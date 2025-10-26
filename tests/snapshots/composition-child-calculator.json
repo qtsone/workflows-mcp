@@ -1,0 +1,43 @@
+{
+  "status": "success",
+  "outputs": {
+    "calculate_success": "true",
+    "result": "0"
+  },
+  "blocks": {
+    "calculate": {
+      "inputs": {
+        "command": "case + in\n  +|-|/|\\*)\n    echo \"$((0 + 0))\" > $SCRATCH/result.txt\n    ;;\n  *)\n    echo \"'+' is an unsupported operation\" >&2\n    exit 1\n    ;;\nesac\n"
+      },
+      "outputs": {
+        "exit_code": 0,
+        "stdout": "",
+        "stderr": "",
+        "result": 0
+      },
+      "metadata": {
+        "status": "completed",
+        "outcome": "success",
+        "execution_time_ms": 6.646240234375,
+        "started_at": "2025-10-25T15:57:55.075983+00:00",
+        "completed_at": "2025-10-25T15:57:55.082619+00:00",
+        "wave": 0,
+        "execution_order": 0,
+        "message": null,
+        "succeeded": true,
+        "failed": false,
+        "skipped": false
+      },
+      "blocks": {},
+      "depth": 0
+    }
+  },
+  "metadata": {
+    "workflow_name": "composition-child-calculator",
+    "start_time": "2025-10-25T15:57:55.075855+00:00",
+    "total_blocks": 1,
+    "execution_waves": 1,
+    "completed_at": "2025-10-25T15:57:55.083066+00:00",
+    "execution_time_seconds": 0.007219791412353516
+  }
+}

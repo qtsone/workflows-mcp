@@ -1,0 +1,19 @@
+name: block-status-failure-detection
+description: Test .failed shortcut for detecting failed block execution (ADR-007)
+tags: [test, core, status, shortcuts, adr-007]
+blocks:
+  - id: failing_block
+    type: Shell
+    inputs:
+      command: exit 1
+  - id: check_failure
+    type: Shell
+    inputs:
+      command: echo "detected_failure"
+    condition: "${blocks.failing_block.failed}"
+    depends_on:
+      - block: failing_block
+        required: false
+outputs:
+  block_failed: "${blocks.failing_block.failed}"
+  detection_worked: "${blocks.check_failure.succeeded}"

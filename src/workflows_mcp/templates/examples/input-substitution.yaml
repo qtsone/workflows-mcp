@@ -1,0 +1,123 @@
+# Input Substitution Patterns Workflow
+#
+# Demonstrates comprehensive variable substitution patterns:
+# - ${input_name} - Direct input variable substitution
+# - ${block_id.field} - Block output field substitution
+# - Multiple input types (string, integer, boolean)
+# - Input defaults for optional parameters
+# - Complex variable resolution chains
+# - Combining inputs and block outputs in messages
+#
+# Variable Substitution Rules:
+# 1. Input variables: ${input_name} (no dot notation)
+# 2. Block outputs: ${block_id.field_name} (with dot notation)
+# 3. Only works in string values (not integers/booleans)
+# 4. Variables are resolved at execution time
+#
+# Usage:
+#   execute_workflow("input-substitution")
+#   execute_workflow("input-substitution", {
+#     "user_name": "Alice",
+#     "iterations": 5,
+#     "verbose": true
+#   })
+
+name: input-substitution
+description: Comprehensive demonstration of variable substitution patterns
+version: "1.0"
+author: Workflows MCP Team
+tags: [example, tutorial, variables, substitution, inputs]
+# Multiple input types with defaults
+inputs:
+  user_name:
+    type: str
+    description: User name for personalized messages
+    default: "Developer"
+
+  project_name:
+    type: str
+    description: Project name to process
+    default: "example-project"
+
+  iterations:
+    type: int
+    description: Number of iterations (demonstrates integer input)
+    default: 3
+
+  verbose:
+    type: bool
+    description: Enable verbose output (demonstrates boolean input)
+    default: true
+
+# Blocks demonstrating various substitution patterns
+blocks:
+  # Block 1: Direct input substitution
+  - id: greet_user
+    type: EchoBlock
+    inputs:
+      # Substitutes ${inputs.user_name} from workflow inputs
+      message: "Welcome, ${inputs.user_name}!"
+      delay_ms: 50
+
+  # Block 2: Multiple input substitutions in one message
+  - id: show_config
+    type: EchoBlock
+    inputs:
+      # Multiple input variables in single message
+      message: "Config: Project=${inputs.project_name}, User=${inputs.user_name}, Iterations=${inputs.iterations}, Verbose=${inputs.verbose}"
+      delay_ms: 50
+
+  # Block 3: Block output substitution
+  - id: reference_previous
+    type: EchoBlock
+    inputs:
+      # References output from greet_user block
+      # Note the dot notation: ${block_id.field}
+      message: "Previous greeting was: ${blocks.greet_user.outputs.echoed}"
+      delay_ms: 50
+    depends_on:
+      - greet_user
+
+  # Block 4: Combining input and block output substitutions
+  - id: combine_variables
+    type: EchoBlock
+    inputs:
+      # Mix of input variables and block output references
+      message: "User ${inputs.user_name} is working on ${inputs.project_name}. Status: ${blocks.reference_previous.outputs.echoed}"
+      delay_ms: 50
+    depends_on:
+      - reference_previous
+
+  # Block 5: Chain of block output references
+  - id: chain_outputs
+    type: EchoBlock
+    inputs:
+      # Reference multiple previous block outputs
+      message: "Chain: ${blocks.greet_user.outputs.echoed} → ${blocks.show_config.outputs.echoed} → ${blocks.combine_variables.outputs.echoed}"
+      delay_ms: 50
+    depends_on:
+      - greet_user
+      - show_config
+      - combine_variables
+
+  # Block 6: Execution time tracking
+  - id: report_metrics
+    type: EchoBlock
+    inputs:
+      # Reference execution time field from previous blocks
+      message: "Execution times: greet=${blocks.greet_user.metadata.execution_time_ms}ms, chain=${blocks.chain_outputs.metadata.execution_time_ms}ms"
+      delay_ms: 50
+    depends_on:
+      - chain_outputs
+
+# Output mapping with variable substitution
+outputs:
+  # Direct block output references
+  greeting: "${blocks.greet_user.outputs.echoed}"
+  configuration: "${blocks.show_config.outputs.echoed}"
+  combined: "${blocks.combine_variables.outputs.echoed}"
+  chained: "${blocks.chain_outputs.outputs.echoed}"
+  metrics: "${blocks.report_metrics.outputs.echoed}"
+
+  # Access specific output fields
+  final_execution_time: "${blocks.report_metrics.metadata.execution_time_ms}"

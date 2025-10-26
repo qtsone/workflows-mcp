@@ -1,0 +1,80 @@
+{
+  "status": "success",
+  "outputs": {
+    "write_succeeded": "true",
+    "cleanup_done": "true"
+  },
+  "blocks": {
+    "write_state": {
+      "inputs": {
+        "path": "/tmp/test-write-state.json",
+        "data": {
+          "string_field": "test",
+          "number_field": 42,
+          "bool_field": true,
+          "array_field": [
+            "a",
+            "b",
+            "c"
+          ],
+          "nested": {
+            "key": "value"
+          }
+        },
+        "create_parents": true
+      },
+      "outputs": {
+        "path": "/private/tmp/test-write-state.json",
+        "size_bytes": 161
+      },
+      "metadata": {
+        "status": "completed",
+        "outcome": "success",
+        "execution_time_ms": 0.34716796875,
+        "started_at": "2025-10-25T15:57:55.415426+00:00",
+        "completed_at": "2025-10-25T15:57:55.415770+00:00",
+        "wave": 0,
+        "execution_order": 0,
+        "message": null,
+        "succeeded": true,
+        "failed": false,
+        "skipped": false
+      },
+      "blocks": {},
+      "depth": 0
+    },
+    "cleanup": {
+      "inputs": {
+        "command": "rm -f \"/tmp/test-write-state.json\""
+      },
+      "outputs": {
+        "exit_code": 0,
+        "stdout": "",
+        "stderr": ""
+      },
+      "metadata": {
+        "status": "completed",
+        "outcome": "success",
+        "execution_time_ms": 6.787109375,
+        "started_at": "2025-10-25T15:57:55.415991+00:00",
+        "completed_at": "2025-10-25T15:57:55.422766+00:00",
+        "wave": 1,
+        "execution_order": 1,
+        "message": null,
+        "succeeded": true,
+        "failed": false,
+        "skipped": false
+      },
+      "blocks": {},
+      "depth": 0
+    }
+  },
+  "metadata": {
+    "workflow_name": "state-management-write",
+    "start_time": "2025-10-25T15:57:55.415296+00:00",
+    "total_blocks": 2,
+    "execution_waves": 2,
+    "completed_at": "2025-10-25T15:57:55.423192+00:00",
+    "execution_time_seconds": 0.007903099060058594
+  }
+}

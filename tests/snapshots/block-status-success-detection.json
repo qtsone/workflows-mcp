@@ -1,0 +1,67 @@
+{
+  "status": "success",
+  "outputs": {
+    "block_succeeded": "true",
+    "detection_worked": "true"
+  },
+  "blocks": {
+    "successful_block": {
+      "inputs": {
+        "command": "echo \"success\""
+      },
+      "outputs": {
+        "exit_code": 0,
+        "stdout": "success\n",
+        "stderr": ""
+      },
+      "metadata": {
+        "status": "completed",
+        "outcome": "success",
+        "execution_time_ms": 5.22900390625,
+        "started_at": "2025-10-25T15:57:55.060886+00:00",
+        "completed_at": "2025-10-25T15:57:55.066104+00:00",
+        "wave": 0,
+        "execution_order": 0,
+        "message": null,
+        "succeeded": true,
+        "failed": false,
+        "skipped": false
+      },
+      "blocks": {},
+      "depth": 0
+    },
+    "check_success": {
+      "inputs": {
+        "command": "echo \"detected\""
+      },
+      "outputs": {
+        "exit_code": 0,
+        "stdout": "detected\n",
+        "stderr": ""
+      },
+      "metadata": {
+        "status": "completed",
+        "outcome": "success",
+        "execution_time_ms": 5.6708984375,
+        "started_at": "2025-10-25T15:57:55.066657+00:00",
+        "completed_at": "2025-10-25T15:57:55.072320+00:00",
+        "wave": 1,
+        "execution_order": 1,
+        "message": null,
+        "succeeded": true,
+        "failed": false,
+        "skipped": false
+      },
+      "blocks": {},
+      "depth": 0
+    }
+  },
+  "metadata": {
+    "workflow_name": "block-status-success-detection",
+    "start_time": "2025-10-25T15:57:55.060776+00:00",
+    "total_blocks": 2,
+    "execution_waves": 2,
+    "completed_at": "2025-10-25T15:57:55.072748+00:00",
+    "execution_time_seconds": 0.011980056762695312
+  }
+}

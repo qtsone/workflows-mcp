@@ -1,0 +1,36 @@
+# Hello World Workflow
+#
+# The simplest possible workflow demonstrating:
+# - Basic workflow structure
+# - Single block execution
+# - Input parameter with default value
+# - Variable substitution from inputs
+# - Output mapping
+#
+# Usage:
+#   execute_workflow("hello-world")
+#   execute_workflow("hello-world", {"name": "Claude"})
+
+name: hello-world
+description: Simple hello world workflow with a single echo block
+version: "1.0"
+author: Workflows MCP Team
+tags: [example, tutorial, basic]
+# Single input parameter with sensible default
+inputs:
+  name:
+    type: str
+    description: Name to greet
+    default: "World"
+
+# Single block - simplest possible workflow
+blocks:
+  - id: greet
+    type: EchoBlock
+    inputs:
+      # Variable substitution from workflow input
+      message: "Hello, ${inputs.name}!"
+
+# Map block output to workflow output
+outputs:
+  greeting: "${blocks.greet.outputs.echoed}"

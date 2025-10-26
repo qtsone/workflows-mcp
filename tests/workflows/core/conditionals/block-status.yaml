@@ -1,0 +1,31 @@
+name: conditionals-block-status
+description: Test conditional execution based on block status (succeeded/failed)
+tags: [test, core, conditionals, status]
+blocks:
+  - id: success_block
+    type: Shell
+    inputs:
+      command: echo "success"
+  - id: failure_block
+    type: Shell
+    inputs:
+      command: exit 1
+  - id: runs_on_success
+    type: Shell
+    inputs:
+      command: echo "after_success"
+    condition: "${blocks.success_block.succeeded}"
+    depends_on:
+      - block: success_block
+        required: true
+  - id: runs_on_failure
+    type: Shell
+    inputs:
+      command: echo "after_failure"
+    condition: "${blocks.failure_block.failed}"
+    depends_on:
+      - block: failure_block
+        required: false
+outputs:
+  runs_on_success_executed: "${blocks.runs_on_success.succeeded}"
+  runs_on_failure_executed: "${blocks.runs_on_failure.succeeded}"

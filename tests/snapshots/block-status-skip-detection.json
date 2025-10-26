@@ -1,0 +1,65 @@
+{
+  "status": "success",
+  "outputs": {
+    "block_skipped": "true",
+    "detection_worked": "true"
+  },
+  "blocks": {
+    "skippable_block": {
+      "inputs": {},
+      "outputs": {
+        "exit_code": 0,
+        "stdout": "",
+        "stderr": ""
+      },
+      "metadata": {
+        "status": "skipped",
+        "outcome": "n/a",
+        "execution_time_ms": 0.0,
+        "started_at": "2025-10-25T15:57:55.051324+00:00",
+        "completed_at": "2025-10-25T15:57:55.051324+00:00",
+        "wave": 0,
+        "execution_order": 0,
+        "message": "Condition 'not ${inputs.should_skip}' evaluated to False",
+        "succeeded": false,
+        "failed": false,
+        "skipped": true
+      },
+      "blocks": {},
+      "depth": 0
+    },
+    "check_skipped": {
+      "inputs": {
+        "command": "echo \"detected_skip\""
+      },
+      "outputs": {
+        "exit_code": 0,
+        "stdout": "detected_skip\n",
+        "stderr": ""
+      },
+      "metadata": {
+        "status": "completed",
+        "outcome": "success",
+        "execution_time_ms": 5.366943359375,
+        "started_at": "2025-10-25T15:57:55.051566+00:00",
+        "completed_at": "2025-10-25T15:57:55.056920+00:00",
+        "wave": 1,
+        "execution_order": 0,
+        "message": null,
+        "succeeded": true,
+        "failed": false,
+        "skipped": false
+      },
+      "blocks": {},
+      "depth": 0
+    }
+  },
+  "metadata": {
+    "workflow_name": "block-status-skip-detection",
+    "start_time": "2025-10-25T15:57:55.051166+00:00",
+    "total_blocks": 1,
+    "execution_waves": 2,
+    "completed_at": "2025-10-25T15:57:55.057432+00:00",
+    "execution_time_seconds": 0.006277799606323242
+  }
+}

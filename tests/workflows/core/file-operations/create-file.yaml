@@ -1,0 +1,43 @@
+name: file-operations-create
+description: Test CreateFile with encoding, permissions, and parent directory creation
+tags: [test, core, files, create]
+inputs:
+  test_dir:
+    type: str
+    default: "/tmp/test-create-file"
+    description: "Directory for test files"
+blocks:
+  - id: create_utf8_file
+    type: CreateFile
+    inputs:
+      path: "${inputs.test_dir}/test.txt"
+      content: |
+        Line 1: Test
+        Line 2: 你好世界
+      encoding: "utf-8"
+      create_parents: true
+      overwrite: true
+  - id: create_executable
+    type: CreateFile
+    inputs:
+      path: "${inputs.test_dir}/script.sh"
+      content: |
+        #!/bin/bash
+        echo 'executable'
+      mode: "755"
+      create_parents: true
+  - id: verify_executable
+    type: Shell
+    inputs:
+      command: test -x "${inputs.test_dir}/script.sh" && echo "yes"
+    depends_on: [create_executable]
+  - id: cleanup
+    type: Shell
+    inputs:
+      command: rm -rf "${inputs.test_dir}"
+    depends_on: [create_utf8_file, verify_executable]
+outputs:
+  utf8_created: "${blocks.create_utf8_file.succeeded}"
+  executable_created: "${blocks.create_executable.succeeded}"
+  is_executable: "${blocks.verify_executable.outputs.stdout}"
+  cleanup_done: "${blocks.cleanup.succeeded}"

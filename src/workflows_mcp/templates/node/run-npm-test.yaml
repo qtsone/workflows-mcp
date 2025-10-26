@@ -1,0 +1,60 @@
+name: run-npm-test
+description: Execute npm test with coverage reporting
+version: "1.0"
+author: "workflows-mcp"
+tags: [node, "node", "npm", "testing", "jest", "coverage"]
+inputs:
+  working_dir:
+    type: str
+    description: "Project directory containing package.json"
+    default: "."
+
+  test_script:
+    type: str
+    description: "npm script to run (from package.json)"
+    default: "test"
+
+  with_coverage:
+    type: bool
+    description: "Run tests with coverage"
+    default: true
+
+blocks:
+  - id: check_package_json
+    type: Shell
+    inputs:
+      command: "test -f package.json && echo 'package.json found'"
+      working_dir: "${inputs.working_dir}"
+      timeout: 10
+
+  - id: build_test_command
+    type: Shell
+    inputs:
+      command: |
+        CMD="npm run ${inputs.test_script}"
+        if [ "${inputs.with_coverage}" = "true" ]; then
+          CMD="$CMD -- --coverage"
+        fi
+        echo "$CMD"
+      timeout: 5
+    depends_on:
+      - check_package_json
+
+  - id: run_npm_test
+    type: Shell
+    inputs:
+      command: "${blocks.build_test_command.outputs.stdout}"
+      working_dir: "${inputs.working_dir}"
+      timeout: 600
+      env:
+        CI: "true"
+        NODE_ENV: "test"
+    depends_on:
+      - build_test_command
+
+outputs:
+  success: "${blocks.run_npm_test.succeeded}"
+  exit_code: "${blocks.run_npm_test.outputs.exit_code}"
+  test_output: "${blocks.run_npm_test.outputs.stdout}"
+  errors: "${blocks.run_npm_test.outputs.stderr}"
+  execution_time_ms: "${blocks.run_npm_test.metadata.execution_time_ms}"

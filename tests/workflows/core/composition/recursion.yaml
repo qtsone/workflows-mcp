@@ -1,0 +1,104 @@
+name: composition-recursion
+description: Test recursive workflow pattern (workflow calls itself)
+tags: [test, core, composition, recursion]
+
+inputs:
+  count:
+    type: int
+    default: 3
+    description: "Countdown from this number to 0"
+
+  state_file:
+    type: str
+    default: "/tmp/test-recursion-state.json"
+    description: "State file for tracking iterations"
+
+blocks:
+  - id: check_state_exists
+    type: ReadJSONState
+    inputs:
+      path: "${inputs.state_file}"
+      required: false
+
+  - id: initialize_state
+    type: WriteJSONState
+    inputs:
+      path: "${inputs.state_file}"
+      data:
+        current: 0
+        max: ${inputs.count}
+    condition: "not ${blocks.check_state_exists.outputs.found}"
+    depends_on: [check_state_exists]
+
+  - id: read_current_state
+    type: ReadJSONState
+    inputs:
+      path: "${inputs.state_file}"
+    depends_on:
+      - block: initialize_state
+        required: false
+
+  - id: increment
+    type: Shell
+    inputs:
+      command: |
+        CURRENT=${blocks.read_current_state.outputs.data.current}
+        NEXT=$((CURRENT + 1))
+        echo $NEXT > "$SCRATCH/next.txt"
+    outputs:
+      number:
+        path: "$SCRATCH/next.txt"
+        type: int
+    depends_on: [read_current_state]
+
+  - id: update_state
+    type: MergeJSONState
+    inputs:
+      path: "${inputs.state_file}"
+      updates:
+        current: ${blocks.increment.outputs.number}
+    depends_on: [increment]
+
+  - id: check_continue
+    type: Shell
+    inputs:
+      command: |
+        CURRENT=${blocks.update_state.outputs.merged_data.current}
+        MAX=${inputs.count}
+        if [ $CURRENT -lt $MAX ]; then
+          exit 0  # Continue
+        else
+          exit 1  # Done
+        fi
+    depends_on: [update_state]
+
+  - id: recurse
+    type: Workflow
+    inputs:
+      workflow: "composition-recursion"
+      inputs:
+        count: ${inputs.count}
+        state_file: "${inputs.state_file}"
+    depends_on: [check_continue]
+
+  - id: read_final_state
+    type: ReadJSONState
+    inputs:
+      path: "${inputs.state_file}"
+    depends_on:
+      - block: recurse
+        required: false
+
+  - id: cleanup
+    type: Shell
+    inputs:
+      command: rm -f "${inputs.state_file}"
+    depends_on:
+      - block: initialize_state
+        required: true
+      - block: read_final_state
+        required: true
+
+outputs:
+  completed: "${blocks.cleanup.succeeded}"
+  iterations: "${blocks.read_final_state.outputs.data.current}"

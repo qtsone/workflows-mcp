@@ -1,0 +1,37 @@
+{
+  "status": "paused",
+  "checkpoint_id": "pause_interactive-simple-approval_1761407875382_371319ca",
+  "prompt": "Proceed with operation?",
+  "message": "Use resume_workflow(checkpoint_id: \"pause_interactive-simple-approval_1761407875382_371319ca\", response: \"<your-response>\") to continue",
+  "blocks": {
+    "start": {
+      "inputs": {
+        "command": "echo \"Starting workflow with message: Proceed with operation?\"\n"
+      },
+      "outputs": {
+        "exit_code": 0,
+        "stdout": "Starting workflow with message: Proceed with operation?\n",
+        "stderr": ""
+      },
+      "metadata": {
+        "status": "completed",
+        "outcome": "success",
+        "execution_time_ms": 6.0810546875,
+        "started_at": "2025-10-25T15:57:55.375572+00:00",
+        "completed_at": "2025-10-25T15:57:55.381642+00:00",
+        "wave": 0,
+        "execution_order": 0,
+        "message": null,
+        "succeeded": true,
+        "failed": false,
+        "skipped": false
+      },
+      "blocks": {},
+      "depth": 0
+    }
+  },
+  "metadata": {
+    "workflow_name": "interactive-simple-approval",
+    "start_time": "2025-10-25T15:57:55.375376+00:00"
+  }
+}

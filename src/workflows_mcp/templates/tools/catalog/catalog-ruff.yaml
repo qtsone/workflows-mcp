@@ -1,0 +1,89 @@
+name: catalog-ruff
+description: ruff tool specifications and installation metadata
+version: "1.0"
+author: Workflows MCP Team
+tags: [tools, catalog, ruff, python, linting, formatting]
+
+# Catalog files are metadata-only (minimal no-op block for validation)
+blocks:
+  - id: catalog_marker
+    type: EchoBlock
+    inputs:
+      message: "Catalog file: ruff tool specifications"
+
+# Tool metadata stored as workflow inputs
+inputs:
+  tool_catalog_type:
+    type: str
+    description: Marker indicating this is a catalog file
+    default: "catalog"
+
+  metadata:
+    type: dict
+    description: Tool metadata and specifications
+    default:
+      tool_name: ruff
+      tool_type: python_package
+      command_name: ruff
+      description: Extremely fast Python linter and code formatter, written in Rust
+
+      # Version checking configuration
+      version_check:
+        command: ruff --version
+        pattern: 'ruff (\d+\.\d+\.\d+)'
+        import_name: ruff
+
+      # Installation options (priority order)
+      installation:
+        uv:
+          package_name: ruff
+          recommended: true
+          notes: Fastest installation method via uv pip
+
+        pip:
+          package_name: ruff
+          notes: Standard installation via pip
+
+        brew:
+          formula: ruff
+          platforms: [macos]
+          notes: System-wide installation via Homebrew (macOS only)
+
+      # Package extras (ruff has minimal extras)
+      extras:
+        all:
+          packages: []
+          description: ruff is self-contained with no required extras
+
+      # Version constraints
+      constraints:
+        python_version: '>=3.7'
+        minimum_version: '0.1.0'
+        recommended_version: '>=0.6.0'
+        tested_versions: ['0.5.0', '0.6.0', '0.7.0']
+        notes: Version 0.6.0+ includes formatter, earlier versions linting only
+
+      # Platform-specific notes
+      platform_notes:
+        macos: Homebrew installation recommended for system-wide use
+        linux: pip installation recommended (prebuilt wheel available)
+        windows: pip installation recommended (prebuilt wheel available)
+
+      # Documentation links
+      documentation:
+        homepage: https://docs.astral.sh/ruff/
+        installation: https://docs.astral.sh/ruff/installation/
+        configuration: https://docs.astral.sh/ruff/configuration/
+        rules: https://docs.astral.sh/ruff/rules/
+        formatter: https://docs.astral.sh/ruff/formatter/
+
+      # Common use cases
+      usage:
+        linting: ruff check .
+        formatting: ruff format .
+        fix: ruff check --fix .
+        config: ruff.toml or pyproject.toml
+
+outputs:
+  catalog_type: "catalog"
+  tool_catalog_marker: "${blocks.catalog_marker.outputs.echoed}"

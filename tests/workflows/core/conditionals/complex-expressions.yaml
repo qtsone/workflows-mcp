@@ -1,0 +1,38 @@
+name: conditionals-complex-expressions
+description: Test complex boolean expressions in conditions (AND, OR, NOT)
+tags: [test, core, conditionals, boolean]
+inputs:
+  flag_a:
+    type: bool
+    default: true
+    description: "First boolean flag"
+  flag_b:
+    type: bool
+    default: false
+    description: "Second boolean flag"
+blocks:
+  - id: success_block
+    type: Shell
+    inputs:
+      command: echo "success"
+  - id: and_condition
+    type: Shell
+    inputs:
+      command: echo "AND passed"
+    condition: "${inputs.flag_a} and ${blocks.success_block.succeeded}"
+    depends_on: [success_block]
+  - id: or_condition
+    type: Shell
+    inputs:
+      command: echo "OR passed"
+    condition: "${inputs.flag_b} or ${blocks.success_block.succeeded}"
+    depends_on: [success_block]
+  - id: not_condition
+    type: Shell
+    inputs:
+      command: echo "NOT passed"
+    condition: "not ${inputs.flag_b}"
+outputs:
+  and_passed: "${blocks.and_condition.succeeded}"
+  or_passed: "${blocks.or_condition.succeeded}"
+  not_passed: "${blocks.not_condition.succeeded}"

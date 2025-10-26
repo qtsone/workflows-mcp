@@ -1,0 +1,29 @@
+name: dag-execution-dependency-order
+description: Test that blocks execute in correct dependency order
+tags: [test, core, dag, dependencies]
+blocks:
+  - id: step1
+    type: Shell
+    inputs:
+      command: echo "1"
+  - id: step2
+    type: Shell
+    inputs:
+      command: echo "${blocks.step1.stdout}-2"
+    depends_on: [step1]
+  - id: step3
+    type: Shell
+    inputs:
+      command: echo "${blocks.step2.stdout}-3"
+    depends_on: [step2]
+  - id: step4
+    type: Shell
+    inputs:
+      command: echo "${blocks.step3.stdout}-4"
+    depends_on: [step3]
+outputs:
+  final_result: "${blocks.step4.outputs.stdout}"
+  step1_output: "${blocks.step1.outputs.stdout}"
+  step2_output: "${blocks.step2.outputs.stdout}"
+  step3_output: "${blocks.step3.outputs.stdout}"
+  step4_output: "${blocks.step4.outputs.stdout}"

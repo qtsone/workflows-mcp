@@ -1,0 +1,73 @@
+name: recursive-countdown
+description: |
+  Recursive countdown workflow demonstrating workflow self-calling.
+
+  This workflow counts down from a given number to zero using recursion.
+  It demonstrates:
+  - Workflow calling itself (A→A recursion)
+  - Conditional recursion with base case
+  - Recursion depth tracking
+  - Success state checking (ADR-005)
+
+  Example:
+    countdown(3) → countdown(2) → countdown(1) → countdown(0) → done
+
+  The recursion depth is limited by WORKFLOWS_MAX_RECURSION_DEPTH (default: 50).
+  Starting with count > max_depth will result in RecursionDepthExceededError.
+
+inputs:
+  count:
+    type: int
+    required: true
+    description: Starting number to count down from (must be >= 0)
+
+blocks:
+  - id: validate_input
+    type: Shell
+    inputs:
+      command: |
+        # Validate input is non-negative
+        if [ ${inputs.count} -lt 0 ]; then
+          echo "Error: count must be non-negative" >&2
+          exit 1
+        fi
+        echo "Count: ${inputs.count}"
+
+  - id: check_base_case
+    type: Shell
+    inputs:
+      command: |
+        # Base case: count == 0
+        test ${inputs.count} -eq 0
+    depends_on:
+      - validate_input
+
+  - id: compute_next
+    type: Shell
+    inputs:
+      command: |
+        # Compute next count value (count - 1)
+        NEXT=$((${inputs.count} - 1))
+        echo "$NEXT" > "$SCRATCH/next_count.txt"
+    outputs:
+      next_count:
+        path: "$SCRATCH/next_count.txt"
+        type: int
+    depends_on:
+      - block: check_base_case
+        required: false
+
+  - id: recurse
+    type: Workflow
+    inputs:
+      workflow: recursive-countdown
+      inputs:
+        count: ${blocks.compute_next.outputs.next_count}
+    # Only recurse if NOT at base case (count > 0)
+    condition: "${blocks.check_base_case.failed}"
+    depends_on:
+      - compute_next
+
+outputs:
+  count: "${inputs.count}"
+  reached_base_case: "${blocks.check_base_case.succeeded}"

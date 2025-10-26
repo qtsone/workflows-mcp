@@ -1,0 +1,149 @@
+# Complex Multi-Stage Workflow
+#
+# Realistic workflow demonstrating:
+# - Multiple execution stages (initialize → process → validate → finalize)
+# - Mixed sequential and parallel execution patterns
+# - Complex dependency graph (8 blocks)
+# - Multiple inputs with various types
+# - Real-world workflow structure
+# - Wave-based execution optimization
+# - Comprehensive output mapping
+#
+# Workflow Structure:
+#   Wave 1: initialize
+#   Wave 2: fetch_config, fetch_data (parallel)
+#   Wave 3: validate_config, validate_data (parallel)
+#   Wave 4: merge_results
+#   Wave 5: transform_output
+#   Wave 6: finalize
+#
+# Usage:
+#   execute_workflow("complex-workflow")
+#   execute_workflow("complex-workflow", {
+#     "environment": "production",
+#     "max_retries": 5,
+#     "enable_validation": true,
+#     "output_format": "json"
+#   })
+
+name: complex-workflow
+description: Complex multi-stage workflow with parallel execution and validation
+version: "1.0"
+author: Workflows MCP Team
+tags: [tutorial, complex, multi-stage, realistic, parallel]
+# Multiple inputs representing real-world configuration
+inputs:
+  environment:
+    type: str
+    description: Target environment (dev, staging, production)
+    default: "development"
+
+  data_source:
+    type: str
+    description: Source identifier for data fetching
+    default: "primary-db"
+
+  max_retries:
+    type: int
+    description: Maximum retry attempts for operations
+    default: 3
+
+  enable_validation:
+    type: bool
+    description: Enable strict validation checks
+    default: true
+
+  output_format:
+    type: str
+    description: Format for final output (json, xml, yaml)
+    default: "json"
+
+blocks:
+  # Stage 1: Initialization (Wave 1)
+  - id: initialize
+    type: EchoBlock
+    inputs:
+      message: "Initializing workflow in ${inputs.environment} environment with ${inputs.max_retries} retries"
+      delay_ms: 100
+
+  # Stage 2: Parallel data fetching (Wave 2)
+  - id: fetch_config
+    type: EchoBlock
+    inputs:
+      message: "Fetching configuration for ${inputs.environment}"
+      delay_ms: 200
+    depends_on:
+      - initialize
+
+  - id: fetch_data
+    type: EchoBlock
+    inputs:
+      message: "Fetching data from ${inputs.data_source}"
+      delay_ms: 250
+    depends_on:
+      - initialize
+
+  # Stage 3: Parallel validation (Wave 3)
+  - id: validate_config
+    type: EchoBlock
+    inputs:
+      message: "Validating config: ${blocks.fetch_config.outputs.echoed} (strict=${inputs.enable_validation})"
+      delay_ms: 150
+    depends_on:
+      - fetch_config
+
+  - id: validate_data
+    type: EchoBlock
+    inputs:
+      message: "Validating data: ${blocks.fetch_data.outputs.echoed} (strict=${inputs.enable_validation})"
+      delay_ms: 180
+    depends_on:
+      - fetch_data
+
+  # Stage 4: Merge results (Wave 4)
+  - id: merge_results
+    type: EchoBlock
+    inputs:
+      message: "Merging: ${blocks.validate_config.outputs.echoed} + ${blocks.validate_data.outputs.echoed}"
+      delay_ms: 100
+    depends_on:
+      - validate_config
+      - validate_data
+
+  # Stage 5: Transform output (Wave 5)
+  - id: transform_output
+    type: EchoBlock
+    inputs:
+      message: "Transforming to ${inputs.output_format} format: ${blocks.merge_results.outputs.echoed}"
+      delay_ms: 120
+    depends_on:
+      - merge_results
+
+  # Stage 6: Finalization (Wave 6)
+  - id: finalize
+    type: EchoBlock
+    inputs:
+      message: "Workflow complete. Environment: ${inputs.environment}, Output: ${blocks.transform_output.outputs.echoed}"
+      delay_ms: 100
+    depends_on:
+      - transform_output
+
+# Comprehensive output mapping
+outputs:
+  # Stage outputs
+  initialization: "${blocks.initialize.outputs.echoed}"
+  config_status: "${blocks.validate_config.outputs.echoed}"
+  data_status: "${blocks.validate_data.outputs.echoed}"
+  merged: "${blocks.merge_results.outputs.echoed}"
+  transformed: "${blocks.transform_output.outputs.echoed}"
+  final_result: "${blocks.finalize.outputs.echoed}"
+
+  # Metadata
+  environment: "${inputs.environment}"
+  output_format: "${inputs.output_format}"
+  validation_enabled: "${inputs.enable_validation}"
+
+  # Performance metrics
+  total_execution_time_ms: "${blocks.finalize.metadata.execution_time_ms}"
+  fetch_config_time_ms: "${blocks.fetch_config.metadata.execution_time_ms}"
+  fetch_data_time_ms: "${blocks.fetch_data.metadata.execution_time_ms}"

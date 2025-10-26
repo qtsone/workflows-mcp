@@ -1,0 +1,99 @@
+{
+  "status": "success",
+  "outputs": {
+    "child_succeeded": "true",
+    "result": "15",
+    "parent_verified": "true"
+  },
+  "blocks": {
+    "call_child": {
+      "inputs": {
+        "workflow": "composition-child-calculator",
+        "inputs": {
+          "number_a": "3",
+          "number_b": "5",
+          "operation": "*"
+        }
+      },
+      "outputs": {
+        "calculate_success": "true",
+        "result": "15"
+      },
+      "metadata": {
+        "status": "completed",
+        "outcome": "success",
+        "execution_time_ms": 6.909912109375,
+        "started_at": "2025-10-25T15:57:55.171217+00:00",
+        "completed_at": "2025-10-25T15:57:55.178126+00:00",
+        "wave": 0,
+        "execution_order": 0,
+        "message": null,
+        "succeeded": true,
+        "failed": false,
+        "skipped": false
+      },
+      "blocks": {
+        "calculate": {
+          "inputs": {
+            "command": "case * in\n  +|-|/|\\*)\n    echo \"$((3 * 5))\" > $SCRATCH/result.txt\n    ;;\n  *)\n    echo \"'*' is an unsupported operation\" >&2\n    exit 1\n    ;;\nesac\n"
+          },
+          "outputs": {
+            "exit_code": 0,
+            "stdout": "",
+            "stderr": "",
+            "result": 15
+          },
+          "metadata": {
+            "status": "completed",
+            "outcome": "success",
+            "execution_time_ms": 6.315185546875,
+            "started_at": "2025-10-25T15:57:55.171300+00:00",
+            "completed_at": "2025-10-25T15:57:55.177600+00:00",
+            "wave": 0,
+            "execution_order": 0,
+            "message": null,
+            "succeeded": true,
+            "failed": false,
+            "skipped": false
+          },
+          "blocks": {},
+          "depth": 0
+        }
+      },
+      "depth": 1
+    },
+    "verify_result": {
+      "inputs": {
+        "command": "echo \"Child returned: 15\""
+      },
+      "outputs": {
+        "exit_code": 0,
+        "stdout": "Child returned: 15\n",
+        "stderr": ""
+      },
+      "metadata": {
+        "status": "completed",
+        "outcome": "success",
+        "execution_time_ms": 5.3037109375,
+        "started_at": "2025-10-25T15:57:55.178415+00:00",
+        "completed_at": "2025-10-25T15:57:55.183713+00:00",
+        "wave": 1,
+        "execution_order": 1,
+        "message": null,
+        "succeeded": true,
+        "failed": false,
+        "skipped": false
+      },
+      "blocks": {},
+      "depth": 0
+    }
+  },
+  "metadata": {
+    "workflow_name": "composition-workflow-call",
+    "start_time": "2025-10-25T15:57:55.171098+00:00",
+    "total_blocks": 2,
+    "execution_waves": 2,
+    "completed_at": "2025-10-25T15:57:55.184124+00:00",
+    "execution_time_seconds": 0.013033151626586914
+  }
+}

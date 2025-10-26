@@ -1,0 +1,68 @@
+{
+  "status": "success",
+  "outputs": {
+    "always_ran": "true",
+    "conditional_ran": "true",
+    "conditional_skipped": "false"
+  },
+  "blocks": {
+    "always_run": {
+      "inputs": {
+        "command": "echo \"always\""
+      },
+      "outputs": {
+        "exit_code": 0,
+        "stdout": "always\n",
+        "stderr": ""
+      },
+      "metadata": {
+        "status": "completed",
+        "outcome": "success",
+        "execution_time_ms": 5.39794921875,
+        "started_at": "2025-10-25T15:57:55.225987+00:00",
+        "completed_at": "2025-10-25T15:57:55.231378+00:00",
+        "wave": 0,
+        "execution_order": 0,
+        "message": null,
+        "succeeded": true,
+        "failed": false,
+        "skipped": false
+      },
+      "blocks": {},
+      "depth": 0
+    },
+    "conditional_block": {
+      "inputs": {
+        "command": "echo \"conditional_ran\""
+      },
+      "outputs": {
+        "exit_code": 0,
+        "stdout": "conditional_ran\n",
+        "stderr": ""
+      },
+      "metadata": {
+        "status": "completed",
+        "outcome": "success",
+        "execution_time_ms": 4.7109375,
+        "started_at": "2025-10-25T15:57:55.228723+00:00",
+        "completed_at": "2025-10-25T15:57:55.233437+00:00",
+        "wave": 0,
+        "execution_order": 0,
+        "message": null,
+        "succeeded": true,
+        "failed": false,
+        "skipped": false
+      },
+      "blocks": {},
+      "depth": 0
+    }
+  },
+  "metadata": {
+    "workflow_name": "conditionals-input-based",
+    "start_time": "2025-10-25T15:57:55.225813+00:00",
+    "total_blocks": 2,
+    "execution_waves": 1,
+    "completed_at": "2025-10-25T15:57:55.233817+00:00",
+    "execution_time_seconds": 0.008011102676391602
+  }
+}

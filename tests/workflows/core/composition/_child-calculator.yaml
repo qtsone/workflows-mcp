@@ -1,0 +1,43 @@
+name: composition-child-calculator
+description: Child workflow for composition testing - performs simple arithmetic
+tags: [test, core, composition, child, helper]
+inputs:
+  number_a:
+    type: int
+    required: true
+    description: "First number"
+    default: 0
+
+  number_b:
+    type: int
+    required: true
+    description: "Second number"
+    default: 0
+
+  operation:
+    type: str
+    required: true
+    description: "Operation to perform (+, -, *, /)"
+    default: "+"
+
+blocks:
+  - id: calculate
+    type: Shell
+    inputs:
+      command: |
+        case ${inputs.operation} in
+          +|-|/|\*)
+            echo "$((${inputs.number_a} ${inputs.operation} ${inputs.number_b}))" > $SCRATCH/result.txt
+            ;;
+          *)
+            echo "'${inputs.operation}' is an unsupported operation" >&2
+            exit 1
+            ;;
+        esac
+    outputs:
+      result:
+        path: $SCRATCH/result.txt
+        type: int
+outputs:
+  calculate_success: "${blocks.calculate.succeeded}"
+  result: "${blocks.calculate.outputs.result}"

@@ -1,0 +1,164 @@
+name: git-commit
+description: |
+  Create a semantic commit with an AI-generated message based on staged changes.
+
+  Uses LLM to analyze diffs and determine commit type (feat, fix, docs, refactor, test, chore,
+  perf, style), extract scope, and generate a meaningful description following Conventional
+  Commits specification.
+
+  Workflow steps:
+  1. Optional staging of all modified files
+  2. Analyze staged changes (via git-analyze-changes)
+  3. Generate semantic commit message using LLM (or use manual override)
+  4. Optional interactive confirmation
+  5. Create the commit
+version: "4.0.0"
+author: "workflows-mcp"
+tags: [git, commit, semantic, conventional-commits, interactive, composed]
+
+inputs:
+  stage_all:
+    type: bool
+    default: false
+    description: "(Optional) Stage all modified files before analyzing (default: use already staged files)"
+    required: false
+
+  working_dir:
+    type: str
+    default: "."
+    description: "(Optional) Path to the git repository"
+    required: false
+
+  auto_commit:
+    type: bool
+    default: true
+    description: "(Optional) Skip interactive confirmation and commit immediately with generated message"
+    required: false
+
+  commit_message:
+    type: str
+    default: ""
+    description: "(Optional) Manually provide commit message (bypasses LLM generation)"
+    required: false
+
+blocks:
+  - id: stage_files
+    type: Shell
+    description: "Stage all modified files in git repository"
+    inputs:
+      command: git add -A
+      working_dir: "${inputs.working_dir}"
+    condition: ${inputs.stage_all}
+
+  - id: analyze_changes
+    type: Workflow
+    description: "Analyze staged changes in git repository"
+    inputs:
+      workflow: "git-analyze-changes"
+      inputs:
+        working_dir: "${inputs.working_dir}"
+
+  - id: no_changes_message
+    type: Shell
+    description: "No changes to commit"
+    inputs:
+      command: echo "No changes to commit"
+    condition: "not ${blocks.analyze_changes.outputs.has_changes}"
+    depends_on:
+      - analyze_changes
+
+  - id: llm_generate_message
+    type: Prompt
+    description: "Generate semantic commit message using LLM"
+    inputs:
+      prompt: |
+        Generate a semantic commit message following the Conventional Commits specification.
+
+        ## Format
+        <type>(<scope>): <summary>
+
+        <body>
+
+        ## Types
+        - feat: New feature
+        - fix: Bug fix
+        - docs: Documentation changes
+        - style: Code formatting (no logic change)
+        - refactor: Code restructuring
+        - perf: Performance improvement
+        - test: Test additions/changes
+        - chore: Maintenance (deps, config)
+        - ci: CI/CD changes
+
+        ## Guidelines
+        - Summary: imperative mood, lowercase, no period, max 72 chars
+        - Body: explain what and why (optional)
+        - Scope: component/module affected (optional)
+
+        ## File Status
+        ${blocks.analyze_changes.outputs.file_status}
+
+        ## Diff Statistics
+        ${blocks.analyze_changes.outputs.diff_stat}
+
+        ## Detailed Changes
+        ${blocks.analyze_changes.outputs.staged_diff}
+
+        Generate ONLY the commit message (no quotes, no explanations):
+    condition: "${blocks.analyze_changes.outputs.has_changes} and ${inputs.commit_message} == ''"
+    depends_on:
+      - analyze_changes
+
+  - id: select_message
+    type: Shell
+    description: "Select final commit message: manual override or LLM-generated"
+    inputs:
+      command: |
+        if [ -n "${inputs.commit_message}" ]; then
+          # Use manual message if provided
+          echo "${inputs.commit_message}"
+        else
+          # Use LLM-generated message
+          echo "${blocks.llm_generate_message.outputs.response}"
+        fi
+    condition: "${blocks.analyze_changes.outputs.has_changes}"
+    depends_on:
+      - block: llm_generate_message
+        required: false
+
+  - id: confirm_commit
+    type: Prompt
+    description: "Prompt user for commit confirmation"
+    inputs:
+      prompt: |
+        About to create commit with message:
+
+        ${blocks.select_message.outputs.stdout}
+
+        Proceed with commit? Respond with 'yes' or 'no'
+    condition: "${blocks.analyze_changes.outputs.has_changes} and not ${inputs.auto_commit}"
+    depends_on:
+      - select_message
+
+  - id: create_commit
+    type: Shell
+    description: "Create git commit with semantic message"
+    inputs:
+      command: |
+        set -e  # Exit immediately if any command fails
+        # Create commit and get hash (using -F - to handle multi-line messages)
+        echo "${blocks.select_message.outputs.stdout}" | git commit -F -
+        git rev-parse HEAD
+      working_dir: "${inputs.working_dir}"
+    condition: "${blocks.analyze_changes.outputs.has_changes} and (${inputs.auto_commit} or ${blocks.confirm_commit.outputs.response} == 'yes')"
+    depends_on:
+      - select_message
+      - block: confirm_commit
+        required: false
+
+outputs:
+  has_changes: "${blocks.analyze_changes.outputs.has_changes}"
+  commit_succeeded: "${blocks.create_commit.succeeded}"
+  commit_failed: "${blocks.create_commit.failed}"
+  commit_skipped: "${blocks.create_commit.skipped}"
+  commit_hash: "${blocks.create_commit.outputs.stdout}"

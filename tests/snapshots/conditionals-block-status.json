@@ -1,0 +1,117 @@
+{
+  "status": "success",
+  "outputs": {
+    "runs_on_success_executed": "true",
+    "runs_on_failure_executed": "true"
+  },
+  "blocks": {
+    "success_block": {
+      "inputs": {
+        "command": "echo \"success\""
+      },
+      "outputs": {
+        "exit_code": 0,
+        "stdout": "success\n",
+        "stderr": ""
+      },
+      "metadata": {
+        "status": "completed",
+        "outcome": "success",
+        "execution_time_ms": 5.801025390625,
+        "started_at": "2025-10-25T15:57:55.187657+00:00",
+        "completed_at": "2025-10-25T15:57:55.193445+00:00",
+        "wave": 0,
+        "execution_order": 0,
+        "message": null,
+        "succeeded": true,
+        "failed": false,
+        "skipped": false
+      },
+      "blocks": {},
+      "depth": 0
+    },
+    "failure_block": {
+      "inputs": {
+        "command": "exit 1"
+      },
+      "outputs": {
+        "exit_code": 1,
+        "stdout": "",
+        "stderr": ""
+      },
+      "metadata": {
+        "status": "completed",
+        "outcome": "failure",
+        "execution_time_ms": 5.06787109375,
+        "started_at": "2025-10-25T15:57:55.190081+00:00",
+        "completed_at": "2025-10-25T15:57:55.195154+00:00",
+        "wave": 0,
+        "execution_order": 0,
+        "message": "Command exited with code 1",
+        "succeeded": false,
+        "failed": true,
+        "skipped": false
+      },
+      "blocks": {},
+      "depth": 0
+    },
+    "runs_on_success": {
+      "inputs": {
+        "command": "echo \"after_success\""
+      },
+      "outputs": {
+        "exit_code": 0,
+        "stdout": "after_success\n",
+        "stderr": ""
+      },
+      "metadata": {
+        "status": "completed",
+        "outcome": "success",
+        "execution_time_ms": 5.381103515625,
+        "started_at": "2025-10-25T15:57:55.195681+00:00",
+        "completed_at": "2025-10-25T15:57:55.201054+00:00",
+        "wave": 1,
+        "execution_order": 2,
+        "message": null,
+        "succeeded": true,
+        "failed": false,
+        "skipped": false
+      },
+      "blocks": {},
+      "depth": 0
+    },
+    "runs_on_failure": {
+      "inputs": {
+        "command": "echo \"after_failure\""
+      },
+      "outputs": {
+        "exit_code": 0,
+        "stdout": "after_failure\n",
+        "stderr": ""
+      },
+      "metadata": {
+        "status": "completed",
+        "outcome": "success",
+        "execution_time_ms": 5.5439453125,
+        "started_at": "2025-10-25T15:57:55.198010+00:00",
+        "completed_at": "2025-10-25T15:57:55.203561+00:00",
+        "wave": 1,
+        "execution_order": 2,
+        "message": null,
+        "succeeded": true,
+        "failed": false,
+        "skipped": false
+      },
+      "blocks": {},
+      "depth": 0
+    }
+  },
+  "metadata": {
+    "workflow_name": "conditionals-block-status",
+    "start_time": "2025-10-25T15:57:55.187545+00:00",
+    "total_blocks": 4,
+    "execution_waves": 2,
+    "completed_at": "2025-10-25T15:57:55.203934+00:00",
+    "execution_time_seconds": 0.016396045684814453
+  }
+}

@@ -1,0 +1,40 @@
+name: dag-execution-parallel
+description: Test parallel execution of independent blocks in same wave
+tags: [test, core, dag, parallel]
+blocks:
+  # Wave 1: Three independent blocks execute in parallel
+  - id: parallel_1
+    type: Shell
+    inputs:
+      command: echo "parallel_1"
+  - id: parallel_2
+    type: Shell
+    inputs:
+      command: echo "parallel_2"
+  - id: parallel_3
+    type: Shell
+    inputs:
+      command: echo "parallel_3"
+  # Wave 2: Depends on all wave 1 blocks
+  - id: after_parallel
+    type: Shell
+    inputs:
+      command: 'echo "after: ${blocks.parallel_1.stdout}, ${blocks.parallel_2.stdout}, ${blocks.parallel_3.stdout}"'
+    depends_on:
+      - parallel_1
+      - parallel_2
+      - parallel_3
+  # Wave 3: Final block
+  - id: final
+    type: Shell
+    inputs:
+      command: echo "final"
+    depends_on:
+      - after_parallel
+outputs:
+  parallel_1_output: "${blocks.parallel_1.outputs.stdout}"
+  parallel_2_output: "${blocks.parallel_2.outputs.stdout}"
+  parallel_3_output: "${blocks.parallel_3.outputs.stdout}"
+  all_succeeded: >
+    ${blocks.parallel_1.succeeded} and ${blocks.parallel_2.succeeded} and ${blocks.parallel_3.succeeded} and ${blocks.final.succeeded}
+

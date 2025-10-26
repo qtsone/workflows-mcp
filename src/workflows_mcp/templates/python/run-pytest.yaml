@@ -1,0 +1,148 @@
+name: run-pytest
+description: Execute pytest with coverage reporting and configurable options (supports auto-install)
+version: "1.0"
+author: Workflows MCP Team
+tags: [python, testing, pytest, coverage, quality]
+
+inputs:
+  path:
+    type: str
+    description: (Optional) Path to project directory
+    default: "."
+    required: false
+
+  test_path:
+    type: str
+    description: (Optional) Path to tests directory or specific test file
+    default: "tests/"
+    required: false
+
+  coverage_threshold:
+    type: int
+    description: (Optional) Minimum coverage percentage required (0-100)
+    default: 80
+    required: false
+
+  verbose:
+    type: bool
+    description: (Optional) Enable verbose pytest output
+    default: false
+    required: false
+
+  markers:
+    type: str
+    description: (Optional) Pytest markers to select tests (e.g., 'not slow')
+    default: ""
+    required: false
+
+  generate_html_report:
+    type: bool
+    description: (Optional) Generate HTML coverage report
+    default: true
+    required: false
+
+  fail_on_coverage:
+    type: bool
+    description: (Optional) Fail workflow if coverage below threshold
+    default: true
+    required: false
+
+  venv_path:
+    type: str
+    description: (Optional) Virtual environment path (will use ${inputs.venv_path}/bin/pytest if available)
+    default: ""
+    required: false
+
+  auto_install:
+    type: bool
+    description: (Optional) Automatically install pytest if not found
+    default: true
+    required: false
+
+blocks:
+  - id: ensure_pytest
+    type: Workflow
+    inputs:
+      workflow: ensure-tool
+      inputs:
+        tool_name: pytest
+        tool_type: python_package
+        version: ">=7.0.0"
+        venv_path: "${inputs.venv_path}"
+        auto_install: true
+    condition: "${inputs.auto_install}"
+
+  # Build pytest command dynamically using bash conditionals
+  - id: build_command
+    type: Shell
+    inputs:
+      command: |
+        # Determine pytest executable path (prefer venv if available)
+        if [ -n "${inputs.venv_path}" ] && [ -f "${inputs.venv_path}/bin/pytest" ]; then
+          PYTEST="${inputs.venv_path}/bin/pytest"
+        else
+          PYTEST="pytest"
+        fi
+
+        # Build command with options
+        CMD="$PYTEST ${inputs.test_path} --cov=src --cov-report=term-missing"
+        if [ "${inputs.generate_html_report}" = "true" ]; then
+          CMD="$CMD --cov-report=html"
+        fi
+        if [ "${inputs.fail_on_coverage}" = "true" ]; then
+          CMD="$CMD --cov-fail-under=${inputs.coverage_threshold}"
+        fi
+        if [ "${inputs.verbose}" = "true" ]; then
+          CMD="$CMD -v"
+        fi
+        if [ -n "${inputs.markers}" ]; then
+          CMD="$CMD -m ${inputs.markers}"
+        fi
+        echo "$CMD"
+      timeout: 5
+
+  # Run pytest with coverage
+  - id: run_pytest
+    type: Shell
+    inputs:
+      command: "${blocks.build_command.outputs.stdout}"
+      working_dir: "${inputs.path}"
+      timeout: 600
+      
+      env:
+        PYTEST_CURRENT_TEST: "true"
+    depends_on:
+      - build_command
+
+  # Determine test status
+  - id: get_test_status
+    type: Shell
+    inputs:
+      command: "test ${blocks.run_pytest.outputs.exit_code} -eq 0 && echo 'PASSED' || echo 'FAILED'"
+      timeout: 5
+      
+    depends_on:
+      - run_pytest
+
+  # Generate test summary
+  - id: test_summary
+    type: EchoBlock
+    inputs:
+      message: |
+        Pytest Execution Summary:
+        - Tests executed: ${inputs.test_path}
+        - Exit code: ${blocks.run_pytest.outputs.exit_code}
+        - Status: ${blocks.get_test_status.outputs.stdout}
+        - Execution time: ${blocks.run_pytest.metadata.execution_time_ms}ms
+        - Coverage threshold: ${inputs.coverage_threshold}%
+    depends_on:
+      - get_test_status
+
+outputs:
+  success: "${blocks.run_pytest.outputs.exit_code} == 0"
+  exit_code: "${blocks.run_pytest.outputs.exit_code}"
+  stdout: "${blocks.run_pytest.outputs.stdout}"
+  stderr: "${blocks.run_pytest.outputs.stderr}"
+  execution_time_ms: "${blocks.run_pytest.metadata.execution_time_ms}"
+  summary: "${blocks.test_summary.outputs.echoed}"
+  command_executed: "${blocks.build_command.outputs.stdout}"

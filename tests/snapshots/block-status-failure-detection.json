@@ -1,0 +1,67 @@
+{
+  "status": "success",
+  "outputs": {
+    "block_failed": "true",
+    "detection_worked": "true"
+  },
+  "blocks": {
+    "failing_block": {
+      "inputs": {
+        "command": "exit 1"
+      },
+      "outputs": {
+        "exit_code": 1,
+        "stdout": "",
+        "stderr": ""
+      },
+      "metadata": {
+        "status": "completed",
+        "outcome": "failure",
+        "execution_time_ms": 10.69287109375,
+        "started_at": "2025-10-25T15:57:55.029944+00:00",
+        "completed_at": "2025-10-25T15:57:55.040625+00:00",
+        "wave": 0,
+        "execution_order": 0,
+        "message": "Command exited with code 1",
+        "succeeded": false,
+        "failed": true,
+        "skipped": false
+      },
+      "blocks": {},
+      "depth": 0
+    },
+    "check_failure": {
+      "inputs": {
+        "command": "echo \"detected_failure\""
+      },
+      "outputs": {
+        "exit_code": 0,
+        "stdout": "detected_failure\n",
+        "stderr": ""
+      },
+      "metadata": {
+        "status": "completed",
+        "outcome": "success",
+        "execution_time_ms": 6.068115234375,
+        "started_at": "2025-10-25T15:57:55.041366+00:00",
+        "completed_at": "2025-10-25T15:57:55.047423+00:00",
+        "wave": 1,
+        "execution_order": 1,
+        "message": null,
+        "succeeded": true,
+        "failed": false,
+        "skipped": false
+      },
+      "blocks": {},
+      "depth": 0
+    }
+  },
+  "metadata": {
+    "workflow_name": "block-status-failure-detection",
+    "start_time": "2025-10-25T15:57:55.029586+00:00",
+    "total_blocks": 2,
+    "execution_waves": 2,
+    "completed_at": "2025-10-25T15:57:55.047981+00:00",
+    "execution_time_seconds": 0.018401622772216797
+  }
+}

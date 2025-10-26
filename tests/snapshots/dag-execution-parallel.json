@@ -1,0 +1,140 @@
+{
+  "status": "success",
+  "outputs": {
+    "parallel_1_output": "parallel_1\n",
+    "parallel_2_output": "parallel_2\n",
+    "parallel_3_output": "parallel_3\n",
+    "all_succeeded": false
+  },
+  "blocks": {
+    "parallel_2": {
+      "inputs": {
+        "command": "echo \"parallel_2\""
+      },
+      "outputs": {
+        "exit_code": 0,
+        "stdout": "parallel_2\n",
+        "stderr": ""
+      },
+      "metadata": {
+        "status": "completed",
+        "outcome": "success",
+        "execution_time_ms": 7.760009765625,
+        "started_at": "2025-10-25T15:57:55.271515+00:00",
+        "completed_at": "2025-10-25T15:57:55.279268+00:00",
+        "wave": 0,
+        "execution_order": 0,
+        "message": null,
+        "succeeded": true,
+        "failed": false,
+        "skipped": false
+      },
+      "blocks": {},
+      "depth": 0
+    },
+    "parallel_1": {
+      "inputs": {
+        "command": "echo \"parallel_1\""
+      },
+      "outputs": {
+        "exit_code": 0,
+        "stdout": "parallel_1\n",
+        "stderr": ""
+      },
+      "metadata": {
+        "status": "completed",
+        "outcome": "success",
+        "execution_time_ms": 5.408203125,
+        "started_at": "2025-10-25T15:57:55.274004+00:00",
+        "completed_at": "2025-10-25T15:57:55.279421+00:00",
+        "wave": 0,
+        "execution_order": 0,
+        "message": null,
+        "succeeded": true,
+        "failed": false,
+        "skipped": false
+      },
+      "blocks": {},
+      "depth": 0
+    },
+    "parallel_3": {
+      "inputs": {
+        "command": "echo \"parallel_3\""
+      },
+      "outputs": {
+        "exit_code": 0,
+        "stdout": "parallel_3\n",
+        "stderr": ""
+      },
+      "metadata": {
+        "status": "completed",
+        "outcome": "success",
+        "execution_time_ms": 4.720947265625,
+        "started_at": "2025-10-25T15:57:55.276350+00:00",
+        "completed_at": "2025-10-25T15:57:55.281079+00:00",
+        "wave": 0,
+        "execution_order": 0,
+        "message": null,
+        "succeeded": true,
+        "failed": false,
+        "skipped": false
+      },
+      "blocks": {},
+      "depth": 0
+    },
+    "after_parallel": {
+      "inputs": {},
+      "outputs": {
+        "exit_code": 0,
+        "stdout": "",
+        "stderr": ""
+      },
+      "metadata": {
+        "status": "failed",
+        "outcome": "n/a",
+        "execution_time_ms": 0.0,
+        "started_at": "2025-10-25T15:57:55.281546+00:00",
+        "completed_at": "2025-10-25T15:57:55.281546+00:00",
+        "wave": 1,
+        "execution_order": 3,
+        "message": "Variable '${blocks.parallel_1.stdout}' not found. At segment 'stdout', available keys: ['inputs', 'outputs', 'metadata', 'blocks', 'depth']",
+        "succeeded": false,
+        "failed": true,
+        "skipped": false
+      },
+      "blocks": {},
+      "depth": 0
+    },
+    "final": {
+      "inputs": {},
+      "outputs": {
+        "exit_code": 0,
+        "stdout": "",
+        "stderr": ""
+      },
+      "metadata": {
+        "status": "skipped",
+        "outcome": "n/a",
+        "execution_time_ms": 0.0,
+        "started_at": "2025-10-25T15:57:55.281648+00:00",
+        "completed_at": "2025-10-25T15:57:55.281648+00:00",
+        "wave": 2,
+        "execution_order": 4,
+        "message": "Parent dependency did not complete successfully",
+        "succeeded": false,
+        "failed": false,
+        "skipped": true
+      },
+      "blocks": {},
+      "depth": 0
+    }
+  },
+  "metadata": {
+    "workflow_name": "dag-execution-parallel",
+    "start_time": "2025-10-25T15:57:55.271326+00:00",
+    "total_blocks": 4,
+    "execution_waves": 3,
+    "completed_at": "2025-10-25T15:57:55.281850+00:00",
+    "execution_time_seconds": 0.010536909103393555
+  }
+}

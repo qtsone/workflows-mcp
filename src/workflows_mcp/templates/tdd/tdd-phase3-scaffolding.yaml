@@ -1,0 +1,645 @@
+# TDD Phase 3: Scaffolding
+#
+# Creates project structure, setup dependencies, initialize test framework.
+#
+# This phase sets up the complete development environment and project structure
+# based on the architecture from Phase 2. It ensures everything is ready for
+# TDD implementation in Phase 4.
+#
+# Philosophy: Prepare the environment before writing code.
+#
+# Key Activities:
+# 1. Create project directory structure (src/, tests/, docs/)
+# 2. Initialize Python project with uv (pyproject.toml)
+# 3. Install development dependencies (pytest, coverage, ruff, mypy)
+# 4. Create pytest configuration and fixtures
+# 5. Create empty module files and __init__.py
+# 6. Setup .gitignore
+# 7. Create basic README.md
+# 8. Verify setup with pytest --collect-only
+# 9. Checkpoint review for setup approval
+#
+# State Management:
+# - Verifies Phase 2 complete before starting
+# - Updates state with Phase 3 completion
+# - Marks setup as ready for implementation
+# - Enables resumability and progress tracking
+#
+# Interactive Pauses:
+# - Final checkpoint to confirm setup complete
+#
+# Usage:
+#   execute_workflow("tdd-phase3-scaffolding", {
+#     "project_path": "/path/to/project",
+#     "python_version": "3.12"
+#   })
+#
+# Output:
+#   - Complete project structure created
+#   - Dependencies installed
+#   - Test framework ready
+#   - State updated with Phase 3 completion
+#   - Ready to proceed to Phase 4 (TDD Implementation)
+
+name: tdd-phase3-scaffolding
+description: TDD Phase 3 - Create project structure, setup dependencies, initialize test framework
+version: "1.0"
+author: MCP Workflows Team
+tags: [tdd, scaffolding, setup, project-structure, phase3]
+
+inputs:
+  project_path:
+    type: str
+    description: Path to project root directory
+    default: "."
+    required: false
+
+  state_file:
+    type: str
+    description: Path to TDD state file (JSON) relative to project_path
+    default: ".tdd-state.json"
+    required: false
+
+  python_version:
+    type: str
+    description: Python version for the project
+    default: "3.12"
+    required: false
+
+  test_framework:
+    type: str
+    description: Test framework to use
+    default: "pytest"
+    required: false
+
+  project_name:
+    type: str
+    description: Project name for pyproject.toml (auto-detect from path if not provided)
+    default: ""
+    required: false
+
+blocks:
+  - id: read_state
+    type: ReadJSONState
+    inputs:
+      path: "${inputs.project_path}/${inputs.state_file}"
+
+  - id: validate_phase2_complete
+    type: Shell
+    inputs:
+      command: |
+        STATE_FOUND="${blocks.read_state.outputs.found}"
+        if [ "$STATE_FOUND" != "true" ]; then
+          echo "❌ ERROR: TDD state file not found"
+          echo "Please complete Phase 1 and Phase 2 first"
+          exit 1
+        fi
+
+        echo "✅ TDD state found - proceeding with Phase 3"
+        exit 0
+      timeout: 10
+    depends_on:
+      - read_state
+
+  - id: detect_project_name
+    type: Shell
+    inputs:
+      command: |
+        PROVIDED_NAME="${inputs.project_name}"
+
+        if [ -n "$PROVIDED_NAME" ]; then
+          # Use provided name
+          PROJECT_NAME="$PROVIDED_NAME"
+        else
+          # Auto-detect from project path
+          PROJECT_NAME=$(basename "${inputs.project_path}")
+        fi
+
+        # Sanitize name (lowercase, replace spaces/special chars with hyphens)
+        PROJECT_NAME=$(echo "$PROJECT_NAME" | tr '[:upper:]' '[:lower:]' | sed 's/[^a-z0-9_-]/-/g')
+
+        echo "$PROJECT_NAME" > "$SCRATCH/project_name.txt"
+        echo "✅ Project name: $PROJECT_NAME"
+      timeout: 10
+    outputs:
+      project_name:
+        type: str
+        path: "$SCRATCH/project_name.txt"
+        description: "Detected or provided project name"
+    depends_on:
+      - validate_phase2_complete
+
+  - id: create_directory_structure
+    type: Shell
+    inputs:
+      command: |
+        PROJECT_ROOT="${inputs.project_path}"
+
+        echo "Creating project directory structure..."
+
+        # Create main directories
+        mkdir -p "$PROJECT_ROOT/src"
+        mkdir -p "$PROJECT_ROOT/tests"
+        mkdir -p "$PROJECT_ROOT/docs"
+
+        # Create __init__.py for src package (use project name from state)
+        PROJECT_NAME="${blocks.detect_project_name.outputs.project_name}"
+        mkdir -p "$PROJECT_ROOT/src/$PROJECT_NAME"
+        touch "$PROJECT_ROOT/src/$PROJECT_NAME/__init__.py"
+
+        # Create tests __init__.py
+        touch "$PROJECT_ROOT/tests/__init__.py"
+
+        echo "✅ Directory structure created:"
+        echo "   src/$PROJECT_NAME/"
+        echo "   tests/"
+        echo "   docs/"
+
+        tree -L 2 "$PROJECT_ROOT" || ls -R "$PROJECT_ROOT"
+      timeout: 60
+    depends_on:
+      - detect_project_name
+
+  - id: initialize_uv_project
+    type: Shell
+    inputs:
+      command: |
+        cd "${inputs.project_path}"
+        PROJECT_NAME="${blocks.detect_project_name.outputs.project_name}"
+
+        # Check if uv is available
+        if ! command -v uv &> /dev/null; then
+          echo "⚠️  WARNING: uv not found, will use pip instead"
+          echo "   Recommendation: Install uv with: curl -LsSf https://astral.sh/uv/install.sh | sh"
+          USE_UV=false
+        else
+          USE_UV=true
+        fi
+
+        # Create pyproject.toml
+        cat > pyproject.toml << EOF
+        [project]
+        name = "$PROJECT_NAME"
+        version = "0.1.0"
+        description = "TDD-developed project"
+        readme = "README.md"
+        requires-python = ">=${inputs.python_version}"
+        dependencies = []
+
+        [project.optional-dependencies]
+        dev = [
+            "pytest>=8.0.0",
+            "pytest-cov>=4.1.0",
+            "ruff>=0.1.0",
+            "mypy>=1.7.0",
+        ]
+
+        [build-system]
+        requires = ["hatchling"]
+        build-backend = "hatchling.build"
+
+        [tool.pytest.ini_options]
+        testpaths = ["tests"]
+        python_files = ["test_*.py"]
+        python_classes = ["Test*"]
+        python_functions = ["test_*"]
+        addopts = "-v --strict-markers --tb=short"
+
+        [tool.coverage.run]
+        source = ["src"]
+        branch = true
+
+        [tool.coverage.report]
+        precision = 2
+        show_missing = true
+        skip_covered = false
+
+        [tool.ruff]
+        line-length = 100
+        target-version = "py${python_version//./}"
+
+        [tool.mypy]
+        python_version = "${inputs.python_version}"
+        warn_return_any = true
+        warn_unused_configs = true
+        disallow_untyped_defs = true
+        EOF
+
+        echo "✅ Created pyproject.toml with Python ${inputs.python_version}"
+        echo "$USE_UV" > "$SCRATCH/use_uv.txt"
+      timeout: 60
+    outputs:
+      use_uv:
+        type: bool
+        path: "$SCRATCH/use_uv.txt"
+        description: "Whether uv is available and will be used"
+    depends_on:
+      - create_directory_structure
+
+  - id: install_dependencies
+    type: Shell
+    inputs:
+      command: |
+        cd "${inputs.project_path}"
+
+        USE_UV="${blocks.initialize_uv_project.outputs.use_uv}"
+
+        if [ "$USE_UV" = "true" ]; then
+          echo "Installing dependencies with uv..."
+          uv sync --dev
+          INSTALL_METHOD="uv"
+        else
+          echo "Installing dependencies with pip..."
+          python${inputs.python_version} -m pip install -e ".[dev]"
+          INSTALL_METHOD="pip"
+        fi
+
+        echo "✅ Dependencies installed via $INSTALL_METHOD"
+        echo "$INSTALL_METHOD" > "$SCRATCH/install_method.txt"
+      timeout: 300
+      
+    outputs:
+      install_method:
+        type: str
+        path: "$SCRATCH/install_method.txt"
+        description: "Method used to install dependencies (uv or pip)"
+    depends_on:
+      - initialize_uv_project
+
+  - id: create_pytest_config
+    type: CreateFile
+    inputs:
+      path: "${inputs.project_path}/tests/conftest.py"
+      content: |
+        """
+        Pytest configuration and shared fixtures.
+
+        This file is automatically discovered by pytest and provides
+        shared fixtures and configuration for all tests.
+        """
+        import pytest
+
+
+        @pytest.fixture
+        def sample_fixture():
+            """
+            Example fixture for demonstration.
+
+            Fixtures provide reusable test data and setup/teardown logic.
+            Replace this with actual fixtures needed for your tests.
+            """
+            return {"example": "data"}
+
+
+        # Add more fixtures here as needed during TDD implementation
+      encoding: "utf-8"
+    depends_on:
+      - install_dependencies
+
+  - id: create_gitignore
+    type: CreateFile
+    inputs:
+      path: "${inputs.project_path}/.gitignore"
+      content: |
+        # Python
+        __pycache__/
+        *.py[cod]
+        *$py.class
+        *.so
+        .Python
+        build/
+        develop-eggs/
+        dist/
+        downloads/
+        eggs/
+        .eggs/
+        lib/
+        lib64/
+        parts/
+        sdist/
+        var/
+        wheels/
+        *.egg-info/
+        .installed.cfg
+        *.egg
+
+        # Virtual environments
+        .venv/
+        venv/
+        ENV/
+        env/
+
+        # Testing
+        .pytest_cache/
+        .coverage
+        htmlcov/
+        .tox/
+
+        # IDE
+        .vscode/
+        .idea/
+        *.swp
+        *.swo
+        *~
+
+        # OS
+        .DS_Store
+        Thumbs.db
+
+        # TDD workflow
+        .tdd-state.json
+
+        # uv
+        .uv/
+      encoding: "utf-8"
+    depends_on:
+      - create_pytest_config
+
+  - id: create_readme
+    type: Shell
+    inputs:
+      command: |
+        cd "${inputs.project_path}"
+        PROJECT_NAME="${blocks.detect_project_name.outputs.project_name}"
+
+        cat > README.md << EOF
+        # $PROJECT_NAME
+
+        TDD-developed project following Test-Driven Development workflow.
+
+        ## Development Status
+
+        - ✅ Phase 1: Analysis & Specification
+        - ✅ Phase 2: Architecture & Design
+        - ✅ Phase 3: Scaffolding
+        - 🔄 Phase 4: TDD Implementation (in progress)
+
+        ## Project Structure
+
+        \`\`\`
+        .
+        ├── src/              # Source code
+        ├── tests/            # Test files
+        ├── docs/             # Documentation
+        ├── TECHNICAL_SPEC.md # Requirements specification
+        ├── ARCHITECTURE.md   # System architecture
+        └── README.md         # This file
+        \`\`\`
+
+        ## Setup
+
+        \`\`\`bash
+        # Install dependencies
+        uv sync --dev
+
+        # Run tests
+        uv run pytest
+
+        # Run tests with coverage
+        uv run pytest --cov=src --cov-report=html
+
+        # Lint code
+        uv run ruff check src tests
+
+        # Type check
+        uv run mypy src
+        \`\`\`
+
+        ## Development Workflow
+
+        This project follows TDD (Test-Driven Development):
+
+        1. Write tests first (RED phase)
+        2. Implement minimum code to pass (GREEN phase)
+        3. Refactor for quality (REFACTOR phase)
+
+        ## Testing
+
+        - Framework: ${inputs.test_framework}
+        - Minimum coverage: 80% per module
+        - Test types: Unit, Integration, E2E
+
+        ## Documentation
+
+        - Technical Spec: See \`TECHNICAL_SPEC.md\`
+        - Architecture: See \`ARCHITECTURE.md\`
+        - API Docs: (Generated after implementation)
+
+        ## License
+
+        [Add license information]
+
+        ---
+
+        Generated by MCP Workflows TDD Phase 3
+        EOF
+
+        echo "✅ Created README.md"
+      timeout: 30
+    depends_on:
+      - create_gitignore
+
+  - id: verify_pytest_setup
+    type: Shell
+    inputs:
+      command: |
+        cd "${inputs.project_path}"
+
+        # Try to collect tests (should find 0 tests but verify pytest works)
+        if command -v uv &> /dev/null; then
+          PYTEST_OUTPUT=$(uv run pytest --collect-only -q 2>&1 || true)
+        else
+          PYTEST_OUTPUT=$(python${inputs.python_version} -m pytest --collect-only -q 2>&1 || true)
+        fi
+
+        echo "Pytest collection output:"
+        echo "$PYTEST_OUTPUT"
+
+        # Check if pytest ran successfully (even with 0 tests)
+        if echo "$PYTEST_OUTPUT" | grep -q "no tests ran\|collected 0"; then
+          echo "✅ Pytest setup verified (0 tests collected - expected at this stage)"
+          echo "true" > "$SCRATCH/pytest_working.txt"
+          exit 0
+        elif echo "$PYTEST_OUTPUT" | grep -q "error\|ERROR\|failed to collect"; then
+          echo "⚠️  Pytest encountered errors"
+          echo "false" > "$SCRATCH/pytest_working.txt"
+          exit 1
+        else
+          echo "✅ Pytest appears to be working"
+          echo "true" > "$SCRATCH/pytest_working.txt"
+          exit 0
+        fi
+      timeout: 60
+      
+    outputs:
+      pytest_working:
+        type: bool
+        path: "$SCRATCH/pytest_working.txt"
+        description: "Whether pytest is properly configured and working"
+    depends_on:
+      - create_readme
+
+  - id: update_state_phase3_complete
+    type: Shell
+    inputs:
+      command: |
+        PROJECT_NAME="${blocks.detect_project_name.outputs.project_name}"
+        PYTEST_WORKING="${blocks.verify_pytest_setup.outputs.pytest_working}"
+        INSTALL_METHOD="${blocks.install_dependencies.outputs.install_method}"
+
+        # Create Python script to update state
+        cat > /tmp/update_tdd_state_phase3.py << 'PYTHON_SCRIPT'
+        import json
+        import sys
+        from pathlib import Path
+        from datetime import datetime
+
+        # Get arguments
+        state_file = Path(sys.argv[1])
+        project_name = sys.argv[2]
+        pytest_working = sys.argv[3] == "true"
+        install_method = sys.argv[4] if len(sys.argv) > 4 else "unknown"
+
+        # Read existing state
+        if state_file.exists():
+            state = json.loads(state_file.read_text())
+        else:
+            state = {}
+
+        # Update state for Phase 3 completion
+        if 'phases_completed' not in state:
+            state['phases_completed'] = []
+        if 'phase3' not in state['phases_completed']:
+            state['phases_completed'].append('phase3')
+
+        state['current_phase'] = 'phase3_complete'
+        state['phase3'] = {
+            'project_name': project_name,
+            'setup_successful': True,
+            'dependencies_installed': True,
+            'test_framework_ready': pytest_working,
+            'install_method': install_method,
+            'completed_at': datetime.now().isoformat()
+        }
+
+        # Mark ready for implementation
+        state['setup_ready'] = True
+
+        # Write back
+        state_file.parent.mkdir(parents=True, exist_ok=True)
+        state_file.write_text(json.dumps(state, indent=2) + '\n')
+
+        print(f'✅ Phase 3 complete: Project scaffolding ready')
+        print(f'   Project: {project_name}')
+        print(f'   Test framework: {"ready" if pytest_working else "needs attention"}')
+        PYTHON_SCRIPT
+
+        # Run the Python script
+        python3 /tmp/update_tdd_state_phase3.py \
+          "${inputs.project_path}/${inputs.state_file}" \
+          "$PROJECT_NAME" \
+          "$PYTEST_WORKING" \
+          "$INSTALL_METHOD"
+      timeout: 30
+    depends_on:
+      - verify_pytest_setup
+
+  - id: checkpoint_review
+    type: Prompt
+    inputs:
+      prompt: |
+        === PHASE 3 SCAFFOLDING COMPLETE ===
+
+        Project setup completed:
+        - Project name: ${blocks.detect_project_name.outputs.stdout}
+        - Directory structure: ✅ Created (src/, tests/, docs/)
+        - Dependencies: ✅ Installed (${blocks.install_dependencies.outputs.stdout})
+        - Test framework: ${blocks.verify_pytest_setup.outputs.stdout}
+        - Configuration: ✅ pyproject.toml, .gitignore, README.md
+
+        Review checkpoint:
+        1. Is the directory structure correct?
+        2. Are all dependencies installed?
+        3. Does pytest work (pytest --collect-only)?
+        4. Are configuration files in place?
+
+        Ready to proceed to Phase 4 (TDD Implementation)?
+        
+        Respond with 'yes' or 'no'
+        
+        Respond with 'yes' or 'no'
+      operation: "approve_phase3_complete"
+      details:
+        project_name: "${blocks.detect_project_name.outputs.stdout}"
+        setup_status: "complete"
+        state_updated: "true"
+    depends_on:
+      - update_state_phase3_complete
+
+  - id: completion_summary
+    type: Shell
+    inputs:
+      command: |
+        PROJECT_NAME="${blocks.detect_project_name.outputs.project_name}"
+
+        echo "╔════════════════════════════════════════════════════════════════╗"
+        echo "║             TDD PHASE 3: SCAFFOLDING COMPLETE                 ║"
+        echo "╚════════════════════════════════════════════════════════════════╝"
+        echo ""
+        echo "Phase 3 Results:"
+        echo "  ✅ Project structure created"
+        echo "  ✅ Python project initialized (uv)"
+        echo "  ✅ Development dependencies installed"
+        echo "  ✅ Test framework configured (${inputs.test_framework})"
+        echo "  ✅ Configuration files created"
+        echo "  ✅ Documentation initialized"
+        echo ""
+        echo "Project Setup:"
+        echo "  📦 Project: $PROJECT_NAME"
+        echo "  🐍 Python: ${inputs.python_version}"
+        echo "  🧪 Tests: ${blocks.verify_pytest_setup.outputs.stdout}"
+        echo "  💾 State: ${inputs.project_path}/${inputs.state_file}"
+        echo ""
+        echo "Directory Structure:"
+        echo "  src/$PROJECT_NAME/    - Source code"
+        echo "  tests/                - Test files"
+        echo "  docs/                 - Documentation"
+        echo ""
+        echo "Next Phase: TDD Implementation (Phase 4)"
+        echo "  Run: execute_workflow('tdd-phase4-module-tdd', {"
+        echo "         'project_path': '${inputs.project_path}',"
+        echo "         'module_name': '<first_module>'"
+        echo "       })"
+        echo ""
+        echo "Checkpoint Approved: ${blocks.checkpoint_review.outputs.response == 'yes'}"
+      timeout: 10
+    depends_on:
+      - checkpoint_review
+
+outputs:
+  phase_complete: "${blocks.checkpoint_review.outputs.response == 'yes'}"
+  setup_successful: "true"
+  dependencies_installed: "${blocks.install_dependencies.succeeded}"
+  test_framework_ready: "${blocks.verify_pytest_setup.outputs.stdout} contains 'pytest_working=true'"
+  pytest_collection_success: "${blocks.verify_pytest_setup.succeeded}"
+  checkpoint_approved: "${blocks.checkpoint_review.outputs.response == 'yes'}"
+
+  # Project info
+  project_name: "${blocks.detect_project_name.outputs.stdout}"
+  project_path: "${inputs.project_path}"
+
+  # State tracking
+  state_file_path: "${inputs.project_path}/${inputs.state_file}"
+
+  # Setup details
+  directory_structure_created: "${blocks.create_directory_structure.succeeded}"
+  pyproject_created: "${blocks.initialize_uv_project.succeeded}"
+  dependencies_method: "${blocks.install_dependencies.outputs.stdout}"
+  gitignore_created: "${blocks.create_gitignore.succeeded}"
+  readme_created: "${blocks.create_readme.succeeded}"
+
+  # Summary
+  summary: "${blocks.completion_summary.outputs.stdout}"
+
+  # Next phase readiness
+  ready_for_phase4: "${blocks.checkpoint_review.outputs.response == 'yes'}"

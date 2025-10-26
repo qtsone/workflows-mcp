@@ -1,0 +1,176 @@
+name: generate-readme
+description: Generate README.md from template with project metadata
+version: "1.0"
+author: Workflows MCP Team
+tags: [python, files, documentation, template, readme]
+inputs:
+  project_name:
+    type: str
+    description: Project name
+    default: "My Project"
+
+  description:
+    type: str
+    description: Project description
+    default: "A sample project"
+
+  author:
+    type: str
+    description: Project author
+    default: "Anonymous"
+
+  version:
+    type: str
+    description: Project version
+    default: "1.0.0"
+
+  license:
+    type: str
+    description: License type
+    default: "MIT"
+
+  workspace:
+    type: str
+    description: Workspace directory path
+    default: "."
+
+  template_path:
+    type: str
+    description: Path to README template file (relative to workspace or absolute)
+    default: "README.template.md"
+
+  output_path:
+    type: str
+    description: Output README path (relative to workspace or absolute)
+    default: "README.md"
+
+  create_template_if_missing:
+    type: bool
+    description: Create default template if template_path doesn't exist
+    default: true
+
+blocks:
+  # Check if template exists
+  - id: check_template
+    type: Shell
+    inputs:
+      command: "test -f ${inputs.workspace}/${inputs.template_path} && echo 'exists' || echo 'missing'"
+      timeout: 5
+      
+
+  # Create default template if missing
+  - id: create_default_template
+    type: CreateFile
+    inputs:
+      path: "${inputs.workspace}/${inputs.template_path}"
+      content: |
+        # ${inputs.project_name}
+
+        ${inputs.description}
+
+        ## Installation
+
+        \`\`\`bash
+        pip install ${inputs.project_name}
+        \`\`\`
+
+        ## Usage
+
+        \`\`\`python
+        import ${inputs.project_name}
+        # Your code here
+        \`\`\`
+
+        ## Features
+
+        - Feature 1
+        - Feature 2
+        - Feature 3
+
+        ## Contributing
+
+        Contributions are welcome! Please feel free to submit a Pull Request.
+
+        ## License
+
+        This project is licensed under the ${inputs.license} License.
+
+        ## Author
+
+        ${inputs.author}
+
+        ## Version
+
+        Current version: ${inputs.version}
+    depends_on:
+      - check_template
+    condition: "${inputs.create_template_if_missing} and 'missing' in ${blocks.check_template.outputs.stdout}"
+
+  # Read template
+  - id: read_template
+    type: ReadFile
+    inputs:
+      path: "${inputs.workspace}/${inputs.template_path}"
+    depends_on:
+      - check_template
+      - create_default_template
+    condition: "'exists' in ${blocks.check_template.outputs.stdout} or ${inputs.create_template_if_missing}"
+
+  # Populate template with variables
+  - id: populate_template
+    type: RenderTemplate
+    inputs:
+      template: "${blocks.read_template.outputs.content}"
+      variables:
+        project_name: "${inputs.project_name}"
+        description: "${inputs.description}"
+        author: "${inputs.author}"
+        version: "${inputs.version}"
+        license: "${inputs.license}"
+    depends_on:
+      - read_template
+
+  # Write README file
+  - id: write_readme
+    type: CreateFile
+    inputs:
+      path: "${inputs.workspace}/${inputs.output_path}"
+      content: "${blocks.populate_template.outputs.content}"
+      mode: "644"
+    depends_on:
+      - populate_template
+
+  # Verify README was created
+  - id: verify_readme
+    type: ReadFile
+    inputs:
+      path: "${inputs.workspace}/${inputs.output_path}"
+    depends_on:
+      - write_readme
+
+  # Generate summary
+  - id: summary
+    type: EchoBlock
+    inputs:
+      message: |
+        README Generation Summary:
+        ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+        Project: ${inputs.project_name} v${inputs.version}
+        Template: ${inputs.template_path} (${blocks.check_template.outputs.stdout})
+        Output: ${inputs.output_path}
+        Author: ${inputs.author}
+        License: ${inputs.license}
+        ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+        Status: ✓ README generated successfully
+        Size: ${blocks.verify_readme.outputs.size_bytes} bytes
+    depends_on:
+      - verify_readme
+
+outputs:
+  success: "true"
+  readme_path: "${inputs.workspace}/${inputs.output_path}"
+  template_used: "${inputs.workspace}/${inputs.template_path}"
+  template_created: "${inputs.create_template_if_missing} and 'missing' in ${blocks.check_template.outputs.stdout}"
+  readme_content: "${blocks.verify_readme.outputs.content}"
+  readme_size: "${blocks.verify_readme.outputs.size_bytes}"
+  summary: "${blocks.summary.outputs.echoed}"

@@ -1,0 +1,126 @@
+{
+  "status": "success",
+  "outputs": {
+    "utf8_created": "true",
+    "executable_created": "true",
+    "is_executable": "yes\n",
+    "cleanup_done": "true"
+  },
+  "blocks": {
+    "create_utf8_file": {
+      "inputs": {
+        "path": "/tmp/test-create-file/test.txt",
+        "content": "Line 1: Test\nLine 2: \u4f60\u597d\u4e16\u754c\n",
+        "encoding": "utf-8",
+        "create_parents": true,
+        "overwrite": true
+      },
+      "outputs": {
+        "path": "/private/tmp/test-create-file/test.txt",
+        "size_bytes": 34,
+        "created": true
+      },
+      "metadata": {
+        "status": "completed",
+        "outcome": "success",
+        "execution_time_ms": 0.5078125,
+        "started_at": "2025-10-25T15:57:55.285348+00:00",
+        "completed_at": "2025-10-25T15:57:55.285855+00:00",
+        "wave": 0,
+        "execution_order": 0,
+        "message": null,
+        "succeeded": true,
+        "failed": false,
+        "skipped": false
+      },
+      "blocks": {},
+      "depth": 0
+    },
+    "create_executable": {
+      "inputs": {
+        "path": "/tmp/test-create-file/script.sh",
+        "content": "#!/bin/bash\necho 'executable'\n",
+        "mode": "755",
+        "create_parents": true
+      },
+      "outputs": {
+        "path": "/private/tmp/test-create-file/script.sh",
+        "size_bytes": 30,
+        "created": true
+      },
+      "metadata": {
+        "status": "completed",
+        "outcome": "success",
+        "execution_time_ms": 0.2119140625,
+        "started_at": "2025-10-25T15:57:55.285917+00:00",
+        "completed_at": "2025-10-25T15:57:55.286128+00:00",
+        "wave": 0,
+        "execution_order": 0,
+        "message": null,
+        "succeeded": true,
+        "failed": false,
+        "skipped": false
+      },
+      "blocks": {},
+      "depth": 0
+    },
+    "verify_executable": {
+      "inputs": {
+        "command": "test -x \"/tmp/test-create-file/script.sh\" && echo \"yes\""
+      },
+      "outputs": {
+        "exit_code": 0,
+        "stdout": "yes\n",
+        "stderr": ""
+      },
+      "metadata": {
+        "status": "completed",
+        "outcome": "success",
+        "execution_time_ms": 5.544921875,
+        "started_at": "2025-10-25T15:57:55.286337+00:00",
+        "completed_at": "2025-10-25T15:57:55.291868+00:00",
+        "wave": 1,
+        "execution_order": 2,
+        "message": null,
+        "succeeded": true,
+        "failed": false,
+        "skipped": false
+      },
+      "blocks": {},
+      "depth": 0
+    },
+    "cleanup": {
+      "inputs": {
+        "command": "rm -rf \"/tmp/test-create-file\""
+      },
+      "outputs": {
+        "exit_code": 0,
+        "stdout": "",
+        "stderr": ""
+      },
+      "metadata": {
+        "status": "completed",
+        "outcome": "success",
+        "execution_time_ms": 6.998046875,
+        "started_at": "2025-10-25T15:57:55.292384+00:00",
+        "completed_at": "2025-10-25T15:57:55.299370+00:00",
+        "wave": 2,
+        "execution_order": 3,
+        "message": null,
+        "succeeded": true,
+        "failed": false,
+        "skipped": false
+      },
+      "blocks": {},
+      "depth": 0
+    }
+  },
+  "metadata": {
+    "workflow_name": "file-operations-create",
+    "start_time": "2025-10-25T15:57:55.285223+00:00",
+    "total_blocks": 4,
+    "execution_waves": 3,
+    "completed_at": "2025-10-25T15:57:55.299885+00:00",
+    "execution_time_seconds": 0.014673948287963867
+  }
+}

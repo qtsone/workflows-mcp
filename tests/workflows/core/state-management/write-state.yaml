@@ -1,0 +1,29 @@
+name: state-management-write
+description: Test WriteJSONState with various data types
+tags: [test, core, state, write, json]
+inputs:
+  state_file:
+    type: str
+    default: "/tmp/test-write-state.json"
+    description: "Path to state file"
+blocks:
+  - id: write_state
+    type: WriteJSONState
+    inputs:
+      path: "${inputs.state_file}"
+      data:
+        string_field: "test"
+        number_field: 42
+        bool_field: true
+        array_field: ["a", "b", "c"]
+        nested:
+          key: "value"
+      create_parents: true
+  - id: cleanup
+    type: Shell
+    inputs:
+      command: rm -f "${inputs.state_file}"
+    depends_on: [write_state]
+outputs:
+  write_succeeded: "${blocks.write_state.succeeded}"
+  cleanup_done: "${blocks.cleanup.succeeded}"

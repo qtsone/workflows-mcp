@@ -1,0 +1,67 @@
+{
+  "status": "success",
+  "outputs": {
+    "workflow_name": "variable-resolution-metadata\n",
+    "start_time": "2025-10-25T15:57:55.453225+00:00\n"
+  },
+  "blocks": {
+    "use_start_time": {
+      "inputs": {
+        "command": "echo \"2025-10-25T15:57:55.453225+00:00\""
+      },
+      "outputs": {
+        "exit_code": 0,
+        "stdout": "2025-10-25T15:57:55.453225+00:00\n",
+        "stderr": ""
+      },
+      "metadata": {
+        "status": "completed",
+        "outcome": "success",
+        "execution_time_ms": 5.845947265625,
+        "started_at": "2025-10-25T15:57:55.453341+00:00",
+        "completed_at": "2025-10-25T15:57:55.459179+00:00",
+        "wave": 0,
+        "execution_order": 0,
+        "message": null,
+        "succeeded": true,
+        "failed": false,
+        "skipped": false
+      },
+      "blocks": {},
+      "depth": 0
+    },
+    "use_workflow_name": {
+      "inputs": {
+        "command": "echo \"variable-resolution-metadata\""
+      },
+      "outputs": {
+        "exit_code": 0,
+        "stdout": "variable-resolution-metadata\n",
+        "stderr": ""
+      },
+      "metadata": {
+        "status": "completed",
+        "outcome": "success",
+        "execution_time_ms": 5.548828125,
+        "started_at": "2025-10-25T15:57:55.456129+00:00",
+        "completed_at": "2025-10-25T15:57:55.461684+00:00",
+        "wave": 0,
+        "execution_order": 0,
+        "message": null,
+        "succeeded": true,
+        "failed": false,
+        "skipped": false
+      },
+      "blocks": {},
+      "depth": 0
+    }
+  },
+  "metadata": {
+    "workflow_name": "variable-resolution-metadata",
+    "start_time": "2025-10-25T15:57:55.453225+00:00",
+    "total_blocks": 2,
+    "execution_waves": 1,
+    "completed_at": "2025-10-25T15:57:55.462110+00:00",
+    "execution_time_seconds": 0.008892297744750977
+  }
+}

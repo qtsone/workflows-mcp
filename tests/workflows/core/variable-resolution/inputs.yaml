@@ -1,0 +1,24 @@
+name: variable-resolution-inputs
+description: Test variable resolution from workflow inputs namespace
+tags: [test, core, variables, inputs]
+inputs:
+  string_input:
+    type: str
+    default: "test_value"
+    description: "String input for testing"
+  number_input:
+    type: int
+    default: 42
+    description: "Numeric input for testing"
+blocks:
+  - id: use_string
+    type: Shell
+    inputs:
+      command: echo "${inputs.string_input}"
+  - id: use_number
+    type: Shell
+    inputs:
+      command: echo "${inputs.number_input}"
+outputs:
+  string_result: "${blocks.use_string.outputs.stdout}"
+  number_result: "${blocks.use_number.outputs.stdout}"

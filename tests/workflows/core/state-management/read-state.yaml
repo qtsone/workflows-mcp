@@ -1,0 +1,36 @@
+name: state-management-read
+description: Test ReadJSONState with nested field access
+tags: [test, core, state, read, json]
+inputs:
+  state_file:
+    type: str
+    default: "/tmp/test-read-state.json"
+    description: "Path to state file"
+blocks:
+  - id: setup
+    type: Shell
+    inputs:
+      command: |
+        echo '{"phase": "test", "count": 42, "nested": {"key": "value"}}' > "${inputs.state_file}"
+  - id: read_state
+    type: ReadJSONState
+    inputs:
+      path: "${inputs.state_file}"
+      required: true
+    depends_on: [setup]
+  - id: read_nonexistent
+    type: ReadJSONState
+    inputs:
+      path: "/tmp/nonexistent-state.json"
+      required: false
+  - id: cleanup
+    type: Shell
+    inputs:
+      command: rm -f "${inputs.state_file}"
+    depends_on: [read_state, read_nonexistent]
+outputs:
+  phase: "${blocks.read_state.outputs.data.phase}"
+  count: "${blocks.read_state.outputs.data.count}"
+  nested_key: "${blocks.read_state.outputs.data.nested.key}"
+  nonexistent_found: "${blocks.read_nonexistent.outputs.found}"
+  cleanup_done: "${blocks.cleanup.succeeded}"

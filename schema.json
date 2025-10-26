@@ -1,0 +1,926 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "MCP Workflow Definition",
+  "type": "object",
+  "required": [
+    "name",
+    "blocks"
+  ],
+  "properties": {
+    "name": {
+      "type": "string",
+      "description": "Workflow name"
+    },
+    "description": {
+      "type": "string",
+      "description": "Workflow description"
+    },
+    "inputs": {
+      "type": "object",
+      "description": "Workflow input parameters",
+      "patternProperties": {
+        ".*": {
+          "type": "object",
+          "properties": {
+            "type": {
+              "enum": [
+                "str",
+                "int",
+                "float",
+                "bool",
+                "list",
+                "dict"
+              ]
+            },
+            "default": {},
+            "description": {
+              "type": "string"
+            },
+            "required": {
+              "type": "boolean"
+            }
+          },
+          "required": [
+            "type"
+          ]
+        }
+      }
+    },
+    "outputs": {
+      "type": "object",
+      "description": "Workflow output expressions",
+      "patternProperties": {
+        ".*": {
+          "type": "string"
+        }
+      }
+    },
+    "blocks": {
+      "type": "array",
+      "description": "Workflow execution blocks",
+      "items": {
+        "type": "object",
+        "required": [
+          "id",
+          "type",
+          "inputs"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "description": "Unique block identifier"
+          },
+          "type": {
+            "enum": [
+              "Shell",
+              "Workflow",
+              "CreateFile",
+              "ReadFile",
+              "RenderTemplate",
+              "Prompt",
+              "ReadJSONState",
+              "WriteJSONState",
+              "MergeJSONState"
+            ],
+            "description": "Block type"
+          },
+          "description": {
+            "type": "string",
+            "description": "Optional block description"
+          },
+          "inputs": {
+            "type": "object",
+            "description": "Block inputs (schema depends on type)"
+          },
+          "depends_on": {
+            "type": "array",
+            "description": "Dependencies (block IDs or specs with 'required' flag)",
+            "items": {
+              "oneOf": [
+                {
+                  "type": "string",
+                  "description": "Block ID (shorthand for {\"block\": \"id\", \"required\": true})"
+                },
+                {
+                  "type": "object",
+                  "required": [
+                    "block"
+                  ],
+                  "properties": {
+                    "block": {
+                      "type": "string",
+                      "description": "Block ID of parent dependency"
+                    },
+                    "required": {
+                      "type": "boolean",
+                      "default": true,
+                      "description": "Skip this block if parent fails/skips (default: true)"
+                    }
+                  },
+                  "additionalProperties": false
+                }
+              ]
+            }
+          },
+          "condition": {
+            "type": "string",
+            "description": "Conditional execution expression"
+          }
+        },
+        "allOf": [
+          {
+            "if": {
+              "properties": {
+                "type": {
+                  "const": "Shell"
+                }
+              }
+            },
+            "then": {
+              "properties": {
+                "inputs": {
+                  "additionalProperties": false,
+                  "description": "Inputs for Shell block",
+                  "properties": {
+                    "command": {
+                      "description": "Shell command to execute",
+                      "title": "Command",
+                      "type": "string"
+                    },
+                    "working_dir": {
+                      "default": "",
+                      "description": "Working directory (empty = current dir)",
+                      "title": "Working Dir",
+                      "type": "string"
+                    },
+                    "timeout": {
+                      "default": 120,
+                      "description": "Timeout in seconds",
+                      "title": "Timeout",
+                      "type": "integer"
+                    },
+                    "env": {
+                      "additionalProperties": {
+                        "type": "string"
+                      },
+                      "description": "Environment variables",
+                      "title": "Env",
+                      "type": "object"
+                    },
+                    "capture_output": {
+                      "default": true,
+                      "description": "Capture stdout/stderr",
+                      "title": "Capture Output",
+                      "type": "boolean"
+                    },
+                    "shell": {
+                      "default": true,
+                      "description": "Execute via shell",
+                      "title": "Shell",
+                      "type": "boolean"
+                    },
+                    "custom_outputs": {
+                      "anyOf": [
+                        {
+                          "additionalProperties": true,
+                          "type": "object"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ],
+                      "default": null,
+                      "description": "Custom file-based outputs to read after execution",
+                      "title": "Custom Outputs"
+                    }
+                  },
+                  "required": [
+                    "command"
+                  ],
+                  "title": "ShellInput",
+                  "type": "object"
+                }
+              }
+            }
+          },
+          {
+            "if": {
+              "properties": {
+                "type": {
+                  "const": "Workflow"
+                }
+              }
+            },
+            "then": {
+              "properties": {
+                "inputs": {
+                  "additionalProperties": false,
+                  "description": "Inputs for Workflow block",
+                  "properties": {
+                    "workflow": {
+                      "description": "Workflow name to execute",
+                      "title": "Workflow",
+                      "type": "string"
+                    },
+                    "inputs": {
+                      "additionalProperties": true,
+                      "description": "Inputs to pass to child workflow (variables resolved in parent context)",
+                      "title": "Inputs",
+                      "type": "object"
+                    },
+                    "timeout_ms": {
+                      "anyOf": [
+                        {
+                          "type": "integer"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ],
+                      "default": null,
+                      "description": "Optional timeout for child execution in milliseconds",
+                      "title": "Timeout Ms"
+                    }
+                  },
+                  "required": [
+                    "workflow"
+                  ],
+                  "title": "WorkflowInput",
+                  "type": "object"
+                }
+              }
+            }
+          },
+          {
+            "if": {
+              "properties": {
+                "type": {
+                  "const": "CreateFile"
+                }
+              }
+            },
+            "then": {
+              "properties": {
+                "inputs": {
+                  "additionalProperties": false,
+                  "description": "Inputs for CreateFile block",
+                  "properties": {
+                    "path": {
+                      "description": "File path (absolute or relative)",
+                      "title": "Path",
+                      "type": "string"
+                    },
+                    "content": {
+                      "description": "File content to write",
+                      "title": "Content",
+                      "type": "string"
+                    },
+                    "encoding": {
+                      "default": "utf-8",
+                      "description": "Text encoding",
+                      "title": "Encoding",
+                      "type": "string"
+                    },
+                    "mode": {
+                      "anyOf": [
+                        {
+                          "type": "integer"
+                        },
+                        {
+                          "type": "string"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ],
+                      "default": null,
+                      "description": "File permissions (Unix only, e.g., 0o644, 644, or '644')",
+                      "title": "Mode"
+                    },
+                    "overwrite": {
+                      "default": true,
+                      "description": "Whether to overwrite existing file",
+                      "title": "Overwrite",
+                      "type": "boolean"
+                    },
+                    "create_parents": {
+                      "default": true,
+                      "description": "Create parent directories if missing",
+                      "title": "Create Parents",
+                      "type": "boolean"
+                    }
+                  },
+                  "required": [
+                    "path",
+                    "content"
+                  ],
+                  "title": "CreateFileInput",
+                  "type": "object"
+                }
+              }
+            }
+          },
+          {
+            "if": {
+              "properties": {
+                "type": {
+                  "const": "ReadFile"
+                }
+              }
+            },
+            "then": {
+              "properties": {
+                "inputs": {
+                  "additionalProperties": false,
+                  "description": "Inputs for ReadFile block",
+                  "properties": {
+                    "path": {
+                      "description": "File path to read (absolute or relative)",
+                      "title": "Path",
+                      "type": "string"
+                    },
+                    "encoding": {
+                      "default": "utf-8",
+                      "description": "Text encoding",
+                      "title": "Encoding",
+                      "type": "string"
+                    },
+                    "required": {
+                      "default": true,
+                      "description": "If False, missing file returns empty content instead of error",
+                      "title": "Required",
+                      "type": "boolean"
+                    }
+                  },
+                  "required": [
+                    "path"
+                  ],
+                  "title": "ReadFileInput",
+                  "type": "object"
+                }
+              }
+            }
+          },
+          {
+            "if": {
+              "properties": {
+                "type": {
+                  "const": "RenderTemplate"
+                }
+              }
+            },
+            "then": {
+              "properties": {
+                "inputs": {
+                  "additionalProperties": false,
+                  "description": "Inputs for RenderTemplate block",
+                  "properties": {
+                    "template": {
+                      "description": "Jinja2 template string",
+                      "title": "Template",
+                      "type": "string"
+                    },
+                    "variables": {
+                      "additionalProperties": true,
+                      "description": "Variables to substitute in template",
+                      "title": "Variables",
+                      "type": "object"
+                    },
+                    "output_path": {
+                      "anyOf": [
+                        {
+                          "type": "string"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ],
+                      "default": null,
+                      "description": "Optional file path to write rendered content",
+                      "title": "Output Path"
+                    },
+                    "encoding": {
+                      "default": "utf-8",
+                      "description": "Text encoding for output file",
+                      "title": "Encoding",
+                      "type": "string"
+                    },
+                    "overwrite": {
+                      "default": true,
+                      "description": "Whether to overwrite existing output file",
+                      "title": "Overwrite",
+                      "type": "boolean"
+                    },
+                    "create_parents": {
+                      "default": true,
+                      "description": "Create parent directories for output file",
+                      "title": "Create Parents",
+                      "type": "boolean"
+                    }
+                  },
+                  "required": [
+                    "template"
+                  ],
+                  "title": "RenderTemplateInput",
+                  "type": "object"
+                }
+              }
+            }
+          },
+          {
+            "if": {
+              "properties": {
+                "type": {
+                  "const": "Prompt"
+                }
+              }
+            },
+            "then": {
+              "properties": {
+                "inputs": {
+                  "additionalProperties": false,
+                  "description": "Inputs for Prompt block",
+                  "properties": {
+                    "prompt": {
+                      "description": "Prompt/question to display to LLM. The LLM will provide a response.",
+                      "title": "Prompt",
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "prompt"
+                  ],
+                  "title": "PromptInput",
+                  "type": "object"
+                }
+              }
+            }
+          },
+          {
+            "if": {
+              "properties": {
+                "type": {
+                  "const": "ReadJSONState"
+                }
+              }
+            },
+            "then": {
+              "properties": {
+                "inputs": {
+                  "additionalProperties": false,
+                  "description": "Inputs for ReadJSONState block",
+                  "properties": {
+                    "path": {
+                      "description": "Path to JSON file",
+                      "title": "Path",
+                      "type": "string"
+                    },
+                    "required": {
+                      "default": false,
+                      "description": "Whether file must exist (False returns empty dict)",
+                      "title": "Required",
+                      "type": "boolean"
+                    }
+                  },
+                  "required": [
+                    "path"
+                  ],
+                  "title": "ReadJSONStateInput",
+                  "type": "object"
+                }
+              }
+            }
+          },
+          {
+            "if": {
+              "properties": {
+                "type": {
+                  "const": "WriteJSONState"
+                }
+              }
+            },
+            "then": {
+              "properties": {
+                "inputs": {
+                  "additionalProperties": false,
+                  "description": "Inputs for WriteJSONState block",
+                  "properties": {
+                    "path": {
+                      "description": "Path to JSON file",
+                      "title": "Path",
+                      "type": "string"
+                    },
+                    "data": {
+                      "additionalProperties": true,
+                      "description": "JSON data to write",
+                      "title": "Data",
+                      "type": "object"
+                    },
+                    "create_parents": {
+                      "default": true,
+                      "description": "Create parent directories if missing",
+                      "title": "Create Parents",
+                      "type": "boolean"
+                    }
+                  },
+                  "required": [
+                    "path",
+                    "data"
+                  ],
+                  "title": "WriteJSONStateInput",
+                  "type": "object"
+                }
+              }
+            }
+          },
+          {
+            "if": {
+              "properties": {
+                "type": {
+                  "const": "MergeJSONState"
+                }
+              }
+            },
+            "then": {
+              "properties": {
+                "inputs": {
+                  "additionalProperties": false,
+                  "description": "Inputs for MergeJSONState block",
+                  "properties": {
+                    "path": {
+                      "description": "Path to JSON file",
+                      "title": "Path",
+                      "type": "string"
+                    },
+                    "updates": {
+                      "additionalProperties": true,
+                      "description": "Updates to merge",
+                      "title": "Updates",
+                      "type": "object"
+                    },
+                    "create_if_missing": {
+                      "default": true,
+                      "description": "Create file if it doesn't exist",
+                      "title": "Create If Missing",
+                      "type": "boolean"
+                    },
+                    "create_parents": {
+                      "default": true,
+                      "description": "Create parent directories if missing",
+                      "title": "Create Parents",
+                      "type": "boolean"
+                    }
+                  },
+                  "required": [
+                    "path",
+                    "updates"
+                  ],
+                  "title": "MergeJSONStateInput",
+                  "type": "object"
+                }
+              }
+            }
+          }
+        ]
+      }
+    }
+  },
+  "definitions": {
+    "ShellInput": {
+      "additionalProperties": false,
+      "description": "Input model for Shell executor.\n\nArchitecture (ADR-006):\n- Execute returns ShellOutput directly\n- Operation outcome determined by exit_code\n- Exceptions indicate execution failure",
+      "properties": {
+        "command": {
+          "description": "Shell command to execute",
+          "title": "Command",
+          "type": "string"
+        },
+        "working_dir": {
+          "default": "",
+          "description": "Working directory (empty = current dir)",
+          "title": "Working Dir",
+          "type": "string"
+        },
+        "timeout": {
+          "default": 120,
+          "description": "Timeout in seconds",
+          "title": "Timeout",
+          "type": "integer"
+        },
+        "env": {
+          "additionalProperties": {
+            "type": "string"
+          },
+          "description": "Environment variables",
+          "title": "Env",
+          "type": "object"
+        },
+        "capture_output": {
+          "default": true,
+          "description": "Capture stdout/stderr",
+          "title": "Capture Output",
+          "type": "boolean"
+        },
+        "shell": {
+          "default": true,
+          "description": "Execute via shell",
+          "title": "Shell",
+          "type": "boolean"
+        },
+        "custom_outputs": {
+          "anyOf": [
+            {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Custom file-based outputs to read after execution",
+          "title": "Custom Outputs"
+        }
+      },
+      "required": [
+        "command"
+      ],
+      "title": "ShellInput",
+      "type": "object"
+    },
+    "WorkflowInput": {
+      "additionalProperties": false,
+      "description": "Input model for Workflow executor.\n\nSupports variable references from parent context:\n- ${inputs.field}: Parent workflow inputs\n- ${blocks.block_id.outputs.field}: Parent block outputs\n- ${metadata.field}: Parent workflow metadata\n\nVariable resolution happens in parent context before passing to child.",
+      "properties": {
+        "workflow": {
+          "description": "Workflow name to execute",
+          "title": "Workflow",
+          "type": "string"
+        },
+        "inputs": {
+          "additionalProperties": true,
+          "description": "Inputs to pass to child workflow (variables resolved in parent context)",
+          "title": "Inputs",
+          "type": "object"
+        },
+        "timeout_ms": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Optional timeout for child execution in milliseconds",
+          "title": "Timeout Ms"
+        }
+      },
+      "required": [
+        "workflow"
+      ],
+      "title": "WorkflowInput",
+      "type": "object"
+    },
+    "CreateFileInput": {
+      "additionalProperties": false,
+      "description": "Input model for CreateFile executor.",
+      "properties": {
+        "path": {
+          "description": "File path (absolute or relative)",
+          "title": "Path",
+          "type": "string"
+        },
+        "content": {
+          "description": "File content to write",
+          "title": "Content",
+          "type": "string"
+        },
+        "encoding": {
+          "default": "utf-8",
+          "description": "Text encoding",
+          "title": "Encoding",
+          "type": "string"
+        },
+        "mode": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "File permissions (Unix only, e.g., 0o644, 644, or '644')",
+          "title": "Mode"
+        },
+        "overwrite": {
+          "default": true,
+          "description": "Whether to overwrite existing file",
+          "title": "Overwrite",
+          "type": "boolean"
+        },
+        "create_parents": {
+          "default": true,
+          "description": "Create parent directories if missing",
+          "title": "Create Parents",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "path",
+        "content"
+      ],
+      "title": "CreateFileInput",
+      "type": "object"
+    },
+    "ReadFileInput": {
+      "additionalProperties": false,
+      "description": "Input model for ReadFile executor.",
+      "properties": {
+        "path": {
+          "description": "File path to read (absolute or relative)",
+          "title": "Path",
+          "type": "string"
+        },
+        "encoding": {
+          "default": "utf-8",
+          "description": "Text encoding",
+          "title": "Encoding",
+          "type": "string"
+        },
+        "required": {
+          "default": true,
+          "description": "If False, missing file returns empty content instead of error",
+          "title": "Required",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "path"
+      ],
+      "title": "ReadFileInput",
+      "type": "object"
+    },
+    "RenderTemplateInput": {
+      "additionalProperties": false,
+      "description": "Input model for RenderTemplate executor.",
+      "properties": {
+        "template": {
+          "description": "Jinja2 template string",
+          "title": "Template",
+          "type": "string"
+        },
+        "variables": {
+          "additionalProperties": true,
+          "description": "Variables to substitute in template",
+          "title": "Variables",
+          "type": "object"
+        },
+        "output_path": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Optional file path to write rendered content",
+          "title": "Output Path"
+        },
+        "encoding": {
+          "default": "utf-8",
+          "description": "Text encoding for output file",
+          "title": "Encoding",
+          "type": "string"
+        },
+        "overwrite": {
+          "default": true,
+          "description": "Whether to overwrite existing output file",
+          "title": "Overwrite",
+          "type": "boolean"
+        },
+        "create_parents": {
+          "default": true,
+          "description": "Create parent directories for output file",
+          "title": "Create Parents",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "template"
+      ],
+      "title": "RenderTemplateInput",
+      "type": "object"
+    },
+    "PromptInput": {
+      "additionalProperties": false,
+      "description": "Input for Prompt executor.\n\nSimple design: single prompt field for maximum flexibility.",
+      "properties": {
+        "prompt": {
+          "description": "Prompt/question to display to LLM. The LLM will provide a response.",
+          "title": "Prompt",
+          "type": "string"
+        }
+      },
+      "required": [
+        "prompt"
+      ],
+      "title": "PromptInput",
+      "type": "object"
+    },
+    "ReadJSONStateInput": {
+      "additionalProperties": false,
+      "description": "Input for ReadJSONState executor.",
+      "properties": {
+        "path": {
+          "description": "Path to JSON file",
+          "title": "Path",
+          "type": "string"
+        },
+        "required": {
+          "default": false,
+          "description": "Whether file must exist (False returns empty dict)",
+          "title": "Required",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "path"
+      ],
+      "title": "ReadJSONStateInput",
+      "type": "object"
+    },
+    "WriteJSONStateInput": {
+      "additionalProperties": false,
+      "description": "Input for WriteJSONState executor.",
+      "properties": {
+        "path": {
+          "description": "Path to JSON file",
+          "title": "Path",
+          "type": "string"
+        },
+        "data": {
+          "additionalProperties": true,
+          "description": "JSON data to write",
+          "title": "Data",
+          "type": "object"
+        },
+        "create_parents": {
+          "default": true,
+          "description": "Create parent directories if missing",
+          "title": "Create Parents",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "path",
+        "data"
+      ],
+      "title": "WriteJSONStateInput",
+      "type": "object"
+    },
+    "MergeJSONStateInput": {
+      "additionalProperties": false,
+      "description": "Input for MergeJSONState executor.",
+      "properties": {
+        "path": {
+          "description": "Path to JSON file",
+          "title": "Path",
+          "type": "string"
+        },
+        "updates": {
+          "additionalProperties": true,
+          "description": "Updates to merge",
+          "title": "Updates",
+          "type": "object"
+        },
+        "create_if_missing": {
+          "default": true,
+          "description": "Create file if it doesn't exist",
+          "title": "Create If Missing",
+          "type": "boolean"
+        },
+        "create_parents": {
+          "default": true,
+          "description": "Create parent directories if missing",
+          "title": "Create Parents",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "path",
+        "updates"
+      ],
+      "title": "MergeJSONStateInput",
+      "type": "object"
+    }
+  }
+}

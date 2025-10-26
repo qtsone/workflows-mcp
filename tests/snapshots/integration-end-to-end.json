@@ -1,0 +1,340 @@
+{
+  "status": "success",
+  "outputs": {
+    "project_name": "TestProject",
+    "workflow_name": "integration-end-to-end",
+    "data1": "data1",
+    "data2": "data2",
+    "report_content": "# TestProject\n\nWorkflow: integration-end-to-end\nTimestamp: 2025-10-25T15:57:55.342121+00:00\n\n## Data Streams\n- Stream 1: data1\n- Stream 2: data2\n\n## Status\nPhase: report_generation",
+    "final_phase": "complete",
+    "validation_passed": "true",
+    "all_blocks_succeeded": true
+  },
+  "blocks": {
+    "init_state": {
+      "inputs": {
+        "path": "/tmp/integration-test/state.json",
+        "data": {
+          "project": "TestProject",
+          "phase": "init",
+          "workflow": "integration-end-to-end"
+        },
+        "create_parents": true
+      },
+      "outputs": {
+        "path": "/private/tmp/integration-test/state.json",
+        "size_bytes": 90
+      },
+      "metadata": {
+        "status": "completed",
+        "outcome": "success",
+        "execution_time_ms": 0.487060546875,
+        "started_at": "2025-10-25T15:57:55.342291+00:00",
+        "completed_at": "2025-10-25T15:57:55.342780+00:00",
+        "wave": 0,
+        "execution_order": 0,
+        "message": null,
+        "succeeded": true,
+        "failed": false,
+        "skipped": false
+      },
+      "blocks": {},
+      "depth": 0
+    },
+    "gen_data2": {
+      "inputs": {
+        "command": "printf \"data2\""
+      },
+      "outputs": {
+        "exit_code": 0,
+        "stdout": "data2",
+        "stderr": ""
+      },
+      "metadata": {
+        "status": "completed",
+        "outcome": "success",
+        "execution_time_ms": 6.156982421875,
+        "started_at": "2025-10-25T15:57:55.343011+00:00",
+        "completed_at": "2025-10-25T15:57:55.349159+00:00",
+        "wave": 1,
+        "execution_order": 1,
+        "message": null,
+        "succeeded": true,
+        "failed": false,
+        "skipped": false
+      },
+      "blocks": {},
+      "depth": 0
+    },
+    "gen_data1": {
+      "inputs": {
+        "command": "printf \"data1\""
+      },
+      "outputs": {
+        "exit_code": 0,
+        "stdout": "data1",
+        "stderr": ""
+      },
+      "metadata": {
+        "status": "completed",
+        "outcome": "success",
+        "execution_time_ms": 5.35986328125,
+        "started_at": "2025-10-25T15:57:55.345663+00:00",
+        "completed_at": "2025-10-25T15:57:55.351032+00:00",
+        "wave": 1,
+        "execution_order": 1,
+        "message": null,
+        "succeeded": true,
+        "failed": false,
+        "skipped": false
+      },
+      "blocks": {},
+      "depth": 0
+    },
+    "update_state": {
+      "inputs": {
+        "path": "/tmp/integration-test/state.json",
+        "updates": {
+          "phase": "generation_complete",
+          "data1": "data1",
+          "data2": "data2"
+        }
+      },
+      "outputs": {
+        "path": "/private/tmp/integration-test/state.json",
+        "created": false,
+        "merged_data": {
+          "phase": "generation_complete",
+          "project": "TestProject",
+          "workflow": "integration-end-to-end",
+          "data1": "data1",
+          "data2": "data2"
+        }
+      },
+      "metadata": {
+        "status": "completed",
+        "outcome": "success",
+        "execution_time_ms": 0.4208984375,
+        "started_at": "2025-10-25T15:57:55.351424+00:00",
+        "completed_at": "2025-10-25T15:57:55.351846+00:00",
+        "wave": 2,
+        "execution_order": 3,
+        "message": null,
+        "succeeded": true,
+        "failed": false,
+        "skipped": false
+      },
+      "blocks": {},
+      "depth": 0
+    },
+    "render_report": {
+      "inputs": {
+        "template": "# {{ project }}\n\nWorkflow: {{ workflow }}\nTimestamp: {{ timestamp }}\n\n## Data Streams\n- Stream 1: {{ data1 }}\n- Stream 2: {{ data2 }}\n\n## Status\nPhase: {{ phase }}\n",
+        "variables": {
+          "project": "TestProject",
+          "workflow": "integration-end-to-end",
+          "timestamp": "2025-10-25T15:57:55.342121+00:00",
+          "data1": "data1",
+          "data2": "data2",
+          "phase": "report_generation"
+        },
+        "output_path": "/tmp/integration-test/report.md"
+      },
+      "outputs": {
+        "content": "# TestProject\n\nWorkflow: integration-end-to-end\nTimestamp: 2025-10-25T15:57:55.342121+00:00\n\n## Data Streams\n- Stream 1: data1\n- Stream 2: data2\n\n## Status\nPhase: report_generation",
+        "output_path": "/private/tmp/integration-test/report.md",
+        "size_bytes": 180
+      },
+      "metadata": {
+        "status": "completed",
+        "outcome": "success",
+        "execution_time_ms": 0.89306640625,
+        "started_at": "2025-10-25T15:57:55.352056+00:00",
+        "completed_at": "2025-10-25T15:57:55.352950+00:00",
+        "wave": 3,
+        "execution_order": 4,
+        "message": null,
+        "succeeded": true,
+        "failed": false,
+        "skipped": false
+      },
+      "blocks": {},
+      "depth": 0
+    },
+    "validate_failure": {
+      "inputs": {},
+      "outputs": {
+        "exit_code": 0,
+        "stdout": "",
+        "stderr": ""
+      },
+      "metadata": {
+        "status": "skipped",
+        "outcome": "n/a",
+        "execution_time_ms": 0.0,
+        "started_at": "2025-10-25T15:57:55.353200+00:00",
+        "completed_at": "2025-10-25T15:57:55.353200+00:00",
+        "wave": 4,
+        "execution_order": 5,
+        "message": "Condition '${blocks.gen_data1.failed} or ${blocks.gen_data2.failed} or ${blocks.render_report.failed}\n' evaluated to False",
+        "succeeded": false,
+        "failed": false,
+        "skipped": true
+      },
+      "blocks": {},
+      "depth": 0
+    },
+    "validate_success": {
+      "inputs": {
+        "command": "echo \"validation_passed\""
+      },
+      "outputs": {
+        "exit_code": 0,
+        "stdout": "validation_passed\n",
+        "stderr": ""
+      },
+      "metadata": {
+        "status": "completed",
+        "outcome": "success",
+        "execution_time_ms": 5.461181640625,
+        "started_at": "2025-10-25T15:57:55.353287+00:00",
+        "completed_at": "2025-10-25T15:57:55.358734+00:00",
+        "wave": 4,
+        "execution_order": 5,
+        "message": null,
+        "succeeded": true,
+        "failed": false,
+        "skipped": false
+      },
+      "blocks": {},
+      "depth": 0
+    },
+    "final_state": {
+      "inputs": {
+        "path": "/tmp/integration-test/state.json",
+        "updates": {
+          "phase": "complete",
+          "validation_passed": "true"
+        }
+      },
+      "outputs": {
+        "path": "/private/tmp/integration-test/state.json",
+        "created": false,
+        "merged_data": {
+          "data1": "data1",
+          "data2": "data2",
+          "phase": "complete",
+          "project": "TestProject",
+          "workflow": "integration-end-to-end",
+          "validation_passed": "true"
+        }
+      },
+      "metadata": {
+        "status": "completed",
+        "outcome": "success",
+        "execution_time_ms": 0.60791015625,
+        "started_at": "2025-10-25T15:57:55.359359+00:00",
+        "completed_at": "2025-10-25T15:57:55.359969+00:00",
+        "wave": 5,
+        "execution_order": 6,
+        "message": null,
+        "succeeded": true,
+        "failed": false,
+        "skipped": false
+      },
+      "blocks": {},
+      "depth": 0
+    },
+    "read_report": {
+      "inputs": {
+        "path": "/tmp/integration-test/report.md"
+      },
+      "outputs": {
+        "content": "# TestProject\n\nWorkflow: integration-end-to-end\nTimestamp: 2025-10-25T15:57:55.342121+00:00\n\n## Data Streams\n- Stream 1: data1\n- Stream 2: data2\n\n## Status\nPhase: report_generation",
+        "path": "/private/tmp/integration-test/report.md",
+        "size_bytes": 180,
+        "found": true
+      },
+      "metadata": {
+        "status": "completed",
+        "outcome": "success",
+        "execution_time_ms": 0.196044921875,
+        "started_at": "2025-10-25T15:57:55.360246+00:00",
+        "completed_at": "2025-10-25T15:57:55.360442+00:00",
+        "wave": 6,
+        "execution_order": 7,
+        "message": null,
+        "succeeded": true,
+        "failed": false,
+        "skipped": false
+      },
+      "blocks": {},
+      "depth": 0
+    },
+    "read_final_state": {
+      "inputs": {
+        "path": "/tmp/integration-test/state.json"
+      },
+      "outputs": {
+        "data": {
+          "data1": "data1",
+          "data2": "data2",
+          "phase": "complete",
+          "project": "TestProject",
+          "validation_passed": "true",
+          "workflow": "integration-end-to-end"
+        },
+        "found": true,
+        "path": "/private/tmp/integration-test/state.json"
+      },
+      "metadata": {
+        "status": "completed",
+        "outcome": "success",
+        "execution_time_ms": 0.11181640625,
+        "started_at": "2025-10-25T15:57:55.360558+00:00",
+        "completed_at": "2025-10-25T15:57:55.360670+00:00",
+        "wave": 6,
+        "execution_order": 7,
+        "message": null,
+        "succeeded": true,
+        "failed": false,
+        "skipped": false
+      },
+      "blocks": {},
+      "depth": 0
+    },
+    "cleanup": {
+      "inputs": {
+        "command": "[ -d \"/tmp/integration-test\" ] && rm -rf \"/tmp/integration-test\" || echo \"Error: Test directory does not exist\"\n"
+      },
+      "outputs": {
+        "exit_code": 0,
+        "stdout": "",
+        "stderr": ""
+      },
+      "metadata": {
+        "status": "completed",
+        "outcome": "success",
+        "execution_time_ms": 9.4619140625,
+        "started_at": "2025-10-25T15:57:55.360966+00:00",
+        "completed_at": "2025-10-25T15:57:55.370418+00:00",
+        "wave": 7,
+        "execution_order": 9,
+        "message": null,
+        "succeeded": true,
+        "failed": false,
+        "skipped": false
+      },
+      "blocks": {},
+      "depth": 0
+    }
+  },
+  "metadata": {
+    "workflow_name": "integration-end-to-end",
+    "start_time": "2025-10-25T15:57:55.342121+00:00",
+    "total_blocks": 10,
+    "execution_waves": 8,
+    "completed_at": "2025-10-25T15:57:55.371108+00:00",
+    "execution_time_seconds": 0.02899789810180664
+  }
+}

@@ -1,0 +1,17 @@
+name: block-status-success-detection
+description: Test .succeeded shortcut for detecting successful block execution (ADR-007)
+tags: [test, core, status, shortcuts, adr-007]
+blocks:
+  - id: successful_block
+    type: Shell
+    inputs:
+      command: echo "success"
+  - id: check_success
+    type: Shell
+    inputs:
+      command: echo "detected"
+    condition: "${blocks.successful_block.succeeded}"
+    depends_on: [successful_block]
+outputs:
+  block_succeeded: "${blocks.successful_block.succeeded}"
+  detection_worked: "${blocks.check_success.succeeded}"

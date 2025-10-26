@@ -1,0 +1,77 @@
+name: git-analyze-changes
+description: Analyze git repository for uncommitted changes and extract diff information
+version: 1.0.0
+tags: [git, diff, analysis]
+
+inputs:
+  working_dir:
+    type: str
+    description: (Optional) Working directory for git operations
+    default: "."
+    required: false
+
+blocks:
+  - id: changes
+    type: Shell
+    inputs:
+      command: |
+        # Check for any changes: staged, unstaged, or untracked
+        if [ -z "$(git status --porcelain)" ]; then
+          printf "false" > $SCRATCH/changes.txt
+        else
+          printf "true" > $SCRATCH/changes.txt
+        fi
+      working_dir: "${inputs.working_dir}"
+    outputs:
+      detected:
+        type: bool
+        description: "Indicates if there are any changes (staged, unstaged, or untracked)"
+        path: "$SCRATCH/changes.txt"
+
+  - id: get_file_status
+    type: Shell
+    inputs:
+      command: git status --short --porcelain
+      working_dir: "${inputs.working_dir}"
+    condition: ${blocks.changes.outputs.detected}
+    depends_on:
+      - changes
+
+  - id: get_staged_diff
+    type: Shell
+    inputs:
+      command: git diff --cached
+      working_dir: "${inputs.working_dir}"
+    condition: ${blocks.changes.outputs.detected}
+    depends_on:
+      - changes
+
+  - id: get_unstaged_diff
+    type: Shell
+    inputs:
+      command: git diff
+      working_dir: "${inputs.working_dir}"
+    condition: ${blocks.changes.outputs.detected}
+    depends_on:
+      - changes
+
+  - id: get_diff_stat
+    type: Shell
+    inputs:
+      command: |
+        echo "=== Staged Changes ==="
+        git diff --cached --stat || echo "No staged changes"
+        echo ""
+        echo "=== Unstaged Changes ==="
+        git diff --stat || echo "No unstaged changes"
+      working_dir: "${inputs.working_dir}"
+    condition: ${blocks.changes.outputs.detected}
+    depends_on:
+      - changes
+
+outputs:
+  has_changes: "${blocks.changes.outputs.detected}"
+  file_status: "${blocks.get_file_status.outputs.stdout}"
+  staged_diff: "${blocks.get_staged_diff.outputs.stdout}"
+  unstaged_diff: "${blocks.get_unstaged_diff.outputs.stdout}"
+  diff_stat: "${blocks.get_diff_stat.outputs.stdout}"

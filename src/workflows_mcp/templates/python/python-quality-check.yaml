@@ -1,0 +1,331 @@
+name: python-quality-check
+description: Comprehensive Python quality checks (ruff linting, mypy type checking, format validation) with aggregated results
+version: "1.0"
+author: Workflows MCP Team
+tags: [python, quality, linting, mypy, ruff, formatting, tdd]
+
+inputs:
+  source_path:
+    type: str
+    description: Path to source code directory or file to check
+    default: "src/"
+
+  strict:
+    type: bool
+    description: Enable strict mode (fail on any warnings, strict mypy)
+    default: false
+
+  check_linting:
+    type: bool
+    description: Enable ruff linting checks
+    default: true
+
+  check_types:
+    type: bool
+    description: Enable mypy type checking
+    default: true
+
+  check_formatting:
+    type: bool
+    description: Enable ruff format validation
+    default: true
+
+  working_dir:
+    type: str
+    description: Working directory for checks
+    default: "."
+
+  venv_path:
+    type: str
+    description: Virtual environment path (will use ${inputs.venv_path}/bin/{ruff,mypy} if available)
+    default: ""
+
+blocks:
+  # Build ruff check command (prefer uv for proper venv management)
+  - id: build_ruff_command
+    type: Shell
+    inputs:
+      command: |
+        # Check if uv is available (modern Python tool management)
+        if command -v uv &> /dev/null && [ -f "pyproject.toml" ]; then
+          RUFF="uv run ruff"
+        elif [ -n "${inputs.venv_path}" ] && [ -f "${inputs.venv_path}/bin/ruff" ]; then
+          RUFF="${inputs.venv_path}/bin/ruff"
+        else
+          RUFF="ruff"
+        fi
+        echo "$RUFF check ${inputs.source_path}"
+      timeout: 5
+    condition: "${inputs.check_linting}"
+
+  # Run ruff linting
+  - id: run_ruff_linting
+    type: Shell
+    inputs:
+      command: "${blocks.build_ruff_command.outputs.stdout}"
+      working_dir: "${inputs.working_dir}"
+      timeout: 300
+      
+    depends_on:
+      - build_ruff_command
+    condition: "${inputs.check_linting}"
+
+  # Build mypy command (prefer uv for proper venv management)
+  - id: build_mypy_command
+    type: Shell
+    inputs:
+      command: |
+        # Check if uv is available (modern Python tool management)
+        if command -v uv &> /dev/null && [ -f "pyproject.toml" ]; then
+          MYPY="uv run mypy"
+        elif [ -n "${inputs.venv_path}" ] && [ -f "${inputs.venv_path}/bin/mypy" ]; then
+          MYPY="${inputs.venv_path}/bin/mypy"
+        else
+          MYPY="mypy"
+        fi
+
+        # Add --strict flag if strict mode is enabled
+        if [ "${inputs.strict}" = "true" ]; then
+          echo "$MYPY --strict ${inputs.source_path}"
+        else
+          echo "$MYPY ${inputs.source_path}"
+        fi
+      timeout: 5
+    condition: "${inputs.check_types}"
+
+  # Run mypy type checking
+  - id: run_mypy_checking
+    type: Shell
+    inputs:
+      command: "${blocks.build_mypy_command.outputs.stdout}"
+      working_dir: "${inputs.working_dir}"
+      timeout: 300
+      
+    depends_on:
+      - build_mypy_command
+    condition: "${inputs.check_types}"
+
+  # Build ruff format check command (prefer uv for proper venv management)
+  - id: build_format_command
+    type: Shell
+    inputs:
+      command: |
+        # Check if uv is available (modern Python tool management)
+        if command -v uv &> /dev/null && [ -f "pyproject.toml" ]; then
+          RUFF="uv run ruff"
+        elif [ -n "${inputs.venv_path}" ] && [ -f "${inputs.venv_path}/bin/ruff" ]; then
+          RUFF="${inputs.venv_path}/bin/ruff"
+        else
+          RUFF="ruff"
+        fi
+        echo "$RUFF format --check ${inputs.source_path}"
+      timeout: 5
+    condition: "${inputs.check_formatting}"
+
+  # Run ruff format validation
+  - id: run_format_check
+    type: Shell
+    inputs:
+      command: "${blocks.build_format_command.outputs.stdout}"
+      working_dir: "${inputs.working_dir}"
+      timeout: 300
+      
+    depends_on:
+      - build_format_command
+    condition: "${inputs.check_formatting}"
+
+  # Determine individual check statuses
+  - id: get_linting_status
+    type: Shell
+    inputs:
+      command: |
+        if [ "${inputs.check_linting}" = "false" ]; then
+          echo "skipped"
+        elif [ ${blocks.run_ruff_linting.outputs.exit_code} -eq 0 ]; then
+          echo "passed"
+        else
+          echo "failed"
+        fi
+      timeout: 5
+      
+    depends_on:
+      - run_ruff_linting
+
+  - id: get_typing_status
+    type: Shell
+    inputs:
+      command: |
+        if [ "${inputs.check_types}" = "false" ]; then
+          echo "skipped"
+        elif [ ${blocks.run_mypy_checking.outputs.exit_code} -eq 0 ]; then
+          echo "passed"
+        else
+          echo "failed"
+        fi
+      timeout: 5
+      
+    depends_on:
+      - run_mypy_checking
+
+  - id: get_formatting_status
+    type: Shell
+    inputs:
+      command: |
+        if [ "${inputs.check_formatting}" = "false" ]; then
+          echo "skipped"
+        elif [ ${blocks.run_format_check.outputs.exit_code} -eq 0 ]; then
+          echo "passed"
+        else
+          echo "failed"
+        fi
+      timeout: 5
+      
+    depends_on:
+      - run_format_check
+
+  # Calculate overall pass/fail status
+  # A check "passes" if it's skipped OR if it succeeded
+  - id: calculate_overall_status
+    type: Shell
+    inputs:
+      command: |
+        LINTING_STATUS="${blocks.get_linting_status.outputs.stdout}"
+        TYPING_STATUS="${blocks.get_typing_status.outputs.stdout}"
+        FORMATTING_STATUS="${blocks.get_formatting_status.outputs.stdout}"
+
+        # Check if all enabled checks passed
+        ALL_PASSED=true
+
+        if [ "$LINTING_STATUS" = "failed" ]; then
+          ALL_PASSED=false
+        fi
+
+        if [ "$TYPING_STATUS" = "failed" ]; then
+          ALL_PASSED=false
+        fi
+
+        if [ "$FORMATTING_STATUS" = "failed" ]; then
+          ALL_PASSED=false
+        fi
+
+        if [ "$ALL_PASSED" = "true" ]; then
+          echo "passed"
+        else
+          echo "failed"
+        fi
+      timeout: 5
+      
+    depends_on:
+      - get_linting_status
+      - get_typing_status
+      - get_formatting_status
+
+  # Generate display symbols for summary
+  - id: format_linting_display
+    type: Shell
+    inputs:
+      command: |
+        STATUS="${blocks.get_linting_status.outputs.stdout}"
+        case "$STATUS" in
+          "passed") echo "✓ PASSED" ;;
+          "failed") echo "✗ FAILED" ;;
+          "skipped") echo "⊘ SKIPPED" ;;
+        esac
+      timeout: 5
+      
+    depends_on:
+      - get_linting_status
+
+  - id: format_typing_display
+    type: Shell
+    inputs:
+      command: |
+        STATUS="${blocks.get_typing_status.outputs.stdout}"
+        case "$STATUS" in
+          "passed") echo "✓ PASSED" ;;
+          "failed") echo "✗ FAILED" ;;
+          "skipped") echo "⊘ SKIPPED" ;;
+        esac
+      timeout: 5
+      
+    depends_on:
+      - get_typing_status
+
+  - id: format_formatting_display
+    type: Shell
+    inputs:
+      command: |
+        STATUS="${blocks.get_formatting_status.outputs.stdout}"
+        case "$STATUS" in
+          "passed") echo "✓ PASSED" ;;
+          "failed") echo "✗ FAILED" ;;
+          "skipped") echo "⊘ SKIPPED" ;;
+        esac
+      timeout: 5
+      
+    depends_on:
+      - get_formatting_status
+
+  - id: format_overall_display
+    type: Shell
+    inputs:
+      command: |
+        STATUS="${blocks.calculate_overall_status.outputs.stdout}"
+        if [ "$STATUS" = "passed" ]; then
+          echo "✓ ALL CHECKS PASSED"
+        else
+          echo "✗ QUALITY ISSUES FOUND"
+        fi
+      timeout: 5
+      
+    depends_on:
+      - calculate_overall_status
+
+  # Generate comprehensive summary
+  - id: generate_summary
+    type: EchoBlock
+    inputs:
+      message: |
+        ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+        Python Quality Check Results
+        ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+        Source Path:   ${inputs.source_path}
+        Strict Mode:   ${inputs.strict}
+
+        Checks:
+          Linting:     ${blocks.format_linting_display.outputs.stdout}
+          Type Check:  ${blocks.format_typing_display.outputs.stdout}
+          Formatting:  ${blocks.format_formatting_display.outputs.stdout}
+
+        Overall Status: ${blocks.format_overall_display.outputs.stdout}
+        ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+    depends_on:
+      - format_linting_display
+      - format_typing_display
+      - format_formatting_display
+      - format_overall_display
+
+outputs:
+  # Individual check results (boolean expressions)
+  linting_passed: "${blocks.get_linting_status.outputs.stdout} != 'failed'"
+  linting_exit_code: "${blocks.run_ruff_linting.outputs.exit_code}"
+
+  typing_passed: "${blocks.get_typing_status.outputs.stdout} != 'failed'"
+  typing_exit_code: "${blocks.run_mypy_checking.outputs.exit_code}"
+
+  formatting_passed: "${blocks.get_formatting_status.outputs.stdout} != 'failed'"
+  formatting_exit_code: "${blocks.run_format_check.outputs.exit_code}"
+
+  # Overall status
+  all_checks_passed: "${blocks.calculate_overall_status.outputs.stdout} == 'passed'"
+
+  # Summary and metadata
+  summary: "${blocks.generate_summary.outputs.echoed}"
+
+  # Full outputs for debugging
+  linting_output: "${blocks.run_ruff_linting.outputs.stdout}"
+  typing_output: "${blocks.run_mypy_checking.outputs.stdout}"
+  formatting_output: "${blocks.run_format_check.outputs.stdout}"
+
+  # Execution time
+  execution_time_ms: "${blocks.generate_summary.metadata.execution_time_ms}"

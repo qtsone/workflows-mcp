@@ -1,0 +1,586 @@
+# TDD Phase 5: Integration Testing
+#
+# Connects implemented modules through integration and end-to-end testing.
+#
+# This phase validates that individually tested modules work correctly together,
+# ensuring proper data flow, error propagation, and system-wide functionality.
+# It bridges the gap between isolated unit testing and complete system validation.
+#
+# Philosophy: Verify the whole is greater than the sum of its parts.
+#
+# Key Activities:
+# 1. Verify all Phase 4 modules are complete
+# 2. Request integration test design from LLM (module interactions)
+# 3. Write and execute integration tests
+# 4. Validate integration test results
+# 5. Fix integration issues if tests fail
+# 6. Request E2E test design from LLM (complete workflows)
+# 7. Write and execute E2E tests
+# 8. Validate E2E test results
+# 9. Fix E2E issues if tests fail
+# 10. Integration checkpoint for approval
+#
+# State Management:
+# - Reads Phase 4 completion status
+# - Stores integration test metrics
+# - Stores E2E test metrics
+# - Updates phase to phase5_complete
+#
+# Interactive Pauses:
+# - LLM designs integration tests
+# - LLM fixes integration failures (if needed)
+# - LLM designs E2E tests
+# - LLM fixes E2E failures (if needed)
+# - Final checkpoint for integration approval
+#
+# Usage:
+#   execute_workflow("tdd-phase5-integration", {
+#     "project_path": "/path/to/project"
+#   })
+#
+# Output:
+#   - Integration tests created in tests/integration/
+#   - E2E tests created in tests/e2e/
+#   - All integration and E2E tests passing
+#   - State updated with test metrics
+#   - Ready for Phase 6 (Validation & Quality)
+
+name: tdd-phase5-integration
+description: TDD Phase 5 - Integration and E2E testing to validate module interactions and complete workflows
+version: "1.0"
+author: MCP Workflows Team
+tags: [tdd, integration, e2e, testing, phase5, validation]
+
+inputs:
+  project_path:
+    type: str
+    description: Path to project root directory
+    default: "."
+    required: false
+
+  state_file:
+    type: str
+    description: Path to TDD state file (JSON)
+    default: ".tdd-state.json"
+    required: false
+
+  test_path:
+    type: str
+    description: Path to test directory (relative to project_path)
+    default: "tests"
+    required: false
+
+  source_path:
+    type: str
+    description: Path to source directory (relative to project_path)
+    default: "src"
+    required: false
+
+  language:
+    type: str
+    description: Programming language for the project (python, javascript, go, etc.)
+    default: "python"
+    required: false
+
+  coverage_threshold:
+    type: int
+    description: Minimum integration test coverage percentage
+    default: 75
+    required: false
+
+blocks:
+  - id: read_state
+    type: ReadJSONState
+    inputs:
+      path: "${inputs.project_path}/${inputs.state_file}"
+
+  - id: validate_phase4_complete
+    type: Shell
+    inputs:
+      command: |
+        STATE='${blocks.read_state.state}'
+
+        # Check if Phase 4 is in completed phases
+        if echo "$STATE" | grep -q '"phase4_complete"'; then
+          echo "✅ Phase 4 complete - proceeding with integration testing"
+          exit 0
+        else
+          echo "❌ ERROR: Phase 4 not complete. Complete module implementation first."
+          echo "Current phase: ${blocks.read_state.state.current_phase}"
+          exit 1
+        fi
+      timeout: 10
+    depends_on:
+      - read_state
+
+  - id: create_integration_dir
+    type: Shell
+    inputs:
+      command: |
+        mkdir -p "${inputs.project_path}/${inputs.test_path}/integration"
+        echo "✅ Integration test directory ready: ${inputs.project_path}/${inputs.test_path}/integration"
+      timeout: 10
+    depends_on:
+      - validate_phase4_complete
+
+  - id: request_integration_tests
+    type: Prompt
+    inputs:
+      prompt: |
+        === INTEGRATION TESTING: Design Module Interaction Tests ===
+
+        Project: ${inputs.project_path}
+        Modules implemented: ${blocks.read_state.state.completed_modules}
+
+        Design comprehensive integration tests that verify modules work together correctly:
+
+        Requirements:
+        1. Test data flow between modules
+        2. Test error propagation across module boundaries
+        3. Test configuration dependencies and shared state
+        4. Test transaction handling (if applicable)
+        5. Test API contract compliance between modules
+        6. Use pytest fixtures for test setup and teardown
+        7. Aim for ${inputs.coverage_threshold}%+ coverage of integration points
+
+        Target location: ${inputs.project_path}/${inputs.test_path}/integration/
+
+        Provide integration test file(s) content below.
+        Format: filename.py followed by complete file content.
+        Separate multiple files with "--- FILE: filename.py ---"
+        
+        Respond with 'yes' or 'no'
+        
+        Respond with 'yes' or 'no'
+        
+        Respond with 'yes' or 'no'
+    depends_on:
+      - create_integration_dir
+
+  - id: parse_integration_files
+    type: Shell
+    inputs:
+      command: |
+        # Parse LLM response and create integration test files
+        cd "${inputs.project_path}/${inputs.test_path}/integration"
+
+        INPUT="${blocks.request_integration_tests.response}"
+
+        # Simple parsing: Look for "--- FILE: " markers
+        # For now, assume single file named test_integration.py if no markers
+        if echo "$INPUT" | grep -q "^--- FILE:"; then
+          # Multi-file mode (parse markers)
+          echo "Multi-file integration tests detected"
+          # TODO: Implement multi-file parsing
+          echo "$INPUT" > test_integration.py
+        else
+          # Single file mode
+          echo "Single integration test file"
+          echo "$INPUT" > test_integration.py
+        fi
+
+        echo "✅ Integration test files created"
+        ls -la
+      timeout: 30
+    depends_on:
+      - request_integration_tests
+
+  - id: run_integration_tests
+    type: Workflow
+    inputs:
+      workflow: run-tests
+      inputs:
+        language: "${inputs.language}"
+        test_path: "${inputs.test_path}/integration"
+        source_path: "${inputs.source_path}"
+        coverage_threshold: ${inputs.coverage_threshold}
+        working_dir: "${inputs.project_path}"
+    depends_on:
+      - parse_integration_files
+
+  - id: check_integration_results
+    type: Shell
+    inputs:
+      command: |
+        EXIT_CODE="${blocks.run_integration_tests.outputs.exit_code}"
+        TESTS_PASSED="${blocks.run_integration_tests.outputs.tests_passed}"
+        TESTS_FAILED="${blocks.run_integration_tests.outputs.tests_failed}"
+
+        if [ "$EXIT_CODE" = "0" ] && [ "$TESTS_FAILED" = "0" ]; then
+          echo "✅ Integration tests PASSED"
+          echo "Tests passed: $TESTS_PASSED"
+          exit 0
+        else
+          echo "❌ Integration tests FAILED"
+          echo "Tests passed: $TESTS_PASSED"
+          echo "Tests failed: $TESTS_FAILED"
+          echo "Exit code: $EXIT_CODE"
+          exit 1
+        fi
+      timeout: 10
+
+    depends_on:
+      - run_integration_tests
+
+  - id: request_integration_fixes
+    type: Prompt
+    inputs:
+      prompt: |
+        === INTEGRATION TEST FAILEDS: Fix Required ===
+
+        Integration tests failed. Please analyze and fix the issues:
+
+        Test Results:
+        - Tests passed: ${blocks.run_integration_tests.outputs.tests_passed}
+        - Tests failed: ${blocks.run_integration_tests.outputs.tests_failed}
+        - Exit code: ${blocks.run_integration_tests.outputs.exit_code}
+
+        Test Output:
+        ${blocks.run_integration_tests.outputs.stdout}
+
+        Error Output:
+        ${blocks.run_integration_tests.outputs.stderr}
+
+        Analyze the failures and provide:
+        1. Root cause analysis
+        2. Required fixes (code changes or test adjustments)
+        3. Updated test files OR updated module code
+
+        Format: filename.py followed by complete updated content.
+
+        Respond with 'yes' or 'no'
+    depends_on:
+      - check_integration_results
+    condition: "${blocks.check_integration_results.failed}"
+
+  - id: apply_integration_fixes
+    type: Shell
+    inputs:
+      command: |
+        echo "⚠️  Integration fixes requested but not auto-applied"
+        echo "Manual intervention required to apply fixes"
+        echo "LLM response saved for review"
+
+        # Save LLM fix response for manual application
+        echo "${blocks.request_integration_fixes.response}" > "${inputs.project_path}/integration_fixes.txt"
+
+        echo "✅ Fix suggestions saved to: ${inputs.project_path}/integration_fixes.txt"
+      timeout: 10
+    depends_on:
+      - request_integration_fixes
+    condition: "${blocks.check_integration_results.failed}"
+
+  - id: create_e2e_dir
+    type: Shell
+    inputs:
+      command: |
+        mkdir -p "${inputs.project_path}/${inputs.test_path}/e2e"
+        echo "✅ E2E test directory ready: ${inputs.project_path}/${inputs.test_path}/e2e"
+      timeout: 10
+    depends_on:
+      - check_integration_results
+    condition: "${blocks.check_integration_results.succeeded}"
+
+  - id: request_e2e_tests
+    type: Prompt
+    inputs:
+      prompt: |
+        === END-TO-END TESTING: Design Complete User Workflows ===
+
+        Project: ${inputs.project_path}
+        Integration tests: ✅ PASSING
+
+        Design comprehensive E2E tests that verify complete user workflows:
+
+        Requirements:
+        1. Test from entry point to final output (complete user journeys)
+        2. Test realistic usage scenarios and user flows
+        3. Test error handling in complete workflows
+        4. Test configuration and environment setup
+        5. Test CLI commands, API endpoints, or UI workflows (as applicable)
+        6. Test data persistence and state management
+        7. Use pytest fixtures for environment setup
+
+        Target location: ${inputs.project_path}/${inputs.test_path}/e2e/
+
+        Provide E2E test file(s) content below.
+        Format: filename.py followed by complete file content.
+        Separate multiple files with "--- FILE: filename.py ---"
+        
+        Respond with 'yes' or 'no'
+        
+        Respond with 'yes' or 'no'
+        
+        Respond with 'yes' or 'no'
+    depends_on:
+      - create_e2e_dir
+    condition: "${blocks.check_integration_results.succeeded}"
+
+  - id: parse_e2e_files
+    type: Shell
+    inputs:
+      command: |
+        # Parse LLM response and create E2E test files
+        cd "${inputs.project_path}/${inputs.test_path}/e2e"
+
+        INPUT="${blocks.request_e2e_tests.response}"
+
+        # Simple parsing: single file for now
+        if echo "$INPUT" | grep -q "^--- FILE:"; then
+          echo "Multi-file E2E tests detected"
+          echo "$INPUT" > test_e2e.py
+        else
+          echo "Single E2E test file"
+          echo "$INPUT" > test_e2e.py
+        fi
+
+        echo "✅ E2E test files created"
+        ls -la
+      timeout: 30
+    depends_on:
+      - request_e2e_tests
+    condition: "${blocks.check_integration_results.succeeded}"
+
+  - id: run_e2e_tests
+    type: Workflow
+    inputs:
+      workflow: run-tests
+      inputs:
+        language: "${inputs.language}"
+        test_path: "${inputs.test_path}/e2e"
+        source_path: "${inputs.source_path}"
+        coverage_threshold: 0  # E2E focuses on workflows, not coverage
+        working_dir: "${inputs.project_path}"
+    depends_on:
+      - parse_e2e_files
+    condition: "${blocks.check_integration_results.succeeded}"
+
+  - id: check_e2e_results
+    type: Shell
+    inputs:
+      command: |
+        EXIT_CODE="${blocks.run_e2e_tests.outputs.exit_code}"
+        TESTS_PASSED="${blocks.run_e2e_tests.outputs.tests_passed}"
+        TESTS_FAILED="${blocks.run_e2e_tests.outputs.tests_failed}"
+
+        if [ "$EXIT_CODE" = "0" ] && [ "$TESTS_FAILED" = "0" ]; then
+          echo "✅ E2E tests PASSED"
+          echo "Tests passed: $TESTS_PASSED"
+          exit 0
+        else
+          echo "❌ E2E tests FAILED"
+          echo "Tests passed: $TESTS_PASSED"
+          echo "Tests failed: $TESTS_FAILED"
+          echo "Exit code: $EXIT_CODE"
+          exit 1
+        fi
+      timeout: 10
+
+    depends_on:
+      - run_e2e_tests
+    condition: "${blocks.check_integration_results.succeeded}"
+
+  - id: request_e2e_fixes
+    type: Prompt
+    inputs:
+      prompt: |
+        === E2E TEST FAILEDS: Fix Required ===
+
+        E2E tests failed. Please analyze and fix the issues:
+
+        Test Results:
+        - Tests passed: ${blocks.run_e2e_tests.outputs.tests_passed}
+        - Tests failed: ${blocks.run_e2e_tests.outputs.tests_failed}
+        - Exit code: ${blocks.run_e2e_tests.outputs.exit_code}
+
+        Test Output:
+        ${blocks.run_e2e_tests.outputs.stdout}
+
+        Error Output:
+        ${blocks.run_e2e_tests.outputs.stderr}
+
+        Analyze the failures and provide:
+        1. Root cause analysis
+        2. Required fixes (code changes or test adjustments)
+        3. Updated test files OR updated module code
+
+        Format: filename.py followed by complete updated content.
+
+        Respond with 'yes' or 'no'
+    depends_on:
+      - check_e2e_results
+    condition: "${blocks.check_e2e_results.failed}"
+
+  - id: apply_e2e_fixes
+    type: Shell
+    inputs:
+      command: |
+        echo "⚠️  E2E fixes requested but not auto-applied"
+        echo "Manual intervention required to apply fixes"
+
+        # Save LLM fix response for manual application
+        echo "${blocks.request_e2e_fixes.response}" > "${inputs.project_path}/e2e_fixes.txt"
+
+        echo "✅ Fix suggestions saved to: ${inputs.project_path}/e2e_fixes.txt"
+      timeout: 10
+    depends_on:
+      - request_e2e_fixes
+    condition: "${blocks.check_e2e_results.failed}"
+
+  - id: update_state_phase5
+    type: Shell
+    inputs:
+      command: |
+        # Create Python script to update state
+        cat > /tmp/update_phase5_state.py << 'PYTHON_SCRIPT'
+        import json
+        import sys
+        from pathlib import Path
+        from datetime import datetime
+
+        # Get arguments
+        state_file = Path(sys.argv[1])
+        integration_passed = int(sys.argv[2])
+        integration_failed = int(sys.argv[3])
+        e2e_passed = int(sys.argv[4])
+        e2e_failed = int(sys.argv[5])
+
+        # Read existing state
+        state = json.loads(state_file.read_text())
+
+        # Ensure required keys exist
+        if 'phases_completed' not in state:
+            state['phases_completed'] = []
+
+        # Add phase5_complete to completed phases
+        if 'phase5_complete' not in state['phases_completed']:
+            state['phases_completed'].append('phase5_complete')
+
+        # Update phase5 metrics
+        state['phase5'] = {
+            'integration_tests': {
+                'passed': integration_passed,
+                'failed': integration_failed,
+                'total': integration_passed + integration_failed
+            },
+            'e2e_tests': {
+                'passed': e2e_passed,
+                'failed': e2e_failed,
+                'total': e2e_passed + e2e_failed
+            },
+            'all_passing': integration_failed == 0 and e2e_failed == 0,
+            'completed_at': datetime.now().isoformat()
+        }
+
+        # Update current phase
+        state['current_phase'] = 'phase5_complete'
+
+        # Write back
+        state_file.write_text(json.dumps(state, indent=2) + '\n')
+
+        print(f'✅ Phase 5 complete:')
+        print(f'   Integration: {integration_passed} passed, {integration_failed} failed')
+        print(f'   E2E: {e2e_passed} passed, {e2e_failed} failed')
+        PYTHON_SCRIPT
+
+        # Run the Python script (using python3 for utility script execution)
+        python3 /tmp/update_phase5_state.py \
+          "${inputs.project_path}/${inputs.state_file}" \
+          "${blocks.run_integration_tests.outputs.tests_passed}" \
+          "${blocks.run_integration_tests.outputs.tests_failed}" \
+          "${blocks.run_e2e_tests.outputs.tests_passed}" \
+          "${blocks.run_e2e_tests.outputs.tests_failed}"
+      timeout: 30
+    depends_on:
+      - check_integration_results
+      - check_e2e_results
+    condition: "${blocks.check_integration_results.succeeded} and ${blocks.check_e2e_results.succeeded}"
+
+  - id: integration_checkpoint
+    type: Prompt
+    inputs:
+      prompt: |
+        ╔════════════════════════════════════════════════════════════════╗
+        ║               PHASE 5: INTEGRATION COMPLETE                   ║
+        ╚════════════════════════════════════════════════════════════════╝
+
+        Integration Testing Results:
+        - Tests passed: ${blocks.run_integration_tests.outputs.tests_passed}
+        - Tests failed: ${blocks.run_integration_tests.outputs.tests_failed}
+        - Status: ${blocks.check_integration_results.outputs.stdout}
+
+        E2E Testing Results:
+        - Tests passed: ${blocks.run_e2e_tests.outputs.tests_passed}
+        - Tests failed: ${blocks.run_e2e_tests.outputs.tests_failed}
+        - Status: ${blocks.check_e2e_results.outputs.stdout}
+
+        All integration and E2E tests are passing.
+        Modules are properly integrated and complete workflows validated.
+
+        Approve Phase 5 completion and proceed to Phase 6 (Validation & Quality)?
+        
+        Respond with 'yes' or 'no'
+        
+        Respond with 'yes' or 'no'
+      operation: "phase5_integration_checkpoint"
+      details:
+        integration_tests: "${blocks.run_integration_tests.outputs.tests_passed}/${blocks.run_integration_tests.outputs.tests_failed}"
+        e2e_tests: "${blocks.run_e2e_tests.outputs.tests_passed}/${blocks.run_e2e_tests.outputs.tests_failed}"
+        integration_status: "${blocks.check_integration_results.outputs.stdout}"
+        e2e_status: "${blocks.check_e2e_results.outputs.stdout}"
+    depends_on:
+      - update_state_phase5
+    condition: "${blocks.check_integration_results.succeeded} and ${blocks.check_e2e_results.succeeded}"
+
+  - id: phase5_summary
+    type: Shell
+    inputs:
+      command: |
+        echo "╔════════════════════════════════════════════════════════════════╗"
+        echo "║         TDD PHASE 5: INTEGRATION TESTING COMPLETE             ║"
+        echo "╚════════════════════════════════════════════════════════════════╝"
+        echo ""
+        echo "Integration Testing:"
+        echo "  ✅ Tests passed: ${blocks.run_integration_tests.outputs.tests_passed}"
+        echo "  ❌ Tests failed: ${blocks.run_integration_tests.outputs.tests_failed}"
+        echo "  📊 Coverage: ${blocks.run_integration_tests.outputs.coverage_percent}%"
+        echo ""
+        echo "E2E Testing:"
+        echo "  ✅ Tests passed: ${blocks.run_e2e_tests.outputs.tests_passed}"
+        echo "  ❌ Tests failed: ${blocks.run_e2e_tests.outputs.tests_failed}"
+        echo ""
+        echo "Files Created:"
+        echo "  - ${inputs.project_path}/${inputs.test_path}/integration/test_integration.py"
+        echo "  - ${inputs.project_path}/${inputs.test_path}/e2e/test_e2e.py"
+        echo "  - ${inputs.project_path}/${inputs.state_file} (updated)"
+        echo ""
+        echo "Next Phase: Phase 6 - Validation & Quality"
+      timeout: 10
+    depends_on:
+      - integration_checkpoint
+
+outputs:
+  # Integration test metrics
+  integration_tests_count: "${blocks.run_integration_tests.outputs.tests_passed}"
+  integration_tests_passing: "${blocks.run_integration_tests.outputs.tests_passed}"
+  integration_tests_failed: "${blocks.run_integration_tests.outputs.tests_failed}"
+  integration_coverage: "${blocks.run_integration_tests.outputs.coverage_percent}"
+
+  # E2E test metrics
+  e2e_tests_count: "${blocks.run_e2e_tests.outputs.tests_passed}"
+  e2e_tests_passing: "${blocks.run_e2e_tests.outputs.tests_passed}"
+  e2e_tests_failed: "${blocks.run_e2e_tests.outputs.tests_failed}"
+
+  # Overall status
+  all_integration_passing: "${blocks.check_integration_results.succeeded}"
+  all_e2e_passing: "${blocks.check_e2e_results.succeeded}"
+  all_tests_passing: "${blocks.check_integration_results.succeeded} and ${blocks.check_e2e_results.succeeded}"
+
+  # Checkpoint
+  checkpoint_approved: "${blocks.integration_checkpoint.outputs.response == 'yes'}"
+
+  # State
+  state_updated: "${blocks.update_state_phase5.succeeded}"
+
+  # Summary
+  summary: "${blocks.phase5_summary.outputs.stdout}"

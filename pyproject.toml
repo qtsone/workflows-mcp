@@ -1,0 +1,104 @@
+[project]
+name = "workflows-mcp"
+dynamic = ["version"]
+description = "MCP server for DAG-based workflow execution with YAML definitions and LLM collaboration"
+authors = [
+    { name = "Iulian Bacalu", email = "ibacalu@icloud.com" }
+]
+readme = "README.md"
+license = "AGPL-3.0-or-later"
+license-files = ["LICENSE"]
+requires-python = ">=3.12"
+keywords = ["mcp", "workflow", "dag", "automation", "claude", "llm-collaboration"]
+classifiers = [
+    "Development Status :: 5 - Production/Stable",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: GNU Affero General Public License v3 or later (AGPLv3+)",
+    "Topic :: Software Development :: Libraries :: Python Modules",
+    "Topic :: System :: Distributed Computing",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.12",
+]
+
+dependencies = [
+    "mcp[cli]>=1.0.0",
+    "pydantic>=2.0",
+    "pyyaml>=6.0",
+    "types-pyyaml>=6.0.12.20250915",
+    "jinja2>=3.1.0",
+    "jsonschema>=4.0",
+]
+[project.urls]
+Homepage = "https://github.com/qtsone/workflows-mcp"
+Repository = "https://github.com/qtsone/workflows-mcp"
+Documentation = "https://github.com/qtsone/workflows-mcp/blob/main/README.md"
+Issues = "https://github.com/qtsone/workflows-mcp/issues"
+Changelog = "https://github.com/qtsone/workflows-mcp/blob/main/CHANGELOG.md"
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0",
+    "pytest-asyncio>=0.21.0",
+    "pytest-cov>=4.0",
+    "mypy>=1.8",
+    "ruff>=0.1.0",
+]
+
+[build-system]
+requires = ["hatchling>=1.26", "uv-dynamic-versioning"]
+build-backend = "hatchling.build"
+
+[tool.hatch.version]
+source = "uv-dynamic-versioning"
+
+[tool.uv-dynamic-versioning]
+enable = true
+vcs = "git"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/workflows_mcp"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "N", "W", "UP"]
+ignore = []
+
+[tool.mypy]
+python_version = "3.12"
+strict = true
+warn_return_any = true
+warn_unused_configs = true
+disallow_untyped_defs = true
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+python_classes = ["Test*"]
+python_functions = ["test_*"]
+# Ignore standalone scripts that are not pytest tests
+norecursedirs = [".git", ".venv", "build", "dist"]
+markers = [
+    "slow: marks tests as slow (deselect with '-m \"not slow\"')",
+]
+# Suppress harmless warnings from async dependencies
+filterwarnings = [
+    "ignore::pytest.PytestAssertRewriteWarning",
+]
+
+[dependency-groups]
+dev = [
+    "mypy>=1.18.2",
+    "pytest>=8.4.2",
+    "pytest-asyncio>=1.2.0",
+    "pytest-cov>=4.0",
+    "ruff>=0.1.0",
+    "types-jsonschema>=4.25.1.20251009",
+]
+
+[project.scripts]
+workflows-mcp = "workflows_mcp.__main__:main"

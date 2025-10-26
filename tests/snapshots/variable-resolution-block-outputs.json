@@ -1,0 +1,67 @@
+{
+  "status": "success",
+  "outputs": {
+    "producer_output": "produced_value\n",
+    "consumer_output": "Consumed: produced_value\n\n"
+  },
+  "blocks": {
+    "producer": {
+      "inputs": {
+        "command": "echo \"produced_value\""
+      },
+      "outputs": {
+        "exit_code": 0,
+        "stdout": "produced_value\n",
+        "stderr": ""
+      },
+      "metadata": {
+        "status": "completed",
+        "outcome": "success",
+        "execution_time_ms": 5.43994140625,
+        "started_at": "2025-10-25T15:57:55.426540+00:00",
+        "completed_at": "2025-10-25T15:57:55.431967+00:00",
+        "wave": 0,
+        "execution_order": 0,
+        "message": null,
+        "succeeded": true,
+        "failed": false,
+        "skipped": false
+      },
+      "blocks": {},
+      "depth": 0
+    },
+    "consumer": {
+      "inputs": {
+        "command": "echo \"Consumed: produced_value\n\""
+      },
+      "outputs": {
+        "exit_code": 0,
+        "stdout": "Consumed: produced_value\n\n",
+        "stderr": ""
+      },
+      "metadata": {
+        "status": "completed",
+        "outcome": "success",
+        "execution_time_ms": 5.4228515625,
+        "started_at": "2025-10-25T15:57:55.432646+00:00",
+        "completed_at": "2025-10-25T15:57:55.438060+00:00",
+        "wave": 1,
+        "execution_order": 1,
+        "message": null,
+        "succeeded": true,
+        "failed": false,
+        "skipped": false
+      },
+      "blocks": {},
+      "depth": 0
+    }
+  },
+  "metadata": {
+    "workflow_name": "variable-resolution-block-outputs",
+    "start_time": "2025-10-25T15:57:55.426436+00:00",
+    "total_blocks": 2,
+    "execution_waves": 2,
+    "completed_at": "2025-10-25T15:57:55.438505+00:00",
+    "execution_time_seconds": 0.012076139450073242
+  }
+}

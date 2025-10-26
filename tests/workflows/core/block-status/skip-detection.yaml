@@ -1,0 +1,25 @@
+name: block-status-skip-detection
+description: Test .skipped shortcut for detecting skipped block execution (ADR-007)
+tags: [test, core, status, shortcuts, adr-007]
+inputs:
+  should_skip:
+    type: bool
+    default: true
+    description: "Control whether block is skipped"
+blocks:
+  - id: skippable_block
+    type: Shell
+    inputs:
+      command: echo "ran"
+    condition: "not ${inputs.should_skip}"
+  - id: check_skipped
+    type: Shell
+    inputs:
+      command: echo "detected_skip"
+    condition: "${blocks.skippable_block.skipped}"
+    depends_on:
+      - block: skippable_block
+        required: false
+outputs:
+  block_skipped: "${blocks.skippable_block.skipped}"
+  detection_worked: "${blocks.check_skipped.succeeded}"

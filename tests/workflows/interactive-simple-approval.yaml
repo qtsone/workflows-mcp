@@ -1,0 +1,53 @@
+# Simple Interactive Approval Test Workflow
+#
+# Tests pause/resume functionality with a single Prompt block
+# Used for testing checkpoint creation, pause state, and resume with response
+
+name: interactive-simple-approval
+description: Simple interactive workflow for testing pause/resume
+tags: [test, interactive, prompt]
+
+inputs:
+  message:
+    type: str
+    description: Message to display in prompt
+    default: "Proceed with operation?"
+
+blocks:
+  # Step 1: Echo initial state
+  - id: start
+    type: Shell
+    inputs:
+      command: |
+        echo "Starting workflow with message: ${inputs.message}"
+
+  # Step 2: Interactive prompt - PAUSES WORKFLOW
+  - id: approval
+    type: Prompt
+    inputs:
+      prompt: "${inputs.message}"
+    depends_on: [start]
+
+  # Step 3: Execute if approved
+  - id: approved_action
+    type: Shell
+    inputs:
+      command: |
+        echo "Action approved! Response was: ${blocks.approval.outputs.response}"
+    depends_on: [approval]
+    condition: "${blocks.approval.outputs.response} == 'yes'"
+
+  # Step 4: Execute if denied
+  - id: denied_action
+    type: Shell
+    inputs:
+      command: |
+        echo "Action denied! Response was: ${blocks.approval.outputs.response}"
+    depends_on: [approval]
+    condition: "${blocks.approval.outputs.response} == 'no'"
+
+outputs:
+  started: "${blocks.start.succeeded}"
+  approval_response: "${blocks.approval.outputs.response}"
+  approved: "${blocks.approved_action.succeeded}"
+  denied: "${blocks.denied_action.succeeded}"

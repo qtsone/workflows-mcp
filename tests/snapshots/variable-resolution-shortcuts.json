@@ -1,0 +1,202 @@
+{
+  "status": "success",
+  "outputs": {
+    "status_shortcut_works": "true",
+    "status_full_path_works": "true",
+    "outcome_shortcut_works": "true",
+    "outcome_full_path_works": "true",
+    "success_shortcut_works": "true",
+    "success_full_path_works": "true",
+    "status_shortcut_value": "completed",
+    "status_full_path_value": "completed",
+    "outcome_shortcut_value": "success",
+    "outcome_full_path_value": "success",
+    "success_shortcut_value": "true",
+    "success_full_path_value": "true"
+  },
+  "blocks": {
+    "producer": {
+      "inputs": {
+        "command": "echo \"value\""
+      },
+      "outputs": {
+        "exit_code": 0,
+        "stdout": "value\n",
+        "stderr": ""
+      },
+      "metadata": {
+        "status": "completed",
+        "outcome": "success",
+        "execution_time_ms": 4.882080078125,
+        "started_at": "2025-10-25T15:57:55.465091+00:00",
+        "completed_at": "2025-10-25T15:57:55.469966+00:00",
+        "wave": 0,
+        "execution_order": 0,
+        "message": null,
+        "succeeded": true,
+        "failed": false,
+        "skipped": false
+      },
+      "blocks": {},
+      "depth": 0
+    },
+    "use_status_full_path": {
+      "inputs": {
+        "command": "echo \"completed\""
+      },
+      "outputs": {
+        "exit_code": 0,
+        "stdout": "completed\n",
+        "stderr": ""
+      },
+      "metadata": {
+        "status": "completed",
+        "outcome": "success",
+        "execution_time_ms": 14.64306640625,
+        "started_at": "2025-10-25T15:57:55.470393+00:00",
+        "completed_at": "2025-10-25T15:57:55.485025+00:00",
+        "wave": 1,
+        "execution_order": 1,
+        "message": null,
+        "succeeded": true,
+        "failed": false,
+        "skipped": false
+      },
+      "blocks": {},
+      "depth": 0
+    },
+    "use_success_shortcut": {
+      "inputs": {
+        "command": "echo \"true\""
+      },
+      "outputs": {
+        "exit_code": 0,
+        "stdout": "true\n",
+        "stderr": ""
+      },
+      "metadata": {
+        "status": "completed",
+        "outcome": "success",
+        "execution_time_ms": 12.532958984375,
+        "started_at": "2025-10-25T15:57:55.472605+00:00",
+        "completed_at": "2025-10-25T15:57:55.485145+00:00",
+        "wave": 1,
+        "execution_order": 1,
+        "message": null,
+        "succeeded": true,
+        "failed": false,
+        "skipped": false
+      },
+      "blocks": {},
+      "depth": 0
+    },
+    "use_success_full_path": {
+      "inputs": {
+        "command": "echo \"true\""
+      },
+      "outputs": {
+        "exit_code": 0,
+        "stdout": "true\n",
+        "stderr": ""
+      },
+      "metadata": {
+        "status": "completed",
+        "outcome": "success",
+        "execution_time_ms": 10.7373046875,
+        "started_at": "2025-10-25T15:57:55.474432+00:00",
+        "completed_at": "2025-10-25T15:57:55.485179+00:00",
+        "wave": 1,
+        "execution_order": 1,
+        "message": null,
+        "succeeded": true,
+        "failed": false,
+        "skipped": false
+      },
+      "blocks": {},
+      "depth": 0
+    },
+    "use_outcome_shortcut": {
+      "inputs": {
+        "command": "echo \"success\""
+      },
+      "outputs": {
+        "exit_code": 0,
+        "stdout": "success\n",
+        "stderr": ""
+      },
+      "metadata": {
+        "status": "completed",
+        "outcome": "success",
+        "execution_time_ms": 8.375244140625,
+        "started_at": "2025-10-25T15:57:55.476826+00:00",
+        "completed_at": "2025-10-25T15:57:55.485211+00:00",
+        "wave": 1,
+        "execution_order": 1,
+        "message": null,
+        "succeeded": true,
+        "failed": false,
+        "skipped": false
+      },
+      "blocks": {},
+      "depth": 0
+    },
+    "use_status_shortcut": {
+      "inputs": {
+        "command": "echo \"completed\""
+      },
+      "outputs": {
+        "exit_code": 0,
+        "stdout": "completed\n",
+        "stderr": ""
+      },
+      "metadata": {
+        "status": "completed",
+        "outcome": "success",
+        "execution_time_ms": 5.99365234375,
+        "started_at": "2025-10-25T15:57:55.479241+00:00",
+        "completed_at": "2025-10-25T15:57:55.485244+00:00",
+        "wave": 1,
+        "execution_order": 1,
+        "message": null,
+        "succeeded": true,
+        "failed": false,
+        "skipped": false
+      },
+      "blocks": {},
+      "depth": 0
+    },
+    "use_outcome_full_path": {
+      "inputs": {
+        "command": "echo \"success\""
+      },
+      "outputs": {
+        "exit_code": 0,
+        "stdout": "success\n",
+        "stderr": ""
+      },
+      "metadata": {
+        "status": "completed",
+        "outcome": "success",
+        "execution_time_ms": 5.5888671875,
+        "started_at": "2025-10-25T15:57:55.481601+00:00",
+        "completed_at": "2025-10-25T15:57:55.487193+00:00",
+        "wave": 1,
+        "execution_order": 1,
+        "message": null,
+        "succeeded": true,
+        "failed": false,
+        "skipped": false
+      },
+      "blocks": {},
+      "depth": 0
+    }
+  },
+  "metadata": {
+    "workflow_name": "variable-resolution-shortcuts",
+    "start_time": "2025-10-25T15:57:55.464987+00:00",
+    "total_blocks": 7,
+    "execution_waves": 2,
+    "completed_at": "2025-10-25T15:57:55.487645+00:00",
+    "execution_time_seconds": 0.022665977478027344
+  }
+}
