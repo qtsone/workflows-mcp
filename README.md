@@ -22,9 +22,26 @@ uv pip install workflows-mcp
 pip install workflows-mcp
 ```
 
-### Configure in Claude Desktop
+### Configuration
 
-Add to your Claude Desktop config (`~/Library/Application Support/Claude/claude_desktop_config.json` on macOS):
+**Option 1: Install via QTS Marketplace (Claude Desktop & Claude Code)**
+
+Install the `workflows` plugin from the [qtsone marketplace](https://github.com/qtsone/marketplace) which includes:
+- 🤖 **workflows-specialist agent** - Dedicated agent for workflow orchestration
+- 📚 **workflows-expert skill** - Comprehensive knowledge base and best practices
+- ⚙️ **MCP auto-configuration** - Automatic workflows-mcp server setup
+
+```bash
+# Add the marketplace (one-time setup)
+/plugin marketplace add qtsone/marketplace
+
+# Install the workflows plugin
+/plugin install workflows@qtsone
+```
+
+The plugin automatically configures the MCP server with custom workflow directories: `~/.workflows` and `./.workflows`
+
+**Option 2: Manual MCP Configuration (Any MCP-Compatible LLM)**
 
 ```json
 {
@@ -32,12 +49,11 @@ Add to your Claude Desktop config (`~/Library/Application Support/Claude/claude_
     "workflows": {
       "command": "uvx",
       "args": [
-        "--from", "workflows-mcp",
         "workflows-mcp"
       ],
       "env": {
+        "WORKFLOWS_TEMPLATE_PATHS": "~/.workflows:./.workflows",
         "WORKFLOWS_LOG_LEVEL": "INFO",
-        "WORKFLOWS_TEMPLATE_PATHS": "~/my-workflows,/opt/team-workflows",
         "WORKFLOWS_MAX_RECURSION_DEPTH": "50"
       }
     }
@@ -46,8 +62,7 @@ Add to your Claude Desktop config (`~/Library/Application Support/Claude/claude_
 ```
 
 All `env` variables are optional. Omit the entire `env` section for default settings.
-
-Restart Claude Desktop, and you're ready to go!
+Restart your LLM client, and you're ready to go!
 
 ## What Can You Do With It?
 
