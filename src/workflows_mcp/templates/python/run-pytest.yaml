@@ -126,15 +126,15 @@ blocks:
 
   # Generate test summary
   - id: test_summary
-    type: EchoBlock
+    type: Shell
     inputs:
-      message: |
-        Pytest Execution Summary:
-        - Tests executed: ${inputs.test_path}
-        - Exit code: ${blocks.run_pytest.outputs.exit_code}
-        - Status: ${blocks.get_test_status.outputs.stdout}
-        - Execution time: ${blocks.run_pytest.metadata.execution_time_ms}ms
-        - Coverage threshold: ${inputs.coverage_threshold}%
+      command: |
+        printf "Pytest Execution Summary:\n"
+        printf "- Tests executed: ${inputs.test_path}\n"
+        printf "- Exit code: ${blocks.run_pytest.outputs.exit_code}\n"
+        printf "- Status: ${blocks.get_test_status.outputs.stdout}\n"
+        printf "- Execution time: ${blocks.run_pytest.metadata.execution_time_ms}ms\n"
+        printf "- Coverage threshold: ${inputs.coverage_threshold}%%"
     depends_on:
       - get_test_status
 
@@ -144,5 +144,5 @@ outputs:
   stdout: "${blocks.run_pytest.outputs.stdout}"
   stderr: "${blocks.run_pytest.outputs.stderr}"
   execution_time_ms: "${blocks.run_pytest.metadata.execution_time_ms}"
-  summary: "${blocks.test_summary.outputs.echoed}"
+  summary: "${blocks.test_summary.outputs.stdout}"
   command_executed: "${blocks.build_command.outputs.stdout}"

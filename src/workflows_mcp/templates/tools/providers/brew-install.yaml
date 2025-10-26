@@ -115,17 +115,17 @@ blocks:
 
   # Generate installation summary
   - id: installation_summary
-    type: EchoBlock
+    type: Shell
     inputs:
-      message: |
-        Homebrew Installation Summary:
-        - Package: ${inputs.package_name}
-        - Cask: ${inputs.cask}
-        - Brew Available: ${blocks.check_brew_available.succeeded}
-        - Already Installed: ${blocks.check_installed.succeeded}
-        - Exit Code: ${blocks.install_package.outputs.exit_code}
-        - Installed Version: ${blocks.get_installed_version.outputs.stdout}
-        - Command: ${blocks.build_install_command.outputs.stdout}
+      command: |
+        printf "Homebrew Installation Summary:\n"
+        printf "- Package: ${inputs.package_name}\n"
+        printf "- Cask: ${inputs.cask}\n"
+        printf "- Brew Available: ${blocks.check_brew_available.succeeded}\n"
+        printf "- Already Installed: ${blocks.check_installed.succeeded}\n"
+        printf "- Exit Code: ${blocks.install_package.outputs.exit_code}\n"
+        printf "- Installed Version: ${blocks.get_installed_version.outputs.stdout}\n"
+        printf "- Command: ${blocks.build_install_command.outputs.stdout}"
     depends_on:
       - check_brew_available
       - check_installed
@@ -141,4 +141,4 @@ outputs:
   command_executed: "${blocks.build_install_command.outputs.stdout}"
   brew_available: "${blocks.check_brew_available.succeeded}"
   already_installed: "${blocks.check_installed.succeeded}"
-  summary: "${blocks.installation_summary.outputs.echoed}"
+  summary: "${blocks.installation_summary.outputs.stdout}"

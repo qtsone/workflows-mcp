@@ -124,18 +124,18 @@ blocks:
 
   # Generate installation summary
   - id: installation_summary
-    type: EchoBlock
+    type: Shell
     inputs:
-      message: |
-        uv Installation Summary:
-        - Package: ${inputs.package_name}
-        - Version Constraint: ${inputs.version}
-        - Extras: ${inputs.extras}
-        - uv Available: ${blocks.check_uv_available.succeeded}
-        - Exit Code: ${blocks.install_package.outputs.exit_code}
-        - Installed Version: ${blocks.verify_installation.outputs.stdout}
-        - Install Location: ${blocks.get_install_location.outputs.stdout}
-        - Command: ${blocks.build_install_command.outputs.stdout}
+      command: |
+        printf "uv Installation Summary:\n"
+        printf "- Package: ${inputs.package_name}\n"
+        printf "- Version Constraint: ${inputs.version}\n"
+        printf "- Extras: ${inputs.extras}\n"
+        printf "- uv Available: ${blocks.check_uv_available.succeeded}\n"
+        printf "- Exit Code: ${blocks.install_package.outputs.exit_code}\n"
+        printf "- Installed Version: ${blocks.verify_installation.outputs.stdout}\n"
+        printf "- Install Location: ${blocks.get_install_location.outputs.stdout}\n"
+        printf "- Command: ${blocks.build_install_command.outputs.stdout}"
     depends_on:
       - check_uv_available
       - install_package
@@ -151,4 +151,4 @@ outputs:
   stderr: "${blocks.install_package.outputs.stderr}"
   command_executed: "${blocks.build_install_command.outputs.stdout}"
   uv_available: "${blocks.check_uv_available.succeeded}"
-  summary: "${blocks.installation_summary.outputs.echoed}"
+  summary: "${blocks.installation_summary.outputs.stdout}"

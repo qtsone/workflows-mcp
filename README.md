@@ -22,16 +22,6 @@ uv pip install workflows-mcp
 pip install workflows-mcp
 ```
 
-### Running the Server
-
-```bash
-# Directly
-workflows-mcp
-
-# Or via Python module
-python -m workflows_mcp
-```
-
 ### Configure in Claude Desktop
 
 Add to your Claude Desktop config (`~/Library/Application Support/Claude/claude_desktop_config.json` on macOS):
@@ -124,110 +114,76 @@ inputs:
 
 blocks:
   - id: greet
-    type: EchoBlock
+    type: Shell
     inputs:
-      message: "Hello, ${inputs.name}!"
+      command: printf "Hello, ${inputs.name}!"
 
 outputs:
-  greeting: "${blocks.greet.outputs.echoed}"
+  greeting: "${blocks.greet.outputs.stdout}"
 ```
 
 ### Key Features
 
 **Variable Substitution:**
 
-Reference inputs, block outputs, and metadata anywhere in your workflow:
+Reference inputs, block outputs, and metadata anywhere in your workflow.
 
-```yaml
-# From inputs
-message: "${inputs.project_name}"
+Examples:
 
-# From block outputs
-path: "${blocks.setup.outputs.venv_path}"
-
-# From metadata
-timestamp: "${metadata.start_time}"
-```
+- [Using workflow inputs](tests/workflows/core/variable-resolution/inputs.yaml) - `${inputs.field_name}`
+- [Using block outputs](tests/workflows/core/variable-resolution/block-outputs.yaml) - `${blocks.block_id.outputs.field}`
+- [Using metadata](tests/workflows/core/variable-resolution/metadata.yaml) - `${metadata.workflow_name}`
+- [Variable shortcuts](tests/workflows/core/variable-resolution/shortcuts.yaml) - convenient shorthand syntax
 
 **Conditionals:**
 
-Run blocks only when conditions are met:
+Run blocks only when conditions are met.
 
-```yaml
-- id: deploy
-  type: Shell
-  inputs:
-    command: ./deploy.sh
-  condition: "${blocks.run_tests.succeeded}"
-  depends_on: [run_tests]
-```
+Examples:
+
+- [Input-based conditions](tests/workflows/core/conditionals/input-based.yaml) - conditions using workflow inputs
+- [Block status conditions](tests/workflows/core/conditionals/block-status.yaml) - conditions based on block execution
+
+**Block Status Shortcuts:**
+
+Use simple shortcuts to check if blocks succeeded, failed, or were skipped.
+
+Examples:
+
+- [Success detection](tests/workflows/core/block-status/success-detection.yaml) - `${blocks.id.succeeded}`
+- [Failure detection](tests/workflows/core/block-status/failure-detection.yaml) - `${blocks.id.failed}`
+- [Skip detection](tests/workflows/core/block-status/skip-detection.yaml) - `${blocks.id.skipped}`
 
 **Parallel Execution:**
 
-Tasks with no dependencies run in parallel automatically:
+Tasks with no dependencies run in parallel automatically.
 
-```yaml
-blocks:
-  - id: lint
-    type: Workflow
-    inputs:
-      workflow: "lint-python"
-    depends_on: [setup]
+Example: [parallel-execution.yaml](tests/workflows/core/dag-execution/parallel-execution.yaml) - blocks with same dependencies execute concurrently
 
-  - id: test
-    type: Workflow
-    inputs:
-      workflow: "run-pytest"
-    depends_on: [setup]  # Both run in parallel after setup!
-```
+**Workflow Composition & Recursion:**
 
-**Workflow Composition:**
+Workflows can call other workflows, including themselves (recursion supported with depth limits).
 
-Workflows can call other workflows:
+Examples:
 
-```yaml
-- id: ci_pipeline
-  type: Workflow
-  inputs:
-    workflow: "python-ci-pipeline"
-    inputs:
-      project_path: "${inputs.workspace}"
-```
+- [Workflow composition](tests/workflows/core/composition/) - nested workflow patterns
+- [Recursive workflows](tests/workflows/core/composition/recursion.yaml) - self-calling workflows
+
+Control recursion depth with `WORKFLOWS_MAX_RECURSION_DEPTH` (default: 50, max: 10000).
 
 ### Available Block Types
 
 - **Shell** - Execute shell commands
-- **Workflow** - Call another workflow
-- **EchoBlock** - Simple echo for testing
+- **Workflow** - Call another workflow (enables composition and recursion)
 - **CreateFile** - Create files with content
 - **ReadFile** - Read file contents
 - **RenderTemplate** - Process Jinja2 templates
 - **Prompt** - Interactive user prompts (with pause/resume)
-- **LoadState** / **SaveState** - Manage JSON state
+- **ReadJSONState** / **WriteJSONState** / **MergeJSONState** - Manage JSON state files
 
 ## Custom Workflow Templates
 
-Want to add your own workflows? Set the `WORKFLOWS_TEMPLATE_PATHS` environment variable:
-
-```bash
-export WORKFLOWS_TEMPLATE_PATHS="~/my-workflows,/opt/company-workflows"
-```
-
-Or in your MCP configuration:
-
-```json
-{
-  "mcpServers": {
-    "workflows": {
-      "command": "uvx",
-      "args": ["--from", "workflows-mcp", "workflows-mcp"],
-      "env": {
-        "WORKFLOWS_TEMPLATE_PATHS": "~/my-workflows,/opt/company-workflows"
-      }
-    }
-  }
-}
-```
+Want to add your own workflows? Set the `WORKFLOWS_TEMPLATE_PATHS` environment variable in your Claude Desktop configuration (see [Configure in Claude Desktop](#configure-in-claude-desktop) above).
 
 Your custom workflows override built-in ones if they have the same name. Later directories in the path override earlier ones.
 
@@ -277,6 +233,32 @@ uv run ruff check src/workflows_mcp/
 # Formatting
 uv run ruff format src/workflows_mcp/
 ```
+
+### Testing the MCP Server
+
+For interactive testing and debugging, create a `.mcp.json` config file:
+
+```json
+{
+  "mcpServers": {
+    "workflows": {
+      "command": "uv",
+      "args": ["run", "workflows-mcp"],
+      "env": {
+        "WORKFLOWS_LOG_LEVEL": "DEBUG"
+      }
+    }
+  }
+}
+```
+
+Then use the MCP Inspector:
+
+```bash
+npx @modelcontextprotocol/inspector --config .mcp.json --server workflows
+```
+
+This opens a web interface where you can test tool calls, inspect responses, and debug workflow execution.
 
 ## Architecture
 

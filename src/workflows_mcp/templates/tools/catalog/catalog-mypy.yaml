@@ -7,9 +7,9 @@ tags: [tools, catalog, mypy, python, type-checking, static-analysis]
 # Catalog files are metadata-only (minimal no-op block for validation)
 blocks:
   - id: catalog_marker
-    type: EchoBlock
+    type: Shell
     inputs:
-      message: "Catalog file: mypy tool specifications"
+      command: 'printf "Catalog file: mypy tool specifications"'
 
 # Tool metadata stored as workflow inputs
 inputs:
@@ -95,4 +95,4 @@ inputs:
 
 outputs:
   catalog_type: "catalog"
-  tool_catalog_marker: "${blocks.catalog_marker.outputs.echoed}"
+  tool_catalog_marker: "${blocks.catalog_marker.outputs.stdout}"

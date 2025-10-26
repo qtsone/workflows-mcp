@@ -449,17 +449,17 @@ blocks:
 
   # Step 14: Generate summary
   - id: ensure_summary
-    type: EchoBlock
+    type: Shell
     inputs:
-      message: |
-        Ensure Tool Summary:
-        - Tool: ${inputs.tool_name}
-        - Type: ${inputs.tool_type}
-        - Provider: ${blocks.select_provider.outputs.stdout}
-        - Action: ${blocks.consolidate_action.outputs.stdout}
-        - Available: ${blocks.consolidate_availability.outputs.stdout}
-        - Version: ${blocks.consolidate_version.outputs.stdout}
-        - Path: ${blocks.consolidate_path.outputs.stdout}
+      command: |
+        printf "Ensure Tool Summary:\n"
+        printf "- Tool: ${inputs.tool_name}\n"
+        printf "- Type: ${inputs.tool_type}\n"
+        printf "- Provider: ${blocks.select_provider.outputs.stdout}\n"
+        printf "- Action: ${blocks.consolidate_action.outputs.stdout}\n"
+        printf "- Available: ${blocks.consolidate_availability.outputs.stdout}\n"
+        printf "- Version: ${blocks.consolidate_version.outputs.stdout}\n"
+        printf "- Path: ${blocks.consolidate_path.outputs.stdout}"
     depends_on:
       - select_provider
       - consolidate_action
@@ -475,4 +475,4 @@ outputs:
   tool_path: "${blocks.consolidate_path.outputs.stdout}"
   action_taken: "${blocks.consolidate_action.outputs.stdout}"
   validation_output: "${blocks.validate_command.outputs.summary}"
-  summary: "${blocks.ensure_summary.outputs.echoed}"
+  summary: "${blocks.ensure_summary.outputs.stdout}"

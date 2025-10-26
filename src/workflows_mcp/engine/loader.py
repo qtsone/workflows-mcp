@@ -86,9 +86,9 @@ def load_workflow_from_yaml(
         tags: [test, example]
         blocks:
           - id: block1
-            type: EchoBlock
+            type: Shell
             inputs:
-              message: "Hello"
+              command: 'printf "Hello"'
         '''
         result = load_workflow_from_yaml(yaml_str)
     """

@@ -283,22 +283,22 @@ blocks:
 
   # Generate comprehensive summary
   - id: generate_summary
-    type: EchoBlock
+    type: Shell
     inputs:
-      message: |
-        ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-        Python Quality Check Results
-        ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-        Source Path:   ${inputs.source_path}
-        Strict Mode:   ${inputs.strict}
-
-        Checks:
-          Linting:     ${blocks.format_linting_display.outputs.stdout}
-          Type Check:  ${blocks.format_typing_display.outputs.stdout}
-          Formatting:  ${blocks.format_formatting_display.outputs.stdout}
-
-        Overall Status: ${blocks.format_overall_display.outputs.stdout}
-        ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+      command: |
+        printf "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+        printf "Python Quality Check Results\n"
+        printf "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+        printf "Source Path:   ${inputs.source_path}\n"
+        printf "Strict Mode:   ${inputs.strict}\n"
+        printf "\n"
+        printf "Checks:\n"
+        printf "  Linting:     ${blocks.format_linting_display.outputs.stdout}\n"
+        printf "  Type Check:  ${blocks.format_typing_display.outputs.stdout}\n"
+        printf "  Formatting:  ${blocks.format_formatting_display.outputs.stdout}\n"
+        printf "\n"
+        printf "Overall Status: ${blocks.format_overall_display.outputs.stdout}\n"
+        printf "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
     depends_on:
       - format_linting_display
       - format_typing_display
@@ -320,7 +320,7 @@ outputs:
   all_checks_passed: "${blocks.calculate_overall_status.outputs.stdout} == 'passed'"
 
   # Summary and metadata
-  summary: "${blocks.generate_summary.outputs.echoed}"
+  summary: "${blocks.generate_summary.outputs.stdout}"
 
   # Full outputs for debugging
   linting_output: "${blocks.run_ruff_linting.outputs.stdout}"

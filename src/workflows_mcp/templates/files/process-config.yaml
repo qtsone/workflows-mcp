@@ -43,9 +43,9 @@ blocks:
 
   # Validate configuration format
   - id: validate_format
-    type: EchoBlock
+    type: Shell
     inputs:
-      message: "Validating config format: ${inputs.config_path} (${blocks.read_config.outputs.size_bytes} bytes)"
+      command: 'printf "Validating config format: ${inputs.config_path} (${blocks.read_config.outputs.size_bytes} bytes)"'
     depends_on:
       - read_config
 
@@ -156,20 +156,20 @@ blocks:
 
   # Generate processing report
   - id: processing_report
-    type: EchoBlock
+    type: Shell
     inputs:
-      message: |
-        Configuration Processing Report:
-        ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-        Input: ${inputs.config_path} (${blocks.read_config.outputs.size_bytes} bytes)
-        ${blocks.get_mode_display.outputs.stdout}
-        Environment: ${inputs.environment}
-        ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-        Validation: ✓ PASSED
-        ${blocks.get_backup_display.outputs.stdout}
-        ${blocks.get_output_display.outputs.stdout}
-        ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-        Status: ✓ Processing complete
+      command: |
+        printf "Configuration Processing Report:\n"
+        printf "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+        printf "Input: ${inputs.config_path} (${blocks.read_config.outputs.size_bytes} bytes)\n"
+        printf "${blocks.get_mode_display.outputs.stdout}\n"
+        printf "Environment: ${inputs.environment}\n"
+        printf "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+        printf "Validation: ✓ PASSED\n"
+        printf "${blocks.get_backup_display.outputs.stdout}\n"
+        printf "${blocks.get_output_display.outputs.stdout}\n"
+        printf "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+        printf "Status: ✓ Processing complete"
     depends_on:
       - get_mode_display
       - get_backup_display
@@ -192,4 +192,4 @@ outputs:
   output_size: "${blocks.verify_output.outputs.size_bytes}"
 
   environment: "${inputs.environment}"
-  report: "${blocks.processing_report.outputs.echoed}"
+  report: "${blocks.processing_report.outputs.stdout}"

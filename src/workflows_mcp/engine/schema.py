@@ -464,19 +464,19 @@ class WorkflowSchema(BaseModel):
 
         blocks:
           - id: block1
-            type: EchoBlock
+            type: Shell
             inputs:
-              message: "Hello ${input_name}"
+              command: 'printf "Hello ${input_name}"'
 
           - id: block2
-            type: EchoBlock
+            type: Shell
             inputs:
-              message: "Output: ${block1.echoed}"
+              command: 'printf "Output: ${blocks.block1.outputs.stdout}"'
             depends_on:
               - block1
 
         outputs:
-          final_message: "${block2.echoed}"
+          final_message: "${blocks.block2.outputs.stdout}"
     """
 
     # Metadata fields (flattened for YAML convenience)
