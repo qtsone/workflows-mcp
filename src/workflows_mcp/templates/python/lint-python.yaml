@@ -222,16 +222,16 @@ blocks:
 
   # Aggregate results
   - id: aggregate_results
-    type: EchoBlock
+    type: Shell
     inputs:
-      message: |
-        Code Quality Results:
-        ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-        Ruff Linting:  ${blocks.get_ruff_status.outputs.stdout}
-        Mypy:          ${blocks.get_mypy_display.outputs.stdout}
-        Formatting:    ${blocks.get_format_status.outputs.stdout}
-        ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-        Overall: ${blocks.get_overall_status.outputs.stdout}
+      command: |
+        printf "Code Quality Results:\n"
+        printf "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+        printf "Ruff Linting:  ${blocks.get_ruff_status.outputs.stdout}\n"
+        printf "Mypy:          ${blocks.get_mypy_display.outputs.stdout}\n"
+        printf "Formatting:    ${blocks.get_format_status.outputs.stdout}\n"
+        printf "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+        printf "Overall: ${blocks.get_overall_status.outputs.stdout}"
     depends_on:
       - get_overall_status
 
@@ -250,7 +250,7 @@ outputs:
 
   # Overall status
   all_passed: "${blocks.run_ruff.outputs.exit_code} == 0 and (${inputs.skip_mypy} or ${blocks.run_mypy.outputs.exit_code} == 0) and ${blocks.check_format.outputs.exit_code} == 0"
-  summary: "${blocks.aggregate_results.outputs.echoed}"
+  summary: "${blocks.aggregate_results.outputs.stdout}"
 
   # Execution metadata
   total_execution_time_ms: "${blocks.aggregate_results.metadata.execution_time_ms}"

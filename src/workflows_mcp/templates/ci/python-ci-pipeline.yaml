@@ -183,18 +183,18 @@ blocks:
 
   # Stage 4: Validate results
   - id: validate_pipeline
-    type: EchoBlock
+    type: Shell
     inputs:
-      message: |
-        ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-        Python CI Pipeline Results
-        ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-        ${blocks.get_setup_display.outputs.stdout}
-        Linting: ${blocks.get_linting_display.outputs.stdout}
-        Testing: ${blocks.get_testing_display.outputs.stdout}
-        ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-        Overall Status: ${blocks.get_overall_display.outputs.stdout}
-        ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+      command: |
+        printf "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+        printf "Python CI Pipeline Results\n"
+        printf "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+        printf "${blocks.get_setup_display.outputs.stdout}\n"
+        printf "Linting: ${blocks.get_linting_display.outputs.stdout}\n"
+        printf "Testing: ${blocks.get_testing_display.outputs.stdout}\n"
+        printf "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+        printf "Overall Status: ${blocks.get_overall_display.outputs.stdout}\n"
+        printf "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
     depends_on:
       - get_overall_display
 
@@ -217,5 +217,5 @@ outputs:
   test_exit_code: "${blocks.run_tests.outputs.exit_code}"
 
   # Summary
-  pipeline_summary: "${blocks.validate_pipeline.outputs.echoed}"
+  pipeline_summary: "${blocks.validate_pipeline.outputs.stdout}"
   execution_time_ms: "${blocks.validate_pipeline.metadata.execution_time_ms}"

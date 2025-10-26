@@ -150,19 +150,18 @@ blocks:
 
   # Generate summary
   - id: summary
-    type: EchoBlock
+    type: Shell
     inputs:
-      message: |
-        README Generation Summary:
-        ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-        Project: ${inputs.project_name} v${inputs.version}
-        Template: ${inputs.template_path} (${blocks.check_template.outputs.stdout})
-        Output: ${inputs.output_path}
-        Author: ${inputs.author}
-        License: ${inputs.license}
-        ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-        Status: ✓ README generated successfully
-        Size: ${blocks.verify_readme.outputs.size_bytes} bytes
+      command: |
+        printf "README Generation Summary:\n"
+        printf "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+        printf "Project: ${inputs.project_name} v${inputs.version}\n"
+        printf "Template: ${inputs.template_path} (${blocks.check_template.outputs.stdout})\n"
+        printf "Output: ${inputs.output_path}\n"
+        printf "Author: ${inputs.author}\n"
+        printf "License: ${inputs.license}\n"
+        printf "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+        printf "Status: ✓ README generated successfully"
     depends_on:
       - verify_readme
 
@@ -173,4 +172,4 @@ outputs:
   template_created: "${inputs.create_template_if_missing} and 'missing' in ${blocks.check_template.outputs.stdout}"
   readme_content: "${blocks.verify_readme.outputs.content}"
   readme_size: "${blocks.verify_readme.outputs.size_bytes}"
-  summary: "${blocks.summary.outputs.echoed}"
+  summary: "${blocks.summary.outputs.stdout}"

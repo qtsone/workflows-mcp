@@ -42,9 +42,9 @@ inputs:
 blocks:
   # Validate environment
   - id: validate_env
-    type: EchoBlock
+    type: Shell
     inputs:
-      message: "Validating deployment to ${inputs.environment} environment"
+      command: 'printf "Validating deployment to ${inputs.environment} environment"'
 
   # Run pre-deployment tests
   - id: run_tests
@@ -98,9 +98,9 @@ blocks:
 
   # Production deployment (requires approval)
   - id: production_check
-    type: EchoBlock
+    type: Shell
     inputs:
-      message: "Production deployment requires approval: ${inputs.require_approval}"
+      command: 'printf "Production deployment requires approval: ${inputs.require_approval}"'
     depends_on:
       - build_artifacts
     condition: "${inputs.environment} == 'production'"
@@ -258,22 +258,21 @@ blocks:
 
   # Generate deployment report
   - id: deployment_report
-    type: EchoBlock
+    type: Shell
     inputs:
-      message: |
-        ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-        Deployment Report
-        ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-        Environment: ${inputs.environment}
-        Tests Run: ${blocks.get_test_display.outputs.stdout}
-        Artifacts Built: ${blocks.get_artifacts_display.outputs.stdout}
-        Deployment Status:
-          - Dev: ${blocks.get_dev_display.outputs.stdout}
-          - Staging: ${blocks.get_staging_display.outputs.stdout}
-          - Production: ${blocks.get_production_display.outputs.stdout}
-        ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-        Verification: ${blocks.verify_deployment.outputs.stdout}
-        ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+      command: |
+        printf "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+        printf "Deployment Report\n"
+        printf "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+        printf "Environment: ${inputs.environment}\n"
+        printf "Tests Run: ${blocks.get_test_display.outputs.stdout}\n"
+        printf "Artifacts Built: ${blocks.get_artifacts_display.outputs.stdout}\n"
+        printf "Deployment Status:\n"
+        printf "  - Dev: ${blocks.get_dev_display.outputs.stdout}\n"
+        printf "  - Staging: ${blocks.get_staging_display.outputs.stdout}\n"
+        printf "  - Production: ${blocks.get_production_display.outputs.stdout}\n"
+        printf "Verification: ${blocks.verify_deployment.outputs.stdout}\n"
+        printf "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
     depends_on:
       - get_test_display
       - get_artifacts_display
@@ -300,5 +299,5 @@ outputs:
   production_approval_required: "${inputs.environment} == 'production' and ${inputs.require_approval}"
 
   # Report
-  report: "${blocks.deployment_report.outputs.echoed}"
+  report: "${blocks.deployment_report.outputs.stdout}"
   verification_output: "${blocks.verify_deployment.outputs.stdout}"
