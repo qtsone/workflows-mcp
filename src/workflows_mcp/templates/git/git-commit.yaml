@@ -48,7 +48,7 @@ blocks:
     inputs:
       command: git add -A
       working_dir: "{{inputs.working_dir}}"
-    condition: {{inputs.stage_all}}
+    condition: "{{inputs.stage_all}}"
 
   - id: analyze_changes
     type: Workflow
