@@ -95,14 +95,11 @@ blocks:
         - Body: explain what and why (optional)
         - Scope: component/module affected (optional)
 
-        ## File Status
-        ${blocks.analyze_changes.outputs.file_status}
-
-        ## Diff Statistics
-        ${blocks.analyze_changes.outputs.diff_stat}
+        ## Summary
+        ${blocks.analyze_changes.outputs.summary}
 
         ## Detailed Changes
-        ${blocks.analyze_changes.outputs.staged_diff}
+        ${blocks.analyze_changes.outputs.diff}
 
         Generate ONLY the commit message (no quotes, no explanations):
     condition: "${blocks.analyze_changes.outputs.has_changes} and ${inputs.commit_message} == ''"
@@ -116,15 +113,19 @@ blocks:
       command: |
         if [ -n "${inputs.commit_message}" ]; then
           # Use manual message if provided
-          echo "${inputs.commit_message}"
+          printf '%s' "${inputs.commit_message}" > "$SCRATCH/message.txt"
         else
           # Use LLM-generated message
-          echo "${blocks.llm_generate_message.outputs.response}"
+          printf '%s' "${blocks.llm_generate_message.outputs.response}" > "$SCRATCH/message.txt"
         fi
     condition: "${blocks.analyze_changes.outputs.has_changes}"
     depends_on:
       - block: llm_generate_message
         required: false
+    outputs:
+      message:
+        type: str
+        path: "$SCRATCH/message.txt"
 
   - id: confirm_commit
     type: Prompt
@@ -133,7 +134,7 @@ blocks:
       prompt: |
         About to create commit with message:
 
-        ${blocks.select_message.outputs.stdout}
+        ${blocks.select_message.outputs.message}
 
         Proceed with commit? Respond with 'yes' or 'no'
     condition: "${blocks.analyze_changes.outputs.has_changes} and not ${inputs.auto_commit}"
@@ -146,8 +147,8 @@ blocks:
     inputs:
       command: |
         set -e  # Exit immediately if any command fails
-        # Create commit and get hash (using -F - to handle multi-line messages)
-        echo "${blocks.select_message.outputs.stdout}" | git commit -F -
+        # Create commit from message file and get hash
+        git commit -F "$SCRATCH/message.txt"
         git rev-parse HEAD
       working_dir: "${inputs.working_dir}"
     condition: "${blocks.analyze_changes.outputs.has_changes} and (${inputs.auto_commit} or ${blocks.confirm_commit.outputs.response} == 'yes')"
