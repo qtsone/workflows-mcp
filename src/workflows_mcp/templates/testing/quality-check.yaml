@@ -61,10 +61,10 @@ blocks:
       workflow: "{{inputs.language}}-quality-check"
       inputs:
         source_path: "{{inputs.source_path}}"
-        strict: {{inputs.strict}}
-        check_linting: {{inputs.check_linting}}
-        check_types: {{inputs.check_types}}
-        check_formatting: {{inputs.check_formatting}}
+        strict: "{{inputs.strict}}"
+        check_linting: "{{inputs.check_linting}}"
+        check_types: "{{inputs.check_types}}"
+        check_formatting: "{{inputs.check_formatting}}"
         working_dir: "{{inputs.working_dir}}"
         venv_path: "{{inputs.venv_path}}"
 

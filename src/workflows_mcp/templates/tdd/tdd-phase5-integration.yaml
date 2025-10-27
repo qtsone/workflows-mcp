@@ -193,7 +193,7 @@ blocks:
         language: "{{inputs.language}}"
         test_path: "{{inputs.test_path}}/integration"
         source_path: "{{inputs.source_path}}"
-        coverage_threshold: {{inputs.coverage_threshold}}
+        coverage_threshold: "{{inputs.coverage_threshold}}"
         working_dir: "{{inputs.project_path}}"
     depends_on:
       - parse_integration_files

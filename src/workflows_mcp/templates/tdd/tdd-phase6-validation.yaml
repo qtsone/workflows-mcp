@@ -132,7 +132,7 @@ blocks:
         language: "{{inputs.language}}"
         test_path: "{{inputs.test_path}}"
         source_path: "{{inputs.source_path}}"
-        coverage_threshold: {{inputs.coverage_threshold}}
+        coverage_threshold: "{{inputs.coverage_threshold}}"
         working_dir: "{{inputs.project_path}}"
         pytest_args: "-v --tb=short"
     depends_on:
@@ -168,7 +168,7 @@ blocks:
       inputs:
         language: "{{inputs.language}}"
         source_path: "{{inputs.source_path}}"
-        strict: {{inputs.strict_quality}}
+        strict: "{{inputs.strict_quality}}"
         working_dir: "{{inputs.project_path}}"
     depends_on:
       - validate_phase5_complete

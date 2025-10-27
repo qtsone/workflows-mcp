@@ -56,7 +56,7 @@ blocks:
       inputs:
         test_path: "{{inputs.test_path}}"
         source_path: "{{inputs.source_path}}"
-        coverage_threshold: {{inputs.coverage_threshold}}
+        coverage_threshold: "{{inputs.coverage_threshold}}"
         pytest_args: "{{inputs.pytest_args}}"
         working_dir: "{{inputs.working_dir}}"
         venv_path: "{{inputs.venv_path}}"

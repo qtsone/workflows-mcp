@@ -148,7 +148,7 @@ blocks:
         language: "{{inputs.language}}"
         test_path: "{{inputs.test_path}}/test_{{inputs.module_name}}.py"
         source_path: "{{inputs.source_path}}"
-        coverage_threshold: {{inputs.coverage_threshold}}
+        coverage_threshold: "{{inputs.coverage_threshold}}"
         pytest_args: "-v --tb=short"
         working_dir: "{{inputs.project_path}}"
     depends_on:
@@ -238,7 +238,7 @@ blocks:
         language: "{{inputs.language}}"
         test_path: "{{inputs.test_path}}/test_{{inputs.module_name}}.py"
         source_path: "{{inputs.source_path}}/{{inputs.module_name}}.py"
-        coverage_threshold: {{inputs.coverage_threshold}}
+        coverage_threshold: "{{inputs.coverage_threshold}}"
         pytest_args: "-v --cov-report=term-missing"
         working_dir: "{{inputs.project_path}}"
     depends_on:
@@ -331,7 +331,7 @@ blocks:
         language: "{{inputs.language}}"
         test_path: "{{inputs.test_path}}/test_{{inputs.module_name}}.py"
         source_path: "{{inputs.source_path}}/{{inputs.module_name}}.py"
-        coverage_threshold: {{inputs.coverage_threshold}}
+        coverage_threshold: "{{inputs.coverage_threshold}}"
         pytest_args: "-v --cov-report=term-missing"
         working_dir: "{{inputs.project_path}}"
     depends_on:

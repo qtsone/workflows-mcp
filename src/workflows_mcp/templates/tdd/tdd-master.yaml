@@ -285,7 +285,7 @@ blocks:
       inputs:
         project_path: "{{inputs.project_path}}"
         language: "{{blocks.set_language.outputs.language}}"
-        coverage_threshold: {{inputs.coverage_threshold}}
+        coverage_threshold: "{{inputs.coverage_threshold}}"
     depends_on:
       - confirm_all_modules_complete
     condition: "{{blocks.confirm_all_modules_complete.outputs.response}} == 'yes'"
@@ -328,7 +328,7 @@ blocks:
       inputs:
         project_path: "{{inputs.project_path}}"
         language: "{{blocks.set_language.outputs.language}}"
-        coverage_threshold: {{inputs.coverage_threshold}}
+        coverage_threshold: "{{inputs.coverage_threshold}}"
         strict_quality: true
         enable_security_scan: true
     depends_on:
@@ -383,7 +383,7 @@ blocks:
         author: "{{inputs.author}}"
         language: "{{blocks.set_language.outputs.language}}"
         python_version: "{{inputs.python_version}}"
-        coverage_threshold: {{inputs.coverage_threshold}}
+        coverage_threshold: "{{inputs.coverage_threshold}}"
     depends_on:
       - confirm_phase6_complete
     condition: "{{blocks.confirm_phase6_complete.outputs.response}} == 'yes'"
