@@ -110,13 +110,16 @@ blocks:
     type: Shell
     description: "Select final commit message: manual override or LLM-generated"
     inputs:
+      env:
+        MANUAL_MESSAGE: "{{inputs.commit_message}}"
+        LLM_MESSAGE: "{{blocks.llm_generate_message.outputs.response}}"
       command: |
-        if [ -n "{{inputs.commit_message}}" ]; then
-          # Use manual message if provided
-          printf '%s' "{{inputs.commit_message}}" > "$SCRATCH/message.txt"
+        # Use environment variables to safely pass content (GitHub Actions pattern)
+        # This prevents shell expansion of special chars (backticks, $, quotes)
+        if [ -n "$MANUAL_MESSAGE" ]; then
+          printf '%s' "$MANUAL_MESSAGE" > "$SCRATCH/message.txt"
         else
-          # Use LLM-generated message
-          printf '%s' "{{blocks.llm_generate_message.outputs.response}}" > "$SCRATCH/message.txt"
+          printf '%s' "$LLM_MESSAGE" > "$SCRATCH/message.txt"
         fi
     condition: "{{blocks.analyze_changes.outputs.has_changes}}"
     depends_on:
