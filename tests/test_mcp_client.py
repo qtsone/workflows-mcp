@@ -204,7 +204,7 @@ def mock_context():
             {
                 "id": "step1",
                 "type": "Shell",
-                "inputs": {"command": "echo 'Hello ${inputs.message}'"},
+                "inputs": {"command": "echo 'Hello {{inputs.message}}'"},
             }
         ],
         inputs={
@@ -214,7 +214,7 @@ def mock_context():
                 "default": "World",
             }
         },
-        outputs={"result": "${blocks.step1.outputs.stdout}"},
+        outputs={"result": "{{blocks.step1.outputs.stdout}}"},
     )
     registry.register(test_workflow)
 
@@ -390,7 +390,7 @@ class TestWorkflowExecution:
                 {
                     "id": "echo1",
                     "type": "Shell",
-                    "inputs": {"command": "echo ${inputs.required_param}"},
+                    "inputs": {"command": "echo {{inputs.required_param}}"},
                 }
             ],
             inputs={
@@ -439,7 +439,7 @@ blocks:
     inputs:
       command: echo 'Inline test'
 outputs:
-  result: "${blocks.echo.outputs.stdout}"
+  result: "{{blocks.echo.outputs.stdout}}"
 """
 
         result = await execute_inline_workflow(workflow_yaml=workflow_yaml, ctx=mock_context)

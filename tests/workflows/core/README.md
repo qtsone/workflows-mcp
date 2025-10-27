@@ -10,16 +10,16 @@ Tests are organized by feature category, with each test validating a specific ca
 
 Tests for the variable resolution system across all namespaces:
 
-- **[inputs.yaml](variable-resolution/inputs.yaml)**: Tests `${inputs.*}` variable resolution
-- **[metadata.yaml](variable-resolution/metadata.yaml)**: Tests `${metadata.*}` variable resolution
-- **[block-outputs.yaml](variable-resolution/block-outputs.yaml)**: Tests `${blocks.*.outputs.*}` variable resolution
-- **[shortcuts.yaml](variable-resolution/shortcuts.yaml)**: Tests shortcut syntax `${blocks.*.field}` (ADR-007)
+- **[inputs.yaml](variable-resolution/inputs.yaml)**: Tests `{{inputs.*}}` variable resolution
+- **[metadata.yaml](variable-resolution/metadata.yaml)**: Tests `{{metadata.*}}` variable resolution
+- **[block-outputs.yaml](variable-resolution/block-outputs.yaml)**: Tests `{{blocks.*.outputs.*}}` variable resolution
+- **[shortcuts.yaml](variable-resolution/shortcuts.yaml)**: Tests shortcut syntax `{{blocks.*.field}}` (ADR-007)
 
 ### Conditional Execution (3 tests)
 
 Tests for conditional block execution with boolean expressions:
 
-- **[input-based.yaml](conditionals/input-based.yaml)**: Tests conditions based on `${inputs.*}`
+- **[input-based.yaml](conditionals/input-based.yaml)**: Tests conditions based on `{{inputs.*}}`
 - **[block-status.yaml](conditionals/block-status.yaml)**: Tests conditions based on block status (`succeeded`, `failed`)
 - **[complex-expressions.yaml](conditionals/complex-expressions.yaml)**: Tests complex boolean expressions (AND, OR, NOT)
 

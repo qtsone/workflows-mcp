@@ -17,7 +17,9 @@ templates/
 ## Category Organization
 
 ### `python/`
+
 Workflows for Python development tasks:
+
 - Python project initialization
 - Virtual environment management
 - Dependency management (pip, uv, poetry)
@@ -25,6 +27,7 @@ Workflows for Python development tasks:
 - Package building and distribution
 
 ### `node/`
+
 Workflows for Node.js development tasks:
 - npm/yarn/pnpm project initialization
 - Dependency installation and updates
@@ -32,7 +35,9 @@ Workflows for Node.js development tasks:
 - Building and packaging
 
 ### `git/`
+
 Git operation workflows:
+
 - Repository initialization
 - Branch management
 - Worktree creation and cleanup
@@ -40,14 +45,18 @@ Git operation workflows:
 - Pull request workflows
 
 ### `quality/`
+
 QA and testing workflows:
+
 - Test execution (unit, integration, E2E)
 - Code quality checks (linting, formatting, type checking)
 - Security scanning
 - Coverage reporting
 
 ### `examples/`
+
 Tutorial and demonstration workflows:
+
 - Simple hello-world workflow
 - Multi-step workflow examples
 - Dependency chain examples
@@ -76,7 +85,7 @@ blocks:
   - id: display
     type: Shell
     inputs:
-      command: echo "${inputs.message}"
+      command: echo "{{inputs.message}}"
 ```
 
 ## How Workflows Are Loaded
@@ -91,9 +100,7 @@ The MCP server automatically discovers and loads workflows from this directory:
 ### Workflow Naming Convention
 
 **File naming**: `workflow-name.yaml` (lowercase, hyphen-separated)
-
 **Tool naming**: `execute_workflow_<workflow-name>` (e.g., `execute_workflow_example`)
-
 **Workflow ID**: Derived from filename (e.g., `example-workflow` from `example-workflow.yaml`)
 
 ## Adding Custom Workflows
@@ -127,8 +134,8 @@ blocks:
   - id: ruff_check
     type: Shell
     inputs:
-      command: ruff check ${inputs.path}
-      working_dir: ${inputs.path}
+      command: ruff check {{inputs.path}}
+      working_dir: {{inputs.path}}
 ```
 
 ### Step 3: Restart MCP Server
@@ -156,33 +163,39 @@ Claude will discover and execute: `execute_workflow_python_lint(path="./src")`
 ## Workflow Development Best Practices
 
 ### 1. Clear Naming
+
 - **Workflow name**: Descriptive, hyphen-separated (e.g., `python-test-unit`)
 - **Block IDs**: Semantic, snake_case (e.g., `run_tests`, `generate_report`)
 
 ### 2. Input Validation
+
 - Always specify `type`, `description`, and `required` for inputs
 - Provide sensible `default` values where appropriate
 - Use validation in blocks to fail fast on invalid inputs
 
 ### 3. Documentation
+
 - Write clear `description` for workflow and each input
 - Add comments in YAML for complex logic
 - Include usage examples in workflow description
 
 ### 4. Dependency Management
+
 - Explicitly declare `depends_on` for blocks with dependencies
 - Avoid circular dependencies (will fail validation)
 - Keep dependency chains shallow for better parallelization
 
 ### 5. Error Handling
+
 - Design workflows to fail gracefully
 - Provide meaningful error messages in block outputs
 - Consider idempotency (safe to re-run)
 
 ### 6. Variable Substitution
-- Use `${inputs.name}` for workflow inputs
-- Use `${block_id.field}` for cross-block references
-- Reference previous block outputs via `${block_id.output_field}`
+
+- Use `{{inputs.name}}` for workflow inputs
+- Use `{{block_id.field}}` for cross-block references
+- Reference previous block outputs via `{{block_id.output_field}}`
 
 ## Workflow Schema Reference
 
@@ -231,6 +244,7 @@ See the `examples/` directory for complete workflow examples:
 **Problem**: Created a workflow but it's not available as an MCP tool.
 
 **Solutions**:
+
 1. Check YAML syntax: `python -m yaml templates/category/workflow.yaml`
 2. Verify workflow follows schema (see [docs/YAML_WORKFLOW_GUIDE.md](../docs/YAML_WORKFLOW_GUIDE.md))
 3. Check server logs for validation errors
@@ -242,6 +256,7 @@ See the `examples/` directory for complete workflow examples:
 **Problem**: Workflow fails validation during loading.
 
 **Solutions**:
+
 1. Review error message for specific validation failure
 2. Check required fields: `name`, `description`, `version`, `blocks`
 3. Verify all block IDs are unique
@@ -253,7 +268,8 @@ See the `examples/` directory for complete workflow examples:
 **Problem**: Variables not resolving correctly during execution.
 
 **Solutions**:
-1. Use correct syntax: `${inputs.name}` or `${block_id.field}`
+
+1. Use correct syntax: `{{inputs.name}}` or `{{block_id.field}}`
 2. Ensure referenced block has executed before current block
 3. Check field exists in referenced block's output
 4. Verify no circular dependencies in variable references

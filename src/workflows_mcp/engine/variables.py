@@ -2,15 +2,15 @@
 Variable resolution and conditional evaluation for workflow execution.
 
 This module provides:
-1. VariableResolver: Resolves ${var} syntax in workflow inputs
+1. VariableResolver: Resolves {{var}} syntax in workflow inputs
 2. ConditionEvaluator: Safely evaluates boolean expressions
 
 Variable Resolution:
-- ${inputs.param_name} - References workflow inputs
-- ${blocks.block_id.outputs.field} - References block output fields
-- ${blocks.block_id.inputs.field} - References block input fields (debugging)
-- ${blocks.block_id.metadata.field} - References block metadata
-- ${metadata.field} - References workflow metadata
+- {{inputs.param_name}} - References workflow inputs
+- {{blocks.block_id.outputs.field}} - References block output fields
+- {{blocks.block_id.inputs.field}} - References block input fields (debugging)
+- {{blocks.block_id.metadata.field}} - References block metadata
+- {{metadata.field}} - References workflow metadata
 - Recursive resolution in strings, dicts, lists
 
 Conditional Evaluation:
@@ -40,7 +40,7 @@ class InvalidConditionError(Exception):
 
 class VariableResolver:
     """
-    Resolves ${var} variable references from workflow context.
+    Resolves {{var}} variable references from workflow context.
 
     Context Structure:
         {
@@ -62,29 +62,29 @@ class VariableResolver:
         }
 
     Variable Syntax:
-        - ${inputs.param_name} - Workflow input
-        - ${blocks.block_id.outputs.field} - Block output
-        - ${blocks.block_id.inputs.field} - Block input (debugging)
-        - ${blocks.block_id.metadata.field} - Block metadata
-        - ${metadata.field} - Workflow metadata
+        - {{inputs.param_name}} - Workflow input
+        - {{blocks.block_id.outputs.field}} - Block output
+        - {{blocks.block_id.inputs.field}} - Block input (debugging)
+        - {{blocks.block_id.metadata.field}} - Block metadata
+        - {{metadata.field}} - Workflow metadata
 
     Block Status References (ADR-007 - Industry-Aligned Three-Tier Model):
 
         Tier 1: Boolean Shortcuts (GitHub Actions style)
-        - ${blocks.block_id.succeeded} - True if completed successfully
-        - ${blocks.block_id.failed} - True if failed (any reason)
-        - ${blocks.block_id.skipped} - True if skipped
+        - {{blocks.block_id.succeeded}} - True if completed successfully
+        - {{blocks.block_id.failed}} - True if failed (any reason)
+        - {{blocks.block_id.skipped}} - True if skipped
 
         Tier 2: Status String (Argo Workflows style)
-        - ${blocks.block_id.status} - Returns status as string
+        - {{blocks.block_id.status}} - Returns status as string
           Values: "pending"|"running"|"completed"|"failed"|"skipped"|"paused"
 
         Tier 3: Outcome String (Precision)
-        - ${blocks.block_id.outcome} - Returns outcome as string
+        - {{blocks.block_id.outcome}} - Returns outcome as string
           Values: "success"|"failure"|"n/a"
 
     Security:
-        - ${__internal__.*} - Access denied (internal system state)
+        - {{__internal__.*}} - Access denied (internal system state)
 
     Example:
         context = {
@@ -97,12 +97,12 @@ class VariableResolver:
         }
 
         resolver = VariableResolver(context)
-        result = resolver.resolve("Path: ${blocks.create_worktree.outputs.worktree_path}")
+        result = resolver.resolve("Path: {{blocks.create_worktree.outputs.worktree_path}}")
         # Returns: "Path: /tmp/worktree"
     """
 
-    # Pattern: ${identifier} or ${identifier.field} or ${identifier.field.subfield} (any depth)
-    VAR_PATTERN = re.compile(r"\$\{([a-z_][a-z0-9_]*(?:\.[a-z_][a-z0-9_]*)*)\}")
+    # Pattern: {{identifier}} or {{identifier.field}} or {{identifier.field.subfield}} (any depth)
+    VAR_PATTERN = re.compile(r"\{\{([a-z_][a-z0-9_]*(?:\.[a-z_][a-z0-9_]*)*)\}\}")
 
     def __init__(self, context: dict[str, Any]):
         """
@@ -139,7 +139,7 @@ class VariableResolver:
 
     def _resolve_string(self, text: str, for_eval: bool = False) -> str:
         """
-        Replace ${var} patterns with context values.
+        Replace {{var}} patterns with context values.
 
         Args:
             text: String containing variable references
@@ -159,7 +159,7 @@ class VariableResolver:
             # Security: Block access to internal namespace
             if var_path.startswith("__internal__") or ".__internal__" in var_path:
                 raise VariableNotFoundError(
-                    f"Access to internal namespace is not allowed: ${{{var_path}}}"
+                    f"Access to internal namespace is not allowed: {{{{{var_path}}}}}"
                 )
 
             segments = var_path.split(".")
@@ -196,13 +196,13 @@ class VariableResolver:
                 if not isinstance(value, dict):
                     partial_path = ".".join(segments[:i])
                     raise VariableNotFoundError(
-                        f"Cannot access '{segment}' on non-dict value at '${{{partial_path}}}'"
+                        f"Cannot access '{segment}' on non-dict value at '{{{{{partial_path}}}}}'"
                     )
 
                 if segment not in value:
                     available = list(value.keys()) if isinstance(value, dict) else []
                     raise VariableNotFoundError(
-                        f"Variable '${{{var_path}}}' not found. "
+                        f"Variable '{{{{{var_path}}}}}' not found. "
                         f"At segment '{segment}', available keys: {available}"
                     )
 
@@ -285,7 +285,7 @@ class ConditionEvaluator:
         context = {"run_tests.exit_code": 0, "coverage": 85}
 
         # Resolve variables first
-        condition = "${run_tests.exit_code} == 0 and ${coverage} >= 80"
+        condition = "{{run_tests.exit_code}} == 0 and {{coverage}} >= 80"
         result = evaluator.evaluate(condition, context)
         # Returns: True
     """
@@ -322,7 +322,7 @@ class ConditionEvaluator:
 
         Example:
             result = evaluator.evaluate(
-                "${run_tests.exit_code} == 0 and ${coverage} >= 80",
+                "{{run_tests.exit_code}} == 0 and {{coverage}} >= 80",
                 {"run_tests.exit_code": 0, "coverage": 85}
             )
         """

@@ -36,11 +36,11 @@ blocks:
     inputs:
       workflow: "setup-python-env"
       inputs:
-        python_version: "${inputs.python_version}"
-        project_path: "${inputs.project_path}"
+        python_version: "{{inputs.python_version}}"
+        project_path: "{{inputs.project_path}}"
         requirements_file: "requirements.txt"
         upgrade_pip: true
-    condition: "not ${inputs.skip_setup}"
+    condition: "not {{inputs.skip_setup}}"
 
   # Stage 2: Run linting (parallel with setup verification)
   - id: run_linting
@@ -48,12 +48,12 @@ blocks:
     inputs:
       workflow: "lint-python"
       inputs:
-        working_dir: "${inputs.project_path}"
+        working_dir: "{{inputs.project_path}}"
         src_path: "src/"
-        strict_mode: "${inputs.strict_linting}"
+        strict_mode: "{{inputs.strict_linting}}"
         fix_issues: false
         skip_mypy: false
-        venv_path: "${inputs.project_path}/.venv"
+        venv_path: "{{inputs.project_path}}/.venv"
     depends_on:
       - setup_env
 
@@ -63,12 +63,12 @@ blocks:
     inputs:
       workflow: "run-pytest"
       inputs:
-        working_dir: "${inputs.project_path}"
+        working_dir: "{{inputs.project_path}}"
         test_path: "tests/"
-        coverage_threshold: "${inputs.coverage_threshold}"
+        coverage_threshold: "{{inputs.coverage_threshold}}"
         verbose: true
         generate_html_report: true
-        venv_path: "${inputs.project_path}/.venv"
+        venv_path: "{{inputs.project_path}}/.venv"
     depends_on:
       - setup_env
 
@@ -79,7 +79,7 @@ blocks:
       command: "echo 'Setup: SKIPPED'"
       timeout: 5
 
-    condition: "${inputs.skip_setup}"
+    condition: "{{inputs.skip_setup}}"
 
   - id: get_setup_display_passed
     type: Shell
@@ -87,7 +87,7 @@ blocks:
       command: "echo 'Setup: ✓ PASSED'"
       timeout: 5
 
-    condition: "not ${inputs.skip_setup} and ${blocks.setup_env.succeeded}"
+    condition: "not {{inputs.skip_setup}} and {{blocks.setup_env.succeeded}}"
     depends_on:
       - setup_env
 
@@ -97,7 +97,7 @@ blocks:
       command: "echo 'Setup: ✗ FAILED'"
       timeout: 5
 
-    condition: "not ${inputs.skip_setup} and not ${blocks.setup_env.succeeded}"
+    condition: "not {{inputs.skip_setup}} and not {{blocks.setup_env.succeeded}}"
     depends_on:
       - setup_env
 
@@ -105,9 +105,9 @@ blocks:
     type: Shell
     inputs:
       command: |
-        STATUS_SKIPPED="${blocks.get_setup_display_skipped.outputs.stdout}"
-        STATUS_PASSED="${blocks.get_setup_display_passed.outputs.stdout}"
-        STATUS_FAILED="${blocks.get_setup_display_failed.outputs.stdout}"
+        STATUS_SKIPPED="{{blocks.get_setup_display_skipped.outputs.stdout}}"
+        STATUS_PASSED="{{blocks.get_setup_display_passed.outputs.stdout}}"
+        STATUS_FAILED="{{blocks.get_setup_display_failed.outputs.stdout}}"
         if [ -n "$STATUS_SKIPPED" ]; then
           echo "$STATUS_SKIPPED"
         elif [ -n "$STATUS_PASSED" ]; then
@@ -125,7 +125,7 @@ blocks:
   - id: get_linting_display
     type: Shell
     inputs:
-      command: "test '${blocks.run_linting.outputs.all_passed}' = 'true' && echo '✓ PASSED' || echo '✗ FAILED'"
+      command: "test '{{blocks.run_linting.outputs.all_passed}}' = 'true' && echo '✓ PASSED' || echo '✗ FAILED'"
       timeout: 5
 
     depends_on:
@@ -134,7 +134,7 @@ blocks:
   - id: get_testing_display
     type: Shell
     inputs:
-      command: "test '${blocks.run_tests.succeeded}' = 'true' && echo '✓ PASSED' || echo '✗ FAILED'"
+      command: "test '{{blocks.run_tests.succeeded}}' = 'true' && echo '✓ PASSED' || echo '✗ FAILED'"
       timeout: 5
 
     depends_on:
@@ -146,7 +146,7 @@ blocks:
       command: "echo '✓ ALL CHECKS PASSED'"
       timeout: 5
 
-    condition: "(${inputs.skip_setup} or ${blocks.setup_env.succeeded}) and ${blocks.run_linting.outputs.all_passed} and ${blocks.run_tests.succeeded}"
+    condition: "({{inputs.skip_setup}} or {{blocks.setup_env.succeeded}}) and {{blocks.run_linting.outputs.all_passed}} and {{blocks.run_tests.succeeded}}"
     depends_on:
       - get_setup_display
       - get_linting_display
@@ -158,7 +158,7 @@ blocks:
       command: "echo '✗ PIPELINE FAILED'"
       timeout: 5
 
-    condition: "not ((${inputs.skip_setup} or ${blocks.setup_env.succeeded}) and ${blocks.run_linting.outputs.all_passed} and ${blocks.run_tests.succeeded})"
+    condition: "not (({{inputs.skip_setup}} or {{blocks.setup_env.succeeded}}) and {{blocks.run_linting.outputs.all_passed}} and {{blocks.run_tests.succeeded}})"
     depends_on:
       - get_setup_display
       - get_linting_display
@@ -168,8 +168,8 @@ blocks:
     type: Shell
     inputs:
       command: |
-        STATUS_SUCCESS="${blocks.get_overall_display_success.outputs.stdout}"
-        STATUS_FAILED="${blocks.get_overall_display_failed.outputs.stdout}"
+        STATUS_SUCCESS="{{blocks.get_overall_display_success.outputs.stdout}}"
+        STATUS_FAILED="{{blocks.get_overall_display_failed.outputs.stdout}}"
         if [ -n "$STATUS_SUCCESS" ]; then
           echo "$STATUS_SUCCESS"
         else
@@ -189,33 +189,33 @@ blocks:
         printf "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
         printf "Python CI Pipeline Results\n"
         printf "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
-        printf "${blocks.get_setup_display.outputs.stdout}\n"
-        printf "Linting: ${blocks.get_linting_display.outputs.stdout}\n"
-        printf "Testing: ${blocks.get_testing_display.outputs.stdout}\n"
+        printf "{{blocks.get_setup_display.outputs.stdout}}\n"
+        printf "Linting: {{blocks.get_linting_display.outputs.stdout}}\n"
+        printf "Testing: {{blocks.get_testing_display.outputs.stdout}}\n"
         printf "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
-        printf "Overall Status: ${blocks.get_overall_display.outputs.stdout}\n"
+        printf "Overall Status: {{blocks.get_overall_display.outputs.stdout}}\n"
         printf "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
     depends_on:
       - get_overall_display
 
 outputs:
   # Overall status
-  success: "${(${inputs.skip_setup} or ${blocks.setup_env.succeeded}) and ${blocks.run_linting.outputs.all_passed} and ${blocks.run_tests.succeeded}}"
+  success: "({{inputs.skip_setup}} or {{blocks.setup_env.succeeded}}) and {{blocks.run_linting.outputs.all_passed}} and {{blocks.run_tests.succeeded}}"
 
   # Environment setup results
-  env_setup_success: "${inputs.skip_setup} or ${blocks.setup_env.succeeded}"
-  python_version: "${inputs.python_version}"
+  env_setup_success: "{{inputs.skip_setup}} or {{blocks.setup_env.succeeded}}"
+  python_version: "{{inputs.python_version}}"
 
   # Linting results
-  linting_passed: "${blocks.run_linting.outputs.all_passed}"
-  ruff_passed: "${blocks.run_linting.outputs.ruff_passed}"
-  mypy_passed: "${blocks.run_linting.outputs.mypy_passed}"
-  format_passed: "${blocks.run_linting.outputs.format_passed}"
+  linting_passed: "{{blocks.run_linting.outputs.all_passed}}"
+  ruff_passed: "{{blocks.run_linting.outputs.ruff_passed}}"
+  mypy_passed: "{{blocks.run_linting.outputs.mypy_passed}}"
+  format_passed: "{{blocks.run_linting.outputs.format_passed}}"
 
   # Testing results
-  tests_passed: "${blocks.run_tests.succeeded}"
-  test_exit_code: "${blocks.run_tests.outputs.exit_code}"
+  tests_passed: "{{blocks.run_tests.succeeded}}"
+  test_exit_code: "{{blocks.run_tests.outputs.exit_code}}"
 
   # Summary
-  pipeline_summary: "${blocks.validate_pipeline.outputs.stdout}"
-  execution_time_ms: "${blocks.validate_pipeline.metadata.execution_time_ms}"
+  pipeline_summary: "{{blocks.validate_pipeline.outputs.stdout}}"
+  execution_time_ms: "{{blocks.validate_pipeline.metadata.execution_time_ms}}"

@@ -52,39 +52,39 @@ blocks:
   - id: run_tests
     type: Workflow
     inputs:
-      workflow: "${inputs.language}-run-tests"
+      workflow: "{{inputs.language}}-run-tests"
       inputs:
-        test_path: "${inputs.test_path}"
-        source_path: "${inputs.source_path}"
-        coverage_threshold: ${inputs.coverage_threshold}
-        pytest_args: "${inputs.pytest_args}"
-        working_dir: "${inputs.working_dir}"
-        venv_path: "${inputs.venv_path}"
+        test_path: "{{inputs.test_path}}"
+        source_path: "{{inputs.source_path}}"
+        coverage_threshold: "{{inputs.coverage_threshold}}"
+        pytest_args: "{{inputs.pytest_args}}"
+        working_dir: "{{inputs.working_dir}}"
+        venv_path: "{{inputs.venv_path}}"
 
 # Pass through outputs from language-specific test runner
 outputs:
   # Test execution status
-  exit_code: "${blocks.run_tests.outputs.exit_code}"
-  success: "${blocks.run_tests.succeeded}"
+  exit_code: "{{blocks.run_tests.outputs.exit_code}}"
+  success: "{{blocks.run_tests.succeeded}}"
 
   # Test counts
-  tests_passed: "${blocks.run_tests.outputs.tests_passed}"
-  tests_failed: "${blocks.run_tests.outputs.tests_failed}"
-  tests_skipped: "${blocks.run_tests.outputs.tests_skipped}"
+  tests_passed: "{{blocks.run_tests.outputs.tests_passed}}"
+  tests_failed: "{{blocks.run_tests.outputs.tests_failed}}"
+  tests_skipped: "{{blocks.run_tests.outputs.tests_skipped}}"
 
   # Coverage information
-  coverage_percent: "${blocks.run_tests.outputs.coverage_percent}"
-  coverage_threshold_met: "${blocks.run_tests.outputs.coverage_threshold_met}"
+  coverage_percent: "{{blocks.run_tests.outputs.coverage_percent}}"
+  coverage_threshold_met: "{{blocks.run_tests.outputs.coverage_threshold_met}}"
 
   # Full output for debugging
-  stdout: "${blocks.run_tests.outputs.stdout}"
-  stderr: "${blocks.run_tests.outputs.stderr}"
+  stdout: "{{blocks.run_tests.outputs.stdout}}"
+  stderr: "{{blocks.run_tests.outputs.stderr}}"
 
   # Summary and metadata
-  summary: "${blocks.run_tests.outputs.summary}"
-  execution_time_ms: "${blocks.run_tests.metadata.execution_time_ms}"
-  command_executed: "${blocks.run_tests.outputs.command_executed}"
+  summary: "{{blocks.run_tests.outputs.summary}}"
+  execution_time_ms: "{{blocks.run_tests.metadata.execution_time_ms}}"
+  command_executed: "{{blocks.run_tests.outputs.command_executed}}"
 
   # Wrapper metadata
-  language_used: "${inputs.language}"
-  workflow_delegated_to: "${inputs.language}-run-tests"
+  language_used: "{{inputs.language}}"
+  workflow_delegated_to: "{{inputs.language}}-run-tests"

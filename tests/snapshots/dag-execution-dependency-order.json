@@ -1,28 +1,27 @@
 {
   "status": "success",
   "outputs": {
-    "final_result": "",
-    "step1_output": "1\n",
-    "step2_output": "",
-    "step3_output": "",
-    "step4_output": ""
+    "step1_output": "1",
+    "step2_output": "1-2",
+    "step3_output": "1-2-3",
+    "step4_output": "1-2-3-4"
   },
   "blocks": {
     "step1": {
       "inputs": {
-        "command": "echo \"1\""
+        "command": "printf \"1\""
       },
       "outputs": {
         "exit_code": 0,
-        "stdout": "1\n",
+        "stdout": "1",
         "stderr": ""
       },
       "metadata": {
         "status": "completed",
         "outcome": "success",
-        "execution_time_ms": 5.3369140625,
-        "started_at": "2025-10-25T15:57:55.237182+00:00",
-        "completed_at": "2025-10-25T15:57:55.242506+00:00",
+        "execution_time_ms": 6.010009765625,
+        "started_at": "2025-10-27T15:29:35.264724+00:00",
+        "completed_at": "2025-10-27T15:29:35.270724+00:00",
         "wave": 0,
         "execution_order": 0,
         "message": null,
@@ -34,70 +33,76 @@
       "depth": 0
     },
     "step2": {
-      "inputs": {},
+      "inputs": {
+        "command": "printf \"1-2\""
+      },
       "outputs": {
         "exit_code": 0,
-        "stdout": "",
+        "stdout": "1-2",
         "stderr": ""
       },
       "metadata": {
-        "status": "failed",
-        "outcome": "n/a",
-        "execution_time_ms": 0.0,
-        "started_at": "2025-10-25T15:57:55.243037+00:00",
-        "completed_at": "2025-10-25T15:57:55.243037+00:00",
+        "status": "completed",
+        "outcome": "success",
+        "execution_time_ms": 5.469970703125,
+        "started_at": "2025-10-27T15:29:35.271269+00:00",
+        "completed_at": "2025-10-27T15:29:35.276727+00:00",
         "wave": 1,
         "execution_order": 1,
-        "message": "Variable '${blocks.step1.stdout}' not found. At segment 'stdout', available keys: ['inputs', 'outputs', 'metadata', 'blocks', 'depth']",
-        "succeeded": false,
-        "failed": true,
+        "message": null,
+        "succeeded": true,
+        "failed": false,
         "skipped": false
       },
       "blocks": {},
       "depth": 0
     },
     "step3": {
-      "inputs": {},
+      "inputs": {
+        "command": "printf \"1-2-3\""
+      },
       "outputs": {
         "exit_code": 0,
-        "stdout": "",
+        "stdout": "1-2-3",
         "stderr": ""
       },
       "metadata": {
-        "status": "skipped",
-        "outcome": "n/a",
-        "execution_time_ms": 0.0,
-        "started_at": "2025-10-25T15:57:55.243155+00:00",
-        "completed_at": "2025-10-25T15:57:55.243155+00:00",
+        "status": "completed",
+        "outcome": "success",
+        "execution_time_ms": 4.738037109375,
+        "started_at": "2025-10-27T15:29:35.277290+00:00",
+        "completed_at": "2025-10-27T15:29:35.282020+00:00",
         "wave": 2,
         "execution_order": 2,
-        "message": "Parent dependency did not complete successfully",
-        "succeeded": false,
+        "message": null,
+        "succeeded": true,
         "failed": false,
-        "skipped": true
+        "skipped": false
       },
       "blocks": {},
       "depth": 0
     },
     "step4": {
-      "inputs": {},
+      "inputs": {
+        "command": "printf \"1-2-3-4\""
+      },
       "outputs": {
         "exit_code": 0,
-        "stdout": "",
+        "stdout": "1-2-3-4",
         "stderr": ""
       },
       "metadata": {
-        "status": "skipped",
-        "outcome": "n/a",
-        "execution_time_ms": 0.0,
-        "started_at": "2025-10-25T15:57:55.243216+00:00",
-        "completed_at": "2025-10-25T15:57:55.243216+00:00",
+        "status": "completed",
+        "outcome": "success",
+        "execution_time_ms": 5.68408203125,
+        "started_at": "2025-10-27T15:29:35.282510+00:00",
+        "completed_at": "2025-10-27T15:29:35.288183+00:00",
         "wave": 3,
-        "execution_order": 2,
-        "message": "Parent dependency did not complete successfully",
-        "succeeded": false,
+        "execution_order": 3,
+        "message": null,
+        "succeeded": true,
         "failed": false,
-        "skipped": true
+        "skipped": false
       },
       "blocks": {},
       "depth": 0
@@ -105,10 +110,10 @@
   },
   "metadata": {
     "workflow_name": "dag-execution-dependency-order",
-    "start_time": "2025-10-25T15:57:55.237063+00:00",
-    "total_blocks": 2,
+    "start_time": "2025-10-27T15:29:35.264601+00:00",
+    "total_blocks": 4,
     "execution_waves": 4,
-    "completed_at": "2025-10-25T15:57:55.243312+00:00",
-    "execution_time_seconds": 0.006253957748413086
+    "completed_at": "2025-10-27T15:29:35.288613+00:00",
+    "execution_time_seconds": 0.024016857147216797
   }
 }

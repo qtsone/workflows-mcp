@@ -82,13 +82,13 @@ blocks:
   - id: read_state
     type: ReadJSONState
     inputs:
-      path: "${inputs.project_path}/${inputs.state_file}"
+      path: "{{inputs.project_path}}/{{inputs.state_file}}"
 
   - id: validate_phase2_complete
     type: Shell
     inputs:
       command: |
-        STATE_FOUND="${blocks.read_state.outputs.found}"
+        STATE_FOUND="{{blocks.read_state.outputs.found}}"
         if [ "$STATE_FOUND" != "true" ]; then
           echo "❌ ERROR: TDD state file not found"
           echo "Please complete Phase 1 and Phase 2 first"
@@ -105,14 +105,14 @@ blocks:
     type: Shell
     inputs:
       command: |
-        PROVIDED_NAME="${inputs.project_name}"
+        PROVIDED_NAME="{{inputs.project_name}}"
 
         if [ -n "$PROVIDED_NAME" ]; then
           # Use provided name
           PROJECT_NAME="$PROVIDED_NAME"
         else
           # Auto-detect from project path
-          PROJECT_NAME=$(basename "${inputs.project_path}")
+          PROJECT_NAME=$(basename "{{inputs.project_path}}")
         fi
 
         # Sanitize name (lowercase, replace spaces/special chars with hyphens)
@@ -133,7 +133,7 @@ blocks:
     type: Shell
     inputs:
       command: |
-        PROJECT_ROOT="${inputs.project_path}"
+        PROJECT_ROOT="{{inputs.project_path}}"
 
         echo "Creating project directory structure..."
 
@@ -143,7 +143,7 @@ blocks:
         mkdir -p "$PROJECT_ROOT/docs"
 
         # Create __init__.py for src package (use project name from state)
-        PROJECT_NAME="${blocks.detect_project_name.outputs.project_name}"
+        PROJECT_NAME="{{blocks.detect_project_name.outputs.project_name}}"
         mkdir -p "$PROJECT_ROOT/src/$PROJECT_NAME"
         touch "$PROJECT_ROOT/src/$PROJECT_NAME/__init__.py"
 
@@ -164,8 +164,8 @@ blocks:
     type: Shell
     inputs:
       command: |
-        cd "${inputs.project_path}"
-        PROJECT_NAME="${blocks.detect_project_name.outputs.project_name}"
+        cd "{{inputs.project_path}}"
+        PROJECT_NAME="{{blocks.detect_project_name.outputs.project_name}}"
 
         # Check if uv is available
         if ! command -v uv &> /dev/null; then
@@ -183,7 +183,7 @@ blocks:
         version = "0.1.0"
         description = "TDD-developed project"
         readme = "README.md"
-        requires-python = ">=${inputs.python_version}"
+        requires-python = ">={{inputs.python_version}}"
         dependencies = []
 
         [project.optional-dependencies]
@@ -219,13 +219,13 @@ blocks:
         target-version = "py${python_version//./}"
 
         [tool.mypy]
-        python_version = "${inputs.python_version}"
+        python_version = "{{inputs.python_version}}"
         warn_return_any = true
         warn_unused_configs = true
         disallow_untyped_defs = true
         EOF
 
-        echo "✅ Created pyproject.toml with Python ${inputs.python_version}"
+        echo "✅ Created pyproject.toml with Python {{inputs.python_version}}"
         echo "$USE_UV" > "$SCRATCH/use_uv.txt"
       timeout: 60
     outputs:
@@ -240,9 +240,9 @@ blocks:
     type: Shell
     inputs:
       command: |
-        cd "${inputs.project_path}"
+        cd "{{inputs.project_path}}"
 
-        USE_UV="${blocks.initialize_uv_project.outputs.use_uv}"
+        USE_UV="{{blocks.initialize_uv_project.outputs.use_uv}}"
 
         if [ "$USE_UV" = "true" ]; then
           echo "Installing dependencies with uv..."
@@ -250,7 +250,7 @@ blocks:
           INSTALL_METHOD="uv"
         else
           echo "Installing dependencies with pip..."
-          python${inputs.python_version} -m pip install -e ".[dev]"
+          python{{inputs.python_version}} -m pip install -e ".[dev]"
           INSTALL_METHOD="pip"
         fi
 
@@ -269,7 +269,7 @@ blocks:
   - id: create_pytest_config
     type: CreateFile
     inputs:
-      path: "${inputs.project_path}/tests/conftest.py"
+      path: "{{inputs.project_path}}/tests/conftest.py"
       content: |
         """
         Pytest configuration and shared fixtures.
@@ -299,7 +299,7 @@ blocks:
   - id: create_gitignore
     type: CreateFile
     inputs:
-      path: "${inputs.project_path}/.gitignore"
+      path: "{{inputs.project_path}}/.gitignore"
       content: |
         # Python
         __pycache__/
@@ -359,8 +359,8 @@ blocks:
     type: Shell
     inputs:
       command: |
-        cd "${inputs.project_path}"
-        PROJECT_NAME="${blocks.detect_project_name.outputs.project_name}"
+        cd "{{inputs.project_path}}"
+        PROJECT_NAME="{{blocks.detect_project_name.outputs.project_name}}"
 
         cat > README.md << EOF
         # $PROJECT_NAME
@@ -415,7 +415,7 @@ blocks:
 
         ## Testing
 
-        - Framework: ${inputs.test_framework}
+        - Framework: {{inputs.test_framework}}
         - Minimum coverage: 80% per module
         - Test types: Unit, Integration, E2E
 
@@ -443,13 +443,13 @@ blocks:
     type: Shell
     inputs:
       command: |
-        cd "${inputs.project_path}"
+        cd "{{inputs.project_path}}"
 
         # Try to collect tests (should find 0 tests but verify pytest works)
         if command -v uv &> /dev/null; then
           PYTEST_OUTPUT=$(uv run pytest --collect-only -q 2>&1 || true)
         else
-          PYTEST_OUTPUT=$(python${inputs.python_version} -m pytest --collect-only -q 2>&1 || true)
+          PYTEST_OUTPUT=$(python{{inputs.python_version}} -m pytest --collect-only -q 2>&1 || true)
         fi
 
         echo "Pytest collection output:"
@@ -483,9 +483,9 @@ blocks:
     type: Shell
     inputs:
       command: |
-        PROJECT_NAME="${blocks.detect_project_name.outputs.project_name}"
-        PYTEST_WORKING="${blocks.verify_pytest_setup.outputs.pytest_working}"
-        INSTALL_METHOD="${blocks.install_dependencies.outputs.install_method}"
+        PROJECT_NAME="{{blocks.detect_project_name.outputs.project_name}}"
+        PYTEST_WORKING="{{blocks.verify_pytest_setup.outputs.pytest_working}}"
+        INSTALL_METHOD="{{blocks.install_dependencies.outputs.install_method}}"
 
         # Create Python script to update state
         cat > /tmp/update_tdd_state_phase3.py << 'PYTHON_SCRIPT'
@@ -536,7 +536,7 @@ blocks:
 
         # Run the Python script
         python3 /tmp/update_tdd_state_phase3.py \
-          "${inputs.project_path}/${inputs.state_file}" \
+          "{{inputs.project_path}}/{{inputs.state_file}}" \
           "$PROJECT_NAME" \
           "$PYTEST_WORKING" \
           "$INSTALL_METHOD"
@@ -551,10 +551,10 @@ blocks:
         === PHASE 3 SCAFFOLDING COMPLETE ===
 
         Project setup completed:
-        - Project name: ${blocks.detect_project_name.outputs.stdout}
+        - Project name: {{blocks.detect_project_name.outputs.stdout}}
         - Directory structure: ✅ Created (src/, tests/, docs/)
-        - Dependencies: ✅ Installed (${blocks.install_dependencies.outputs.stdout})
-        - Test framework: ${blocks.verify_pytest_setup.outputs.stdout}
+        - Dependencies: ✅ Installed ({{blocks.install_dependencies.outputs.stdout}})
+        - Test framework: {{blocks.verify_pytest_setup.outputs.stdout}}
         - Configuration: ✅ pyproject.toml, .gitignore, README.md
 
         Review checkpoint:
@@ -570,7 +570,7 @@ blocks:
         Respond with 'yes' or 'no'
       operation: "approve_phase3_complete"
       details:
-        project_name: "${blocks.detect_project_name.outputs.stdout}"
+        project_name: "{{blocks.detect_project_name.outputs.stdout}}"
         setup_status: "complete"
         state_updated: "true"
     depends_on:
@@ -580,7 +580,7 @@ blocks:
     type: Shell
     inputs:
       command: |
-        PROJECT_NAME="${blocks.detect_project_name.outputs.project_name}"
+        PROJECT_NAME="{{blocks.detect_project_name.outputs.project_name}}"
 
         echo "╔════════════════════════════════════════════════════════════════╗"
         echo "║             TDD PHASE 3: SCAFFOLDING COMPLETE                 ║"
@@ -590,15 +590,15 @@ blocks:
         echo "  ✅ Project structure created"
         echo "  ✅ Python project initialized (uv)"
         echo "  ✅ Development dependencies installed"
-        echo "  ✅ Test framework configured (${inputs.test_framework})"
+        echo "  ✅ Test framework configured ({{inputs.test_framework}})"
         echo "  ✅ Configuration files created"
         echo "  ✅ Documentation initialized"
         echo ""
         echo "Project Setup:"
         echo "  📦 Project: $PROJECT_NAME"
-        echo "  🐍 Python: ${inputs.python_version}"
-        echo "  🧪 Tests: ${blocks.verify_pytest_setup.outputs.stdout}"
-        echo "  💾 State: ${inputs.project_path}/${inputs.state_file}"
+        echo "  🐍 Python: {{inputs.python_version}}"
+        echo "  🧪 Tests: {{blocks.verify_pytest_setup.outputs.stdout}}"
+        echo "  💾 State: {{inputs.project_path}}/{{inputs.state_file}}"
         echo ""
         echo "Directory Structure:"
         echo "  src/$PROJECT_NAME/    - Source code"
@@ -607,39 +607,39 @@ blocks:
         echo ""
         echo "Next Phase: TDD Implementation (Phase 4)"
         echo "  Run: execute_workflow('tdd-phase4-module-tdd', {"
-        echo "         'project_path': '${inputs.project_path}',"
+        echo "         'project_path': '{{inputs.project_path}}',"
         echo "         'module_name': '<first_module>'"
         echo "       })"
         echo ""
-        echo "Checkpoint Approved: ${blocks.checkpoint_review.outputs.response == 'yes'}"
+        echo "Checkpoint Approved: {{blocks.checkpoint_review.outputs.response}} == \'yes\'"
       timeout: 10
     depends_on:
       - checkpoint_review
 
 outputs:
-  phase_complete: "${blocks.checkpoint_review.outputs.response == 'yes'}"
+  phase_complete: "{{blocks.checkpoint_review.outputs.response}} == 'yes'"
   setup_successful: "true"
-  dependencies_installed: "${blocks.install_dependencies.succeeded}"
-  test_framework_ready: "${blocks.verify_pytest_setup.outputs.stdout} contains 'pytest_working=true'"
-  pytest_collection_success: "${blocks.verify_pytest_setup.succeeded}"
-  checkpoint_approved: "${blocks.checkpoint_review.outputs.response == 'yes'}"
+  dependencies_installed: "{{blocks.install_dependencies.succeeded}}"
+  test_framework_ready: "{{blocks.verify_pytest_setup.outputs.stdout}} contains 'pytest_working=true'"
+  pytest_collection_success: "{{blocks.verify_pytest_setup.succeeded}}"
+  checkpoint_approved: "{{blocks.checkpoint_review.outputs.response}} == 'yes'"
 
   # Project info
-  project_name: "${blocks.detect_project_name.outputs.stdout}"
-  project_path: "${inputs.project_path}"
+  project_name: "{{blocks.detect_project_name.outputs.stdout}}"
+  project_path: "{{inputs.project_path}}"
 
   # State tracking
-  state_file_path: "${inputs.project_path}/${inputs.state_file}"
+  state_file_path: "{{inputs.project_path}}/{{inputs.state_file}}"
 
   # Setup details
-  directory_structure_created: "${blocks.create_directory_structure.succeeded}"
-  pyproject_created: "${blocks.initialize_uv_project.succeeded}"
-  dependencies_method: "${blocks.install_dependencies.outputs.stdout}"
-  gitignore_created: "${blocks.create_gitignore.succeeded}"
-  readme_created: "${blocks.create_readme.succeeded}"
+  directory_structure_created: "{{blocks.create_directory_structure.succeeded}}"
+  pyproject_created: "{{blocks.initialize_uv_project.succeeded}}"
+  dependencies_method: "{{blocks.install_dependencies.outputs.stdout}}"
+  gitignore_created: "{{blocks.create_gitignore.succeeded}}"
+  readme_created: "{{blocks.create_readme.succeeded}}"
 
   # Summary
-  summary: "${blocks.completion_summary.outputs.stdout}"
+  summary: "{{blocks.completion_summary.outputs.stdout}}"
 
   # Next phase readiness
-  ready_for_phase4: "${blocks.checkpoint_review.outputs.response == 'yes'}"
+  ready_for_phase4: "{{blocks.checkpoint_review.outputs.response}} == 'yes'"

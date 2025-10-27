@@ -85,7 +85,7 @@ class PromptExecutor(BlockExecutor):
           type: Shell
           inputs:
             command: "./deploy.sh"
-          condition: ${blocks.confirm_deploy.outputs.response} == 'yes'
+          condition: "{{blocks.confirm_deploy.outputs.response}} == 'yes'"
           depends_on: [confirm_deploy]
 
     Example YAML - Multiple Choice:
@@ -106,7 +106,7 @@ class PromptExecutor(BlockExecutor):
           type: Shell
           inputs:
             command: "./deploy.sh dev"
-          condition: ${blocks.select_env.outputs.response} == '1'
+          condition: "{{blocks.select_env.outputs.response}} == '1'"
           depends_on: [select_env]
 
     Example YAML - Free-form Input:
@@ -124,7 +124,7 @@ class PromptExecutor(BlockExecutor):
         - id: create_commit
           type: Shell
           inputs:
-            command: git commit -m "${blocks.get_commit_msg.outputs.response}"
+            command: git commit -m "{{blocks.get_commit_msg.outputs.response}}"
           depends_on: [get_commit_msg]
 
     Benefits of Simplified Design:

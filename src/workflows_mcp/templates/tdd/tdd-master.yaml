@@ -91,7 +91,7 @@ blocks:
     type: Prompt
     inputs:
       prompt: |
-        Examine the project at ${inputs.project_path} and determine the programming language.
+        Examine the project at {{inputs.project_path}} and determine the programming language.
 
         Look for language-specific files:
         - Python: pyproject.toml, setup.py, requirements.txt
@@ -104,17 +104,17 @@ blocks:
 
         Respond with ONLY the language name: python, javascript, typescript, go, rust, java, ruby, or php
       allow_empty: false
-    condition: "${inputs.language} == ''"
+    condition: "{{inputs.language}} == ''"
 
   # Set final language value (provided or determined)
   - id: set_language
     type: Shell
     inputs:
       command: |
-        if [ -n "${inputs.language}" ]; then
-          echo "${inputs.language}" > "$SCRATCH/language.txt"
+        if [ -n "{{inputs.language}}" ]; then
+          echo "{{inputs.language}}" > "$SCRATCH/language.txt"
         else
-          echo "${blocks.determine_language.outputs.response}" > "$SCRATCH/language.txt"
+          echo "{{blocks.determine_language.outputs.response}}" > "$SCRATCH/language.txt"
         fi
       timeout: 5
     outputs:
@@ -131,8 +131,8 @@ blocks:
     inputs:
       workflow: tdd-phase1-analysis
       inputs:
-        project_path: "${inputs.project_path}"
-        prd_path: "${inputs.prd_path}"
+        project_path: "{{inputs.project_path}}"
+        prd_path: "{{inputs.prd_path}}"
 
   - id: confirm_phase1_complete
     type: Prompt
@@ -144,14 +144,14 @@ blocks:
 
         Results:
         - Technical specification created
-        - Requirements identified: ${blocks.execute_phase1.requirements_count}
+        - Requirements identified: {{blocks.execute_phase1.requirements_count}}
         - Ambiguities resolved
         - Success criteria defined
         - Technical constraints documented
 
         Review:
-        - File: ${blocks.execute_phase1.technical_spec_path}
-        - State: ${blocks.execute_phase1.state_file_path}
+        - File: {{blocks.execute_phase1.technical_spec_path}}
+        - State: {{blocks.execute_phase1.state_file_path}}
 
         Approve Phase 1 and proceed to Phase 2 (Architecture & Design)?
         
@@ -161,8 +161,8 @@ blocks:
       operation: "approve_phase1_proceed_to_phase2"
       details:
         phase: "phase1"
-        requirements_count: "${blocks.execute_phase1.requirements_count}"
-        spec_path: "${blocks.execute_phase1.technical_spec_path}"
+        requirements_count: "{{blocks.execute_phase1.requirements_count}}"
+        spec_path: "{{blocks.execute_phase1.technical_spec_path}}"
     depends_on:
       - execute_phase1
 
@@ -172,10 +172,10 @@ blocks:
     inputs:
       workflow: tdd-phase2-architecture
       inputs:
-        project_path: "${inputs.project_path}"
+        project_path: "{{inputs.project_path}}"
     depends_on:
       - confirm_phase1_complete
-    condition: "${blocks.confirm_phase1_complete.outputs.response == 'yes'}"
+    condition: "{{blocks.confirm_phase1_complete.outputs.response}} == 'yes'"
 
   - id: confirm_phase2_complete
     type: Prompt
@@ -188,12 +188,12 @@ blocks:
         Results:
         - System architecture designed
         - Data models defined
-        - Modules identified: ${blocks.execute_phase2.modules}
+        - Modules identified: {{blocks.execute_phase2.modules}}
         - Module interfaces specified
         - Test strategy planned
 
         Review:
-        - File: ${blocks.execute_phase2.architecture_path}
+        - File: {{blocks.execute_phase2.architecture_path}}
 
         Approve Phase 2 and proceed to Phase 3 (Scaffolding)?
         
@@ -203,11 +203,11 @@ blocks:
       operation: "approve_phase2_proceed_to_phase3"
       details:
         phase: "phase2"
-        modules: "${blocks.execute_phase2.modules}"
-        architecture_path: "${blocks.execute_phase2.architecture_path}"
+        modules: "{{blocks.execute_phase2.modules}}"
+        architecture_path: "{{blocks.execute_phase2.architecture_path}}"
     depends_on:
       - execute_phase2
-    condition: "${blocks.confirm_phase1_complete.outputs.response == 'yes'}"
+    condition: "{{blocks.confirm_phase1_complete.outputs.response}} == 'yes'"
 
   # PHASE 3: Scaffolding
   - id: execute_phase3
@@ -215,13 +215,13 @@ blocks:
     inputs:
       workflow: tdd-phase3-scaffolding
       inputs:
-        project_path: "${inputs.project_path}"
-        language: "${blocks.set_language.outputs.language}"
-        python_version: "${inputs.python_version}"
-        project_name: "${inputs.project_name}"
+        project_path: "{{inputs.project_path}}"
+        language: "{{blocks.set_language.outputs.language}}"
+        python_version: "{{inputs.python_version}}"
+        project_name: "{{inputs.project_name}}"
     depends_on:
       - confirm_phase2_complete
-    condition: "${blocks.confirm_phase2_complete.outputs.response == 'yes'}"
+    condition: "{{blocks.confirm_phase2_complete.outputs.response}} == 'yes'"
 
   - id: confirm_phase3_complete
     type: Prompt
@@ -234,10 +234,10 @@ blocks:
         Results:
         - Project structure created (src/, tests/, docs/)
         - Dependencies installed
-        - Test framework configured: ${blocks.execute_phase3.test_framework_ready}
+        - Test framework configured: {{blocks.execute_phase3.test_framework_ready}}
         - Configuration files ready
 
-        Project: ${blocks.execute_phase3.project_name}
+        Project: {{blocks.execute_phase3.project_name}}
 
         Approve Phase 3 and proceed to Phase 4 (TDD Implementation)?
         
@@ -247,14 +247,14 @@ blocks:
       operation: "approve_phase3_proceed_to_phase4"
       details:
         phase: "phase3"
-        project_name: "${blocks.execute_phase3.project_name}"
-        setup_successful: "${blocks.execute_phase3.setup_successful}"
+        project_name: "{{blocks.execute_phase3.project_name}}"
+        setup_successful: "{{blocks.execute_phase3.setup_successful}}"
     depends_on:
       - execute_phase3
-    condition: "${blocks.confirm_phase2_complete.outputs.response == 'yes'}"
+    condition: "{{blocks.confirm_phase2_complete.outputs.response}} == 'yes'"
 
   # PHASE 4: TDD Module Implementation
-  # LLM: Read ${inputs.project_path}/.tdd-state.json and execute tdd-phase4-module-tdd for each module
+  # LLM: Read {{inputs.project_path}}/.tdd-state.json and execute tdd-phase4-module-tdd for each module
   - id: confirm_all_modules_complete
     type: Prompt
     inputs:
@@ -262,7 +262,7 @@ blocks:
         PHASE 4 COMPLETE: TDD Module Implementation
 
         All modules have been implemented following RED→GREEN→REFACTOR cycle.
-        Review state file: ${inputs.project_path}/.tdd-state.json
+        Review state file: {{inputs.project_path}}/.tdd-state.json
 
         Approve Phase 4 and proceed to Phase 5 (Integration)?
         
@@ -272,10 +272,10 @@ blocks:
       operation: "approve_phase4_proceed_to_phase5"
       details:
         phase: "phase4"
-        state_file: "${inputs.project_path}/.tdd-state.json"
+        state_file: "{{inputs.project_path}}/.tdd-state.json"
     depends_on:
       - confirm_phase3_complete
-    condition: "${blocks.confirm_phase3_complete.outputs.response == 'yes'}"
+    condition: "{{blocks.confirm_phase3_complete.outputs.response}} == 'yes'"
 
   # PHASE 5: Integration Testing
   - id: execute_phase5
@@ -283,12 +283,12 @@ blocks:
     inputs:
       workflow: tdd-phase5-integration
       inputs:
-        project_path: "${inputs.project_path}"
-        language: "${blocks.set_language.outputs.language}"
-        coverage_threshold: ${inputs.coverage_threshold}
+        project_path: "{{inputs.project_path}}"
+        language: "{{blocks.set_language.outputs.language}}"
+        coverage_threshold: "{{inputs.coverage_threshold}}"
     depends_on:
       - confirm_all_modules_complete
-    condition: "${blocks.confirm_all_modules_complete.outputs.response == 'yes'}"
+    condition: "{{blocks.confirm_all_modules_complete.outputs.response}} == 'yes'"
 
   - id: confirm_phase5_complete
     type: Prompt
@@ -299,10 +299,10 @@ blocks:
         ═══════════════════════════════════════════════════════════════
 
         Results:
-        - Integration tests: ${blocks.execute_phase5.integration_tests_passing}/${blocks.execute_phase5.integration_tests_count}
-        - E2E tests: ${blocks.execute_phase5.e2e_tests_passing}/${blocks.execute_phase5.e2e_tests_count}
-        - All integration tests passing: ${blocks.execute_phase5.all_integration_passing}
-        - All E2E tests passing: ${blocks.execute_phase5.all_e2e_passing}
+        - Integration tests: {{blocks.execute_phase5.integration_tests_passing}}/{{blocks.execute_phase5.integration_tests_count}}
+        - E2E tests: {{blocks.execute_phase5.e2e_tests_passing}}/{{blocks.execute_phase5.e2e_tests_count}}
+        - All integration tests passing: {{blocks.execute_phase5.all_integration_passing}}
+        - All E2E tests passing: {{blocks.execute_phase5.all_e2e_passing}}
 
         Module interactions verified and complete workflows validated.
 
@@ -314,11 +314,11 @@ blocks:
       operation: "approve_phase5_proceed_to_phase6"
       details:
         phase: "phase5"
-        integration_tests: "${blocks.execute_phase5.integration_tests_passing}"
-        e2e_tests: "${blocks.execute_phase5.e2e_tests_passing}"
+        integration_tests: "{{blocks.execute_phase5.integration_tests_passing}}"
+        e2e_tests: "{{blocks.execute_phase5.e2e_tests_passing}}"
     depends_on:
       - execute_phase5
-    condition: "${blocks.confirm_all_modules_complete.outputs.response == 'yes'}"
+    condition: "{{blocks.confirm_all_modules_complete.outputs.response}} == 'yes'"
 
   # PHASE 6: Validation & Quality Gates
   - id: execute_phase6
@@ -326,14 +326,14 @@ blocks:
     inputs:
       workflow: tdd-phase6-validation
       inputs:
-        project_path: "${inputs.project_path}"
-        language: "${blocks.set_language.outputs.language}"
-        coverage_threshold: ${inputs.coverage_threshold}
+        project_path: "{{inputs.project_path}}"
+        language: "{{blocks.set_language.outputs.language}}"
+        coverage_threshold: "{{inputs.coverage_threshold}}"
         strict_quality: true
         enable_security_scan: true
     depends_on:
       - confirm_phase5_complete
-    condition: "${blocks.confirm_phase5_complete.outputs.response == 'yes'}"
+    condition: "{{blocks.confirm_phase5_complete.outputs.response}} == 'yes'"
 
   - id: confirm_phase6_complete
     type: Prompt
@@ -344,15 +344,15 @@ blocks:
         ═══════════════════════════════════════════════════════════════
 
         Results:
-        - Total tests: ${blocks.execute_phase6.total_tests}
-        - Tests passing: ${blocks.execute_phase6.tests_passing}
-        - Overall coverage: ${blocks.execute_phase6.overall_coverage}%
-        - Quality gates: ${blocks.execute_phase6.all_quality_gates_passed}
-        - Security scan: ${blocks.execute_phase6.security_scan_clean}
+        - Total tests: {{blocks.execute_phase6.total_tests}}
+        - Tests passing: {{blocks.execute_phase6.tests_passing}}
+        - Overall coverage: {{blocks.execute_phase6.overall_coverage}}%
+        - Quality gates: {{blocks.execute_phase6.all_quality_gates_passed}}
+        - Security scan: {{blocks.execute_phase6.security_scan_clean}}
         - PRD compliance verified
-        - Production ready: ${blocks.execute_phase6.production_ready}
+        - Production ready: {{blocks.execute_phase6.production_ready}}
 
-        Quality report: ${blocks.execute_phase6.quality_report_path}
+        Quality report: {{blocks.execute_phase6.quality_report_path}}
 
         All quality gates passed. System is production-ready.
 
@@ -364,12 +364,12 @@ blocks:
       operation: "approve_phase6_proceed_to_phase7"
       details:
         phase: "phase6"
-        total_tests: "${blocks.execute_phase6.total_tests}"
-        coverage: "${blocks.execute_phase6.overall_coverage}%"
-        production_ready: "${blocks.execute_phase6.production_ready}"
+        total_tests: "{{blocks.execute_phase6.total_tests}}"
+        coverage: "{{blocks.execute_phase6.overall_coverage}}%"
+        production_ready: "{{blocks.execute_phase6.production_ready}}"
     depends_on:
       - execute_phase6
-    condition: "${blocks.confirm_phase5_complete.outputs.response == 'yes'}"
+    condition: "{{blocks.confirm_phase5_complete.outputs.response}} == 'yes'"
 
   # PHASE 7: Finalization & Documentation
   - id: execute_phase7
@@ -377,16 +377,16 @@ blocks:
     inputs:
       workflow: tdd-phase7-finalization
       inputs:
-        project_path: "${inputs.project_path}"
-        project_name: "${inputs.project_name}"
-        version: "${inputs.version}"
-        author: "${inputs.author}"
-        language: "${blocks.set_language.outputs.language}"
-        python_version: "${inputs.python_version}"
-        coverage_threshold: ${inputs.coverage_threshold}
+        project_path: "{{inputs.project_path}}"
+        project_name: "{{inputs.project_name}}"
+        version: "{{inputs.version}}"
+        author: "{{inputs.author}}"
+        language: "{{blocks.set_language.outputs.language}}"
+        python_version: "{{inputs.python_version}}"
+        coverage_threshold: "{{inputs.coverage_threshold}}"
     depends_on:
       - confirm_phase6_complete
-    condition: "${blocks.confirm_phase6_complete.outputs.response == 'yes'}"
+    condition: "{{blocks.confirm_phase6_complete.outputs.response}} == 'yes'"
 
   - id: confirm_phase7_complete
     type: Prompt
@@ -397,21 +397,21 @@ blocks:
         ═══════════════════════════════════════════════════════════════
 
         Documentation Generated:
-        - ✅ Deployment Guide: ${blocks.execute_phase7.deployment_guide_path}
-        - ✅ User Guide: ${blocks.execute_phase7.user_guide_path}
-        - ✅ API Documentation: ${blocks.execute_phase7.api_docs_path}
-        - ✅ Operations Runbook: ${blocks.execute_phase7.runbook_path}
-        - ✅ Deployment Checklist: ${blocks.execute_phase7.deployment_checklist_path}
-        - ✅ README: ${blocks.execute_phase7.readme_path}
-        - ✅ CHANGELOG: ${blocks.execute_phase7.changelog_path}
+        - ✅ Deployment Guide: {{blocks.execute_phase7.deployment_guide_path}}
+        - ✅ User Guide: {{blocks.execute_phase7.user_guide_path}}
+        - ✅ API Documentation: {{blocks.execute_phase7.api_docs_path}}
+        - ✅ Operations Runbook: {{blocks.execute_phase7.runbook_path}}
+        - ✅ Deployment Checklist: {{blocks.execute_phase7.deployment_checklist_path}}
+        - ✅ README: {{blocks.execute_phase7.readme_path}}
+        - ✅ CHANGELOG: {{blocks.execute_phase7.changelog_path}}
 
         Status:
-        - Documentation: ${blocks.execute_phase7.documentation_complete}
-        - Package: ${blocks.execute_phase7.package_created}
-        - Requirements: ${blocks.execute_phase7.requirements_generated}
-        - Deployment Ready: ${blocks.execute_phase7.deployment_ready}
+        - Documentation: {{blocks.execute_phase7.documentation_complete}}
+        - Package: {{blocks.execute_phase7.package_created}}
+        - Requirements: {{blocks.execute_phase7.requirements_generated}}
+        - Deployment Ready: {{blocks.execute_phase7.deployment_ready}}
 
-        Project ${inputs.project_name} v${inputs.version} is COMPLETE and ready for deployment!
+        Project {{inputs.project_name}} v{{inputs.version}} is COMPLETE and ready for deployment!
 
         Confirm project completion?
         
@@ -421,12 +421,12 @@ blocks:
       operation: "confirm_project_complete"
       details:
         phase: "phase7"
-        project_name: "${inputs.project_name}"
-        version: "${inputs.version}"
-        deployment_ready: "${blocks.execute_phase7.deployment_ready}"
+        project_name: "{{inputs.project_name}}"
+        version: "{{inputs.version}}"
+        deployment_ready: "{{blocks.execute_phase7.deployment_ready}}"
     depends_on:
       - execute_phase7
-    condition: "${blocks.confirm_phase6_complete.outputs.response == 'yes'}"
+    condition: "{{blocks.confirm_phase6_complete.outputs.response}} == 'yes'"
 
   - id: display_final_summary
     type: Shell
@@ -437,14 +437,14 @@ blocks:
         echo "║  🎉 TDD PROJECT DEVELOPMENT COMPLETE! 🎉                      ║"
         echo "╚═══════════════════════════════════════════════════════════════╝"
         echo ""
-        echo "Project: ${inputs.project_name} v${inputs.version}"
-        echo "Author: ${inputs.author}"
+        echo "Project: {{inputs.project_name}} v{{inputs.version}}"
+        echo "Author: {{inputs.author}}"
         echo "Completion: $(date)"
         echo ""
 
         # Read final state
-        if [ -f "${inputs.project_path}/.tdd-state.json" ]; then
-          STATE=$(cat "${inputs.project_path}/.tdd-state.json")
+        if [ -f "{{inputs.project_path}}/.tdd-state.json" ]; then
+          STATE=$(cat "{{inputs.project_path}}/.tdd-state.json")
 
           echo "📊 Development Statistics:"
 
@@ -487,48 +487,48 @@ blocks:
         echo ""
         echo "✅ Project is production-ready!"
         echo ""
-        echo "State file: ${inputs.project_path}/.tdd-state.json"
+        echo "State file: {{inputs.project_path}}/.tdd-state.json"
       timeout: 30
     depends_on:
       - confirm_phase7_complete
-    condition: "${blocks.confirm_phase7_complete.outputs.response == 'yes'}"
+    condition: "{{blocks.confirm_phase7_complete.outputs.response}} == 'yes'"
 
 outputs:
   # Overall status
-  project_complete: "${blocks.confirm_phase7_complete.outputs.response == 'yes'}"
-  deployment_ready: "${blocks.execute_phase7.deployment_ready}"
+  project_complete: "{{blocks.confirm_phase7_complete.outputs.response}} == 'yes'"
+  deployment_ready: "{{blocks.execute_phase7.deployment_ready}}"
 
   # Project info
-  project_name: "${inputs.project_name}"
-  version: "${inputs.version}"
-  author: "${inputs.author}"
+  project_name: "{{inputs.project_name}}"
+  version: "{{inputs.version}}"
+  author: "{{inputs.author}}"
 
   # Phase completion status
-  phase1_complete: "${blocks.confirm_phase1_complete.outputs.response == 'yes'}"
-  phase2_complete: "${blocks.confirm_phase2_complete.outputs.response == 'yes'}"
-  phase3_complete: "${blocks.confirm_phase3_complete.outputs.response == 'yes'}"
-  phase4_complete: "${blocks.confirm_all_modules_complete.outputs.response == 'yes'}"
-  phase5_complete: "${blocks.confirm_phase5_complete.outputs.response == 'yes'}"
-  phase6_complete: "${blocks.confirm_phase6_complete.outputs.response == 'yes'}"
-  phase7_complete: "${blocks.confirm_phase7_complete.outputs.response == 'yes'}"
+  phase1_complete: "{{blocks.confirm_phase1_complete.outputs.response}} == 'yes'"
+  phase2_complete: "{{blocks.confirm_phase2_complete.outputs.response}} == 'yes'"
+  phase3_complete: "{{blocks.confirm_phase3_complete.outputs.response}} == 'yes'"
+  phase4_complete: "{{blocks.confirm_all_modules_complete.outputs.response}} == 'yes'"
+  phase5_complete: "{{blocks.confirm_phase5_complete.outputs.response}} == 'yes'"
+  phase6_complete: "{{blocks.confirm_phase6_complete.outputs.response}} == 'yes'"
+  phase7_complete: "{{blocks.confirm_phase7_complete.outputs.response}} == 'yes'"
 
   # Key metrics
-  requirements_count: "${blocks.execute_phase1.requirements_count}"
-  modules_count: "${blocks.execute_phase2.module_count}"
-  total_tests: "${blocks.execute_phase6.total_tests}"
-  coverage_percent: "${blocks.execute_phase6.overall_coverage}"
+  requirements_count: "{{blocks.execute_phase1.requirements_count}}"
+  modules_count: "{{blocks.execute_phase2.module_count}}"
+  total_tests: "{{blocks.execute_phase6.total_tests}}"
+  coverage_percent: "{{blocks.execute_phase6.overall_coverage}}"
 
   # Documentation paths
-  technical_spec: "${blocks.execute_phase1.technical_spec_path}"
-  architecture: "${blocks.execute_phase2.architecture_path}"
-  deployment_guide: "${blocks.execute_phase7.deployment_guide_path}"
-  user_guide: "${blocks.execute_phase7.user_guide_path}"
-  api_docs: "${blocks.execute_phase7.api_docs_path}"
-  runbook: "${blocks.execute_phase7.runbook_path}"
-  deployment_checklist: "${blocks.execute_phase7.deployment_checklist_path}"
+  technical_spec: "{{blocks.execute_phase1.technical_spec_path}}"
+  architecture: "{{blocks.execute_phase2.architecture_path}}"
+  deployment_guide: "{{blocks.execute_phase7.deployment_guide_path}}"
+  user_guide: "{{blocks.execute_phase7.user_guide_path}}"
+  api_docs: "{{blocks.execute_phase7.api_docs_path}}"
+  runbook: "{{blocks.execute_phase7.runbook_path}}"
+  deployment_checklist: "{{blocks.execute_phase7.deployment_checklist_path}}"
 
   # State tracking
-  state_file: "${inputs.project_path}/.tdd-state.json"
+  state_file: "{{inputs.project_path}}/.tdd-state.json"
 
   # Final summary
-  summary: "${blocks.display_final_summary.outputs.stdout}"
+  summary: "{{blocks.display_final_summary.outputs.stdout}}"

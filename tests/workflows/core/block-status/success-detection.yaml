@@ -10,8 +10,8 @@ blocks:
     type: Shell
     inputs:
       command: echo "detected"
-    condition: "${blocks.successful_block.succeeded}"
+    condition: "{{blocks.successful_block.succeeded}}"
     depends_on: [successful_block]
 outputs:
-  block_succeeded: "${blocks.successful_block.succeeded}"
-  detection_worked: "${blocks.check_success.succeeded}"
+  block_succeeded: "{{blocks.successful_block.succeeded}}"
+  detection_worked: "{{blocks.check_success.succeeded}}"

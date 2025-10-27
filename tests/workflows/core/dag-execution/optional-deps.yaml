@@ -49,9 +49,9 @@ blocks:
       - block: job_1
         required: false
 outputs:
-  job_1_succeeded: "${blocks.job_1.succeeded}"
-  job_2_failed: "${blocks.job_2.failed}"
-  job_3_succeeded: "${blocks.job_3.succeeded}"
-  job_4_succeeded: "${blocks.job_4.succeeded}"
-  job_5_succeeded: "${blocks.job_5.succeeded}"
-  job_6_succeeded: "${blocks.job_6.succeeded}"
+  job_1_succeeded: "{{blocks.job_1.succeeded}}"
+  job_2_failed: "{{blocks.job_2.failed}}"
+  job_3_succeeded: "{{blocks.job_3.succeeded}}"
+  job_4_succeeded: "{{blocks.job_4.succeeded}}"
+  job_5_succeeded: "{{blocks.job_5.succeeded}}"
+  job_6_succeeded: "{{blocks.job_6.succeeded}}"

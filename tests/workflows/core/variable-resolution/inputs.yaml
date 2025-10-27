@@ -14,11 +14,11 @@ blocks:
   - id: use_string
     type: Shell
     inputs:
-      command: echo "${inputs.string_input}"
+      command: echo "{{inputs.string_input}}"
   - id: use_number
     type: Shell
     inputs:
-      command: echo "${inputs.number_input}"
+      command: echo "{{inputs.number_input}}"
 outputs:
-  string_result: "${blocks.use_string.outputs.stdout}"
-  number_result: "${blocks.use_number.outputs.stdout}"
+  string_result: "{{blocks.use_string.outputs.stdout}}"
+  number_result: "{{blocks.use_number.outputs.stdout}}"

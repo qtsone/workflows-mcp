@@ -11,15 +11,15 @@ blocks:
     type: Shell
     inputs:
       command: echo "ran"
-    condition: "not ${inputs.should_skip}"
+    condition: "not {{inputs.should_skip}}"
   - id: check_skipped
     type: Shell
     inputs:
       command: echo "detected_skip"
-    condition: "${blocks.skippable_block.skipped}"
+    condition: "{{blocks.skippable_block.skipped}}"
     depends_on:
       - block: skippable_block
         required: false
 outputs:
-  block_skipped: "${blocks.skippable_block.skipped}"
-  detection_worked: "${blocks.check_skipped.succeeded}"
+  block_skipped: "{{blocks.skippable_block.skipped}}"
+  detection_worked: "{{blocks.check_skipped.succeeded}}"

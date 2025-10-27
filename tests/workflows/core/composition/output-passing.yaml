@@ -14,7 +14,7 @@ blocks:
     inputs:
       workflow: "composition-child-calculator"
       inputs:
-        number_a: "${inputs.value}"
+        number_a: "{{inputs.value}}"
         number_b: 5
         operation: "*"
 
@@ -23,7 +23,7 @@ blocks:
     inputs:
       workflow: "composition-child-calculator"
       inputs:
-        number_a: "${blocks.call_multiply.outputs.result}"
+        number_a: "{{blocks.call_multiply.outputs.result}}"
         number_b: 10
         operation: "+"
     depends_on: [call_multiply]
@@ -31,12 +31,12 @@ blocks:
   - id: use_final_output
     type: Shell
     inputs:
-      command: 'echo "Final result: ${blocks.call_add.outputs.result}"'
+      command: 'echo "Final result: {{blocks.call_add.outputs.result}}"'
     depends_on: [call_add]
 
 outputs:
-  multiply_result: "${blocks.call_multiply.outputs.result}"
-  add_result: "${blocks.call_add.outputs.result}"
+  multiply_result: "{{blocks.call_multiply.outputs.result}}"
+  add_result: "{{blocks.call_add.outputs.result}}"
   both_succeeded: >
-    ${blocks.call_multiply.succeeded} and
-    ${blocks.call_add.succeeded}
+    {{blocks.call_multiply.succeeded}} and
+    {{blocks.call_add.succeeded}}

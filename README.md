@@ -133,10 +133,10 @@ blocks:
   - id: greet
     type: Shell
     inputs:
-      command: printf "Hello, ${inputs.name}!"
+      command: printf "Hello, {{inputs.name}}!"
 
 outputs:
-  greeting: "${blocks.greet.outputs.stdout}"
+  greeting: "{{blocks.greet.outputs.stdout}}"
 ```
 
 ### Key Features
@@ -147,9 +147,9 @@ Reference inputs, block outputs, and metadata anywhere in your workflow.
 
 Examples:
 
-- [Using workflow inputs](tests/workflows/core/variable-resolution/inputs.yaml) - `${inputs.field_name}`
-- [Using block outputs](tests/workflows/core/variable-resolution/block-outputs.yaml) - `${blocks.block_id.outputs.field}`
-- [Using metadata](tests/workflows/core/variable-resolution/metadata.yaml) - `${metadata.workflow_name}`
+- [Using workflow inputs](tests/workflows/core/variable-resolution/inputs.yaml) - `{{inputs.field_name}}`
+- [Using block outputs](tests/workflows/core/variable-resolution/block-outputs.yaml) - `{{blocks.block_id.outputs.field}}`
+- [Using metadata](tests/workflows/core/variable-resolution/metadata.yaml) - `{{metadata.workflow_name}}`
 - [Variable shortcuts](tests/workflows/core/variable-resolution/shortcuts.yaml) - convenient shorthand syntax
 
 **Conditionals:**
@@ -167,9 +167,9 @@ Use simple shortcuts to check if blocks succeeded, failed, or were skipped.
 
 Examples:
 
-- [Success detection](tests/workflows/core/block-status/success-detection.yaml) - `${blocks.id.succeeded}`
-- [Failure detection](tests/workflows/core/block-status/failure-detection.yaml) - `${blocks.id.failed}`
-- [Skip detection](tests/workflows/core/block-status/skip-detection.yaml) - `${blocks.id.skipped}`
+- [Success detection](tests/workflows/core/block-status/success-detection.yaml) - `{{blocks.id.succeeded}}`
+- [Failure detection](tests/workflows/core/block-status/failure-detection.yaml) - `{{blocks.id.failed}}`
+- [Skip detection](tests/workflows/core/block-status/skip-detection.yaml) - `{{blocks.id.skipped}}`
 
 **Parallel Execution:**
 

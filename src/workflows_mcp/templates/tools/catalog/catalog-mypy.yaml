@@ -95,4 +95,4 @@ inputs:
 
 outputs:
   catalog_type: "catalog"
-  tool_catalog_marker: "${blocks.catalog_marker.outputs.stdout}"
+  tool_catalog_marker: "{{blocks.catalog_marker.outputs.stdout}}"

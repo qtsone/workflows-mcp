@@ -57,9 +57,9 @@ blocks:
     inputs:
       workflow: validate-command
       inputs:
-        command: "${inputs.tool_name}"
-        version_flag: "${inputs.version_flag}"
-        required_version: "${inputs.version}"
+        command: "{{inputs.tool_name}}"
+        version_flag: "{{inputs.version_flag}}"
+        required_version: "{{inputs.version}}"
 
   # Step 2: Determine if installation needed
   - id: check_installation_needed
@@ -70,11 +70,11 @@ blocks:
         # 1. Tool not found AND auto_install=true
         # 2. Tool found but doesn't meet constraints AND auto_install=true
         # Note: Python booleans convert to "True"/"False" (capitalized), not "true"/"false"
-        if [ "${inputs.auto_install}" == "true" ]; then
+        if [ "{{inputs.auto_install}}" == "true" ]; then
           # Note: validate_command.outputs.found is now a boolean (true/false as string)
-          if [ "${blocks.validate_command.outputs.found}" == "false" ]; then
+          if [ "{{blocks.validate_command.outputs.found}}" == "false" ]; then
             exit 0  # Exit 0 = installation needed
-          elif [ "${blocks.validate_command.outputs.found}" == "true" ] && [ -n "${inputs.version}" ] && [ "${blocks.validate_command.outputs.meets_constraints}" == "false" ]; then
+          elif [ "{{blocks.validate_command.outputs.found}}" == "true" ] && [ -n "{{inputs.version}}" ] && [ "{{blocks.validate_command.outputs.meets_constraints}}" == "false" ]; then
             exit 0  # Exit 0 = installation needed (found but wrong version)
           else
             exit 1  # Exit 1 = no installation needed
@@ -106,10 +106,10 @@ blocks:
     type: Shell
     inputs:
       command: |
-        EXPLICIT_PROVIDER="${inputs.provider}"
-        TOOL_TYPE="${inputs.tool_type}"
-        PLATFORM="${blocks.detect_platform.outputs.stdout}"
-        VENV_PATH="${inputs.venv_path}"
+        EXPLICIT_PROVIDER="{{inputs.provider}}"
+        TOOL_TYPE="{{inputs.tool_type}}"
+        PLATFORM="{{blocks.detect_platform.outputs.stdout}}"
+        VENV_PATH="{{inputs.venv_path}}"
 
         # Strip trailing whitespace from PLATFORM (stdout includes newline)
         PLATFORM=$(echo "$PLATFORM" | tr -d '\n')
@@ -169,9 +169,9 @@ blocks:
     type: Shell
     inputs:
       command: |
-        TOOL="${inputs.tool_name}"
-        VERSION="${inputs.version}"
-        VENV="${inputs.venv_path}"
+        TOOL="{{inputs.tool_name}}"
+        VERSION="{{inputs.version}}"
+        VENV="{{inputs.venv_path}}"
 
         # Build pip command
         if [ -n "$VENV" ] && [ -f "$VENV/bin/pip" ]; then
@@ -195,7 +195,7 @@ blocks:
       working_dir: "."
       timeout: 300
       
-    condition: "${blocks.check_installation_needed.outputs.exit_code} == 0 and ${blocks.select_provider.outputs.stdout} == 'pip'"
+    condition: "{{blocks.check_installation_needed.outputs.exit_code}} == 0 and {{blocks.select_provider.outputs.stdout}} == 'pip'"
     depends_on:
       - check_installation_needed
       - select_provider
@@ -205,9 +205,9 @@ blocks:
     type: Shell
     inputs:
       command: |
-        TOOL="${inputs.tool_name}"
-        VERSION="${inputs.version}"
-        VENV="${inputs.venv_path}"
+        TOOL="{{inputs.tool_name}}"
+        VERSION="{{inputs.version}}"
+        VENV="{{inputs.venv_path}}"
 
         # Determine uv command
         if command -v uv >/dev/null 2>&1; then
@@ -236,7 +236,7 @@ blocks:
       working_dir: "."
       timeout: 300
       
-    condition: "${blocks.check_installation_needed.outputs.exit_code} == 0 and ${blocks.select_provider.outputs.stdout} == 'uv'"
+    condition: "{{blocks.check_installation_needed.outputs.exit_code}} == 0 and {{blocks.select_provider.outputs.stdout}} == 'uv'"
     depends_on:
       - check_installation_needed
       - select_provider
@@ -246,7 +246,7 @@ blocks:
     type: Shell
     inputs:
       command: |
-        TOOL="${inputs.tool_name}"
+        TOOL="{{inputs.tool_name}}"
 
         if command -v brew >/dev/null 2>&1; then
           echo "Installing $TOOL using Homebrew..."
@@ -257,7 +257,7 @@ blocks:
         fi
       timeout: 600
       
-    condition: "${blocks.check_installation_needed.outputs.exit_code} == 0 and ${blocks.select_provider.outputs.stdout} == 'brew'"
+    condition: "{{blocks.check_installation_needed.outputs.exit_code}} == 0 and {{blocks.select_provider.outputs.stdout}} == 'brew'"
     depends_on:
       - check_installation_needed
       - select_provider
@@ -268,10 +268,10 @@ blocks:
     inputs:
       workflow: validate-command
       inputs:
-        command: "${inputs.tool_name}"
-        version_flag: "${inputs.version_flag}"
-        required_version: "${inputs.version}"
-    condition: "${blocks.check_installation_needed.outputs.exit_code} == 0"
+        command: "{{inputs.tool_name}}"
+        version_flag: "{{inputs.version_flag}}"
+        required_version: "{{inputs.version}}"
+    condition: "{{blocks.check_installation_needed.outputs.exit_code}} == 0"
     depends_on:
       - install_via_pip
       - install_via_uv
@@ -284,14 +284,14 @@ blocks:
       command: |
         # Determine action based on initial state
         # Note: validate_command.outputs.found is a boolean (True/False as string)
-        if [ "${blocks.validate_command.outputs.found}" = "False" ]; then
+        if [ "{{blocks.validate_command.outputs.found}}" = "False" ]; then
           echo "installed"
         else
           echo "upgraded"
         fi
       timeout: 5
       
-    condition: "${blocks.check_installation_needed.outputs.exit_code} == 0"
+    condition: "{{blocks.check_installation_needed.outputs.exit_code}} == 0"
     depends_on:
       - check_installation_needed
       - validate_command
@@ -303,7 +303,7 @@ blocks:
       command: echo "already_available"
       timeout: 5
       
-    condition: "${blocks.check_installation_needed.outputs.exit_code} != 0"
+    condition: "{{blocks.check_installation_needed.outputs.exit_code}} != 0"
     depends_on:
       - check_installation_needed
       - validate_command
@@ -312,10 +312,10 @@ blocks:
   - id: check_final_availability_installed
     type: Shell
     inputs:
-      command: echo "${blocks.validate_installation.outputs.found}"
+      command: echo "{{blocks.validate_installation.outputs.found}}"
       timeout: 5
       
-    condition: "${blocks.check_installation_needed.outputs.exit_code} == 0"
+    condition: "{{blocks.check_installation_needed.outputs.exit_code}} == 0"
     depends_on:
       - determine_action
       - validate_installation
@@ -324,10 +324,10 @@ blocks:
   - id: check_final_availability_existing
     type: Shell
     inputs:
-      command: echo "${blocks.validate_command.outputs.found}"
+      command: echo "{{blocks.validate_command.outputs.found}}"
       timeout: 5
       
-    condition: "${blocks.check_installation_needed.outputs.exit_code} != 0"
+    condition: "{{blocks.check_installation_needed.outputs.exit_code}} != 0"
     depends_on:
       - determine_action_no_install
 
@@ -335,10 +335,10 @@ blocks:
   - id: get_final_version_installed
     type: Shell
     inputs:
-      command: echo "${blocks.validate_installation.outputs.version}"
+      command: echo "{{blocks.validate_installation.outputs.version}}"
       timeout: 5
       
-    condition: "${blocks.check_installation_needed.outputs.exit_code} == 0"
+    condition: "{{blocks.check_installation_needed.outputs.exit_code}} == 0"
     depends_on:
       - determine_action
       - validate_installation
@@ -347,10 +347,10 @@ blocks:
   - id: get_final_version_existing
     type: Shell
     inputs:
-      command: echo "${blocks.validate_command.outputs.version}"
+      command: echo "{{blocks.validate_command.outputs.version}}"
       timeout: 5
       
-    condition: "${blocks.check_installation_needed.outputs.exit_code} != 0"
+    condition: "{{blocks.check_installation_needed.outputs.exit_code}} != 0"
     depends_on:
       - determine_action_no_install
 
@@ -358,10 +358,10 @@ blocks:
   - id: get_final_path_installed
     type: Shell
     inputs:
-      command: echo "${blocks.validate_installation.outputs.path}"
+      command: echo "{{blocks.validate_installation.outputs.path}}"
       timeout: 5
       
-    condition: "${blocks.check_installation_needed.outputs.exit_code} == 0"
+    condition: "{{blocks.check_installation_needed.outputs.exit_code}} == 0"
     depends_on:
       - determine_action
       - validate_installation
@@ -370,10 +370,10 @@ blocks:
   - id: get_final_path_existing
     type: Shell
     inputs:
-      command: echo "${blocks.validate_command.outputs.path}"
+      command: echo "{{blocks.validate_command.outputs.path}}"
       timeout: 5
       
-    condition: "${blocks.check_installation_needed.outputs.exit_code} != 0"
+    condition: "{{blocks.check_installation_needed.outputs.exit_code}} != 0"
     depends_on:
       - determine_action_no_install
 
@@ -383,8 +383,8 @@ blocks:
     inputs:
       command: |
         # Return action from whichever path was taken
-        ACTION_INSTALLED="${blocks.determine_action.outputs.stdout}"
-        ACTION_EXISTING="${blocks.determine_action_no_install.outputs.stdout}"
+        ACTION_INSTALLED="{{blocks.determine_action.outputs.stdout}}"
+        ACTION_EXISTING="{{blocks.determine_action_no_install.outputs.stdout}}"
         if [ -n "$ACTION_INSTALLED" ]; then
           echo "$ACTION_INSTALLED"
         else
@@ -400,8 +400,8 @@ blocks:
     type: Shell
     inputs:
       command: |
-        AVAIL_INSTALLED="${blocks.check_final_availability_installed.outputs.stdout}"
-        AVAIL_EXISTING="${blocks.check_final_availability_existing.outputs.stdout}"
+        AVAIL_INSTALLED="{{blocks.check_final_availability_installed.outputs.stdout}}"
+        AVAIL_EXISTING="{{blocks.check_final_availability_existing.outputs.stdout}}"
         if [ -n "$AVAIL_INSTALLED" ]; then
           echo "$AVAIL_INSTALLED"
         else
@@ -417,8 +417,8 @@ blocks:
     type: Shell
     inputs:
       command: |
-        VER_INSTALLED="${blocks.get_final_version_installed.outputs.stdout}"
-        VER_EXISTING="${blocks.get_final_version_existing.outputs.stdout}"
+        VER_INSTALLED="{{blocks.get_final_version_installed.outputs.stdout}}"
+        VER_EXISTING="{{blocks.get_final_version_existing.outputs.stdout}}"
         if [ -n "$VER_INSTALLED" ]; then
           echo "$VER_INSTALLED"
         else
@@ -434,8 +434,8 @@ blocks:
     type: Shell
     inputs:
       command: |
-        PATH_INSTALLED="${blocks.get_final_path_installed.outputs.stdout}"
-        PATH_EXISTING="${blocks.get_final_path_existing.outputs.stdout}"
+        PATH_INSTALLED="{{blocks.get_final_path_installed.outputs.stdout}}"
+        PATH_EXISTING="{{blocks.get_final_path_existing.outputs.stdout}}"
         if [ -n "$PATH_INSTALLED" ]; then
           echo "$PATH_INSTALLED"
         else
@@ -453,13 +453,13 @@ blocks:
     inputs:
       command: |
         printf "Ensure Tool Summary:\n"
-        printf "- Tool: ${inputs.tool_name}\n"
-        printf "- Type: ${inputs.tool_type}\n"
-        printf "- Provider: ${blocks.select_provider.outputs.stdout}\n"
-        printf "- Action: ${blocks.consolidate_action.outputs.stdout}\n"
-        printf "- Available: ${blocks.consolidate_availability.outputs.stdout}\n"
-        printf "- Version: ${blocks.consolidate_version.outputs.stdout}\n"
-        printf "- Path: ${blocks.consolidate_path.outputs.stdout}"
+        printf "- Tool: {{inputs.tool_name}}\n"
+        printf "- Type: {{inputs.tool_type}}\n"
+        printf "- Provider: {{blocks.select_provider.outputs.stdout}}\n"
+        printf "- Action: {{blocks.consolidate_action.outputs.stdout}}\n"
+        printf "- Available: {{blocks.consolidate_availability.outputs.stdout}}\n"
+        printf "- Version: {{blocks.consolidate_version.outputs.stdout}}\n"
+        printf "- Path: {{blocks.consolidate_path.outputs.stdout}}"
     depends_on:
       - select_provider
       - consolidate_action
@@ -468,11 +468,11 @@ blocks:
       - consolidate_path
 
 outputs:
-  available: "${blocks.consolidate_availability.outputs.stdout}"
-  installed_by_workflow: "${blocks.check_installation_needed.outputs.exit_code} == 0"
-  version: "${blocks.consolidate_version.outputs.stdout}"
-  provider_used: "${blocks.select_provider.outputs.stdout}"
-  tool_path: "${blocks.consolidate_path.outputs.stdout}"
-  action_taken: "${blocks.consolidate_action.outputs.stdout}"
-  validation_output: "${blocks.validate_command.outputs.summary}"
-  summary: "${blocks.ensure_summary.outputs.stdout}"
+  available: "{{blocks.consolidate_availability.outputs.stdout}}"
+  installed_by_workflow: "{{blocks.check_installation_needed.outputs.exit_code}} == 0"
+  version: "{{blocks.consolidate_version.outputs.stdout}}"
+  provider_used: "{{blocks.select_provider.outputs.stdout}}"
+  tool_path: "{{blocks.consolidate_path.outputs.stdout}}"
+  action_taken: "{{blocks.consolidate_action.outputs.stdout}}"
+  validation_output: "{{blocks.validate_command.outputs.summary}}"
+  summary: "{{blocks.ensure_summary.outputs.stdout}}"

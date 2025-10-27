@@ -82,29 +82,29 @@ blocks:
   - id: read_state
     type: ReadJSONState
     inputs:
-      path: "${inputs.project_path}/${inputs.state_file}"
+      path: "{{inputs.project_path}}/{{inputs.state_file}}"
 
   - id: confirm_start
     type: Prompt
     inputs:
       prompt: |
-        Start TDD implementation for module: ${inputs.module_name}
+        Start TDD implementation for module: {{inputs.module_name}}
 
         Current TDD state:
-        - Phase: ${blocks.read_state.state.current_phase}
-        - Total modules: ${blocks.read_state.state.modules}
-        - Completed: ${blocks.read_state.state.completed_modules}
+        - Phase: {{blocks.read_state.state.current_phase}}
+        - Total modules: {{blocks.read_state.state.modules}}
+        - Completed: {{blocks.read_state.state.completed_modules}}
 
         Ready to begin RED-GREEN-REFACTOR cycle?
         
         Respond with 'yes' or 'no'
-      operation: "start_tdd_module_${inputs.module_name}"
+      operation: "start_tdd_module_{{inputs.module_name}}"
       details:
-        module_name: "${inputs.module_name}"
-        project_path: "${inputs.project_path}"
-        test_path: "${inputs.test_path}"
-        source_path: "${inputs.source_path}"
-        state_loaded: "${blocks.read_state.outputs.found}"
+        module_name: "{{inputs.module_name}}"
+        project_path: "{{inputs.project_path}}"
+        test_path: "{{inputs.test_path}}"
+        source_path: "{{inputs.source_path}}"
+        state_loaded: "{{blocks.read_state.outputs.found}}"
     depends_on:
       - read_state
 
@@ -114,28 +114,28 @@ blocks:
       prompt: |
         === RED PHASE: Write Tests First ===
 
-        Module: ${inputs.module_name}
-        Test file: ${inputs.project_path}/${inputs.test_path}/test_${inputs.module_name}.py
+        Module: {{inputs.module_name}}
+        Test file: {{inputs.project_path}}/{{inputs.test_path}}/test_{{inputs.module_name}}.py
 
         Write ALL unit tests for this module following these principles:
         1. Use AAA pattern (Arrange-Act-Assert)
         2. Test edge cases and error conditions
         3. Tests should FAIL initially (no implementation exists yet)
         4. Use pytest fixtures and parametrize where appropriate
-        5. Aim for comprehensive coverage (${inputs.coverage_threshold}%+ target)
+        5. Aim for comprehensive coverage ({{inputs.coverage_threshold}}%+ target)
 
         Provide the COMPLETE test file content below:
         
         Respond with 'yes' or 'no'
     depends_on:
       - confirm_start
-    condition: "${blocks.confirm_start.outputs.response == 'yes'}"
+    condition: "{{blocks.confirm_start.outputs.response}} == 'yes'"
 
   - id: write_test_file
     type: CreateFile
     inputs:
-      path: "${inputs.project_path}/${inputs.test_path}/test_${inputs.module_name}.py"
-      content: "${blocks.request_test_code.response}"
+      path: "{{inputs.project_path}}/{{inputs.test_path}}/test_{{inputs.module_name}}.py"
+      content: "{{blocks.request_test_code.response}}"
       encoding: "utf-8"
     depends_on:
       - request_test_code
@@ -145,12 +145,12 @@ blocks:
     inputs:
       workflow: "run-tests"
       inputs:
-        language: "${inputs.language}"
-        test_path: "${inputs.test_path}/test_${inputs.module_name}.py"
-        source_path: "${inputs.source_path}"
-        coverage_threshold: ${inputs.coverage_threshold}
+        language: "{{inputs.language}}"
+        test_path: "{{inputs.test_path}}/test_{{inputs.module_name}}.py"
+        source_path: "{{inputs.source_path}}"
+        coverage_threshold: "{{inputs.coverage_threshold}}"
         pytest_args: "-v --tb=short"
-        working_dir: "${inputs.project_path}"
+        working_dir: "{{inputs.project_path}}"
     depends_on:
       - write_test_file
 
@@ -158,7 +158,7 @@ blocks:
     type: Shell
     inputs:
       command: |
-        EXIT_CODE="${blocks.run_tests_verify_fail.outputs.exit_code}"
+        EXIT_CODE="{{blocks.run_tests_verify_fail.outputs.exit_code}}"
         if [ "$EXIT_CODE" = "0" ]; then
           echo "❌ ERROR: Tests passed without implementation!"
           echo "This violates TDD principles - tests must fail initially."
@@ -179,8 +179,8 @@ blocks:
       prompt: |
         === RED PHASE COMPLETE ===
 
-        Tests for ${inputs.module_name} are failing correctly:
-        - Exit code: ${blocks.run_tests_verify_fail.outputs.exit_code}
+        Tests for {{inputs.module_name}} are failing correctly:
+        - Exit code: {{blocks.run_tests_verify_fail.outputs.exit_code}}
         - Test output available for review
         - This confirms tests will catch missing implementation
 
@@ -189,10 +189,10 @@ blocks:
         Respond with 'yes' or 'no'
         
         Respond with 'yes' or 'no'
-      operation: "confirm_red_phase_${inputs.module_name}"
+      operation: "confirm_red_phase_{{inputs.module_name}}"
       details:
-        exit_code: "${blocks.run_tests_verify_fail.outputs.exit_code}"
-        test_file: "${inputs.project_path}/${inputs.test_path}/test_${inputs.module_name}.py"
+        exit_code: "{{blocks.run_tests_verify_fail.outputs.exit_code}}"
+        test_file: "{{inputs.project_path}}/{{inputs.test_path}}/test_{{inputs.module_name}}.py"
     depends_on:
       - validate_red_phase
 
@@ -202,8 +202,8 @@ blocks:
       prompt: |
         === GREEN PHASE: Implement Minimum Code ===
 
-        Module: ${inputs.module_name}
-        Source file: ${inputs.project_path}/${inputs.source_path}/${inputs.module_name}.py
+        Module: {{inputs.module_name}}
+        Source file: {{inputs.project_path}}/{{inputs.source_path}}/{{inputs.module_name}}.py
 
         Implement the MINIMUM code needed to make ALL tests pass:
         1. Focus on making tests pass, not on perfection
@@ -212,20 +212,20 @@ blocks:
         4. Ensure all test cases are handled
 
         Test requirements from RED phase:
-        ${blocks.run_tests_verify_fail.outputs.stderr}
+        {{blocks.run_tests_verify_fail.outputs.stderr}}
 
         Provide the COMPLETE implementation file content below:
         
         Respond with 'yes' or 'no'
     depends_on:
       - confirm_red_phase
-    condition: "${blocks.confirm_red_phase.outputs.response == 'yes'}"
+    condition: "{{blocks.confirm_red_phase.outputs.response}} == 'yes'"
 
   - id: write_implementation
     type: CreateFile
     inputs:
-      path: "${inputs.project_path}/${inputs.source_path}/${inputs.module_name}.py"
-      content: "${blocks.request_implementation.response}"
+      path: "{{inputs.project_path}}/{{inputs.source_path}}/{{inputs.module_name}}.py"
+      content: "{{blocks.request_implementation.response}}"
       encoding: "utf-8"
     depends_on:
       - request_implementation
@@ -235,12 +235,12 @@ blocks:
     inputs:
       workflow: "run-tests"
       inputs:
-        language: "${inputs.language}"
-        test_path: "${inputs.test_path}/test_${inputs.module_name}.py"
-        source_path: "${inputs.source_path}/${inputs.module_name}.py"
-        coverage_threshold: ${inputs.coverage_threshold}
+        language: "{{inputs.language}}"
+        test_path: "{{inputs.test_path}}/test_{{inputs.module_name}}.py"
+        source_path: "{{inputs.source_path}}/{{inputs.module_name}}.py"
+        coverage_threshold: "{{inputs.coverage_threshold}}"
         pytest_args: "-v --cov-report=term-missing"
-        working_dir: "${inputs.project_path}"
+        working_dir: "{{inputs.project_path}}"
     depends_on:
       - write_implementation
 
@@ -248,7 +248,7 @@ blocks:
     type: Shell
     inputs:
       command: |
-        EXIT_CODE="${blocks.run_tests_verify_pass.outputs.exit_code}"
+        EXIT_CODE="{{blocks.run_tests_verify_pass.outputs.exit_code}}"
         if [ "$EXIT_CODE" != "0" ]; then
           echo "❌ ERROR: Tests still failing after implementation!"
           echo "Exit code: $EXIT_CODE"
@@ -268,11 +268,11 @@ blocks:
       prompt: |
         === GREEN PHASE COMPLETE ===
 
-        Tests for ${inputs.module_name} are now passing:
-        - Exit code: ${blocks.run_tests_verify_pass.outputs.exit_code}
-        - Tests passed: ${blocks.run_tests_verify_pass.outputs.tests_passed}
-        - Tests failed: ${blocks.run_tests_verify_pass.outputs.tests_failed}
-        - Coverage: ${blocks.run_tests_verify_pass.outputs.coverage_percent}%
+        Tests for {{inputs.module_name}} are now passing:
+        - Exit code: {{blocks.run_tests_verify_pass.outputs.exit_code}}
+        - Tests passed: {{blocks.run_tests_verify_pass.outputs.tests_passed}}
+        - Tests failed: {{blocks.run_tests_verify_pass.outputs.tests_failed}}
+        - Coverage: {{blocks.run_tests_verify_pass.outputs.coverage_percent}}%
         - Implementation complete and verified
 
         Proceed to REFACTOR phase (improve code quality)?
@@ -280,13 +280,13 @@ blocks:
         Respond with 'yes' or 'no'
         
         Respond with 'yes' or 'no'
-      operation: "confirm_green_phase_${inputs.module_name}"
+      operation: "confirm_green_phase_{{inputs.module_name}}"
       details:
-        exit_code: "${blocks.run_tests_verify_pass.outputs.exit_code}"
-        tests_passed: "${blocks.run_tests_verify_pass.outputs.tests_passed}"
-        tests_failed: "${blocks.run_tests_verify_pass.outputs.tests_failed}"
-        coverage_percent: "${blocks.run_tests_verify_pass.outputs.coverage_percent}"
-        implementation_file: "${inputs.project_path}/${inputs.source_path}/${inputs.module_name}.py"
+        exit_code: "{{blocks.run_tests_verify_pass.outputs.exit_code}}"
+        tests_passed: "{{blocks.run_tests_verify_pass.outputs.tests_passed}}"
+        tests_failed: "{{blocks.run_tests_verify_pass.outputs.tests_failed}}"
+        coverage_percent: "{{blocks.run_tests_verify_pass.outputs.coverage_percent}}"
+        implementation_file: "{{inputs.project_path}}/{{inputs.source_path}}/{{inputs.module_name}}.py"
     depends_on:
       - validate_green_phase
 
@@ -296,10 +296,10 @@ blocks:
       prompt: |
         === REFACTOR PHASE: Improve Code Quality ===
 
-        Module: ${inputs.module_name}
-        Source file: ${inputs.project_path}/${inputs.source_path}/${inputs.module_name}.py
+        Module: {{inputs.module_name}}
+        Source file: {{inputs.project_path}}/{{inputs.source_path}}/{{inputs.module_name}}.py
 
-        Review the current implementation at: @${inputs.project_path}/${inputs.source_path}/${inputs.module_name}.py
+        Review the current implementation at: @{{inputs.project_path}}/{{inputs.source_path}}/{{inputs.module_name}}.py
 
         Refactor this code to improve quality while keeping tests passing:
         1. Improve naming and clarity
@@ -312,13 +312,13 @@ blocks:
         Provide the REFACTORED implementation file content below:
     depends_on:
       - confirm_green_phase
-    condition: "${blocks.confirm_green_phase.outputs.response == 'yes'}"
+    condition: "{{blocks.confirm_green_phase.outputs.response}} == 'yes'"
 
   - id: write_refactored
     type: CreateFile
     inputs:
-      path: "${inputs.project_path}/${inputs.source_path}/${inputs.module_name}.py"
-      content: "${blocks.request_refactor.response}"
+      path: "{{inputs.project_path}}/{{inputs.source_path}}/{{inputs.module_name}}.py"
+      content: "{{blocks.request_refactor.response}}"
       encoding: "utf-8"
     depends_on:
       - request_refactor
@@ -328,12 +328,12 @@ blocks:
     inputs:
       workflow: "run-tests"
       inputs:
-        language: "${inputs.language}"
-        test_path: "${inputs.test_path}/test_${inputs.module_name}.py"
-        source_path: "${inputs.source_path}/${inputs.module_name}.py"
-        coverage_threshold: ${inputs.coverage_threshold}
+        language: "{{inputs.language}}"
+        test_path: "{{inputs.test_path}}/test_{{inputs.module_name}}.py"
+        source_path: "{{inputs.source_path}}/{{inputs.module_name}}.py"
+        coverage_threshold: "{{inputs.coverage_threshold}}"
         pytest_args: "-v --cov-report=term-missing"
-        working_dir: "${inputs.project_path}"
+        working_dir: "{{inputs.project_path}}"
     depends_on:
       - write_refactored
 
@@ -341,7 +341,7 @@ blocks:
     type: Shell
     inputs:
       command: |
-        EXIT_CODE="${blocks.run_tests_after_refactor.outputs.exit_code}"
+        EXIT_CODE="{{blocks.run_tests_after_refactor.outputs.exit_code}}"
         if [ "$EXIT_CODE" != "0" ]; then
           echo "❌ ERROR: Tests failing after refactoring!"
           echo "Refactoring changed behavior - this violates TDD principles."
@@ -361,11 +361,11 @@ blocks:
       prompt: |
         === REFACTOR PHASE COMPLETE ===
 
-        Module ${inputs.module_name} successfully refactored:
-        - Exit code: ${blocks.run_tests_after_refactor.outputs.exit_code}
-        - Tests passed: ${blocks.run_tests_after_refactor.outputs.tests_passed}
-        - Tests failed: ${blocks.run_tests_after_refactor.outputs.tests_failed}
-        - Coverage: ${blocks.run_tests_after_refactor.outputs.coverage_percent}%
+        Module {{inputs.module_name}} successfully refactored:
+        - Exit code: {{blocks.run_tests_after_refactor.outputs.exit_code}}
+        - Tests passed: {{blocks.run_tests_after_refactor.outputs.tests_passed}}
+        - Tests failed: {{blocks.run_tests_after_refactor.outputs.tests_failed}}
+        - Coverage: {{blocks.run_tests_after_refactor.outputs.coverage_percent}}%
         - Tests still passing after refactoring
         - Code quality improved
 
@@ -374,13 +374,13 @@ blocks:
         Respond with 'yes' or 'no'
         
         Respond with 'yes' or 'no'
-      operation: "confirm_refactor_complete_${inputs.module_name}"
+      operation: "confirm_refactor_complete_{{inputs.module_name}}"
       details:
-        exit_code: "${blocks.run_tests_after_refactor.outputs.exit_code}"
-        tests_passed: "${blocks.run_tests_after_refactor.outputs.tests_passed}"
-        tests_failed: "${blocks.run_tests_after_refactor.outputs.tests_failed}"
-        coverage_percent: "${blocks.run_tests_after_refactor.outputs.coverage_percent}"
-        refactored_file: "${inputs.project_path}/${inputs.source_path}/${inputs.module_name}.py"
+        exit_code: "{{blocks.run_tests_after_refactor.outputs.exit_code}}"
+        tests_passed: "{{blocks.run_tests_after_refactor.outputs.tests_passed}}"
+        tests_failed: "{{blocks.run_tests_after_refactor.outputs.tests_failed}}"
+        coverage_percent: "{{blocks.run_tests_after_refactor.outputs.coverage_percent}}"
+        refactored_file: "{{inputs.project_path}}/{{inputs.source_path}}/{{inputs.module_name}}.py"
     depends_on:
       - validate_refactor_phase
 
@@ -389,8 +389,8 @@ blocks:
     inputs:
       command: |
         # Get metrics directly from test execution outputs
-        PASSED="${blocks.run_tests_after_refactor.outputs.tests_passed}"
-        COVERAGE="${blocks.run_tests_after_refactor.outputs.coverage_percent}"
+        PASSED="{{blocks.run_tests_after_refactor.outputs.tests_passed}}"
+        COVERAGE="{{blocks.run_tests_after_refactor.outputs.coverage_percent}}"
 
         # Create Python script to update state
         cat > /tmp/update_tdd_state.py << 'PYTHON_SCRIPT'
@@ -441,20 +441,20 @@ blocks:
 
         # Run the Python script (use python3 for utility script execution)
         python3 /tmp/update_tdd_state.py \
-          "${inputs.project_path}/${inputs.state_file}" \
-          "${inputs.module_name}" \
+          "{{inputs.project_path}}/{{inputs.state_file}}" \
+          "{{inputs.module_name}}" \
           "$PASSED" \
           "$COVERAGE"
       timeout: 30
     depends_on:
       - confirm_refactor_success
-    condition: "${blocks.confirm_refactor_success.outputs.response == 'yes'}"
+    condition: "{{blocks.confirm_refactor_success.outputs.response}} == 'yes'"
 
   - id: ask_continue
     type: Prompt
     inputs:
       prompt: |
-        Module '${inputs.module_name}' is complete and verified.
+        Module '{{inputs.module_name}}' is complete and verified.
 
         TDD cycle summary:
         - ✅ RED: Tests written and failed correctly
@@ -475,7 +475,7 @@ blocks:
         echo "║         TDD RED-GREEN-REFACTOR CYCLE COMPLETE                 ║"
         echo "╚════════════════════════════════════════════════════════════════╝"
         echo ""
-        echo "Module: ${inputs.module_name}"
+        echo "Module: {{inputs.module_name}}"
         echo ""
         echo "Phase Results:"
         echo "  🔴 RED:     Tests written and failed correctly"
@@ -483,41 +483,41 @@ blocks:
         echo "  🔵 REFACTOR: Code improved while tests passing"
         echo ""
         echo "Final Metrics:"
-        echo "  Tests passed: ${blocks.run_tests_after_refactor.outputs.tests_passed}"
-        echo "  Tests failed: ${blocks.run_tests_after_refactor.outputs.tests_failed}"
-        echo "  Coverage: ${blocks.run_tests_after_refactor.outputs.coverage_percent}%"
+        echo "  Tests passed: {{blocks.run_tests_after_refactor.outputs.tests_passed}}"
+        echo "  Tests failed: {{blocks.run_tests_after_refactor.outputs.tests_failed}}"
+        echo "  Coverage: {{blocks.run_tests_after_refactor.outputs.coverage_percent}}%"
         echo ""
         echo "Files Updated:"
-        echo "  - ${inputs.project_path}/${inputs.test_path}/test_${inputs.module_name}.py"
-        echo "  - ${inputs.project_path}/${inputs.source_path}/${inputs.module_name}.py"
-        echo "  - ${inputs.project_path}/${inputs.state_file}"
+        echo "  - {{inputs.project_path}}/{{inputs.test_path}}/test_{{inputs.module_name}}.py"
+        echo "  - {{inputs.project_path}}/{{inputs.source_path}}/{{inputs.module_name}}.py"
+        echo "  - {{inputs.project_path}}/{{inputs.state_file}}"
         echo ""
-        echo "Next Action: ${blocks.ask_continue.response}"
+        echo "Next Action: {{blocks.ask_continue.response}}"
       timeout: 10
     depends_on:
       - ask_continue
 
 outputs:
-  module_name: "${inputs.module_name}"
-  tests_written: "${blocks.write_test_file.succeeded}"
-  tests_passing: "${blocks.run_tests_after_refactor.succeeded}"
-  tests_passed: "${blocks.run_tests_after_refactor.outputs.tests_passed}"
-  tests_failed: "${blocks.run_tests_after_refactor.outputs.tests_failed}"
-  coverage_percent: "${blocks.run_tests_after_refactor.outputs.coverage_percent}"
-  refactored: "${blocks.confirm_refactor_success.outputs.response == 'yes'}"
-  continue_choice: "${blocks.ask_continue.response}"
-  continue_to_next_module: "${blocks.ask_continue.response}.lower().startswith('yes')"
-  state_updated: "${blocks.update_state.succeeded}"
+  module_name: "{{inputs.module_name}}"
+  tests_written: "{{blocks.write_test_file.succeeded}}"
+  tests_passing: "{{blocks.run_tests_after_refactor.succeeded}}"
+  tests_passed: "{{blocks.run_tests_after_refactor.outputs.tests_passed}}"
+  tests_failed: "{{blocks.run_tests_after_refactor.outputs.tests_failed}}"
+  coverage_percent: "{{blocks.run_tests_after_refactor.outputs.coverage_percent}}"
+  refactored: "{{blocks.confirm_refactor_success.outputs.response}} == 'yes'"
+  continue_choice: "{{blocks.ask_continue.response}}"
+  continue_to_next_module: "{{blocks.ask_continue.response}}.lower().startswith('yes')"
+  state_updated: "{{blocks.update_state.succeeded}}"
 
   # Phase completion flags
-  red_phase_complete: "${blocks.validate_red_phase.succeeded}"
-  green_phase_complete: "${blocks.validate_green_phase.succeeded}"
-  refactor_phase_complete: "${blocks.validate_refactor_phase.succeeded}"
+  red_phase_complete: "{{blocks.validate_red_phase.succeeded}}"
+  green_phase_complete: "{{blocks.validate_green_phase.succeeded}}"
+  refactor_phase_complete: "{{blocks.validate_refactor_phase.succeeded}}"
 
   # File paths
-  test_file: "${inputs.project_path}/${inputs.test_path}/test_${inputs.module_name}.py"
-  source_file: "${inputs.project_path}/${inputs.source_path}/${inputs.module_name}.py"
-  state_file: "${inputs.project_path}/${inputs.state_file}"
+  test_file: "{{inputs.project_path}}/{{inputs.test_path}}/test_{{inputs.module_name}}.py"
+  source_file: "{{inputs.project_path}}/{{inputs.source_path}}/{{inputs.module_name}}.py"
+  state_file: "{{inputs.project_path}}/{{inputs.state_file}}"
 
   # Summary
-  summary: "${blocks.completion_summary.outputs.stdout}"
+  summary: "{{blocks.completion_summary.outputs.stdout}}"

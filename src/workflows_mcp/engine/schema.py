@@ -13,7 +13,7 @@ The schema validates:
 - Required fields and types
 - Block type existence in registry
 - Dependency validity (no cycles, valid references)
-- Variable substitution syntax (${block_id.field})
+- Variable substitution syntax ({{block_id.field}})
 """
 
 import re
@@ -40,7 +40,7 @@ class ValueType(str, Enum):
     - Output parsing logic
 
     These match Python's built-in types for consistency with:
-    - isinstance() checks in conditions: isinstance(${inputs.name}, str)
+    - isinstance() checks in conditions: isinstance({{inputs.name}}, str)
     - Type annotations in executor models: Field(default="", description="...")
     - Variable resolution return types
 
@@ -293,14 +293,14 @@ class BlockDefinition(BaseModel):
             type: CreateWorktree
             description: "Create isolated git worktree for feature development"
             inputs:
-              branch: "feature/${issue_number}"
+              branch: "feature/{{issue_number}}"
               base_branch: "main"
 
           - id: create_file
             type: CreateFile
             description: "Create initial README file in worktree"
             inputs:
-              path: "${create_worktree.worktree_path}/README.md"
+              path: "{{create_worktree.worktree_path}}/README.md"
               content: "# Feature"
             depends_on:
               - create_worktree
@@ -321,7 +321,7 @@ class BlockDefinition(BaseModel):
             description: "Deploy to production if tests pass"
             inputs:
               command: "echo 'Deploying...'"
-            condition: "${run_tests.exit_code} == 0"
+            condition: "{{run_tests.exit_code}} == 0"
             depends_on:
               - run_tests
     """
@@ -407,18 +407,18 @@ class WorkflowOutputSchema(BaseModel):
     expressions that reference block outputs.
 
     Attributes:
-        value: Expression (e.g., "${block.outputs.field}" or "${block.exit_code}")
+        value: Expression (e.g., "{{block.outputs.field}}" or "{{block.exit_code}}")
         type: Output type (str, int, float, bool, json)
         description: Optional human-readable output description
 
     Example:
         outputs:
           test_results:
-            value: "${run_tests.outputs.test_results}"
+            value: "{{run_tests.outputs.test_results}}"
             type: json
             description: "Test execution results"
           success:
-            value: "${run_tests.exit_code}"
+            value: "{{run_tests.exit_code}}"
             type: int
             description: "Test exit code"
     """
@@ -466,17 +466,17 @@ class WorkflowSchema(BaseModel):
           - id: block1
             type: Shell
             inputs:
-              command: 'printf "Hello ${input_name}"'
+              command: 'printf "Hello {{input_name}}"'
 
           - id: block2
             type: Shell
             inputs:
-              command: 'printf "Output: ${blocks.block1.outputs.stdout}"'
+              command: 'printf "Output: {{blocks.block1.outputs.stdout}}"'
             depends_on:
               - block1
 
         outputs:
-          final_message: "${blocks.block2.outputs.stdout}"
+          final_message: "{{blocks.block2.outputs.stdout}}"
     """
 
     # Metadata fields (flattened for YAML convenience)
@@ -602,8 +602,8 @@ class WorkflowSchema(BaseModel):
     @model_validator(mode="after")
     def validate_variable_substitution_syntax(self) -> "WorkflowSchema":
         """Validate variable substitution syntax in all string values."""
-        # Pattern: ${namespace.path.to.field} - captures full dotted path
-        var_pattern = re.compile(r"\$\{([a-z_][a-z0-9_.]*)\}")
+        # Pattern: {{namespace.path.to.field}} - captures full dotted path
+        var_pattern = re.compile(r"\{\{([a-z_][a-z0-9_.]*)\}\}")
 
         block_ids = {block.id for block in self.blocks}
         input_names = set(self.inputs.keys())
@@ -614,38 +614,38 @@ class WorkflowSchema(BaseModel):
             for var_path in matches:
                 parts = var_path.split(".")
 
-                # ${inputs.field} - workflow input
+                # {{inputs.field}} - workflow input
                 if parts[0] == "inputs":
                     if len(parts) < 2:
                         raise ValueError(
-                            f"{context}: Invalid variable reference '${{{var_path}}}'. "
-                            f"Input reference must include field name: ${{inputs.field_name}}"
+                            f"{context}: Invalid variable reference '{{{{{var_path}}}}}'. "
+                            f"Input reference must include field name: {{{{inputs.field_name}}}}"
                         )
                     field_name = parts[1]
                     if field_name not in input_names:
                         raise ValueError(
-                            f"{context}: Invalid variable reference '${{{var_path}}}'. "
+                            f"{context}: Invalid variable reference '{{{{{var_path}}}}}'. "
                             f"Input '{field_name}' does not exist. "
                             f"Available inputs: {sorted(input_names)}"
                         )
 
-                # ${blocks.block_id.namespace.field} - block outputs/metadata
-                # Also supports shortcut: ${blocks.block_id.field} -> outputs.field
+                # {{blocks.block_id.namespace.field}} - block outputs/metadata
+                # Also supports shortcut: {{blocks.block_id.field}} -> outputs.field
                 elif parts[0] == "blocks":
                     if len(parts) < 3:
                         raise ValueError(
-                            f"{context}: Invalid variable reference '${{{var_path}}}'. "
+                            f"{context}: Invalid variable reference '{{{{{var_path}}}}}'. "
                             f"Block reference must be: "
-                            f"${{blocks.block_id.outputs.field}}, "
-                            f"${{blocks.block_id.metadata.field}}, or "
-                            f"${{blocks.block_id.field}} (shortcut for outputs)"
+                            f"{{{{blocks.block_id.outputs.field}}}}, "
+                            f"{{{{blocks.block_id.metadata.field}}}}, or "
+                            f"{{{{blocks.block_id.field}}}} (shortcut for outputs)"
                         )
                     block_id = parts[1]
 
                     # Check if block exists
                     if block_id not in block_ids:
                         raise ValueError(
-                            f"{context}: Invalid variable reference '${{{var_path}}}'. "
+                            f"{context}: Invalid variable reference '{{{{{var_path}}}}}'. "
                             f"Block '{block_id}' does not exist. "
                             f"Available blocks: {sorted(block_ids)}"
                         )
@@ -654,10 +654,10 @@ class WorkflowSchema(BaseModel):
                     # - Standard namespaces: outputs, metadata, inputs
                     # - Custom output fields: any valid identifier
                     # Both are valid, so no validation needed beyond block existence
-                    # If 3 parts, it's shortcut form ${blocks.block_id.field}
+                    # If 3 parts, it's shortcut form {{blocks.block_id.field}}
                     # This is valid and will be auto-expanded to outputs.field
 
-                # ${metadata.field} - workflow metadata
+                # {{metadata.field}} - workflow metadata
                 elif parts[0] == "metadata":
                     # Metadata references are valid (read-only workflow metadata)
                     pass
@@ -665,7 +665,7 @@ class WorkflowSchema(BaseModel):
                 # Unknown namespace
                 else:
                     raise ValueError(
-                        f"{context}: Invalid variable reference '${{{var_path}}}'. "
+                        f"{context}: Invalid variable reference '{{{{{var_path}}}}}'. "
                         f"Unknown namespace '{parts[0]}'. "
                         f"Valid namespaces: 'inputs', 'blocks', 'metadata'"
                     )

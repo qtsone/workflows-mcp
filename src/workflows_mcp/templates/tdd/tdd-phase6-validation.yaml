@@ -103,13 +103,13 @@ blocks:
   - id: read_state
     type: ReadJSONState
     inputs:
-      path: "${inputs.project_path}/${inputs.state_file}"
+      path: "{{inputs.project_path}}/{{inputs.state_file}}"
 
   - id: validate_phase5_complete
     type: Shell
     inputs:
       command: |
-        STATE='${blocks.read_state.state}'
+        STATE='{{blocks.read_state.state}}'
 
         # Check if Phase 5 is in completed phases
         if echo "$STATE" | grep -q '"phase5_complete"'; then
@@ -117,7 +117,7 @@ blocks:
           exit 0
         else
           echo "❌ ERROR: Phase 5 not complete. Complete integration testing first."
-          echo "Current phase: ${blocks.read_state.state.current_phase}"
+          echo "Current phase: {{blocks.read_state.state.current_phase}}"
           exit 1
         fi
       timeout: 10
@@ -129,11 +129,11 @@ blocks:
     inputs:
       workflow: run-tests
       inputs:
-        language: "${inputs.language}"
-        test_path: "${inputs.test_path}"
-        source_path: "${inputs.source_path}"
-        coverage_threshold: ${inputs.coverage_threshold}
-        working_dir: "${inputs.project_path}"
+        language: "{{inputs.language}}"
+        test_path: "{{inputs.test_path}}"
+        source_path: "{{inputs.source_path}}"
+        coverage_threshold: "{{inputs.coverage_threshold}}"
+        working_dir: "{{inputs.project_path}}"
         pytest_args: "-v --tb=short"
     depends_on:
       - validate_phase5_complete
@@ -142,8 +142,8 @@ blocks:
     type: Shell
     inputs:
       command: |
-        COVERAGE="${blocks.run_all_tests.outputs.coverage_percent}"
-        THRESHOLD="${inputs.coverage_threshold}"
+        COVERAGE="{{blocks.run_all_tests.outputs.coverage_percent}}"
+        THRESHOLD="{{inputs.coverage_threshold}}"
 
         # Use awk for floating point comparison
         MEETS_THRESHOLD=$(awk -v cov="$COVERAGE" -v thresh="$THRESHOLD" 'BEGIN { print (cov >= thresh) ? "true" : "false" }')
@@ -166,10 +166,10 @@ blocks:
     inputs:
       workflow: quality-check
       inputs:
-        language: "${inputs.language}"
-        source_path: "${inputs.source_path}"
-        strict: ${inputs.strict_quality}
-        working_dir: "${inputs.project_path}"
+        language: "{{inputs.language}}"
+        source_path: "{{inputs.source_path}}"
+        strict: "{{inputs.strict_quality}}"
+        working_dir: "{{inputs.project_path}}"
     depends_on:
       - validate_phase5_complete
 
@@ -177,10 +177,10 @@ blocks:
     type: Shell
     inputs:
       command: |
-        LINTING="${blocks.run_quality_checks.outputs.linting_passed}"
-        TYPING="${blocks.run_quality_checks.outputs.typing_passed}"
-        FORMATTING="${blocks.run_quality_checks.outputs.formatting_passed}"
-        ALL_PASSED="${blocks.run_quality_checks.outputs.all_checks_passed}"
+        LINTING="{{blocks.run_quality_checks.outputs.linting_passed}}"
+        TYPING="{{blocks.run_quality_checks.outputs.typing_passed}}"
+        FORMATTING="{{blocks.run_quality_checks.outputs.formatting_passed}}"
+        ALL_PASSED="{{blocks.run_quality_checks.outputs.all_checks_passed}}"
 
         if [ "$ALL_PASSED" = "true" ]; then
           echo "✅ All quality gates PASSED"
@@ -195,13 +195,13 @@ blocks:
           echo "  - Formatting: ${FORMATTING}"
           echo ""
           echo "Linting output:"
-          echo "${blocks.run_quality_checks.outputs.linting_output}"
+          echo "{{blocks.run_quality_checks.outputs.linting_output}}"
           echo ""
           echo "Type checking output:"
-          echo "${blocks.run_quality_checks.outputs.typing_output}"
+          echo "{{blocks.run_quality_checks.outputs.typing_output}}"
           echo ""
           echo "Formatting output:"
-          echo "${blocks.run_quality_checks.outputs.formatting_output}"
+          echo "{{blocks.run_quality_checks.outputs.formatting_output}}"
           exit 1
         fi
       timeout: 10
@@ -218,23 +218,23 @@ blocks:
         Quality checks failed. Please analyze and fix:
 
         Test Results:
-        - Tests passing: ${blocks.run_all_tests.outputs.tests_passed}
-        - Tests failing: ${blocks.run_all_tests.outputs.tests_failed}
-        - Coverage: ${blocks.run_all_tests.outputs.coverage_percent}% (threshold: ${inputs.coverage_threshold}%)
+        - Tests passing: {{blocks.run_all_tests.outputs.tests_passed}}
+        - Tests failing: {{blocks.run_all_tests.outputs.tests_failed}}
+        - Coverage: {{blocks.run_all_tests.outputs.coverage_percent}}% (threshold: {{inputs.coverage_threshold}}%)
 
         Quality Check Results:
-        - Linting: ${blocks.run_quality_checks.outputs.linting_passed}
-        - Type checking: ${blocks.run_quality_checks.outputs.typing_passed}
-        - Formatting: ${blocks.run_quality_checks.outputs.formatting_passed}
+        - Linting: {{blocks.run_quality_checks.outputs.linting_passed}}
+        - Type checking: {{blocks.run_quality_checks.outputs.typing_passed}}
+        - Formatting: {{blocks.run_quality_checks.outputs.formatting_passed}}
 
         Linting Issues:
-        ${blocks.run_quality_checks.outputs.linting_output}
+        {{blocks.run_quality_checks.outputs.linting_output}}
 
         Type Checking Issues:
-        ${blocks.run_quality_checks.outputs.typing_output}
+        {{blocks.run_quality_checks.outputs.typing_output}}
 
         Formatting Issues:
-        ${blocks.run_quality_checks.outputs.formatting_output}
+        {{blocks.run_quality_checks.outputs.formatting_output}}
 
         Provide fixes for ALL failing quality gates.
         Format: filename.py followed by complete corrected content.
@@ -242,13 +242,13 @@ blocks:
         Respond with 'yes' or 'no'
     depends_on:
       - validate_quality_gates
-    condition: "${blocks.validate_quality_gates.failed}"
+    condition: "{{blocks.validate_quality_gates.failed}}"
 
   - id: run_bandit_scan
     type: Shell
     inputs:
       command: |
-        cd "${inputs.project_path}"
+        cd "{{inputs.project_path}}"
 
         # Check if bandit is available
         if ! command -v bandit &> /dev/null; then
@@ -258,7 +258,7 @@ blocks:
         fi
 
         echo "Running Bandit security scan..."
-        bandit -r "${inputs.source_path}" -f json -o bandit-report.json || true
+        bandit -r "{{inputs.source_path}}" -f json -o bandit-report.json || true
 
         # Check results
         if [ -f bandit-report.json ]; then
@@ -267,7 +267,7 @@ blocks:
 
           if [ "$HIGH_ISSUES" -gt 0 ]; then
             echo "❌ Security issues found: $HIGH_ISSUES high/medium severity"
-            bandit -r "${inputs.source_path}" -f screen
+            bandit -r "{{inputs.source_path}}" -f screen
             exit 1
           else
             echo "✅ No high/medium severity security issues"
@@ -281,13 +281,13 @@ blocks:
 
     depends_on:
       - validate_phase5_complete
-    condition: "${inputs.enable_security_scan}"
+    condition: "{{inputs.enable_security_scan}}"
 
   - id: run_safety_scan
     type: Shell
     inputs:
       command: |
-        cd "${inputs.project_path}"
+        cd "{{inputs.project_path}}"
 
         # Check if safety is available
         if ! command -v safety &> /dev/null; then
@@ -326,14 +326,14 @@ blocks:
 
     depends_on:
       - validate_phase5_complete
-    condition: "${inputs.enable_security_scan}"
+    condition: "{{inputs.enable_security_scan}}"
 
   - id: validate_security
     type: Shell
     inputs:
       command: |
-        BANDIT_EXIT="${blocks.run_bandit_scan.outputs.exit_code}"
-        SAFETY_EXIT="${blocks.run_safety_scan.outputs.exit_code}"
+        BANDIT_EXIT="{{blocks.run_bandit_scan.outputs.exit_code}}"
+        SAFETY_EXIT="{{blocks.run_safety_scan.outputs.exit_code}}"
 
         if [ "$BANDIT_EXIT" -eq 0 ] && [ "$SAFETY_EXIT" -eq 0 ]; then
           echo "✅ Security scans PASSED"
@@ -351,7 +351,7 @@ blocks:
     depends_on:
       - run_bandit_scan
       - run_safety_scan
-    condition: "${inputs.enable_security_scan}"
+    condition: "{{inputs.enable_security_scan}}"
 
   - id: ask_performance_testing
     type: Prompt
@@ -369,7 +369,7 @@ blocks:
     depends_on:
       - validate_quality_gates
       - validate_security
-    condition: "${blocks.validate_quality_gates.succeeded}"
+    condition: "{{blocks.validate_quality_gates.succeeded}}"
 
   - id: request_performance_benchmarks
     type: Prompt
@@ -394,7 +394,7 @@ blocks:
         If performance testing is not applicable, explain why.
     depends_on:
       - ask_performance_testing
-    condition: "${blocks.ask_performance_testing.response}.lower().startswith('yes')"
+    condition: "{{blocks.ask_performance_testing.response}}.lower().startswith('yes')"
 
   - id: request_prd_compliance
     type: Prompt
@@ -404,10 +404,10 @@ blocks:
 
         Verify that ALL PRD requirements have been implemented and tested.
 
-        Review the Technical Specification at: @${inputs.project_path}/TECHNICAL_SPEC.md
+        Review the Technical Specification at: @{{inputs.project_path}}/TECHNICAL_SPEC.md
 
         Requirements from Phase 1:
-        ${blocks.read_state.state.phase1.requirements_count} requirements defined
+        {{blocks.read_state.state.phase1.requirements_count}} requirements defined
 
         For EACH requirement, indicate:
         - ✅ IMPLEMENTED - Requirement fully met with tests passing
@@ -423,14 +423,14 @@ blocks:
         Format your response as a structured report.
     depends_on:
       - validate_quality_gates
-    condition: "${blocks.validate_quality_gates.succeeded}"
+    condition: "{{blocks.validate_quality_gates.succeeded}}"
 
   - id: calculate_compliance
     type: Shell
     inputs:
       command: |
         # Parse LLM response to count compliance
-        COMPLIANCE_TEXT="${blocks.request_prd_compliance.response}"
+        COMPLIANCE_TEXT="{{blocks.request_prd_compliance.response}}"
 
         # Count status indicators
         IMPLEMENTED=$(echo "$COMPLIANCE_TEXT" | grep -c "✅ IMPLEMENTED" || echo "0")
@@ -546,19 +546,19 @@ blocks:
         PYTHON_SCRIPT
 
         # Extract compliance percentage from output
-        COMPLIANCE="${blocks.calculate_compliance.outputs.compliance_percent}"
+        COMPLIANCE="{{blocks.calculate_compliance.outputs.compliance_percent}}"
 
         # Run the Python script (using python3 for utility script execution)
         python3 /tmp/update_phase6_state.py \
-          "${inputs.project_path}/${inputs.state_file}" \
-          "${blocks.run_all_tests.outputs.tests_passed}" \
-          "${blocks.run_all_tests.outputs.tests_passed}" \
-          "${blocks.run_all_tests.outputs.coverage_percent}" \
-          "${blocks.run_quality_checks.outputs.linting_passed}" \
-          "${blocks.run_quality_checks.outputs.typing_passed}" \
-          "${blocks.run_quality_checks.outputs.formatting_passed}" \
-          "${blocks.run_bandit_scan.outputs.exit_code}" \
-          "${blocks.run_safety_scan.outputs.exit_code}" \
+          "{{inputs.project_path}}/{{inputs.state_file}}" \
+          "{{blocks.run_all_tests.outputs.tests_passed}}" \
+          "{{blocks.run_all_tests.outputs.tests_passed}}" \
+          "{{blocks.run_all_tests.outputs.coverage_percent}}" \
+          "{{blocks.run_quality_checks.outputs.linting_passed}}" \
+          "{{blocks.run_quality_checks.outputs.typing_passed}}" \
+          "{{blocks.run_quality_checks.outputs.formatting_passed}}" \
+          "{{blocks.run_bandit_scan.outputs.exit_code}}" \
+          "{{blocks.run_safety_scan.outputs.exit_code}}" \
           "$COMPLIANCE"
       timeout: 30
     depends_on:
@@ -577,23 +577,23 @@ blocks:
         ╚════════════════════════════════════════════════════════════════╝
 
         Test Suite Results:
-        - Total tests: ${blocks.run_all_tests.outputs.tests_passed}
-        - Tests passing: ${blocks.run_all_tests.outputs.tests_passed}
-        - Overall coverage: ${blocks.run_all_tests.outputs.coverage_percent}%
-        - Threshold: ${inputs.coverage_threshold}%
+        - Total tests: {{blocks.run_all_tests.outputs.tests_passed}}
+        - Tests passing: {{blocks.run_all_tests.outputs.tests_passed}}
+        - Overall coverage: {{blocks.run_all_tests.outputs.coverage_percent}}%
+        - Threshold: {{inputs.coverage_threshold}}%
 
         Quality Gates:
-        - Linting: ${blocks.run_quality_checks.outputs.linting_passed}
-        - Type checking: ${blocks.run_quality_checks.outputs.typing_passed}
-        - Formatting: ${blocks.run_quality_checks.outputs.formatting_passed}
-        - Overall: ${blocks.run_quality_checks.outputs.all_checks_passed}
+        - Linting: {{blocks.run_quality_checks.outputs.linting_passed}}
+        - Type checking: {{blocks.run_quality_checks.outputs.typing_passed}}
+        - Formatting: {{blocks.run_quality_checks.outputs.formatting_passed}}
+        - Overall: {{blocks.run_quality_checks.outputs.all_checks_passed}}
 
         Security Scan:
-        - Bandit: ${blocks.run_bandit_scan.outputs.exit_code}
-        - Safety: ${blocks.run_safety_scan.outputs.exit_code}
+        - Bandit: {{blocks.run_bandit_scan.outputs.exit_code}}
+        - Safety: {{blocks.run_safety_scan.outputs.exit_code}}
 
         PRD Compliance:
-        - ${blocks.calculate_compliance.outputs.stdout}
+        - {{blocks.calculate_compliance.outputs.stdout}}
 
         All quality gates passed. System is production-ready.
 
@@ -604,11 +604,11 @@ blocks:
         Respond with 'yes' or 'no'
       operation: "phase6_quality_checkpoint"
       details:
-        tests_passing: "${blocks.run_all_tests.outputs.tests_passed}"
-        coverage: "${blocks.run_all_tests.outputs.coverage_percent}%"
-        quality_gates: "${blocks.run_quality_checks.outputs.all_checks_passed}"
-        security_clean: "${blocks.validate_security.outputs.exit_code} == 0"
-        prd_compliance: "${blocks.calculate_compliance.outputs.stdout}"
+        tests_passing: "{{blocks.run_all_tests.outputs.tests_passed}}"
+        coverage: "{{blocks.run_all_tests.outputs.coverage_percent}}%"
+        quality_gates: "{{blocks.run_quality_checks.outputs.all_checks_passed}}"
+        security_clean: "{{blocks.validate_security.outputs.exit_code}} == 0"
+        prd_compliance: "{{blocks.calculate_compliance.outputs.stdout}}"
     depends_on:
       - update_state_phase6
 
@@ -616,47 +616,47 @@ blocks:
     type: Shell
     inputs:
       command: |
-        cat > "${inputs.project_path}/QUALITY_REPORT.md" << 'EOF'
+        cat > "{{inputs.project_path}}/QUALITY_REPORT.md" << 'EOF'
         # Quality Validation Report
 
         **Generated**: $(date -Iseconds)
         **Phase**: Phase 6 - Validation & Quality
-        **Status**: ${blocks.final_quality_checkpoint.outputs.response == 'yes'}
+        **Status**: {{blocks.final_quality_checkpoint.outputs.response}} == 'yes'
 
         ## Test Results
 
-        - **Total Tests**: ${blocks.run_all_tests.outputs.tests_passed}
-        - **Tests Passing**: ${blocks.run_all_tests.outputs.tests_passed}
-        - **Tests Failing**: ${blocks.run_all_tests.outputs.tests_failed}
-        - **Overall Coverage**: ${blocks.run_all_tests.outputs.coverage_percent}%
-        - **Coverage Threshold**: ${inputs.coverage_threshold}%
+        - **Total Tests**: {{blocks.run_all_tests.outputs.tests_passed}}
+        - **Tests Passing**: {{blocks.run_all_tests.outputs.tests_passed}}
+        - **Tests Failing**: {{blocks.run_all_tests.outputs.tests_failed}}
+        - **Overall Coverage**: {{blocks.run_all_tests.outputs.coverage_percent}}%
+        - **Coverage Threshold**: {{inputs.coverage_threshold}}%
 
         ## Quality Metrics
 
         | Check | Status | Exit Code |
         |-------|--------|-----------|
-        | Linting (ruff) | ${blocks.run_quality_checks.outputs.linting_passed} | ${blocks.run_quality_checks.outputs.linting_exit_code} |
-        | Type Checking (mypy) | ${blocks.run_quality_checks.outputs.typing_passed} | ${blocks.run_quality_checks.outputs.typing_exit_code} |
-        | Formatting (ruff format) | ${blocks.run_quality_checks.outputs.formatting_passed} | ${blocks.run_quality_checks.outputs.formatting_exit_code} |
+        | Linting (ruff) | {{blocks.run_quality_checks.outputs.linting_passed}} | {{blocks.run_quality_checks.outputs.linting_exit_code}} |
+        | Type Checking (mypy) | {{blocks.run_quality_checks.outputs.typing_passed}} | {{blocks.run_quality_checks.outputs.typing_exit_code}} |
+        | Formatting (ruff format) | {{blocks.run_quality_checks.outputs.formatting_passed}} | {{blocks.run_quality_checks.outputs.formatting_exit_code}} |
 
         ## Security Scan
 
-        - **Bandit (Code Security)**: Exit Code ${blocks.run_bandit_scan.outputs.exit_code}
-        - **Safety (Dependencies)**: Exit Code ${blocks.run_safety_scan.outputs.exit_code}
+        - **Bandit (Code Security)**: Exit Code {{blocks.run_bandit_scan.outputs.exit_code}}
+        - **Safety (Dependencies)**: Exit Code {{blocks.run_safety_scan.outputs.exit_code}}
 
         ## PRD Compliance
 
-        ${blocks.calculate_compliance.outputs.stdout}
+        {{blocks.calculate_compliance.outputs.stdout}}
 
         ## Deployment Readiness
 
-        **Production Ready**: ${blocks.final_quality_checkpoint.outputs.response == 'yes'}
+        **Production Ready**: {{blocks.final_quality_checkpoint.outputs.response}} == 'yes'
 
         All quality gates have been validated and the system is ready for deployment.
 
         EOF
 
-        echo "✅ Quality report generated: ${inputs.project_path}/QUALITY_REPORT.md"
+        echo "✅ Quality report generated: {{inputs.project_path}}/QUALITY_REPORT.md"
       timeout: 30
     depends_on:
       - final_quality_checkpoint
@@ -670,24 +670,24 @@ blocks:
         echo "╚════════════════════════════════════════════════════════════════╝"
         echo ""
         echo "Test Results:"
-        echo "  ✅ Total tests: ${blocks.run_all_tests.outputs.tests_passed}"
-        echo "  📊 Coverage: ${blocks.run_all_tests.outputs.coverage_percent}% (threshold: ${inputs.coverage_threshold}%)"
+        echo "  ✅ Total tests: {{blocks.run_all_tests.outputs.tests_passed}}"
+        echo "  📊 Coverage: {{blocks.run_all_tests.outputs.coverage_percent}}% (threshold: {{inputs.coverage_threshold}}%)"
         echo ""
         echo "Quality Gates:"
-        echo "  ✓ Linting: ${blocks.run_quality_checks.outputs.linting_passed}"
-        echo "  ✓ Type checking: ${blocks.run_quality_checks.outputs.typing_passed}"
-        echo "  ✓ Formatting: ${blocks.run_quality_checks.outputs.formatting_passed}"
+        echo "  ✓ Linting: {{blocks.run_quality_checks.outputs.linting_passed}}"
+        echo "  ✓ Type checking: {{blocks.run_quality_checks.outputs.typing_passed}}"
+        echo "  ✓ Formatting: {{blocks.run_quality_checks.outputs.formatting_passed}}"
         echo ""
         echo "Security:"
-        echo "  ✓ Bandit: ${blocks.run_bandit_scan.outputs.exit_code}"
-        echo "  ✓ Safety: ${blocks.run_safety_scan.outputs.exit_code}"
+        echo "  ✓ Bandit: {{blocks.run_bandit_scan.outputs.exit_code}}"
+        echo "  ✓ Safety: {{blocks.run_safety_scan.outputs.exit_code}}"
         echo ""
         echo "PRD Compliance:"
-        echo "  ${blocks.calculate_compliance.outputs.stdout}"
+        echo "  {{blocks.calculate_compliance.outputs.stdout}}"
         echo ""
         echo "Files Created:"
-        echo "  - ${inputs.project_path}/QUALITY_REPORT.md"
-        echo "  - ${inputs.project_path}/${inputs.state_file} (updated)"
+        echo "  - {{inputs.project_path}}/QUALITY_REPORT.md"
+        echo "  - {{inputs.project_path}}/{{inputs.state_file}} (updated)"
         echo ""
         echo "🎉 PRODUCTION READY - All quality gates passed!"
       timeout: 10
@@ -696,35 +696,35 @@ blocks:
 
 outputs:
   # Test metrics
-  total_tests: "${blocks.run_all_tests.outputs.tests_passed}"
-  tests_passing: "${blocks.run_all_tests.outputs.tests_passed}"
-  tests_failing: "${blocks.run_all_tests.outputs.tests_failed}"
-  overall_coverage: "${blocks.run_all_tests.outputs.coverage_percent}"
+  total_tests: "{{blocks.run_all_tests.outputs.tests_passed}}"
+  tests_passing: "{{blocks.run_all_tests.outputs.tests_passed}}"
+  tests_failing: "{{blocks.run_all_tests.outputs.tests_failed}}"
+  overall_coverage: "{{blocks.run_all_tests.outputs.coverage_percent}}"
 
   # Quality gate results
-  linting_passed: "${blocks.run_quality_checks.outputs.linting_passed}"
-  type_checking_passed: "${blocks.run_quality_checks.outputs.typing_passed}"
-  formatting_passed: "${blocks.run_quality_checks.outputs.formatting_passed}"
-  all_quality_gates_passed: "${blocks.run_quality_checks.outputs.all_checks_passed}"
+  linting_passed: "{{blocks.run_quality_checks.outputs.linting_passed}}"
+  type_checking_passed: "{{blocks.run_quality_checks.outputs.typing_passed}}"
+  formatting_passed: "{{blocks.run_quality_checks.outputs.formatting_passed}}"
+  all_quality_gates_passed: "{{blocks.run_quality_checks.outputs.all_checks_passed}}"
 
   # Security scan results
-  security_bandit_exit_code: "${blocks.run_bandit_scan.outputs.exit_code}"
-  security_safety_exit_code: "${blocks.run_safety_scan.outputs.exit_code}"
-  security_scan_clean: "${blocks.validate_security.succeeded}"
+  security_bandit_exit_code: "{{blocks.run_bandit_scan.outputs.exit_code}}"
+  security_safety_exit_code: "{{blocks.run_safety_scan.outputs.exit_code}}"
+  security_scan_clean: "{{blocks.validate_security.succeeded}}"
 
   # PRD compliance
-  prd_compliance: "${blocks.calculate_compliance.outputs.stdout}"
+  prd_compliance: "{{blocks.calculate_compliance.outputs.stdout}}"
 
   # Overall status
-  all_gates_passed: "${blocks.validate_quality_gates.succeeded} and ${blocks.validate_security.succeeded}"
-  production_ready: "${blocks.final_quality_checkpoint.outputs.response == 'yes'}"
+  all_gates_passed: "{{blocks.validate_quality_gates.succeeded}} and {{blocks.validate_security.succeeded}}"
+  production_ready: "{{blocks.final_quality_checkpoint.outputs.response}} == 'yes'"
 
   # Checkpoint
-  checkpoint_approved: "${blocks.final_quality_checkpoint.outputs.response == 'yes'}"
+  checkpoint_approved: "{{blocks.final_quality_checkpoint.outputs.response}} == 'yes'"
 
   # State and reports
-  state_updated: "${blocks.update_state_phase6.succeeded}"
-  quality_report_path: "${inputs.project_path}/QUALITY_REPORT.md"
+  state_updated: "{{blocks.update_state_phase6.succeeded}}"
+  quality_report_path: "{{inputs.project_path}}/QUALITY_REPORT.md"
 
   # Summary
-  summary: "${blocks.phase6_summary.outputs.stdout}"
+  summary: "{{blocks.phase6_summary.outputs.stdout}}"

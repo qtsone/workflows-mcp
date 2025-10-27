@@ -54,7 +54,7 @@ blocks:
   - id: check_template
     type: Shell
     inputs:
-      command: "test -f ${inputs.workspace}/${inputs.template_path} && echo 'exists' || echo 'missing'"
+      command: "test -f {{inputs.workspace}}/{{inputs.template_path}} && echo 'exists' || echo 'missing'"
       timeout: 5
       
 
@@ -62,22 +62,22 @@ blocks:
   - id: create_default_template
     type: CreateFile
     inputs:
-      path: "${inputs.workspace}/${inputs.template_path}"
+      path: "{{inputs.workspace}}/{{inputs.template_path}}"
       content: |
-        # ${inputs.project_name}
+        # {{inputs.project_name}}
 
-        ${inputs.description}
+        {{inputs.description}}
 
         ## Installation
 
         \`\`\`bash
-        pip install ${inputs.project_name}
+        pip install {{inputs.project_name}}
         \`\`\`
 
         ## Usage
 
         \`\`\`python
-        import ${inputs.project_name}
+        import {{inputs.project_name}}
         # Your code here
         \`\`\`
 
@@ -93,40 +93,40 @@ blocks:
 
         ## License
 
-        This project is licensed under the ${inputs.license} License.
+        This project is licensed under the {{inputs.license}} License.
 
         ## Author
 
-        ${inputs.author}
+        {{inputs.author}}
 
         ## Version
 
-        Current version: ${inputs.version}
+        Current version: {{inputs.version}}
     depends_on:
       - check_template
-    condition: "${inputs.create_template_if_missing} and 'missing' in ${blocks.check_template.outputs.stdout}"
+    condition: "{{inputs.create_template_if_missing}} and 'missing' in {{blocks.check_template.outputs.stdout}}"
 
   # Read template
   - id: read_template
     type: ReadFile
     inputs:
-      path: "${inputs.workspace}/${inputs.template_path}"
+      path: "{{inputs.workspace}}/{{inputs.template_path}}"
     depends_on:
       - check_template
       - create_default_template
-    condition: "'exists' in ${blocks.check_template.outputs.stdout} or ${inputs.create_template_if_missing}"
+    condition: "'exists' in {{blocks.check_template.outputs.stdout}} or {{inputs.create_template_if_missing}}"
 
   # Populate template with variables
   - id: populate_template
     type: RenderTemplate
     inputs:
-      template: "${blocks.read_template.outputs.content}"
+      template: "{{blocks.read_template.outputs.content}}"
       variables:
-        project_name: "${inputs.project_name}"
-        description: "${inputs.description}"
-        author: "${inputs.author}"
-        version: "${inputs.version}"
-        license: "${inputs.license}"
+        project_name: "{{inputs.project_name}}"
+        description: "{{inputs.description}}"
+        author: "{{inputs.author}}"
+        version: "{{inputs.version}}"
+        license: "{{inputs.license}}"
     depends_on:
       - read_template
 
@@ -134,8 +134,8 @@ blocks:
   - id: write_readme
     type: CreateFile
     inputs:
-      path: "${inputs.workspace}/${inputs.output_path}"
-      content: "${blocks.populate_template.outputs.content}"
+      path: "{{inputs.workspace}}/{{inputs.output_path}}"
+      content: "{{blocks.populate_template.outputs.content}}"
       mode: "644"
     depends_on:
       - populate_template
@@ -144,7 +144,7 @@ blocks:
   - id: verify_readme
     type: ReadFile
     inputs:
-      path: "${inputs.workspace}/${inputs.output_path}"
+      path: "{{inputs.workspace}}/{{inputs.output_path}}"
     depends_on:
       - write_readme
 
@@ -155,11 +155,11 @@ blocks:
       command: |
         printf "README Generation Summary:\n"
         printf "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
-        printf "Project: ${inputs.project_name} v${inputs.version}\n"
-        printf "Template: ${inputs.template_path} (${blocks.check_template.outputs.stdout})\n"
-        printf "Output: ${inputs.output_path}\n"
-        printf "Author: ${inputs.author}\n"
-        printf "License: ${inputs.license}\n"
+        printf "Project: {{inputs.project_name}} v{{inputs.version}}\n"
+        printf "Template: {{inputs.template_path}} ({{blocks.check_template.outputs.stdout}})\n"
+        printf "Output: {{inputs.output_path}}\n"
+        printf "Author: {{inputs.author}}\n"
+        printf "License: {{inputs.license}}\n"
         printf "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
         printf "Status: ✓ README generated successfully"
     depends_on:
@@ -167,9 +167,9 @@ blocks:
 
 outputs:
   success: "true"
-  readme_path: "${inputs.workspace}/${inputs.output_path}"
-  template_used: "${inputs.workspace}/${inputs.template_path}"
-  template_created: "${inputs.create_template_if_missing} and 'missing' in ${blocks.check_template.outputs.stdout}"
-  readme_content: "${blocks.verify_readme.outputs.content}"
-  readme_size: "${blocks.verify_readme.outputs.size_bytes}"
-  summary: "${blocks.summary.outputs.stdout}"
+  readme_path: "{{inputs.workspace}}/{{inputs.output_path}}"
+  template_used: "{{inputs.workspace}}/{{inputs.template_path}}"
+  template_created: "{{inputs.create_template_if_missing}} and 'missing' in {{blocks.check_template.outputs.stdout}}"
+  readme_content: "{{blocks.verify_readme.outputs.content}}"
+  readme_size: "{{blocks.verify_readme.outputs.size_bytes}}"
+  summary: "{{blocks.summary.outputs.stdout}}"

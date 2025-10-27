@@ -11,27 +11,27 @@ blocks:
     type: Shell
     inputs:
       command: |
-        mkdir -p "${inputs.test_dir}"
-        echo "Test content with 你好" > "${inputs.test_dir}/test.txt"
+        mkdir -p "{{inputs.test_dir}}"
+        echo "Test content with 你好" > "{{inputs.test_dir}}/test.txt"
   - id: read_existing
     type: ReadFile
     inputs:
-      path: "${inputs.test_dir}/test.txt"
+      path: "{{inputs.test_dir}}/test.txt"
       encoding: "utf-8"
     depends_on: [setup]
   - id: read_nonexistent_optional
     type: ReadFile
     inputs:
-      path: "${inputs.test_dir}/nonexistent.txt"
+      path: "{{inputs.test_dir}}/nonexistent.txt"
       required: false
     depends_on: [setup]
   - id: cleanup
     type: Shell
     inputs:
-      command: rm -rf "${inputs.test_dir}"
+      command: rm -rf "{{inputs.test_dir}}"
     depends_on: [read_existing, read_nonexistent_optional]
 outputs:
-  file_read: "${blocks.read_existing.succeeded}"
-  content_has_data: "${blocks.read_existing.outputs.content}"
-  optional_not_found: "${blocks.read_nonexistent_optional.succeeded}"
-  cleanup_done: "${blocks.cleanup.succeeded}"
+  file_read: "{{blocks.read_existing.succeeded}}"
+  content_has_data: "{{blocks.read_existing.outputs.content}}"
+  optional_not_found: "{{blocks.read_nonexistent_optional.succeeded}}"
+  cleanup_done: "{{blocks.cleanup.succeeded}}"

@@ -77,13 +77,13 @@ blocks:
   - id: read_state
     type: ReadJSONState
     inputs:
-      path: "${inputs.project_path}/${inputs.state_file}"
+      path: "{{inputs.project_path}}/{{inputs.state_file}}"
 
   - id: validate_phase1_complete
     type: Shell
     inputs:
       command: |
-        STATE_FOUND="${blocks.read_state.outputs.found}"
+        STATE_FOUND="{{blocks.read_state.outputs.found}}"
         if [ "$STATE_FOUND" != "true" ]; then
           echo "❌ ERROR: TDD state file not found"
           echo "Please complete Phase 1 (Analysis) first"
@@ -102,12 +102,12 @@ blocks:
     type: Shell
     inputs:
       command: |
-        if [ ! -f "${inputs.project_path}/${inputs.spec_path}" ]; then
-          echo "❌ ERROR: Technical specification not found at: ${inputs.project_path}/${inputs.spec_path}"
+        if [ ! -f "{{inputs.project_path}}/{{inputs.spec_path}}" ]; then
+          echo "❌ ERROR: Technical specification not found at: {{inputs.project_path}}/{{inputs.spec_path}}"
           echo "Please complete Phase 1 (Analysis) to generate technical specification"
           exit 1
         else
-          echo "✅ Technical specification found: ${inputs.project_path}/${inputs.spec_path}"
+          echo "✅ Technical specification found: {{inputs.project_path}}/{{inputs.spec_path}}"
           exit 0
         fi
       timeout: 10
@@ -120,7 +120,7 @@ blocks:
       prompt: |
         === PHASE 2: SYSTEM ARCHITECTURE DESIGN ===
 
-        Read and analyze the Technical Specification at: @${inputs.project_path}/${inputs.spec_path}
+        Read and analyze the Technical Specification at: @{{inputs.project_path}}/{{inputs.spec_path}}
 
         Task: Design the high-level system architecture.
 
@@ -160,7 +160,7 @@ blocks:
         === DEFINE DATA MODELS & SCHEMAS ===
 
         Based on the requirements and architecture design:
-        ${blocks.design_architecture.response}
+        {{blocks.design_architecture.response}}
 
         Task: Define all data models and schemas needed for the system.
 
@@ -199,10 +199,10 @@ blocks:
         === IDENTIFY MODULES & RESPONSIBILITIES ===
 
         Architecture:
-        ${blocks.design_architecture.response}
+        {{blocks.design_architecture.response}}
 
         Data Models:
-        ${blocks.define_data_models.response}
+        {{blocks.define_data_models.response}}
 
         Task: Identify all modules/components and their responsibilities.
 
@@ -238,7 +238,7 @@ blocks:
         === DEFINE MODULE INTERFACES & APIs ===
 
         Modules identified:
-        ${blocks.identify_modules.response}
+        {{blocks.identify_modules.response}}
 
         Task: Define the interface/API for each module.
 
@@ -293,7 +293,7 @@ blocks:
         === PLAN COMPREHENSIVE TEST STRATEGY ===
 
         System architecture and modules:
-        ${blocks.identify_modules.response}
+        {{blocks.identify_modules.response}}
 
         Task: Plan a comprehensive test strategy covering unit, integration, and E2E tests.
 
@@ -342,19 +342,19 @@ blocks:
         Combine all architectural design work into a comprehensive document:
 
         1. Architecture Design:
-        ${blocks.design_architecture.response}
+        {{blocks.design_architecture.response}}
 
         2. Data Models:
-        ${blocks.define_data_models.response}
+        {{blocks.define_data_models.response}}
 
         3. Modules:
-        ${blocks.identify_modules.response}
+        {{blocks.identify_modules.response}}
 
         4. Interfaces:
-        ${blocks.define_interfaces.response}
+        {{blocks.define_interfaces.response}}
 
         5. Test Strategy:
-        ${blocks.plan_test_strategy.response}
+        {{blocks.plan_test_strategy.response}}
 
         Create a well-structured architecture document with these sections:
 
@@ -400,8 +400,8 @@ blocks:
   - id: create_architecture_file
     type: CreateFile
     inputs:
-      path: "${inputs.project_path}/${inputs.architecture_output_path}"
-      content: "${blocks.document_architecture.response}"
+      path: "{{inputs.project_path}}/{{inputs.architecture_output_path}}"
+      content: "{{blocks.document_architecture.response}}"
       encoding: "utf-8"
     depends_on:
       - document_architecture
@@ -410,7 +410,7 @@ blocks:
     type: Shell
     inputs:
       command: |
-        ARCH_FILE="${inputs.project_path}/${inputs.architecture_output_path}"
+        ARCH_FILE="{{inputs.project_path}}/{{inputs.architecture_output_path}}"
 
         if [ ! -f "$ARCH_FILE" ]; then
           echo "0" > "$SCRATCH/module_count.txt"
@@ -445,8 +445,8 @@ blocks:
     inputs:
       command: |
         # Parse module data
-        MODULE_COUNT="${blocks.extract_modules.outputs.module_count}"
-        MODULES_LIST="${blocks.extract_modules.outputs.modules_list}"
+        MODULE_COUNT="{{blocks.extract_modules.outputs.module_count}}"
+        MODULES_LIST="{{blocks.extract_modules.outputs.modules_list}}"
 
         # Create Python script to update state
         cat > /tmp/update_tdd_state_phase2.py << 'PYTHON_SCRIPT'
@@ -496,8 +496,8 @@ blocks:
 
         # Run the Python script
         python3 /tmp/update_tdd_state_phase2.py \
-          "${inputs.project_path}/${inputs.state_file}" \
-          "${inputs.architecture_output_path}" \
+          "{{inputs.project_path}}/{{inputs.state_file}}" \
+          "{{inputs.architecture_output_path}}" \
           "$MODULE_COUNT" \
           "$MODULES_LIST"
       timeout: 30
@@ -511,8 +511,8 @@ blocks:
         === PHASE 2 ARCHITECTURE COMPLETE ===
 
         Architecture document created:
-        - Path: ${inputs.project_path}/${inputs.architecture_output_path}
-        - Modules identified: ${blocks.extract_modules.outputs.module_count}
+        - Path: {{inputs.project_path}}/{{inputs.architecture_output_path}}
+        - Modules identified: {{blocks.extract_modules.outputs.module_count}}
         - Test strategy defined: Yes
 
         Review checkpoint:
@@ -529,8 +529,8 @@ blocks:
         Respond with 'yes' or 'no'
       operation: "approve_phase2_complete"
       details:
-        architecture_path: "${inputs.project_path}/${inputs.architecture_output_path}"
-        module_info: "${blocks.extract_modules.outputs.modules_list}"
+        architecture_path: "{{inputs.project_path}}/{{inputs.architecture_output_path}}"
+        module_info: "{{blocks.extract_modules.outputs.modules_list}}"
         state_updated: "true"
     depends_on:
       - update_state_phase2_complete
@@ -552,38 +552,38 @@ blocks:
         echo "  ✅ Architecture document created"
         echo ""
         echo "Output:"
-        echo "  📐 Architecture: ${inputs.project_path}/${inputs.architecture_output_path}"
-        echo "  🧩 Modules: ${blocks.extract_modules.outputs.modules_list}"
-        echo "  💾 State File: ${inputs.project_path}/${inputs.state_file}"
+        echo "  📐 Architecture: {{inputs.project_path}}/{{inputs.architecture_output_path}}"
+        echo "  🧩 Modules: {{blocks.extract_modules.outputs.modules_list}}"
+        echo "  💾 State File: {{inputs.project_path}}/{{inputs.state_file}}"
         echo ""
         echo "Next Phase: Scaffolding (Phase 3)"
-        echo "  Run: execute_workflow('tdd-phase3-scaffolding', {'project_path': '${inputs.project_path}'})"
+        echo "  Run: execute_workflow('tdd-phase3-scaffolding', {'project_path': '{{inputs.project_path}}'})"
         echo ""
-        echo "Checkpoint Approved: ${blocks.checkpoint_review.outputs.response == 'yes'}"
+        echo "Checkpoint Approved: {{blocks.checkpoint_review.outputs.response}} == \'yes\'"
       timeout: 10
     depends_on:
       - checkpoint_review
 
 outputs:
-  phase_complete: "${blocks.checkpoint_review.outputs.response == 'yes'}"
-  architecture_path: "${inputs.project_path}/${inputs.architecture_output_path}"
-  modules: "${blocks.extract_modules.outputs.modules_list}"
-  module_count: "${blocks.extract_modules.outputs.module_count}"
+  phase_complete: "{{blocks.checkpoint_review.outputs.response}} == 'yes'"
+  architecture_path: "{{inputs.project_path}}/{{inputs.architecture_output_path}}"
+  modules: "{{blocks.extract_modules.outputs.modules_list}}"
+  module_count: "{{blocks.extract_modules.outputs.module_count}}"
   test_strategy_defined: "true"
-  checkpoint_approved: "${blocks.checkpoint_review.outputs.response == 'yes'}"
+  checkpoint_approved: "{{blocks.checkpoint_review.outputs.response}} == 'yes'"
 
   # State tracking
-  state_file_path: "${inputs.project_path}/${inputs.state_file}"
+  state_file_path: "{{inputs.project_path}}/{{inputs.state_file}}"
 
   # Architecture outputs
-  system_architecture: "${blocks.design_architecture.response}"
-  data_models: "${blocks.define_data_models.response}"
-  module_definitions: "${blocks.identify_modules.response}"
-  module_interfaces: "${blocks.define_interfaces.response}"
-  test_strategy: "${blocks.plan_test_strategy.response}"
+  system_architecture: "{{blocks.design_architecture.response}}"
+  data_models: "{{blocks.define_data_models.response}}"
+  module_definitions: "{{blocks.identify_modules.response}}"
+  module_interfaces: "{{blocks.define_interfaces.response}}"
+  test_strategy: "{{blocks.plan_test_strategy.response}}"
 
   # Summary
-  summary: "${blocks.completion_summary.outputs.stdout}"
+  summary: "{{blocks.completion_summary.outputs.stdout}}"
 
   # Next phase readiness
-  ready_for_phase3: "${blocks.checkpoint_review.outputs.response == 'yes'}"
+  ready_for_phase3: "{{blocks.checkpoint_review.outputs.response}} == 'yes'"

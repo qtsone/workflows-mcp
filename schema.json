@@ -650,7 +650,7 @@
     },
     "WorkflowInput": {
       "additionalProperties": false,
-      "description": "Input model for Workflow executor.\n\nSupports variable references from parent context:\n- ${inputs.field}: Parent workflow inputs\n- ${blocks.block_id.outputs.field}: Parent block outputs\n- ${metadata.field}: Parent workflow metadata\n\nVariable resolution happens in parent context before passing to child.",
+      "description": "Input model for Workflow executor.\n\nSupports variable references from parent context:\n- {{inputs.field}}: Parent workflow inputs\n- {{blocks.block_id.outputs.field}}: Parent block outputs\n- {{metadata.field}}: Parent workflow metadata\n\nVariable resolution happens in parent context before passing to child.",
       "properties": {
         "workflow": {
           "description": "Workflow name to execute",

@@ -104,13 +104,13 @@ blocks:
   - id: read_state
     type: ReadJSONState
     inputs:
-      path: "${inputs.project_path}/${inputs.state_file}"
+      path: "{{inputs.project_path}}/{{inputs.state_file}}"
 
   - id: validate_phase6_complete
     type: Shell
     inputs:
       command: |
-        STATE='${blocks.read_state.state}'
+        STATE='{{blocks.read_state.state}}'
 
         # Check if Phase 6 is in completed phases
         if echo "$STATE" | grep -q '"phase6_complete"'; then
@@ -125,7 +125,7 @@ blocks:
           exit 0
         else
           echo "❌ ERROR: Phase 6 not complete. Complete validation testing first."
-          echo "Current phase: ${blocks.read_state.state.current_phase}"
+          echo "Current phase: {{blocks.read_state.state.current_phase}}"
           exit 1
         fi
       timeout: 10
@@ -147,7 +147,7 @@ blocks:
     type: Shell
     inputs:
       command: |
-        cd "${inputs.project_path}"
+        cd "{{inputs.project_path}}"
         mkdir -p docs
         echo "✅ Created docs/ directory"
       timeout: 10
@@ -160,15 +160,15 @@ blocks:
       prompt: |
         === GENERATE DEPLOYMENT GUIDE ===
 
-        Generate comprehensive deployment guide for ${inputs.project_name} v${inputs.version}.
+        Generate comprehensive deployment guide for {{inputs.project_name}} v{{inputs.version}}.
 
         Include the following sections in markdown format:
 
-        # Deployment Guide - ${inputs.project_name}
+        # Deployment Guide - {{inputs.project_name}}
 
         ## 1. System Requirements
         - Operating system compatibility
-        - Python version: ${inputs.python_version}
+        - Python version: {{inputs.python_version}}
         - Hardware requirements (CPU, RAM, disk)
         - Network requirements
 
@@ -215,8 +215,8 @@ blocks:
   - id: write_deployment_guide
     type: CreateFile
     inputs:
-      path: "${inputs.project_path}/docs/DEPLOYMENT.md"
-      content: "${blocks.request_deployment_guide.response}"
+      path: "{{inputs.project_path}}/docs/DEPLOYMENT.md"
+      content: "{{blocks.request_deployment_guide.response}}"
       encoding: "utf-8"
     depends_on:
       - request_deployment_guide
@@ -227,14 +227,14 @@ blocks:
       prompt: |
         === GENERATE USER GUIDE ===
 
-        Generate comprehensive user guide for ${inputs.project_name} v${inputs.version}.
+        Generate comprehensive user guide for {{inputs.project_name}} v{{inputs.version}}.
 
         Include the following sections in markdown format:
 
-        # User Guide - ${inputs.project_name}
+        # User Guide - {{inputs.project_name}}
 
         ## 1. Getting Started
-        - Overview of ${inputs.project_name}
+        - Overview of {{inputs.project_name}}
         - Key features and benefits
         - Prerequisites
         - Quick start guide
@@ -278,8 +278,8 @@ blocks:
   - id: write_user_guide
     type: CreateFile
     inputs:
-      path: "${inputs.project_path}/docs/USER_GUIDE.md"
-      content: "${blocks.request_user_guide.response}"
+      path: "{{inputs.project_path}}/docs/USER_GUIDE.md"
+      content: "{{blocks.request_user_guide.response}}"
       encoding: "utf-8"
     depends_on:
       - request_user_guide
@@ -290,11 +290,11 @@ blocks:
       prompt: |
         === GENERATE API DOCUMENTATION ===
 
-        Generate comprehensive API documentation for ${inputs.project_name} v${inputs.version}.
+        Generate comprehensive API documentation for {{inputs.project_name}} v{{inputs.version}}.
 
         Include the following sections in markdown format:
 
-        # API Documentation - ${inputs.project_name}
+        # API Documentation - {{inputs.project_name}}
 
         ## 1. Overview
         - API purpose and capabilities
@@ -350,8 +350,8 @@ blocks:
   - id: write_api_docs
     type: CreateFile
     inputs:
-      path: "${inputs.project_path}/docs/API.md"
-      content: "${blocks.request_api_docs.response}"
+      path: "{{inputs.project_path}}/docs/API.md"
+      content: "{{blocks.request_api_docs.response}}"
       encoding: "utf-8"
     depends_on:
       - request_api_docs
@@ -362,11 +362,11 @@ blocks:
       prompt: |
         === GENERATE OPERATIONS RUNBOOK ===
 
-        Generate comprehensive operations runbook for ${inputs.project_name} v${inputs.version}.
+        Generate comprehensive operations runbook for {{inputs.project_name}} v{{inputs.version}}.
 
         Include the following sections in markdown format:
 
-        # Operations Runbook - ${inputs.project_name}
+        # Operations Runbook - {{inputs.project_name}}
 
         ## 1. Monitoring Guidelines
         - Key metrics to monitor
@@ -428,8 +428,8 @@ blocks:
   - id: write_runbook
     type: CreateFile
     inputs:
-      path: "${inputs.project_path}/docs/RUNBOOK.md"
-      content: "${blocks.request_runbook.response}"
+      path: "{{inputs.project_path}}/docs/RUNBOOK.md"
+      content: "{{blocks.request_runbook.response}}"
       encoding: "utf-8"
     depends_on:
       - request_runbook
@@ -440,14 +440,14 @@ blocks:
       prompt: |
         === UPDATE README.md ===
 
-        Create comprehensive README.md for ${inputs.project_name} v${inputs.version}.
+        Create comprehensive README.md for {{inputs.project_name}} v{{inputs.version}}.
 
         Structure as follows:
 
-        # ${inputs.project_name}
+        # {{inputs.project_name}}
 
-        **Version:** ${inputs.version}
-        **Author:** ${inputs.author}
+        **Version:** {{inputs.version}}
+        **Author:** {{inputs.author}}
 
         ## Overview
         [Brief project description - what it does and why it exists]
@@ -462,27 +462,27 @@ blocks:
 
         ```bash
         # Installation
-        pip install ${inputs.project_name}
+        pip install {{inputs.project_name}}
 
         # Basic usage
-        ${inputs.project_name} --help
+        {{inputs.project_name}} --help
         ```
 
         ## Installation
 
         ### Requirements
-        - Python ${inputs.python_version}
+        - Python {{inputs.python_version}}
         - [Other requirements]
 
         ### Install from PyPI
         ```bash
-        pip install ${inputs.project_name}
+        pip install {{inputs.project_name}}
         ```
 
         ### Install from Source
         ```bash
-        git clone https://github.com/yourorg/${inputs.project_name}.git
-        cd ${inputs.project_name}
+        git clone https://github.com/yourorg/{{inputs.project_name}}.git
+        cd {{inputs.project_name}}
         pip install -e .
         ```
 
@@ -501,10 +501,10 @@ blocks:
 
         ### Running Tests
         ```bash
-        pytest tests/ --cov=${inputs.project_name}
+        pytest tests/ --cov={{inputs.project_name}}
         ```
 
-        Coverage: ${inputs.coverage_threshold}%+ required
+        Coverage: {{inputs.coverage_threshold}}%+ required
 
         ### Code Quality
         ```bash
@@ -537,8 +537,8 @@ blocks:
   - id: write_readme
     type: CreateFile
     inputs:
-      path: "${inputs.project_path}/README.md"
-      content: "${blocks.request_readme_update.response}"
+      path: "{{inputs.project_path}}/README.md"
+      content: "{{blocks.request_readme_update.response}}"
       encoding: "utf-8"
     depends_on:
       - request_readme_update
@@ -547,7 +547,7 @@ blocks:
     type: Shell
     inputs:
       command: |
-        STATE='${blocks.read_state.state}'
+        STATE='{{blocks.read_state.state}}'
 
         # Try to extract requirements list from Phase 1
         REQ_LIST=$(echo "$STATE" | grep -o '"requirements_list"[[:space:]]*:[[:space:]]*\[[^]]*\]' | head -1)
@@ -575,20 +575,20 @@ blocks:
     type: Shell
     inputs:
       command: |
-        cat > "${inputs.project_path}/CHANGELOG.md" << 'EOF'
+        cat > "{{inputs.project_path}}/CHANGELOG.md" << 'EOF'
         # Changelog
 
-        All notable changes to ${inputs.project_name} will be documented in this file.
+        All notable changes to {{inputs.project_name}} will be documented in this file.
 
         The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
         and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-        ## [${inputs.version}] - $(date +%Y-%m-%d)
+        ## [{{inputs.version}}] - $(date +%Y-%m-%d)
 
         ### Added
-        - Initial release of ${inputs.project_name}
+        - Initial release of {{inputs.project_name}}
         - Core functionality implemented with TDD methodology
-        - Comprehensive test suite with ${inputs.coverage_threshold}%+ coverage
+        - Comprehensive test suite with {{inputs.coverage_threshold}}%+ coverage
         - Complete documentation suite:
           - User Guide
           - API Documentation
@@ -598,13 +598,13 @@ blocks:
 
         ### Features
         - All PRD requirements implemented and tested
-        - ${blocks.validate_phase6_complete.stdout | grep test_count | cut -d= -f2} automated tests
-        - ${blocks.validate_phase6_complete.stdout | grep coverage | cut -d= -f2}% code coverage
+        - $(echo "{{blocks.validate_phase6_complete.stdout}}" | grep test_count | cut -d= -f2) automated tests
+        - $(echo "{{blocks.validate_phase6_complete.stdout}}" | grep coverage | cut -d= -f2)% code coverage
         - Security scanning passed
         - Performance validation completed
 
         ### Technical
-        - Python ${inputs.python_version} compatible
+        - Python {{inputs.python_version}} compatible
         - Test-Driven Development methodology
         - Continuous integration ready
         - Production deployment ready
@@ -620,21 +620,21 @@ blocks:
     type: Shell
     inputs:
       command: |
-        cd "${inputs.project_path}"
+        cd "{{inputs.project_path}}"
 
         # Check if pyproject.toml exists
         if [ -f pyproject.toml ]; then
           echo "✅ pyproject.toml found"
 
           # Verify project name
-          if grep -q "name.*${inputs.project_name}" pyproject.toml; then
+          if grep -q "name.*{{inputs.project_name}}" pyproject.toml; then
             echo "✅ Project name matches in pyproject.toml"
           else
             echo "⚠️  WARNING: Project name mismatch in pyproject.toml"
           fi
 
           # Verify version
-          if grep -q "version.*${inputs.version}" pyproject.toml; then
+          if grep -q "version.*{{inputs.version}}" pyproject.toml; then
             echo "✅ Version matches in pyproject.toml"
           else
             echo "⚠️  WARNING: Version mismatch in pyproject.toml"
@@ -662,7 +662,7 @@ blocks:
     type: Shell
     inputs:
       command: |
-        cd "${inputs.project_path}"
+        cd "{{inputs.project_path}}"
 
         # Generate requirements.txt for deployment
         if command -v uv &> /dev/null; then
@@ -707,11 +707,11 @@ blocks:
     inputs:
       command: |
         # Extract metrics from state
-        TOTAL_TESTS="${blocks.validate_phase6_complete.outputs.test_count}"
-        COVERAGE="${blocks.validate_phase6_complete.outputs.coverage}"
+        TOTAL_TESTS="{{blocks.validate_phase6_complete.outputs.test_count}}"
+        COVERAGE="{{blocks.validate_phase6_complete.outputs.coverage}}"
 
-        cat > "${inputs.project_path}/docs/DEPLOYMENT_CHECKLIST.md" << EOF
-        # Deployment Checklist for ${inputs.project_name} v${inputs.version}
+        cat > "{{inputs.project_path}}/docs/DEPLOYMENT_CHECKLIST.md" << EOF
+        # Deployment Checklist for {{inputs.project_name}} v{{inputs.version}}
 
         **Generated:** $(date -Iseconds)
 
@@ -719,7 +719,7 @@ blocks:
 
         ### Quality Assurance
         - [ ] All tests passing (${TOTAL_TESTS:-N/A} tests)
-        - [ ] Code coverage ≥ ${inputs.coverage_threshold}% (actual: ${COVERAGE:-N/A}%)
+        - [ ] Code coverage ≥ {{inputs.coverage_threshold}}% (actual: ${COVERAGE:-N/A}%)
         - [ ] All quality gates passed
         - [ ] Security scan clean (no vulnerabilities)
         - [ ] Performance testing completed
@@ -829,7 +829,7 @@ blocks:
 
         EOF
 
-        echo "✅ Deployment checklist created: ${inputs.project_path}/docs/DEPLOYMENT_CHECKLIST.md"
+        echo "✅ Deployment checklist created: {{inputs.project_path}}/docs/DEPLOYMENT_CHECKLIST.md"
       timeout: 30
     depends_on:
       - generate_requirements
@@ -898,9 +898,9 @@ blocks:
 
         # Run the Python script
         python3 /tmp/update_phase7_state.py \
-          "${inputs.project_path}/${inputs.state_file}" \
-          "${inputs.project_name}" \
-          "${inputs.version}"
+          "{{inputs.project_path}}/{{inputs.state_file}}" \
+          "{{inputs.project_name}}" \
+          "{{inputs.version}}"
       timeout: 30
     depends_on:
       - create_deployment_checklist
@@ -913,13 +913,13 @@ blocks:
         ║  🎉 TDD PROJECT DEVELOPMENT COMPLETE! 🎉                  ║
         ╚═══════════════════════════════════════════════════════════╝
 
-        Project: ${inputs.project_name} v${inputs.version}
+        Project: {{inputs.project_name}} v{{inputs.version}}
         Completed: $(date)
 
         📊 Project Statistics:
-        - Total tests: ${blocks.validate_phase6_complete.stdout | grep test_count | cut -d= -f2}
-        - Test coverage: ${blocks.validate_phase6_complete.stdout | grep coverage | cut -d= -f2}%
-        - Coverage threshold: ${inputs.coverage_threshold}%
+        - Total tests: $(echo "{{blocks.validate_phase6_complete.stdout}}" | grep test_count | cut -d= -f2)
+        - Test coverage: $(echo "{{blocks.validate_phase6_complete.stdout}}" | grep coverage | cut -d= -f2)%
+        - Coverage threshold: {{inputs.coverage_threshold}}%
 
         📚 Documentation Generated:
         - ✅ docs/DEPLOYMENT.md - Deployment guide
@@ -949,8 +949,8 @@ blocks:
         Respond with 'yes' or 'no'
       operation: "phase7_completion_checkpoint"
       details:
-        project_name: "${inputs.project_name}"
-        version: "${inputs.version}"
+        project_name: "{{inputs.project_name}}"
+        version: "{{inputs.version}}"
         documentation_complete: "true"
         deployment_ready: "true"
     depends_on:
@@ -961,16 +961,16 @@ blocks:
     inputs:
       command: |
         # Extract metrics
-        TOTAL_TESTS="${blocks.validate_phase6_complete.outputs.test_count}"
-        COVERAGE="${blocks.validate_phase6_complete.outputs.coverage}"
-        MODULE_COUNT="${blocks.extract_requirements_list.outputs.module_count}"
+        TOTAL_TESTS="{{blocks.validate_phase6_complete.outputs.test_count}}"
+        COVERAGE="{{blocks.validate_phase6_complete.outputs.coverage}}"
+        MODULE_COUNT="{{blocks.extract_requirements_list.outputs.module_count}}"
 
         echo "╔═══════════════════════════════════════════════════════════╗"
         echo "║       TDD PHASE 7: FINALIZATION COMPLETE                 ║"
         echo "╚═══════════════════════════════════════════════════════════╝"
         echo ""
-        echo "Project: ${inputs.project_name} v${inputs.version}"
-        echo "Author: ${inputs.author}"
+        echo "Project: {{inputs.project_name}} v{{inputs.version}}"
+        echo "Author: {{inputs.author}}"
         echo "Completion Date: $(date)"
         echo ""
         echo "📊 Project Statistics:"
@@ -980,27 +980,27 @@ blocks:
         echo "  - Quality gates: All passed ✅"
         echo ""
         echo "📚 Documentation Generated:"
-        echo "  ✅ ${inputs.project_path}/docs/DEPLOYMENT.md"
-        echo "  ✅ ${inputs.project_path}/docs/USER_GUIDE.md"
-        echo "  ✅ ${inputs.project_path}/docs/API.md"
-        echo "  ✅ ${inputs.project_path}/docs/RUNBOOK.md"
-        echo "  ✅ ${inputs.project_path}/docs/DEPLOYMENT_CHECKLIST.md"
-        echo "  ✅ ${inputs.project_path}/README.md"
-        echo "  ✅ ${inputs.project_path}/CHANGELOG.md"
+        echo "  ✅ {{inputs.project_path}}/docs/DEPLOYMENT.md"
+        echo "  ✅ {{inputs.project_path}}/docs/USER_GUIDE.md"
+        echo "  ✅ {{inputs.project_path}}/docs/API.md"
+        echo "  ✅ {{inputs.project_path}}/docs/RUNBOOK.md"
+        echo "  ✅ {{inputs.project_path}}/docs/DEPLOYMENT_CHECKLIST.md"
+        echo "  ✅ {{inputs.project_path}}/README.md"
+        echo "  ✅ {{inputs.project_path}}/CHANGELOG.md"
         echo ""
         echo "📦 Package Status:"
-        echo "  - Configuration: ${blocks.verify_project_config.stdout | grep config_verified | cut -d= -f2}"
-        echo "  - Requirements: ${blocks.generate_requirements.stdout | grep requirements_generated | cut -d= -f2}"
+        echo "  - Configuration: $(echo "{{blocks.verify_project_config.stdout}}" | grep config_verified | cut -d= -f2)"
+        echo "  - Requirements: $(echo "{{blocks.generate_requirements.stdout}}" | grep requirements_generated | cut -d= -f2)"
         echo "  - Deployment: Ready ✅"
         echo ""
         echo "🚀 Deployment Instructions:"
-        echo "  1. Review: ${inputs.project_path}/docs/DEPLOYMENT_CHECKLIST.md"
-        echo "  2. Follow: ${inputs.project_path}/docs/DEPLOYMENT.md"
-        echo "  3. Monitor: ${inputs.project_path}/docs/RUNBOOK.md"
+        echo "  1. Review: {{inputs.project_path}}/docs/DEPLOYMENT_CHECKLIST.md"
+        echo "  2. Follow: {{inputs.project_path}}/docs/DEPLOYMENT.md"
+        echo "  3. Monitor: {{inputs.project_path}}/docs/RUNBOOK.md"
         echo ""
         echo "✅ PROJECT READY FOR PRODUCTION DEPLOYMENT!"
         echo ""
-        echo "State file: ${inputs.project_path}/${inputs.state_file}"
+        echo "State file: {{inputs.project_path}}/{{inputs.state_file}}"
         echo "Project complete: true"
       timeout: 10
     depends_on:
@@ -1008,33 +1008,33 @@ blocks:
 
 outputs:
   # Documentation paths
-  deployment_guide_path: "${inputs.project_path}/docs/DEPLOYMENT.md"
-  user_guide_path: "${inputs.project_path}/docs/USER_GUIDE.md"
-  api_docs_path: "${inputs.project_path}/docs/API.md"
-  runbook_path: "${inputs.project_path}/docs/RUNBOOK.md"
-  changelog_path: "${inputs.project_path}/CHANGELOG.md"
-  readme_path: "${inputs.project_path}/README.md"
-  deployment_checklist_path: "${inputs.project_path}/docs/DEPLOYMENT_CHECKLIST.md"
+  deployment_guide_path: "{{inputs.project_path}}/docs/DEPLOYMENT.md"
+  user_guide_path: "{{inputs.project_path}}/docs/USER_GUIDE.md"
+  api_docs_path: "{{inputs.project_path}}/docs/API.md"
+  runbook_path: "{{inputs.project_path}}/docs/RUNBOOK.md"
+  changelog_path: "{{inputs.project_path}}/CHANGELOG.md"
+  readme_path: "{{inputs.project_path}}/README.md"
+  deployment_checklist_path: "{{inputs.project_path}}/docs/DEPLOYMENT_CHECKLIST.md"
 
   # Status indicators
   documentation_complete: "true"
   readme_updated: "true"
-  package_created: "${blocks.verify_project_config.outputs.config_verified}"
-  requirements_generated: "${blocks.generate_requirements.outputs.requirements_generated}"
+  package_created: "{{blocks.verify_project_config.outputs.config_verified}}"
+  requirements_generated: "{{blocks.generate_requirements.outputs.requirements_generated}}"
   project_complete: "true"
-  deployment_ready: "${blocks.final_completion_checkpoint.outputs.response == 'yes'}"
+  deployment_ready: "{{blocks.final_completion_checkpoint.outputs.response}} == 'yes'"
 
   # Project info
-  project_name: "${inputs.project_name}"
-  project_version: "${inputs.version}"
-  project_author: "${inputs.author}"
+  project_name: "{{inputs.project_name}}"
+  project_version: "{{inputs.version}}"
+  project_author: "{{inputs.author}}"
 
   # Checkpoint
-  completion_confirmed: "${blocks.final_completion_checkpoint.outputs.response == 'yes'}"
+  completion_confirmed: "{{blocks.final_completion_checkpoint.outputs.response}} == 'yes'"
 
   # State
-  state_updated: "${blocks.update_state_phase7.succeeded}"
-  state_file_path: "${inputs.project_path}/${inputs.state_file}"
+  state_updated: "{{blocks.update_state_phase7.succeeded}}"
+  state_file_path: "{{inputs.project_path}}/{{inputs.state_file}}"
 
   # Summary
-  summary: "${blocks.final_summary.outputs.stdout}"
+  summary: "{{blocks.final_summary.outputs.stdout}}"
