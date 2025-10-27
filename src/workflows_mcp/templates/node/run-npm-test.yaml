@@ -24,15 +24,15 @@ blocks:
     type: Shell
     inputs:
       command: "test -f package.json && echo 'package.json found'"
-      working_dir: "${inputs.working_dir}"
+      working_dir: "{{inputs.working_dir}}"
       timeout: 10
 
   - id: build_test_command
     type: Shell
     inputs:
       command: |
-        CMD="npm run ${inputs.test_script}"
-        if [ "${inputs.with_coverage}" = "true" ]; then
+        CMD="npm run {{inputs.test_script}}"
+        if [ "{{inputs.with_coverage}}" = "true" ]; then
           CMD="$CMD -- --coverage"
         fi
         echo "$CMD"
@@ -43,8 +43,8 @@ blocks:
   - id: run_npm_test
     type: Shell
     inputs:
-      command: "${blocks.build_test_command.outputs.stdout}"
-      working_dir: "${inputs.working_dir}"
+      command: "{{blocks.build_test_command.outputs.stdout}}"
+      working_dir: "{{inputs.working_dir}}"
       timeout: 600
       env:
         CI: "true"
@@ -53,8 +53,8 @@ blocks:
       - build_test_command
 
 outputs:
-  success: "${blocks.run_npm_test.succeeded}"
-  exit_code: "${blocks.run_npm_test.outputs.exit_code}"
-  test_output: "${blocks.run_npm_test.outputs.stdout}"
-  errors: "${blocks.run_npm_test.outputs.stderr}"
-  execution_time_ms: "${blocks.run_npm_test.metadata.execution_time_ms}"
+  success: "{{blocks.run_npm_test.succeeded}}"
+  exit_code: "{{blocks.run_npm_test.outputs.exit_code}}"
+  test_output: "{{blocks.run_npm_test.outputs.stdout}}"
+  errors: "{{blocks.run_npm_test.outputs.stderr}}"
+  execution_time_ms: "{{blocks.run_npm_test.metadata.execution_time_ms}}"

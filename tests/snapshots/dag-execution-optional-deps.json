@@ -21,9 +21,9 @@
       "metadata": {
         "status": "completed",
         "outcome": "failure",
-        "execution_time_ms": 5.77099609375,
-        "started_at": "2025-10-25T15:57:55.246682+00:00",
-        "completed_at": "2025-10-25T15:57:55.252448+00:00",
+        "execution_time_ms": 5.96728515625,
+        "started_at": "2025-10-27T15:29:35.291803+00:00",
+        "completed_at": "2025-10-27T15:29:35.297763+00:00",
         "wave": 0,
         "execution_order": 0,
         "message": "Command exited with code 1",
@@ -46,36 +46,11 @@
       "metadata": {
         "status": "completed",
         "outcome": "success",
-        "execution_time_ms": 5.22998046875,
-        "started_at": "2025-10-25T15:57:55.249563+00:00",
-        "completed_at": "2025-10-25T15:57:55.254796+00:00",
+        "execution_time_ms": 5.48486328125,
+        "started_at": "2025-10-27T15:29:35.294208+00:00",
+        "completed_at": "2025-10-27T15:29:35.299695+00:00",
         "wave": 0,
         "execution_order": 0,
-        "message": null,
-        "succeeded": true,
-        "failed": false,
-        "skipped": false
-      },
-      "blocks": {},
-      "depth": 0
-    },
-    "job_3": {
-      "inputs": {
-        "command": "echo \"runs_only_if_success\""
-      },
-      "outputs": {
-        "exit_code": 0,
-        "stdout": "runs_only_if_success\n",
-        "stderr": ""
-      },
-      "metadata": {
-        "status": "completed",
-        "outcome": "success",
-        "execution_time_ms": 10.323974609375,
-        "started_at": "2025-10-25T15:57:55.255223+00:00",
-        "completed_at": "2025-10-25T15:57:55.265535+00:00",
-        "wave": 1,
-        "execution_order": 2,
         "message": null,
         "succeeded": true,
         "failed": false,
@@ -96,9 +71,9 @@
       "metadata": {
         "status": "completed",
         "outcome": "success",
-        "execution_time_ms": 7.94287109375,
-        "started_at": "2025-10-25T15:57:55.257695+00:00",
-        "completed_at": "2025-10-25T15:57:55.265643+00:00",
+        "execution_time_ms": 10.445068359375,
+        "started_at": "2025-10-27T15:29:35.300155+00:00",
+        "completed_at": "2025-10-27T15:29:35.310590+00:00",
         "wave": 1,
         "execution_order": 2,
         "message": null,
@@ -121,9 +96,34 @@
       "metadata": {
         "status": "completed",
         "outcome": "success",
-        "execution_time_ms": 5.559814453125,
-        "started_at": "2025-10-25T15:57:55.260142+00:00",
-        "completed_at": "2025-10-25T15:57:55.265712+00:00",
+        "execution_time_ms": 8.093017578125,
+        "started_at": "2025-10-27T15:29:35.302615+00:00",
+        "completed_at": "2025-10-27T15:29:35.310715+00:00",
+        "wave": 1,
+        "execution_order": 2,
+        "message": null,
+        "succeeded": true,
+        "failed": false,
+        "skipped": false
+      },
+      "blocks": {},
+      "depth": 0
+    },
+    "job_3": {
+      "inputs": {
+        "command": "echo \"runs_only_if_success\""
+      },
+      "outputs": {
+        "exit_code": 0,
+        "stdout": "runs_only_if_success\n",
+        "stderr": ""
+      },
+      "metadata": {
+        "status": "completed",
+        "outcome": "success",
+        "execution_time_ms": 5.583251953125,
+        "started_at": "2025-10-27T15:29:35.305153+00:00",
+        "completed_at": "2025-10-27T15:29:35.310743+00:00",
         "wave": 1,
         "execution_order": 2,
         "message": null,
@@ -146,9 +146,9 @@
       "metadata": {
         "status": "completed",
         "outcome": "success",
-        "execution_time_ms": 4.826171875,
-        "started_at": "2025-10-25T15:57:55.262584+00:00",
-        "completed_at": "2025-10-25T15:57:55.267414+00:00",
+        "execution_time_ms": 5.16796875,
+        "started_at": "2025-10-27T15:29:35.307453+00:00",
+        "completed_at": "2025-10-27T15:29:35.312623+00:00",
         "wave": 1,
         "execution_order": 2,
         "message": null,
@@ -162,10 +162,10 @@
   },
   "metadata": {
     "workflow_name": "dag-execution-optional-deps",
-    "start_time": "2025-10-25T15:57:55.246483+00:00",
+    "start_time": "2025-10-27T15:29:35.291689+00:00",
     "total_blocks": 6,
     "execution_waves": 2,
-    "completed_at": "2025-10-25T15:57:55.267796+00:00",
-    "execution_time_seconds": 0.021319150924682617
+    "completed_at": "2025-10-27T15:29:35.313025+00:00",
+    "execution_time_seconds": 0.02134108543395996
   }
 }

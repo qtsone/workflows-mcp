@@ -24,17 +24,17 @@ blocks:
     inputs:
       workflow: "composition-child-calculator"
       inputs:
-        number_a: "${inputs.number_a}"
-        number_b: "${inputs.number_b}"
-        operation: "${inputs.operation}"
+        number_a: "{{inputs.number_a}}"
+        number_b: "{{inputs.number_b}}"
+        operation: "{{inputs.operation}}"
 
   - id: verify_result
     type: Shell
     inputs:
-      command: 'echo "Child returned: ${blocks.call_child.outputs.result}"'
+      command: 'echo "Child returned: {{blocks.call_child.outputs.result}}"'
     depends_on: [call_child]
 
 outputs:
-  child_succeeded: "${blocks.call_child.outputs.calculate_success}"
-  result: "${blocks.call_child.outputs.result}"
-  parent_verified: "${blocks.verify_result.succeeded}"
+  child_succeeded: "{{blocks.call_child.outputs.calculate_success}}"
+  result: "{{blocks.call_child.outputs.result}}"
+  parent_verified: "{{blocks.verify_result.succeeded}}"

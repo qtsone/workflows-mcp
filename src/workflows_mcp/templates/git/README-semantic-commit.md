@@ -288,7 +288,7 @@ Combine with other workflows:
       stage_all: true
       auto_commit: true
   depends_on: [run_tests]
-  condition: ${blocks.run_tests.succeeded} == true
+  condition: "{{blocks.run_tests.succeeded}}"
 ```
 
 ### Git Hooks Integration

@@ -40,22 +40,22 @@ blocks:
     inputs:
       command: |
         # Build package specification
-        PACKAGE="${inputs.package_name}"
+        PACKAGE="{{inputs.package_name}}"
 
         # Add extras if provided
-        if [ -n "${inputs.extras}" ]; then
-          PACKAGE="${PACKAGE}[${inputs.extras}]"
+        if [ -n "{{inputs.extras}}" ]; then
+          PACKAGE="${PACKAGE}[{{inputs.extras}}]"
         fi
 
         # Add version constraint if provided
-        if [ -n "${inputs.version}" ]; then
-          PACKAGE="${PACKAGE}${inputs.version}"
+        if [ -n "{{inputs.version}}" ]; then
+          PACKAGE="${PACKAGE}{{inputs.version}}"
         fi
 
         # Build uv pip install command
         # uv pip install works with venv activation or --python flag
-        if [ -n "${inputs.venv_path}" ]; then
-          CMD="uv pip install --python ${inputs.venv_path}/bin/python \"$PACKAGE\""
+        if [ -n "{{inputs.venv_path}}" ]; then
+          CMD="uv pip install --python {{inputs.venv_path}}/bin/python \"$PACKAGE\""
         else
           CMD="uv pip install \"$PACKAGE\""
         fi
@@ -63,7 +63,7 @@ blocks:
         echo "$CMD"
       timeout: 5
       
-    condition: "${blocks.check_uv_available.succeeded}"
+    condition: "{{blocks.check_uv_available.succeeded}}"
     depends_on:
       - check_uv_available
 
@@ -71,7 +71,7 @@ blocks:
   - id: install_package
     type: Shell
     inputs:
-      command: "${blocks.build_install_command.outputs.stdout}"
+      command: "{{blocks.build_install_command.outputs.stdout}}"
       timeout: 300
       
     depends_on:
@@ -83,16 +83,16 @@ blocks:
     inputs:
       command: |
         # Determine python executable (prefer venv if available)
-        if [ -n "${inputs.venv_path}" ] && [ -f "${inputs.venv_path}/bin/python" ]; then
-          PYTHON="${inputs.venv_path}/bin/python"
+        if [ -n "{{inputs.venv_path}}" ] && [ -f "{{inputs.venv_path}}/bin/python" ]; then
+          PYTHON="{{inputs.venv_path}}/bin/python"
         else
           PYTHON="python3"
         fi
 
         # Try to import the package
-        if $PYTHON -c "import ${inputs.package_name}" 2>/dev/null; then
+        if $PYTHON -c "import {{inputs.package_name}}" 2>/dev/null; then
           # Get installed version
-          VERSION=$($PYTHON -c "import ${inputs.package_name}; print(getattr(${inputs.package_name}, '__version__', 'unknown'))" 2>/dev/null || echo "unknown")
+          VERSION=$($PYTHON -c "import {{inputs.package_name}}; print(getattr({{inputs.package_name}}, '__version__', 'unknown'))" 2>/dev/null || echo "unknown")
           echo "$VERSION"
         else
           echo "not_installed"
@@ -108,14 +108,14 @@ blocks:
     inputs:
       command: |
         # Determine python executable (prefer venv if available)
-        if [ -n "${inputs.venv_path}" ] && [ -f "${inputs.venv_path}/bin/python" ]; then
-          PYTHON="${inputs.venv_path}/bin/python"
+        if [ -n "{{inputs.venv_path}}" ] && [ -f "{{inputs.venv_path}}/bin/python" ]; then
+          PYTHON="{{inputs.venv_path}}/bin/python"
         else
           PYTHON="python3"
         fi
 
         # Get package location
-        LOCATION=$($PYTHON -c "import ${inputs.package_name}; import os; print(os.path.dirname(${inputs.package_name}.__file__))" 2>/dev/null || echo "unknown")
+        LOCATION=$($PYTHON -c "import {{inputs.package_name}}; import os; print(os.path.dirname({{inputs.package_name}}.__file__))" 2>/dev/null || echo "unknown")
         echo "$LOCATION"
       timeout: 10
       
@@ -128,14 +128,14 @@ blocks:
     inputs:
       command: |
         printf "uv Installation Summary:\n"
-        printf "- Package: ${inputs.package_name}\n"
-        printf "- Version Constraint: ${inputs.version}\n"
-        printf "- Extras: ${inputs.extras}\n"
-        printf "- uv Available: ${blocks.check_uv_available.succeeded}\n"
-        printf "- Exit Code: ${blocks.install_package.outputs.exit_code}\n"
-        printf "- Installed Version: ${blocks.verify_installation.outputs.stdout}\n"
-        printf "- Install Location: ${blocks.get_install_location.outputs.stdout}\n"
-        printf "- Command: ${blocks.build_install_command.outputs.stdout}"
+        printf "- Package: {{inputs.package_name}}\n"
+        printf "- Version Constraint: {{inputs.version}}\n"
+        printf "- Extras: {{inputs.extras}}\n"
+        printf "- uv Available: {{blocks.check_uv_available.succeeded}}\n"
+        printf "- Exit Code: {{blocks.install_package.outputs.exit_code}}\n"
+        printf "- Installed Version: {{blocks.verify_installation.outputs.stdout}}\n"
+        printf "- Install Location: {{blocks.get_install_location.outputs.stdout}}\n"
+        printf "- Command: {{blocks.build_install_command.outputs.stdout}}"
     depends_on:
       - check_uv_available
       - install_package
@@ -143,12 +143,12 @@ blocks:
       - get_install_location
 
 outputs:
-  success: "${blocks.install_package.outputs.exit_code} == 0"
-  installed_version: "${blocks.verify_installation.outputs.stdout}"
-  install_location: "${blocks.get_install_location.outputs.stdout}"
-  exit_code: "${blocks.install_package.outputs.exit_code}"
-  stdout: "${blocks.install_package.outputs.stdout}"
-  stderr: "${blocks.install_package.outputs.stderr}"
-  command_executed: "${blocks.build_install_command.outputs.stdout}"
-  uv_available: "${blocks.check_uv_available.succeeded}"
-  summary: "${blocks.installation_summary.outputs.stdout}"
+  success: "{{blocks.install_package.outputs.exit_code}} == 0"
+  installed_version: "{{blocks.verify_installation.outputs.stdout}}"
+  install_location: "{{blocks.get_install_location.outputs.stdout}}"
+  exit_code: "{{blocks.install_package.outputs.exit_code}}"
+  stdout: "{{blocks.install_package.outputs.stdout}}"
+  stderr: "{{blocks.install_package.outputs.stderr}}"
+  command_executed: "{{blocks.build_install_command.outputs.stdout}}"
+  uv_available: "{{blocks.check_uv_available.succeeded}}"
+  summary: "{{blocks.installation_summary.outputs.stdout}}"

@@ -18,14 +18,14 @@ blocks:
     inputs:
       workflow: "git-analyze-changes"
       inputs:
-        working_dir: "${inputs.working_dir}"
+        working_dir: "{{inputs.working_dir}}"
 
   - id: git_branch
     type: Shell
     description: "Get current git branch name"
     inputs:
       command: git branch --show-current > $SCRATCH/current_branch.txt
-      working_dir: "${inputs.working_dir}"
+      working_dir: "{{inputs.working_dir}}"
       timeout: 5
     outputs:
       name:
@@ -37,7 +37,7 @@ blocks:
     type: Shell
     inputs:
       command: "git log --oneline -5"
-      working_dir: "${inputs.working_dir}"
+      working_dir: "{{inputs.working_dir}}"
       timeout: 30
     depends_on:
       - analyze_changes
@@ -57,22 +57,22 @@ blocks:
         - Recent Commits:
         {{ recent_commits }}
       variables:
-        branch_name: "${blocks.git_branch.outputs.name}"
-        has_changes: "${blocks.analyze_changes.outputs.has_changes}"
-        file_status: "${blocks.analyze_changes.outputs.file_status}"
-        diff_stat: "${blocks.analyze_changes.outputs.diff_stat}"
-        recent_commits: "${blocks.check_recent_commits.outputs.stdout}"
+        branch_name: "{{blocks.git_branch.outputs.name}}"
+        has_changes: "{{blocks.analyze_changes.outputs.has_changes}}"
+        file_status: "{{blocks.analyze_changes.outputs.file_status}}"
+        diff_stat: "{{blocks.analyze_changes.outputs.diff_stat}}"
+        recent_commits: "{{blocks.check_recent_commits.outputs.stdout}}"
     depends_on:
       - analyze_changes
       - git_branch
       - check_recent_commits
 
 outputs:
-  current_branch: "${blocks.git_branch.outputs.name}"
-  has_changes: "${blocks.analyze_changes.outputs.has_changes}"
-  file_status: "${blocks.analyze_changes.outputs.file_status}"
-  staged_diff: "${blocks.analyze_changes.outputs.staged_diff}"
-  unstaged_diff: "${blocks.analyze_changes.outputs.unstaged_diff}"
-  diff_stat: "${blocks.analyze_changes.outputs.diff_stat}"
-  recent_commits: "${blocks.check_recent_commits.outputs.stdout}"
-  summary: "${blocks.summary.outputs.content}"
+  current_branch: "{{blocks.git_branch.outputs.name}}"
+  has_changes: "{{blocks.analyze_changes.outputs.has_changes}}"
+  file_status: "{{blocks.analyze_changes.outputs.file_status}}"
+  staged_diff: "{{blocks.analyze_changes.outputs.staged_diff}}"
+  unstaged_diff: "{{blocks.analyze_changes.outputs.unstaged_diff}}"
+  diff_stat: "{{blocks.analyze_changes.outputs.diff_stat}}"
+  recent_commits: "{{blocks.check_recent_commits.outputs.stdout}}"
+  summary: "{{blocks.summary.outputs.content}}"

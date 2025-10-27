@@ -5,11 +5,11 @@ blocks:
   - id: use_workflow_name
     type: Shell
     inputs:
-      command: echo "${metadata.workflow_name}"
+      command: echo "{{metadata.workflow_name}}"
   - id: use_start_time
     type: Shell
     inputs:
-      command: echo "${metadata.start_time}"
+      command: echo "{{metadata.start_time}}"
 outputs:
-  workflow_name: "${blocks.use_workflow_name.outputs.stdout}"
-  start_time: "${blocks.use_start_time.outputs.stdout}"
+  workflow_name: "{{blocks.use_workflow_name.outputs.stdout}}"
+  start_time: "{{blocks.use_start_time.outputs.stdout}}"

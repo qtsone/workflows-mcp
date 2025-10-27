@@ -29,27 +29,27 @@ blocks:
         - {{ feature }}
         {% endfor %}
       variables:
-        project_name: "${inputs.project_name}"
-        timestamp: "${metadata.start_time}"
-        shell_data: "${blocks.create_shell_data.outputs.stdout}"
+        project_name: "{{inputs.project_name}}"
+        timestamp: "{{metadata.start_time}}"
+        shell_data: "{{blocks.create_shell_data.outputs.stdout}}"
         features:
           - "Feature 1"
           - "Feature 2"
           - "Feature 3"
-      output_path: "${inputs.test_dir}/README.md"
+      output_path: "{{inputs.test_dir}}/README.md"
       create_parents: true
     depends_on: [create_shell_data]
   - id: verify_file_created
     type: ReadFile
     inputs:
-      path: "${inputs.test_dir}/README.md"
+      path: "{{inputs.test_dir}}/README.md"
     depends_on: [render_template]
   - id: cleanup
     type: Shell
     inputs:
-      command: rm -rf "${inputs.test_dir}"
+      command: rm -rf "{{inputs.test_dir}}"
     depends_on: [verify_file_created]
 outputs:
-  template_rendered: "${blocks.render_template.succeeded}"
-  file_content: "${blocks.verify_file_created.outputs.content}"
-  cleanup_done: "${blocks.cleanup.succeeded}"
+  template_rendered: "{{blocks.render_template.succeeded}}"
+  file_content: "{{blocks.verify_file_created.outputs.content}}"
+  cleanup_done: "{{blocks.cleanup.succeeded}}"

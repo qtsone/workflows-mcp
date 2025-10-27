@@ -39,13 +39,13 @@ blocks:
   - id: read_config
     type: ReadFile
     inputs:
-      path: "${inputs.config_path}"
+      path: "{{inputs.config_path}}"
 
   # Validate configuration format
   - id: validate_format
     type: Shell
     inputs:
-      command: 'printf "Validating config format: ${inputs.config_path} (${blocks.read_config.outputs.size_bytes} bytes)"'
+      command: 'printf "Validating config format: {{inputs.config_path}} ({{blocks.read_config.outputs.size_bytes}} bytes)"'
     depends_on:
       - read_config
 
@@ -53,12 +53,12 @@ blocks:
   - id: backup_config
     type: Shell
     inputs:
-      command: "cp ${inputs.config_path} ${inputs.config_path}.backup"
+      command: "cp {{inputs.config_path}} {{inputs.config_path}}.backup"
       timeout: 30
       
     depends_on:
       - read_config
-    condition: "${inputs.backup_original} and not ${inputs.validate_only}"
+    condition: "{{inputs.backup_original}} and not {{inputs.validate_only}}"
 
   # Transform configuration for environment
   - id: transform_config
@@ -66,53 +66,53 @@ blocks:
     inputs:
       template: |
         {
-          "source_file": "${inputs.config_path}",
-          "environment": "${inputs.environment}",
+          "source_file": "{{inputs.config_path}}",
+          "environment": "{{inputs.environment}}",
           "processed_at": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
-          "original_size": ${blocks.read_config.outputs.size_bytes},
+          "original_size": {{blocks.read_config.outputs.size_bytes}},
           "validation_passed": true,
           "metadata": {
             "processor": "process-config workflow",
             "version": "1.0",
-            "backup_created": ${inputs.backup_original}
+            "backup_created": {{inputs.backup_original}}
           },
-          "original_content": ${blocks.read_config.outputs.content}
+          "original_content": {{blocks.read_config.outputs.content}}
         }
       variables:
-        config_path: "${inputs.config_path}"
-        environment: "${inputs.environment}"
-        read_config_size: "${blocks.read_config.outputs.size_bytes}"
-        backup_original: "${inputs.backup_original}"
+        config_path: "{{inputs.config_path}}"
+        environment: "{{inputs.environment}}"
+        read_config_size: "{{blocks.read_config.outputs.size_bytes}}"
+        backup_original: "{{inputs.backup_original}}"
     depends_on:
       - validate_format
       - backup_config
-    condition: "not ${inputs.validate_only}"
+    condition: "not {{inputs.validate_only}}"
 
   # Write processed configuration
   - id: write_output
     type: CreateFile
     inputs:
-      path: "${inputs.output_path}"
-      content: "${blocks.transform_config.outputs.content}"
+      path: "{{inputs.output_path}}"
+      content: "{{blocks.transform_config.outputs.content}}"
       mode: "644"
     depends_on:
       - transform_config
-    condition: "not ${inputs.validate_only}"
+    condition: "not {{inputs.validate_only}}"
 
   # Verify output file
   - id: verify_output
     type: ReadFile
     inputs:
-      path: "${inputs.output_path}"
+      path: "{{inputs.output_path}}"
     depends_on:
       - write_output
-    condition: "not ${inputs.validate_only}"
+    condition: "not {{inputs.validate_only}}"
 
   # Generate status displays
   - id: get_mode_display
     type: Shell
     inputs:
-      command: "test '${inputs.validate_only}' = 'true' && echo 'Mode: VALIDATION ONLY' || echo 'Mode: TRANSFORM AND WRITE'"
+      command: "test '{{inputs.validate_only}}' = 'true' && echo 'Mode: VALIDATION ONLY' || echo 'Mode: TRANSFORM AND WRITE'"
       timeout: 5
       
     depends_on:
@@ -122,11 +122,11 @@ blocks:
     type: Shell
     inputs:
       command: |
-        if [ "${inputs.validate_only}" = "true" ]; then
+        if [ "{{inputs.validate_only}}" = "true" ]; then
           echo ''
         else
-          if [ "${inputs.backup_original}" = "true" ]; then
-            if [ ${blocks.backup_config.outputs.exit_code} -eq 0 ]; then
+          if [ "{{inputs.backup_original}}" = "true" ]; then
+            if [ {{blocks.backup_config.outputs.exit_code}} -eq 0 ]; then
               echo 'Backup: ✓ Created'
             else
               echo 'Backup: ✗ Failed'
@@ -144,10 +144,10 @@ blocks:
     type: Shell
     inputs:
       command: |
-        if [ "${inputs.validate_only}" = "true" ]; then
+        if [ "{{inputs.validate_only}}" = "true" ]; then
           echo ''
         else
-          echo "Output: ${inputs.output_path} (${blocks.verify_output.outputs.size_bytes} bytes)"
+          echo "Output: {{inputs.output_path}} ({{blocks.verify_output.outputs.size_bytes}} bytes)"
         fi
       timeout: 5
       
@@ -161,13 +161,13 @@ blocks:
       command: |
         printf "Configuration Processing Report:\n"
         printf "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
-        printf "Input: ${inputs.config_path} (${blocks.read_config.outputs.size_bytes} bytes)\n"
-        printf "${blocks.get_mode_display.outputs.stdout}\n"
-        printf "Environment: ${inputs.environment}\n"
+        printf "Input: {{inputs.config_path}} ({{blocks.read_config.outputs.size_bytes}} bytes)\n"
+        printf "{{blocks.get_mode_display.outputs.stdout}}\n"
+        printf "Environment: {{inputs.environment}}\n"
         printf "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
         printf "Validation: ✓ PASSED\n"
-        printf "${blocks.get_backup_display.outputs.stdout}\n"
-        printf "${blocks.get_output_display.outputs.stdout}\n"
+        printf "{{blocks.get_backup_display.outputs.stdout}}\n"
+        printf "{{blocks.get_output_display.outputs.stdout}}\n"
         printf "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
         printf "Status: ✓ Processing complete"
     depends_on:
@@ -176,20 +176,20 @@ blocks:
       - get_output_display
 
 outputs:
-  success: "${blocks.read_config.succeeded}"
-  input_exists: "${blocks.read_config.succeeded}"
-  config_path: "${inputs.config_path}"
-  input_size: "${blocks.read_config.outputs.size_bytes}"
+  success: "{{blocks.read_config.succeeded}}"
+  input_exists: "{{blocks.read_config.succeeded}}"
+  config_path: "{{inputs.config_path}}"
+  input_size: "{{blocks.read_config.outputs.size_bytes}}"
 
   validation_passed: "true"
-  validate_only_mode: "${inputs.validate_only}"
+  validate_only_mode: "{{inputs.validate_only}}"
 
-  backup_created: "${inputs.backup_original} and not ${inputs.validate_only} and ${blocks.backup_config.outputs.exit_code} == 0"
-  backup_path: "${inputs.config_path}.backup"
+  backup_created: "{{inputs.backup_original}} and not {{inputs.validate_only}} and {{blocks.backup_config.outputs.exit_code}} == 0"
+  backup_path: "{{inputs.config_path}}.backup"
 
-  output_written: "not ${inputs.validate_only}"
-  output_path: "${inputs.output_path}"
-  output_size: "${blocks.verify_output.outputs.size_bytes}"
+  output_written: "not {{inputs.validate_only}}"
+  output_path: "{{inputs.output_path}}"
+  output_size: "{{blocks.verify_output.outputs.size_bytes}}"
 
-  environment: "${inputs.environment}"
-  report: "${blocks.processing_report.outputs.stdout}"
+  environment: "{{inputs.environment}}"
+  report: "{{blocks.processing_report.outputs.stdout}}"

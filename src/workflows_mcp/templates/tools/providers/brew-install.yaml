@@ -44,14 +44,14 @@ blocks:
     inputs:
       command: |
         # Check installation status
-        if [ "${inputs.cask}" = "true" ]; then
-          brew list --cask "${inputs.package_name}" >/dev/null 2>&1
+        if [ "{{inputs.cask}}" = "true" ]; then
+          brew list --cask "{{inputs.package_name}}" >/dev/null 2>&1
         else
-          brew list "${inputs.package_name}" >/dev/null 2>&1
+          brew list "{{inputs.package_name}}" >/dev/null 2>&1
         fi
       timeout: 10
       
-    condition: "${blocks.check_brew_available.succeeded}"
+    condition: "{{blocks.check_brew_available.succeeded}}"
     depends_on:
       - check_brew_available
 
@@ -64,22 +64,22 @@ blocks:
         # If already installed and upgrade=false, this block won't execute (condition prevents it)
         # If already installed and upgrade=true: upgrade
         # If not installed: install
-        if [ "${inputs.cask}" = "true" ]; then
-          if [ "${inputs.upgrade}" = "true" ]; then
-            echo "brew upgrade --cask ${inputs.package_name}"
+        if [ "{{inputs.cask}}" = "true" ]; then
+          if [ "{{inputs.upgrade}}" = "true" ]; then
+            echo "brew upgrade --cask {{inputs.package_name}}"
           else
-            echo "brew install --cask ${inputs.package_name}"
+            echo "brew install --cask {{inputs.package_name}}"
           fi
         else
-          if [ "${inputs.upgrade}" = "true" ]; then
-            echo "brew upgrade ${inputs.package_name}"
+          if [ "{{inputs.upgrade}}" = "true" ]; then
+            echo "brew upgrade {{inputs.package_name}}"
           else
-            echo "brew install ${inputs.package_name}"
+            echo "brew install {{inputs.package_name}}"
           fi
         fi
       timeout: 5
       
-    condition: "${blocks.check_brew_available.succeeded} and (not ${blocks.check_installed.succeeded} or ${inputs.upgrade})"
+    condition: "{{blocks.check_brew_available.succeeded}} and (not {{blocks.check_installed.succeeded}} or {{inputs.upgrade}})"
     depends_on:
       - check_brew_available
       - check_installed
@@ -88,7 +88,7 @@ blocks:
   - id: install_package
     type: Shell
     inputs:
-      command: "${blocks.build_install_command.outputs.stdout}"
+      command: "{{blocks.build_install_command.outputs.stdout}}"
       timeout: 600
       
     depends_on:
@@ -100,16 +100,16 @@ blocks:
     inputs:
       command: |
         # Get version from brew info
-        if [ "${inputs.cask}" = "true" ]; then
-          VERSION=$(brew info --cask "${inputs.package_name}" 2>/dev/null | head -n1 | awk '{print $2}' || echo "unknown")
+        if [ "{{inputs.cask}}" = "true" ]; then
+          VERSION=$(brew info --cask "{{inputs.package_name}}" 2>/dev/null | head -n1 | awk '{print $2}' || echo "unknown")
         else
-          VERSION=$(brew info "${inputs.package_name}" 2>/dev/null | head -n1 | awk '{print $4}' || echo "unknown")
+          VERSION=$(brew info "{{inputs.package_name}}" 2>/dev/null | head -n1 | awk '{print $4}' || echo "unknown")
         fi
 
         echo "$VERSION"
       timeout: 10
       
-    condition: "${blocks.check_brew_available.succeeded}"
+    condition: "{{blocks.check_brew_available.succeeded}}"
     depends_on:
       - install_package
 
@@ -119,13 +119,13 @@ blocks:
     inputs:
       command: |
         printf "Homebrew Installation Summary:\n"
-        printf "- Package: ${inputs.package_name}\n"
-        printf "- Cask: ${inputs.cask}\n"
-        printf "- Brew Available: ${blocks.check_brew_available.succeeded}\n"
-        printf "- Already Installed: ${blocks.check_installed.succeeded}\n"
-        printf "- Exit Code: ${blocks.install_package.outputs.exit_code}\n"
-        printf "- Installed Version: ${blocks.get_installed_version.outputs.stdout}\n"
-        printf "- Command: ${blocks.build_install_command.outputs.stdout}"
+        printf "- Package: {{inputs.package_name}}\n"
+        printf "- Cask: {{inputs.cask}}\n"
+        printf "- Brew Available: {{blocks.check_brew_available.succeeded}}\n"
+        printf "- Already Installed: {{blocks.check_installed.succeeded}}\n"
+        printf "- Exit Code: {{blocks.install_package.outputs.exit_code}}\n"
+        printf "- Installed Version: {{blocks.get_installed_version.outputs.stdout}}\n"
+        printf "- Command: {{blocks.build_install_command.outputs.stdout}}"
     depends_on:
       - check_brew_available
       - check_installed
@@ -133,12 +133,12 @@ blocks:
       - get_installed_version
 
 outputs:
-  success: "${blocks.install_package.outputs.exit_code} == 0"
-  installed_version: "${blocks.get_installed_version.outputs.stdout}"
-  exit_code: "${blocks.install_package.outputs.exit_code}"
-  stdout: "${blocks.install_package.outputs.stdout}"
-  stderr: "${blocks.install_package.outputs.stderr}"
-  command_executed: "${blocks.build_install_command.outputs.stdout}"
-  brew_available: "${blocks.check_brew_available.succeeded}"
-  already_installed: "${blocks.check_installed.succeeded}"
-  summary: "${blocks.installation_summary.outputs.stdout}"
+  success: "{{blocks.install_package.outputs.exit_code}} == 0"
+  installed_version: "{{blocks.get_installed_version.outputs.stdout}}"
+  exit_code: "{{blocks.install_package.outputs.exit_code}}"
+  stdout: "{{blocks.install_package.outputs.stdout}}"
+  stderr: "{{blocks.install_package.outputs.stderr}}"
+  command_executed: "{{blocks.build_install_command.outputs.stdout}}"
+  brew_available: "{{blocks.check_brew_available.succeeded}}"
+  already_installed: "{{blocks.check_installed.succeeded}}"
+  summary: "{{blocks.installation_summary.outputs.stdout}}"

@@ -10,7 +10,7 @@ blocks:
   - id: write_state
     type: WriteJSONState
     inputs:
-      path: "${inputs.state_file}"
+      path: "{{inputs.state_file}}"
       data:
         string_field: "test"
         number_field: 42
@@ -22,8 +22,8 @@ blocks:
   - id: cleanup
     type: Shell
     inputs:
-      command: rm -f "${inputs.state_file}"
+      command: rm -f "{{inputs.state_file}}"
     depends_on: [write_state]
 outputs:
-  write_succeeded: "${blocks.write_state.succeeded}"
-  cleanup_done: "${blocks.cleanup.succeeded}"
+  write_succeeded: "{{blocks.write_state.succeeded}}"
+  cleanup_done: "{{blocks.cleanup.succeeded}}"

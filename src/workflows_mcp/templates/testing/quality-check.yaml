@@ -58,42 +58,42 @@ blocks:
   - id: run_quality_check
     type: Workflow
     inputs:
-      workflow: "${inputs.language}-quality-check"
+      workflow: "{{inputs.language}}-quality-check"
       inputs:
-        source_path: "${inputs.source_path}"
-        strict: ${inputs.strict}
-        check_linting: ${inputs.check_linting}
-        check_types: ${inputs.check_types}
-        check_formatting: ${inputs.check_formatting}
-        working_dir: "${inputs.working_dir}"
-        venv_path: "${inputs.venv_path}"
+        source_path: "{{inputs.source_path}}"
+        strict: {{inputs.strict}}
+        check_linting: {{inputs.check_linting}}
+        check_types: {{inputs.check_types}}
+        check_formatting: {{inputs.check_formatting}}
+        working_dir: "{{inputs.working_dir}}"
+        venv_path: "{{inputs.venv_path}}"
 
 # Pass through outputs from language-specific quality checker
 outputs:
   # Individual check results
-  linting_passed: "${blocks.run_quality_check.outputs.linting_passed}"
-  linting_exit_code: "${blocks.run_quality_check.outputs.linting_exit_code}"
+  linting_passed: "{{blocks.run_quality_check.outputs.linting_passed}}"
+  linting_exit_code: "{{blocks.run_quality_check.outputs.linting_exit_code}}"
 
-  typing_passed: "${blocks.run_quality_check.outputs.typing_passed}"
-  typing_exit_code: "${blocks.run_quality_check.outputs.typing_exit_code}"
+  typing_passed: "{{blocks.run_quality_check.outputs.typing_passed}}"
+  typing_exit_code: "{{blocks.run_quality_check.outputs.typing_exit_code}}"
 
-  formatting_passed: "${blocks.run_quality_check.outputs.formatting_passed}"
-  formatting_exit_code: "${blocks.run_quality_check.outputs.formatting_exit_code}"
+  formatting_passed: "{{blocks.run_quality_check.outputs.formatting_passed}}"
+  formatting_exit_code: "{{blocks.run_quality_check.outputs.formatting_exit_code}}"
 
   # Overall status
-  all_checks_passed: "${blocks.run_quality_check.outputs.all_checks_passed}"
+  all_checks_passed: "{{blocks.run_quality_check.outputs.all_checks_passed}}"
 
   # Summary and metadata
-  summary: "${blocks.run_quality_check.outputs.summary}"
+  summary: "{{blocks.run_quality_check.outputs.summary}}"
 
   # Full outputs for debugging
-  linting_output: "${blocks.run_quality_check.outputs.linting_output}"
-  typing_output: "${blocks.run_quality_check.outputs.typing_output}"
-  formatting_output: "${blocks.run_quality_check.outputs.formatting_output}"
+  linting_output: "{{blocks.run_quality_check.outputs.linting_output}}"
+  typing_output: "{{blocks.run_quality_check.outputs.typing_output}}"
+  formatting_output: "{{blocks.run_quality_check.outputs.formatting_output}}"
 
   # Execution time
-  execution_time_ms: "${blocks.run_quality_check.metadata.execution_time_ms}"
+  execution_time_ms: "{{blocks.run_quality_check.metadata.execution_time_ms}}"
 
   # Wrapper metadata
-  language_used: "${inputs.language}"
-  workflow_delegated_to: "${inputs.language}-quality-check"
+  language_used: "{{inputs.language}}"
+  workflow_delegated_to: "{{inputs.language}}-quality-check"

@@ -76,7 +76,7 @@ blocks:
   - id: display
     type: Shell
     inputs:
-      command: echo "${inputs.message}"
+      command: echo "{{inputs.message}}"
 ```
 
 ## How Workflows Are Loaded
@@ -127,8 +127,8 @@ blocks:
   - id: ruff_check
     type: Shell
     inputs:
-      command: ruff check ${inputs.path}
-      working_dir: ${inputs.path}
+      command: ruff check {{inputs.path}}
+      working_dir: {{inputs.path}}
 ```
 
 ### Step 3: Restart MCP Server
@@ -180,9 +180,9 @@ Claude will discover and execute: `execute_workflow_python_lint(path="./src")`
 - Consider idempotency (safe to re-run)
 
 ### 6. Variable Substitution
-- Use `${inputs.name}` for workflow inputs
-- Use `${block_id.field}` for cross-block references
-- Reference previous block outputs via `${block_id.output_field}`
+- Use `{{inputs.name}}` for workflow inputs
+- Use `{{block_id.field}}` for cross-block references
+- Reference previous block outputs via `{{block_id.output_field}}`
 
 ## Workflow Schema Reference
 
@@ -253,7 +253,7 @@ See the `examples/` directory for complete workflow examples:
 **Problem**: Variables not resolving correctly during execution.
 
 **Solutions**:
-1. Use correct syntax: `${inputs.name}` or `${block_id.field}`
+1. Use correct syntax: `{{inputs.name}}` or `{{block_id.field}}`
 2. Ensure referenced block has executed before current block
 3. Check field exists in referenced block's output
 4. Verify no circular dependencies in variable references

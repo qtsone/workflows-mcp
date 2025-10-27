@@ -37,7 +37,7 @@ inputs:
 
   venv_path:
     type: str
-    description: Virtual environment path (will use ${inputs.venv_path}/bin/pytest if available)
+    description: Virtual environment path (will use {{inputs.venv_path}}/bin/pytest if available)
     default: ""
     required: false
 
@@ -50,12 +50,12 @@ blocks:
         # Check if uv is available (modern Python tool management)
         if command -v uv &> /dev/null && [ -f "pyproject.toml" ]; then
           PYTEST="uv run pytest"
-        elif [ -n "${inputs.venv_path}" ] && [ -f "${inputs.venv_path}/bin/pytest" ]; then
-          PYTEST="${inputs.venv_path}/bin/pytest"
+        elif [ -n "{{inputs.venv_path}}" ] && [ -f "{{inputs.venv_path}}/bin/pytest" ]; then
+          PYTEST="{{inputs.venv_path}}/bin/pytest"
         else
           PYTEST="pytest"
         fi
-        echo "$PYTEST ${inputs.test_path} --cov=${inputs.source_path} --cov-report=json --cov-report=term-missing ${inputs.pytest_args}"
+        echo "$PYTEST {{inputs.test_path}} --cov={{inputs.source_path}} --cov-report=json --cov-report=term-missing {{inputs.pytest_args}}"
       timeout: 5
 
   # Execute pytest with coverage
@@ -63,8 +63,8 @@ blocks:
   - id: run_pytest
     type: Shell
     inputs:
-      command: "${blocks.build_pytest_command.outputs.stdout}"
-      working_dir: "${inputs.working_dir}"
+      command: "{{blocks.build_pytest_command.outputs.stdout}}"
+      working_dir: "{{inputs.working_dir}}"
       timeout: 600
       
     depends_on:
@@ -76,7 +76,7 @@ blocks:
     type: Shell
     inputs:
       command: |
-        cd "${inputs.working_dir}"
+        cd "{{inputs.working_dir}}"
         if [ -f coverage.json ]; then
           # Use uv run python if available, fallback to python3
           if command -v uv &> /dev/null && [ -f "pyproject.toml" ]; then
@@ -97,7 +97,7 @@ blocks:
         else
           echo "0.00"
         fi
-      working_dir: "${inputs.working_dir}"
+      working_dir: "{{inputs.working_dir}}"
       timeout: 10
       
     depends_on:
@@ -109,7 +109,7 @@ blocks:
     type: Shell
     inputs:
       command: |
-        OUTPUT="${blocks.run_pytest.outputs.stdout}"
+        OUTPUT="{{blocks.run_pytest.outputs.stdout}}"
 
         # Extract passed count
         PASSED=$(echo "$OUTPUT" | grep -oE '[0-9]+ passed' | grep -oE '[0-9]+' || echo "0")
@@ -132,7 +132,7 @@ blocks:
   - id: extract_passed_count
     type: Shell
     inputs:
-      command: "echo '${blocks.parse_test_results.outputs.stdout}' | grep '^PASSED=' | cut -d= -f2"
+      command: "echo '{{blocks.parse_test_results.outputs.stdout}}' | grep '^PASSED=' | cut -d= -f2"
       timeout: 5
       
     depends_on:
@@ -141,7 +141,7 @@ blocks:
   - id: extract_failed_count
     type: Shell
     inputs:
-      command: "echo '${blocks.parse_test_results.outputs.stdout}' | grep '^FAILED=' | cut -d= -f2"
+      command: "echo '{{blocks.parse_test_results.outputs.stdout}}' | grep '^FAILED=' | cut -d= -f2"
       timeout: 5
       
     depends_on:
@@ -150,7 +150,7 @@ blocks:
   - id: extract_skipped_count
     type: Shell
     inputs:
-      command: "echo '${blocks.parse_test_results.outputs.stdout}' | grep '^SKIPPED=' | cut -d= -f2"
+      command: "echo '{{blocks.parse_test_results.outputs.stdout}}' | grep '^SKIPPED=' | cut -d= -f2"
       timeout: 5
       
     depends_on:
@@ -161,8 +161,8 @@ blocks:
     type: Shell
     inputs:
       command: |
-        COVERAGE="${blocks.extract_coverage.outputs.stdout}"
-        THRESHOLD="${inputs.coverage_threshold}"
+        COVERAGE="{{blocks.extract_coverage.outputs.stdout}}"
+        THRESHOLD="{{inputs.coverage_threshold}}"
 
         # Use awk for floating point comparison
         RESULT=$(awk -v cov="$COVERAGE" -v thresh="$THRESHOLD" 'BEGIN { print (cov >= thresh) ? "true" : "false" }')
@@ -180,21 +180,21 @@ blocks:
         printf "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
         printf "Test Execution Results\n"
         printf "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
-        printf "Tests Path:    ${inputs.test_path}\n"
-        printf "Source Path:   ${inputs.source_path}\n"
+        printf "Tests Path:    {{inputs.test_path}}\n"
+        printf "Source Path:   {{inputs.source_path}}\n"
         printf "\n"
         printf "Test Results:\n"
-        printf "  ✓ Passed:    ${blocks.extract_passed_count.outputs.stdout}\n"
-        printf "  ✗ Failed:    ${blocks.extract_failed_count.outputs.stdout}\n"
-        printf "  ⊘ Skipped:   ${blocks.extract_skipped_count.outputs.stdout}\n"
+        printf "  ✓ Passed:    {{blocks.extract_passed_count.outputs.stdout}}\n"
+        printf "  ✗ Failed:    {{blocks.extract_failed_count.outputs.stdout}}\n"
+        printf "  ⊘ Skipped:   {{blocks.extract_skipped_count.outputs.stdout}}\n"
         printf "\n"
         printf "Coverage:\n"
-        printf "  Measured:    ${blocks.extract_coverage.outputs.stdout}%%\n"
-        printf "  Threshold:   ${inputs.coverage_threshold}%%\n"
-        printf "  Status:      ${blocks.check_coverage_threshold.outputs.stdout}\n"
+        printf "  Measured:    {{blocks.extract_coverage.outputs.stdout}}%%\n"
+        printf "  Threshold:   {{inputs.coverage_threshold}}%%\n"
+        printf "  Status:      {{blocks.check_coverage_threshold.outputs.stdout}}\n"
         printf "\n"
-        printf "Exit Code:     ${blocks.run_pytest.outputs.exit_code}\n"
-        printf "Execution:     ${blocks.run_pytest.metadata.execution_time_ms}ms\n"
+        printf "Exit Code:     {{blocks.run_pytest.outputs.exit_code}}\n"
+        printf "Execution:     {{blocks.run_pytest.metadata.execution_time_ms}}ms\n"
         printf "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
     depends_on:
       - extract_passed_count
@@ -204,23 +204,23 @@ blocks:
 
 outputs:
   # Test execution status
-  exit_code: "${blocks.run_pytest.outputs.exit_code}"
-  success: "${blocks.run_pytest.outputs.exit_code} == 0"
+  exit_code: "{{blocks.run_pytest.outputs.exit_code}}"
+  success: "{{blocks.run_pytest.outputs.exit_code}} == 0"
 
   # Test counts (as strings for now, can be converted to int in workflow logic)
-  tests_passed: "${blocks.extract_passed_count.outputs.stdout}"
-  tests_failed: "${blocks.extract_failed_count.outputs.stdout}"
-  tests_skipped: "${blocks.extract_skipped_count.outputs.stdout}"
+  tests_passed: "{{blocks.extract_passed_count.outputs.stdout}}"
+  tests_failed: "{{blocks.extract_failed_count.outputs.stdout}}"
+  tests_skipped: "{{blocks.extract_skipped_count.outputs.stdout}}"
 
   # Coverage information
-  coverage_percent: "${blocks.extract_coverage.outputs.stdout}"
-  coverage_threshold_met: "${blocks.check_coverage_threshold.outputs.stdout}"
+  coverage_percent: "{{blocks.extract_coverage.outputs.stdout}}"
+  coverage_threshold_met: "{{blocks.check_coverage_threshold.outputs.stdout}}"
 
   # Full output for debugging
-  stdout: "${blocks.run_pytest.outputs.stdout}"
-  stderr: "${blocks.run_pytest.outputs.stderr}"
+  stdout: "{{blocks.run_pytest.outputs.stdout}}"
+  stderr: "{{blocks.run_pytest.outputs.stderr}}"
 
   # Summary and metadata
-  summary: "${blocks.generate_summary.outputs.stdout}"
-  execution_time_ms: "${blocks.run_pytest.metadata.execution_time_ms}"
-  command_executed: "${blocks.build_pytest_command.outputs.stdout}"
+  summary: "{{blocks.generate_summary.outputs.stdout}}"
+  execution_time_ms: "{{blocks.run_pytest.metadata.execution_time_ms}}"
+  command_executed: "{{blocks.build_pytest_command.outputs.stdout}}"

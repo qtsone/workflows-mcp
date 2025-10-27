@@ -16,11 +16,11 @@
         "status": "skipped",
         "outcome": "n/a",
         "execution_time_ms": 0.0,
-        "started_at": "2025-10-25T15:57:55.051324+00:00",
-        "completed_at": "2025-10-25T15:57:55.051324+00:00",
+        "started_at": "2025-10-27T15:29:35.082495+00:00",
+        "completed_at": "2025-10-27T15:29:35.082495+00:00",
         "wave": 0,
         "execution_order": 0,
-        "message": "Condition 'not ${inputs.should_skip}' evaluated to False",
+        "message": "Condition 'not {{inputs.should_skip}}' evaluated to False",
         "succeeded": false,
         "failed": false,
         "skipped": true
@@ -40,9 +40,9 @@
       "metadata": {
         "status": "completed",
         "outcome": "success",
-        "execution_time_ms": 5.366943359375,
-        "started_at": "2025-10-25T15:57:55.051566+00:00",
-        "completed_at": "2025-10-25T15:57:55.056920+00:00",
+        "execution_time_ms": 5.076904296875,
+        "started_at": "2025-10-27T15:29:35.082671+00:00",
+        "completed_at": "2025-10-27T15:29:35.087739+00:00",
         "wave": 1,
         "execution_order": 0,
         "message": null,
@@ -56,10 +56,10 @@
   },
   "metadata": {
     "workflow_name": "block-status-skip-detection",
-    "start_time": "2025-10-25T15:57:55.051166+00:00",
+    "start_time": "2025-10-27T15:29:35.082380+00:00",
     "total_blocks": 1,
     "execution_waves": 2,
-    "completed_at": "2025-10-25T15:57:55.057432+00:00",
-    "execution_time_seconds": 0.006277799606323242
+    "completed_at": "2025-10-27T15:29:35.088190+00:00",
+    "execution_time_seconds": 0.00582122802734375
   }
 }

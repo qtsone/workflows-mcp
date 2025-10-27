@@ -35,38 +35,38 @@ blocks:
   - id: check_python
     type: Shell
     inputs:
-      command: "python${inputs.python_version} --version"
-      working_dir: "${inputs.project_path}"
+      command: "python{{inputs.python_version}} --version"
+      working_dir: "{{inputs.project_path}}"
       timeout: 10
 
   # Create virtual environment
   - id: create_venv
     type: Shell
     inputs:
-      command: "python${inputs.python_version} -m venv ${inputs.venv_name}"
-      working_dir: "${inputs.project_path}"
+      command: "python{{inputs.python_version}} -m venv {{inputs.venv_name}}"
+      working_dir: "{{inputs.project_path}}"
       timeout: 60
     depends_on:
       - check_python
-    condition: "${blocks.check_python.outputs.exit_code} == 0"
+    condition: "{{blocks.check_python.outputs.exit_code}} == 0"
 
   # Upgrade pip if requested
   - id: upgrade_pip
     type: Shell
     inputs:
-      command: "${inputs.venv_name}/bin/pip install --upgrade pip"
-      working_dir: "${inputs.project_path}"
+      command: "{{inputs.venv_name}}/bin/pip install --upgrade pip"
+      working_dir: "{{inputs.project_path}}"
       timeout: 120
     depends_on:
       - create_venv
-    condition: "${inputs.upgrade_pip} and ${blocks.create_venv.outputs.exit_code} == 0"
+    condition: "{{inputs.upgrade_pip}} and {{blocks.create_venv.outputs.exit_code}} == 0"
 
   # Check if requirements file exists
   - id: check_requirements
     type: Shell
     inputs:
-      command: "test -f ${inputs.requirements_file} && echo 'exists' || echo 'missing'"
-      working_dir: "${inputs.project_path}"
+      command: "test -f {{inputs.requirements_file}} && echo 'exists' || echo 'missing'"
+      working_dir: "{{inputs.project_path}}"
       timeout: 5
     depends_on:
       - create_venv
@@ -75,30 +75,30 @@ blocks:
   - id: install_deps
     type: Shell
     inputs:
-      command: "${inputs.venv_name}/bin/pip install -r ${inputs.requirements_file}"
-      working_dir: "${inputs.project_path}"
+      command: "{{inputs.venv_name}}/bin/pip install -r {{inputs.requirements_file}}"
+      working_dir: "{{inputs.project_path}}"
       timeout: 600
     depends_on:
       - upgrade_pip
       - check_requirements
-    condition: "'exists' in ${blocks.check_requirements.outputs.stdout}"
+    condition: "'exists' in {{blocks.check_requirements.outputs.stdout}}"
 
   # Verify installation
   - id: verify_install
     type: Shell
     inputs:
-      command: "${inputs.venv_name}/bin/pip list"
-      working_dir: "${inputs.project_path}"
+      command: "{{inputs.venv_name}}/bin/pip list"
+      working_dir: "{{inputs.project_path}}"
       timeout: 30
     depends_on:
       - install_deps
 
 outputs:
-  success: "${blocks.verify_install.outputs.exit_code} == 0"
-  python_version: "${blocks.check_python.outputs.stdout}"
-  venv_path: "${inputs.project_path}/${inputs.venv_name}"
-  python_executable: "${inputs.project_path}/${inputs.venv_name}/bin/python"
-  pip_executable: "${inputs.project_path}/${inputs.venv_name}/bin/pip"
-  installed_packages: "${blocks.verify_install.outputs.stdout}"
-  requirements_found: "'exists' in ${blocks.check_requirements.outputs.stdout}"
-  execution_summary: "Python ${inputs.python_version} environment created at ${inputs.project_path}/${inputs.venv_name}"
+  success: "{{blocks.verify_install.outputs.exit_code}} == 0"
+  python_version: "{{blocks.check_python.outputs.stdout}}"
+  venv_path: "{{inputs.project_path}}/{{inputs.venv_name}}"
+  python_executable: "{{inputs.project_path}}/{{inputs.venv_name}}/bin/python"
+  pip_executable: "{{inputs.project_path}}/{{inputs.venv_name}}/bin/pip"
+  installed_packages: "{{blocks.verify_install.outputs.stdout}}"
+  requirements_found: "'exists' in {{blocks.check_requirements.outputs.stdout}}"
+  execution_summary: "Python {{inputs.python_version}} environment created at {{inputs.project_path}}/{{inputs.venv_name}}"

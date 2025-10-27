@@ -18,9 +18,9 @@
       "metadata": {
         "status": "completed",
         "outcome": "success",
-        "execution_time_ms": 6.646240234375,
-        "started_at": "2025-10-25T15:57:55.075983+00:00",
-        "completed_at": "2025-10-25T15:57:55.082619+00:00",
+        "execution_time_ms": 6.031982421875,
+        "started_at": "2025-10-27T15:29:35.107153+00:00",
+        "completed_at": "2025-10-27T15:29:35.113176+00:00",
         "wave": 0,
         "execution_order": 0,
         "message": null,
@@ -34,10 +34,10 @@
   },
   "metadata": {
     "workflow_name": "composition-child-calculator",
-    "start_time": "2025-10-25T15:57:55.075855+00:00",
+    "start_time": "2025-10-27T15:29:35.107038+00:00",
     "total_blocks": 1,
     "execution_waves": 1,
-    "completed_at": "2025-10-25T15:57:55.083066+00:00",
-    "execution_time_seconds": 0.007219791412353516
+    "completed_at": "2025-10-27T15:29:35.113536+00:00",
+    "execution_time_seconds": 0.0065059661865234375
   }
 }

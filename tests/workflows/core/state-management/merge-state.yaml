@@ -10,14 +10,14 @@ blocks:
   - id: setup
     type: WriteJSONState
     inputs:
-      path: "${inputs.state_file}"
+      path: "{{inputs.state_file}}"
       data:
         phase: "init"
         count: 0
   - id: merge_update
     type: MergeJSONState
     inputs:
-      path: "${inputs.state_file}"
+      path: "{{inputs.state_file}}"
       updates:
         phase: "updated"
         count: 1
@@ -26,16 +26,16 @@ blocks:
   - id: read_result
     type: ReadJSONState
     inputs:
-      path: "${inputs.state_file}"
+      path: "{{inputs.state_file}}"
     depends_on: [merge_update]
   - id: cleanup
     type: Shell
     inputs:
-      command: rm -f "${inputs.state_file}"
+      command: rm -f "{{inputs.state_file}}"
     depends_on: [read_result]
 outputs:
-  phase: "${blocks.read_result.outputs.data.phase}"
-  count: "${blocks.read_result.outputs.data.count}"
-  new_field: "${blocks.read_result.outputs.data.new_field}"
-  merge_succeeded: "${blocks.merge_update.succeeded}"
-  cleanup_done: "${blocks.cleanup.succeeded}"
+  phase: "{{blocks.read_result.outputs.data.phase}}"
+  count: "{{blocks.read_result.outputs.data.count}}"
+  new_field: "{{blocks.read_result.outputs.data.new_field}}"
+  merge_succeeded: "{{blocks.merge_update.succeeded}}"
+  cleanup_done: "{{blocks.cleanup.succeeded}}"

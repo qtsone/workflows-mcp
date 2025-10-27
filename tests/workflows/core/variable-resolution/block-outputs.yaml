@@ -9,8 +9,8 @@ blocks:
   - id: consumer
     type: Shell
     inputs:
-      command: 'echo "Consumed: ${blocks.producer.outputs.stdout}"'
+      command: 'echo "Consumed: {{blocks.producer.outputs.stdout}}"'
     depends_on: [producer]
 outputs:
-  producer_output: "${blocks.producer.outputs.stdout}"
-  consumer_output: "${blocks.consumer.outputs.stdout}"
+  producer_output: "{{blocks.producer.outputs.stdout}}"
+  consumer_output: "{{blocks.consumer.outputs.stdout}}"

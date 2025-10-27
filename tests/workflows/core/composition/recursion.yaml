@@ -17,23 +17,23 @@ blocks:
   - id: check_state_exists
     type: ReadJSONState
     inputs:
-      path: "${inputs.state_file}"
+      path: "{{inputs.state_file}}"
       required: false
 
   - id: initialize_state
     type: WriteJSONState
     inputs:
-      path: "${inputs.state_file}"
+      path: "{{inputs.state_file}}"
       data:
         current: 0
-        max: ${inputs.count}
-    condition: "not ${blocks.check_state_exists.outputs.found}"
+        max: "{{inputs.count}}"
+    condition: "not {{blocks.check_state_exists.outputs.found}}"
     depends_on: [check_state_exists]
 
   - id: read_current_state
     type: ReadJSONState
     inputs:
-      path: "${inputs.state_file}"
+      path: "{{inputs.state_file}}"
     depends_on:
       - block: initialize_state
         required: false
@@ -42,7 +42,7 @@ blocks:
     type: Shell
     inputs:
       command: |
-        CURRENT=${blocks.read_current_state.outputs.data.current}
+        CURRENT={{blocks.read_current_state.outputs.data.current}}
         NEXT=$((CURRENT + 1))
         echo $NEXT > "$SCRATCH/next.txt"
     outputs:
@@ -54,17 +54,17 @@ blocks:
   - id: update_state
     type: MergeJSONState
     inputs:
-      path: "${inputs.state_file}"
+      path: "{{inputs.state_file}}"
       updates:
-        current: ${blocks.increment.outputs.number}
+        current: "{{blocks.increment.outputs.number}}"
     depends_on: [increment]
 
   - id: check_continue
     type: Shell
     inputs:
       command: |
-        CURRENT=${blocks.update_state.outputs.merged_data.current}
-        MAX=${inputs.count}
+        CURRENT={{blocks.update_state.outputs.merged_data.current}}
+        MAX={{inputs.count}}
         if [ $CURRENT -lt $MAX ]; then
           exit 0  # Continue
         else
@@ -77,14 +77,14 @@ blocks:
     inputs:
       workflow: "composition-recursion"
       inputs:
-        count: ${inputs.count}
-        state_file: "${inputs.state_file}"
+        count: "{{inputs.count}}"
+        state_file: "{{inputs.state_file}}"
     depends_on: [check_continue]
 
   - id: read_final_state
     type: ReadJSONState
     inputs:
-      path: "${inputs.state_file}"
+      path: "{{inputs.state_file}}"
     depends_on:
       - block: recurse
         required: false
@@ -92,7 +92,7 @@ blocks:
   - id: cleanup
     type: Shell
     inputs:
-      command: rm -f "${inputs.state_file}"
+      command: rm -f "{{inputs.state_file}}"
     depends_on:
       - block: initialize_state
         required: true
@@ -100,5 +100,5 @@ blocks:
         required: true
 
 outputs:
-  completed: "${blocks.cleanup.succeeded}"
-  iterations: "${blocks.read_final_state.outputs.data.current}"
+  completed: "{{blocks.cleanup.succeeded}}"
+  iterations: "{{blocks.read_final_state.outputs.data.current}}"

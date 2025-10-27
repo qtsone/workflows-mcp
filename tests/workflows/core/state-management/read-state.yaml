@@ -11,11 +11,11 @@ blocks:
     type: Shell
     inputs:
       command: |
-        echo '{"phase": "test", "count": 42, "nested": {"key": "value"}}' > "${inputs.state_file}"
+        echo '{"phase": "test", "count": 42, "nested": {"key": "value"}}' > "{{inputs.state_file}}"
   - id: read_state
     type: ReadJSONState
     inputs:
-      path: "${inputs.state_file}"
+      path: "{{inputs.state_file}}"
       required: true
     depends_on: [setup]
   - id: read_nonexistent
@@ -26,11 +26,11 @@ blocks:
   - id: cleanup
     type: Shell
     inputs:
-      command: rm -f "${inputs.state_file}"
+      command: rm -f "{{inputs.state_file}}"
     depends_on: [read_state, read_nonexistent]
 outputs:
-  phase: "${blocks.read_state.outputs.data.phase}"
-  count: "${blocks.read_state.outputs.data.count}"
-  nested_key: "${blocks.read_state.outputs.data.nested.key}"
-  nonexistent_found: "${blocks.read_nonexistent.outputs.found}"
-  cleanup_done: "${blocks.cleanup.succeeded}"
+  phase: "{{blocks.read_state.outputs.data.phase}}"
+  count: "{{blocks.read_state.outputs.data.count}}"
+  nested_key: "{{blocks.read_state.outputs.data.nested.key}}"
+  nonexistent_found: "{{blocks.read_nonexistent.outputs.found}}"
+  cleanup_done: "{{blocks.cleanup.succeeded}}"

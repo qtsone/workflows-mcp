@@ -15,8 +15,8 @@ blocks:
     type: Shell
     inputs:
       command: echo "conditional_ran"
-    condition: "${inputs.should_run}"
+    condition: "{{inputs.should_run}}"
 outputs:
-  always_ran: "${blocks.always_run.succeeded}"
-  conditional_ran: "${blocks.conditional_block.succeeded}"
-  conditional_skipped: "${blocks.conditional_block.skipped}"
+  always_ran: "{{blocks.always_run.succeeded}}"
+  conditional_ran: "{{blocks.conditional_block.succeeded}}"
+  conditional_skipped: "{{blocks.conditional_block.skipped}}"

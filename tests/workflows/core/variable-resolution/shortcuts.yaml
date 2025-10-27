@@ -12,54 +12,54 @@ blocks:
     description: "Use shortcut syntax to access block output"
     type: Shell
     inputs:
-      command: echo "${blocks.producer.status}"
+      command: echo "{{blocks.producer.status}}"
     depends_on: [producer]
 
   - id: use_status_full_path
     description: "Use full path to access block output"
     type: Shell
     inputs:
-      command: echo "${blocks.producer.metadata.status}"
+      command: echo "{{blocks.producer.metadata.status}}"
     depends_on: [producer]
 
   - id: use_outcome_shortcut
     description: "Use shortcut syntax to access block output"
     type: Shell
     inputs:
-      command: echo "${blocks.producer.outcome}"
+      command: echo "{{blocks.producer.outcome}}"
     depends_on: [producer]
 
   - id: use_outcome_full_path
     description: "Use full path to access block output"
     type: Shell
     inputs:
-      command: echo "${blocks.producer.metadata.outcome}"
+      command: echo "{{blocks.producer.metadata.outcome}}"
     depends_on: [producer]
 
   - id: use_success_shortcut
     description: "Use shortcut syntax to access block output"
     type: Shell
     inputs:
-      command: echo "${blocks.producer.succeeded}"
+      command: echo "{{blocks.producer.succeeded}}"
     depends_on: [producer]
 
   - id: use_success_full_path
     description: "Use full path to access block output"
     type: Shell
     inputs:
-      command: echo "${blocks.producer.metadata.succeeded}"
+      command: echo "{{blocks.producer.metadata.succeeded}}"
     depends_on: [producer]
 
 outputs:
-  status_shortcut_works: "${blocks.use_status_shortcut.succeeded}"
-  status_full_path_works: "${blocks.use_status_full_path.succeeded}"
-  outcome_shortcut_works: "${blocks.use_outcome_shortcut.succeeded}"
-  outcome_full_path_works: "${blocks.use_outcome_full_path.succeeded}"
-  success_shortcut_works: "${blocks.use_success_shortcut.succeeded}"
-  success_full_path_works: "${blocks.use_success_full_path.succeeded}"
-  status_shortcut_value: "${blocks.producer.status}"
-  status_full_path_value: "${blocks.producer.metadata.status}"
-  outcome_shortcut_value: "${blocks.producer.outcome}"
-  outcome_full_path_value: "${blocks.producer.metadata.outcome}"
-  success_shortcut_value: "${blocks.producer.succeeded}"
-  success_full_path_value: "${blocks.producer.metadata.succeeded}"
+  status_shortcut_works: "{{blocks.use_status_shortcut.succeeded}}"
+  status_full_path_works: "{{blocks.use_status_full_path.succeeded}}"
+  outcome_shortcut_works: "{{blocks.use_outcome_shortcut.succeeded}}"
+  outcome_full_path_works: "{{blocks.use_outcome_full_path.succeeded}}"
+  success_shortcut_works: "{{blocks.use_success_shortcut.succeeded}}"
+  success_full_path_works: "{{blocks.use_success_full_path.succeeded}}"
+  status_shortcut_value: "{{blocks.producer.status}}"
+  status_full_path_value: "{{blocks.producer.metadata.status}}"
+  outcome_shortcut_value: "{{blocks.producer.outcome}}"
+  outcome_full_path_value: "{{blocks.producer.metadata.outcome}}"
+  success_shortcut_value: "{{blocks.producer.succeeded}}"
+  success_full_path_value: "{{blocks.producer.metadata.succeeded}}"

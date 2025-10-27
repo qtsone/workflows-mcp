@@ -92,13 +92,13 @@ blocks:
   - id: read_state
     type: ReadJSONState
     inputs:
-      path: "${inputs.project_path}/${inputs.state_file}"
+      path: "{{inputs.project_path}}/{{inputs.state_file}}"
 
   - id: validate_phase4_complete
     type: Shell
     inputs:
       command: |
-        STATE='${blocks.read_state.state}'
+        STATE='{{blocks.read_state.state}}'
 
         # Check if Phase 4 is in completed phases
         if echo "$STATE" | grep -q '"phase4_complete"'; then
@@ -106,7 +106,7 @@ blocks:
           exit 0
         else
           echo "❌ ERROR: Phase 4 not complete. Complete module implementation first."
-          echo "Current phase: ${blocks.read_state.state.current_phase}"
+          echo "Current phase: {{blocks.read_state.state.current_phase}}"
           exit 1
         fi
       timeout: 10
@@ -117,8 +117,8 @@ blocks:
     type: Shell
     inputs:
       command: |
-        mkdir -p "${inputs.project_path}/${inputs.test_path}/integration"
-        echo "✅ Integration test directory ready: ${inputs.project_path}/${inputs.test_path}/integration"
+        mkdir -p "{{inputs.project_path}}/{{inputs.test_path}}/integration"
+        echo "✅ Integration test directory ready: {{inputs.project_path}}/{{inputs.test_path}}/integration"
       timeout: 10
     depends_on:
       - validate_phase4_complete
@@ -129,8 +129,8 @@ blocks:
       prompt: |
         === INTEGRATION TESTING: Design Module Interaction Tests ===
 
-        Project: ${inputs.project_path}
-        Modules implemented: ${blocks.read_state.state.completed_modules}
+        Project: {{inputs.project_path}}
+        Modules implemented: {{blocks.read_state.state.completed_modules}}
 
         Design comprehensive integration tests that verify modules work together correctly:
 
@@ -141,9 +141,9 @@ blocks:
         4. Test transaction handling (if applicable)
         5. Test API contract compliance between modules
         6. Use pytest fixtures for test setup and teardown
-        7. Aim for ${inputs.coverage_threshold}%+ coverage of integration points
+        7. Aim for {{inputs.coverage_threshold}}%+ coverage of integration points
 
-        Target location: ${inputs.project_path}/${inputs.test_path}/integration/
+        Target location: {{inputs.project_path}}/{{inputs.test_path}}/integration/
 
         Provide integration test file(s) content below.
         Format: filename.py followed by complete file content.
@@ -162,9 +162,9 @@ blocks:
     inputs:
       command: |
         # Parse LLM response and create integration test files
-        cd "${inputs.project_path}/${inputs.test_path}/integration"
+        cd "{{inputs.project_path}}/{{inputs.test_path}}/integration"
 
-        INPUT="${blocks.request_integration_tests.response}"
+        INPUT="{{blocks.request_integration_tests.response}}"
 
         # Simple parsing: Look for "--- FILE: " markers
         # For now, assume single file named test_integration.py if no markers
@@ -190,11 +190,11 @@ blocks:
     inputs:
       workflow: run-tests
       inputs:
-        language: "${inputs.language}"
-        test_path: "${inputs.test_path}/integration"
-        source_path: "${inputs.source_path}"
-        coverage_threshold: ${inputs.coverage_threshold}
-        working_dir: "${inputs.project_path}"
+        language: "{{inputs.language}}"
+        test_path: "{{inputs.test_path}}/integration"
+        source_path: "{{inputs.source_path}}"
+        coverage_threshold: {{inputs.coverage_threshold}}
+        working_dir: "{{inputs.project_path}}"
     depends_on:
       - parse_integration_files
 
@@ -202,9 +202,9 @@ blocks:
     type: Shell
     inputs:
       command: |
-        EXIT_CODE="${blocks.run_integration_tests.outputs.exit_code}"
-        TESTS_PASSED="${blocks.run_integration_tests.outputs.tests_passed}"
-        TESTS_FAILED="${blocks.run_integration_tests.outputs.tests_failed}"
+        EXIT_CODE="{{blocks.run_integration_tests.outputs.exit_code}}"
+        TESTS_PASSED="{{blocks.run_integration_tests.outputs.tests_passed}}"
+        TESTS_FAILED="{{blocks.run_integration_tests.outputs.tests_failed}}"
 
         if [ "$EXIT_CODE" = "0" ] && [ "$TESTS_FAILED" = "0" ]; then
           echo "✅ Integration tests PASSED"
@@ -231,15 +231,15 @@ blocks:
         Integration tests failed. Please analyze and fix the issues:
 
         Test Results:
-        - Tests passed: ${blocks.run_integration_tests.outputs.tests_passed}
-        - Tests failed: ${blocks.run_integration_tests.outputs.tests_failed}
-        - Exit code: ${blocks.run_integration_tests.outputs.exit_code}
+        - Tests passed: {{blocks.run_integration_tests.outputs.tests_passed}}
+        - Tests failed: {{blocks.run_integration_tests.outputs.tests_failed}}
+        - Exit code: {{blocks.run_integration_tests.outputs.exit_code}}
 
         Test Output:
-        ${blocks.run_integration_tests.outputs.stdout}
+        {{blocks.run_integration_tests.outputs.stdout}}
 
         Error Output:
-        ${blocks.run_integration_tests.outputs.stderr}
+        {{blocks.run_integration_tests.outputs.stderr}}
 
         Analyze the failures and provide:
         1. Root cause analysis
@@ -251,7 +251,7 @@ blocks:
         Respond with 'yes' or 'no'
     depends_on:
       - check_integration_results
-    condition: "${blocks.check_integration_results.failed}"
+    condition: "{{blocks.check_integration_results.failed}}"
 
   - id: apply_integration_fixes
     type: Shell
@@ -262,24 +262,24 @@ blocks:
         echo "LLM response saved for review"
 
         # Save LLM fix response for manual application
-        echo "${blocks.request_integration_fixes.response}" > "${inputs.project_path}/integration_fixes.txt"
+        echo "{{blocks.request_integration_fixes.response}}" > "{{inputs.project_path}}/integration_fixes.txt"
 
-        echo "✅ Fix suggestions saved to: ${inputs.project_path}/integration_fixes.txt"
+        echo "✅ Fix suggestions saved to: {{inputs.project_path}}/integration_fixes.txt"
       timeout: 10
     depends_on:
       - request_integration_fixes
-    condition: "${blocks.check_integration_results.failed}"
+    condition: "{{blocks.check_integration_results.failed}}"
 
   - id: create_e2e_dir
     type: Shell
     inputs:
       command: |
-        mkdir -p "${inputs.project_path}/${inputs.test_path}/e2e"
-        echo "✅ E2E test directory ready: ${inputs.project_path}/${inputs.test_path}/e2e"
+        mkdir -p "{{inputs.project_path}}/{{inputs.test_path}}/e2e"
+        echo "✅ E2E test directory ready: {{inputs.project_path}}/{{inputs.test_path}}/e2e"
       timeout: 10
     depends_on:
       - check_integration_results
-    condition: "${blocks.check_integration_results.succeeded}"
+    condition: "{{blocks.check_integration_results.succeeded}}"
 
   - id: request_e2e_tests
     type: Prompt
@@ -287,7 +287,7 @@ blocks:
       prompt: |
         === END-TO-END TESTING: Design Complete User Workflows ===
 
-        Project: ${inputs.project_path}
+        Project: {{inputs.project_path}}
         Integration tests: ✅ PASSING
 
         Design comprehensive E2E tests that verify complete user workflows:
@@ -301,7 +301,7 @@ blocks:
         6. Test data persistence and state management
         7. Use pytest fixtures for environment setup
 
-        Target location: ${inputs.project_path}/${inputs.test_path}/e2e/
+        Target location: {{inputs.project_path}}/{{inputs.test_path}}/e2e/
 
         Provide E2E test file(s) content below.
         Format: filename.py followed by complete file content.
@@ -314,16 +314,16 @@ blocks:
         Respond with 'yes' or 'no'
     depends_on:
       - create_e2e_dir
-    condition: "${blocks.check_integration_results.succeeded}"
+    condition: "{{blocks.check_integration_results.succeeded}}"
 
   - id: parse_e2e_files
     type: Shell
     inputs:
       command: |
         # Parse LLM response and create E2E test files
-        cd "${inputs.project_path}/${inputs.test_path}/e2e"
+        cd "{{inputs.project_path}}/{{inputs.test_path}}/e2e"
 
-        INPUT="${blocks.request_e2e_tests.response}"
+        INPUT="{{blocks.request_e2e_tests.response}}"
 
         # Simple parsing: single file for now
         if echo "$INPUT" | grep -q "^--- FILE:"; then
@@ -339,29 +339,29 @@ blocks:
       timeout: 30
     depends_on:
       - request_e2e_tests
-    condition: "${blocks.check_integration_results.succeeded}"
+    condition: "{{blocks.check_integration_results.succeeded}}"
 
   - id: run_e2e_tests
     type: Workflow
     inputs:
       workflow: run-tests
       inputs:
-        language: "${inputs.language}"
-        test_path: "${inputs.test_path}/e2e"
-        source_path: "${inputs.source_path}"
+        language: "{{inputs.language}}"
+        test_path: "{{inputs.test_path}}/e2e"
+        source_path: "{{inputs.source_path}}"
         coverage_threshold: 0  # E2E focuses on workflows, not coverage
-        working_dir: "${inputs.project_path}"
+        working_dir: "{{inputs.project_path}}"
     depends_on:
       - parse_e2e_files
-    condition: "${blocks.check_integration_results.succeeded}"
+    condition: "{{blocks.check_integration_results.succeeded}}"
 
   - id: check_e2e_results
     type: Shell
     inputs:
       command: |
-        EXIT_CODE="${blocks.run_e2e_tests.outputs.exit_code}"
-        TESTS_PASSED="${blocks.run_e2e_tests.outputs.tests_passed}"
-        TESTS_FAILED="${blocks.run_e2e_tests.outputs.tests_failed}"
+        EXIT_CODE="{{blocks.run_e2e_tests.outputs.exit_code}}"
+        TESTS_PASSED="{{blocks.run_e2e_tests.outputs.tests_passed}}"
+        TESTS_FAILED="{{blocks.run_e2e_tests.outputs.tests_failed}}"
 
         if [ "$EXIT_CODE" = "0" ] && [ "$TESTS_FAILED" = "0" ]; then
           echo "✅ E2E tests PASSED"
@@ -378,7 +378,7 @@ blocks:
 
     depends_on:
       - run_e2e_tests
-    condition: "${blocks.check_integration_results.succeeded}"
+    condition: "{{blocks.check_integration_results.succeeded}}"
 
   - id: request_e2e_fixes
     type: Prompt
@@ -389,15 +389,15 @@ blocks:
         E2E tests failed. Please analyze and fix the issues:
 
         Test Results:
-        - Tests passed: ${blocks.run_e2e_tests.outputs.tests_passed}
-        - Tests failed: ${blocks.run_e2e_tests.outputs.tests_failed}
-        - Exit code: ${blocks.run_e2e_tests.outputs.exit_code}
+        - Tests passed: {{blocks.run_e2e_tests.outputs.tests_passed}}
+        - Tests failed: {{blocks.run_e2e_tests.outputs.tests_failed}}
+        - Exit code: {{blocks.run_e2e_tests.outputs.exit_code}}
 
         Test Output:
-        ${blocks.run_e2e_tests.outputs.stdout}
+        {{blocks.run_e2e_tests.outputs.stdout}}
 
         Error Output:
-        ${blocks.run_e2e_tests.outputs.stderr}
+        {{blocks.run_e2e_tests.outputs.stderr}}
 
         Analyze the failures and provide:
         1. Root cause analysis
@@ -409,7 +409,7 @@ blocks:
         Respond with 'yes' or 'no'
     depends_on:
       - check_e2e_results
-    condition: "${blocks.check_e2e_results.failed}"
+    condition: "{{blocks.check_e2e_results.failed}}"
 
   - id: apply_e2e_fixes
     type: Shell
@@ -419,13 +419,13 @@ blocks:
         echo "Manual intervention required to apply fixes"
 
         # Save LLM fix response for manual application
-        echo "${blocks.request_e2e_fixes.response}" > "${inputs.project_path}/e2e_fixes.txt"
+        echo "{{blocks.request_e2e_fixes.response}}" > "{{inputs.project_path}}/e2e_fixes.txt"
 
-        echo "✅ Fix suggestions saved to: ${inputs.project_path}/e2e_fixes.txt"
+        echo "✅ Fix suggestions saved to: {{inputs.project_path}}/e2e_fixes.txt"
       timeout: 10
     depends_on:
       - request_e2e_fixes
-    condition: "${blocks.check_e2e_results.failed}"
+    condition: "{{blocks.check_e2e_results.failed}}"
 
   - id: update_state_phase5
     type: Shell
@@ -485,16 +485,16 @@ blocks:
 
         # Run the Python script (using python3 for utility script execution)
         python3 /tmp/update_phase5_state.py \
-          "${inputs.project_path}/${inputs.state_file}" \
-          "${blocks.run_integration_tests.outputs.tests_passed}" \
-          "${blocks.run_integration_tests.outputs.tests_failed}" \
-          "${blocks.run_e2e_tests.outputs.tests_passed}" \
-          "${blocks.run_e2e_tests.outputs.tests_failed}"
+          "{{inputs.project_path}}/{{inputs.state_file}}" \
+          "{{blocks.run_integration_tests.outputs.tests_passed}}" \
+          "{{blocks.run_integration_tests.outputs.tests_failed}}" \
+          "{{blocks.run_e2e_tests.outputs.tests_passed}}" \
+          "{{blocks.run_e2e_tests.outputs.tests_failed}}"
       timeout: 30
     depends_on:
       - check_integration_results
       - check_e2e_results
-    condition: "${blocks.check_integration_results.succeeded} and ${blocks.check_e2e_results.succeeded}"
+    condition: "{{blocks.check_integration_results.succeeded}} and {{blocks.check_e2e_results.succeeded}}"
 
   - id: integration_checkpoint
     type: Prompt
@@ -505,14 +505,14 @@ blocks:
         ╚════════════════════════════════════════════════════════════════╝
 
         Integration Testing Results:
-        - Tests passed: ${blocks.run_integration_tests.outputs.tests_passed}
-        - Tests failed: ${blocks.run_integration_tests.outputs.tests_failed}
-        - Status: ${blocks.check_integration_results.outputs.stdout}
+        - Tests passed: {{blocks.run_integration_tests.outputs.tests_passed}}
+        - Tests failed: {{blocks.run_integration_tests.outputs.tests_failed}}
+        - Status: {{blocks.check_integration_results.outputs.stdout}}
 
         E2E Testing Results:
-        - Tests passed: ${blocks.run_e2e_tests.outputs.tests_passed}
-        - Tests failed: ${blocks.run_e2e_tests.outputs.tests_failed}
-        - Status: ${blocks.check_e2e_results.outputs.stdout}
+        - Tests passed: {{blocks.run_e2e_tests.outputs.tests_passed}}
+        - Tests failed: {{blocks.run_e2e_tests.outputs.tests_failed}}
+        - Status: {{blocks.check_e2e_results.outputs.stdout}}
 
         All integration and E2E tests are passing.
         Modules are properly integrated and complete workflows validated.
@@ -524,13 +524,13 @@ blocks:
         Respond with 'yes' or 'no'
       operation: "phase5_integration_checkpoint"
       details:
-        integration_tests: "${blocks.run_integration_tests.outputs.tests_passed}/${blocks.run_integration_tests.outputs.tests_failed}"
-        e2e_tests: "${blocks.run_e2e_tests.outputs.tests_passed}/${blocks.run_e2e_tests.outputs.tests_failed}"
-        integration_status: "${blocks.check_integration_results.outputs.stdout}"
-        e2e_status: "${blocks.check_e2e_results.outputs.stdout}"
+        integration_tests: "{{blocks.run_integration_tests.outputs.tests_passed}}/{{blocks.run_integration_tests.outputs.tests_failed}}"
+        e2e_tests: "{{blocks.run_e2e_tests.outputs.tests_passed}}/{{blocks.run_e2e_tests.outputs.tests_failed}}"
+        integration_status: "{{blocks.check_integration_results.outputs.stdout}}"
+        e2e_status: "{{blocks.check_e2e_results.outputs.stdout}}"
     depends_on:
       - update_state_phase5
-    condition: "${blocks.check_integration_results.succeeded} and ${blocks.check_e2e_results.succeeded}"
+    condition: "{{blocks.check_integration_results.succeeded}} and {{blocks.check_e2e_results.succeeded}}"
 
   - id: phase5_summary
     type: Shell
@@ -541,18 +541,18 @@ blocks:
         echo "╚════════════════════════════════════════════════════════════════╝"
         echo ""
         echo "Integration Testing:"
-        echo "  ✅ Tests passed: ${blocks.run_integration_tests.outputs.tests_passed}"
-        echo "  ❌ Tests failed: ${blocks.run_integration_tests.outputs.tests_failed}"
-        echo "  📊 Coverage: ${blocks.run_integration_tests.outputs.coverage_percent}%"
+        echo "  ✅ Tests passed: {{blocks.run_integration_tests.outputs.tests_passed}}"
+        echo "  ❌ Tests failed: {{blocks.run_integration_tests.outputs.tests_failed}}"
+        echo "  📊 Coverage: {{blocks.run_integration_tests.outputs.coverage_percent}}%"
         echo ""
         echo "E2E Testing:"
-        echo "  ✅ Tests passed: ${blocks.run_e2e_tests.outputs.tests_passed}"
-        echo "  ❌ Tests failed: ${blocks.run_e2e_tests.outputs.tests_failed}"
+        echo "  ✅ Tests passed: {{blocks.run_e2e_tests.outputs.tests_passed}}"
+        echo "  ❌ Tests failed: {{blocks.run_e2e_tests.outputs.tests_failed}}"
         echo ""
         echo "Files Created:"
-        echo "  - ${inputs.project_path}/${inputs.test_path}/integration/test_integration.py"
-        echo "  - ${inputs.project_path}/${inputs.test_path}/e2e/test_e2e.py"
-        echo "  - ${inputs.project_path}/${inputs.state_file} (updated)"
+        echo "  - {{inputs.project_path}}/{{inputs.test_path}}/integration/test_integration.py"
+        echo "  - {{inputs.project_path}}/{{inputs.test_path}}/e2e/test_e2e.py"
+        echo "  - {{inputs.project_path}}/{{inputs.state_file}} (updated)"
         echo ""
         echo "Next Phase: Phase 6 - Validation & Quality"
       timeout: 10
@@ -561,26 +561,26 @@ blocks:
 
 outputs:
   # Integration test metrics
-  integration_tests_count: "${blocks.run_integration_tests.outputs.tests_passed}"
-  integration_tests_passing: "${blocks.run_integration_tests.outputs.tests_passed}"
-  integration_tests_failed: "${blocks.run_integration_tests.outputs.tests_failed}"
-  integration_coverage: "${blocks.run_integration_tests.outputs.coverage_percent}"
+  integration_tests_count: "{{blocks.run_integration_tests.outputs.tests_passed}}"
+  integration_tests_passing: "{{blocks.run_integration_tests.outputs.tests_passed}}"
+  integration_tests_failed: "{{blocks.run_integration_tests.outputs.tests_failed}}"
+  integration_coverage: "{{blocks.run_integration_tests.outputs.coverage_percent}}"
 
   # E2E test metrics
-  e2e_tests_count: "${blocks.run_e2e_tests.outputs.tests_passed}"
-  e2e_tests_passing: "${blocks.run_e2e_tests.outputs.tests_passed}"
-  e2e_tests_failed: "${blocks.run_e2e_tests.outputs.tests_failed}"
+  e2e_tests_count: "{{blocks.run_e2e_tests.outputs.tests_passed}}"
+  e2e_tests_passing: "{{blocks.run_e2e_tests.outputs.tests_passed}}"
+  e2e_tests_failed: "{{blocks.run_e2e_tests.outputs.tests_failed}}"
 
   # Overall status
-  all_integration_passing: "${blocks.check_integration_results.succeeded}"
-  all_e2e_passing: "${blocks.check_e2e_results.succeeded}"
-  all_tests_passing: "${blocks.check_integration_results.succeeded} and ${blocks.check_e2e_results.succeeded}"
+  all_integration_passing: "{{blocks.check_integration_results.succeeded}}"
+  all_e2e_passing: "{{blocks.check_e2e_results.succeeded}}"
+  all_tests_passing: "{{blocks.check_integration_results.succeeded}} and {{blocks.check_e2e_results.succeeded}}"
 
   # Checkpoint
-  checkpoint_approved: "${blocks.integration_checkpoint.outputs.response == 'yes'}"
+  checkpoint_approved: "{{blocks.integration_checkpoint.outputs.response}} == 'yes'"
 
   # State
-  state_updated: "${blocks.update_state_phase5.succeeded}"
+  state_updated: "{{blocks.update_state_phase5.succeeded}}"
 
   # Summary
-  summary: "${blocks.phase5_summary.outputs.stdout}"
+  summary: "{{blocks.phase5_summary.outputs.stdout}}"

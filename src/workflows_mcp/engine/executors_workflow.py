@@ -24,9 +24,9 @@ class WorkflowInput(BlockInput):
     Input model for Workflow executor.
 
     Supports variable references from parent context:
-    - ${inputs.field}: Parent workflow inputs
-    - ${blocks.block_id.outputs.field}: Parent block outputs
-    - ${metadata.field}: Parent workflow metadata
+    - {{inputs.field}}: Parent workflow inputs
+    - {{blocks.block_id.outputs.field}}: Parent block outputs
+    - {{metadata.field}}: Parent workflow metadata
 
     Variable resolution happens in parent context before passing to child.
     """
@@ -53,7 +53,7 @@ class WorkflowExecutor(BlockExecutor):
     Architecture:
     - Returns full child Execution (includes child's blocks!)
     - Orchestrator stores child Execution in parent.blocks[block_id]
-    - Enables deep access: ${blocks.run_tests.blocks.pytest.outputs.exit_code}
+    - Enables deep access: {{blocks.run_tests.blocks.pytest.outputs.exit_code}}
     - Uses ExecutionContext for workflow registry access
     - Uses WorkflowRunner for child workflow execution
     - Recursion depth limiting via context.check_recursion_depth()
@@ -72,8 +72,8 @@ class WorkflowExecutor(BlockExecutor):
         }
 
     Variable Access:
-        ${blocks.run_tests.outputs.test_passed}  # Child's workflow output
-        ${blocks.run_tests.blocks.pytest.outputs.exit_code}  # Drill down!
+        {{blocks.run_tests.outputs.test_passed}}  # Child's workflow output
+        {{blocks.run_tests.blocks.pytest.outputs.exit_code}}  # Drill down!
 
     Pause Propagation:
         If child workflow pauses (Prompt block), ExecutionPaused exception
@@ -86,7 +86,7 @@ class WorkflowExecutor(BlockExecutor):
             inputs:
               workflow: python-ci-pipeline
               inputs:
-                project_path: "${inputs.project_path}"
+                project_path: "{{inputs.project_path}}"
     """
 
     type_name: ClassVar[str] = "Workflow"

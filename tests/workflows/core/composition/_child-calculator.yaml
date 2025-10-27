@@ -25,12 +25,12 @@ blocks:
     type: Shell
     inputs:
       command: |
-        case ${inputs.operation} in
+        case {{inputs.operation}} in
           +|-|/|\*)
-            echo "$((${inputs.number_a} ${inputs.operation} ${inputs.number_b}))" > $SCRATCH/result.txt
+            echo "$(({{inputs.number_a}} {{inputs.operation}} {{inputs.number_b}}))" > $SCRATCH/result.txt
             ;;
           *)
-            echo "'${inputs.operation}' is an unsupported operation" >&2
+            echo "'{{inputs.operation}}' is an unsupported operation" >&2
             exit 1
             ;;
         esac
@@ -39,5 +39,5 @@ blocks:
         path: $SCRATCH/result.txt
         type: int
 outputs:
-  calculate_success: "${blocks.calculate.succeeded}"
-  result: "${blocks.calculate.outputs.result}"
+  calculate_success: "{{blocks.calculate.succeeded}}"
+  result: "{{blocks.calculate.outputs.result}}"

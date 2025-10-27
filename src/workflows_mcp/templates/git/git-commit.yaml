@@ -47,8 +47,8 @@ blocks:
     description: "Stage all modified files in git repository"
     inputs:
       command: git add -A
-      working_dir: "${inputs.working_dir}"
-    condition: ${inputs.stage_all}
+      working_dir: "{{inputs.working_dir}}"
+    condition: {{inputs.stage_all}}
 
   - id: analyze_changes
     type: Workflow
@@ -56,14 +56,14 @@ blocks:
     inputs:
       workflow: "git-analyze-changes"
       inputs:
-        working_dir: "${inputs.working_dir}"
+        working_dir: "{{inputs.working_dir}}"
 
   - id: no_changes_message
     type: Shell
     description: "No changes to commit"
     inputs:
       command: echo "No changes to commit"
-    condition: "not ${blocks.analyze_changes.outputs.has_changes}"
+    condition: "not {{blocks.analyze_changes.outputs.has_changes}}"
     depends_on:
       - analyze_changes
 
@@ -96,13 +96,13 @@ blocks:
         - Scope: component/module affected (optional)
 
         ## Summary
-        ${blocks.analyze_changes.outputs.summary}
+        {{blocks.analyze_changes.outputs.summary}}
 
         ## Detailed Changes
-        ${blocks.analyze_changes.outputs.diff}
+        {{blocks.analyze_changes.outputs.diff}}
 
         Generate ONLY the commit message (no quotes, no explanations):
-    condition: "${blocks.analyze_changes.outputs.has_changes} and ${inputs.commit_message} == ''"
+    condition: "{{blocks.analyze_changes.outputs.has_changes}} and {{inputs.commit_message}} == ''"
     depends_on:
       - analyze_changes
 
@@ -111,14 +111,14 @@ blocks:
     description: "Select final commit message: manual override or LLM-generated"
     inputs:
       command: |
-        if [ -n "${inputs.commit_message}" ]; then
+        if [ -n "{{inputs.commit_message}}" ]; then
           # Use manual message if provided
-          printf '%s' "${inputs.commit_message}" > "$SCRATCH/message.txt"
+          printf '%s' "{{inputs.commit_message}}" > "$SCRATCH/message.txt"
         else
           # Use LLM-generated message
-          printf '%s' "${blocks.llm_generate_message.outputs.response}" > "$SCRATCH/message.txt"
+          printf '%s' "{{blocks.llm_generate_message.outputs.response}}" > "$SCRATCH/message.txt"
         fi
-    condition: "${blocks.analyze_changes.outputs.has_changes}"
+    condition: "{{blocks.analyze_changes.outputs.has_changes}}"
     depends_on:
       - block: llm_generate_message
         required: false
@@ -134,10 +134,10 @@ blocks:
       prompt: |
         About to create commit with message:
 
-        ${blocks.select_message.outputs.message}
+        {{blocks.select_message.outputs.message}}
 
         Proceed with commit? Respond with 'yes' or 'no'
-    condition: "${blocks.analyze_changes.outputs.has_changes} and not ${inputs.auto_commit}"
+    condition: "{{blocks.analyze_changes.outputs.has_changes}} and not {{inputs.auto_commit}}"
     depends_on:
       - select_message
 
@@ -150,16 +150,16 @@ blocks:
         # Create commit from message file and get hash
         git commit -F "$SCRATCH/message.txt"
         git rev-parse HEAD
-      working_dir: "${inputs.working_dir}"
-    condition: "${blocks.analyze_changes.outputs.has_changes} and (${inputs.auto_commit} or ${blocks.confirm_commit.outputs.response} == 'yes')"
+      working_dir: "{{inputs.working_dir}}"
+    condition: "{{blocks.analyze_changes.outputs.has_changes}} and ({{inputs.auto_commit}} or {{blocks.confirm_commit.outputs.response}} == 'yes')"
     depends_on:
       - select_message
       - block: confirm_commit
         required: false
 
 outputs:
-  has_changes: "${blocks.analyze_changes.outputs.has_changes}"
-  commit_succeeded: "${blocks.create_commit.succeeded}"
-  commit_failed: "${blocks.create_commit.failed}"
-  commit_skipped: "${blocks.create_commit.skipped}"
-  commit_hash: "${blocks.create_commit.outputs.stdout}"
+  has_changes: "{{blocks.analyze_changes.outputs.has_changes}}"
+  commit_succeeded: "{{blocks.create_commit.succeeded}}"
+  commit_failed: "{{blocks.create_commit.failed}}"
+  commit_skipped: "{{blocks.create_commit.skipped}}"
+  commit_hash: "{{blocks.create_commit.outputs.stdout}}"
