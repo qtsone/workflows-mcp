@@ -49,7 +49,8 @@ The plugin automatically configures the MCP server with custom workflow director
     "workflows": {
       "command": "uvx",
       "args": [
-        "workflows-mcp"
+        "workflows-mcp",
+        "--refresh"
       ],
       "env": {
         "WORKFLOWS_TEMPLATE_PATHS": "~/.workflows:./.workflows",
@@ -61,7 +62,8 @@ The plugin automatically configures the MCP server with custom workflow director
 }
 ```
 
-All `env` variables are optional. Omit the entire `env` section for default settings.
+All `env` variables are optional. The `--refresh` flag is recommended to ensure `uvx` always fetches the latest version of `workflows-mcp`. For Gemini CLI, this configuration would be in `~/.gemini/settings.json`.
+
 Restart your LLM client, and you're ready to go!
 
 ## What Can You Do With It?
