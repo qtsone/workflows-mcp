@@ -53,7 +53,7 @@ The plugin automatically configures the MCP server with custom workflow director
         "--refresh"
       ],
       "env": {
-        "WORKFLOWS_TEMPLATE_PATHS": "~/.workflows:./.workflows",
+        "WORKFLOWS_TEMPLATE_PATHS": "~/.workflows,./.workflows",
         "WORKFLOWS_LOG_LEVEL": "INFO",
         "WORKFLOWS_MAX_RECURSION_DEPTH": "50"
       }

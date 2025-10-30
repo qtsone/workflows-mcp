@@ -224,7 +224,8 @@ async def app_lifespan(_server: FastMCP) -> AsyncIterator[AppContext]:
 
 
 # Initialize MCP server with lifespan management
-mcp = FastMCP("workflows", lifespan=app_lifespan)
+# Following Python MCP naming convention: {service}_mcp
+mcp = FastMCP("workflows_mcp", lifespan=app_lifespan)
 
 
 # =============================================================================
@@ -265,8 +266,23 @@ def main() -> None:
         stream=sys.stderr,
     )
 
-    # Run the MCP server
-    mcp.run()  # Defaults to stdio transport
+    logger.info("Starting MCP server (press Ctrl+C to stop)...")
+
+    try:
+        # Run the MCP server with stdio transport
+        # anyio.run() (used internally by mcp.run()) handles SIGINT gracefully
+        # and raises KeyboardInterrupt for clean shutdown
+        mcp.run()
+    except KeyboardInterrupt:
+        # Graceful shutdown via Ctrl+C (SIGINT)
+        # anyio ensures proper cleanup of async resources and lifespan context
+        logger.info("Received interrupt signal, shutting down gracefully...")
+    except Exception as e:
+        # Unexpected errors
+        logger.exception(f"Server error: {e}")
+        sys.exit(1)
+
+    logger.info("Server shutdown complete")
 
 
 # =============================================================================
