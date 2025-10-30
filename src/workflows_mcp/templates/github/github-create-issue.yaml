@@ -1,0 +1,416 @@
+name: github-create-issue
+description: |
+  Interactive workflow to create GitHub issues with LLM assistance.
+
+  Features:
+  - Context-aware: Analyzes repository to understand patterns
+  - LLM-powered: Generates title, body, and selects labels intelligently
+  - Safe: Prevents shell injection via environment variables
+  - Interactive: Preview before creating, with confirmation step
+
+  Requirements:
+  - GitHub CLI (`gh`) installed and authenticated
+  - Git repository with GitHub remote
+
+tags:
+  - github
+  - interactive
+  - issues
+
+inputs:
+  repo_path:
+    type: str
+    default: "."
+    description: Path to git repository
+    required: false
+
+  auto_confirm:
+    type: bool
+    default: false
+    description: Skip confirmation prompt and create issue immediately
+    required: false
+
+blocks:
+  # ============================================================================
+  # Phase 1: Prerequisite Validation
+  # ============================================================================
+
+  - id: check_gh_installed
+    type: Shell
+    inputs:
+      command: |
+        if ! command -v gh >/dev/null 2>&1; then
+          echo "ERROR: GitHub CLI (gh) is not installed."
+          echo "Install from: https://cli.github.com/"
+          exit 1
+        fi
+        echo "GitHub CLI found: $(gh --version | head -1)"
+
+  - id: check_git_repo
+    type: Shell
+    inputs:
+      command: |
+        if ! git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+          echo "ERROR: Not inside a git repository."
+          echo "Run this command from within a git repository."
+          exit 1
+        fi
+        echo "Git repository detected: $(git rev-parse --show-toplevel)"
+      working_dir: "{{inputs.repo_path}}"
+    depends_on:
+      - check_gh_installed
+
+  - id: check_gh_auth
+    type: Shell
+    inputs:
+      command: |
+        if ! gh auth status >/dev/null 2>&1; then
+          echo "ERROR: GitHub CLI is not authenticated."
+          echo "Run: gh auth login"
+          exit 1
+        fi
+        echo "GitHub CLI authenticated: $(gh auth status 2>&1 | grep 'Logged in' | head -1)"
+      working_dir: "{{inputs.repo_path}}"
+    depends_on:
+      - check_git_repo
+
+  # ============================================================================
+  # Phase 2: Repository Context Gathering (Parallel Execution)
+  # ============================================================================
+
+  - id: get_repo_info
+    type: Shell
+    inputs:
+      command: |
+        gh repo view --json name,description,url > $SCRATCH/repo_info.json
+
+        # Extract fields for easy reference
+        cat $SCRATCH/repo_info.json | jq -r '.name' > $SCRATCH/repo_name.txt
+        cat $SCRATCH/repo_info.json | jq -r '.description // "No description"' > $SCRATCH/repo_desc.txt
+        cat $SCRATCH/repo_info.json | jq -r '.url' > $SCRATCH/repo_url.txt
+
+        # Display summary
+        echo "Repository: $(cat $SCRATCH/repo_name.txt)"
+        echo "Description: $(cat $SCRATCH/repo_desc.txt)"
+      working_dir: "{{inputs.repo_path}}"
+    depends_on:
+      - check_gh_auth
+    outputs:
+      repo_name:
+        type: str
+        path: "$SCRATCH/repo_name.txt"
+      repo_desc:
+        type: str
+        path: "$SCRATCH/repo_desc.txt"
+      repo_url:
+        type: str
+        path: "$SCRATCH/repo_url.txt"
+
+  - id: get_repo_labels
+    type: Shell
+    inputs:
+      command: |
+        # Fetch available labels
+        gh label list --json name,description --limit 50 > $SCRATCH/labels.json
+
+        # Format for LLM context
+        echo "Available labels:" > $SCRATCH/labels_formatted.txt
+        cat $SCRATCH/labels.json | jq -r '.[] | "- \(.name): \(.description // "No description")"' >> $SCRATCH/labels_formatted.txt
+
+        # Also save just names for easier parsing
+        cat $SCRATCH/labels.json | jq -r '.[].name' | paste -sd "," - > $SCRATCH/label_names.txt
+
+        cat $SCRATCH/labels_formatted.txt
+      working_dir: "{{inputs.repo_path}}"
+    depends_on:
+      - check_gh_auth
+    outputs:
+      labels_formatted:
+        type: str
+        path: "$SCRATCH/labels_formatted.txt"
+      label_names:
+        type: str
+        path: "$SCRATCH/label_names.txt"
+
+  - id: get_recent_issues
+    type: Shell
+    inputs:
+      command: |
+        ISSUE_COUNT=$(gh issue list --state all --json number 2>/dev/null | jq 'length')
+
+        if [ "$ISSUE_COUNT" -gt 10 ]; then
+          echo "Recent issues:" > $SCRATCH/recent_issues_formatted.txt
+          gh issue list --limit 3 --json number,title 2>/dev/null \
+            | jq -r '.[] | "#\(.number): \(.title)"' >> $SCRATCH/recent_issues_formatted.txt
+        else
+          echo "No established pattern (repository has <10 issues)" > $SCRATCH/recent_issues_formatted.txt
+        fi
+
+        cat $SCRATCH/recent_issues_formatted.txt
+      working_dir: "{{inputs.repo_path}}"
+    depends_on:
+      - check_gh_auth
+    outputs:
+      recent_issues:
+        type: str
+        path: "$SCRATCH/recent_issues_formatted.txt"
+
+  # ============================================================================
+  # Phase 3: Interactive Issue Description
+  # ============================================================================
+
+  - id: get_issue_description
+    type: Prompt
+    inputs:
+      prompt: |
+        # 🐛 GitHub Issue Creator
+
+        **Repository**: {{blocks.get_repo_info.outputs.repo_name}}
+        **Description**: {{blocks.get_repo_info.outputs.repo_desc}}
+
+        ## Describe the issue you want to create
+
+        Please provide a comprehensive description including:
+        - **Problem or feature request**: What is the issue about?
+        - **Context**: When does this occur? What triggers it?
+        - **Expected behavior**: What should happen?
+        - **Actual behavior** (for bugs): What actually happens?
+        - **Additional context**: Any relevant details, logs, or examples
+
+        The more detail you provide, the better the generated issue will be.
+
+        ---
+
+        **Your description**:
+    depends_on:
+      - get_repo_info
+      - get_repo_labels
+      - get_recent_issues
+
+  # ============================================================================
+  # Phase 4: LLM Content Generation
+  # ============================================================================
+
+  - id: generate_title
+    type: Prompt
+    inputs:
+      prompt: |
+        Generate a concise GitHub issue title (maximum 80 characters).
+
+        ## Repository Context
+        **Name**: {{blocks.get_repo_info.outputs.repo_name}}
+        **Description**: {{blocks.get_repo_info.outputs.repo_desc}}
+
+        ## Recent Issues (for pattern reference)
+        {{blocks.get_recent_issues.outputs.recent_issues}}
+
+        ## User's Description
+        {{blocks.get_issue_description.outputs.response}}
+
+        ---
+
+        **Instructions**:
+        - Generate a clear, specific title that summarizes the issue
+        - Follow the repository's existing title patterns (see recent issues above)
+        - Keep it under 80 characters
+        - Use imperative mood for bugs/features (e.g., "Fix login validation" not "Fixing login validation")
+        - Provide ONLY the title text (no quotes, no explanations, no markdown formatting)
+
+        **Generated title**:
+    depends_on:
+      - get_issue_description
+
+  - id: generate_body
+    type: Prompt
+    inputs:
+      prompt: |
+        Generate a well-structured GitHub issue body in Markdown format.
+
+        ## Issue Title
+        {{blocks.generate_title.outputs.response}}
+
+        ## Repository
+        {{blocks.get_repo_info.outputs.repo_name}}
+
+        ---
+
+        Based on the issue description you provided in the previous prompt, create a professional Markdown body with:
+        - Appropriate sections for the issue type (Description, Steps to Reproduce, Expected/Actual Behavior, etc.)
+        - Clear Markdown formatting (headings, lists, code blocks)
+        - Specific, actionable content
+        - All relevant information from your description
+
+        Provide ONLY the Markdown body (no explanatory text, no quotes):
+    depends_on:
+      - generate_title
+
+  - id: filter_relevant_labels
+    type: Shell
+    inputs:
+      env:
+        TITLE: "{{blocks.generate_title.outputs.response}}"
+        DESCRIPTION: "{{blocks.get_issue_description.outputs.response}}"
+        ALL_LABELS: "{{blocks.get_repo_labels.outputs.labels_formatted}}"
+      command: |
+        {
+          echo "$TITLE"
+          echo "$DESCRIPTION"
+        } | tr '[:upper:]' '[:lower:]' | tr -cs '[:alnum:]' '\n' > $SCRATCH/keywords.txt
+
+        echo "$ALL_LABELS" | while IFS= read -r line; do
+          label_lower=$(echo "$line" | tr '[:upper:]' '[:lower:]')
+          while IFS= read -r keyword; do
+            if [ -n "$keyword" ] && echo "$label_lower" | grep -q "$keyword"; then
+              echo "$line"
+              break
+            fi
+          done < $SCRATCH/keywords.txt
+        done | head -15 > $SCRATCH/filtered_labels.txt
+
+        if [ ! -s $SCRATCH/filtered_labels.txt ]; then
+          cat > $SCRATCH/filtered_labels.txt <<EOF
+        Available labels:
+        - bug: Something isn't working
+        - enhancement: New feature or request
+        - documentation: Improvements or additions to documentation
+        - question: Further information is requested
+        EOF
+        fi
+
+        cat $SCRATCH/filtered_labels.txt
+      working_dir: "{{inputs.repo_path}}"
+    depends_on:
+      - generate_title
+      - get_repo_labels
+    outputs:
+      filtered_labels:
+        type: str
+        path: "$SCRATCH/filtered_labels.txt"
+
+  - id: select_labels
+    type: Prompt
+    inputs:
+      prompt: |
+        Select appropriate labels for this GitHub issue from the available labels.
+
+        ## Issue Title
+        {{blocks.generate_title.outputs.response}}
+
+        ## Available Labels
+        {{blocks.filter_relevant_labels.outputs.filtered_labels}}
+
+        ---
+
+        Based on the issue you described earlier, select 1-3 most relevant labels:
+        - Consider the issue type (bug, enhancement, documentation, question)
+        - Consider the affected area or component
+        - Provide label names as comma-separated values (e.g., "bug,enhancement")
+        - Provide ONLY the label names (no quotes, no explanations)
+        - If no labels are appropriate, respond with empty string
+
+        **Selected labels**:
+    depends_on:
+      - generate_body
+      - filter_relevant_labels
+
+  # ============================================================================
+  # Phase 5: Preview and Confirmation
+  # ============================================================================
+
+  - id: preview_and_confirm
+    type: Prompt
+    inputs:
+      prompt: |
+        # 📝 GitHub Issue Preview
+
+        Ready to create the following issue in **{{blocks.get_repo_info.outputs.repo_name}}**:
+
+        ---
+
+        ## Title
+        {{blocks.generate_title.outputs.response}}
+
+        ## Labels
+        {{blocks.select_labels.outputs.response}}
+
+        ## Body
+        ```markdown
+        {{blocks.generate_body.outputs.response}}
+        ```
+
+        ---
+
+        **Create this issue?**
+
+        Respond:
+        - **'yes'** to create the issue
+        - **'no'** to cancel
+        - **'edit'** if you want to modify anything (note: editing not implemented in v1, will cancel)
+    condition: "not {{inputs.auto_confirm}}"
+    depends_on:
+      - generate_title
+      - generate_body
+      - select_labels
+
+  # ============================================================================
+  # Phase 6: Issue Creation
+  # ============================================================================
+
+  - id: create_issue
+    type: Shell
+    inputs:
+      working_dir: "{{inputs.repo_path}}"
+      env:
+        TITLE: "{{blocks.generate_title.outputs.response}}"
+        BODY: "{{blocks.generate_body.outputs.response}}"
+        LABELS: "{{blocks.select_labels.outputs.response}}"
+      command: |
+        # Save body to file (safely handles multiline content)
+        printf '%s' "$BODY" > $SCRATCH/issue_body.md
+
+        # Build gh issue create command
+        GH_CMD="gh issue create --title \"$TITLE\" --body-file $SCRATCH/issue_body.md"
+
+        # Add labels if provided
+        if [ -n "$LABELS" ] && [ "$LABELS" != "" ]; then
+          # Split labels and add each one
+          IFS=',' read -ra LABEL_ARRAY <<< "$LABELS"
+          for label in "${LABEL_ARRAY[@]}"; do
+            # Trim whitespace
+            label=$(echo "$label" | xargs)
+            if [ -n "$label" ]; then
+              GH_CMD="$GH_CMD --label \"$label\""
+            fi
+          done
+        fi
+
+        # Execute command and capture output
+        echo "Creating issue..."
+        eval $GH_CMD | tee $SCRATCH/issue_url.txt
+
+        # Verify creation
+        if [ ${PIPESTATUS[0]} -eq 0 ]; then
+          echo ""
+          echo "✅ Issue created successfully!"
+          cat $SCRATCH/issue_url.txt
+        else
+          echo "❌ Failed to create issue"
+          exit 1
+        fi
+    condition: "{{inputs.auto_confirm}} or {{blocks.preview_and_confirm.outputs.response}} == 'yes'"
+    depends_on:
+      - generate_title
+      - generate_body
+      - select_labels
+      - block: preview_and_confirm
+        required: false
+    outputs:
+      issue_url:
+        type: str
+        path: "$SCRATCH/issue_url.txt"
+
+outputs:
+  created: "{{blocks.create_issue.succeeded}}"
+  issue_url: "{{blocks.create_issue.outputs.issue_url}}"
+  title: "{{blocks.generate_title.outputs.response}}"
+  labels: "{{blocks.select_labels.outputs.response}}"
