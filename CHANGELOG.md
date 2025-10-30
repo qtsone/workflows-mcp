@@ -2,6 +2,18 @@
 
 All notable changes to this project will be documented in this file.
 
+# [4.1.0](https://github.com/qtsone/workflows-mcp/compare/v4.0.3...v4.1.0) (2025-10-30)
+
+
+### Bug Fixes
+
+* **server:** improve graceful shutdown and fix naming convention ([86b66eb](https://github.com/qtsone/workflows-mcp/commit/86b66eb0bfa91d8bb7e04e70d7c322971e585897))
+
+
+### Features
+
+* **github:** add interactive issue creation workflow ([52da77f](https://github.com/qtsone/workflows-mcp/commit/52da77f2cd046f146a853d8d309733c07f432527))
+
 ## [4.0.3](https://github.com/qtsone/workflows-mcp/compare/v4.0.2...v4.0.3) (2025-10-27)
 
 
