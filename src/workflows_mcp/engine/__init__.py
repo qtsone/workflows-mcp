@@ -35,6 +35,7 @@ Architecture (ADR-008 ExecutionResult Pattern):
 from . import (  # noqa: F401
     executors_core,  # Shell executor
     executors_file,  # File operation executors
+    executors_http,  # HTTP/REST API executor
     executors_interactive,  # Interactive executors
     executors_state,  # JSON state executors
     executors_workflow,  # Workflow executor (ADR-008)
@@ -59,6 +60,11 @@ from .executors_file import (
     RenderTemplateExecutor,
     RenderTemplateInput,
     RenderTemplateOutput,
+)
+from .executors_http import (
+    HttpCallExecutor,
+    HttpCallInput,
+    HttpCallOutput,
 )
 from .executors_interactive import (
     PromptExecutor,
@@ -116,6 +122,10 @@ __all__ = [
     "RenderTemplateExecutor",
     "RenderTemplateInput",
     "RenderTemplateOutput",
+    # HTTP Executors
+    "HttpCallExecutor",
+    "HttpCallInput",
+    "HttpCallOutput",
     # Interactive Executors
     "PromptExecutor",
     "PromptInput",

@@ -19,38 +19,11 @@
       "metadata": {
         "status": "completed",
         "outcome": "success",
-        "execution_time_ms": 8.46826171875,
-        "started_at": "2025-10-27T15:29:35.358427+00:00",
-        "completed_at": "2025-10-27T15:29:35.366885+00:00",
+        "execution_time_ms": 6.858154296875,
+        "started_at": "2025-11-01T12:58:45.966599+00:00",
+        "completed_at": "2025-11-01T12:58:45.973449+00:00",
         "wave": 0,
         "execution_order": 0,
-        "message": null,
-        "succeeded": true,
-        "failed": false,
-        "skipped": false
-      },
-      "blocks": {},
-      "depth": 0
-    },
-    "read_nonexistent_optional": {
-      "inputs": {
-        "path": "/tmp/test-read-file/nonexistent.txt",
-        "required": false
-      },
-      "outputs": {
-        "content": "",
-        "path": "/private/tmp/test-read-file/nonexistent.txt",
-        "size_bytes": 0,
-        "found": false
-      },
-      "metadata": {
-        "status": "completed",
-        "outcome": "success",
-        "execution_time_ms": 0.18798828125,
-        "started_at": "2025-10-27T15:29:35.367651+00:00",
-        "completed_at": "2025-10-27T15:29:35.367844+00:00",
-        "wave": 1,
-        "execution_order": 1,
         "message": null,
         "succeeded": true,
         "failed": false,
@@ -73,9 +46,36 @@
       "metadata": {
         "status": "completed",
         "outcome": "success",
-        "execution_time_ms": 0.126220703125,
-        "started_at": "2025-10-27T15:29:35.367929+00:00",
-        "completed_at": "2025-10-27T15:29:35.368055+00:00",
+        "execution_time_ms": 0.18798828125,
+        "started_at": "2025-11-01T12:58:45.973828+00:00",
+        "completed_at": "2025-11-01T12:58:45.974016+00:00",
+        "wave": 1,
+        "execution_order": 1,
+        "message": null,
+        "succeeded": true,
+        "failed": false,
+        "skipped": false
+      },
+      "blocks": {},
+      "depth": 0
+    },
+    "read_nonexistent_optional": {
+      "inputs": {
+        "path": "/tmp/test-read-file/nonexistent.txt",
+        "required": false
+      },
+      "outputs": {
+        "content": "",
+        "path": "/private/tmp/test-read-file/nonexistent.txt",
+        "size_bytes": 0,
+        "found": false
+      },
+      "metadata": {
+        "status": "completed",
+        "outcome": "success",
+        "execution_time_ms": 0.06689453125,
+        "started_at": "2025-11-01T12:58:45.974069+00:00",
+        "completed_at": "2025-11-01T12:58:45.974135+00:00",
         "wave": 1,
         "execution_order": 1,
         "message": null,
@@ -98,9 +98,9 @@
       "metadata": {
         "status": "completed",
         "outcome": "success",
-        "execution_time_ms": 7.453857421875,
-        "started_at": "2025-10-27T15:29:35.368283+00:00",
-        "completed_at": "2025-10-27T15:29:35.375731+00:00",
+        "execution_time_ms": 5.886962890625,
+        "started_at": "2025-11-01T12:58:45.974272+00:00",
+        "completed_at": "2025-11-01T12:58:45.980152+00:00",
         "wave": 2,
         "execution_order": 3,
         "message": null,
@@ -114,10 +114,10 @@
   },
   "metadata": {
     "workflow_name": "file-operations-read",
-    "start_time": "2025-10-27T15:29:35.358317+00:00",
+    "start_time": "2025-11-01T12:58:45.966503+00:00",
     "total_blocks": 4,
     "execution_waves": 3,
-    "completed_at": "2025-10-27T15:29:35.376133+00:00",
-    "execution_time_seconds": 0.017821788787841797
+    "completed_at": "2025-11-01T12:58:45.980552+00:00",
+    "execution_time_seconds": 0.014053821563720703
   }
 }

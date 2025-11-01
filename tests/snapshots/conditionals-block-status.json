@@ -17,9 +17,9 @@
       "metadata": {
         "status": "completed",
         "outcome": "failure",
-        "execution_time_ms": 5.290771484375,
-        "started_at": "2025-10-27T15:29:35.216342+00:00",
-        "completed_at": "2025-10-27T15:29:35.221624+00:00",
+        "execution_time_ms": 4.460205078125,
+        "started_at": "2025-11-01T12:58:45.847156+00:00",
+        "completed_at": "2025-11-01T12:58:45.851609+00:00",
         "wave": 0,
         "execution_order": 0,
         "message": "Command exited with code 1",
@@ -42,9 +42,9 @@
       "metadata": {
         "status": "completed",
         "outcome": "success",
-        "execution_time_ms": 5.05615234375,
-        "started_at": "2025-10-27T15:29:35.218733+00:00",
-        "completed_at": "2025-10-27T15:29:35.223791+00:00",
+        "execution_time_ms": 3.830078125,
+        "started_at": "2025-11-01T12:58:45.848986+00:00",
+        "completed_at": "2025-11-01T12:58:45.852821+00:00",
         "wave": 0,
         "execution_order": 0,
         "message": null,
@@ -67,9 +67,9 @@
       "metadata": {
         "status": "completed",
         "outcome": "success",
-        "execution_time_ms": 5.39990234375,
-        "started_at": "2025-10-27T15:29:35.224333+00:00",
-        "completed_at": "2025-10-27T15:29:35.229725+00:00",
+        "execution_time_ms": 4.5380859375,
+        "started_at": "2025-11-01T12:58:45.853267+00:00",
+        "completed_at": "2025-11-01T12:58:45.857798+00:00",
         "wave": 1,
         "execution_order": 2,
         "message": null,
@@ -92,9 +92,9 @@
       "metadata": {
         "status": "completed",
         "outcome": "success",
-        "execution_time_ms": 4.880126953125,
-        "started_at": "2025-10-27T15:29:35.226731+00:00",
-        "completed_at": "2025-10-27T15:29:35.231616+00:00",
+        "execution_time_ms": 4.214111328125,
+        "started_at": "2025-11-01T12:58:45.855232+00:00",
+        "completed_at": "2025-11-01T12:58:45.859455+00:00",
         "wave": 1,
         "execution_order": 2,
         "message": null,
@@ -108,10 +108,10 @@
   },
   "metadata": {
     "workflow_name": "conditionals-block-status",
-    "start_time": "2025-10-27T15:29:35.216241+00:00",
+    "start_time": "2025-11-01T12:58:45.847064+00:00",
     "total_blocks": 4,
     "execution_waves": 2,
-    "completed_at": "2025-10-27T15:29:35.231977+00:00",
-    "execution_time_seconds": 0.01574087142944336
+    "completed_at": "2025-11-01T12:58:45.859756+00:00",
+    "execution_time_seconds": 0.012695074081420898
   }
 }

@@ -87,6 +87,10 @@ def normalize_dynamic_fields(data: Any, path: str = "") -> Any:
     - ISO 8601 timestamps → 'TIMESTAMP'
     - Execution times → 'EXECUTION_TIME'
     - Checkpoint IDs → 'CHECKPOINT_ID'
+    - HTTP date headers → 'HTTP_DATE'
+    - Amazon trace IDs → 'TRACE_ID'
+    - HTTP origin/IP fields → 'HTTP_ORIGIN'
+    - Content-Length headers → 'CONTENT_LENGTH'
 
     Args:
         data: Response data to normalize (dict, list, str, or primitive)
@@ -112,6 +116,15 @@ def normalize_dynamic_fields(data: Any, path: str = "") -> Any:
                 normalized[key] = "EXECUTION_TIME"
             elif key == "checkpoint_id" and isinstance(value, str):
                 normalized[key] = "CHECKPOINT_ID"
+            elif key == "date" and isinstance(value, str):
+                # Normalize HTTP date headers (e.g., "Sat, 01 Nov 2025 12:26:49 GMT")
+                normalized[key] = "HTTP_DATE"
+            elif key in ("origin", "Origin") and isinstance(value, str):
+                # Normalize HTTP origin/client IP (e.g., "192.168.1.1")
+                normalized[key] = "HTTP_ORIGIN"
+            elif key in ("Content-Length", "content-length") and isinstance(value, str):
+                # Normalize content-length header (varies with response body size)
+                normalized[key] = "CONTENT_LENGTH"
             else:
                 normalized[key] = normalize_dynamic_fields(value, current_path)
         return normalized
@@ -125,6 +138,26 @@ def normalize_dynamic_fields(data: Any, path: str = "") -> Any:
             r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d+[+-]\d{2}:\d{2}",
             "TIMESTAMP",
             data,
+        )
+        # Normalize Amazon trace IDs (X-Amzn-Trace-Id)
+        # Format: Root=1-6905fc89-71dbb5d47ab07eeb01ec09c5
+        normalized_str = re.sub(
+            r"Root=1-[a-f0-9]{8}-[a-f0-9]{24}",
+            "Root=TRACE_ID",
+            normalized_str,
+        )
+        # Normalize IP addresses (IPv4 and IPv6)
+        # IPv4: 192.168.1.1, 10.0.0.1, etc.
+        normalized_str = re.sub(
+            r"\b(?:\d{1,3}\.){3}\d{1,3}\b",
+            "IP_ADDRESS",
+            normalized_str,
+        )
+        # IPv6: 2001:db8::1, ::1, etc.
+        normalized_str = re.sub(
+            r"\b(?:[0-9a-fA-F]{1,4}:){7}[0-9a-fA-F]{1,4}\b|::1\b",
+            "IP_ADDRESS",
+            normalized_str,
         )
         # Normalize /private/tmp to /tmp (macOS vs Linux compatibility)
         # On macOS, /tmp is a symlink to /private/tmp

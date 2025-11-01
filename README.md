@@ -195,6 +195,7 @@ Control recursion depth with `WORKFLOWS_MAX_RECURSION_DEPTH` (default: 50, max: 
 - **CreateFile** - Create files with content
 - **ReadFile** - Read file contents
 - **RenderTemplate** - Process Jinja2 templates
+- **HttpCall** - Make HTTP/REST API calls with environment variable substitution
 - **Prompt** - Interactive user prompts (with pause/resume)
 - **ReadJSONState** / **WriteJSONState** / **MergeJSONState** - Manage JSON state files
 

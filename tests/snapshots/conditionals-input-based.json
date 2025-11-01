@@ -18,9 +18,9 @@
       "metadata": {
         "status": "completed",
         "outcome": "success",
-        "execution_time_ms": 5.9658203125,
-        "started_at": "2025-10-27T15:29:35.253643+00:00",
-        "completed_at": "2025-10-27T15:29:35.259600+00:00",
+        "execution_time_ms": 4.645751953125,
+        "started_at": "2025-11-01T12:58:45.878978+00:00",
+        "completed_at": "2025-11-01T12:58:45.883620+00:00",
         "wave": 0,
         "execution_order": 0,
         "message": null,
@@ -43,9 +43,9 @@
       "metadata": {
         "status": "completed",
         "outcome": "success",
-        "execution_time_ms": 4.842041015625,
-        "started_at": "2025-10-27T15:29:35.256322+00:00",
-        "completed_at": "2025-10-27T15:29:35.261169+00:00",
+        "execution_time_ms": 3.85498046875,
+        "started_at": "2025-11-01T12:58:45.880969+00:00",
+        "completed_at": "2025-11-01T12:58:45.884831+00:00",
         "wave": 0,
         "execution_order": 0,
         "message": null,
@@ -59,10 +59,10 @@
   },
   "metadata": {
     "workflow_name": "conditionals-input-based",
-    "start_time": "2025-10-27T15:29:35.253462+00:00",
+    "start_time": "2025-11-01T12:58:45.878811+00:00",
     "total_blocks": 2,
     "execution_waves": 1,
-    "completed_at": "2025-10-27T15:29:35.261482+00:00",
-    "execution_time_seconds": 0.008025169372558594
+    "completed_at": "2025-11-01T12:58:45.885115+00:00",
+    "execution_time_seconds": 0.006308794021606445
   }
 }
