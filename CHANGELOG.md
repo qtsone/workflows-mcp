@@ -2,6 +2,14 @@
 
 All notable changes to this project will be documented in this file.
 
+# [4.3.0](https://github.com/qtsone/workflows-mcp/compare/v4.2.0...v4.3.0) (2025-11-01)
+
+
+### Features
+
+* add HttpCall block executor for HTTP/REST API integration ([9ca2b70](https://github.com/qtsone/workflows-mcp/commit/9ca2b7002a85d38cdef5e94952509340bf34f940))
+* add HttpCall block executor for HTTP/REST API integration ([#16](https://github.com/qtsone/workflows-mcp/issues/16)) ([76d1714](https://github.com/qtsone/workflows-mcp/commit/76d171483af915c4d468d4e14fec2710fc836231))
+
 # [4.2.0](https://github.com/qtsone/workflows-mcp/compare/v4.1.0...v4.2.0) (2025-11-01)
 
 
