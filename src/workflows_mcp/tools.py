@@ -20,6 +20,7 @@ from pydantic import Field
 
 from .context import AppContextType
 from .engine import WorkflowRunner, load_workflow_from_yaml
+from .engine.checkpoint import CheckpointConfig
 from .formatting import (
     format_checkpoint_info_markdown,
     format_checkpoint_list_markdown,
@@ -138,7 +139,6 @@ async def execute_workflow(
 
     # Create WorkflowRunner and execute
     # Enable checkpointing for top-level MCP tool execution (None only for nested workflows)
-    from workflows_mcp.engine.checkpoint import CheckpointConfig
     runner = WorkflowRunner(checkpoint_config=CheckpointConfig())
     result = await runner.execute(
         workflow=workflow_schema,
@@ -247,7 +247,6 @@ async def execute_inline_workflow(
 
     # Create WorkflowRunner and execute (no registration needed for inline workflows)
     # Enable checkpointing for top-level MCP tool execution (None only for nested workflows)
-    from workflows_mcp.engine.checkpoint import CheckpointConfig
     runner = WorkflowRunner(checkpoint_config=CheckpointConfig())
     result = await runner.execute(
         workflow=workflow_schema,
@@ -603,7 +602,6 @@ async def resume_workflow(
 
     # Create WorkflowRunner and resume
     # Enable checkpointing for top-level MCP tool execution (None only for nested workflows)
-    from workflows_mcp.engine.checkpoint import CheckpointConfig
     runner = WorkflowRunner(checkpoint_config=CheckpointConfig())
     result = await runner.resume(
         checkpoint_id=checkpoint_id,
