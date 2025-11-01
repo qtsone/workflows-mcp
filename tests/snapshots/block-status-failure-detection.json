@@ -17,9 +17,9 @@
       "metadata": {
         "status": "completed",
         "outcome": "failure",
-        "execution_time_ms": 5.2587890625,
-        "started_at": "2025-11-01T12:37:00.885773+00:00",
-        "completed_at": "2025-11-01T12:37:00.891022+00:00",
+        "execution_time_ms": 8.097900390625,
+        "started_at": "2025-11-01T12:58:45.719345+00:00",
+        "completed_at": "2025-11-01T12:58:45.727434+00:00",
         "wave": 0,
         "execution_order": 0,
         "message": "Command exited with code 1",
@@ -42,9 +42,9 @@
       "metadata": {
         "status": "completed",
         "outcome": "success",
-        "execution_time_ms": 4.446044921875,
-        "started_at": "2025-11-01T12:37:00.891837+00:00",
-        "completed_at": "2025-11-01T12:37:00.896280+00:00",
+        "execution_time_ms": 4.72705078125,
+        "started_at": "2025-11-01T12:58:45.728184+00:00",
+        "completed_at": "2025-11-01T12:58:45.732905+00:00",
         "wave": 1,
         "execution_order": 1,
         "message": null,
@@ -58,10 +58,10 @@
   },
   "metadata": {
     "workflow_name": "block-status-failure-detection",
-    "start_time": "2025-11-01T12:37:00.885217+00:00",
+    "start_time": "2025-11-01T12:58:45.718980+00:00",
     "total_blocks": 2,
     "execution_waves": 2,
-    "completed_at": "2025-11-01T12:37:00.896622+00:00",
-    "execution_time_seconds": 0.011411905288696289
+    "completed_at": "2025-11-01T12:58:45.733283+00:00",
+    "execution_time_seconds": 0.014308929443359375
   }
 }

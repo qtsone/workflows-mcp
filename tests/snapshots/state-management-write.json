@@ -30,9 +30,9 @@
       "metadata": {
         "status": "completed",
         "outcome": "success",
-        "execution_time_ms": 0.299072265625,
-        "started_at": "2025-11-01T12:37:04.183589+00:00",
-        "completed_at": "2025-11-01T12:37:04.183889+00:00",
+        "execution_time_ms": 0.26708984375,
+        "started_at": "2025-11-01T12:58:47.391405+00:00",
+        "completed_at": "2025-11-01T12:58:47.391673+00:00",
         "wave": 0,
         "execution_order": 0,
         "message": null,
@@ -55,9 +55,9 @@
       "metadata": {
         "status": "completed",
         "outcome": "success",
-        "execution_time_ms": 6.7099609375,
-        "started_at": "2025-11-01T12:37:04.184088+00:00",
-        "completed_at": "2025-11-01T12:37:04.190780+00:00",
+        "execution_time_ms": 6.2939453125,
+        "started_at": "2025-11-01T12:58:47.391846+00:00",
+        "completed_at": "2025-11-01T12:58:47.398124+00:00",
         "wave": 1,
         "execution_order": 1,
         "message": null,
@@ -71,10 +71,10 @@
   },
   "metadata": {
     "workflow_name": "state-management-write",
-    "start_time": "2025-11-01T12:37:04.183486+00:00",
+    "start_time": "2025-11-01T12:58:47.391306+00:00",
     "total_blocks": 2,
     "execution_waves": 2,
-    "completed_at": "2025-11-01T12:37:04.191156+00:00",
-    "execution_time_seconds": 0.0076751708984375
+    "completed_at": "2025-11-01T12:58:47.398458+00:00",
+    "execution_time_seconds": 0.007155895233154297
   }
 }

@@ -7,6 +7,34 @@
     "cleanup_done": "true"
   },
   "blocks": {
+    "create_executable": {
+      "inputs": {
+        "path": "/tmp/test-create-file/script.sh",
+        "content": "#!/bin/bash\necho 'executable'\n",
+        "mode": "755",
+        "create_parents": true
+      },
+      "outputs": {
+        "path": "/private/tmp/test-create-file/script.sh",
+        "size_bytes": 30,
+        "created": true
+      },
+      "metadata": {
+        "status": "completed",
+        "outcome": "success",
+        "execution_time_ms": 0.363037109375,
+        "started_at": "2025-11-01T12:58:45.952021+00:00",
+        "completed_at": "2025-11-01T12:58:45.952386+00:00",
+        "wave": 0,
+        "execution_order": 0,
+        "message": null,
+        "succeeded": true,
+        "failed": false,
+        "skipped": false
+      },
+      "blocks": {},
+      "depth": 0
+    },
     "create_utf8_file": {
       "inputs": {
         "path": "/tmp/test-create-file/test.txt",
@@ -23,37 +51,9 @@
       "metadata": {
         "status": "completed",
         "outcome": "success",
-        "execution_time_ms": 0.333740234375,
-        "started_at": "2025-11-01T12:37:01.119494+00:00",
-        "completed_at": "2025-11-01T12:37:01.119827+00:00",
-        "wave": 0,
-        "execution_order": 0,
-        "message": null,
-        "succeeded": true,
-        "failed": false,
-        "skipped": false
-      },
-      "blocks": {},
-      "depth": 0
-    },
-    "create_executable": {
-      "inputs": {
-        "path": "/tmp/test-create-file/script.sh",
-        "content": "#!/bin/bash\necho 'executable'\n",
-        "mode": "755",
-        "create_parents": true
-      },
-      "outputs": {
-        "path": "/private/tmp/test-create-file/script.sh",
-        "size_bytes": 30,
-        "created": true
-      },
-      "metadata": {
-        "status": "completed",
-        "outcome": "success",
-        "execution_time_ms": 0.215087890625,
-        "started_at": "2025-11-01T12:37:01.119888+00:00",
-        "completed_at": "2025-11-01T12:37:01.120103+00:00",
+        "execution_time_ms": 0.175048828125,
+        "started_at": "2025-11-01T12:58:45.952442+00:00",
+        "completed_at": "2025-11-01T12:58:45.952616+00:00",
         "wave": 0,
         "execution_order": 0,
         "message": null,
@@ -76,9 +76,9 @@
       "metadata": {
         "status": "completed",
         "outcome": "success",
-        "execution_time_ms": 4.56005859375,
-        "started_at": "2025-11-01T12:37:01.120286+00:00",
-        "completed_at": "2025-11-01T12:37:01.124838+00:00",
+        "execution_time_ms": 4.5341796875,
+        "started_at": "2025-11-01T12:58:45.952776+00:00",
+        "completed_at": "2025-11-01T12:58:45.957302+00:00",
         "wave": 1,
         "execution_order": 2,
         "message": null,
@@ -101,9 +101,9 @@
       "metadata": {
         "status": "completed",
         "outcome": "success",
-        "execution_time_ms": 5.72802734375,
-        "started_at": "2025-11-01T12:37:01.125238+00:00",
-        "completed_at": "2025-11-01T12:37:01.130961+00:00",
+        "execution_time_ms": 5.73291015625,
+        "started_at": "2025-11-01T12:58:45.957674+00:00",
+        "completed_at": "2025-11-01T12:58:45.963400+00:00",
         "wave": 2,
         "execution_order": 3,
         "message": null,
@@ -117,10 +117,10 @@
   },
   "metadata": {
     "workflow_name": "file-operations-create",
-    "start_time": "2025-11-01T12:37:01.119377+00:00",
+    "start_time": "2025-11-01T12:58:45.951915+00:00",
     "total_blocks": 4,
     "execution_waves": 3,
-    "completed_at": "2025-11-01T12:37:01.131319+00:00",
-    "execution_time_seconds": 0.011947154998779297
+    "completed_at": "2025-11-01T12:58:45.963752+00:00",
+    "execution_time_seconds": 0.011842012405395508
   }
 }

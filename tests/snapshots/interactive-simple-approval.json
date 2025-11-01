@@ -1,8 +1,8 @@
 {
   "status": "paused",
-  "checkpoint_id": "pause_interactive-simple-approval_1762000624154_bf097707",
+  "checkpoint_id": "pause_interactive-simple-approval_1762001927362_73c9af6e",
   "prompt": "Proceed with operation?",
-  "message": "Use resume_workflow(checkpoint_id: \"pause_interactive-simple-approval_1762000624154_bf097707\", response: \"<your-response>\") to continue",
+  "message": "Use resume_workflow(checkpoint_id: \"pause_interactive-simple-approval_1762001927362_73c9af6e\", response: \"<your-response>\") to continue",
   "blocks": {
     "start": {
       "inputs": {
@@ -16,9 +16,9 @@
       "metadata": {
         "status": "completed",
         "outcome": "success",
-        "execution_time_ms": 5.39599609375,
-        "started_at": "2025-11-01T12:37:04.148193+00:00",
-        "completed_at": "2025-11-01T12:37:04.153576+00:00",
+        "execution_time_ms": 5.154052734375,
+        "started_at": "2025-11-01T12:58:47.356981+00:00",
+        "completed_at": "2025-11-01T12:58:47.362117+00:00",
         "wave": 0,
         "execution_order": 0,
         "message": null,
@@ -32,6 +32,6 @@
   },
   "metadata": {
     "workflow_name": "interactive-simple-approval",
-    "start_time": "2025-11-01T12:37:04.148067+00:00"
+    "start_time": "2025-11-01T12:58:47.356882+00:00"
   }
 }

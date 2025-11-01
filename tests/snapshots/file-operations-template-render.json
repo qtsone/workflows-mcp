@@ -2,7 +2,7 @@
   "status": "success",
   "outputs": {
     "template_rendered": "true",
-    "file_content": "# TestProject\n\nGenerated: 2025-11-01T12:37:01.152003+00:00\nShell Output: data_from_shell\n\n\n## Features\n\n- Feature 1\n\n- Feature 2\n\n- Feature 3\n",
+    "file_content": "# TestProject\n\nGenerated: 2025-11-01T12:58:45.983358+00:00\nShell Output: data_from_shell\n\n\n## Features\n\n- Feature 1\n\n- Feature 2\n\n- Feature 3\n",
     "cleanup_done": "true"
   },
   "blocks": {
@@ -18,9 +18,9 @@
       "metadata": {
         "status": "completed",
         "outcome": "success",
-        "execution_time_ms": 4.55908203125,
-        "started_at": "2025-11-01T12:37:01.152101+00:00",
-        "completed_at": "2025-11-01T12:37:01.156653+00:00",
+        "execution_time_ms": 4.63525390625,
+        "started_at": "2025-11-01T12:58:45.983463+00:00",
+        "completed_at": "2025-11-01T12:58:45.988088+00:00",
         "wave": 0,
         "execution_order": 0,
         "message": null,
@@ -36,7 +36,7 @@
         "template": "# {{ project_name }}\n\nGenerated: {{ timestamp }}\nShell Output: {{ shell_data }}\n\n## Features\n{% for feature in features %}\n- {{ feature }}\n{% endfor %}\n",
         "variables": {
           "project_name": "TestProject",
-          "timestamp": "2025-11-01T12:37:01.152003+00:00",
+          "timestamp": "2025-11-01T12:58:45.983358+00:00",
           "shell_data": "data_from_shell\n",
           "features": [
             "Feature 1",
@@ -48,16 +48,16 @@
         "create_parents": true
       },
       "outputs": {
-        "content": "# TestProject\n\nGenerated: 2025-11-01T12:37:01.152003+00:00\nShell Output: data_from_shell\n\n\n## Features\n\n- Feature 1\n\n- Feature 2\n\n- Feature 3\n",
+        "content": "# TestProject\n\nGenerated: 2025-11-01T12:58:45.983358+00:00\nShell Output: data_from_shell\n\n\n## Features\n\n- Feature 1\n\n- Feature 2\n\n- Feature 3\n",
         "output_path": "/private/tmp/test-template-render/README.md",
         "size_bytes": 142
       },
       "metadata": {
         "status": "completed",
         "outcome": "success",
-        "execution_time_ms": 1.81591796875,
-        "started_at": "2025-11-01T12:37:01.157081+00:00",
-        "completed_at": "2025-11-01T12:37:01.158897+00:00",
+        "execution_time_ms": 1.823974609375,
+        "started_at": "2025-11-01T12:58:45.988497+00:00",
+        "completed_at": "2025-11-01T12:58:45.990320+00:00",
         "wave": 1,
         "execution_order": 1,
         "message": null,
@@ -73,7 +73,7 @@
         "path": "/tmp/test-template-render/README.md"
       },
       "outputs": {
-        "content": "# TestProject\n\nGenerated: 2025-11-01T12:37:01.152003+00:00\nShell Output: data_from_shell\n\n\n## Features\n\n- Feature 1\n\n- Feature 2\n\n- Feature 3\n",
+        "content": "# TestProject\n\nGenerated: 2025-11-01T12:58:45.983358+00:00\nShell Output: data_from_shell\n\n\n## Features\n\n- Feature 1\n\n- Feature 2\n\n- Feature 3\n",
         "path": "/private/tmp/test-template-render/README.md",
         "size_bytes": 142,
         "found": true
@@ -81,9 +81,9 @@
       "metadata": {
         "status": "completed",
         "outcome": "success",
-        "execution_time_ms": 0.1240234375,
-        "started_at": "2025-11-01T12:37:01.159094+00:00",
-        "completed_at": "2025-11-01T12:37:01.159218+00:00",
+        "execution_time_ms": 0.112060546875,
+        "started_at": "2025-11-01T12:58:45.990529+00:00",
+        "completed_at": "2025-11-01T12:58:45.990641+00:00",
         "wave": 2,
         "execution_order": 2,
         "message": null,
@@ -106,9 +106,9 @@
       "metadata": {
         "status": "completed",
         "outcome": "success",
-        "execution_time_ms": 6.083984375,
-        "started_at": "2025-11-01T12:37:01.159358+00:00",
-        "completed_at": "2025-11-01T12:37:01.165432+00:00",
+        "execution_time_ms": 6.364013671875,
+        "started_at": "2025-11-01T12:58:45.990790+00:00",
+        "completed_at": "2025-11-01T12:58:45.997146+00:00",
         "wave": 3,
         "execution_order": 3,
         "message": null,
@@ -122,10 +122,10 @@
   },
   "metadata": {
     "workflow_name": "file-operations-template-render",
-    "start_time": "2025-11-01T12:37:01.152003+00:00",
+    "start_time": "2025-11-01T12:58:45.983358+00:00",
     "total_blocks": 4,
     "execution_waves": 4,
-    "completed_at": "2025-11-01T12:37:01.165844+00:00",
-    "execution_time_seconds": 0.013847112655639648
+    "completed_at": "2025-11-01T12:58:45.997538+00:00",
+    "execution_time_seconds": 0.014188051223754883
   }
 }

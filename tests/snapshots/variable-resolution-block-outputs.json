@@ -17,9 +17,9 @@
       "metadata": {
         "status": "completed",
         "outcome": "success",
-        "execution_time_ms": 4.836181640625,
-        "started_at": "2025-11-01T12:37:04.193912+00:00",
-        "completed_at": "2025-11-01T12:37:04.198731+00:00",
+        "execution_time_ms": 4.727783203125,
+        "started_at": "2025-11-01T12:58:47.400992+00:00",
+        "completed_at": "2025-11-01T12:58:47.405701+00:00",
         "wave": 0,
         "execution_order": 0,
         "message": null,
@@ -42,9 +42,9 @@
       "metadata": {
         "status": "completed",
         "outcome": "success",
-        "execution_time_ms": 4.990966796875,
-        "started_at": "2025-11-01T12:37:04.199197+00:00",
-        "completed_at": "2025-11-01T12:37:04.204177+00:00",
+        "execution_time_ms": 4.420166015625,
+        "started_at": "2025-11-01T12:58:47.406094+00:00",
+        "completed_at": "2025-11-01T12:58:47.410501+00:00",
         "wave": 1,
         "execution_order": 1,
         "message": null,
@@ -58,10 +58,10 @@
   },
   "metadata": {
     "workflow_name": "variable-resolution-block-outputs",
-    "start_time": "2025-11-01T12:37:04.193820+00:00",
+    "start_time": "2025-11-01T12:58:47.400907+00:00",
     "total_blocks": 2,
     "execution_waves": 2,
-    "completed_at": "2025-11-01T12:37:04.204559+00:00",
-    "execution_time_seconds": 0.010746955871582031
+    "completed_at": "2025-11-01T12:58:47.410799+00:00",
+    "execution_time_seconds": 0.009895801544189453
   }
 }

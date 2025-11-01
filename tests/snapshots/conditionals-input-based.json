@@ -6,31 +6,6 @@
     "conditional_skipped": "false"
   },
   "blocks": {
-    "always_run": {
-      "inputs": {
-        "command": "echo \"always\""
-      },
-      "outputs": {
-        "exit_code": 0,
-        "stdout": "always\n",
-        "stderr": ""
-      },
-      "metadata": {
-        "status": "completed",
-        "outcome": "success",
-        "execution_time_ms": 4.808837890625,
-        "started_at": "2025-11-01T12:37:01.045488+00:00",
-        "completed_at": "2025-11-01T12:37:01.050288+00:00",
-        "wave": 0,
-        "execution_order": 0,
-        "message": null,
-        "succeeded": true,
-        "failed": false,
-        "skipped": false
-      },
-      "blocks": {},
-      "depth": 0
-    },
     "conditional_block": {
       "inputs": {
         "command": "echo \"conditional_ran\""
@@ -43,9 +18,34 @@
       "metadata": {
         "status": "completed",
         "outcome": "success",
-        "execution_time_ms": 4.404052734375,
-        "started_at": "2025-11-01T12:37:01.047615+00:00",
-        "completed_at": "2025-11-01T12:37:01.052025+00:00",
+        "execution_time_ms": 4.645751953125,
+        "started_at": "2025-11-01T12:58:45.878978+00:00",
+        "completed_at": "2025-11-01T12:58:45.883620+00:00",
+        "wave": 0,
+        "execution_order": 0,
+        "message": null,
+        "succeeded": true,
+        "failed": false,
+        "skipped": false
+      },
+      "blocks": {},
+      "depth": 0
+    },
+    "always_run": {
+      "inputs": {
+        "command": "echo \"always\""
+      },
+      "outputs": {
+        "exit_code": 0,
+        "stdout": "always\n",
+        "stderr": ""
+      },
+      "metadata": {
+        "status": "completed",
+        "outcome": "success",
+        "execution_time_ms": 3.85498046875,
+        "started_at": "2025-11-01T12:58:45.880969+00:00",
+        "completed_at": "2025-11-01T12:58:45.884831+00:00",
         "wave": 0,
         "execution_order": 0,
         "message": null,
@@ -59,10 +59,10 @@
   },
   "metadata": {
     "workflow_name": "conditionals-input-based",
-    "start_time": "2025-11-01T12:37:01.045360+00:00",
+    "start_time": "2025-11-01T12:58:45.878811+00:00",
     "total_blocks": 2,
     "execution_waves": 1,
-    "completed_at": "2025-11-01T12:37:01.052371+00:00",
-    "execution_time_seconds": 0.007014751434326172
+    "completed_at": "2025-11-01T12:58:45.885115+00:00",
+    "execution_time_seconds": 0.006308794021606445
   }
 }

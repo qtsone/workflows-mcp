@@ -19,34 +19,9 @@
       "metadata": {
         "status": "completed",
         "outcome": "success",
-        "execution_time_ms": 7.208740234375,
-        "started_at": "2025-11-01T12:37:01.097388+00:00",
-        "completed_at": "2025-11-01T12:37:01.104593+00:00",
-        "wave": 0,
-        "execution_order": 0,
-        "message": null,
-        "succeeded": true,
-        "failed": false,
-        "skipped": false
-      },
-      "blocks": {},
-      "depth": 0
-    },
-    "parallel_2": {
-      "inputs": {
-        "command": "printf \"parallel_2\""
-      },
-      "outputs": {
-        "exit_code": 0,
-        "stdout": "parallel_2",
-        "stderr": ""
-      },
-      "metadata": {
-        "status": "completed",
-        "outcome": "success",
-        "execution_time_ms": 5.330078125,
-        "started_at": "2025-11-01T12:37:01.099386+00:00",
-        "completed_at": "2025-11-01T12:37:01.104726+00:00",
+        "execution_time_ms": 6.909912109375,
+        "started_at": "2025-11-01T12:58:45.930850+00:00",
+        "completed_at": "2025-11-01T12:58:45.937754+00:00",
         "wave": 0,
         "execution_order": 0,
         "message": null,
@@ -69,9 +44,34 @@
       "metadata": {
         "status": "completed",
         "outcome": "success",
-        "execution_time_ms": 4.468017578125,
-        "started_at": "2025-11-01T12:37:01.101801+00:00",
-        "completed_at": "2025-11-01T12:37:01.106279+00:00",
+        "execution_time_ms": 4.9560546875,
+        "started_at": "2025-11-01T12:58:45.932971+00:00",
+        "completed_at": "2025-11-01T12:58:45.937934+00:00",
+        "wave": 0,
+        "execution_order": 0,
+        "message": null,
+        "succeeded": true,
+        "failed": false,
+        "skipped": false
+      },
+      "blocks": {},
+      "depth": 0
+    },
+    "parallel_2": {
+      "inputs": {
+        "command": "printf \"parallel_2\""
+      },
+      "outputs": {
+        "exit_code": 0,
+        "stdout": "parallel_2",
+        "stderr": ""
+      },
+      "metadata": {
+        "status": "completed",
+        "outcome": "success",
+        "execution_time_ms": 4.7119140625,
+        "started_at": "2025-11-01T12:58:45.934681+00:00",
+        "completed_at": "2025-11-01T12:58:45.939403+00:00",
         "wave": 0,
         "execution_order": 0,
         "message": null,
@@ -94,9 +94,9 @@
       "metadata": {
         "status": "completed",
         "outcome": "success",
-        "execution_time_ms": 4.673828125,
-        "started_at": "2025-11-01T12:37:01.106629+00:00",
-        "completed_at": "2025-11-01T12:37:01.111295+00:00",
+        "execution_time_ms": 4.28076171875,
+        "started_at": "2025-11-01T12:58:45.939766+00:00",
+        "completed_at": "2025-11-01T12:58:45.944040+00:00",
         "wave": 1,
         "execution_order": 3,
         "message": null,
@@ -119,9 +119,9 @@
       "metadata": {
         "status": "completed",
         "outcome": "success",
-        "execution_time_ms": 4.21826171875,
-        "started_at": "2025-11-01T12:37:01.111660+00:00",
-        "completed_at": "2025-11-01T12:37:01.115869+00:00",
+        "execution_time_ms": 4.1337890625,
+        "started_at": "2025-11-01T12:58:45.944389+00:00",
+        "completed_at": "2025-11-01T12:58:45.948514+00:00",
         "wave": 2,
         "execution_order": 4,
         "message": null,
@@ -135,10 +135,10 @@
   },
   "metadata": {
     "workflow_name": "dag-execution-parallel",
-    "start_time": "2025-11-01T12:37:01.097281+00:00",
+    "start_time": "2025-11-01T12:58:45.930746+00:00",
     "total_blocks": 5,
     "execution_waves": 3,
-    "completed_at": "2025-11-01T12:37:01.116291+00:00",
-    "execution_time_seconds": 0.01901388168334961
+    "completed_at": "2025-11-01T12:58:45.948974+00:00",
+    "execution_time_seconds": 0.018231868743896484
   }
 }

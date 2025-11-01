@@ -16,7 +16,7 @@
       },
       "outputs": {
         "status_code": 200,
-        "response_body": "{\n  \"args\": {}, \n  \"headers\": {\n    \"Accept\": \"*/*\", \n    \"Accept-Encoding\": \"gzip, deflate\", \n    \"Host\": \"httpbin.org\", \n    \"User-Agent\": \"python-httpx/0.28.1\", \n    \"X-Amzn-Trace-Id\": \"Root=1-6905feed-1e4722fd1826c01a37950ee5\"\n  }, \n  \"origin\": \"212.86.54.81\", \n  \"url\": \"https://httpbin.org/get\"\n}\n",
+        "response_body": "{\n  \"args\": {}, \n  \"headers\": {\n    \"Accept\": \"*/*\", \n    \"Accept-Encoding\": \"gzip, deflate\", \n    \"Host\": \"httpbin.org\", \n    \"User-Agent\": \"python-httpx/0.28.1\", \n    \"X-Amzn-Trace-Id\": \"Root=1-69060406-145a39656747889e6ee18c6e\"\n  }, \n  \"origin\": \"212.86.54.81\", \n  \"url\": \"https://httpbin.org/get\"\n}\n",
         "response_json": {
           "args": {},
           "headers": {
@@ -24,13 +24,13 @@
             "Accept-Encoding": "gzip, deflate",
             "Host": "httpbin.org",
             "User-Agent": "python-httpx/0.28.1",
-            "X-Amzn-Trace-Id": "Root=1-6905feed-1e4722fd1826c01a37950ee5"
+            "X-Amzn-Trace-Id": "Root=1-69060406-145a39656747889e6ee18c6e"
           },
           "origin": "212.86.54.81",
           "url": "https://httpbin.org/get"
         },
         "headers": {
-          "date": "Sat, 01 Nov 2025 12:37:03 GMT",
+          "date": "Sat, 01 Nov 2025 12:58:46 GMT",
           "content-type": "application/json",
           "content-length": "303",
           "connection": "keep-alive",
@@ -43,9 +43,9 @@
       "metadata": {
         "status": "completed",
         "outcome": "success",
-        "execution_time_ms": 2154.261962890625,
-        "started_at": "2025-11-01T12:37:01.169160+00:00",
-        "completed_at": "2025-11-01T12:37:03.323416+00:00",
+        "execution_time_ms": 824.794189453125,
+        "started_at": "2025-11-01T12:58:46.000534+00:00",
+        "completed_at": "2025-11-01T12:58:46.825324+00:00",
         "wave": 0,
         "execution_order": 0,
         "message": null,
@@ -72,7 +72,7 @@
       },
       "outputs": {
         "status_code": 200,
-        "response_body": "{\n  \"args\": {}, \n  \"data\": \"{\\\"test_key\\\":\\\"test_value\\\",\\\"number\\\":42}\", \n  \"files\": {}, \n  \"form\": {}, \n  \"headers\": {\n    \"Accept\": \"*/*\", \n    \"Accept-Encoding\": \"gzip, deflate\", \n    \"Content-Length\": \"37\", \n    \"Content-Type\": \"application/json\", \n    \"Host\": \"httpbin.org\", \n    \"User-Agent\": \"workflows-mcp-test\", \n    \"X-Amzn-Trace-Id\": \"Root=1-6905feef-1021be962dddb7786b26a238\"\n  }, \n  \"json\": {\n    \"number\": 42, \n    \"test_key\": \"test_value\"\n  }, \n  \"origin\": \"212.86.54.81\", \n  \"url\": \"https://httpbin.org/post\"\n}\n",
+        "response_body": "{\n  \"args\": {}, \n  \"data\": \"{\\\"test_key\\\":\\\"test_value\\\",\\\"number\\\":42}\", \n  \"files\": {}, \n  \"form\": {}, \n  \"headers\": {\n    \"Accept\": \"*/*\", \n    \"Accept-Encoding\": \"gzip, deflate\", \n    \"Content-Length\": \"37\", \n    \"Content-Type\": \"application/json\", \n    \"Host\": \"httpbin.org\", \n    \"User-Agent\": \"workflows-mcp-test\", \n    \"X-Amzn-Trace-Id\": \"Root=1-69060407-0d3ac8ee6cd1da281f18bb84\"\n  }, \n  \"json\": {\n    \"number\": 42, \n    \"test_key\": \"test_value\"\n  }, \n  \"origin\": \"212.86.54.81\", \n  \"url\": \"https://httpbin.org/post\"\n}\n",
         "response_json": {
           "args": {},
           "data": "{\"test_key\":\"test_value\",\"number\":42}",
@@ -85,7 +85,7 @@
             "Content-Type": "application/json",
             "Host": "httpbin.org",
             "User-Agent": "workflows-mcp-test",
-            "X-Amzn-Trace-Id": "Root=1-6905feef-1021be962dddb7786b26a238"
+            "X-Amzn-Trace-Id": "Root=1-69060407-0d3ac8ee6cd1da281f18bb84"
           },
           "json": {
             "number": 42,
@@ -95,7 +95,7 @@
           "url": "https://httpbin.org/post"
         },
         "headers": {
-          "date": "Sat, 01 Nov 2025 12:37:03 GMT",
+          "date": "Sat, 01 Nov 2025 12:58:47 GMT",
           "content-type": "application/json",
           "content-length": "528",
           "connection": "keep-alive",
@@ -108,9 +108,9 @@
       "metadata": {
         "status": "completed",
         "outcome": "success",
-        "execution_time_ms": 783.534912109375,
-        "started_at": "2025-11-01T12:37:03.323772+00:00",
-        "completed_at": "2025-11-01T12:37:04.107304+00:00",
+        "execution_time_ms": 492.71923828125,
+        "started_at": "2025-11-01T12:58:46.825567+00:00",
+        "completed_at": "2025-11-01T12:58:47.318281+00:00",
         "wave": 1,
         "execution_order": 1,
         "message": null,
@@ -123,7 +123,7 @@
     },
     "verify_json_response": {
       "inputs": {
-        "command": "# Verify response_json was parsed\nif [ \"{'args': {}, 'data': '{\"test_key\":\"test_value\",\"number\":42}', 'files': {}, 'form': {}, 'headers': {'Accept': '*/*', 'Accept-Encoding': 'gzip, deflate', 'Content-Length': '37', 'Content-Type': 'application/json', 'Host': 'httpbin.org', 'User-Agent': 'workflows-mcp-test', 'X-Amzn-Trace-Id': 'Root=1-6905feef-1021be962dddb7786b26a238'}, 'json': {'number': 42, 'test_key': 'test_value'}, 'origin': '212.86.54.81', 'url': 'https://httpbin.org/post'}\" != \"None\" ]; then\n  echo \"JSON parsed successfully\"\nelse\n  echo \"JSON parsing failed\"\n  exit 1\nfi\n"
+        "command": "# Verify response_json was parsed\nif [ \"{'args': {}, 'data': '{\"test_key\":\"test_value\",\"number\":42}', 'files': {}, 'form': {}, 'headers': {'Accept': '*/*', 'Accept-Encoding': 'gzip, deflate', 'Content-Length': '37', 'Content-Type': 'application/json', 'Host': 'httpbin.org', 'User-Agent': 'workflows-mcp-test', 'X-Amzn-Trace-Id': 'Root=1-69060407-0d3ac8ee6cd1da281f18bb84'}, 'json': {'number': 42, 'test_key': 'test_value'}, 'origin': '212.86.54.81', 'url': 'https://httpbin.org/post'}\" != \"None\" ]; then\n  echo \"JSON parsed successfully\"\nelse\n  echo \"JSON parsing failed\"\n  exit 1\nfi\n"
       },
       "outputs": {
         "exit_code": 0,
@@ -133,9 +133,9 @@
       "metadata": {
         "status": "completed",
         "outcome": "success",
-        "execution_time_ms": 5.4638671875,
-        "started_at": "2025-11-01T12:37:04.107580+00:00",
-        "completed_at": "2025-11-01T12:37:04.113027+00:00",
+        "execution_time_ms": 5.39501953125,
+        "started_at": "2025-11-01T12:58:47.318541+00:00",
+        "completed_at": "2025-11-01T12:58:47.323916+00:00",
         "wave": 2,
         "execution_order": 2,
         "message": null,
@@ -149,10 +149,10 @@
   },
   "metadata": {
     "workflow_name": "http-basic-get",
-    "start_time": "2025-11-01T12:37:01.169052+00:00",
+    "start_time": "2025-11-01T12:58:46.000415+00:00",
     "total_blocks": 3,
     "execution_waves": 3,
-    "completed_at": "2025-11-01T12:37:04.113435+00:00",
-    "execution_time_seconds": 2.944387674331665
+    "completed_at": "2025-11-01T12:58:47.324363+00:00",
+    "execution_time_seconds": 1.3239541053771973
   }
 }

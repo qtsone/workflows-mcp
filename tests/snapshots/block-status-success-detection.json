@@ -17,9 +17,9 @@
       "metadata": {
         "status": "completed",
         "outcome": "success",
-        "execution_time_ms": 5.117919921875,
-        "started_at": "2025-11-01T12:37:00.908030+00:00",
-        "completed_at": "2025-11-01T12:37:00.913139+00:00",
+        "execution_time_ms": 4.8310546875,
+        "started_at": "2025-11-01T12:58:45.746282+00:00",
+        "completed_at": "2025-11-01T12:58:45.751105+00:00",
         "wave": 0,
         "execution_order": 0,
         "message": null,
@@ -42,9 +42,9 @@
       "metadata": {
         "status": "completed",
         "outcome": "success",
-        "execution_time_ms": 4.5087890625,
-        "started_at": "2025-11-01T12:37:00.913628+00:00",
-        "completed_at": "2025-11-01T12:37:00.918131+00:00",
+        "execution_time_ms": 4.376953125,
+        "started_at": "2025-11-01T12:58:45.751561+00:00",
+        "completed_at": "2025-11-01T12:58:45.755932+00:00",
         "wave": 1,
         "execution_order": 1,
         "message": null,
@@ -58,10 +58,10 @@
   },
   "metadata": {
     "workflow_name": "block-status-success-detection",
-    "start_time": "2025-11-01T12:37:00.907886+00:00",
+    "start_time": "2025-11-01T12:58:45.746176+00:00",
     "total_blocks": 2,
     "execution_waves": 2,
-    "completed_at": "2025-11-01T12:37:00.918458+00:00",
-    "execution_time_seconds": 0.01058197021484375
+    "completed_at": "2025-11-01T12:58:45.756235+00:00",
+    "execution_time_seconds": 0.010062932968139648
   }
 }
