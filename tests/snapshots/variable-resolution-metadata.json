@@ -2,7 +2,7 @@
   "status": "success",
   "outputs": {
     "workflow_name": "variable-resolution-metadata\n",
-    "start_time": "2025-10-27T15:29:35.507585+00:00\n"
+    "start_time": "2025-11-01T12:37:04.219707+00:00\n"
   },
   "blocks": {
     "use_workflow_name": {
@@ -17,9 +17,9 @@
       "metadata": {
         "status": "completed",
         "outcome": "success",
-        "execution_time_ms": 5.35205078125,
-        "started_at": "2025-10-27T15:29:35.507701+00:00",
-        "completed_at": "2025-10-27T15:29:35.513043+00:00",
+        "execution_time_ms": 7.02001953125,
+        "started_at": "2025-11-01T12:37:04.219823+00:00",
+        "completed_at": "2025-11-01T12:37:04.226828+00:00",
         "wave": 0,
         "execution_order": 0,
         "message": null,
@@ -32,19 +32,19 @@
     },
     "use_start_time": {
       "inputs": {
-        "command": "echo \"2025-10-27T15:29:35.507585+00:00\""
+        "command": "echo \"2025-11-01T12:37:04.219707+00:00\""
       },
       "outputs": {
         "exit_code": 0,
-        "stdout": "2025-10-27T15:29:35.507585+00:00\n",
+        "stdout": "2025-11-01T12:37:04.219707+00:00\n",
         "stderr": ""
       },
       "metadata": {
         "status": "completed",
         "outcome": "success",
-        "execution_time_ms": 5.252685546875,
-        "started_at": "2025-10-27T15:29:35.510325+00:00",
-        "completed_at": "2025-10-27T15:29:35.515584+00:00",
+        "execution_time_ms": 6.026123046875,
+        "started_at": "2025-11-01T12:37:04.222988+00:00",
+        "completed_at": "2025-11-01T12:37:04.229025+00:00",
         "wave": 0,
         "execution_order": 0,
         "message": null,
@@ -58,10 +58,10 @@
   },
   "metadata": {
     "workflow_name": "variable-resolution-metadata",
-    "start_time": "2025-10-27T15:29:35.507585+00:00",
+    "start_time": "2025-11-01T12:37:04.219707+00:00",
     "total_blocks": 2,
     "execution_waves": 1,
-    "completed_at": "2025-10-27T15:29:35.515981+00:00",
-    "execution_time_seconds": 0.008400917053222656
+    "completed_at": "2025-11-01T12:37:04.229440+00:00",
+    "execution_time_seconds": 0.009740114212036133
   }
 }

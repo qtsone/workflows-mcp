@@ -23,9 +23,9 @@
       "metadata": {
         "status": "completed",
         "outcome": "success",
-        "execution_time_ms": 0.35693359375,
-        "started_at": "2025-10-27T15:29:35.340796+00:00",
-        "completed_at": "2025-10-27T15:29:35.341154+00:00",
+        "execution_time_ms": 0.333740234375,
+        "started_at": "2025-11-01T12:37:01.119494+00:00",
+        "completed_at": "2025-11-01T12:37:01.119827+00:00",
         "wave": 0,
         "execution_order": 0,
         "message": null,
@@ -51,9 +51,9 @@
       "metadata": {
         "status": "completed",
         "outcome": "success",
-        "execution_time_ms": 0.209716796875,
-        "started_at": "2025-10-27T15:29:35.341219+00:00",
-        "completed_at": "2025-10-27T15:29:35.341429+00:00",
+        "execution_time_ms": 0.215087890625,
+        "started_at": "2025-11-01T12:37:01.119888+00:00",
+        "completed_at": "2025-11-01T12:37:01.120103+00:00",
         "wave": 0,
         "execution_order": 0,
         "message": null,
@@ -76,9 +76,9 @@
       "metadata": {
         "status": "completed",
         "outcome": "success",
-        "execution_time_ms": 5.577880859375,
-        "started_at": "2025-10-27T15:29:35.341626+00:00",
-        "completed_at": "2025-10-27T15:29:35.347192+00:00",
+        "execution_time_ms": 4.56005859375,
+        "started_at": "2025-11-01T12:37:01.120286+00:00",
+        "completed_at": "2025-11-01T12:37:01.124838+00:00",
         "wave": 1,
         "execution_order": 2,
         "message": null,
@@ -101,9 +101,9 @@
       "metadata": {
         "status": "completed",
         "outcome": "success",
-        "execution_time_ms": 7.22900390625,
-        "started_at": "2025-10-27T15:29:35.347638+00:00",
-        "completed_at": "2025-10-27T15:29:35.354856+00:00",
+        "execution_time_ms": 5.72802734375,
+        "started_at": "2025-11-01T12:37:01.125238+00:00",
+        "completed_at": "2025-11-01T12:37:01.130961+00:00",
         "wave": 2,
         "execution_order": 3,
         "message": null,
@@ -117,10 +117,10 @@
   },
   "metadata": {
     "workflow_name": "file-operations-create",
-    "start_time": "2025-10-27T15:29:35.340678+00:00",
+    "start_time": "2025-11-01T12:37:01.119377+00:00",
     "total_blocks": 4,
     "execution_waves": 3,
-    "completed_at": "2025-10-27T15:29:35.355321+00:00",
-    "execution_time_seconds": 0.014648675918579102
+    "completed_at": "2025-11-01T12:37:01.131319+00:00",
+    "execution_time_seconds": 0.011947154998779297
   }
 }

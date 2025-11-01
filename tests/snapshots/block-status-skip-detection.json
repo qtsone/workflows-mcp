@@ -16,8 +16,8 @@
         "status": "skipped",
         "outcome": "n/a",
         "execution_time_ms": 0.0,
-        "started_at": "2025-10-27T15:29:35.082495+00:00",
-        "completed_at": "2025-10-27T15:29:35.082495+00:00",
+        "started_at": "2025-11-01T12:37:00.899783+00:00",
+        "completed_at": "2025-11-01T12:37:00.899783+00:00",
         "wave": 0,
         "execution_order": 0,
         "message": "Condition 'not {{inputs.should_skip}}' evaluated to False",
@@ -40,9 +40,9 @@
       "metadata": {
         "status": "completed",
         "outcome": "success",
-        "execution_time_ms": 5.076904296875,
-        "started_at": "2025-10-27T15:29:35.082671+00:00",
-        "completed_at": "2025-10-27T15:29:35.087739+00:00",
+        "execution_time_ms": 4.719970703125,
+        "started_at": "2025-11-01T12:37:00.900021+00:00",
+        "completed_at": "2025-11-01T12:37:00.904738+00:00",
         "wave": 1,
         "execution_order": 0,
         "message": null,
@@ -56,10 +56,10 @@
   },
   "metadata": {
     "workflow_name": "block-status-skip-detection",
-    "start_time": "2025-10-27T15:29:35.082380+00:00",
+    "start_time": "2025-11-01T12:37:00.899669+00:00",
     "total_blocks": 1,
     "execution_waves": 2,
-    "completed_at": "2025-10-27T15:29:35.088190+00:00",
-    "execution_time_seconds": 0.00582122802734375
+    "completed_at": "2025-11-01T12:37:00.905098+00:00",
+    "execution_time_seconds": 0.0054361820220947266
   }
 }

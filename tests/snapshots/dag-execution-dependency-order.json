@@ -19,9 +19,9 @@
       "metadata": {
         "status": "completed",
         "outcome": "success",
-        "execution_time_ms": 6.010009765625,
-        "started_at": "2025-10-27T15:29:35.264724+00:00",
-        "completed_at": "2025-10-27T15:29:35.270724+00:00",
+        "execution_time_ms": 5.032958984375,
+        "started_at": "2025-11-01T12:37:01.055022+00:00",
+        "completed_at": "2025-11-01T12:37:01.060048+00:00",
         "wave": 0,
         "execution_order": 0,
         "message": null,
@@ -44,9 +44,9 @@
       "metadata": {
         "status": "completed",
         "outcome": "success",
-        "execution_time_ms": 5.469970703125,
-        "started_at": "2025-10-27T15:29:35.271269+00:00",
-        "completed_at": "2025-10-27T15:29:35.276727+00:00",
+        "execution_time_ms": 4.27587890625,
+        "started_at": "2025-11-01T12:37:01.060422+00:00",
+        "completed_at": "2025-11-01T12:37:01.064690+00:00",
         "wave": 1,
         "execution_order": 1,
         "message": null,
@@ -69,9 +69,9 @@
       "metadata": {
         "status": "completed",
         "outcome": "success",
-        "execution_time_ms": 4.738037109375,
-        "started_at": "2025-10-27T15:29:35.277290+00:00",
-        "completed_at": "2025-10-27T15:29:35.282020+00:00",
+        "execution_time_ms": 3.99072265625,
+        "started_at": "2025-11-01T12:37:01.065033+00:00",
+        "completed_at": "2025-11-01T12:37:01.069015+00:00",
         "wave": 2,
         "execution_order": 2,
         "message": null,
@@ -94,9 +94,9 @@
       "metadata": {
         "status": "completed",
         "outcome": "success",
-        "execution_time_ms": 5.68408203125,
-        "started_at": "2025-10-27T15:29:35.282510+00:00",
-        "completed_at": "2025-10-27T15:29:35.288183+00:00",
+        "execution_time_ms": 4.81494140625,
+        "started_at": "2025-11-01T12:37:01.069404+00:00",
+        "completed_at": "2025-11-01T12:37:01.074204+00:00",
         "wave": 3,
         "execution_order": 3,
         "message": null,
@@ -110,10 +110,10 @@
   },
   "metadata": {
     "workflow_name": "dag-execution-dependency-order",
-    "start_time": "2025-10-27T15:29:35.264601+00:00",
+    "start_time": "2025-11-01T12:37:01.054931+00:00",
     "total_blocks": 4,
     "execution_waves": 4,
-    "completed_at": "2025-10-27T15:29:35.288613+00:00",
-    "execution_time_seconds": 0.024016857147216797
+    "completed_at": "2025-11-01T12:37:01.074640+00:00",
+    "execution_time_seconds": 0.019713878631591797
   }
 }

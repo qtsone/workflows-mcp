@@ -5,7 +5,7 @@
     "workflow_name": "integration-end-to-end",
     "data1": "data1",
     "data2": "data2",
-    "report_content": "# TestProject\n\nWorkflow: integration-end-to-end\nTimestamp: 2025-10-27T15:29:35.398771+00:00\n\n## Data Streams\n- Stream 1: data1\n- Stream 2: data2\n\n## Status\nPhase: report_generation",
+    "report_content": "# TestProject\n\nWorkflow: integration-end-to-end\nTimestamp: 2025-11-01T12:37:04.116818+00:00\n\n## Data Streams\n- Stream 1: data1\n- Stream 2: data2\n\n## Status\nPhase: report_generation",
     "final_phase": "complete",
     "validation_passed": "true",
     "all_blocks_succeeded": true
@@ -28,9 +28,9 @@
       "metadata": {
         "status": "completed",
         "outcome": "success",
-        "execution_time_ms": 0.406005859375,
-        "started_at": "2025-10-27T15:29:35.398918+00:00",
-        "completed_at": "2025-10-27T15:29:35.399324+00:00",
+        "execution_time_ms": 2.273193359375,
+        "started_at": "2025-11-01T12:37:04.116959+00:00",
+        "completed_at": "2025-11-01T12:37:04.119230+00:00",
         "wave": 0,
         "execution_order": 0,
         "message": null,
@@ -53,9 +53,9 @@
       "metadata": {
         "status": "completed",
         "outcome": "success",
-        "execution_time_ms": 5.63720703125,
-        "started_at": "2025-10-27T15:29:35.399534+00:00",
-        "completed_at": "2025-10-27T15:29:35.405165+00:00",
+        "execution_time_ms": 5.385009765625,
+        "started_at": "2025-11-01T12:37:04.119468+00:00",
+        "completed_at": "2025-11-01T12:37:04.124836+00:00",
         "wave": 1,
         "execution_order": 1,
         "message": null,
@@ -78,9 +78,9 @@
       "metadata": {
         "status": "completed",
         "outcome": "success",
-        "execution_time_ms": 5.268798828125,
-        "started_at": "2025-10-27T15:29:35.402151+00:00",
-        "completed_at": "2025-10-27T15:29:35.407425+00:00",
+        "execution_time_ms": 4.93994140625,
+        "started_at": "2025-11-01T12:37:04.121962+00:00",
+        "completed_at": "2025-11-01T12:37:04.126916+00:00",
         "wave": 1,
         "execution_order": 1,
         "message": null,
@@ -114,9 +114,9 @@
       "metadata": {
         "status": "completed",
         "outcome": "success",
-        "execution_time_ms": 0.43798828125,
-        "started_at": "2025-10-27T15:29:35.407881+00:00",
-        "completed_at": "2025-10-27T15:29:35.408318+00:00",
+        "execution_time_ms": 0.609130859375,
+        "started_at": "2025-11-01T12:37:04.127353+00:00",
+        "completed_at": "2025-11-01T12:37:04.127962+00:00",
         "wave": 2,
         "execution_order": 3,
         "message": null,
@@ -133,7 +133,7 @@
         "variables": {
           "project": "TestProject",
           "workflow": "integration-end-to-end",
-          "timestamp": "2025-10-27T15:29:35.398771+00:00",
+          "timestamp": "2025-11-01T12:37:04.116818+00:00",
           "data1": "data1",
           "data2": "data2",
           "phase": "report_generation"
@@ -141,16 +141,16 @@
         "output_path": "/tmp/integration-test/report.md"
       },
       "outputs": {
-        "content": "# TestProject\n\nWorkflow: integration-end-to-end\nTimestamp: 2025-10-27T15:29:35.398771+00:00\n\n## Data Streams\n- Stream 1: data1\n- Stream 2: data2\n\n## Status\nPhase: report_generation",
+        "content": "# TestProject\n\nWorkflow: integration-end-to-end\nTimestamp: 2025-11-01T12:37:04.116818+00:00\n\n## Data Streams\n- Stream 1: data1\n- Stream 2: data2\n\n## Status\nPhase: report_generation",
         "output_path": "/private/tmp/integration-test/report.md",
         "size_bytes": 180
       },
       "metadata": {
         "status": "completed",
         "outcome": "success",
-        "execution_time_ms": 1.178955078125,
-        "started_at": "2025-10-27T15:29:35.408551+00:00",
-        "completed_at": "2025-10-27T15:29:35.409727+00:00",
+        "execution_time_ms": 1.0830078125,
+        "started_at": "2025-11-01T12:37:04.128229+00:00",
+        "completed_at": "2025-11-01T12:37:04.129311+00:00",
         "wave": 3,
         "execution_order": 4,
         "message": null,
@@ -172,8 +172,8 @@
         "status": "skipped",
         "outcome": "n/a",
         "execution_time_ms": 0.0,
-        "started_at": "2025-10-27T15:29:35.410155+00:00",
-        "completed_at": "2025-10-27T15:29:35.410155+00:00",
+        "started_at": "2025-11-01T12:37:04.129602+00:00",
+        "completed_at": "2025-11-01T12:37:04.129602+00:00",
         "wave": 4,
         "execution_order": 5,
         "message": "Condition '{{blocks.gen_data1.failed}} or {{blocks.gen_data2.failed}} or {{blocks.render_report.failed}}\n' evaluated to False",
@@ -196,9 +196,9 @@
       "metadata": {
         "status": "completed",
         "outcome": "success",
-        "execution_time_ms": 5.4560546875,
-        "started_at": "2025-10-27T15:29:35.410280+00:00",
-        "completed_at": "2025-10-27T15:29:35.415723+00:00",
+        "execution_time_ms": 5.207763671875,
+        "started_at": "2025-11-01T12:37:04.129710+00:00",
+        "completed_at": "2025-11-01T12:37:04.134903+00:00",
         "wave": 4,
         "execution_order": 5,
         "message": null,
@@ -232,9 +232,9 @@
       "metadata": {
         "status": "completed",
         "outcome": "success",
-        "execution_time_ms": 0.618896484375,
-        "started_at": "2025-10-27T15:29:35.416220+00:00",
-        "completed_at": "2025-10-27T15:29:35.416838+00:00",
+        "execution_time_ms": 0.4189453125,
+        "started_at": "2025-11-01T12:37:04.135371+00:00",
+        "completed_at": "2025-11-01T12:37:04.135789+00:00",
         "wave": 5,
         "execution_order": 6,
         "message": null,
@@ -264,9 +264,9 @@
       "metadata": {
         "status": "completed",
         "outcome": "success",
-        "execution_time_ms": 0.098876953125,
-        "started_at": "2025-10-27T15:29:35.417051+00:00",
-        "completed_at": "2025-10-27T15:29:35.417150+00:00",
+        "execution_time_ms": 0.10107421875,
+        "started_at": "2025-11-01T12:37:04.135997+00:00",
+        "completed_at": "2025-11-01T12:37:04.136099+00:00",
         "wave": 6,
         "execution_order": 7,
         "message": null,
@@ -282,7 +282,7 @@
         "path": "/tmp/integration-test/report.md"
       },
       "outputs": {
-        "content": "# TestProject\n\nWorkflow: integration-end-to-end\nTimestamp: 2025-10-27T15:29:35.398771+00:00\n\n## Data Streams\n- Stream 1: data1\n- Stream 2: data2\n\n## Status\nPhase: report_generation",
+        "content": "# TestProject\n\nWorkflow: integration-end-to-end\nTimestamp: 2025-11-01T12:37:04.116818+00:00\n\n## Data Streams\n- Stream 1: data1\n- Stream 2: data2\n\n## Status\nPhase: report_generation",
         "path": "/private/tmp/integration-test/report.md",
         "size_bytes": 180,
         "found": true
@@ -290,9 +290,9 @@
       "metadata": {
         "status": "completed",
         "outcome": "success",
-        "execution_time_ms": 0.0888671875,
-        "started_at": "2025-10-27T15:29:35.417226+00:00",
-        "completed_at": "2025-10-27T15:29:35.417315+00:00",
+        "execution_time_ms": 0.100830078125,
+        "started_at": "2025-11-01T12:37:04.136175+00:00",
+        "completed_at": "2025-11-01T12:37:04.136276+00:00",
         "wave": 6,
         "execution_order": 7,
         "message": null,
@@ -315,9 +315,9 @@
       "metadata": {
         "status": "completed",
         "outcome": "success",
-        "execution_time_ms": 7.680908203125,
-        "started_at": "2025-10-27T15:29:35.417518+00:00",
-        "completed_at": "2025-10-27T15:29:35.425187+00:00",
+        "execution_time_ms": 7.282958984375,
+        "started_at": "2025-11-01T12:37:04.136469+00:00",
+        "completed_at": "2025-11-01T12:37:04.143731+00:00",
         "wave": 7,
         "execution_order": 9,
         "message": null,
@@ -331,10 +331,10 @@
   },
   "metadata": {
     "workflow_name": "integration-end-to-end",
-    "start_time": "2025-10-27T15:29:35.398771+00:00",
+    "start_time": "2025-11-01T12:37:04.116818+00:00",
     "total_blocks": 10,
     "execution_waves": 8,
-    "completed_at": "2025-10-27T15:29:35.425979+00:00",
-    "execution_time_seconds": 0.02721691131591797
+    "completed_at": "2025-11-01T12:37:04.144357+00:00",
+    "execution_time_seconds": 0.02754998207092285
   }
 }

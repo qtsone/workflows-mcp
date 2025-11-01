@@ -19,9 +19,9 @@
       "metadata": {
         "status": "completed",
         "outcome": "success",
-        "execution_time_ms": 7.580810546875,
-        "started_at": "2025-10-27T15:29:35.316662+00:00",
-        "completed_at": "2025-10-27T15:29:35.324232+00:00",
+        "execution_time_ms": 7.208740234375,
+        "started_at": "2025-11-01T12:37:01.097388+00:00",
+        "completed_at": "2025-11-01T12:37:01.104593+00:00",
         "wave": 0,
         "execution_order": 0,
         "message": null,
@@ -44,9 +44,9 @@
       "metadata": {
         "status": "completed",
         "outcome": "success",
-        "execution_time_ms": 5.15087890625,
-        "started_at": "2025-10-27T15:29:35.319193+00:00",
-        "completed_at": "2025-10-27T15:29:35.324354+00:00",
+        "execution_time_ms": 5.330078125,
+        "started_at": "2025-11-01T12:37:01.099386+00:00",
+        "completed_at": "2025-11-01T12:37:01.104726+00:00",
         "wave": 0,
         "execution_order": 0,
         "message": null,
@@ -69,9 +69,9 @@
       "metadata": {
         "status": "completed",
         "outcome": "success",
-        "execution_time_ms": 5.1259765625,
-        "started_at": "2025-10-27T15:29:35.321376+00:00",
-        "completed_at": "2025-10-27T15:29:35.326511+00:00",
+        "execution_time_ms": 4.468017578125,
+        "started_at": "2025-11-01T12:37:01.101801+00:00",
+        "completed_at": "2025-11-01T12:37:01.106279+00:00",
         "wave": 0,
         "execution_order": 0,
         "message": null,
@@ -94,9 +94,9 @@
       "metadata": {
         "status": "completed",
         "outcome": "success",
-        "execution_time_ms": 5.1201171875,
-        "started_at": "2025-10-27T15:29:35.327018+00:00",
-        "completed_at": "2025-10-27T15:29:35.332130+00:00",
+        "execution_time_ms": 4.673828125,
+        "started_at": "2025-11-01T12:37:01.106629+00:00",
+        "completed_at": "2025-11-01T12:37:01.111295+00:00",
         "wave": 1,
         "execution_order": 3,
         "message": null,
@@ -119,9 +119,9 @@
       "metadata": {
         "status": "completed",
         "outcome": "success",
-        "execution_time_ms": 4.454833984375,
-        "started_at": "2025-10-27T15:29:35.332556+00:00",
-        "completed_at": "2025-10-27T15:29:35.337006+00:00",
+        "execution_time_ms": 4.21826171875,
+        "started_at": "2025-11-01T12:37:01.111660+00:00",
+        "completed_at": "2025-11-01T12:37:01.115869+00:00",
         "wave": 2,
         "execution_order": 4,
         "message": null,
@@ -135,10 +135,10 @@
   },
   "metadata": {
     "workflow_name": "dag-execution-parallel",
-    "start_time": "2025-10-27T15:29:35.316549+00:00",
+    "start_time": "2025-11-01T12:37:01.097281+00:00",
     "total_blocks": 5,
     "execution_waves": 3,
-    "completed_at": "2025-10-27T15:29:35.337530+00:00",
-    "execution_time_seconds": 0.020987987518310547
+    "completed_at": "2025-11-01T12:37:01.116291+00:00",
+    "execution_time_seconds": 0.01901388168334961
   }
 }

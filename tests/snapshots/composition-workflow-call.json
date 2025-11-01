@@ -22,9 +22,9 @@
       "metadata": {
         "status": "completed",
         "outcome": "success",
-        "execution_time_ms": 6.955810546875,
-        "started_at": "2025-10-27T15:29:35.199992+00:00",
-        "completed_at": "2025-10-27T15:29:35.206950+00:00",
+        "execution_time_ms": 5.724853515625,
+        "started_at": "2025-11-01T12:37:00.998704+00:00",
+        "completed_at": "2025-11-01T12:37:01.004432+00:00",
         "wave": 0,
         "execution_order": 0,
         "message": null,
@@ -46,9 +46,9 @@
           "metadata": {
             "status": "completed",
             "outcome": "success",
-            "execution_time_ms": 6.419921875,
-            "started_at": "2025-10-27T15:29:35.200132+00:00",
-            "completed_at": "2025-10-27T15:29:35.206544+00:00",
+            "execution_time_ms": 5.250244140625,
+            "started_at": "2025-11-01T12:37:00.998828+00:00",
+            "completed_at": "2025-11-01T12:37:01.004071+00:00",
             "wave": 0,
             "execution_order": 0,
             "message": null,
@@ -74,9 +74,9 @@
       "metadata": {
         "status": "completed",
         "outcome": "success",
-        "execution_time_ms": 5.6630859375,
-        "started_at": "2025-10-27T15:29:35.207150+00:00",
-        "completed_at": "2025-10-27T15:29:35.212803+00:00",
+        "execution_time_ms": 4.419921875,
+        "started_at": "2025-11-01T12:37:01.004618+00:00",
+        "completed_at": "2025-11-01T12:37:01.009030+00:00",
         "wave": 1,
         "execution_order": 1,
         "message": null,
@@ -90,10 +90,10 @@
   },
   "metadata": {
     "workflow_name": "composition-workflow-call",
-    "start_time": "2025-10-27T15:29:35.199865+00:00",
+    "start_time": "2025-11-01T12:37:00.998590+00:00",
     "total_blocks": 2,
     "execution_waves": 2,
-    "completed_at": "2025-10-27T15:29:35.213235+00:00",
-    "execution_time_seconds": 0.013376951217651367
+    "completed_at": "2025-11-01T12:37:01.009375+00:00",
+    "execution_time_seconds": 0.010790109634399414
   }
 }

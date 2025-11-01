@@ -77,6 +77,7 @@
               "CreateFile",
               "ReadFile",
               "RenderTemplate",
+              "HttpCall",
               "Prompt",
               "ReadJSONState",
               "WriteJSONState",
@@ -422,6 +423,96 @@
                     "template"
                   ],
                   "title": "RenderTemplateInput",
+                  "type": "object"
+                }
+              }
+            }
+          },
+          {
+            "if": {
+              "properties": {
+                "type": {
+                  "const": "HttpCall"
+                }
+              }
+            },
+            "then": {
+              "properties": {
+                "inputs": {
+                  "additionalProperties": false,
+                  "description": "Inputs for HttpCall block",
+                  "properties": {
+                    "url": {
+                      "description": "Request URL (supports ${ENV_VAR} substitution)",
+                      "title": "Url",
+                      "type": "string"
+                    },
+                    "method": {
+                      "default": "POST",
+                      "description": "HTTP method (GET, POST, PUT, DELETE, PATCH, etc.)",
+                      "title": "Method",
+                      "type": "string"
+                    },
+                    "headers": {
+                      "additionalProperties": {
+                        "type": "string"
+                      },
+                      "description": "HTTP headers (supports ${ENV_VAR} substitution in values)",
+                      "title": "Headers",
+                      "type": "object"
+                    },
+                    "body_json": {
+                      "anyOf": [
+                        {
+                          "additionalProperties": true,
+                          "type": "object"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ],
+                      "default": null,
+                      "description": "JSON request body (mutually exclusive with body_text)",
+                      "title": "Body Json"
+                    },
+                    "body_text": {
+                      "anyOf": [
+                        {
+                          "type": "string"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ],
+                      "default": null,
+                      "description": "Text request body (mutually exclusive with body_json)",
+                      "title": "Body Text"
+                    },
+                    "timeout": {
+                      "default": 30,
+                      "description": "Request timeout in seconds",
+                      "maximum": 300,
+                      "minimum": 1,
+                      "title": "Timeout",
+                      "type": "integer"
+                    },
+                    "follow_redirects": {
+                      "default": true,
+                      "description": "Whether to follow HTTP redirects",
+                      "title": "Follow Redirects",
+                      "type": "boolean"
+                    },
+                    "verify_ssl": {
+                      "default": true,
+                      "description": "Whether to verify SSL certificates",
+                      "title": "Verify Ssl",
+                      "type": "boolean"
+                    }
+                  },
+                  "required": [
+                    "url"
+                  ],
+                  "title": "HttpCallInput",
                   "type": "object"
                 }
               }
@@ -818,6 +909,83 @@
         "template"
       ],
       "title": "RenderTemplateInput",
+      "type": "object"
+    },
+    "HttpCallInput": {
+      "additionalProperties": false,
+      "description": "Input model for HttpCall executor.",
+      "properties": {
+        "url": {
+          "description": "Request URL (supports ${ENV_VAR} substitution)",
+          "title": "Url",
+          "type": "string"
+        },
+        "method": {
+          "default": "POST",
+          "description": "HTTP method (GET, POST, PUT, DELETE, PATCH, etc.)",
+          "title": "Method",
+          "type": "string"
+        },
+        "headers": {
+          "additionalProperties": {
+            "type": "string"
+          },
+          "description": "HTTP headers (supports ${ENV_VAR} substitution in values)",
+          "title": "Headers",
+          "type": "object"
+        },
+        "body_json": {
+          "anyOf": [
+            {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "JSON request body (mutually exclusive with body_text)",
+          "title": "Body Json"
+        },
+        "body_text": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Text request body (mutually exclusive with body_json)",
+          "title": "Body Text"
+        },
+        "timeout": {
+          "default": 30,
+          "description": "Request timeout in seconds",
+          "maximum": 300,
+          "minimum": 1,
+          "title": "Timeout",
+          "type": "integer"
+        },
+        "follow_redirects": {
+          "default": true,
+          "description": "Whether to follow HTTP redirects",
+          "title": "Follow Redirects",
+          "type": "boolean"
+        },
+        "verify_ssl": {
+          "default": true,
+          "description": "Whether to verify SSL certificates",
+          "title": "Verify Ssl",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "url"
+      ],
+      "title": "HttpCallInput",
       "type": "object"
     },
     "PromptInput": {
