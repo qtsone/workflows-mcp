@@ -175,7 +175,7 @@ blocks:
         
         # Get total count
         TOTAL=$(jq 'length' "$SCRATCH/parsed_todos.json")
-        echo -n "$TOTAL" > "$SCRATCH/total_items.txt"
+        printf '%s' "$TOTAL" > "$SCRATCH/total_items.txt"
         
         if [ "$TOTAL" -eq 0 ]; then
           echo "ERROR: No todo items found in markdown file"
@@ -188,17 +188,10 @@ blocks:
         type: int
         path: "$SCRATCH/total_items.txt"
       parsed_todos:
-        type: str
+        type: json
         path: "$SCRATCH/parsed_todos.json"
     condition: "not {{blocks.check_state_exists.outputs.found}}"
     depends_on: [check_state_exists]
-
-  - id: read_parsed_todos
-    type: ReadJSONState
-    inputs:
-      path: "$SCRATCH/parsed_todos.json"
-    condition: "not {{blocks.check_state_exists.outputs.found}}"
-    depends_on: [parse_markdown_todos]
 
   - id: initialize_state
     type: WriteJSONState
@@ -207,10 +200,10 @@ blocks:
       data:
         current_index: 0
         total_items: "{{blocks.parse_markdown_todos.outputs.total_items}}"
-        todos: "{{blocks.read_parsed_todos.outputs.data}}"
+        todos: "{{blocks.parse_markdown_todos.outputs.parsed_todos}}"
         completed_issues: []
     condition: "not {{blocks.check_state_exists.outputs.found}}"
-    depends_on: [read_parsed_todos]
+    depends_on: [parse_markdown_todos]
 
   # ============================================================================
   # Phase 3: Read Current State
@@ -228,46 +221,29 @@ blocks:
   # Phase 4: Get Current Todo Item
   # ============================================================================
 
-  - id: extract_current_item
-    type: Shell
-    inputs:
-      command: |
-        CURRENT_INDEX={{blocks.read_current_state.outputs.data.current_index}}
-        
-        # Extract the specific todo item from the todos array
-        echo '{{blocks.read_current_state.outputs.data.todos}}' | jq ".[$CURRENT_INDEX]" > "$SCRATCH/current_item.json"
-        
-        # Check if item exists
-        if [ "$(cat "$SCRATCH/current_item.json")" = "null" ]; then
-          echo "ERROR: Item at index $CURRENT_INDEX not found in state"
-          exit 1
-        fi
-        
-        cat "$SCRATCH/current_item.json"
-    outputs:
-      current_item_json:
-        type: str
-        path: "$SCRATCH/current_item.json"
-    depends_on: [read_current_state]
-
-  - id: read_current_item
-    type: ReadJSONState
-    inputs:
-      path: "$SCRATCH/current_item.json"
-    depends_on: [extract_current_item]
-
   - id: get_current_item
     type: Shell
     inputs:
       command: |
         CURRENT_INDEX={{blocks.read_current_state.outputs.data.current_index}}
-        TITLE="{{blocks.read_current_item.outputs.data.title}}"
-        DESCRIPTION="{{blocks.read_current_item.outputs.data.description}}"
-        
-        echo -n "$TITLE" > "$SCRATCH/current_title.txt"
-        echo -n "$DESCRIPTION" > "$SCRATCH/current_description.txt"
-        
         TOTAL={{blocks.read_current_state.outputs.data.total_items}}
+
+        # Extract the current todo item
+        ITEM=$(echo '{{blocks.read_current_state.outputs.data.todos}}' | jq ".[$CURRENT_INDEX]")
+
+        # Check if item exists
+        if [ "$ITEM" = "null" ]; then
+          echo "ERROR: Item at index $CURRENT_INDEX not found in state"
+          exit 1
+        fi
+
+        # Extract title and description
+        TITLE=$(echo "$ITEM" | jq -r '.title')
+        DESCRIPTION=$(echo "$ITEM" | jq -r '.description')
+
+        printf '%s' "$TITLE" > "$SCRATCH/current_title.txt"
+        printf '%s' "$DESCRIPTION" > "$SCRATCH/current_description.txt"
+
         echo "Processing item $((CURRENT_INDEX + 1))/$TOTAL: $TITLE"
     outputs:
       current_title:
@@ -276,7 +252,7 @@ blocks:
       current_description:
         type: str
         path: "$SCRATCH/current_description.txt"
-    depends_on: [read_current_item]
+    depends_on: [read_current_state]
 
   # ============================================================================
   # Phase 5: Create GitHub Issue (calls interactive workflow)
@@ -340,7 +316,7 @@ blocks:
       command: |
         CURRENT={{blocks.read_current_state.outputs.data.current_index}}
         NEXT=$((CURRENT + 1))
-        echo -n "$NEXT" > "$SCRATCH/next_index.txt"
+        printf '%s' "$NEXT" > "$SCRATCH/next_index.txt"
         echo "Incremented index from $CURRENT to $NEXT"
     outputs:
       next_index:
@@ -462,7 +438,5 @@ blocks:
 
 outputs:
   completed: "{{blocks.cleanup.succeeded}}"
-  # total_processed: "{{blocks.read_final_state.outputs.data.total_items}}"
-  successful_issues: "{{blocks.generate_summary.outputs.summary}}"
-  # all_issue_data: "{{blocks.read_final_state.outputs.data.completed_issues}}"
+  summary: "{{blocks.generate_summary.outputs.stdout}}"
 

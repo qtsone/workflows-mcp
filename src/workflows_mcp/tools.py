@@ -137,7 +137,9 @@ async def execute_workflow(
     exec_context = app_ctx.create_execution_context()
 
     # Create WorkflowRunner and execute
-    runner = WorkflowRunner(checkpoint_config=None)
+    # Enable checkpointing for top-level MCP tool execution (None only for nested workflows)
+    from workflows_mcp.engine.checkpoint import CheckpointConfig
+    runner = WorkflowRunner(checkpoint_config=CheckpointConfig())
     result = await runner.execute(
         workflow=workflow_schema,
         runtime_inputs=inputs,
@@ -244,7 +246,9 @@ async def execute_inline_workflow(
     exec_context = app_ctx.create_execution_context()
 
     # Create WorkflowRunner and execute (no registration needed for inline workflows)
-    runner = WorkflowRunner(checkpoint_config=None)
+    # Enable checkpointing for top-level MCP tool execution (None only for nested workflows)
+    from workflows_mcp.engine.checkpoint import CheckpointConfig
+    runner = WorkflowRunner(checkpoint_config=CheckpointConfig())
     result = await runner.execute(
         workflow=workflow_schema,
         runtime_inputs=inputs,
@@ -598,7 +602,9 @@ async def resume_workflow(
     exec_context = app_ctx.create_execution_context()
 
     # Create WorkflowRunner and resume
-    runner = WorkflowRunner(checkpoint_config=None)
+    # Enable checkpointing for top-level MCP tool execution (None only for nested workflows)
+    from workflows_mcp.engine.checkpoint import CheckpointConfig
+    runner = WorkflowRunner(checkpoint_config=CheckpointConfig())
     result = await runner.resume(
         checkpoint_id=checkpoint_id,
         response=response,

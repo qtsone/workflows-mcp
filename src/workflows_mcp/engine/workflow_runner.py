@@ -57,9 +57,15 @@ class WorkflowRunner:
         Initialize workflow runner.
 
         Args:
-            checkpoint_config: Optional checkpoint configuration
+            checkpoint_config: Optional checkpoint configuration.
+                If None, checkpointing is disabled (default for nested workflows and MCP tools).
+                Pass CheckpointConfig() explicitly to enable checkpointing.
         """
-        self.checkpoint_config = checkpoint_config or CheckpointConfig()
+        # Fix: When None is passed, disable checkpointing instead of using defaults
+        # This ensures nested workflows don't create checkpoints (executors_workflow.py:145)
+        self.checkpoint_config = (
+            checkpoint_config if checkpoint_config is not None else CheckpointConfig(enabled=False)
+        )
         self.orchestrator = BlockOrchestrator()
 
     async def execute(
@@ -916,25 +922,54 @@ class WorkflowRunner:
                 raise ValueError(f"Paused block not found: {paused_block_id}")
             block_def = BlockDefinition(**checkpoint.block_definitions[paused_block_id])
 
-            # Resume paused block
-            await self._resume_paused_block(
-                block_id=paused_block_id,
-                block_def=block_def,
-                exec_context=exec_context,
-                response=response,
-                pause_metadata=checkpoint.pause_metadata or {},
-                wave_idx=checkpoint.current_wave_index,
-                execution_order=len(completed_blocks),
-            )
-
-            # Verify resumed block succeeded
-            resumed_block_metadata = exec_context.get_block_metadata(paused_block_id)
-            if resumed_block_metadata and resumed_block_metadata.status.is_failed():
-                raise ValueError(
-                    f"Failed to resume block '{paused_block_id}': {resumed_block_metadata.message}"
+            try:
+                # Resume paused block
+                await self._resume_paused_block(
+                    block_id=paused_block_id,
+                    block_def=block_def,
+                    exec_context=exec_context,
+                    response=response,
+                    pause_metadata=checkpoint.pause_metadata or {},
+                    wave_idx=checkpoint.current_wave_index,
+                    execution_order=len(completed_blocks),
                 )
 
-            completed_blocks.append(paused_block_id)
+                # Verify resumed block succeeded
+                resumed_block_metadata = exec_context.get_block_metadata(paused_block_id)
+                if resumed_block_metadata and resumed_block_metadata.status.is_failed():
+                    error_msg = f"Failed to resume block '{paused_block_id}'"
+                    error_detail = resumed_block_metadata.message
+                    raise ValueError(f"{error_msg}: {error_detail}")
+
+                completed_blocks.append(paused_block_id)
+
+            except ExecutionPaused as e:
+                # Block paused again during resume - save checkpoint and re-raise
+                if context:
+                    checkpoint_id = await self._save_checkpoint(
+                        workflow=workflow,
+                        runtime_inputs=checkpoint.runtime_inputs,
+                        context=context,
+                        exec_context=exec_context,
+                        completed_blocks=completed_blocks,
+                        current_wave_index=checkpoint.current_wave_index,
+                        execution_waves=checkpoint.execution_waves,
+                        pause_exception=e,
+                    )
+
+                    # Update exception with saved checkpoint_id and workflow_name, then re-raise
+                    raise ExecutionPaused(
+                        prompt=e.prompt,
+                        checkpoint_data={
+                            **e.checkpoint_data,
+                            "checkpoint_id": checkpoint_id,
+                            "workflow_name": workflow.name,
+                        },
+                        execution=e.execution,
+                    )
+                else:
+                    # No checkpoint store available - re-raise without checkpoint
+                    raise
 
         # Execute remaining waves
         await self._execute_waves_from(

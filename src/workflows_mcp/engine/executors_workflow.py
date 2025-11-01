@@ -142,7 +142,8 @@ class WorkflowExecutor(BlockExecutor):
         # 4. Create WorkflowRunner and execute child workflow
         from .workflow_runner import WorkflowRunner
 
-        runner = WorkflowRunner(checkpoint_config=None)  # No checkpointing for nested workflows
+        # No checkpointing for nested workflows - parent handles all checkpointing
+        runner = WorkflowRunner(checkpoint_config=None)
 
         # Create child execution context
         child_context = exec_context.create_child_context(
@@ -288,6 +289,7 @@ class WorkflowExecutor(BlockExecutor):
         # 3. Create WorkflowRunner and resume child workflow
         from .workflow_runner import WorkflowRunner
 
+        # No checkpointing for nested workflows - parent handles all checkpointing
         runner = WorkflowRunner(checkpoint_config=None)
 
         # Resume child workflow
