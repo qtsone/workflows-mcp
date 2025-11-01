@@ -2,6 +2,19 @@
 
 All notable changes to this project will be documented in this file.
 
+# [4.2.0](https://github.com/qtsone/workflows-mcp/compare/v4.1.0...v4.2.0) (2025-11-01)
+
+
+### Bug Fixes
+
+* **checkpointing:** properly handle checkpoint config for nested workflows ([b79740b](https://github.com/qtsone/workflows-mcp/commit/b79740b5b3990137ffbb6fcab75044323dff0e92))
+
+
+### Features
+
+* **workflows:** add process-todo-create-issues workflow template ([e932de3](https://github.com/qtsone/workflows-mcp/commit/e932de3b420a13a1907d64192095504602deb456))
+* **workflows:** add process-todo-create-issues workflow template ([#11](https://github.com/qtsone/workflows-mcp/issues/11)) ([309564d](https://github.com/qtsone/workflows-mcp/commit/309564dd37b0259f2e04ed4d26d81385e981bfd8))
+
 # [4.1.0](https://github.com/qtsone/workflows-mcp/compare/v4.0.3...v4.1.0) (2025-10-30)
 
 
