@@ -2,6 +2,20 @@
 
 All notable changes to this project will be documented in this file.
 
+# [4.4.0](https://github.com/qtsone/workflows-mcp/compare/v4.3.0...v4.4.0) (2025-11-02)
+
+
+### Bug Fixes
+
+* **release:** use deploy key ([18e1fc9](https://github.com/qtsone/workflows-mcp/commit/18e1fc9f7d1ed43685561a002f9233f178cdcbb4))
+
+
+### Features
+
+* add comprehensive secrets management system ([31d2732](https://github.com/qtsone/workflows-mcp/commit/31d2732d30365283639c320891632c4f7e508865))
+* add comprehensive secrets management system ([#17](https://github.com/qtsone/workflows-mcp/issues/17)) ([6927464](https://github.com/qtsone/workflows-mcp/commit/69274647653228b183258f251ba3ff83b200135a))
+* **tests:** normalise snapshots ([91f4059](https://github.com/qtsone/workflows-mcp/commit/91f4059cf4b9578b6ad5c7420c6b009c4f175d96))
+
 # [4.3.0](https://github.com/qtsone/workflows-mcp/compare/v4.2.0...v4.3.0) (2025-11-01)
 
 
