@@ -166,12 +166,14 @@ async def app_lifespan(_server: FastMCP) -> AsyncIterator[AppContext]:
     This lifespan context manager:
     1. Initializes shared resources (workflow registry, executor registry, checkpoint store)
     2. Loads workflows from built-in and user template directories
-    3. Yields context to make resources available to tools
-    4. Cleans up resources on shutdown
+    3. Initializes secret management system
+    4. Yields context to make resources available to tools
+    5. Cleans up resources on shutdown
 
     Environment Variables:
         WORKFLOWS_MAX_RECURSION_DEPTH: Maximum workflow recursion depth
             (default: 50, range: 1-10000)
+        WORKFLOW_SECRET_*: Secret environment variables for workflows
 
     Args:
         _server: FastMCP server instance (unused, required by FastMCP signature)
@@ -186,6 +188,24 @@ async def app_lifespan(_server: FastMCP) -> AsyncIterator[AppContext]:
     max_recursion_depth = get_max_recursion_depth()
     if max_recursion_depth != 50:
         logger.info(f"Using max recursion depth: {max_recursion_depth}")
+
+    # Initialize secret provider and check for configured secrets
+    from .engine.secrets import EnvVarSecretProvider
+
+    secret_provider = EnvVarSecretProvider()
+    secret_keys = await secret_provider.list_secret_keys()
+
+    logger.info(f"Secret provider: {secret_provider.__class__.__name__}")
+    logger.info(f"Available secrets: {len(secret_keys)}")
+
+    if len(secret_keys) == 0:
+        logger.warning(
+            "No secrets configured. "
+            "Use WORKFLOW_SECRET_* environment variables to provide secrets."
+        )
+    else:
+        # Log secret keys (not values!) for debugging
+        logger.debug(f"Secret keys: {', '.join(sorted(secret_keys))}")
 
     # Create executor registry with all built-in executors
     executor_registry = create_default_registry()

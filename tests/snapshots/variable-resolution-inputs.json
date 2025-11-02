@@ -5,31 +5,6 @@
     "number_result": "42\n"
   },
   "blocks": {
-    "use_string": {
-      "inputs": {
-        "command": "echo \"test_value\""
-      },
-      "outputs": {
-        "exit_code": 0,
-        "stdout": "test_value\n",
-        "stderr": ""
-      },
-      "metadata": {
-        "status": "completed",
-        "outcome": "success",
-        "execution_time_ms": 5.439208984375,
-        "started_at": "2025-11-01T12:58:47.413843+00:00",
-        "completed_at": "2025-11-01T12:58:47.419266+00:00",
-        "wave": 0,
-        "execution_order": 0,
-        "message": null,
-        "succeeded": true,
-        "failed": false,
-        "skipped": false
-      },
-      "blocks": {},
-      "depth": 0
-    },
     "use_number": {
       "inputs": {
         "command": "echo \"42\""
@@ -42,9 +17,34 @@
       "metadata": {
         "status": "completed",
         "outcome": "success",
-        "execution_time_ms": 4.762939453125,
-        "started_at": "2025-11-01T12:58:47.416349+00:00",
-        "completed_at": "2025-11-01T12:58:47.421127+00:00",
+        "execution_time_ms": 5.654052734375,
+        "started_at": "2025-11-02T10:36:13.020286+00:00",
+        "completed_at": "2025-11-02T10:36:13.025920+00:00",
+        "wave": 0,
+        "execution_order": 0,
+        "message": null,
+        "succeeded": true,
+        "failed": false,
+        "skipped": false
+      },
+      "blocks": {},
+      "depth": 0
+    },
+    "use_string": {
+      "inputs": {
+        "command": "echo \"test_value\""
+      },
+      "outputs": {
+        "exit_code": 0,
+        "stdout": "test_value\n",
+        "stderr": ""
+      },
+      "metadata": {
+        "status": "completed",
+        "outcome": "success",
+        "execution_time_ms": 5.44189453125,
+        "started_at": "2025-11-02T10:36:13.022776+00:00",
+        "completed_at": "2025-11-02T10:36:13.028230+00:00",
         "wave": 0,
         "execution_order": 0,
         "message": null,
@@ -58,10 +58,11 @@
   },
   "metadata": {
     "workflow_name": "variable-resolution-inputs",
-    "start_time": "2025-11-01T12:58:47.413705+00:00",
+    "start_time": "2025-11-02T10:36:13.020186+00:00",
     "total_blocks": 2,
     "execution_waves": 1,
-    "completed_at": "2025-11-01T12:58:47.421420+00:00",
-    "execution_time_seconds": 0.007721424102783203
+    "completed_at": "2025-11-02T10:36:13.028559+00:00",
+    "execution_time_seconds": 0.008441925048828125,
+    "secret_access_count": 0
   }
 }

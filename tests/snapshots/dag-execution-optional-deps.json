@@ -21,9 +21,9 @@
       "metadata": {
         "status": "completed",
         "outcome": "success",
-        "execution_time_ms": 4.757080078125,
-        "started_at": "2025-11-01T12:58:45.909916+00:00",
-        "completed_at": "2025-11-01T12:58:45.914664+00:00",
+        "execution_time_ms": 5.02294921875,
+        "started_at": "2025-11-02T10:36:09.321277+00:00",
+        "completed_at": "2025-11-02T10:36:09.326294+00:00",
         "wave": 0,
         "execution_order": 0,
         "message": null,
@@ -46,9 +46,9 @@
       "metadata": {
         "status": "completed",
         "outcome": "failure",
-        "execution_time_ms": 4.51513671875,
-        "started_at": "2025-11-01T12:58:45.911893+00:00",
-        "completed_at": "2025-11-01T12:58:45.916412+00:00",
+        "execution_time_ms": 4.488037109375,
+        "started_at": "2025-11-02T10:36:09.323319+00:00",
+        "completed_at": "2025-11-02T10:36:09.327814+00:00",
         "wave": 0,
         "execution_order": 0,
         "message": "Command exited with code 1",
@@ -59,21 +59,21 @@
       "blocks": {},
       "depth": 0
     },
-    "job_6": {
+    "job_4": {
       "inputs": {
-        "command": "echo \"job_6_ran\""
+        "command": "echo \"runs_despite_failure\""
       },
       "outputs": {
         "exit_code": 0,
-        "stdout": "job_6_ran\n",
+        "stdout": "runs_despite_failure\n",
         "stderr": ""
       },
       "metadata": {
         "status": "completed",
         "outcome": "success",
-        "execution_time_ms": 8.407958984375,
-        "started_at": "2025-11-01T12:58:45.916758+00:00",
-        "completed_at": "2025-11-01T12:58:45.925160+00:00",
+        "execution_time_ms": 10.156005859375,
+        "started_at": "2025-11-02T10:36:09.328172+00:00",
+        "completed_at": "2025-11-02T10:36:09.338318+00:00",
         "wave": 1,
         "execution_order": 2,
         "message": null,
@@ -96,9 +96,9 @@
       "metadata": {
         "status": "completed",
         "outcome": "success",
-        "execution_time_ms": 6.436767578125,
-        "started_at": "2025-11-01T12:58:45.918827+00:00",
-        "completed_at": "2025-11-01T12:58:45.925271+00:00",
+        "execution_time_ms": 8.157958984375,
+        "started_at": "2025-11-02T10:36:09.330290+00:00",
+        "completed_at": "2025-11-02T10:36:09.338455+00:00",
         "wave": 1,
         "execution_order": 2,
         "message": null,
@@ -121,9 +121,9 @@
       "metadata": {
         "status": "completed",
         "outcome": "success",
-        "execution_time_ms": 4.839111328125,
-        "started_at": "2025-11-01T12:58:45.920711+00:00",
-        "completed_at": "2025-11-01T12:58:45.925558+00:00",
+        "execution_time_ms": 6.046142578125,
+        "started_at": "2025-11-02T10:36:09.332429+00:00",
+        "completed_at": "2025-11-02T10:36:09.338489+00:00",
         "wave": 1,
         "execution_order": 2,
         "message": null,
@@ -134,21 +134,21 @@
       "blocks": {},
       "depth": 0
     },
-    "job_4": {
+    "job_6": {
       "inputs": {
-        "command": "echo \"runs_despite_failure\""
+        "command": "echo \"job_6_ran\""
       },
       "outputs": {
         "exit_code": 0,
-        "stdout": "runs_despite_failure\n",
+        "stdout": "job_6_ran\n",
         "stderr": ""
       },
       "metadata": {
         "status": "completed",
         "outcome": "success",
-        "execution_time_ms": 4.326904296875,
-        "started_at": "2025-11-01T12:58:45.922852+00:00",
-        "completed_at": "2025-11-01T12:58:45.927189+00:00",
+        "execution_time_ms": 5.739990234375,
+        "started_at": "2025-11-02T10:36:09.334754+00:00",
+        "completed_at": "2025-11-02T10:36:09.340502+00:00",
         "wave": 1,
         "execution_order": 2,
         "message": null,
@@ -162,10 +162,11 @@
   },
   "metadata": {
     "workflow_name": "dag-execution-optional-deps",
-    "start_time": "2025-11-01T12:58:45.909809+00:00",
+    "start_time": "2025-11-02T10:36:09.321172+00:00",
     "total_blocks": 6,
     "execution_waves": 2,
-    "completed_at": "2025-11-01T12:58:45.927509+00:00",
-    "execution_time_seconds": 0.017703771591186523
+    "completed_at": "2025-11-02T10:36:09.340850+00:00",
+    "execution_time_seconds": 0.019746065139770508,
+    "secret_access_count": 0
   }
 }

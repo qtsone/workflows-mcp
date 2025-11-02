@@ -10,6 +10,7 @@ Design Principles:
 - Uses ExecutionContext for shared resources
 - Preserves partial execution on errors
 - Supports fractal composition via Workflow
+- Integrates secrets management (provider, redactor, audit log)
 """
 
 import asyncio
@@ -28,6 +29,7 @@ from .execution_result import ExecutionResult
 from .metadata import Metadata
 from .orchestrator import BlockOrchestrator
 from .schema import BlockDefinition, DependencySpec, WorkflowSchema
+from .secrets import EnvVarSecretProvider, SecretAuditLog, SecretRedactor
 from .variables import ConditionEvaluator, InvalidConditionError, VariableResolver
 
 logger = logging.getLogger(__name__)
@@ -66,7 +68,17 @@ class WorkflowRunner:
         self.checkpoint_config = (
             checkpoint_config if checkpoint_config is not None else CheckpointConfig(enabled=False)
         )
-        self.orchestrator = BlockOrchestrator()
+
+        # Initialize secret management components
+        self.secret_provider = EnvVarSecretProvider()
+        self.secret_redactor = SecretRedactor(self.secret_provider)
+        self.secret_audit_log: SecretAuditLog | None = None  # Created per execution
+
+        # Initialize orchestrator with secret management
+        self.orchestrator = BlockOrchestrator(
+            secret_provider=self.secret_provider,
+            secret_redactor=self.secret_redactor,
+        )
 
     async def execute(
         self,
@@ -206,6 +218,12 @@ class WorkflowRunner:
         """
         start_time = time.time()
 
+        # Initialize secret audit log for this execution
+        self.secret_audit_log = SecretAuditLog()
+
+        # Initialize secret redactor patterns
+        await self.secret_redactor.initialize()
+
         # Create execution context
         exec_context = self._create_initial_execution_context(workflow, runtime_inputs, context)
 
@@ -233,7 +251,7 @@ class WorkflowRunner:
             raise
         except Exception as e:
             # ENHANCEMENT: Finalize partial execution before re-raising
-            self._finalize_execution_context(
+            await self._finalize_execution_context(
                 workflow, exec_context, completed_blocks, execution_waves, start_time
             )
 
@@ -242,7 +260,7 @@ class WorkflowRunner:
             raise
 
         # Success - finalize normally
-        self._finalize_execution_context(
+        await self._finalize_execution_context(
             workflow, exec_context, completed_blocks, execution_waves, start_time
         )
 
@@ -459,8 +477,8 @@ class WorkflowRunner:
         if context is None:
             raise RuntimeError("ExecutionContext not found in Execution._internal")
 
-        # 1. Resolve variables in inputs
-        resolved_inputs = self._resolve_block_inputs(block_def.inputs, exec_context)
+        # 1. Resolve variables in inputs (async for secrets support)
+        resolved_inputs = await self._resolve_block_inputs(block_def.inputs, exec_context)
 
         # 2. Get executor from context
         executor = context.executor_registry.get(block_def.type)
@@ -472,14 +490,18 @@ class WorkflowRunner:
         if block_def.outputs:
             # Create variable resolver from execution context
             context_dict = self._execution_to_dict(exec_context)
-            resolver = VariableResolver(context_dict)
+            resolver = VariableResolver(
+                context_dict,
+                secret_provider=self.secret_provider,
+                secret_audit_log=self.secret_audit_log,
+            )
 
-            # Resolve variables in output paths
+            # Resolve variables in output paths (async for secrets support)
             custom_outputs_dict = {}
             for name, output in block_def.outputs.items():
                 output_dict = output.model_dump()
                 # Resolve path variable substitution
-                output_dict["path"] = resolver.resolve(output_dict["path"])
+                output_dict["path"] = await resolver.resolve_async(output_dict["path"])
                 custom_outputs_dict[name] = output_dict
 
             block_custom_outputs.set(custom_outputs_dict)
@@ -540,7 +562,7 @@ class WorkflowRunner:
 
     def _should_skip_block(
         self,
-        block_id: str,
+        _block_id: str,  # Reserved for future logging/debugging
         depends_on: list[DependencySpec],
         exec_context: Execution,
     ) -> bool:
@@ -678,7 +700,7 @@ class WorkflowRunner:
 
         return exec_context
 
-    def _finalize_execution_context(
+    async def _finalize_execution_context(
         self,
         workflow: WorkflowSchema,
         exec_context: Execution,
@@ -686,9 +708,9 @@ class WorkflowRunner:
         execution_waves: list[list[str]],
         start_time: float | None = None,
     ) -> None:
-        """Finalize execution context with outputs and metadata."""
+        """Finalize execution context with outputs and metadata (async for secrets support)."""
         # Evaluate workflow outputs
-        workflow_outputs = self._evaluate_workflow_outputs(workflow, exec_context)
+        workflow_outputs = await self._evaluate_workflow_outputs(workflow, exec_context)
         exec_context.outputs = workflow_outputs
 
         # Update metadata
@@ -700,6 +722,10 @@ class WorkflowRunner:
 
         if start_time is not None:
             metadata_updates["execution_time_seconds"] = time.time() - start_time
+
+        # Include secret audit summary if available
+        if self.secret_audit_log:
+            metadata_updates["secret_access_count"] = len(self.secret_audit_log.events)
 
         if isinstance(exec_context.metadata, dict):
             existing_metadata = exec_context.metadata.copy()
@@ -738,13 +764,17 @@ class WorkflowRunner:
         except InvalidConditionError as e:
             raise ValueError(f"Condition evaluation failed: {e}")
 
-    def _resolve_block_inputs(
+    async def _resolve_block_inputs(
         self, inputs: dict[str, Any], exec_context: Execution
     ) -> dict[str, Any]:
-        """Resolve variables in block inputs."""
+        """Resolve variables in block inputs (async for secrets support)."""
         context_dict = self._execution_to_dict(exec_context)
-        resolver = VariableResolver(context_dict)
-        resolved: dict[str, Any] = resolver.resolve(inputs)
+        resolver = VariableResolver(
+            context_dict,
+            secret_provider=self.secret_provider,
+            secret_audit_log=self.secret_audit_log,
+        )
+        resolved: dict[str, Any] = await resolver.resolve_async(inputs)
         return resolved
 
     def _merge_workflow_inputs(
@@ -788,18 +818,22 @@ class WorkflowRunner:
 
         return merged
 
-    def _evaluate_workflow_outputs(
+    async def _evaluate_workflow_outputs(
         self,
         workflow: WorkflowSchema,
         exec_context: Execution,
     ) -> dict[str, Any]:
-        """Evaluate workflow-level outputs."""
+        """Evaluate workflow-level outputs (async for secrets support)."""
         if not workflow.outputs:
             return {}
 
         outputs = {}
         context_dict = self._execution_to_dict(exec_context)
-        resolver = VariableResolver(context_dict)
+        resolver = VariableResolver(
+            context_dict,
+            secret_provider=self.secret_provider,
+            secret_audit_log=self.secret_audit_log,
+        )
         evaluator = ConditionEvaluator()
 
         comparison_ops = ["==", "!=", ">=", "<=", ">", "<", " and ", " or ", " not "]
@@ -807,8 +841,8 @@ class WorkflowRunner:
         for output_name, output_value in workflow.outputs.items():
             output_expr = output_value if isinstance(output_value, str) else output_value.value
 
-            # Resolve variables
-            resolved_value = resolver.resolve(output_expr)
+            # Resolve variables (async for secrets support)
+            resolved_value = await resolver.resolve_async(output_expr)
 
             # Evaluate boolean expressions if present
             is_string = isinstance(resolved_value, str)
@@ -983,7 +1017,7 @@ class WorkflowRunner:
         )
 
         # Finalize context
-        self._finalize_execution_context(
+        await self._finalize_execution_context(
             workflow, exec_context, completed_blocks, checkpoint.execution_waves
         )
 
@@ -1005,8 +1039,8 @@ class WorkflowRunner:
         if context is None:
             raise RuntimeError("ExecutionContext not found in Execution._internal")
 
-        # Resolve inputs
-        resolved_inputs = self._resolve_block_inputs(block_def.inputs, exec_context)
+        # Resolve inputs (async for secrets support)
+        resolved_inputs = await self._resolve_block_inputs(block_def.inputs, exec_context)
 
         # Get executor
         executor = context.executor_registry.get(block_def.type)

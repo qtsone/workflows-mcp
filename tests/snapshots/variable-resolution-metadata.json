@@ -2,34 +2,9 @@
   "status": "success",
   "outputs": {
     "workflow_name": "variable-resolution-metadata\n",
-    "start_time": "2025-11-01T12:58:47.423962+00:00\n"
+    "start_time": "2025-11-02T10:36:13.031388+00:00\n"
   },
   "blocks": {
-    "use_start_time": {
-      "inputs": {
-        "command": "echo \"2025-11-01T12:58:47.423962+00:00\""
-      },
-      "outputs": {
-        "exit_code": 0,
-        "stdout": "2025-11-01T12:58:47.423962+00:00\n",
-        "stderr": ""
-      },
-      "metadata": {
-        "status": "completed",
-        "outcome": "success",
-        "execution_time_ms": 5.244873046875,
-        "started_at": "2025-11-01T12:58:47.424053+00:00",
-        "completed_at": "2025-11-01T12:58:47.429280+00:00",
-        "wave": 0,
-        "execution_order": 0,
-        "message": null,
-        "succeeded": true,
-        "failed": false,
-        "skipped": false
-      },
-      "blocks": {},
-      "depth": 0
-    },
     "use_workflow_name": {
       "inputs": {
         "command": "echo \"variable-resolution-metadata\""
@@ -42,9 +17,34 @@
       "metadata": {
         "status": "completed",
         "outcome": "success",
-        "execution_time_ms": 4.764892578125,
-        "started_at": "2025-11-01T12:58:47.426466+00:00",
-        "completed_at": "2025-11-01T12:58:47.431247+00:00",
+        "execution_time_ms": 5.81396484375,
+        "started_at": "2025-11-02T10:36:13.031492+00:00",
+        "completed_at": "2025-11-02T10:36:13.037290+00:00",
+        "wave": 0,
+        "execution_order": 0,
+        "message": null,
+        "succeeded": true,
+        "failed": false,
+        "skipped": false
+      },
+      "blocks": {},
+      "depth": 0
+    },
+    "use_start_time": {
+      "inputs": {
+        "command": "echo \"2025-11-02T10:36:13.031388+00:00\""
+      },
+      "outputs": {
+        "exit_code": 0,
+        "stdout": "2025-11-02T10:36:13.031388+00:00\n",
+        "stderr": ""
+      },
+      "metadata": {
+        "status": "completed",
+        "outcome": "success",
+        "execution_time_ms": 4.840087890625,
+        "started_at": "2025-11-02T10:36:13.034132+00:00",
+        "completed_at": "2025-11-02T10:36:13.038985+00:00",
         "wave": 0,
         "execution_order": 0,
         "message": null,
@@ -58,10 +58,11 @@
   },
   "metadata": {
     "workflow_name": "variable-resolution-metadata",
-    "start_time": "2025-11-01T12:58:47.423962+00:00",
+    "start_time": "2025-11-02T10:36:13.031388+00:00",
     "total_blocks": 2,
     "execution_waves": 1,
-    "completed_at": "2025-11-01T12:58:47.431528+00:00",
-    "execution_time_seconds": 0.007570981979370117
+    "completed_at": "2025-11-02T10:36:13.039294+00:00",
+    "execution_time_seconds": 0.007976055145263672,
+    "secret_access_count": 0
   }
 }

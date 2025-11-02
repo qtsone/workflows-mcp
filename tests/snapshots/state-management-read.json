@@ -21,9 +21,9 @@
       "metadata": {
         "status": "completed",
         "outcome": "success",
-        "execution_time_ms": 0.1181640625,
-        "started_at": "2025-11-01T12:58:47.375950+00:00",
-        "completed_at": "2025-11-01T12:58:47.376068+00:00",
+        "execution_time_ms": 0.196044921875,
+        "started_at": "2025-11-02T10:36:12.979559+00:00",
+        "completed_at": "2025-11-02T10:36:12.979769+00:00",
         "wave": 0,
         "execution_order": 0,
         "message": null,
@@ -46,9 +46,9 @@
       "metadata": {
         "status": "completed",
         "outcome": "success",
-        "execution_time_ms": 5.10009765625,
-        "started_at": "2025-11-01T12:58:47.376117+00:00",
-        "completed_at": "2025-11-01T12:58:47.381193+00:00",
+        "execution_time_ms": 7.0830078125,
+        "started_at": "2025-11-02T10:36:12.975978+00:00",
+        "completed_at": "2025-11-02T10:36:12.983057+00:00",
         "wave": 0,
         "execution_order": 0,
         "message": null,
@@ -78,9 +78,9 @@
       "metadata": {
         "status": "completed",
         "outcome": "success",
-        "execution_time_ms": 0.222900390625,
-        "started_at": "2025-11-01T12:58:47.381597+00:00",
-        "completed_at": "2025-11-01T12:58:47.381822+00:00",
+        "execution_time_ms": 0.174072265625,
+        "started_at": "2025-11-02T10:36:12.983399+00:00",
+        "completed_at": "2025-11-02T10:36:12.983573+00:00",
         "wave": 1,
         "execution_order": 2,
         "message": null,
@@ -103,9 +103,9 @@
       "metadata": {
         "status": "completed",
         "outcome": "success",
-        "execution_time_ms": 6.27978515625,
-        "started_at": "2025-11-01T12:58:47.381980+00:00",
-        "completed_at": "2025-11-01T12:58:47.388245+00:00",
+        "execution_time_ms": 7.188232421875,
+        "started_at": "2025-11-02T10:36:12.983729+00:00",
+        "completed_at": "2025-11-02T10:36:12.990897+00:00",
         "wave": 2,
         "execution_order": 3,
         "message": null,
@@ -119,10 +119,11 @@
   },
   "metadata": {
     "workflow_name": "state-management-read",
-    "start_time": "2025-11-01T12:58:47.375859+00:00",
+    "start_time": "2025-11-02T10:36:12.975856+00:00",
     "total_blocks": 4,
     "execution_waves": 3,
-    "completed_at": "2025-11-01T12:58:47.388625+00:00",
-    "execution_time_seconds": 0.012770891189575195
+    "completed_at": "2025-11-02T10:36:12.991348+00:00",
+    "execution_time_seconds": 0.015569210052490234,
+    "secret_access_count": 0
   }
 }

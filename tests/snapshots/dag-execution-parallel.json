@@ -7,31 +7,6 @@
     "all_succeeded": true
   },
   "blocks": {
-    "parallel_3": {
-      "inputs": {
-        "command": "printf \"parallel_3\""
-      },
-      "outputs": {
-        "exit_code": 0,
-        "stdout": "parallel_3",
-        "stderr": ""
-      },
-      "metadata": {
-        "status": "completed",
-        "outcome": "success",
-        "execution_time_ms": 6.909912109375,
-        "started_at": "2025-11-01T12:58:45.930850+00:00",
-        "completed_at": "2025-11-01T12:58:45.937754+00:00",
-        "wave": 0,
-        "execution_order": 0,
-        "message": null,
-        "succeeded": true,
-        "failed": false,
-        "skipped": false
-      },
-      "blocks": {},
-      "depth": 0
-    },
     "parallel_1": {
       "inputs": {
         "command": "printf \"parallel_1\""
@@ -44,9 +19,9 @@
       "metadata": {
         "status": "completed",
         "outcome": "success",
-        "execution_time_ms": 4.9560546875,
-        "started_at": "2025-11-01T12:58:45.932971+00:00",
-        "completed_at": "2025-11-01T12:58:45.937934+00:00",
+        "execution_time_ms": 7.966064453125,
+        "started_at": "2025-11-02T10:36:09.344148+00:00",
+        "completed_at": "2025-11-02T10:36:09.352104+00:00",
         "wave": 0,
         "execution_order": 0,
         "message": null,
@@ -69,9 +44,34 @@
       "metadata": {
         "status": "completed",
         "outcome": "success",
-        "execution_time_ms": 4.7119140625,
-        "started_at": "2025-11-01T12:58:45.934681+00:00",
-        "completed_at": "2025-11-01T12:58:45.939403+00:00",
+        "execution_time_ms": 5.773193359375,
+        "started_at": "2025-11-02T10:36:09.346630+00:00",
+        "completed_at": "2025-11-02T10:36:09.352406+00:00",
+        "wave": 0,
+        "execution_order": 0,
+        "message": null,
+        "succeeded": true,
+        "failed": false,
+        "skipped": false
+      },
+      "blocks": {},
+      "depth": 0
+    },
+    "parallel_3": {
+      "inputs": {
+        "command": "printf \"parallel_3\""
+      },
+      "outputs": {
+        "exit_code": 0,
+        "stdout": "parallel_3",
+        "stderr": ""
+      },
+      "metadata": {
+        "status": "completed",
+        "outcome": "success",
+        "execution_time_ms": 5.067138671875,
+        "started_at": "2025-11-02T10:36:09.349121+00:00",
+        "completed_at": "2025-11-02T10:36:09.354197+00:00",
         "wave": 0,
         "execution_order": 0,
         "message": null,
@@ -94,9 +94,9 @@
       "metadata": {
         "status": "completed",
         "outcome": "success",
-        "execution_time_ms": 4.28076171875,
-        "started_at": "2025-11-01T12:58:45.939766+00:00",
-        "completed_at": "2025-11-01T12:58:45.944040+00:00",
+        "execution_time_ms": 5.356201171875,
+        "started_at": "2025-11-02T10:36:09.354577+00:00",
+        "completed_at": "2025-11-02T10:36:09.359925+00:00",
         "wave": 1,
         "execution_order": 3,
         "message": null,
@@ -119,9 +119,9 @@
       "metadata": {
         "status": "completed",
         "outcome": "success",
-        "execution_time_ms": 4.1337890625,
-        "started_at": "2025-11-01T12:58:45.944389+00:00",
-        "completed_at": "2025-11-01T12:58:45.948514+00:00",
+        "execution_time_ms": 5.172119140625,
+        "started_at": "2025-11-02T10:36:09.360317+00:00",
+        "completed_at": "2025-11-02T10:36:09.365476+00:00",
         "wave": 2,
         "execution_order": 4,
         "message": null,
@@ -135,10 +135,11 @@
   },
   "metadata": {
     "workflow_name": "dag-execution-parallel",
-    "start_time": "2025-11-01T12:58:45.930746+00:00",
+    "start_time": "2025-11-02T10:36:09.344022+00:00",
     "total_blocks": 5,
     "execution_waves": 3,
-    "completed_at": "2025-11-01T12:58:45.948974+00:00",
-    "execution_time_seconds": 0.018231868743896484
+    "completed_at": "2025-11-02T10:36:09.365940+00:00",
+    "execution_time_seconds": 0.021992921829223633,
+    "secret_access_count": 0
   }
 }

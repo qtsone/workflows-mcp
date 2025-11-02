@@ -22,9 +22,9 @@
       "metadata": {
         "status": "completed",
         "outcome": "success",
-        "execution_time_ms": 5.7880859375,
-        "started_at": "2025-11-01T12:58:45.833651+00:00",
-        "completed_at": "2025-11-01T12:58:45.839440+00:00",
+        "execution_time_ms": 6.33984375,
+        "started_at": "2025-11-02T10:36:09.183463+00:00",
+        "completed_at": "2025-11-02T10:36:09.189804+00:00",
         "wave": 0,
         "execution_order": 0,
         "message": null,
@@ -46,9 +46,9 @@
           "metadata": {
             "status": "completed",
             "outcome": "success",
-            "execution_time_ms": 5.52880859375,
-            "started_at": "2025-11-01T12:58:45.833729+00:00",
-            "completed_at": "2025-11-01T12:58:45.839249+00:00",
+            "execution_time_ms": 5.9189453125,
+            "started_at": "2025-11-02T10:36:09.183613+00:00",
+            "completed_at": "2025-11-02T10:36:09.189526+00:00",
             "wave": 0,
             "execution_order": 0,
             "message": null,
@@ -74,9 +74,9 @@
       "metadata": {
         "status": "completed",
         "outcome": "success",
-        "execution_time_ms": 4.241943359375,
-        "started_at": "2025-11-01T12:58:45.839696+00:00",
-        "completed_at": "2025-11-01T12:58:45.843928+00:00",
+        "execution_time_ms": 4.68505859375,
+        "started_at": "2025-11-02T10:36:09.190090+00:00",
+        "completed_at": "2025-11-02T10:36:09.194768+00:00",
         "wave": 1,
         "execution_order": 1,
         "message": null,
@@ -90,10 +90,11 @@
   },
   "metadata": {
     "workflow_name": "composition-workflow-call",
-    "start_time": "2025-11-01T12:58:45.833544+00:00",
+    "start_time": "2025-11-02T10:36:09.183328+00:00",
     "total_blocks": 2,
     "execution_waves": 2,
-    "completed_at": "2025-11-01T12:58:45.844272+00:00",
-    "execution_time_seconds": 0.010732650756835938
+    "completed_at": "2025-11-02T10:36:09.195099+00:00",
+    "execution_time_seconds": 0.011846065521240234,
+    "secret_access_count": 0
   }
 }

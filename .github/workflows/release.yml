@@ -13,8 +13,26 @@ jobs:
       issues: write         # to be able to comment on released issues
       pull-requests: write  # to be able to comment on released pull requests
     steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install packaging library
+        run: pip install packaging
+
       - name: Semantic Release
         uses: qtsone/actions/release@main
         with:
           github-token: ${{ secrets.GITHUB_TOKEN }}
           ssh-key: ${{ secrets.DEPLOY_KEY }}
+          skip-checkout: 'true'
+          extra-plugins: |
+            @semantic-release/changelog
+            @semantic-release/git
+            @semantic-release/exec
