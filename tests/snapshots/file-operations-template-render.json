@@ -1,132 +1,132 @@
 {
-  "status": "success",
-  "outputs": {
-    "template_rendered": "true",
-    "file_content": "# TestProject\n\nGenerated: 2025-11-02T10:36:09.405952+00:00\nShell Output: data_from_shell\n\n\n## Features\n\n- Feature 1\n\n- Feature 2\n\n- Feature 3\n",
-    "cleanup_done": "true"
-  },
   "blocks": {
-    "create_shell_data": {
+    "cleanup": {
+      "blocks": {},
+      "depth": 0,
       "inputs": {
-        "command": "echo \"data_from_shell\""
+        "command": "rm -rf \"/tmp/test-template-render\""
+      },
+      "metadata": {
+        "completed_at": "TIMESTAMP",
+        "execution_order": 3,
+        "execution_time_ms": "EXECUTION_TIME",
+        "failed": false,
+        "message": null,
+        "outcome": "success",
+        "skipped": false,
+        "started_at": "TIMESTAMP",
+        "status": "completed",
+        "succeeded": true,
+        "wave": 3
       },
       "outputs": {
         "exit_code": 0,
-        "stdout": "data_from_shell\n",
-        "stderr": ""
+        "stderr": "",
+        "stdout": ""
+      }
+    },
+    "create_shell_data": {
+      "blocks": {},
+      "depth": 0,
+      "inputs": {
+        "command": "echo \"data_from_shell\""
       },
       "metadata": {
-        "status": "completed",
-        "outcome": "success",
-        "execution_time_ms": 5.407958984375,
-        "started_at": "2025-11-02T10:36:09.406077+00:00",
-        "completed_at": "2025-11-02T10:36:09.411474+00:00",
-        "wave": 0,
+        "completed_at": "TIMESTAMP",
         "execution_order": 0,
-        "message": null,
-        "succeeded": true,
+        "execution_time_ms": "EXECUTION_TIME",
         "failed": false,
-        "skipped": false
+        "message": null,
+        "outcome": "success",
+        "skipped": false,
+        "started_at": "TIMESTAMP",
+        "status": "completed",
+        "succeeded": true,
+        "wave": 0
       },
-      "blocks": {},
-      "depth": 0
+      "outputs": {
+        "exit_code": 0,
+        "stderr": "",
+        "stdout": "data_from_shell\n"
+      }
     },
     "render_template": {
+      "blocks": {},
+      "depth": 0,
       "inputs": {
+        "create_parents": true,
+        "output_path": "/tmp/test-template-render/README.md",
         "template": "# {{ project_name }}\n\nGenerated: {{ timestamp }}\nShell Output: {{ shell_data }}\n\n## Features\n{% for feature in features %}\n- {{ feature }}\n{% endfor %}\n",
         "variables": {
-          "project_name": "TestProject",
-          "timestamp": "2025-11-02T10:36:09.405952+00:00",
-          "shell_data": "data_from_shell\n",
           "features": [
             "Feature 1",
             "Feature 2",
             "Feature 3"
-          ]
-        },
-        "output_path": "/tmp/test-template-render/README.md",
-        "create_parents": true
-      },
-      "outputs": {
-        "content": "# TestProject\n\nGenerated: 2025-11-02T10:36:09.405952+00:00\nShell Output: data_from_shell\n\n\n## Features\n\n- Feature 1\n\n- Feature 2\n\n- Feature 3\n",
-        "output_path": "/private/tmp/test-template-render/README.md",
-        "size_bytes": 142
+          ],
+          "project_name": "TestProject",
+          "shell_data": "data_from_shell\n",
+          "timestamp": "TIMESTAMP"
+        }
       },
       "metadata": {
-        "status": "completed",
-        "outcome": "success",
-        "execution_time_ms": 2.095947265625,
-        "started_at": "2025-11-02T10:36:09.411887+00:00",
-        "completed_at": "2025-11-02T10:36:09.413977+00:00",
-        "wave": 1,
+        "completed_at": "TIMESTAMP",
         "execution_order": 1,
-        "message": null,
-        "succeeded": true,
+        "execution_time_ms": "EXECUTION_TIME",
         "failed": false,
-        "skipped": false
+        "message": null,
+        "outcome": "success",
+        "skipped": false,
+        "started_at": "TIMESTAMP",
+        "status": "completed",
+        "succeeded": true,
+        "wave": 1
       },
-      "blocks": {},
-      "depth": 0
+      "outputs": {
+        "content": "# TestProject\n\nGenerated: TIMESTAMP\nShell Output: data_from_shell\n\n\n## Features\n\n- Feature 1\n\n- Feature 2\n\n- Feature 3\n",
+        "output_path": "/tmp/test-template-render/README.md",
+        "size_bytes": 142
+      }
     },
     "verify_file_created": {
+      "blocks": {},
+      "depth": 0,
       "inputs": {
         "path": "/tmp/test-template-render/README.md"
       },
-      "outputs": {
-        "content": "# TestProject\n\nGenerated: 2025-11-02T10:36:09.405952+00:00\nShell Output: data_from_shell\n\n\n## Features\n\n- Feature 1\n\n- Feature 2\n\n- Feature 3\n",
-        "path": "/private/tmp/test-template-render/README.md",
-        "size_bytes": 142,
-        "found": true
-      },
       "metadata": {
-        "status": "completed",
-        "outcome": "success",
-        "execution_time_ms": 0.19677734375,
-        "started_at": "2025-11-02T10:36:09.414284+00:00",
-        "completed_at": "2025-11-02T10:36:09.414484+00:00",
-        "wave": 2,
+        "completed_at": "TIMESTAMP",
         "execution_order": 2,
-        "message": null,
-        "succeeded": true,
+        "execution_time_ms": "EXECUTION_TIME",
         "failed": false,
-        "skipped": false
-      },
-      "blocks": {},
-      "depth": 0
-    },
-    "cleanup": {
-      "inputs": {
-        "command": "rm -rf \"/tmp/test-template-render\""
+        "message": null,
+        "outcome": "success",
+        "skipped": false,
+        "started_at": "TIMESTAMP",
+        "status": "completed",
+        "succeeded": true,
+        "wave": 2
       },
       "outputs": {
-        "exit_code": 0,
-        "stdout": "",
-        "stderr": ""
-      },
-      "metadata": {
-        "status": "completed",
-        "outcome": "success",
-        "execution_time_ms": 8.037109375,
-        "started_at": "2025-11-02T10:36:09.414670+00:00",
-        "completed_at": "2025-11-02T10:36:09.422690+00:00",
-        "wave": 3,
-        "execution_order": 3,
-        "message": null,
-        "succeeded": true,
-        "failed": false,
-        "skipped": false
-      },
-      "blocks": {},
-      "depth": 0
+        "content": "# TestProject\n\nGenerated: TIMESTAMP\nShell Output: data_from_shell\n\n\n## Features\n\n- Feature 1\n\n- Feature 2\n\n- Feature 3\n",
+        "found": true,
+        "path": "/tmp/test-template-render/README.md",
+        "size_bytes": 142
+      }
     }
   },
   "metadata": {
-    "workflow_name": "file-operations-template-render",
-    "start_time": "2025-11-02T10:36:09.405952+00:00",
-    "total_blocks": 4,
+    "completed_at": "TIMESTAMP",
+    "execution_time_seconds": "EXECUTION_TIME",
     "execution_waves": 4,
-    "completed_at": "2025-11-02T10:36:09.423282+00:00",
-    "execution_time_seconds": 0.017405986785888672,
-    "secret_access_count": 0
-  }
+    "secret_access_count": 0,
+    "start_time": "TIMESTAMP",
+    "total_blocks": 4,
+    "workflow_name": "file-operations-template-render"
+  },
+  "outputs": {
+    "cleanup_done": "true",
+    "file_content": "# TestProject\n\nGenerated: TIMESTAMP\nShell Output: data_from_shell\n\n\n## Features\n\n- Feature 1\n\n- Feature 2\n\n- Feature 3\n",
+    "template_rendered": "true"
+  },
+  "status": "success"
 }

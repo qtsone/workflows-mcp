@@ -1,37 +1,37 @@
 {
-  "status": "paused",
-  "checkpoint_id": "pause_interactive-simple-approval_1762079771208_f73efd6f",
-  "prompt": "Proceed with operation?",
-  "message": "Use resume_workflow(checkpoint_id: \"pause_interactive-simple-approval_1762079771208_f73efd6f\", response: \"<your-response>\") to continue",
   "blocks": {
     "start": {
+      "blocks": {},
+      "depth": 0,
       "inputs": {
         "command": "echo \"Starting workflow with message: Proceed with operation?\"\n"
       },
+      "metadata": {
+        "completed_at": "TIMESTAMP",
+        "execution_order": 0,
+        "execution_time_ms": "EXECUTION_TIME",
+        "failed": false,
+        "message": null,
+        "outcome": "success",
+        "skipped": false,
+        "started_at": "TIMESTAMP",
+        "status": "completed",
+        "succeeded": true,
+        "wave": 0
+      },
       "outputs": {
         "exit_code": 0,
-        "stdout": "Starting workflow with message: Proceed with operation?\n",
-        "stderr": ""
-      },
-      "metadata": {
-        "status": "completed",
-        "outcome": "success",
-        "execution_time_ms": 5.81005859375,
-        "started_at": "2025-11-02T10:36:11.201841+00:00",
-        "completed_at": "2025-11-02T10:36:11.207638+00:00",
-        "wave": 0,
-        "execution_order": 0,
-        "message": null,
-        "succeeded": true,
-        "failed": false,
-        "skipped": false
-      },
-      "blocks": {},
-      "depth": 0
+        "stderr": "",
+        "stdout": "Starting workflow with message: Proceed with operation?\n"
+      }
     }
   },
+  "checkpoint_id": "CHECKPOINT_ID",
+  "message": "Use resume_workflow(checkpoint_id: \"CHECKPOINT_ID\", response: \"<your-response>\") to continue",
   "metadata": {
-    "workflow_name": "interactive-simple-approval",
-    "start_time": "2025-11-02T10:36:11.201718+00:00"
-  }
+    "start_time": "TIMESTAMP",
+    "workflow_name": "interactive-simple-approval"
+  },
+  "prompt": "Proceed with operation?",
+  "status": "paused"
 }

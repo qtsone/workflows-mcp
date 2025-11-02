@@ -1,78 +1,82 @@
 {
-  "status": "success",
-  "outputs": {
-    "phase": "updated",
-    "count": "1",
-    "new_field": "added",
-    "merge_succeeded": "true",
-    "cleanup_done": "true"
-  },
   "blocks": {
-    "setup": {
+    "cleanup": {
+      "blocks": {},
+      "depth": 0,
       "inputs": {
-        "path": "/tmp/test-merge-state.json",
-        "data": {
-          "phase": "init",
-          "count": 0
-        }
-      },
-      "outputs": {
-        "path": "/private/tmp/test-merge-state.json",
-        "size_bytes": 36
+        "command": "rm -f \"/tmp/test-merge-state.json\""
       },
       "metadata": {
-        "status": "completed",
-        "outcome": "success",
-        "execution_time_ms": 0.40283203125,
-        "started_at": "2025-11-02T10:36:12.962572+00:00",
-        "completed_at": "2025-11-02T10:36:12.962979+00:00",
-        "wave": 0,
-        "execution_order": 0,
-        "message": null,
-        "succeeded": true,
+        "completed_at": "TIMESTAMP",
+        "execution_order": 3,
+        "execution_time_ms": "EXECUTION_TIME",
         "failed": false,
-        "skipped": false
+        "message": null,
+        "outcome": "success",
+        "skipped": false,
+        "started_at": "TIMESTAMP",
+        "status": "completed",
+        "succeeded": true,
+        "wave": 3
       },
-      "blocks": {},
-      "depth": 0
+      "outputs": {
+        "exit_code": 0,
+        "stderr": "",
+        "stdout": ""
+      }
     },
     "merge_update": {
+      "blocks": {},
+      "depth": 0,
       "inputs": {
         "path": "/tmp/test-merge-state.json",
         "updates": {
-          "phase": "updated",
           "count": 1,
-          "new_field": "added"
-        }
-      },
-      "outputs": {
-        "path": "/private/tmp/test-merge-state.json",
-        "created": false,
-        "merged_data": {
-          "count": 1,
-          "phase": "updated",
-          "new_field": "added"
+          "new_field": "added",
+          "phase": "updated"
         }
       },
       "metadata": {
-        "status": "completed",
-        "outcome": "success",
-        "execution_time_ms": 0.27001953125,
-        "started_at": "2025-11-02T10:36:12.963182+00:00",
-        "completed_at": "2025-11-02T10:36:12.963451+00:00",
-        "wave": 1,
+        "completed_at": "TIMESTAMP",
         "execution_order": 1,
-        "message": null,
-        "succeeded": true,
+        "execution_time_ms": "EXECUTION_TIME",
         "failed": false,
-        "skipped": false
+        "message": null,
+        "outcome": "success",
+        "skipped": false,
+        "started_at": "TIMESTAMP",
+        "status": "completed",
+        "succeeded": true,
+        "wave": 1
       },
-      "blocks": {},
-      "depth": 0
+      "outputs": {
+        "created": false,
+        "merged_data": {
+          "count": 1,
+          "new_field": "added",
+          "phase": "updated"
+        },
+        "path": "/tmp/test-merge-state.json"
+      }
     },
     "read_result": {
+      "blocks": {},
+      "depth": 0,
       "inputs": {
         "path": "/tmp/test-merge-state.json"
+      },
+      "metadata": {
+        "completed_at": "TIMESTAMP",
+        "execution_order": 2,
+        "execution_time_ms": "EXECUTION_TIME",
+        "failed": false,
+        "message": null,
+        "outcome": "success",
+        "skipped": false,
+        "started_at": "TIMESTAMP",
+        "status": "completed",
+        "succeeded": true,
+        "wave": 2
       },
       "outputs": {
         "data": {
@@ -81,57 +85,53 @@
           "phase": "updated"
         },
         "found": true,
-        "path": "/private/tmp/test-merge-state.json"
+        "path": "/tmp/test-merge-state.json"
+      }
+    },
+    "setup": {
+      "blocks": {},
+      "depth": 0,
+      "inputs": {
+        "data": {
+          "count": 0,
+          "phase": "init"
+        },
+        "path": "/tmp/test-merge-state.json"
       },
       "metadata": {
-        "status": "completed",
-        "outcome": "success",
-        "execution_time_ms": 0.133056640625,
-        "started_at": "2025-11-02T10:36:12.963633+00:00",
-        "completed_at": "2025-11-02T10:36:12.963766+00:00",
-        "wave": 2,
-        "execution_order": 2,
-        "message": null,
-        "succeeded": true,
+        "completed_at": "TIMESTAMP",
+        "execution_order": 0,
+        "execution_time_ms": "EXECUTION_TIME",
         "failed": false,
-        "skipped": false
-      },
-      "blocks": {},
-      "depth": 0
-    },
-    "cleanup": {
-      "inputs": {
-        "command": "rm -f \"/tmp/test-merge-state.json\""
+        "message": null,
+        "outcome": "success",
+        "skipped": false,
+        "started_at": "TIMESTAMP",
+        "status": "completed",
+        "succeeded": true,
+        "wave": 0
       },
       "outputs": {
-        "exit_code": 0,
-        "stdout": "",
-        "stderr": ""
-      },
-      "metadata": {
-        "status": "completed",
-        "outcome": "success",
-        "execution_time_ms": 7.674072265625,
-        "started_at": "2025-11-02T10:36:12.963913+00:00",
-        "completed_at": "2025-11-02T10:36:12.971574+00:00",
-        "wave": 3,
-        "execution_order": 3,
-        "message": null,
-        "succeeded": true,
-        "failed": false,
-        "skipped": false
-      },
-      "blocks": {},
-      "depth": 0
+        "path": "/tmp/test-merge-state.json",
+        "size_bytes": 36
+      }
     }
   },
   "metadata": {
-    "workflow_name": "state-management-merge",
-    "start_time": "2025-11-02T10:36:12.962425+00:00",
-    "total_blocks": 4,
+    "completed_at": "TIMESTAMP",
+    "execution_time_seconds": "EXECUTION_TIME",
     "execution_waves": 4,
-    "completed_at": "2025-11-02T10:36:12.971977+00:00",
-    "execution_time_seconds": 0.009629964828491211,
-    "secret_access_count": 0
-  }
+    "secret_access_count": 0,
+    "start_time": "TIMESTAMP",
+    "total_blocks": 4,
+    "workflow_name": "state-management-merge"
+  },
+  "outputs": {
+    "cleanup_done": "true",
+    "count": "1",
+    "merge_succeeded": "true",
+    "new_field": "added",
+    "phase": "updated"
+  },
+  "status": "success"
 }

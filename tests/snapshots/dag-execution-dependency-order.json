@@ -1,120 +1,120 @@
 {
-  "status": "success",
+  "blocks": {
+    "step1": {
+      "blocks": {},
+      "depth": 0,
+      "inputs": {
+        "command": "printf \"1\""
+      },
+      "metadata": {
+        "completed_at": "TIMESTAMP",
+        "execution_order": 0,
+        "execution_time_ms": "EXECUTION_TIME",
+        "failed": false,
+        "message": null,
+        "outcome": "success",
+        "skipped": false,
+        "started_at": "TIMESTAMP",
+        "status": "completed",
+        "succeeded": true,
+        "wave": 0
+      },
+      "outputs": {
+        "exit_code": 0,
+        "stderr": "",
+        "stdout": "1"
+      }
+    },
+    "step2": {
+      "blocks": {},
+      "depth": 0,
+      "inputs": {
+        "command": "printf \"1-2\""
+      },
+      "metadata": {
+        "completed_at": "TIMESTAMP",
+        "execution_order": 1,
+        "execution_time_ms": "EXECUTION_TIME",
+        "failed": false,
+        "message": null,
+        "outcome": "success",
+        "skipped": false,
+        "started_at": "TIMESTAMP",
+        "status": "completed",
+        "succeeded": true,
+        "wave": 1
+      },
+      "outputs": {
+        "exit_code": 0,
+        "stderr": "",
+        "stdout": "1-2"
+      }
+    },
+    "step3": {
+      "blocks": {},
+      "depth": 0,
+      "inputs": {
+        "command": "printf \"1-2-3\""
+      },
+      "metadata": {
+        "completed_at": "TIMESTAMP",
+        "execution_order": 2,
+        "execution_time_ms": "EXECUTION_TIME",
+        "failed": false,
+        "message": null,
+        "outcome": "success",
+        "skipped": false,
+        "started_at": "TIMESTAMP",
+        "status": "completed",
+        "succeeded": true,
+        "wave": 2
+      },
+      "outputs": {
+        "exit_code": 0,
+        "stderr": "",
+        "stdout": "1-2-3"
+      }
+    },
+    "step4": {
+      "blocks": {},
+      "depth": 0,
+      "inputs": {
+        "command": "printf \"1-2-3-4\""
+      },
+      "metadata": {
+        "completed_at": "TIMESTAMP",
+        "execution_order": 3,
+        "execution_time_ms": "EXECUTION_TIME",
+        "failed": false,
+        "message": null,
+        "outcome": "success",
+        "skipped": false,
+        "started_at": "TIMESTAMP",
+        "status": "completed",
+        "succeeded": true,
+        "wave": 3
+      },
+      "outputs": {
+        "exit_code": 0,
+        "stderr": "",
+        "stdout": "1-2-3-4"
+      }
+    }
+  },
+  "metadata": {
+    "completed_at": "TIMESTAMP",
+    "execution_time_seconds": "EXECUTION_TIME",
+    "execution_waves": 4,
+    "secret_access_count": 0,
+    "start_time": "TIMESTAMP",
+    "total_blocks": 4,
+    "workflow_name": "dag-execution-dependency-order"
+  },
   "outputs": {
     "step1_output": "1",
     "step2_output": "1-2",
     "step3_output": "1-2-3",
     "step4_output": "1-2-3-4"
   },
-  "blocks": {
-    "step1": {
-      "inputs": {
-        "command": "printf \"1\""
-      },
-      "outputs": {
-        "exit_code": 0,
-        "stdout": "1",
-        "stderr": ""
-      },
-      "metadata": {
-        "status": "completed",
-        "outcome": "success",
-        "execution_time_ms": 5.9130859375,
-        "started_at": "2025-11-02T10:36:09.295832+00:00",
-        "completed_at": "2025-11-02T10:36:09.301735+00:00",
-        "wave": 0,
-        "execution_order": 0,
-        "message": null,
-        "succeeded": true,
-        "failed": false,
-        "skipped": false
-      },
-      "blocks": {},
-      "depth": 0
-    },
-    "step2": {
-      "inputs": {
-        "command": "printf \"1-2\""
-      },
-      "outputs": {
-        "exit_code": 0,
-        "stdout": "1-2",
-        "stderr": ""
-      },
-      "metadata": {
-        "status": "completed",
-        "outcome": "success",
-        "execution_time_ms": 5.583984375,
-        "started_at": "2025-11-02T10:36:09.302222+00:00",
-        "completed_at": "2025-11-02T10:36:09.307797+00:00",
-        "wave": 1,
-        "execution_order": 1,
-        "message": null,
-        "succeeded": true,
-        "failed": false,
-        "skipped": false
-      },
-      "blocks": {},
-      "depth": 0
-    },
-    "step3": {
-      "inputs": {
-        "command": "printf \"1-2-3\""
-      },
-      "outputs": {
-        "exit_code": 0,
-        "stdout": "1-2-3",
-        "stderr": ""
-      },
-      "metadata": {
-        "status": "completed",
-        "outcome": "success",
-        "execution_time_ms": 4.873046875,
-        "started_at": "2025-11-02T10:36:09.308211+00:00",
-        "completed_at": "2025-11-02T10:36:09.313078+00:00",
-        "wave": 2,
-        "execution_order": 2,
-        "message": null,
-        "succeeded": true,
-        "failed": false,
-        "skipped": false
-      },
-      "blocks": {},
-      "depth": 0
-    },
-    "step4": {
-      "inputs": {
-        "command": "printf \"1-2-3-4\""
-      },
-      "outputs": {
-        "exit_code": 0,
-        "stdout": "1-2-3-4",
-        "stderr": ""
-      },
-      "metadata": {
-        "status": "completed",
-        "outcome": "success",
-        "execution_time_ms": 4.586181640625,
-        "started_at": "2025-11-02T10:36:09.313450+00:00",
-        "completed_at": "2025-11-02T10:36:09.318030+00:00",
-        "wave": 3,
-        "execution_order": 3,
-        "message": null,
-        "succeeded": true,
-        "failed": false,
-        "skipped": false
-      },
-      "blocks": {},
-      "depth": 0
-    }
-  },
-  "metadata": {
-    "workflow_name": "dag-execution-dependency-order",
-    "start_time": "2025-11-02T10:36:09.295714+00:00",
-    "total_blocks": 4,
-    "execution_waves": 4,
-    "completed_at": "2025-11-02T10:36:09.318355+00:00",
-    "execution_time_seconds": 0.022711992263793945,
-    "secret_access_count": 0
-  }
+  "status": "success"
 }

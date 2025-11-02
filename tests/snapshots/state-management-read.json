@@ -1,129 +1,129 @@
 {
-  "status": "success",
-  "outputs": {
-    "phase": "test",
-    "count": "42",
-    "nested_key": "value",
-    "nonexistent_found": "false",
-    "cleanup_done": "true"
-  },
   "blocks": {
+    "cleanup": {
+      "blocks": {},
+      "depth": 0,
+      "inputs": {
+        "command": "rm -f \"/tmp/test-read-state.json\""
+      },
+      "metadata": {
+        "completed_at": "TIMESTAMP",
+        "execution_order": 3,
+        "execution_time_ms": "EXECUTION_TIME",
+        "failed": false,
+        "message": null,
+        "outcome": "success",
+        "skipped": false,
+        "started_at": "TIMESTAMP",
+        "status": "completed",
+        "succeeded": true,
+        "wave": 2
+      },
+      "outputs": {
+        "exit_code": 0,
+        "stderr": "",
+        "stdout": ""
+      }
+    },
     "read_nonexistent": {
+      "blocks": {},
+      "depth": 0,
       "inputs": {
         "path": "/tmp/nonexistent-state.json",
         "required": false
       },
+      "metadata": {
+        "completed_at": "TIMESTAMP",
+        "execution_order": 0,
+        "execution_time_ms": "EXECUTION_TIME",
+        "failed": false,
+        "message": null,
+        "outcome": "success",
+        "skipped": false,
+        "started_at": "TIMESTAMP",
+        "status": "completed",
+        "succeeded": true,
+        "wave": 0
+      },
       "outputs": {
         "data": {},
         "found": false,
-        "path": "/private/tmp/nonexistent-state.json"
-      },
-      "metadata": {
-        "status": "completed",
-        "outcome": "success",
-        "execution_time_ms": 0.196044921875,
-        "started_at": "2025-11-02T10:36:12.979559+00:00",
-        "completed_at": "2025-11-02T10:36:12.979769+00:00",
-        "wave": 0,
-        "execution_order": 0,
-        "message": null,
-        "succeeded": true,
-        "failed": false,
-        "skipped": false
-      },
-      "blocks": {},
-      "depth": 0
-    },
-    "setup": {
-      "inputs": {
-        "command": "echo '{\"phase\": \"test\", \"count\": 42, \"nested\": {\"key\": \"value\"}}' > \"/tmp/test-read-state.json\"\n"
-      },
-      "outputs": {
-        "exit_code": 0,
-        "stdout": "",
-        "stderr": ""
-      },
-      "metadata": {
-        "status": "completed",
-        "outcome": "success",
-        "execution_time_ms": 7.0830078125,
-        "started_at": "2025-11-02T10:36:12.975978+00:00",
-        "completed_at": "2025-11-02T10:36:12.983057+00:00",
-        "wave": 0,
-        "execution_order": 0,
-        "message": null,
-        "succeeded": true,
-        "failed": false,
-        "skipped": false
-      },
-      "blocks": {},
-      "depth": 0
+        "path": "/tmp/nonexistent-state.json"
+      }
     },
     "read_state": {
+      "blocks": {},
+      "depth": 0,
       "inputs": {
         "path": "/tmp/test-read-state.json",
         "required": true
       },
+      "metadata": {
+        "completed_at": "TIMESTAMP",
+        "execution_order": 2,
+        "execution_time_ms": "EXECUTION_TIME",
+        "failed": false,
+        "message": null,
+        "outcome": "success",
+        "skipped": false,
+        "started_at": "TIMESTAMP",
+        "status": "completed",
+        "succeeded": true,
+        "wave": 1
+      },
       "outputs": {
         "data": {
-          "phase": "test",
           "count": 42,
           "nested": {
             "key": "value"
-          }
+          },
+          "phase": "test"
         },
         "found": true,
-        "path": "/private/tmp/test-read-state.json"
+        "path": "/tmp/test-read-state.json"
+      }
+    },
+    "setup": {
+      "blocks": {},
+      "depth": 0,
+      "inputs": {
+        "command": "echo '{\"phase\": \"test\", \"count\": 42, \"nested\": {\"key\": \"value\"}}' > \"/tmp/test-read-state.json\"\n"
       },
       "metadata": {
-        "status": "completed",
-        "outcome": "success",
-        "execution_time_ms": 0.174072265625,
-        "started_at": "2025-11-02T10:36:12.983399+00:00",
-        "completed_at": "2025-11-02T10:36:12.983573+00:00",
-        "wave": 1,
-        "execution_order": 2,
-        "message": null,
-        "succeeded": true,
+        "completed_at": "TIMESTAMP",
+        "execution_order": 0,
+        "execution_time_ms": "EXECUTION_TIME",
         "failed": false,
-        "skipped": false
-      },
-      "blocks": {},
-      "depth": 0
-    },
-    "cleanup": {
-      "inputs": {
-        "command": "rm -f \"/tmp/test-read-state.json\""
+        "message": null,
+        "outcome": "success",
+        "skipped": false,
+        "started_at": "TIMESTAMP",
+        "status": "completed",
+        "succeeded": true,
+        "wave": 0
       },
       "outputs": {
         "exit_code": 0,
-        "stdout": "",
-        "stderr": ""
-      },
-      "metadata": {
-        "status": "completed",
-        "outcome": "success",
-        "execution_time_ms": 7.188232421875,
-        "started_at": "2025-11-02T10:36:12.983729+00:00",
-        "completed_at": "2025-11-02T10:36:12.990897+00:00",
-        "wave": 2,
-        "execution_order": 3,
-        "message": null,
-        "succeeded": true,
-        "failed": false,
-        "skipped": false
-      },
-      "blocks": {},
-      "depth": 0
+        "stderr": "",
+        "stdout": ""
+      }
     }
   },
   "metadata": {
-    "workflow_name": "state-management-read",
-    "start_time": "2025-11-02T10:36:12.975856+00:00",
-    "total_blocks": 4,
+    "completed_at": "TIMESTAMP",
+    "execution_time_seconds": "EXECUTION_TIME",
     "execution_waves": 3,
-    "completed_at": "2025-11-02T10:36:12.991348+00:00",
-    "execution_time_seconds": 0.015569210052490234,
-    "secret_access_count": 0
-  }
+    "secret_access_count": 0,
+    "start_time": "TIMESTAMP",
+    "total_blocks": 4,
+    "workflow_name": "state-management-read"
+  },
+  "outputs": {
+    "cleanup_done": "true",
+    "count": "42",
+    "nested_key": "value",
+    "nonexistent_found": "false",
+    "phase": "test"
+  },
+  "status": "success"
 }

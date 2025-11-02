@@ -1,124 +1,124 @@
 {
-  "status": "success",
-  "outputs": {
-    "file_read": "true",
-    "content_has_data": "Test content with \u4f60\u597d\n",
-    "optional_not_found": "true",
-    "cleanup_done": "true"
-  },
   "blocks": {
-    "setup": {
+    "cleanup": {
+      "blocks": {},
+      "depth": 0,
       "inputs": {
-        "command": "mkdir -p \"/tmp/test-read-file\"\necho \"Test content with \u4f60\u597d\" > \"/tmp/test-read-file/test.txt\"\n"
+        "command": "rm -rf \"/tmp/test-read-file\""
+      },
+      "metadata": {
+        "completed_at": "TIMESTAMP",
+        "execution_order": 3,
+        "execution_time_ms": "EXECUTION_TIME",
+        "failed": false,
+        "message": null,
+        "outcome": "success",
+        "skipped": false,
+        "started_at": "TIMESTAMP",
+        "status": "completed",
+        "succeeded": true,
+        "wave": 2
       },
       "outputs": {
         "exit_code": 0,
-        "stdout": "",
-        "stderr": ""
-      },
-      "metadata": {
-        "status": "completed",
-        "outcome": "success",
-        "execution_time_ms": 8.239990234375,
-        "started_at": "2025-11-02T10:36:09.386089+00:00",
-        "completed_at": "2025-11-02T10:36:09.394323+00:00",
-        "wave": 0,
-        "execution_order": 0,
-        "message": null,
-        "succeeded": true,
-        "failed": false,
-        "skipped": false
-      },
-      "blocks": {},
-      "depth": 0
+        "stderr": "",
+        "stdout": ""
+      }
     },
     "read_existing": {
+      "blocks": {},
+      "depth": 0,
       "inputs": {
-        "path": "/tmp/test-read-file/test.txt",
-        "encoding": "utf-8"
+        "encoding": "utf-8",
+        "path": "/tmp/test-read-file/test.txt"
+      },
+      "metadata": {
+        "completed_at": "TIMESTAMP",
+        "execution_order": 1,
+        "execution_time_ms": "EXECUTION_TIME",
+        "failed": false,
+        "message": null,
+        "outcome": "success",
+        "skipped": false,
+        "started_at": "TIMESTAMP",
+        "status": "completed",
+        "succeeded": true,
+        "wave": 1
       },
       "outputs": {
         "content": "Test content with \u4f60\u597d\n",
-        "path": "/private/tmp/test-read-file/test.txt",
-        "size_bytes": 25,
-        "found": true
-      },
-      "metadata": {
-        "status": "completed",
-        "outcome": "success",
-        "execution_time_ms": 0.22802734375,
-        "started_at": "2025-11-02T10:36:09.394770+00:00",
-        "completed_at": "2025-11-02T10:36:09.394998+00:00",
-        "wave": 1,
-        "execution_order": 1,
-        "message": null,
-        "succeeded": true,
-        "failed": false,
-        "skipped": false
-      },
-      "blocks": {},
-      "depth": 0
+        "found": true,
+        "path": "/tmp/test-read-file/test.txt",
+        "size_bytes": 25
+      }
     },
     "read_nonexistent_optional": {
+      "blocks": {},
+      "depth": 0,
       "inputs": {
         "path": "/tmp/test-read-file/nonexistent.txt",
         "required": false
       },
+      "metadata": {
+        "completed_at": "TIMESTAMP",
+        "execution_order": 1,
+        "execution_time_ms": "EXECUTION_TIME",
+        "failed": false,
+        "message": null,
+        "outcome": "success",
+        "skipped": false,
+        "started_at": "TIMESTAMP",
+        "status": "completed",
+        "succeeded": true,
+        "wave": 1
+      },
       "outputs": {
         "content": "",
-        "path": "/private/tmp/test-read-file/nonexistent.txt",
-        "size_bytes": 0,
-        "found": false
+        "found": false,
+        "path": "/tmp/test-read-file/nonexistent.txt",
+        "size_bytes": 0
+      }
+    },
+    "setup": {
+      "blocks": {},
+      "depth": 0,
+      "inputs": {
+        "command": "mkdir -p \"/tmp/test-read-file\"\necho \"Test content with \u4f60\u597d\" > \"/tmp/test-read-file/test.txt\"\n"
       },
       "metadata": {
-        "status": "completed",
-        "outcome": "success",
-        "execution_time_ms": 0.0810546875,
-        "started_at": "2025-11-02T10:36:09.395056+00:00",
-        "completed_at": "2025-11-02T10:36:09.395137+00:00",
-        "wave": 1,
-        "execution_order": 1,
-        "message": null,
-        "succeeded": true,
+        "completed_at": "TIMESTAMP",
+        "execution_order": 0,
+        "execution_time_ms": "EXECUTION_TIME",
         "failed": false,
-        "skipped": false
-      },
-      "blocks": {},
-      "depth": 0
-    },
-    "cleanup": {
-      "inputs": {
-        "command": "rm -rf \"/tmp/test-read-file\""
+        "message": null,
+        "outcome": "success",
+        "skipped": false,
+        "started_at": "TIMESTAMP",
+        "status": "completed",
+        "succeeded": true,
+        "wave": 0
       },
       "outputs": {
         "exit_code": 0,
-        "stdout": "",
-        "stderr": ""
-      },
-      "metadata": {
-        "status": "completed",
-        "outcome": "success",
-        "execution_time_ms": 6.97802734375,
-        "started_at": "2025-11-02T10:36:09.395300+00:00",
-        "completed_at": "2025-11-02T10:36:09.402265+00:00",
-        "wave": 2,
-        "execution_order": 3,
-        "message": null,
-        "succeeded": true,
-        "failed": false,
-        "skipped": false
-      },
-      "blocks": {},
-      "depth": 0
+        "stderr": "",
+        "stdout": ""
+      }
     }
   },
   "metadata": {
-    "workflow_name": "file-operations-read",
-    "start_time": "2025-11-02T10:36:09.385957+00:00",
-    "total_blocks": 4,
+    "completed_at": "TIMESTAMP",
+    "execution_time_seconds": "EXECUTION_TIME",
     "execution_waves": 3,
-    "completed_at": "2025-11-02T10:36:09.402681+00:00",
-    "execution_time_seconds": 0.01679372787475586,
-    "secret_access_count": 0
-  }
+    "secret_access_count": 0,
+    "start_time": "TIMESTAMP",
+    "total_blocks": 4,
+    "workflow_name": "file-operations-read"
+  },
+  "outputs": {
+    "cleanup_done": "true",
+    "content_has_data": "Test content with \u4f60\u597d\n",
+    "file_read": "true",
+    "optional_not_found": "true"
+  },
+  "status": "success"
 }

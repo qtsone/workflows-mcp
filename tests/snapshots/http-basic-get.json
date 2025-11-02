@@ -1,22 +1,37 @@
 {
-  "status": "success",
-  "outputs": {
-    "get_status": "200",
-    "get_success": "true",
-    "post_status": "200",
-    "post_success": "true",
-    "json_verified": "true"
-  },
   "blocks": {
     "get_request": {
+      "blocks": {},
+      "depth": 0,
       "inputs": {
-        "url": "https://httpbin.org/get",
         "method": "GET",
-        "timeout": 10
+        "timeout": 10,
+        "url": "https://httpbin.org/get"
+      },
+      "metadata": {
+        "completed_at": "TIMESTAMP",
+        "execution_order": 0,
+        "execution_time_ms": "EXECUTION_TIME",
+        "failed": false,
+        "message": null,
+        "outcome": "success",
+        "skipped": false,
+        "started_at": "TIMESTAMP",
+        "status": "completed",
+        "succeeded": true,
+        "wave": 0
       },
       "outputs": {
-        "status_code": 200,
-        "response_body": "{\n  \"args\": {}, \n  \"headers\": {\n    \"Accept\": \"*/*\", \n    \"Accept-Encoding\": \"gzip, deflate\", \n    \"Host\": \"httpbin.org\", \n    \"User-Agent\": \"python-httpx/0.28.1\", \n    \"X-Amzn-Trace-Id\": \"Root=1-6907341a-1fc12f726b8d22fc6abff056\"\n  }, \n  \"origin\": \"212.86.46.95\", \n  \"url\": \"https://httpbin.org/get\"\n}\n",
+        "headers": {
+          "access-control-allow-credentials": "true",
+          "access-control-allow-origin": "*",
+          "connection": "keep-alive",
+          "content-length": "CONTENT_LENGTH",
+          "content-type": "application/json",
+          "date": "HTTP_DATE",
+          "server": "gunicorn/19.9.0"
+        },
+        "response_body": "{\n  \"args\": {}, \n  \"headers\": {\n    \"Accept\": \"*/*\", \n    \"Accept-Encoding\": \"gzip, deflate\", \n    \"Host\": \"httpbin.org\", \n    \"User-Agent\": \"python-httpx/0.28.1\", \n    \"X-Amzn-Trace-Id\": \"Root=TRACE_ID\"\n  }, \n  \"origin\": \"IP_ADDRESS\", \n  \"url\": \"https://httpbin.org/get\"\n}\n",
         "response_json": {
           "args": {},
           "headers": {
@@ -24,55 +39,55 @@
             "Accept-Encoding": "gzip, deflate",
             "Host": "httpbin.org",
             "User-Agent": "python-httpx/0.28.1",
-            "X-Amzn-Trace-Id": "Root=1-6907341a-1fc12f726b8d22fc6abff056"
+            "X-Amzn-Trace-Id": "Root=TRACE_ID"
           },
-          "origin": "212.86.46.95",
+          "origin": "HTTP_ORIGIN",
           "url": "https://httpbin.org/get"
         },
-        "headers": {
-          "date": "Sun, 02 Nov 2025 10:36:10 GMT",
-          "content-type": "application/json",
-          "content-length": "303",
-          "connection": "keep-alive",
-          "server": "gunicorn/19.9.0",
-          "access-control-allow-origin": "*",
-          "access-control-allow-credentials": "true"
-        },
+        "status_code": 200,
         "success": true
-      },
-      "metadata": {
-        "status": "completed",
-        "outcome": "success",
-        "execution_time_ms": 593.172119140625,
-        "started_at": "2025-11-02T10:36:09.426573+00:00",
-        "completed_at": "2025-11-02T10:36:10.019740+00:00",
-        "wave": 0,
-        "execution_order": 0,
-        "message": null,
-        "succeeded": true,
-        "failed": false,
-        "skipped": false
-      },
-      "blocks": {},
-      "depth": 0
+      }
     },
     "post_json": {
+      "blocks": {},
+      "depth": 0,
       "inputs": {
-        "url": "https://httpbin.org/post",
-        "method": "POST",
+        "body_json": {
+          "number": 42,
+          "test_key": "test_value"
+        },
         "headers": {
           "Content-Type": "application/json",
           "User-Agent": "workflows-mcp-test"
         },
-        "body_json": {
-          "test_key": "test_value",
-          "number": 42
-        },
-        "timeout": 10
+        "method": "POST",
+        "timeout": 10,
+        "url": "https://httpbin.org/post"
+      },
+      "metadata": {
+        "completed_at": "TIMESTAMP",
+        "execution_order": 1,
+        "execution_time_ms": "EXECUTION_TIME",
+        "failed": false,
+        "message": null,
+        "outcome": "success",
+        "skipped": false,
+        "started_at": "TIMESTAMP",
+        "status": "completed",
+        "succeeded": true,
+        "wave": 1
       },
       "outputs": {
-        "status_code": 200,
-        "response_body": "{\n  \"args\": {}, \n  \"data\": \"{\\\"test_key\\\":\\\"test_value\\\",\\\"number\\\":42}\", \n  \"files\": {}, \n  \"form\": {}, \n  \"headers\": {\n    \"Accept\": \"*/*\", \n    \"Accept-Encoding\": \"gzip, deflate\", \n    \"Content-Length\": \"37\", \n    \"Content-Type\": \"application/json\", \n    \"Host\": \"httpbin.org\", \n    \"User-Agent\": \"workflows-mcp-test\", \n    \"X-Amzn-Trace-Id\": \"Root=1-6907341a-799124a30e8ca193295cde08\"\n  }, \n  \"json\": {\n    \"number\": 42, \n    \"test_key\": \"test_value\"\n  }, \n  \"origin\": \"212.86.46.95\", \n  \"url\": \"https://httpbin.org/post\"\n}\n",
+        "headers": {
+          "access-control-allow-credentials": "true",
+          "access-control-allow-origin": "*",
+          "connection": "keep-alive",
+          "content-length": "CONTENT_LENGTH",
+          "content-type": "application/json",
+          "date": "HTTP_DATE",
+          "server": "gunicorn/19.9.0"
+        },
+        "response_body": "{\n  \"args\": {}, \n  \"data\": \"{\\\"test_key\\\":\\\"test_value\\\",\\\"number\\\":42}\", \n  \"files\": {}, \n  \"form\": {}, \n  \"headers\": {\n    \"Accept\": \"*/*\", \n    \"Accept-Encoding\": \"gzip, deflate\", \n    \"Content-Length\": \"37\", \n    \"Content-Type\": \"application/json\", \n    \"Host\": \"httpbin.org\", \n    \"User-Agent\": \"workflows-mcp-test\", \n    \"X-Amzn-Trace-Id\": \"Root=TRACE_ID\"\n  }, \n  \"json\": {\n    \"number\": 42, \n    \"test_key\": \"test_value\"\n  }, \n  \"origin\": \"IP_ADDRESS\", \n  \"url\": \"https://httpbin.org/post\"\n}\n",
         "response_json": {
           "args": {},
           "data": "{\"test_key\":\"test_value\",\"number\":42}",
@@ -81,79 +96,64 @@
           "headers": {
             "Accept": "*/*",
             "Accept-Encoding": "gzip, deflate",
-            "Content-Length": "37",
+            "Content-Length": "CONTENT_LENGTH",
             "Content-Type": "application/json",
             "Host": "httpbin.org",
             "User-Agent": "workflows-mcp-test",
-            "X-Amzn-Trace-Id": "Root=1-6907341a-799124a30e8ca193295cde08"
+            "X-Amzn-Trace-Id": "Root=TRACE_ID"
           },
           "json": {
             "number": 42,
             "test_key": "test_value"
           },
-          "origin": "212.86.46.95",
+          "origin": "HTTP_ORIGIN",
           "url": "https://httpbin.org/post"
         },
-        "headers": {
-          "date": "Sun, 02 Nov 2025 10:36:11 GMT",
-          "content-type": "application/json",
-          "content-length": "528",
-          "connection": "keep-alive",
-          "server": "gunicorn/19.9.0",
-          "access-control-allow-origin": "*",
-          "access-control-allow-credentials": "true"
-        },
+        "status_code": 200,
         "success": true
-      },
-      "metadata": {
-        "status": "completed",
-        "outcome": "success",
-        "execution_time_ms": 1137.491943359375,
-        "started_at": "2025-11-02T10:36:10.020152+00:00",
-        "completed_at": "2025-11-02T10:36:11.157644+00:00",
-        "wave": 1,
-        "execution_order": 1,
-        "message": null,
-        "succeeded": true,
-        "failed": false,
-        "skipped": false
-      },
-      "blocks": {},
-      "depth": 0
+      }
     },
     "verify_json_response": {
+      "blocks": {},
+      "depth": 0,
       "inputs": {
-        "command": "# Verify response_json was parsed\nif [ \"{'args': {}, 'data': '{\"test_key\":\"test_value\",\"number\":42}', 'files': {}, 'form': {}, 'headers': {'Accept': '*/*', 'Accept-Encoding': 'gzip, deflate', 'Content-Length': '37', 'Content-Type': 'application/json', 'Host': 'httpbin.org', 'User-Agent': 'workflows-mcp-test', 'X-Amzn-Trace-Id': 'Root=1-6907341a-799124a30e8ca193295cde08'}, 'json': {'number': 42, 'test_key': 'test_value'}, 'origin': '212.86.46.95', 'url': 'https://httpbin.org/post'}\" != \"None\" ]; then\n  echo \"JSON parsed successfully\"\nelse\n  echo \"JSON parsing failed\"\n  exit 1\nfi\n"
+        "command": "# Verify response_json was parsed\nif [ \"{'args': {}, 'data': '{\"test_key\":\"test_value\",\"number\":42}', 'files': {}, 'form': {}, 'headers': {'Accept': '*/*', 'Accept-Encoding': 'gzip, deflate', 'Content-Length': '37', 'Content-Type': 'application/json', 'Host': 'httpbin.org', 'User-Agent': 'workflows-mcp-test', 'X-Amzn-Trace-Id': 'Root=TRACE_ID'}, 'json': {'number': 42, 'test_key': 'test_value'}, 'origin': 'IP_ADDRESS', 'url': 'https://httpbin.org/post'}\" != \"None\" ]; then\n  echo \"JSON parsed successfully\"\nelse\n  echo \"JSON parsing failed\"\n  exit 1\nfi\n"
+      },
+      "metadata": {
+        "completed_at": "TIMESTAMP",
+        "execution_order": 2,
+        "execution_time_ms": "EXECUTION_TIME",
+        "failed": false,
+        "message": null,
+        "outcome": "success",
+        "skipped": false,
+        "started_at": "TIMESTAMP",
+        "status": "completed",
+        "succeeded": true,
+        "wave": 2
       },
       "outputs": {
         "exit_code": 0,
-        "stdout": "JSON parsed successfully\n",
-        "stderr": ""
-      },
-      "metadata": {
-        "status": "completed",
-        "outcome": "success",
-        "execution_time_ms": 6.192138671875,
-        "started_at": "2025-11-02T10:36:11.157891+00:00",
-        "completed_at": "2025-11-02T10:36:11.164065+00:00",
-        "wave": 2,
-        "execution_order": 2,
-        "message": null,
-        "succeeded": true,
-        "failed": false,
-        "skipped": false
-      },
-      "blocks": {},
-      "depth": 0
+        "stderr": "",
+        "stdout": "JSON parsed successfully\n"
+      }
     }
   },
   "metadata": {
-    "workflow_name": "http-basic-get",
-    "start_time": "2025-11-02T10:36:09.426454+00:00",
-    "total_blocks": 3,
+    "completed_at": "TIMESTAMP",
+    "execution_time_seconds": "EXECUTION_TIME",
     "execution_waves": 3,
-    "completed_at": "2025-11-02T10:36:11.164457+00:00",
-    "execution_time_seconds": 1.7380759716033936,
-    "secret_access_count": 0
-  }
+    "secret_access_count": 0,
+    "start_time": "TIMESTAMP",
+    "total_blocks": 3,
+    "workflow_name": "http-basic-get"
+  },
+  "outputs": {
+    "get_status": "200",
+    "get_success": "true",
+    "json_verified": "true",
+    "post_status": "200",
+    "post_success": "true"
+  },
+  "status": "success"
 }

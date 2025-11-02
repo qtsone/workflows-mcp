@@ -1,68 +1,68 @@
 {
-  "status": "success",
+  "blocks": {
+    "check_failure": {
+      "blocks": {},
+      "depth": 0,
+      "inputs": {
+        "command": "echo \"detected_failure\""
+      },
+      "metadata": {
+        "completed_at": "TIMESTAMP",
+        "execution_order": 1,
+        "execution_time_ms": "EXECUTION_TIME",
+        "failed": false,
+        "message": null,
+        "outcome": "success",
+        "skipped": false,
+        "started_at": "TIMESTAMP",
+        "status": "completed",
+        "succeeded": true,
+        "wave": 1
+      },
+      "outputs": {
+        "exit_code": 0,
+        "stderr": "",
+        "stdout": "detected_failure\n"
+      }
+    },
+    "failing_block": {
+      "blocks": {},
+      "depth": 0,
+      "inputs": {
+        "command": "exit 1"
+      },
+      "metadata": {
+        "completed_at": "TIMESTAMP",
+        "execution_order": 0,
+        "execution_time_ms": "EXECUTION_TIME",
+        "failed": true,
+        "message": "Command exited with code 1",
+        "outcome": "failure",
+        "skipped": false,
+        "started_at": "TIMESTAMP",
+        "status": "completed",
+        "succeeded": false,
+        "wave": 0
+      },
+      "outputs": {
+        "exit_code": 1,
+        "stderr": "",
+        "stdout": ""
+      }
+    }
+  },
+  "metadata": {
+    "completed_at": "TIMESTAMP",
+    "execution_time_seconds": "EXECUTION_TIME",
+    "execution_waves": 2,
+    "secret_access_count": 0,
+    "start_time": "TIMESTAMP",
+    "total_blocks": 2,
+    "workflow_name": "block-status-failure-detection"
+  },
   "outputs": {
     "block_failed": "true",
     "detection_worked": "true"
   },
-  "blocks": {
-    "failing_block": {
-      "inputs": {
-        "command": "exit 1"
-      },
-      "outputs": {
-        "exit_code": 1,
-        "stdout": "",
-        "stderr": ""
-      },
-      "metadata": {
-        "status": "completed",
-        "outcome": "failure",
-        "execution_time_ms": 6.067138671875,
-        "started_at": "2025-11-02T10:36:09.055383+00:00",
-        "completed_at": "2025-11-02T10:36:09.061441+00:00",
-        "wave": 0,
-        "execution_order": 0,
-        "message": "Command exited with code 1",
-        "succeeded": false,
-        "failed": true,
-        "skipped": false
-      },
-      "blocks": {},
-      "depth": 0
-    },
-    "check_failure": {
-      "inputs": {
-        "command": "echo \"detected_failure\""
-      },
-      "outputs": {
-        "exit_code": 0,
-        "stdout": "detected_failure\n",
-        "stderr": ""
-      },
-      "metadata": {
-        "status": "completed",
-        "outcome": "success",
-        "execution_time_ms": 5.2861328125,
-        "started_at": "2025-11-02T10:36:09.062015+00:00",
-        "completed_at": "2025-11-02T10:36:09.067292+00:00",
-        "wave": 1,
-        "execution_order": 1,
-        "message": null,
-        "succeeded": true,
-        "failed": false,
-        "skipped": false
-      },
-      "blocks": {},
-      "depth": 0
-    }
-  },
-  "metadata": {
-    "workflow_name": "block-status-failure-detection",
-    "start_time": "2025-11-02T10:36:09.055045+00:00",
-    "total_blocks": 2,
-    "execution_waves": 2,
-    "completed_at": "2025-11-02T10:36:09.067743+00:00",
-    "execution_time_seconds": 0.012929201126098633,
-    "secret_access_count": 0
-  }
+  "status": "success"
 }

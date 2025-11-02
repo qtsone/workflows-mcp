@@ -1,156 +1,156 @@
 {
-  "status": "success",
-  "outputs": {
-    "multiply_result": "50",
-    "add_result": "60",
-    "both_succeeded": true
-  },
   "blocks": {
-    "call_multiply": {
-      "inputs": {
-        "workflow": "composition-child-calculator",
-        "inputs": {
-          "number_a": "10",
-          "number_b": 5,
-          "operation": "*"
-        }
-      },
-      "outputs": {
-        "calculate_success": "true",
-        "result": "50"
-      },
-      "metadata": {
-        "status": "completed",
-        "outcome": "success",
-        "execution_time_ms": 5.759033203125,
-        "started_at": "2025-11-02T10:36:09.104196+00:00",
-        "completed_at": "2025-11-02T10:36:09.109953+00:00",
-        "wave": 0,
-        "execution_order": 0,
-        "message": null,
-        "succeeded": true,
-        "failed": false,
-        "skipped": false
-      },
+    "call_add": {
       "blocks": {
         "calculate": {
+          "blocks": {},
+          "depth": 0,
           "inputs": {
-            "command": "case * in\n  +|-|/|\\*)\n    echo \"$((10 * 5))\" > $SCRATCH/result.txt\n    ;;\n  *)\n    echo \"'*' is an unsupported operation\" >&2\n    exit 1\n    ;;\nesac\n"
+            "command": "case + in\n  +|-|/|\\*)\n    echo \"$((50 + 10))\" > $SCRATCH/result.txt\n    ;;\n  *)\n    echo \"'+' is an unsupported operation\" >&2\n    exit 1\n    ;;\nesac\n"
+          },
+          "metadata": {
+            "completed_at": "TIMESTAMP",
+            "execution_order": 0,
+            "execution_time_ms": "EXECUTION_TIME",
+            "failed": false,
+            "message": null,
+            "outcome": "success",
+            "skipped": false,
+            "started_at": "TIMESTAMP",
+            "status": "completed",
+            "succeeded": true,
+            "wave": 0
           },
           "outputs": {
             "exit_code": 0,
-            "stdout": "",
+            "result": 60,
             "stderr": "",
-            "result": 50
-          },
-          "metadata": {
-            "status": "completed",
-            "outcome": "success",
-            "execution_time_ms": 5.344970703125,
-            "started_at": "2025-11-02T10:36:09.104323+00:00",
-            "completed_at": "2025-11-02T10:36:09.109661+00:00",
-            "wave": 0,
-            "execution_order": 0,
-            "message": null,
-            "succeeded": true,
-            "failed": false,
-            "skipped": false
-          },
-          "blocks": {},
-          "depth": 0
+            "stdout": ""
+          }
         }
       },
-      "depth": 1
-    },
-    "call_add": {
+      "depth": 1,
       "inputs": {
-        "workflow": "composition-child-calculator",
         "inputs": {
           "number_a": "50",
           "number_b": 10,
           "operation": "+"
-        }
+        },
+        "workflow": "composition-child-calculator"
+      },
+      "metadata": {
+        "completed_at": "TIMESTAMP",
+        "execution_order": 1,
+        "execution_time_ms": "EXECUTION_TIME",
+        "failed": false,
+        "message": null,
+        "outcome": "success",
+        "skipped": false,
+        "started_at": "TIMESTAMP",
+        "status": "completed",
+        "succeeded": true,
+        "wave": 1
       },
       "outputs": {
         "calculate_success": "true",
         "result": "60"
-      },
-      "metadata": {
-        "status": "completed",
-        "outcome": "success",
-        "execution_time_ms": 6.01416015625,
-        "started_at": "2025-11-02T10:36:09.110264+00:00",
-        "completed_at": "2025-11-02T10:36:09.116278+00:00",
-        "wave": 1,
-        "execution_order": 1,
-        "message": null,
-        "succeeded": true,
-        "failed": false,
-        "skipped": false
-      },
+      }
+    },
+    "call_multiply": {
       "blocks": {
         "calculate": {
+          "blocks": {},
+          "depth": 0,
           "inputs": {
-            "command": "case + in\n  +|-|/|\\*)\n    echo \"$((50 + 10))\" > $SCRATCH/result.txt\n    ;;\n  *)\n    echo \"'+' is an unsupported operation\" >&2\n    exit 1\n    ;;\nesac\n"
+            "command": "case * in\n  +|-|/|\\*)\n    echo \"$((10 * 5))\" > $SCRATCH/result.txt\n    ;;\n  *)\n    echo \"'*' is an unsupported operation\" >&2\n    exit 1\n    ;;\nesac\n"
+          },
+          "metadata": {
+            "completed_at": "TIMESTAMP",
+            "execution_order": 0,
+            "execution_time_ms": "EXECUTION_TIME",
+            "failed": false,
+            "message": null,
+            "outcome": "success",
+            "skipped": false,
+            "started_at": "TIMESTAMP",
+            "status": "completed",
+            "succeeded": true,
+            "wave": 0
           },
           "outputs": {
             "exit_code": 0,
-            "stdout": "",
+            "result": 50,
             "stderr": "",
-            "result": 60
-          },
-          "metadata": {
-            "status": "completed",
-            "outcome": "success",
-            "execution_time_ms": 5.5869140625,
-            "started_at": "2025-11-02T10:36:09.110422+00:00",
-            "completed_at": "2025-11-02T10:36:09.116001+00:00",
-            "wave": 0,
-            "execution_order": 0,
-            "message": null,
-            "succeeded": true,
-            "failed": false,
-            "skipped": false
-          },
-          "blocks": {},
-          "depth": 0
+            "stdout": ""
+          }
         }
       },
-      "depth": 1
+      "depth": 1,
+      "inputs": {
+        "inputs": {
+          "number_a": "10",
+          "number_b": 5,
+          "operation": "*"
+        },
+        "workflow": "composition-child-calculator"
+      },
+      "metadata": {
+        "completed_at": "TIMESTAMP",
+        "execution_order": 0,
+        "execution_time_ms": "EXECUTION_TIME",
+        "failed": false,
+        "message": null,
+        "outcome": "success",
+        "skipped": false,
+        "started_at": "TIMESTAMP",
+        "status": "completed",
+        "succeeded": true,
+        "wave": 0
+      },
+      "outputs": {
+        "calculate_success": "true",
+        "result": "50"
+      }
     },
     "use_final_output": {
+      "blocks": {},
+      "depth": 0,
       "inputs": {
         "command": "echo \"Final result: 60\""
       },
+      "metadata": {
+        "completed_at": "TIMESTAMP",
+        "execution_order": 2,
+        "execution_time_ms": "EXECUTION_TIME",
+        "failed": false,
+        "message": null,
+        "outcome": "success",
+        "skipped": false,
+        "started_at": "TIMESTAMP",
+        "status": "completed",
+        "succeeded": true,
+        "wave": 2
+      },
       "outputs": {
         "exit_code": 0,
-        "stdout": "Final result: 60\n",
-        "stderr": ""
-      },
-      "metadata": {
-        "status": "completed",
-        "outcome": "success",
-        "execution_time_ms": 5.06298828125,
-        "started_at": "2025-11-02T10:36:09.116578+00:00",
-        "completed_at": "2025-11-02T10:36:09.121633+00:00",
-        "wave": 2,
-        "execution_order": 2,
-        "message": null,
-        "succeeded": true,
-        "failed": false,
-        "skipped": false
-      },
-      "blocks": {},
-      "depth": 0
+        "stderr": "",
+        "stdout": "Final result: 60\n"
+      }
     }
   },
   "metadata": {
-    "workflow_name": "composition-output-passing",
-    "start_time": "2025-11-02T10:36:09.104085+00:00",
-    "total_blocks": 3,
+    "completed_at": "TIMESTAMP",
+    "execution_time_seconds": "EXECUTION_TIME",
     "execution_waves": 3,
-    "completed_at": "2025-11-02T10:36:09.122171+00:00",
-    "execution_time_seconds": 0.018149137496948242,
-    "secret_access_count": 0
-  }
+    "secret_access_count": 0,
+    "start_time": "TIMESTAMP",
+    "total_blocks": 3,
+    "workflow_name": "composition-output-passing"
+  },
+  "outputs": {
+    "add_result": "60",
+    "both_succeeded": true,
+    "multiply_result": "50"
+  },
+  "status": "success"
 }

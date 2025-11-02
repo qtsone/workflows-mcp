@@ -1,119 +1,119 @@
 {
-  "status": "success",
-  "outputs": {
-    "and_passed": "true",
-    "or_passed": "true",
-    "not_passed": "true"
-  },
   "blocks": {
-    "not_condition": {
-      "inputs": {
-        "command": "echo \"NOT passed\""
-      },
-      "outputs": {
-        "exit_code": 0,
-        "stdout": "NOT passed\n",
-        "stderr": ""
-      },
-      "metadata": {
-        "status": "completed",
-        "outcome": "success",
-        "execution_time_ms": 5.27294921875,
-        "started_at": "2025-11-02T10:36:09.215011+00:00",
-        "completed_at": "2025-11-02T10:36:09.220276+00:00",
-        "wave": 0,
-        "execution_order": 0,
-        "message": null,
-        "succeeded": true,
-        "failed": false,
-        "skipped": false
-      },
-      "blocks": {},
-      "depth": 0
-    },
-    "success_block": {
-      "inputs": {
-        "command": "echo \"success\""
-      },
-      "outputs": {
-        "exit_code": 0,
-        "stdout": "success\n",
-        "stderr": ""
-      },
-      "metadata": {
-        "status": "completed",
-        "outcome": "success",
-        "execution_time_ms": 4.612060546875,
-        "started_at": "2025-11-02T10:36:09.217265+00:00",
-        "completed_at": "2025-11-02T10:36:09.221881+00:00",
-        "wave": 0,
-        "execution_order": 0,
-        "message": null,
-        "succeeded": true,
-        "failed": false,
-        "skipped": false
-      },
-      "blocks": {},
-      "depth": 0
-    },
-    "or_condition": {
-      "inputs": {
-        "command": "echo \"OR passed\""
-      },
-      "outputs": {
-        "exit_code": 0,
-        "stdout": "OR passed\n",
-        "stderr": ""
-      },
-      "metadata": {
-        "status": "completed",
-        "outcome": "success",
-        "execution_time_ms": 38.541015625,
-        "started_at": "2025-11-02T10:36:09.222448+00:00",
-        "completed_at": "2025-11-02T10:36:09.260978+00:00",
-        "wave": 1,
-        "execution_order": 2,
-        "message": null,
-        "succeeded": true,
-        "failed": false,
-        "skipped": false
-      },
-      "blocks": {},
-      "depth": 0
-    },
     "and_condition": {
+      "blocks": {},
+      "depth": 0,
       "inputs": {
         "command": "echo \"AND passed\""
       },
+      "metadata": {
+        "completed_at": "TIMESTAMP",
+        "execution_order": 2,
+        "execution_time_ms": "EXECUTION_TIME",
+        "failed": false,
+        "message": null,
+        "outcome": "success",
+        "skipped": false,
+        "started_at": "TIMESTAMP",
+        "status": "completed",
+        "succeeded": true,
+        "wave": 1
+      },
       "outputs": {
         "exit_code": 0,
-        "stdout": "AND passed\n",
-        "stderr": ""
+        "stderr": "",
+        "stdout": "AND passed\n"
+      }
+    },
+    "not_condition": {
+      "blocks": {},
+      "depth": 0,
+      "inputs": {
+        "command": "echo \"NOT passed\""
       },
       "metadata": {
-        "status": "completed",
-        "outcome": "success",
-        "execution_time_ms": 24.495849609375,
-        "started_at": "2025-11-02T10:36:09.236817+00:00",
-        "completed_at": "2025-11-02T10:36:09.261629+00:00",
-        "wave": 1,
-        "execution_order": 2,
-        "message": null,
-        "succeeded": true,
+        "completed_at": "TIMESTAMP",
+        "execution_order": 0,
+        "execution_time_ms": "EXECUTION_TIME",
         "failed": false,
-        "skipped": false
+        "message": null,
+        "outcome": "success",
+        "skipped": false,
+        "started_at": "TIMESTAMP",
+        "status": "completed",
+        "succeeded": true,
+        "wave": 0
       },
+      "outputs": {
+        "exit_code": 0,
+        "stderr": "",
+        "stdout": "NOT passed\n"
+      }
+    },
+    "or_condition": {
       "blocks": {},
-      "depth": 0
+      "depth": 0,
+      "inputs": {
+        "command": "echo \"OR passed\""
+      },
+      "metadata": {
+        "completed_at": "TIMESTAMP",
+        "execution_order": 2,
+        "execution_time_ms": "EXECUTION_TIME",
+        "failed": false,
+        "message": null,
+        "outcome": "success",
+        "skipped": false,
+        "started_at": "TIMESTAMP",
+        "status": "completed",
+        "succeeded": true,
+        "wave": 1
+      },
+      "outputs": {
+        "exit_code": 0,
+        "stderr": "",
+        "stdout": "OR passed\n"
+      }
+    },
+    "success_block": {
+      "blocks": {},
+      "depth": 0,
+      "inputs": {
+        "command": "echo \"success\""
+      },
+      "metadata": {
+        "completed_at": "TIMESTAMP",
+        "execution_order": 0,
+        "execution_time_ms": "EXECUTION_TIME",
+        "failed": false,
+        "message": null,
+        "outcome": "success",
+        "skipped": false,
+        "started_at": "TIMESTAMP",
+        "status": "completed",
+        "succeeded": true,
+        "wave": 0
+      },
+      "outputs": {
+        "exit_code": 0,
+        "stderr": "",
+        "stdout": "success\n"
+      }
     }
   },
   "metadata": {
-    "workflow_name": "conditionals-complex-expressions",
-    "start_time": "2025-11-02T10:36:09.214846+00:00",
-    "total_blocks": 4,
+    "completed_at": "TIMESTAMP",
+    "execution_time_seconds": "EXECUTION_TIME",
     "execution_waves": 2,
-    "completed_at": "2025-11-02T10:36:09.262747+00:00",
-    "execution_time_seconds": 0.047975778579711914,
-    "secret_access_count": 0
-  }
+    "secret_access_count": 0,
+    "start_time": "TIMESTAMP",
+    "total_blocks": 4,
+    "workflow_name": "conditionals-complex-expressions"
+  },
+  "outputs": {
+    "and_passed": "true",
+    "not_passed": "true",
+    "or_passed": "true"
+  },
+  "status": "success"
 }

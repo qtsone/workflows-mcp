@@ -9,6 +9,11 @@ The detailed format includes:
 - Complete block execution details (inputs, outputs, metadata)
 - Execution timing and status information
 - Full workflow metadata and state
+
+Snapshots are NORMALIZED before saving to ensure stability:
+- Dynamic fields (timestamps, IPs, secrets) are replaced with placeholders
+- This ensures regenerating snapshots shows no diffs between runs
+- Tests compare actual (normalized) responses against normalized snapshots
 """
 
 import asyncio
@@ -22,6 +27,7 @@ from typing import Any
 from mcp import ClientSession, StdioServerParameters
 from mcp.client.stdio import stdio_client
 from mcp.types import TextContent
+from test_utils import normalize_dynamic_fields
 
 # Test workflows directory
 TEST_WORKFLOWS_DIR = Path(__file__).parent / "workflows"
@@ -59,6 +65,11 @@ async def generate_snapshot(workflow_name: str, client: ClientSession) -> dict[s
     - Complete block execution details
     - Full metadata about execution timing and state
     - Comprehensive outputs and block-level information
+
+    Response is NORMALIZED before returning to ensure:
+    - Dynamic fields (timestamps, IPs, secrets) replaced with placeholders
+    - Snapshots are stable and regenerating shows no diffs
+    - Tests can reliably compare actual vs expected responses
     """
     result = await client.call_tool(
         "execute_workflow",
@@ -73,7 +84,9 @@ async def generate_snapshot(workflow_name: str, client: ClientSession) -> dict[s
     content = result.content[0]
     if isinstance(content, TextContent):
         response: dict[str, Any] = json.loads(content.text)
-        return response
+        # Normalize dynamic fields before saving
+        normalized_response = normalize_dynamic_fields(response)
+        return normalized_response
     else:
         raise ValueError(f"Expected TextContent, got {type(content)}")
 
