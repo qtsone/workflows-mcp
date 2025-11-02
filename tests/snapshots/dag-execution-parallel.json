@@ -1,144 +1,145 @@
 {
-  "status": "success",
-  "outputs": {
-    "parallel_1_output": "parallel_1",
-    "parallel_2_output": "parallel_2",
-    "parallel_3_output": "parallel_3",
-    "all_succeeded": true
-  },
   "blocks": {
-    "parallel_3": {
-      "inputs": {
-        "command": "printf \"parallel_3\""
-      },
-      "outputs": {
-        "exit_code": 0,
-        "stdout": "parallel_3",
-        "stderr": ""
-      },
-      "metadata": {
-        "status": "completed",
-        "outcome": "success",
-        "execution_time_ms": 6.909912109375,
-        "started_at": "2025-11-01T12:58:45.930850+00:00",
-        "completed_at": "2025-11-01T12:58:45.937754+00:00",
-        "wave": 0,
-        "execution_order": 0,
-        "message": null,
-        "succeeded": true,
-        "failed": false,
-        "skipped": false
-      },
-      "blocks": {},
-      "depth": 0
-    },
-    "parallel_1": {
-      "inputs": {
-        "command": "printf \"parallel_1\""
-      },
-      "outputs": {
-        "exit_code": 0,
-        "stdout": "parallel_1",
-        "stderr": ""
-      },
-      "metadata": {
-        "status": "completed",
-        "outcome": "success",
-        "execution_time_ms": 4.9560546875,
-        "started_at": "2025-11-01T12:58:45.932971+00:00",
-        "completed_at": "2025-11-01T12:58:45.937934+00:00",
-        "wave": 0,
-        "execution_order": 0,
-        "message": null,
-        "succeeded": true,
-        "failed": false,
-        "skipped": false
-      },
-      "blocks": {},
-      "depth": 0
-    },
-    "parallel_2": {
-      "inputs": {
-        "command": "printf \"parallel_2\""
-      },
-      "outputs": {
-        "exit_code": 0,
-        "stdout": "parallel_2",
-        "stderr": ""
-      },
-      "metadata": {
-        "status": "completed",
-        "outcome": "success",
-        "execution_time_ms": 4.7119140625,
-        "started_at": "2025-11-01T12:58:45.934681+00:00",
-        "completed_at": "2025-11-01T12:58:45.939403+00:00",
-        "wave": 0,
-        "execution_order": 0,
-        "message": null,
-        "succeeded": true,
-        "failed": false,
-        "skipped": false
-      },
-      "blocks": {},
-      "depth": 0
-    },
     "after_parallel": {
+      "blocks": {},
+      "depth": 0,
       "inputs": {
         "command": "printf \"after: parallel_1, parallel_2, parallel_3\""
       },
+      "metadata": {
+        "completed_at": "TIMESTAMP",
+        "execution_order": 3,
+        "execution_time_ms": "EXECUTION_TIME",
+        "failed": false,
+        "message": null,
+        "outcome": "success",
+        "skipped": false,
+        "started_at": "TIMESTAMP",
+        "status": "completed",
+        "succeeded": true,
+        "wave": 1
+      },
       "outputs": {
         "exit_code": 0,
-        "stdout": "after: parallel_1, parallel_2, parallel_3",
-        "stderr": ""
-      },
-      "metadata": {
-        "status": "completed",
-        "outcome": "success",
-        "execution_time_ms": 4.28076171875,
-        "started_at": "2025-11-01T12:58:45.939766+00:00",
-        "completed_at": "2025-11-01T12:58:45.944040+00:00",
-        "wave": 1,
-        "execution_order": 3,
-        "message": null,
-        "succeeded": true,
-        "failed": false,
-        "skipped": false
-      },
-      "blocks": {},
-      "depth": 0
+        "stderr": "",
+        "stdout": "after: parallel_1, parallel_2, parallel_3"
+      }
     },
     "final": {
+      "blocks": {},
+      "depth": 0,
       "inputs": {
         "command": "printf \"final\""
       },
+      "metadata": {
+        "completed_at": "TIMESTAMP",
+        "execution_order": 4,
+        "execution_time_ms": "EXECUTION_TIME",
+        "failed": false,
+        "message": null,
+        "outcome": "success",
+        "skipped": false,
+        "started_at": "TIMESTAMP",
+        "status": "completed",
+        "succeeded": true,
+        "wave": 2
+      },
       "outputs": {
         "exit_code": 0,
-        "stdout": "final",
-        "stderr": ""
+        "stderr": "",
+        "stdout": "final"
+      }
+    },
+    "parallel_1": {
+      "blocks": {},
+      "depth": 0,
+      "inputs": {
+        "command": "printf \"parallel_1\""
       },
       "metadata": {
-        "status": "completed",
-        "outcome": "success",
-        "execution_time_ms": 4.1337890625,
-        "started_at": "2025-11-01T12:58:45.944389+00:00",
-        "completed_at": "2025-11-01T12:58:45.948514+00:00",
-        "wave": 2,
-        "execution_order": 4,
-        "message": null,
-        "succeeded": true,
+        "completed_at": "TIMESTAMP",
+        "execution_order": 0,
+        "execution_time_ms": "EXECUTION_TIME",
         "failed": false,
-        "skipped": false
+        "message": null,
+        "outcome": "success",
+        "skipped": false,
+        "started_at": "TIMESTAMP",
+        "status": "completed",
+        "succeeded": true,
+        "wave": 0
       },
+      "outputs": {
+        "exit_code": 0,
+        "stderr": "",
+        "stdout": "parallel_1"
+      }
+    },
+    "parallel_2": {
       "blocks": {},
-      "depth": 0
+      "depth": 0,
+      "inputs": {
+        "command": "printf \"parallel_2\""
+      },
+      "metadata": {
+        "completed_at": "TIMESTAMP",
+        "execution_order": 0,
+        "execution_time_ms": "EXECUTION_TIME",
+        "failed": false,
+        "message": null,
+        "outcome": "success",
+        "skipped": false,
+        "started_at": "TIMESTAMP",
+        "status": "completed",
+        "succeeded": true,
+        "wave": 0
+      },
+      "outputs": {
+        "exit_code": 0,
+        "stderr": "",
+        "stdout": "parallel_2"
+      }
+    },
+    "parallel_3": {
+      "blocks": {},
+      "depth": 0,
+      "inputs": {
+        "command": "printf \"parallel_3\""
+      },
+      "metadata": {
+        "completed_at": "TIMESTAMP",
+        "execution_order": 0,
+        "execution_time_ms": "EXECUTION_TIME",
+        "failed": false,
+        "message": null,
+        "outcome": "success",
+        "skipped": false,
+        "started_at": "TIMESTAMP",
+        "status": "completed",
+        "succeeded": true,
+        "wave": 0
+      },
+      "outputs": {
+        "exit_code": 0,
+        "stderr": "",
+        "stdout": "parallel_3"
+      }
     }
   },
   "metadata": {
-    "workflow_name": "dag-execution-parallel",
-    "start_time": "2025-11-01T12:58:45.930746+00:00",
-    "total_blocks": 5,
+    "completed_at": "TIMESTAMP",
+    "execution_time_seconds": "EXECUTION_TIME",
     "execution_waves": 3,
-    "completed_at": "2025-11-01T12:58:45.948974+00:00",
-    "execution_time_seconds": 0.018231868743896484
-  }
+    "secret_access_count": 0,
+    "start_time": "TIMESTAMP",
+    "total_blocks": 5,
+    "workflow_name": "dag-execution-parallel"
+  },
+  "outputs": {
+    "all_succeeded": true,
+    "parallel_1_output": "parallel_1",
+    "parallel_2_output": "parallel_2",
+    "parallel_3_output": "parallel_3"
+  },
+  "status": "success"
 }

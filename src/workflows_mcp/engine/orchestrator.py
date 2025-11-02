@@ -5,6 +5,7 @@ The orchestrator wraps executor.execute() calls to:
 2. Catch ExecutionPaused → signal pause to caller
 3. Determine operation outcome (for Shell: exit_code)
 4. Return structured BlockExecution result
+5. Resolve secrets in inputs and redact secrets from outputs
 
 This is the bridge between executors (which return BaseModel or raise exceptions)
 and the workflow execution layer (which needs Metadata).
@@ -13,7 +14,7 @@ and the workflow execution layer (which needs Metadata).
 from __future__ import annotations
 
 from datetime import UTC, datetime
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from pydantic import BaseModel
 
@@ -22,6 +23,9 @@ from .exceptions import ExecutionPaused, RecursionDepthExceededError
 from .execution import Execution
 from .executor_base import BlockExecutor
 from .metadata import Metadata
+
+if TYPE_CHECKING:
+    from .secrets import SecretProvider, SecretRedactor
 
 
 class BlockExecution(BaseModel):
@@ -56,8 +60,25 @@ class BlockOrchestrator:
     - Catch exceptions → create Metadata
     - Catch ExecutionPaused → signal pause
     - Determine operation outcome (e.g., Shell exit_code)
+    - Resolve secrets in inputs before execution
+    - Redact secrets from outputs after execution
     - Return BlockExecution with output + metadata
     """
+
+    def __init__(
+        self,
+        secret_provider: SecretProvider | None = None,
+        secret_redactor: SecretRedactor | None = None,
+    ):
+        """
+        Initialize block orchestrator with optional secret management.
+
+        Args:
+            secret_provider: Optional secret provider for resolving {{secrets.*}}
+            secret_redactor: Optional secret redactor for output sanitization
+        """
+        self.secret_provider = secret_provider
+        self.secret_redactor = secret_redactor
 
     async def execute_block(
         self,
@@ -94,6 +115,14 @@ class BlockOrchestrator:
         try:
             # Execute block
             output = await executor.execute(inputs, context)
+
+            # Redact secrets from output (if redactor is configured)
+            if self.secret_redactor:
+                # Convert output to dict, redact, then reconstruct
+                output_dict = output.model_dump()
+                redacted_dict = self.secret_redactor.redact(output_dict)
+                # Reconstruct output with redacted values
+                output = type(output)(**redacted_dict)
 
             # Success! Determine operation outcome
             completed_at = datetime.now(UTC).isoformat()

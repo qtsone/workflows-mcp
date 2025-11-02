@@ -18,10 +18,17 @@
       }
     ],
     [
+      "@semantic-release/exec",
+      {
+        "prepareCmd": "python scripts/update-version.py ${nextRelease.version}"
+      }
+    ],
+    [
       "@semantic-release/git",
       {
         "assets": [
-          "CHANGELOG.md"
+          "CHANGELOG.md",
+          "src/workflows_mcp/__init__.py"
         ],
         "message": "chore(release): version ${nextRelease.version}\n\n${nextRelease.notes}"
       }

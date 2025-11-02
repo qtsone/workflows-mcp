@@ -11,6 +11,7 @@ Variable Resolution:
 - {{blocks.block_id.inputs.field}} - References block input fields (debugging)
 - {{blocks.block_id.metadata.field}} - References block metadata
 - {{metadata.field}} - References workflow metadata
+- {{secrets.SECRET_KEY}} - References secrets from SecretProvider (async)
 - Recursive resolution in strings, dicts, lists
 
 Conditional Evaluation:
@@ -23,7 +24,10 @@ import ast
 import operator
 import re
 from enum import Enum
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from .secrets import SecretAuditLog, SecretProvider
 
 
 class VariableNotFoundError(Exception):
@@ -67,6 +71,7 @@ class VariableResolver:
         - {{blocks.block_id.inputs.field}} - Block input (debugging)
         - {{blocks.block_id.metadata.field}} - Block metadata
         - {{metadata.field}} - Workflow metadata
+        - {{secrets.SECRET_KEY}} - Secret from SecretProvider (async)
 
     Block Status References (ADR-007 - Industry-Aligned Three-Tier Model):
 
@@ -102,20 +107,38 @@ class VariableResolver:
     """
 
     # Pattern: {{identifier}} or {{identifier.field}} or {{identifier.field.subfield}} (any depth)
-    VAR_PATTERN = re.compile(r"\{\{([a-z_][a-z0-9_]*(?:\.[a-z_][a-z0-9_]*)*)\}\}")
+    VAR_PATTERN = re.compile(r"\{\{([a-zA-Z_][a-zA-Z0-9_]*(?:\.[a-zA-Z_][a-zA-Z0-9_]*)*)\}\}")
 
-    def __init__(self, context: dict[str, Any]):
+    def __init__(
+        self,
+        context: dict[str, Any],
+        secret_provider: "SecretProvider | None" = None,
+        secret_audit_log: "SecretAuditLog | None" = None,
+        workflow_name: str = "",
+        block_id: str = "",
+    ):
         """
         Initialize variable resolver with context.
 
         Args:
             context: Workflow context with inputs and block outputs
+            secret_provider: Optional secret provider for resolving {{secrets.*}}
+            secret_audit_log: Optional audit log for tracking secret access
+            workflow_name: Workflow name for audit logging
+            block_id: Block ID for audit logging
         """
         self.context = context
+        self.secret_provider = secret_provider
+        self.secret_audit_log = secret_audit_log
+        self.workflow_name = workflow_name
+        self.block_id = block_id
 
     def resolve(self, value: Any, for_eval: bool = False) -> Any:
         """
-        Recursively resolve variables in value.
+        Recursively resolve variables in value (synchronous version).
+
+        NOTE: This method does NOT resolve {{secrets.*}} references.
+        Use resolve_async() for secret support.
 
         Args:
             value: Value to resolve (str, dict, list, or primitive)
@@ -126,6 +149,7 @@ class VariableResolver:
 
         Raises:
             VariableNotFoundError: If a variable reference cannot be resolved
+            VariableNotFoundError: If {{secrets.*}} reference is found (use resolve_async)
         """
         if isinstance(value, str):
             return self._resolve_string(value, for_eval=for_eval)
@@ -137,9 +161,46 @@ class VariableResolver:
             # Primitive types (int, float, bool, None) pass through
             return value
 
+    async def resolve_async(self, value: Any, for_eval: bool = False) -> Any:
+        """
+        Recursively resolve variables in value (async version with secret support).
+
+        This method supports {{secrets.*}} references via SecretProvider.
+        Use this instead of resolve() when secret resolution is needed.
+
+        Args:
+            value: Value to resolve (str, dict, list, or primitive)
+            for_eval: If True, format string values for Python eval
+
+        Returns:
+            Resolved value with variables and secrets substituted
+
+        Raises:
+            VariableNotFoundError: If a variable reference cannot be resolved
+            SecretNotFoundError: If a secret reference cannot be resolved (from provider)
+        """
+        if isinstance(value, str):
+            return await self._resolve_string_async(value, for_eval=for_eval)
+        elif isinstance(value, dict):
+            resolved: dict[Any, Any] = {}
+            for key, val in value.items():
+                resolved[key] = await self.resolve_async(val, for_eval=for_eval)
+            return resolved
+        elif isinstance(value, list):
+            resolved_list: list[Any] = []
+            for item in value:
+                resolved_list.append(await self.resolve_async(item, for_eval=for_eval))
+            return resolved_list
+        else:
+            # Primitive types (int, float, bool, None) pass through
+            return value
+
     def _resolve_string(self, text: str, for_eval: bool = False) -> str:
         """
-        Replace {{var}} patterns with context values.
+        Replace {{var}} patterns with context values (synchronous version).
+
+        NOTE: This method does NOT resolve {{secrets.*}} references.
+        Use _resolve_string_async() for secret support.
 
         Args:
             text: String containing variable references
@@ -150,6 +211,7 @@ class VariableResolver:
 
         Raises:
             VariableNotFoundError: If variable not found in context
+            VariableNotFoundError: If {{secrets.*}} reference is found (use resolve_async)
         """
 
         def replace_var(match: re.Match[str]) -> str:
@@ -160,6 +222,13 @@ class VariableResolver:
             if var_path.startswith("__internal__") or ".__internal__" in var_path:
                 raise VariableNotFoundError(
                     f"Access to internal namespace is not allowed: {{{{{var_path}}}}}"
+                )
+
+            # Block {{secrets.*}} in synchronous resolution
+            if var_path.startswith("secrets."):
+                raise VariableNotFoundError(
+                    f"Secret resolution requires async context. "
+                    f"Use resolve_async() instead of resolve() for: {{{{{var_path}}}}}"
                 )
 
             segments = var_path.split(".")
@@ -213,6 +282,131 @@ class VariableResolver:
 
         return self.VAR_PATTERN.sub(replace_var, text)
 
+    async def _resolve_string_async(self, text: str, for_eval: bool = False) -> str:
+        """
+        Replace {{var}} patterns with context values (async version with secrets).
+
+        This method supports {{secrets.*}} references via SecretProvider.
+
+        Args:
+            text: String containing variable references
+            for_eval: If True, format values for Python eval (quote strings, etc.)
+
+        Returns:
+            String with variables and secrets substituted
+
+        Raises:
+            VariableNotFoundError: If variable not found in context
+            SecretNotFoundError: If secret not found in provider (from secrets module)
+        """
+        # Find all variable references
+        matches = list(self.VAR_PATTERN.finditer(text))
+
+        if not matches:
+            return text
+
+        # Process matches in reverse order to preserve positions
+        result = text
+        for match in reversed(matches):
+            var_path = match.group(1)
+
+            # Security: Block access to internal namespace
+            if var_path.startswith("__internal__") or ".__internal__" in var_path:
+                raise VariableNotFoundError(
+                    f"Access to internal namespace is not allowed: {{{{{var_path}}}}}"
+                )
+
+            # Handle {{secrets.*}} references
+            if var_path.startswith("secrets."):
+                # Extract secret key: "secrets.API_KEY" → "API_KEY"
+                secret_key = var_path[8:]  # Remove "secrets." prefix
+
+                if not self.secret_provider:
+                    raise VariableNotFoundError(
+                        f"Secret provider not configured. Cannot resolve: {{{{{var_path}}}}}"
+                    )
+
+                # Import SecretNotFoundError here to avoid circular import
+                from .secrets import SecretNotFoundError
+
+                # Fetch secret from provider (async)
+                try:
+                    secret_value = await self.secret_provider.get_secret(secret_key)
+
+                    # Log access to audit log
+                    if self.secret_audit_log:
+                        await self.secret_audit_log.log_access(
+                            workflow_name=self.workflow_name,
+                            block_id=self.block_id,
+                            secret_key=secret_key,
+                            success=True,
+                        )
+
+                    # Format and replace
+                    formatted_value = (
+                        self._format_for_eval(secret_value)
+                        if for_eval
+                        else self._format_for_string(secret_value)
+                    )
+                    result = result[: match.start()] + formatted_value + result[match.end() :]
+
+                except SecretNotFoundError as e:
+                    # Log failed access
+                    if self.secret_audit_log:
+                        await self.secret_audit_log.log_access(
+                            workflow_name=self.workflow_name,
+                            block_id=self.block_id,
+                            secret_key=secret_key,
+                            success=False,
+                            error_message=str(e),
+                        )
+                    # Re-raise with context
+                    raise
+
+            else:
+                # Handle regular variable (same logic as synchronous version)
+                segments = var_path.split(".")
+
+                # ADR-007: Three-tier status reference model
+                # (same transformations as synchronous version)
+                if (
+                    len(segments) == 3
+                    and segments[0] == "blocks"
+                    and segments[2] in ("succeeded", "failed", "skipped")
+                ):
+                    segments = segments[:2] + ["metadata"] + segments[2:]
+                elif len(segments) == 3 and segments[0] == "blocks" and segments[2] == "status":
+                    segments = segments[:2] + ["metadata"] + segments[2:]
+                elif len(segments) == 3 and segments[0] == "blocks" and segments[2] == "outcome":
+                    segments = segments[:2] + ["metadata"] + segments[2:]
+
+                # Simple dictionary navigation
+                value = self.context
+                for i, segment in enumerate(segments):
+                    if not isinstance(value, dict):
+                        partial_path = ".".join(segments[:i])
+                        raise VariableNotFoundError(
+                            f"Cannot access '{segment}' on non-dict value "
+                            f"at '{{{{{partial_path}}}}}'"
+                        )
+
+                    if segment not in value:
+                        available = list(value.keys()) if isinstance(value, dict) else []
+                        raise VariableNotFoundError(
+                            f"Variable '{{{{{var_path}}}}}' not found. "
+                            f"At segment '{segment}', available keys: {available}"
+                        )
+
+                    value = value[segment]
+
+                # Format and replace
+                formatted_value = (
+                    self._format_for_eval(value) if for_eval else self._format_for_string(value)
+                )
+                result = result[: match.start()] + formatted_value + result[match.end() :]
+
+        return result
+
     def _format_for_eval(self, value: Any) -> str:
         """Format value for Python eval (proper literals).
 
@@ -254,7 +448,7 @@ class VariableResolver:
         # Check Enum BEFORE str because ExecutionStatus/OperationOutcome inherit from str
         elif isinstance(value, Enum):
             # Convert enum to its string value (ADR-007: status/outcome strings)
-            return value.value
+            return str(value.value)
         elif isinstance(value, str):
             return value
         elif isinstance(value, (int, float)):

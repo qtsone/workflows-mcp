@@ -1,67 +1,153 @@
 {
-  "status": "success",
-  "outputs": {
-    "completed": "true",
-    "iterations": "3"
-  },
   "blocks": {
+    "check_continue": {
+      "blocks": {},
+      "depth": 0,
+      "inputs": {
+        "command": "CURRENT=1\nMAX=3\nif [ $CURRENT -lt $MAX ]; then\n  exit 0  # Continue\nelse\n  exit 1  # Done\nfi\n"
+      },
+      "metadata": {
+        "completed_at": "TIMESTAMP",
+        "execution_order": 5,
+        "execution_time_ms": "EXECUTION_TIME",
+        "failed": false,
+        "message": null,
+        "outcome": "success",
+        "skipped": false,
+        "started_at": "TIMESTAMP",
+        "status": "completed",
+        "succeeded": true,
+        "wave": 5
+      },
+      "outputs": {
+        "exit_code": 0,
+        "stderr": "",
+        "stdout": ""
+      }
+    },
     "check_state_exists": {
+      "blocks": {},
+      "depth": 0,
       "inputs": {
         "path": "/tmp/test-recursion-state.json",
         "required": false
       },
+      "metadata": {
+        "completed_at": "TIMESTAMP",
+        "execution_order": 0,
+        "execution_time_ms": "EXECUTION_TIME",
+        "failed": false,
+        "message": null,
+        "outcome": "success",
+        "skipped": false,
+        "started_at": "TIMESTAMP",
+        "status": "completed",
+        "succeeded": true,
+        "wave": 0
+      },
       "outputs": {
         "data": {},
         "found": false,
-        "path": "/private/tmp/test-recursion-state.json"
+        "path": "/tmp/test-recursion-state.json"
+      }
+    },
+    "cleanup": {
+      "blocks": {},
+      "depth": 0,
+      "inputs": {
+        "command": "rm -f \"/tmp/test-recursion-state.json\""
       },
       "metadata": {
-        "status": "completed",
-        "outcome": "success",
-        "execution_time_ms": 0.13623046875,
-        "started_at": "2025-11-01T12:58:45.786352+00:00",
-        "completed_at": "2025-11-01T12:58:45.786489+00:00",
-        "wave": 0,
-        "execution_order": 0,
-        "message": null,
-        "succeeded": true,
+        "completed_at": "TIMESTAMP",
+        "execution_order": 8,
+        "execution_time_ms": "EXECUTION_TIME",
         "failed": false,
-        "skipped": false
+        "message": null,
+        "outcome": "success",
+        "skipped": false,
+        "started_at": "TIMESTAMP",
+        "status": "completed",
+        "succeeded": true,
+        "wave": 8
       },
+      "outputs": {
+        "exit_code": 0,
+        "stderr": "",
+        "stdout": ""
+      }
+    },
+    "increment": {
       "blocks": {},
-      "depth": 0
+      "depth": 0,
+      "inputs": {
+        "command": "CURRENT=0\nNEXT=$((CURRENT + 1))\necho $NEXT > \"$SCRATCH/next.txt\"\n"
+      },
+      "metadata": {
+        "completed_at": "TIMESTAMP",
+        "execution_order": 3,
+        "execution_time_ms": "EXECUTION_TIME",
+        "failed": false,
+        "message": null,
+        "outcome": "success",
+        "skipped": false,
+        "started_at": "TIMESTAMP",
+        "status": "completed",
+        "succeeded": true,
+        "wave": 3
+      },
+      "outputs": {
+        "exit_code": 0,
+        "number": 1,
+        "stderr": "",
+        "stdout": ""
+      }
     },
     "initialize_state": {
+      "blocks": {},
+      "depth": 0,
       "inputs": {
-        "path": "/tmp/test-recursion-state.json",
         "data": {
           "current": 0,
           "max": "3"
-        }
-      },
-      "outputs": {
-        "path": "/private/tmp/test-recursion-state.json",
-        "size_bytes": 33
+        },
+        "path": "/tmp/test-recursion-state.json"
       },
       "metadata": {
-        "status": "completed",
-        "outcome": "success",
-        "execution_time_ms": 0.423095703125,
-        "started_at": "2025-11-01T12:58:45.786727+00:00",
-        "completed_at": "2025-11-01T12:58:45.787150+00:00",
-        "wave": 1,
+        "completed_at": "TIMESTAMP",
         "execution_order": 1,
-        "message": null,
-        "succeeded": true,
+        "execution_time_ms": "EXECUTION_TIME",
         "failed": false,
-        "skipped": false
+        "message": null,
+        "outcome": "success",
+        "skipped": false,
+        "started_at": "TIMESTAMP",
+        "status": "completed",
+        "succeeded": true,
+        "wave": 1
       },
-      "blocks": {},
-      "depth": 0
+      "outputs": {
+        "path": "/tmp/test-recursion-state.json",
+        "size_bytes": 33
+      }
     },
     "read_current_state": {
+      "blocks": {},
+      "depth": 0,
       "inputs": {
         "path": "/tmp/test-recursion-state.json"
+      },
+      "metadata": {
+        "completed_at": "TIMESTAMP",
+        "execution_order": 2,
+        "execution_time_ms": "EXECUTION_TIME",
+        "failed": false,
+        "message": null,
+        "outcome": "success",
+        "skipped": false,
+        "started_at": "TIMESTAMP",
+        "status": "completed",
+        "succeeded": true,
+        "wave": 2
       },
       "outputs": {
         "data": {
@@ -69,610 +155,27 @@
           "max": "3"
         },
         "found": true,
-        "path": "/private/tmp/test-recursion-state.json"
-      },
-      "metadata": {
-        "status": "completed",
-        "outcome": "success",
-        "execution_time_ms": 0.11376953125,
-        "started_at": "2025-11-01T12:58:45.787315+00:00",
-        "completed_at": "2025-11-01T12:58:45.787429+00:00",
-        "wave": 2,
-        "execution_order": 2,
-        "message": null,
-        "succeeded": true,
-        "failed": false,
-        "skipped": false
-      },
-      "blocks": {},
-      "depth": 0
-    },
-    "increment": {
-      "inputs": {
-        "command": "CURRENT=0\nNEXT=$((CURRENT + 1))\necho $NEXT > \"$SCRATCH/next.txt\"\n"
-      },
-      "outputs": {
-        "exit_code": 0,
-        "stdout": "",
-        "stderr": "",
-        "number": 1
-      },
-      "metadata": {
-        "status": "completed",
-        "outcome": "success",
-        "execution_time_ms": 5.3701171875,
-        "started_at": "2025-11-01T12:58:45.787757+00:00",
-        "completed_at": "2025-11-01T12:58:45.793123+00:00",
-        "wave": 3,
-        "execution_order": 3,
-        "message": null,
-        "succeeded": true,
-        "failed": false,
-        "skipped": false
-      },
-      "blocks": {},
-      "depth": 0
-    },
-    "update_state": {
-      "inputs": {
-        "path": "/tmp/test-recursion-state.json",
-        "updates": {
-          "current": "1"
-        }
-      },
-      "outputs": {
-        "path": "/private/tmp/test-recursion-state.json",
-        "created": false,
-        "merged_data": {
-          "current": "1",
-          "max": "3"
-        }
-      },
-      "metadata": {
-        "status": "completed",
-        "outcome": "success",
-        "execution_time_ms": 0.317138671875,
-        "started_at": "2025-11-01T12:58:45.793588+00:00",
-        "completed_at": "2025-11-01T12:58:45.793906+00:00",
-        "wave": 4,
-        "execution_order": 4,
-        "message": null,
-        "succeeded": true,
-        "failed": false,
-        "skipped": false
-      },
-      "blocks": {},
-      "depth": 0
-    },
-    "check_continue": {
-      "inputs": {
-        "command": "CURRENT=1\nMAX=3\nif [ $CURRENT -lt $MAX ]; then\n  exit 0  # Continue\nelse\n  exit 1  # Done\nfi\n"
-      },
-      "outputs": {
-        "exit_code": 0,
-        "stdout": "",
-        "stderr": ""
-      },
-      "metadata": {
-        "status": "completed",
-        "outcome": "success",
-        "execution_time_ms": 4.9599609375,
-        "started_at": "2025-11-01T12:58:45.794099+00:00",
-        "completed_at": "2025-11-01T12:58:45.799054+00:00",
-        "wave": 5,
-        "execution_order": 5,
-        "message": null,
-        "succeeded": true,
-        "failed": false,
-        "skipped": false
-      },
-      "blocks": {},
-      "depth": 0
-    },
-    "recurse": {
-      "inputs": {
-        "workflow": "composition-recursion",
-        "inputs": {
-          "count": "3",
-          "state_file": "/tmp/test-recursion-state.json"
-        }
-      },
-      "outputs": {
-        "completed": "false",
-        "iterations": "3"
-      },
-      "metadata": {
-        "status": "completed",
-        "outcome": "success",
-        "execution_time_ms": 21.907958984375,
-        "started_at": "2025-11-01T12:58:45.799487+00:00",
-        "completed_at": "2025-11-01T12:58:45.821399+00:00",
-        "wave": 6,
-        "execution_order": 6,
-        "message": null,
-        "succeeded": true,
-        "failed": false,
-        "skipped": false
-      },
-      "blocks": {
-        "check_state_exists": {
-          "inputs": {
-            "path": "/tmp/test-recursion-state.json",
-            "required": false
-          },
-          "outputs": {
-            "data": {
-              "current": "1",
-              "max": "3"
-            },
-            "found": true,
-            "path": "/private/tmp/test-recursion-state.json"
-          },
-          "metadata": {
-            "status": "completed",
-            "outcome": "success",
-            "execution_time_ms": 0.19091796875,
-            "started_at": "2025-11-01T12:58:45.799581+00:00",
-            "completed_at": "2025-11-01T12:58:45.799772+00:00",
-            "wave": 0,
-            "execution_order": 0,
-            "message": null,
-            "succeeded": true,
-            "failed": false,
-            "skipped": false
-          },
-          "blocks": {},
-          "depth": 0
-        },
-        "initialize_state": {
-          "inputs": {},
-          "outputs": {
-            "path": "",
-            "size_bytes": 0
-          },
-          "metadata": {
-            "status": "skipped",
-            "outcome": "n/a",
-            "execution_time_ms": 0.0,
-            "started_at": "2025-11-01T12:58:45.799915+00:00",
-            "completed_at": "2025-11-01T12:58:45.799915+00:00",
-            "wave": 1,
-            "execution_order": 1,
-            "message": "Condition 'not {{blocks.check_state_exists.outputs.found}}' evaluated to False",
-            "succeeded": false,
-            "failed": false,
-            "skipped": true
-          },
-          "blocks": {},
-          "depth": 0
-        },
-        "read_current_state": {
-          "inputs": {
-            "path": "/tmp/test-recursion-state.json"
-          },
-          "outputs": {
-            "data": {
-              "current": "1",
-              "max": "3"
-            },
-            "found": true,
-            "path": "/private/tmp/test-recursion-state.json"
-          },
-          "metadata": {
-            "status": "completed",
-            "outcome": "success",
-            "execution_time_ms": 0.0810546875,
-            "started_at": "2025-11-01T12:58:45.799984+00:00",
-            "completed_at": "2025-11-01T12:58:45.800066+00:00",
-            "wave": 2,
-            "execution_order": 1,
-            "message": null,
-            "succeeded": true,
-            "failed": false,
-            "skipped": false
-          },
-          "blocks": {},
-          "depth": 0
-        },
-        "increment": {
-          "inputs": {
-            "command": "CURRENT=1\nNEXT=$((CURRENT + 1))\necho $NEXT > \"$SCRATCH/next.txt\"\n"
-          },
-          "outputs": {
-            "exit_code": 0,
-            "stdout": "",
-            "stderr": "",
-            "number": 2
-          },
-          "metadata": {
-            "status": "completed",
-            "outcome": "success",
-            "execution_time_ms": 5.070068359375,
-            "started_at": "2025-11-01T12:58:45.800169+00:00",
-            "completed_at": "2025-11-01T12:58:45.805231+00:00",
-            "wave": 3,
-            "execution_order": 2,
-            "message": null,
-            "succeeded": true,
-            "failed": false,
-            "skipped": false
-          },
-          "blocks": {},
-          "depth": 0
-        },
-        "update_state": {
-          "inputs": {
-            "path": "/tmp/test-recursion-state.json",
-            "updates": {
-              "current": "2"
-            }
-          },
-          "outputs": {
-            "path": "/private/tmp/test-recursion-state.json",
-            "created": false,
-            "merged_data": {
-              "current": "2",
-              "max": "3"
-            }
-          },
-          "metadata": {
-            "status": "completed",
-            "outcome": "success",
-            "execution_time_ms": 0.272216796875,
-            "started_at": "2025-11-01T12:58:45.805491+00:00",
-            "completed_at": "2025-11-01T12:58:45.805766+00:00",
-            "wave": 4,
-            "execution_order": 3,
-            "message": null,
-            "succeeded": true,
-            "failed": false,
-            "skipped": false
-          },
-          "blocks": {},
-          "depth": 0
-        },
-        "check_continue": {
-          "inputs": {
-            "command": "CURRENT=2\nMAX=3\nif [ $CURRENT -lt $MAX ]; then\n  exit 0  # Continue\nelse\n  exit 1  # Done\nfi\n"
-          },
-          "outputs": {
-            "exit_code": 0,
-            "stdout": "",
-            "stderr": ""
-          },
-          "metadata": {
-            "status": "completed",
-            "outcome": "success",
-            "execution_time_ms": 4.283935546875,
-            "started_at": "2025-11-01T12:58:45.805893+00:00",
-            "completed_at": "2025-11-01T12:58:45.810171+00:00",
-            "wave": 5,
-            "execution_order": 4,
-            "message": null,
-            "succeeded": true,
-            "failed": false,
-            "skipped": false
-          },
-          "blocks": {},
-          "depth": 0
-        },
-        "recurse": {
-          "inputs": {
-            "workflow": "composition-recursion",
-            "inputs": {
-              "count": "3",
-              "state_file": "/tmp/test-recursion-state.json"
-            }
-          },
-          "outputs": {
-            "completed": "false",
-            "iterations": "3"
-          },
-          "metadata": {
-            "status": "completed",
-            "outcome": "success",
-            "execution_time_ms": 10.424072265625,
-            "started_at": "2025-11-01T12:58:45.810408+00:00",
-            "completed_at": "2025-11-01T12:58:45.820833+00:00",
-            "wave": 6,
-            "execution_order": 5,
-            "message": null,
-            "succeeded": true,
-            "failed": false,
-            "skipped": false
-          },
-          "blocks": {
-            "check_state_exists": {
-              "inputs": {
-                "path": "/tmp/test-recursion-state.json",
-                "required": false
-              },
-              "outputs": {
-                "data": {
-                  "current": "2",
-                  "max": "3"
-                },
-                "found": true,
-                "path": "/private/tmp/test-recursion-state.json"
-              },
-              "metadata": {
-                "status": "completed",
-                "outcome": "success",
-                "execution_time_ms": 0.1689453125,
-                "started_at": "2025-11-01T12:58:45.810497+00:00",
-                "completed_at": "2025-11-01T12:58:45.810667+00:00",
-                "wave": 0,
-                "execution_order": 0,
-                "message": null,
-                "succeeded": true,
-                "failed": false,
-                "skipped": false
-              },
-              "blocks": {},
-              "depth": 0
-            },
-            "initialize_state": {
-              "inputs": {},
-              "outputs": {
-                "path": "",
-                "size_bytes": 0
-              },
-              "metadata": {
-                "status": "skipped",
-                "outcome": "n/a",
-                "execution_time_ms": 0.0,
-                "started_at": "2025-11-01T12:58:45.810794+00:00",
-                "completed_at": "2025-11-01T12:58:45.810794+00:00",
-                "wave": 1,
-                "execution_order": 1,
-                "message": "Condition 'not {{blocks.check_state_exists.outputs.found}}' evaluated to False",
-                "succeeded": false,
-                "failed": false,
-                "skipped": true
-              },
-              "blocks": {},
-              "depth": 0
-            },
-            "read_current_state": {
-              "inputs": {
-                "path": "/tmp/test-recursion-state.json"
-              },
-              "outputs": {
-                "data": {
-                  "current": "2",
-                  "max": "3"
-                },
-                "found": true,
-                "path": "/private/tmp/test-recursion-state.json"
-              },
-              "metadata": {
-                "status": "completed",
-                "outcome": "success",
-                "execution_time_ms": 0.084228515625,
-                "started_at": "2025-11-01T12:58:45.810858+00:00",
-                "completed_at": "2025-11-01T12:58:45.810942+00:00",
-                "wave": 2,
-                "execution_order": 1,
-                "message": null,
-                "succeeded": true,
-                "failed": false,
-                "skipped": false
-              },
-              "blocks": {},
-              "depth": 0
-            },
-            "increment": {
-              "inputs": {
-                "command": "CURRENT=2\nNEXT=$((CURRENT + 1))\necho $NEXT > \"$SCRATCH/next.txt\"\n"
-              },
-              "outputs": {
-                "exit_code": 0,
-                "stdout": "",
-                "stderr": "",
-                "number": 3
-              },
-              "metadata": {
-                "status": "completed",
-                "outcome": "success",
-                "execution_time_ms": 4.6220703125,
-                "started_at": "2025-11-01T12:58:45.811050+00:00",
-                "completed_at": "2025-11-01T12:58:45.815667+00:00",
-                "wave": 3,
-                "execution_order": 2,
-                "message": null,
-                "succeeded": true,
-                "failed": false,
-                "skipped": false
-              },
-              "blocks": {},
-              "depth": 0
-            },
-            "update_state": {
-              "inputs": {
-                "path": "/tmp/test-recursion-state.json",
-                "updates": {
-                  "current": "3"
-                }
-              },
-              "outputs": {
-                "path": "/private/tmp/test-recursion-state.json",
-                "created": false,
-                "merged_data": {
-                  "current": "3",
-                  "max": "3"
-                }
-              },
-              "metadata": {
-                "status": "completed",
-                "outcome": "success",
-                "execution_time_ms": 0.219970703125,
-                "started_at": "2025-11-01T12:58:45.815886+00:00",
-                "completed_at": "2025-11-01T12:58:45.816105+00:00",
-                "wave": 4,
-                "execution_order": 3,
-                "message": null,
-                "succeeded": true,
-                "failed": false,
-                "skipped": false
-              },
-              "blocks": {},
-              "depth": 0
-            },
-            "check_continue": {
-              "inputs": {
-                "command": "CURRENT=3\nMAX=3\nif [ $CURRENT -lt $MAX ]; then\n  exit 0  # Continue\nelse\n  exit 1  # Done\nfi\n"
-              },
-              "outputs": {
-                "exit_code": 1,
-                "stdout": "",
-                "stderr": ""
-              },
-              "metadata": {
-                "status": "completed",
-                "outcome": "failure",
-                "execution_time_ms": 3.971923828125,
-                "started_at": "2025-11-01T12:58:45.816216+00:00",
-                "completed_at": "2025-11-01T12:58:45.820182+00:00",
-                "wave": 5,
-                "execution_order": 4,
-                "message": "Command exited with code 1",
-                "succeeded": false,
-                "failed": true,
-                "skipped": false
-              },
-              "blocks": {},
-              "depth": 0
-            },
-            "recurse": {
-              "inputs": {},
-              "outputs": {},
-              "metadata": {
-                "status": "skipped",
-                "outcome": "n/a",
-                "execution_time_ms": 0.0,
-                "started_at": "2025-11-01T12:58:45.820301+00:00",
-                "completed_at": "2025-11-01T12:58:45.820301+00:00",
-                "wave": 6,
-                "execution_order": 5,
-                "message": "Parent dependency did not complete successfully",
-                "succeeded": false,
-                "failed": false,
-                "skipped": true
-              },
-              "blocks": {},
-              "depth": 0
-            },
-            "read_final_state": {
-              "inputs": {
-                "path": "/tmp/test-recursion-state.json"
-              },
-              "outputs": {
-                "data": {
-                  "current": "3",
-                  "max": "3"
-                },
-                "found": true,
-                "path": "/private/tmp/test-recursion-state.json"
-              },
-              "metadata": {
-                "status": "completed",
-                "outcome": "success",
-                "execution_time_ms": 0.197021484375,
-                "started_at": "2025-11-01T12:58:45.820456+00:00",
-                "completed_at": "2025-11-01T12:58:45.820653+00:00",
-                "wave": 7,
-                "execution_order": 5,
-                "message": null,
-                "succeeded": true,
-                "failed": false,
-                "skipped": false
-              },
-              "blocks": {},
-              "depth": 0
-            },
-            "cleanup": {
-              "inputs": {},
-              "outputs": {
-                "exit_code": 0,
-                "stdout": "",
-                "stderr": ""
-              },
-              "metadata": {
-                "status": "skipped",
-                "outcome": "n/a",
-                "execution_time_ms": 0.0,
-                "started_at": "2025-11-01T12:58:45.820721+00:00",
-                "completed_at": "2025-11-01T12:58:45.820721+00:00",
-                "wave": 8,
-                "execution_order": 6,
-                "message": "Parent dependency did not complete successfully",
-                "succeeded": false,
-                "failed": false,
-                "skipped": true
-              },
-              "blocks": {},
-              "depth": 0
-            }
-          },
-          "depth": 2
-        },
-        "read_final_state": {
-          "inputs": {
-            "path": "/tmp/test-recursion-state.json"
-          },
-          "outputs": {
-            "data": {
-              "current": "3",
-              "max": "3"
-            },
-            "found": true,
-            "path": "/private/tmp/test-recursion-state.json"
-          },
-          "metadata": {
-            "status": "completed",
-            "outcome": "success",
-            "execution_time_ms": 0.203125,
-            "started_at": "2025-11-01T12:58:45.820996+00:00",
-            "completed_at": "2025-11-01T12:58:45.821196+00:00",
-            "wave": 7,
-            "execution_order": 6,
-            "message": null,
-            "succeeded": true,
-            "failed": false,
-            "skipped": false
-          },
-          "blocks": {},
-          "depth": 0
-        },
-        "cleanup": {
-          "inputs": {},
-          "outputs": {
-            "exit_code": 0,
-            "stdout": "",
-            "stderr": ""
-          },
-          "metadata": {
-            "status": "skipped",
-            "outcome": "n/a",
-            "execution_time_ms": 0.0,
-            "started_at": "2025-11-01T12:58:45.821283+00:00",
-            "completed_at": "2025-11-01T12:58:45.821283+00:00",
-            "wave": 8,
-            "execution_order": 7,
-            "message": "Parent dependency did not complete successfully",
-            "succeeded": false,
-            "failed": false,
-            "skipped": true
-          },
-          "blocks": {},
-          "depth": 0
-        }
-      },
-      "depth": 1
+        "path": "/tmp/test-recursion-state.json"
+      }
     },
     "read_final_state": {
+      "blocks": {},
+      "depth": 0,
       "inputs": {
         "path": "/tmp/test-recursion-state.json"
+      },
+      "metadata": {
+        "completed_at": "TIMESTAMP",
+        "execution_order": 7,
+        "execution_time_ms": "EXECUTION_TIME",
+        "failed": false,
+        "message": null,
+        "outcome": "success",
+        "skipped": false,
+        "started_at": "TIMESTAMP",
+        "status": "completed",
+        "succeeded": true,
+        "wave": 7
       },
       "outputs": {
         "data": {
@@ -680,56 +183,554 @@
           "max": "3"
         },
         "found": true,
-        "path": "/private/tmp/test-recursion-state.json"
+        "path": "/tmp/test-recursion-state.json"
+      }
+    },
+    "recurse": {
+      "blocks": {
+        "check_continue": {
+          "blocks": {},
+          "depth": 0,
+          "inputs": {
+            "command": "CURRENT=2\nMAX=3\nif [ $CURRENT -lt $MAX ]; then\n  exit 0  # Continue\nelse\n  exit 1  # Done\nfi\n"
+          },
+          "metadata": {
+            "completed_at": "TIMESTAMP",
+            "execution_order": 4,
+            "execution_time_ms": "EXECUTION_TIME",
+            "failed": false,
+            "message": null,
+            "outcome": "success",
+            "skipped": false,
+            "started_at": "TIMESTAMP",
+            "status": "completed",
+            "succeeded": true,
+            "wave": 5
+          },
+          "outputs": {
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": ""
+          }
+        },
+        "check_state_exists": {
+          "blocks": {},
+          "depth": 0,
+          "inputs": {
+            "path": "/tmp/test-recursion-state.json",
+            "required": false
+          },
+          "metadata": {
+            "completed_at": "TIMESTAMP",
+            "execution_order": 0,
+            "execution_time_ms": "EXECUTION_TIME",
+            "failed": false,
+            "message": null,
+            "outcome": "success",
+            "skipped": false,
+            "started_at": "TIMESTAMP",
+            "status": "completed",
+            "succeeded": true,
+            "wave": 0
+          },
+          "outputs": {
+            "data": {
+              "current": "1",
+              "max": "3"
+            },
+            "found": true,
+            "path": "/tmp/test-recursion-state.json"
+          }
+        },
+        "cleanup": {
+          "blocks": {},
+          "depth": 0,
+          "inputs": {},
+          "metadata": {
+            "completed_at": "TIMESTAMP",
+            "execution_order": 7,
+            "execution_time_ms": "EXECUTION_TIME",
+            "failed": false,
+            "message": "Parent dependency did not complete successfully",
+            "outcome": "n/a",
+            "skipped": true,
+            "started_at": "TIMESTAMP",
+            "status": "skipped",
+            "succeeded": false,
+            "wave": 8
+          },
+          "outputs": {
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": ""
+          }
+        },
+        "increment": {
+          "blocks": {},
+          "depth": 0,
+          "inputs": {
+            "command": "CURRENT=1\nNEXT=$((CURRENT + 1))\necho $NEXT > \"$SCRATCH/next.txt\"\n"
+          },
+          "metadata": {
+            "completed_at": "TIMESTAMP",
+            "execution_order": 2,
+            "execution_time_ms": "EXECUTION_TIME",
+            "failed": false,
+            "message": null,
+            "outcome": "success",
+            "skipped": false,
+            "started_at": "TIMESTAMP",
+            "status": "completed",
+            "succeeded": true,
+            "wave": 3
+          },
+          "outputs": {
+            "exit_code": 0,
+            "number": 2,
+            "stderr": "",
+            "stdout": ""
+          }
+        },
+        "initialize_state": {
+          "blocks": {},
+          "depth": 0,
+          "inputs": {},
+          "metadata": {
+            "completed_at": "TIMESTAMP",
+            "execution_order": 1,
+            "execution_time_ms": "EXECUTION_TIME",
+            "failed": false,
+            "message": "Condition 'not {{blocks.check_state_exists.outputs.found}}' evaluated to False",
+            "outcome": "n/a",
+            "skipped": true,
+            "started_at": "TIMESTAMP",
+            "status": "skipped",
+            "succeeded": false,
+            "wave": 1
+          },
+          "outputs": {
+            "path": "",
+            "size_bytes": 0
+          }
+        },
+        "read_current_state": {
+          "blocks": {},
+          "depth": 0,
+          "inputs": {
+            "path": "/tmp/test-recursion-state.json"
+          },
+          "metadata": {
+            "completed_at": "TIMESTAMP",
+            "execution_order": 1,
+            "execution_time_ms": "EXECUTION_TIME",
+            "failed": false,
+            "message": null,
+            "outcome": "success",
+            "skipped": false,
+            "started_at": "TIMESTAMP",
+            "status": "completed",
+            "succeeded": true,
+            "wave": 2
+          },
+          "outputs": {
+            "data": {
+              "current": "1",
+              "max": "3"
+            },
+            "found": true,
+            "path": "/tmp/test-recursion-state.json"
+          }
+        },
+        "read_final_state": {
+          "blocks": {},
+          "depth": 0,
+          "inputs": {
+            "path": "/tmp/test-recursion-state.json"
+          },
+          "metadata": {
+            "completed_at": "TIMESTAMP",
+            "execution_order": 6,
+            "execution_time_ms": "EXECUTION_TIME",
+            "failed": false,
+            "message": null,
+            "outcome": "success",
+            "skipped": false,
+            "started_at": "TIMESTAMP",
+            "status": "completed",
+            "succeeded": true,
+            "wave": 7
+          },
+          "outputs": {
+            "data": {
+              "current": "3",
+              "max": "3"
+            },
+            "found": true,
+            "path": "/tmp/test-recursion-state.json"
+          }
+        },
+        "recurse": {
+          "blocks": {
+            "check_continue": {
+              "blocks": {},
+              "depth": 0,
+              "inputs": {
+                "command": "CURRENT=3\nMAX=3\nif [ $CURRENT -lt $MAX ]; then\n  exit 0  # Continue\nelse\n  exit 1  # Done\nfi\n"
+              },
+              "metadata": {
+                "completed_at": "TIMESTAMP",
+                "execution_order": 4,
+                "execution_time_ms": "EXECUTION_TIME",
+                "failed": true,
+                "message": "Command exited with code 1",
+                "outcome": "failure",
+                "skipped": false,
+                "started_at": "TIMESTAMP",
+                "status": "completed",
+                "succeeded": false,
+                "wave": 5
+              },
+              "outputs": {
+                "exit_code": 1,
+                "stderr": "",
+                "stdout": ""
+              }
+            },
+            "check_state_exists": {
+              "blocks": {},
+              "depth": 0,
+              "inputs": {
+                "path": "/tmp/test-recursion-state.json",
+                "required": false
+              },
+              "metadata": {
+                "completed_at": "TIMESTAMP",
+                "execution_order": 0,
+                "execution_time_ms": "EXECUTION_TIME",
+                "failed": false,
+                "message": null,
+                "outcome": "success",
+                "skipped": false,
+                "started_at": "TIMESTAMP",
+                "status": "completed",
+                "succeeded": true,
+                "wave": 0
+              },
+              "outputs": {
+                "data": {
+                  "current": "2",
+                  "max": "3"
+                },
+                "found": true,
+                "path": "/tmp/test-recursion-state.json"
+              }
+            },
+            "cleanup": {
+              "blocks": {},
+              "depth": 0,
+              "inputs": {},
+              "metadata": {
+                "completed_at": "TIMESTAMP",
+                "execution_order": 6,
+                "execution_time_ms": "EXECUTION_TIME",
+                "failed": false,
+                "message": "Parent dependency did not complete successfully",
+                "outcome": "n/a",
+                "skipped": true,
+                "started_at": "TIMESTAMP",
+                "status": "skipped",
+                "succeeded": false,
+                "wave": 8
+              },
+              "outputs": {
+                "exit_code": 0,
+                "stderr": "",
+                "stdout": ""
+              }
+            },
+            "increment": {
+              "blocks": {},
+              "depth": 0,
+              "inputs": {
+                "command": "CURRENT=2\nNEXT=$((CURRENT + 1))\necho $NEXT > \"$SCRATCH/next.txt\"\n"
+              },
+              "metadata": {
+                "completed_at": "TIMESTAMP",
+                "execution_order": 2,
+                "execution_time_ms": "EXECUTION_TIME",
+                "failed": false,
+                "message": null,
+                "outcome": "success",
+                "skipped": false,
+                "started_at": "TIMESTAMP",
+                "status": "completed",
+                "succeeded": true,
+                "wave": 3
+              },
+              "outputs": {
+                "exit_code": 0,
+                "number": 3,
+                "stderr": "",
+                "stdout": ""
+              }
+            },
+            "initialize_state": {
+              "blocks": {},
+              "depth": 0,
+              "inputs": {},
+              "metadata": {
+                "completed_at": "TIMESTAMP",
+                "execution_order": 1,
+                "execution_time_ms": "EXECUTION_TIME",
+                "failed": false,
+                "message": "Condition 'not {{blocks.check_state_exists.outputs.found}}' evaluated to False",
+                "outcome": "n/a",
+                "skipped": true,
+                "started_at": "TIMESTAMP",
+                "status": "skipped",
+                "succeeded": false,
+                "wave": 1
+              },
+              "outputs": {
+                "path": "",
+                "size_bytes": 0
+              }
+            },
+            "read_current_state": {
+              "blocks": {},
+              "depth": 0,
+              "inputs": {
+                "path": "/tmp/test-recursion-state.json"
+              },
+              "metadata": {
+                "completed_at": "TIMESTAMP",
+                "execution_order": 1,
+                "execution_time_ms": "EXECUTION_TIME",
+                "failed": false,
+                "message": null,
+                "outcome": "success",
+                "skipped": false,
+                "started_at": "TIMESTAMP",
+                "status": "completed",
+                "succeeded": true,
+                "wave": 2
+              },
+              "outputs": {
+                "data": {
+                  "current": "2",
+                  "max": "3"
+                },
+                "found": true,
+                "path": "/tmp/test-recursion-state.json"
+              }
+            },
+            "read_final_state": {
+              "blocks": {},
+              "depth": 0,
+              "inputs": {
+                "path": "/tmp/test-recursion-state.json"
+              },
+              "metadata": {
+                "completed_at": "TIMESTAMP",
+                "execution_order": 5,
+                "execution_time_ms": "EXECUTION_TIME",
+                "failed": false,
+                "message": null,
+                "outcome": "success",
+                "skipped": false,
+                "started_at": "TIMESTAMP",
+                "status": "completed",
+                "succeeded": true,
+                "wave": 7
+              },
+              "outputs": {
+                "data": {
+                  "current": "3",
+                  "max": "3"
+                },
+                "found": true,
+                "path": "/tmp/test-recursion-state.json"
+              }
+            },
+            "recurse": {
+              "blocks": {},
+              "depth": 0,
+              "inputs": {},
+              "metadata": {
+                "completed_at": "TIMESTAMP",
+                "execution_order": 5,
+                "execution_time_ms": "EXECUTION_TIME",
+                "failed": false,
+                "message": "Parent dependency did not complete successfully",
+                "outcome": "n/a",
+                "skipped": true,
+                "started_at": "TIMESTAMP",
+                "status": "skipped",
+                "succeeded": false,
+                "wave": 6
+              },
+              "outputs": {}
+            },
+            "update_state": {
+              "blocks": {},
+              "depth": 0,
+              "inputs": {
+                "path": "/tmp/test-recursion-state.json",
+                "updates": {
+                  "current": "3"
+                }
+              },
+              "metadata": {
+                "completed_at": "TIMESTAMP",
+                "execution_order": 3,
+                "execution_time_ms": "EXECUTION_TIME",
+                "failed": false,
+                "message": null,
+                "outcome": "success",
+                "skipped": false,
+                "started_at": "TIMESTAMP",
+                "status": "completed",
+                "succeeded": true,
+                "wave": 4
+              },
+              "outputs": {
+                "created": false,
+                "merged_data": {
+                  "current": "3",
+                  "max": "3"
+                },
+                "path": "/tmp/test-recursion-state.json"
+              }
+            }
+          },
+          "depth": 2,
+          "inputs": {
+            "inputs": {
+              "count": "3",
+              "state_file": "/tmp/test-recursion-state.json"
+            },
+            "workflow": "composition-recursion"
+          },
+          "metadata": {
+            "completed_at": "TIMESTAMP",
+            "execution_order": 5,
+            "execution_time_ms": "EXECUTION_TIME",
+            "failed": false,
+            "message": null,
+            "outcome": "success",
+            "skipped": false,
+            "started_at": "TIMESTAMP",
+            "status": "completed",
+            "succeeded": true,
+            "wave": 6
+          },
+          "outputs": {
+            "completed": "false",
+            "iterations": "3"
+          }
+        },
+        "update_state": {
+          "blocks": {},
+          "depth": 0,
+          "inputs": {
+            "path": "/tmp/test-recursion-state.json",
+            "updates": {
+              "current": "2"
+            }
+          },
+          "metadata": {
+            "completed_at": "TIMESTAMP",
+            "execution_order": 3,
+            "execution_time_ms": "EXECUTION_TIME",
+            "failed": false,
+            "message": null,
+            "outcome": "success",
+            "skipped": false,
+            "started_at": "TIMESTAMP",
+            "status": "completed",
+            "succeeded": true,
+            "wave": 4
+          },
+          "outputs": {
+            "created": false,
+            "merged_data": {
+              "current": "2",
+              "max": "3"
+            },
+            "path": "/tmp/test-recursion-state.json"
+          }
+        }
+      },
+      "depth": 1,
+      "inputs": {
+        "inputs": {
+          "count": "3",
+          "state_file": "/tmp/test-recursion-state.json"
+        },
+        "workflow": "composition-recursion"
       },
       "metadata": {
-        "status": "completed",
-        "outcome": "success",
-        "execution_time_ms": 0.110107421875,
-        "started_at": "2025-11-01T12:58:45.821814+00:00",
-        "completed_at": "2025-11-01T12:58:45.821924+00:00",
-        "wave": 7,
-        "execution_order": 7,
-        "message": null,
-        "succeeded": true,
+        "completed_at": "TIMESTAMP",
+        "execution_order": 6,
+        "execution_time_ms": "EXECUTION_TIME",
         "failed": false,
-        "skipped": false
-      },
-      "blocks": {},
-      "depth": 0
-    },
-    "cleanup": {
-      "inputs": {
-        "command": "rm -f \"/tmp/test-recursion-state.json\""
+        "message": null,
+        "outcome": "success",
+        "skipped": false,
+        "started_at": "TIMESTAMP",
+        "status": "completed",
+        "succeeded": true,
+        "wave": 6
       },
       "outputs": {
-        "exit_code": 0,
-        "stdout": "",
-        "stderr": ""
+        "completed": "false",
+        "iterations": "3"
+      }
+    },
+    "update_state": {
+      "blocks": {},
+      "depth": 0,
+      "inputs": {
+        "path": "/tmp/test-recursion-state.json",
+        "updates": {
+          "current": "1"
+        }
       },
       "metadata": {
-        "status": "completed",
-        "outcome": "success",
-        "execution_time_ms": 6.47314453125,
-        "started_at": "2025-11-01T12:58:45.822194+00:00",
-        "completed_at": "2025-11-01T12:58:45.828655+00:00",
-        "wave": 8,
-        "execution_order": 8,
-        "message": null,
-        "succeeded": true,
+        "completed_at": "TIMESTAMP",
+        "execution_order": 4,
+        "execution_time_ms": "EXECUTION_TIME",
         "failed": false,
-        "skipped": false
+        "message": null,
+        "outcome": "success",
+        "skipped": false,
+        "started_at": "TIMESTAMP",
+        "status": "completed",
+        "succeeded": true,
+        "wave": 4
       },
-      "blocks": {},
-      "depth": 0
+      "outputs": {
+        "created": false,
+        "merged_data": {
+          "current": "1",
+          "max": "3"
+        },
+        "path": "/tmp/test-recursion-state.json"
+      }
     }
   },
   "metadata": {
-    "workflow_name": "composition-recursion",
-    "start_time": "2025-11-01T12:58:45.786213+00:00",
-    "total_blocks": 9,
+    "completed_at": "TIMESTAMP",
+    "execution_time_seconds": "EXECUTION_TIME",
     "execution_waves": 9,
-    "completed_at": "2025-11-01T12:58:45.829192+00:00",
-    "execution_time_seconds": 0.0429840087890625
-  }
+    "secret_access_count": 0,
+    "start_time": "TIMESTAMP",
+    "total_blocks": 9,
+    "workflow_name": "composition-recursion"
+  },
+  "outputs": {
+    "completed": "true",
+    "iterations": "3"
+  },
+  "status": "success"
 }

@@ -1,80 +1,81 @@
 {
-  "status": "success",
-  "outputs": {
-    "write_succeeded": "true",
-    "cleanup_done": "true"
-  },
   "blocks": {
-    "write_state": {
+    "cleanup": {
+      "blocks": {},
+      "depth": 0,
       "inputs": {
-        "path": "/tmp/test-write-state.json",
+        "command": "rm -f \"/tmp/test-write-state.json\""
+      },
+      "metadata": {
+        "completed_at": "TIMESTAMP",
+        "execution_order": 1,
+        "execution_time_ms": "EXECUTION_TIME",
+        "failed": false,
+        "message": null,
+        "outcome": "success",
+        "skipped": false,
+        "started_at": "TIMESTAMP",
+        "status": "completed",
+        "succeeded": true,
+        "wave": 1
+      },
+      "outputs": {
+        "exit_code": 0,
+        "stderr": "",
+        "stdout": ""
+      }
+    },
+    "write_state": {
+      "blocks": {},
+      "depth": 0,
+      "inputs": {
+        "create_parents": true,
         "data": {
-          "string_field": "test",
-          "number_field": 42,
-          "bool_field": true,
           "array_field": [
             "a",
             "b",
             "c"
           ],
+          "bool_field": true,
           "nested": {
             "key": "value"
-          }
+          },
+          "number_field": 42,
+          "string_field": "test"
         },
-        "create_parents": true
-      },
-      "outputs": {
-        "path": "/private/tmp/test-write-state.json",
-        "size_bytes": 161
+        "path": "/tmp/test-write-state.json"
       },
       "metadata": {
-        "status": "completed",
-        "outcome": "success",
-        "execution_time_ms": 0.26708984375,
-        "started_at": "2025-11-01T12:58:47.391405+00:00",
-        "completed_at": "2025-11-01T12:58:47.391673+00:00",
-        "wave": 0,
+        "completed_at": "TIMESTAMP",
         "execution_order": 0,
-        "message": null,
-        "succeeded": true,
+        "execution_time_ms": "EXECUTION_TIME",
         "failed": false,
-        "skipped": false
-      },
-      "blocks": {},
-      "depth": 0
-    },
-    "cleanup": {
-      "inputs": {
-        "command": "rm -f \"/tmp/test-write-state.json\""
+        "message": null,
+        "outcome": "success",
+        "skipped": false,
+        "started_at": "TIMESTAMP",
+        "status": "completed",
+        "succeeded": true,
+        "wave": 0
       },
       "outputs": {
-        "exit_code": 0,
-        "stdout": "",
-        "stderr": ""
-      },
-      "metadata": {
-        "status": "completed",
-        "outcome": "success",
-        "execution_time_ms": 6.2939453125,
-        "started_at": "2025-11-01T12:58:47.391846+00:00",
-        "completed_at": "2025-11-01T12:58:47.398124+00:00",
-        "wave": 1,
-        "execution_order": 1,
-        "message": null,
-        "succeeded": true,
-        "failed": false,
-        "skipped": false
-      },
-      "blocks": {},
-      "depth": 0
+        "path": "/tmp/test-write-state.json",
+        "size_bytes": 161
+      }
     }
   },
   "metadata": {
-    "workflow_name": "state-management-write",
-    "start_time": "2025-11-01T12:58:47.391306+00:00",
-    "total_blocks": 2,
+    "completed_at": "TIMESTAMP",
+    "execution_time_seconds": "EXECUTION_TIME",
     "execution_waves": 2,
-    "completed_at": "2025-11-01T12:58:47.398458+00:00",
-    "execution_time_seconds": 0.007155895233154297
-  }
+    "secret_access_count": 0,
+    "start_time": "TIMESTAMP",
+    "total_blocks": 2,
+    "workflow_name": "state-management-write"
+  },
+  "outputs": {
+    "cleanup_done": "true",
+    "write_succeeded": "true"
+  },
+  "status": "success"
 }

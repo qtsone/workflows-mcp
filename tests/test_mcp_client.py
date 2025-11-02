@@ -39,7 +39,6 @@ Snapshot Management:
 
 import json
 import os
-import re
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -50,6 +49,7 @@ import pytest
 from mcp import ClientSession, StdioServerParameters
 from mcp.client.stdio import stdio_client
 from mcp.types import TextContent
+from test_utils import format_diff, normalize_dynamic_fields
 
 from workflows_mcp.context import AppContext
 from workflows_mcp.engine.checkpoint_store import InMemoryCheckpointStore
@@ -72,140 +72,6 @@ from workflows_mcp.tools import (
 # Test configuration
 SNAPSHOTS_DIR = Path(__file__).parent / "snapshots"
 WORKFLOWS_DIR = Path(__file__).parent / "workflows"
-
-
-# =============================================================================
-# Utility Functions
-# =============================================================================
-
-
-def normalize_dynamic_fields(data: Any, path: str = "") -> Any:
-    """Recursively normalize dynamic fields in workflow responses.
-
-    Handles fields that change between test runs but don't affect
-    functional correctness:
-    - ISO 8601 timestamps → 'TIMESTAMP'
-    - Execution times → 'EXECUTION_TIME'
-    - Checkpoint IDs → 'CHECKPOINT_ID'
-    - HTTP date headers → 'HTTP_DATE'
-    - Amazon trace IDs → 'TRACE_ID'
-    - HTTP origin/IP fields → 'HTTP_ORIGIN'
-    - Content-Length headers → 'CONTENT_LENGTH'
-
-    Args:
-        data: Response data to normalize (dict, list, str, or primitive)
-        path: Current path in data structure (for debugging)
-
-    Returns:
-        Normalized copy of data with dynamic fields replaced
-    """
-    if isinstance(data, dict):
-        normalized = {}
-        for key, value in data.items():
-            current_path = f"{path}.{key}" if path else key
-
-            # Normalize known dynamic field names
-            if key in ("start_time", "end_time", "created_at", "timestamp", "completed_at"):
-                normalized[key] = "TIMESTAMP"
-            elif key in (
-                "execution_time_ms",
-                "duration_ms",
-                "execution_time",
-                "execution_time_seconds",
-            ):
-                normalized[key] = "EXECUTION_TIME"
-            elif key == "checkpoint_id" and isinstance(value, str):
-                normalized[key] = "CHECKPOINT_ID"
-            elif key == "date" and isinstance(value, str):
-                # Normalize HTTP date headers (e.g., "Sat, 01 Nov 2025 12:26:49 GMT")
-                normalized[key] = "HTTP_DATE"
-            elif key in ("origin", "Origin") and isinstance(value, str):
-                # Normalize HTTP origin/client IP (e.g., "192.168.1.1")
-                normalized[key] = "HTTP_ORIGIN"
-            elif key in ("Content-Length", "content-length") and isinstance(value, str):
-                # Normalize content-length header (varies with response body size)
-                normalized[key] = "CONTENT_LENGTH"
-            else:
-                normalized[key] = normalize_dynamic_fields(value, current_path)
-        return normalized
-
-    elif isinstance(data, list):
-        return [normalize_dynamic_fields(item, f"{path}[{i}]") for i, item in enumerate(data)]
-
-    elif isinstance(data, str):
-        # Normalize ISO 8601 timestamps in string values
-        normalized_str = re.sub(
-            r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d+[+-]\d{2}:\d{2}",
-            "TIMESTAMP",
-            data,
-        )
-        # Normalize Amazon trace IDs (X-Amzn-Trace-Id)
-        # Format: Root=1-6905fc89-71dbb5d47ab07eeb01ec09c5
-        normalized_str = re.sub(
-            r"Root=1-[a-f0-9]{8}-[a-f0-9]{24}",
-            "Root=TRACE_ID",
-            normalized_str,
-        )
-        # Normalize IP addresses (IPv4 and IPv6)
-        # IPv4: 192.168.1.1, 10.0.0.1, etc.
-        normalized_str = re.sub(
-            r"\b(?:\d{1,3}\.){3}\d{1,3}\b",
-            "IP_ADDRESS",
-            normalized_str,
-        )
-        # IPv6: 2001:db8::1, ::1, etc.
-        normalized_str = re.sub(
-            r"\b(?:[0-9a-fA-F]{1,4}:){7}[0-9a-fA-F]{1,4}\b|::1\b",
-            "IP_ADDRESS",
-            normalized_str,
-        )
-        # Normalize /private/tmp to /tmp (macOS vs Linux compatibility)
-        # On macOS, /tmp is a symlink to /private/tmp
-        # On Linux, /tmp is just /tmp
-        normalized_str = normalized_str.replace("/private/tmp", "/tmp")
-        return normalized_str
-
-    else:
-        # Primitives (int, float, bool, None) pass through
-        return data
-
-
-def format_diff(actual: dict[str, Any], expected: dict[str, Any], workflow_name: str) -> str:
-    """Generate formatted diff between actual and expected responses.
-
-    Args:
-        actual: Normalized actual response
-        expected: Normalized expected response
-        workflow_name: Name of workflow being tested
-
-    Returns:
-        Formatted diff string with actionable guidance
-    """
-    import difflib
-
-    actual_json = json.dumps(actual, indent=2, sort_keys=True)
-    expected_json = json.dumps(expected, indent=2, sort_keys=True)
-
-    diff = difflib.unified_diff(
-        expected_json.splitlines(keepends=True),
-        actual_json.splitlines(keepends=True),
-        fromfile=f"expected/{workflow_name}.json",
-        tofile=f"actual/{workflow_name}.json",
-        lineterm="",
-    )
-
-    diff_text = "".join(diff)
-
-    return (
-        f"\n{'=' * 80}\n"
-        f"Snapshot mismatch for workflow: {workflow_name}\n"
-        f"{'=' * 80}\n"
-        f"{diff_text}\n"
-        f"{'=' * 80}\n"
-        f"To update snapshot if this change is intentional:\n"
-        f"  uv run python tests/generate_snapshots.py\n"
-        f"{'=' * 80}\n"
-    )
 
 
 # =============================================================================
@@ -1260,11 +1126,13 @@ class TestWorkflowSnapshots:
         Test Flow:
         1. Execute workflow via MCP execute_workflow tool
         2. Extract response from MCP protocol
-        3. Normalize dynamic fields in response
-        4. Load expected snapshot from tests/snapshots/
-        5. Normalize expected snapshot
-        6. Compare normalized responses
-        7. Report precise differences on mismatch
+        3. Normalize dynamic fields in actual response
+        4. Load expected snapshot (already normalized) from tests/snapshots/
+        5. Compare normalized actual vs normalized expected (snapshot)
+        6. Report precise differences on mismatch
+
+        Note: Snapshots are pre-normalized by generate_snapshots.py, so we only
+        normalize the actual response. This ensures stable snapshots and reliable tests.
         """
         # Execute workflow via MCP with detailed response format
         async with get_mcp_client() as mcp_client:
@@ -1284,7 +1152,7 @@ class TestWorkflowSnapshots:
 
             actual_response: dict[str, Any] = json.loads(content.text)
 
-        # Load snapshot
+        # Load snapshot (already normalized during generation)
         snapshot_file = SNAPSHOTS_DIR / f"{workflow_name}.json"
 
         if not snapshot_file.exists():
@@ -1303,13 +1171,12 @@ class TestWorkflowSnapshots:
         with open(snapshot_file) as f:
             expected_response: dict[str, Any] = json.load(f)
 
-        # Normalize both responses to handle dynamic fields
+        # Normalize actual response only (snapshot is already normalized)
         normalized_actual = normalize_dynamic_fields(actual_response)
-        normalized_expected = normalize_dynamic_fields(expected_response)
 
-        # Compare normalized responses
-        if normalized_actual != normalized_expected:
-            diff = format_diff(normalized_actual, normalized_expected, workflow_name)
+        # Compare normalized actual vs normalized expected (snapshot)
+        if normalized_actual != expected_response:
+            diff = format_diff(normalized_actual, expected_response, workflow_name)
             pytest.fail(diff)
 
     async def test_all_snapshots_have_corresponding_workflows(self) -> None:

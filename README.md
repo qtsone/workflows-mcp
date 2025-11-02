@@ -66,6 +66,54 @@ All `env` variables are optional. The `--refresh` flag is recommended to ensure 
 
 Restart your LLM client, and you're ready to go!
 
+## ✨ Features
+
+- **DAG-Based Workflows**: Automatic dependency resolution and parallel execution
+- **🔐 Secrets Management**: Server-side credential handling with automatic redaction (v5.0.0+)
+- **Workflow Composition**: Reusable workflows via Workflow blocks
+- **Conditional Execution**: Boolean expressions for dynamic control flow
+- **Variable Resolution**: Five-namespace system (inputs, metadata, blocks, secrets, __internal__)
+- **File Operations**: CreateFile, ReadFile, RenderTemplate with Jinja2
+- **HTTP Integration**: HttpCall for REST API interactions
+- **Interactive Workflows**: Prompt blocks for user input
+- **MCP Integration**: Exposed as tools for LLM agents via Model Context Protocol
+
+### 🔐 Secrets Management
+
+Securely manage API keys, passwords, and tokens in workflows:
+
+```yaml
+blocks:
+  - id: call_github_api
+    type: HttpCall
+    inputs:
+      url: "https://api.github.com/user"
+      headers:
+        Authorization: "Bearer {{secrets.GITHUB_TOKEN}}"
+```
+
+**Key Features:**
+
+- ✅ **Server-side resolution** - Secrets never reach LLM context
+- ✅ **Automatic redaction** - Secret values sanitized from all outputs
+- ✅ **Fail-fast behavior** - Missing secrets cause immediate workflow failure
+- ✅ **Audit logging** - Comprehensive tracking for compliance
+
+**Configuration:**
+
+```json
+{
+  "mcpServers": {
+    "workflows": {
+      "env": {
+        "WORKFLOW_SECRET_GITHUB_TOKEN": "ghp_xxx",
+        "WORKFLOW_SECRET_OPENAI_API_KEY": "sk-xxx"
+      }
+    }
+  }
+}
+```
+
 ## What Can You Do With It?
 
 ### Built-in Workflows
@@ -212,6 +260,7 @@ Your custom workflows override built-in ones if they have the same name. Later d
 - **WORKFLOWS_TEMPLATE_PATHS** - Comma-separated list of additional template directories
 - **WORKFLOWS_MAX_RECURSION_DEPTH** - Maximum workflow recursion depth (default: 50, range: 1-10000)
 - **WORKFLOWS_LOG_LEVEL** - Logging level (DEBUG, INFO, WARNING, ERROR, CRITICAL)
+- **WORKFLOW_SECRET_<NAME>** - Define secrets for workflow execution (e.g., `WORKFLOW_SECRET_GITHUB_TOKEN`)
 
 ## Example Usage with Claude
 
@@ -287,7 +336,7 @@ The server uses a **fractal execution model** where workflows and blocks share t
 - **WorkflowRunner** - Orchestrates workflow execution
 - **BlockOrchestrator** - Executes individual blocks with error handling
 - **DAGResolver** - Resolves dependencies and computes parallel execution waves
-- **Variable Resolution** - Four-namespace variable system (inputs, blocks, metadata, internal)
+- **Variable Resolution** - Five-namespace variable system (inputs, blocks, metadata, secrets, __internal__)
 - **Checkpoint System** - Pause/resume support for interactive workflows
 
 Workflows execute in **waves**—blocks with no dependencies or whose dependencies are satisfied run in parallel within each wave, maximizing efficiency.
