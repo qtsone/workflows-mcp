@@ -200,8 +200,7 @@ async def app_lifespan(_server: FastMCP) -> AsyncIterator[AppContext]:
 
     if len(secret_keys) == 0:
         logger.warning(
-            "No secrets configured. "
-            "Use WORKFLOW_SECRET_* environment variables to provide secrets."
+            "No secrets configured. Use WORKFLOW_SECRET_* environment variables to provide secrets."
         )
     else:
         # Log secret keys (not values!) for debugging
