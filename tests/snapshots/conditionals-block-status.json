@@ -1,7 +1,7 @@
 {
   "outputs": {
-    "runs_on_failure_executed": "true",
-    "runs_on_success_executed": "true"
+    "runs_on_failure_executed": true,
+    "runs_on_success_executed": true
   },
   "status": "success"
 }

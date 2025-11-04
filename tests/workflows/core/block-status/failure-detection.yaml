@@ -15,5 +15,9 @@ blocks:
       - block: failing_block
         required: false
 outputs:
-  block_failed: "{{blocks.failing_block.failed}}"
-  detection_worked: "{{blocks.check_failure.succeeded}}"
+  block_failed:
+    value: "{{blocks.failing_block.failed}}"
+    type: bool
+  detection_worked:
+    value: "{{blocks.check_failure.succeeded}}"
+    type: bool

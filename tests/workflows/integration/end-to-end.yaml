@@ -13,12 +13,10 @@ inputs:
     type: str
     default: "TestProject"
     description: "Project name for the workflow"
-
   working_dir:
     type: str
     default: "/tmp/integration-test"
     description: "Directory for test outputs"
-
 blocks:
   - id: init_state
     description: "Initialize workflow state"
@@ -30,21 +28,18 @@ blocks:
         phase: "init"
         workflow: "{{metadata.workflow_name}}"
       create_parents: true
-
   - id: gen_data1
     description: "Generate data in parallel"
     type: Shell
     inputs:
       command: printf "data1"
     depends_on: [init_state]
-
   - id: gen_data2
     description: "Generate data in parallel"
     type: Shell
     inputs:
       command: printf "data2"
     depends_on: [init_state]
-
   - id: update_state
     description: "Update state after parallel generation"
     type: MergeJSONState
@@ -55,7 +50,6 @@ blocks:
         data1: "{{blocks.gen_data1.outputs.stdout}}"
         data2: "{{blocks.gen_data2.outputs.stdout}}"
     depends_on: [gen_data1, gen_data2]
-
   - id: render_report
     description: "Render report (depends on both data sources)"
     type: RenderTemplate
@@ -81,7 +75,6 @@ blocks:
         phase: "report_generation"
       output_path: "{{inputs.working_dir}}/report.md"
     depends_on: [update_state]
-
   - id: validate_success
     description: "Validate successful completion"
     type: Shell
@@ -89,10 +82,10 @@ blocks:
       command: echo "validation_passed"
     condition: >
       {{blocks.gen_data1.succeeded}} and {{blocks.gen_data2.succeeded}} and {{blocks.render_report.succeeded}}
+
     depends_on:
       - block: render_report
         required: false
-
   - id: validate_failure
     description: "Validate failure scenario"
     type: Shell
@@ -100,10 +93,10 @@ blocks:
       command: echo "validation_failed"
     condition: >
       {{blocks.gen_data1.failed}} or {{blocks.gen_data2.failed}} or {{blocks.render_report.failed}}
+
     depends_on:
       - block: render_report
         required: false
-
   - id: final_state
     description: "Finalize workflow state"
     type: MergeJSONState
@@ -117,20 +110,17 @@ blocks:
         required: false
       - block: validate_failure
         required: false
-
   - id: read_final_state
     description: "Read final state"
     type: ReadJSONState
     inputs:
       path: "{{inputs.working_dir}}/state.json"
     depends_on: [final_state]
-
   - id: read_report
     type: ReadFile
     inputs:
       path: "{{inputs.working_dir}}/report.md"
     depends_on: [final_state]
-
   - id: cleanup
     description: "Cleanup test directory"
     type: Shell
@@ -138,14 +128,29 @@ blocks:
       command: |
         [ -d "{{inputs.working_dir}}" ] && rm -rf "{{inputs.working_dir}}" || echo "Error: Test directory does not exist"
     depends_on: [read_final_state, read_report]
-
 outputs:
-  project_name: "{{inputs.project_name}}"
-  workflow_name: "{{metadata.workflow_name}}"
-  data1: "{{blocks.gen_data1.outputs.stdout}}"
-  data2: "{{blocks.gen_data2.outputs.stdout}}"
-  report_content: "{{blocks.read_report.outputs.content}}"
-  final_phase: "{{blocks.read_final_state.outputs.data.phase}}"
-  validation_passed: "{{blocks.validate_success.succeeded}}"
-  all_blocks_succeeded: >
-    {{blocks.gen_data1.succeeded}} and {{blocks.gen_data2.succeeded}} and {{blocks.render_report.succeeded}} and {{blocks.validate_success.succeeded}} and {{blocks.cleanup.succeeded}}
+  project_name:
+    value: "{{inputs.project_name}}"
+    type: str
+  workflow_name:
+    value: "{{metadata.workflow_name}}"
+    type: str
+  data1:
+    value: "{{blocks.gen_data1.outputs.stdout}}"
+    type: str
+  data2:
+    value: "{{blocks.gen_data2.outputs.stdout}}"
+    type: str
+  report_content:
+    value: "{{blocks.read_report.outputs.content}}"
+    type: str
+  final_phase:
+    value: "{{blocks.read_final_state.outputs.data.phase}}"
+    type: str
+  validation_passed:
+    value: "{{blocks.validate_success.succeeded}}"
+    type: bool
+  all_blocks_succeeded:
+    value: >
+      {{blocks.gen_data1.succeeded}} and {{blocks.gen_data2.succeeded}} and {{blocks.render_report.succeeded}} and {{blocks.validate_success.succeeded}} and {{blocks.cleanup.succeeded}}
+    type: bool

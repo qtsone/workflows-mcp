@@ -1,11 +1,11 @@
 {
   "outputs": {
-    "job_1_succeeded": "true",
-    "job_2_failed": "true",
-    "job_3_succeeded": "true",
-    "job_4_succeeded": "true",
-    "job_5_succeeded": "true",
-    "job_6_succeeded": "true"
+    "job_1_succeeded": true,
+    "job_2_failed": true,
+    "job_3_succeeded": true,
+    "job_4_succeeded": true,
+    "job_5_succeeded": true,
+    "job_6_succeeded": true
   },
   "status": "success"
 }

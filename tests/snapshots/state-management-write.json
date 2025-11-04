@@ -1,7 +1,7 @@
 {
   "outputs": {
-    "cleanup_done": "true",
-    "write_succeeded": "true"
+    "cleanup_done": true,
+    "write_succeeded": true
   },
   "status": "success"
 }

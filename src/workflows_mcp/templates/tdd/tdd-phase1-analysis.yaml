@@ -46,38 +46,32 @@ description: TDD Phase 1 - Parse PRD, resolve ambiguities, create technical spec
 version: "1.0"
 author: MCP Workflows Team
 tags: [tdd, analysis, specification, requirements, setup, phase1]
-
 inputs:
   project_path:
     type: str
     description: Path to project root directory
     default: "."
     required: false
-
   state_file:
     type: str
     description: Path to TDD state file (JSON) relative to project_path
     default: ".tdd-state.json"
     required: false
-
   prd_path:
     type: str
     description: Path to PRD document relative to project_path
     default: "PRD.md"
     required: false
-
   spec_output_path:
     type: str
     description: Path for technical specification output relative to project_path
     default: "TECHNICAL_SPEC.md"
     required: false
-
 blocks:
   - id: read_initial_state
     type: ReadJSONState
     inputs:
       path: "{{inputs.project_path}}/{{inputs.state_file}}"
-
   - id: initialize_state
     type: WriteJSONState
     inputs:
@@ -90,7 +84,6 @@ blocks:
     depends_on:
       - read_initial_state
     condition: "not {{blocks.read_initial_state.outputs.found}}"
-
   - id: validate_prd_exists
     type: Shell
     inputs:
@@ -106,7 +99,6 @@ blocks:
       timeout: 10
     depends_on:
       - read_initial_state
-
   - id: identify_ambiguities
     type: Prompt
     inputs:
@@ -125,11 +117,10 @@ blocks:
 
         Format your response as a structured list of ambiguities.
         If the PRD is clear and complete, respond with: "NO_AMBIGUITIES"
-        
+
         Respond with 'yes' or 'no'
     depends_on:
       - validate_prd_exists
-
   - id: check_clarifications_needed
     type: Shell
     inputs:
@@ -151,7 +142,6 @@ blocks:
         description: "Whether clarifications are needed for PRD ambiguities"
     depends_on:
       - identify_ambiguities
-
   - id: confirm_need_clarification
     type: Prompt
     inputs:
@@ -160,7 +150,7 @@ blocks:
         {{blocks.identify_ambiguities.outputs.response}}
 
         Do you need to provide clarifications before proceeding?
-        
+
         Respond with 'yes' or 'no'
       operation: "request_prd_clarifications"
       details:
@@ -169,7 +159,6 @@ blocks:
     depends_on:
       - check_clarifications_needed
     condition: "{{blocks.check_clarifications_needed.outputs.clarifications_needed}}"
-
   - id: get_clarifications
     type: Prompt
     inputs:
@@ -183,7 +172,6 @@ blocks:
     depends_on:
       - confirm_need_clarification
     condition: "{{blocks.check_clarifications_needed.outputs.clarifications_needed}}"
-
   - id: define_success_criteria
     type: Prompt
     inputs:
@@ -208,15 +196,14 @@ blocks:
           * Session expires after 24 hours of inactivity
 
         Provide success criteria for ALL requirements.
-        
+
         Respond with 'yes' or 'no'
-        
+
         Respond with 'yes' or 'no'
-        
+
         Respond with 'yes' or 'no'
     depends_on:
       - check_clarifications_needed
-
   - id: identify_constraints
     type: Prompt
     inputs:
@@ -239,7 +226,6 @@ blocks:
         - Priority (must-have / should-have / nice-to-have)
     depends_on:
       - define_success_criteria
-
   - id: write_technical_spec
     type: Prompt
     inputs:
@@ -286,11 +272,10 @@ blocks:
         [Any remaining uncertainties to be resolved in Phase 2]
 
         Provide the COMPLETE technical specification content.
-        
+
         Respond with 'yes' or 'no'
     depends_on:
       - identify_constraints
-
   - id: create_spec_file
     type: CreateFile
     inputs:
@@ -299,7 +284,6 @@ blocks:
       encoding: "utf-8"
     depends_on:
       - write_technical_spec
-
   - id: count_requirements
     type: Shell
     inputs:
@@ -320,12 +304,11 @@ blocks:
       timeout: 30
     outputs:
       requirements_count:
-        type: int
+        type: num
         path: "$SCRATCH/requirements_count.txt"
         description: "Number of unique requirements identified in technical specification"
     depends_on:
       - create_spec_file
-
   - id: extract_requirements
     type: Shell
     inputs:
@@ -344,7 +327,6 @@ blocks:
         description: "Comma-separated list of requirement identifiers"
     depends_on:
       - count_requirements
-
   - id: update_state_phase1_complete
     type: Shell
     inputs:
@@ -404,7 +386,6 @@ blocks:
       timeout: 30
     depends_on:
       - extract_requirements
-
   - id: checkpoint_review
     type: Prompt
     inputs:
@@ -423,9 +404,9 @@ blocks:
         4. Are assumptions documented?
 
         Approve to proceed to Phase 2 (Architecture & Design)?
-        
+
         Respond with 'yes' or 'no'
-        
+
         Respond with 'yes' or 'no'
       operation: "approve_phase1_complete"
       details:
@@ -434,54 +415,41 @@ blocks:
         state_updated: "true"
     depends_on:
       - update_state_phase1_complete
-
   - id: completion_summary
     type: Shell
     inputs:
-      command: |
-        echo "╔════════════════════════════════════════════════════════════════╗"
-        echo "║              TDD PHASE 1: ANALYSIS COMPLETE                   ║"
-        echo "╚════════════════════════════════════════════════════════════════╝"
-        echo ""
-        echo "Phase 1 Results:"
-        echo "  ✅ PRD analyzed and parsed"
-        echo "  ✅ Ambiguities identified and resolved"
-        echo "  ✅ Success criteria defined"
-        echo "  ✅ Technical constraints documented"
-        echo "  ✅ Technical specification created"
-        echo ""
-        echo "Output:"
-        echo "  📄 Technical Spec: {{inputs.project_path}}/{{inputs.spec_output_path}}"
-        echo "  📊 Requirements: {{blocks.count_requirements.outputs.requirements_count}}"
-        echo "  💾 State File: {{inputs.project_path}}/{{inputs.state_file}}"
-        echo ""
-        echo "Next Phase: Architecture & Design (Phase 2)"
-        echo "  Run: execute_workflow('tdd-phase2-architecture', {'project_path': '{{inputs.project_path}}'})"
-        echo ""
-        echo "Checkpoint Approved: {{blocks.checkpoint_review.outputs.response}} == \'yes\'"
+      command: "echo \"╔════════════════════════════════════════════════════════════════╗\"\necho \"║              TDD PHASE 1: ANALYSIS COMPLETE                   ║\"\necho \"╚════════════════════════════════════════════════════════════════╝\"\necho \"\"\necho \"Phase 1 Results:\"\necho \"  ✅ PRD analyzed and parsed\"\necho \"  ✅ Ambiguities identified and resolved\"\necho \"  ✅ Success criteria defined\"\necho \"  ✅ Technical constraints documented\"\necho \"  ✅ Technical specification created\"\necho \"\"\necho \"Output:\"\necho \"  \U0001F4C4 Technical Spec: {{inputs.project_path}}/{{inputs.spec_output_path}}\"\necho \"  \U0001F4CA Requirements: {{blocks.count_requirements.outputs.requirements_count}}\"\necho \"  \U0001F4BE State File: {{inputs.project_path}}/{{inputs.state_file}}\"\necho \"\"\necho \"Next Phase: Architecture & Design (Phase 2)\"\necho \"  Run: execute_workflow('tdd-phase2-architecture', {'project_path': '{{inputs.project_path}}'})\"\necho \"\"\necho \"Checkpoint Approved: {{blocks.checkpoint_review.outputs.response}} == \\'yes\\'\"\n"
       timeout: 10
     depends_on:
       - checkpoint_review
-
 outputs:
-  phase_complete: "{{blocks.checkpoint_review.outputs.response}} == 'yes'"
-  technical_spec_path: "{{inputs.project_path}}/{{inputs.spec_output_path}}"
-  requirements_count: "{{blocks.count_requirements.outputs.requirements_count}}"
-  ambiguities_resolved: "true"
-  checkpoint_approved: "{{blocks.checkpoint_review.outputs.response}} == 'yes'"
-
+  phase_complete:
+    value: "{{blocks.checkpoint_review.outputs.response}} == 'yes'"
+  technical_spec_path:
+    value: "{{inputs.project_path}}/{{inputs.spec_output_path}}"
+  requirements_count:
+    value: "{{blocks.count_requirements.outputs.requirements_count}}"
+  ambiguities_resolved:
+    value: "true"
+  checkpoint_approved:
+    value: "{{blocks.checkpoint_review.outputs.response}} == 'yes'"
   # State tracking
-  state_file_path: "{{inputs.project_path}}/{{inputs.state_file}}"
-  state_initialized: "{{blocks.read_initial_state.outputs.found}} or {{blocks.initialize_state.succeeded}}"
-
+  state_file_path:
+    value: "{{inputs.project_path}}/{{inputs.state_file}}"
+  state_initialized:
+    value: "{{blocks.read_initial_state.outputs.found}} or {{blocks.initialize_state.succeeded}}"
   # Analysis outputs
-  ambiguities_identified: "{{blocks.identify_ambiguities.outputs.response}}"
-  clarifications_provided: "{{blocks.get_clarifications.outputs.response}}"
-  success_criteria: "{{blocks.define_success_criteria.outputs.response}}"
-  constraints: "{{blocks.identify_constraints.outputs.response}}"
-
+  ambiguities_identified:
+    value: "{{blocks.identify_ambiguities.outputs.response}}"
+  clarifications_provided:
+    value: "{{blocks.get_clarifications.outputs.response}}"
+  success_criteria:
+    value: "{{blocks.define_success_criteria.outputs.response}}"
+  constraints:
+    value: "{{blocks.identify_constraints.outputs.response}}"
   # Summary
-  summary: "{{blocks.completion_summary.outputs.stdout}}"
-
+  summary:
+    value: "{{blocks.completion_summary.outputs.stdout}}"
   # Next phase readiness
-  ready_for_phase2: "{{blocks.checkpoint_review.outputs.response}} == 'yes'"
+  ready_for_phase2:
+    value: "{{blocks.checkpoint_review.outputs.response}} == 'yes'"

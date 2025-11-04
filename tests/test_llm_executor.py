@@ -127,9 +127,7 @@ class TestLLMCallExecutor:
         mock_response.json.return_value = {
             "candidates": [
                 {
-                    "content": {
-                        "parts": [{"text": "Quantum computing uses quantum mechanics..."}]
-                    },
+                    "content": {"parts": [{"text": "Quantum computing uses quantum mechanics..."}]},
                     "finishReason": "STOP",
                 }
             ],
@@ -286,9 +284,7 @@ class TestLLMCallExecutor:
             return response
 
         with patch("httpx.AsyncClient") as mock_client:
-            mock_client.return_value.__aenter__.return_value.post = AsyncMock(
-                side_effect=mock_post
-            )
+            mock_client.return_value.__aenter__.return_value.post = AsyncMock(side_effect=mock_post)
 
             result = await executor.execute(inputs, mock_context)
 
@@ -298,9 +294,7 @@ class TestLLMCallExecutor:
             assert result.response_json["answer"] == "4"
 
     @pytest.mark.asyncio
-    async def test_schema_validation_failure_exhausted_retries(
-        self, executor, mock_context
-    ):
+    async def test_schema_validation_failure_exhausted_retries(self, executor, mock_context):
         """Test schema validation failure after all retries exhausted."""
         schema = {
             "type": "object",
@@ -387,9 +381,7 @@ class TestLLMCallExecutor:
             return response
 
         with patch("httpx.AsyncClient") as mock_client:
-            mock_client.return_value.__aenter__.return_value.post = AsyncMock(
-                side_effect=mock_post
-            )
+            mock_client.return_value.__aenter__.return_value.post = AsyncMock(side_effect=mock_post)
 
             result = await executor.execute(inputs, mock_context)
 
@@ -414,9 +406,7 @@ class TestLLMCallExecutor:
             raise httpx.TimeoutException("Request timeout")
 
         with patch("httpx.AsyncClient") as mock_client:
-            mock_client.return_value.__aenter__.return_value.post = AsyncMock(
-                side_effect=mock_post
-            )
+            mock_client.return_value.__aenter__.return_value.post = AsyncMock(side_effect=mock_post)
 
             with pytest.raises(httpx.TimeoutException):
                 await executor.execute(inputs, mock_context)
@@ -466,9 +456,7 @@ class TestLLMCallExecutor:
             return response
 
         with patch("httpx.AsyncClient") as mock_client:
-            mock_client.return_value.__aenter__.return_value.post = AsyncMock(
-                side_effect=mock_post
-            )
+            mock_client.return_value.__aenter__.return_value.post = AsyncMock(side_effect=mock_post)
 
             result = await executor.execute(inputs, mock_context)
 

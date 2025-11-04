@@ -49,62 +49,52 @@ description: TDD Phase 6 - Comprehensive quality validation and PRD compliance v
 version: "1.0"
 author: MCP Workflows Team
 tags: [tdd, validation, quality, compliance, security, phase6, production-ready]
-
 inputs:
   project_path:
     type: str
     description: Path to project root directory
     default: "."
     required: false
-
   state_file:
     type: str
     description: Path to TDD state file (JSON)
     default: ".tdd-state.json"
     required: false
-
   source_path:
     type: str
     description: Path to source directory (relative to project_path)
     default: "src"
     required: false
-
   test_path:
     type: str
     description: Path to test directory (relative to project_path)
     default: "tests"
     required: false
-
   coverage_threshold:
-    type: int
+    type: num
     description: Minimum overall code coverage percentage (0-100)
     default: 80
     required: false
-
   language:
     type: str
     description: Programming language for the project (python, javascript, go, etc.)
     default: "python"
     required: false
-
   strict_quality:
     type: bool
     description: Enable strict quality mode (fail on warnings)
     default: true
     required: false
-
   enable_security_scan:
     type: bool
     description: Enable security scanning (bandit, safety)
     default: true
     required: false
-
 blocks:
   - id: read_state
     type: ReadJSONState
     inputs:
       path: "{{inputs.project_path}}/{{inputs.state_file}}"
-
   - id: validate_phase5_complete
     type: Shell
     inputs:
@@ -123,7 +113,6 @@ blocks:
       timeout: 10
     depends_on:
       - read_state
-
   - id: run_all_tests
     type: Workflow
     inputs:
@@ -137,7 +126,6 @@ blocks:
         pytest_args: "-v --tb=short"
     depends_on:
       - validate_phase5_complete
-
   - id: validate_coverage
     type: Shell
     inputs:
@@ -157,10 +145,8 @@ blocks:
           exit 1
         fi
       timeout: 10
-
     depends_on:
       - run_all_tests
-
   - id: run_quality_checks
     type: Workflow
     inputs:
@@ -172,7 +158,6 @@ blocks:
         working_dir: "{{inputs.project_path}}"
     depends_on:
       - validate_phase5_complete
-
   - id: validate_quality_gates
     type: Shell
     inputs:
@@ -205,10 +190,8 @@ blocks:
           exit 1
         fi
       timeout: 10
-
     depends_on:
       - run_quality_checks
-
   - id: request_quality_fixes
     type: Prompt
     inputs:
@@ -243,7 +226,6 @@ blocks:
     depends_on:
       - validate_quality_gates
     condition: "{{blocks.validate_quality_gates.failed}}"
-
   - id: run_bandit_scan
     type: Shell
     inputs:
@@ -278,11 +260,9 @@ blocks:
           exit 0
         fi
       timeout: 300
-
     depends_on:
       - validate_phase5_complete
     condition: "{{inputs.enable_security_scan}}"
-
   - id: run_safety_scan
     type: Shell
     inputs:
@@ -323,11 +303,9 @@ blocks:
           exit 0
         fi
       timeout: 300
-
     depends_on:
       - validate_phase5_complete
     condition: "{{inputs.enable_security_scan}}"
-
   - id: validate_security
     type: Shell
     inputs:
@@ -347,12 +325,10 @@ blocks:
           exit 1
         fi
       timeout: 10
-
     depends_on:
       - run_bandit_scan
       - run_safety_scan
     condition: "{{inputs.enable_security_scan}}"
-
   - id: ask_performance_testing
     type: Prompt
     inputs:
@@ -370,7 +346,6 @@ blocks:
       - validate_quality_gates
       - validate_security
     condition: "{{blocks.validate_quality_gates.succeeded}}"
-
   - id: request_performance_benchmarks
     type: Prompt
     inputs:
@@ -395,7 +370,6 @@ blocks:
     depends_on:
       - ask_performance_testing
     condition: "{{blocks.ask_performance_testing.response}}.lower().startswith('yes')"
-
   - id: request_prd_compliance
     type: Prompt
     inputs:
@@ -424,47 +398,18 @@ blocks:
     depends_on:
       - validate_quality_gates
     condition: "{{blocks.validate_quality_gates.succeeded}}"
-
   - id: calculate_compliance
     type: Shell
     inputs:
-      command: |
-        # Parse LLM response to count compliance
-        COMPLIANCE_TEXT="{{blocks.request_prd_compliance.response}}"
-
-        # Count status indicators
-        IMPLEMENTED=$(echo "$COMPLIANCE_TEXT" | grep -c "✅ IMPLEMENTED" || echo "0")
-        PARTIAL=$(echo "$COMPLIANCE_TEXT" | grep -c "⚠️  PARTIAL" || echo "0")
-        MISSING=$(echo "$COMPLIANCE_TEXT" | grep -c "❌ MISSING" || echo "0")
-
-        TOTAL=$((IMPLEMENTED + PARTIAL + MISSING))
-
-        if [ "$TOTAL" -eq 0 ]; then
-          echo "⚠️  Unable to parse compliance report"
-          echo "compliance_percent=0"
-          exit 0
-        fi
-
-        # Calculate percentage (full credit for implemented, half credit for partial)
-        WEIGHTED=$((IMPLEMENTED * 100 + PARTIAL * 50))
-        COMPLIANCE_PERCENT=$((WEIGHTED / TOTAL))
-
-        echo "PRD Compliance Summary:"
-        echo "  ✅ Implemented: $IMPLEMENTED"
-        echo "  ⚠️  Partial: $PARTIAL"
-        echo "  ❌ Missing: $MISSING"
-        echo "  📊 Compliance: ${COMPLIANCE_PERCENT}%"
-        echo ""
-        echo "$COMPLIANCE_PERCENT" > "$SCRATCH/compliance_percent.txt"
+      command: "# Parse LLM response to count compliance\nCOMPLIANCE_TEXT=\"{{blocks.request_prd_compliance.response}}\"\n\n# Count status indicators\nIMPLEMENTED=$(echo \"$COMPLIANCE_TEXT\" | grep -c \"✅ IMPLEMENTED\" || echo \"0\")\nPARTIAL=$(echo \"$COMPLIANCE_TEXT\" | grep -c \"⚠️  PARTIAL\" || echo \"0\")\nMISSING=$(echo \"$COMPLIANCE_TEXT\" | grep -c \"❌ MISSING\" || echo \"0\")\n\nTOTAL=$((IMPLEMENTED + PARTIAL + MISSING))\n\nif [ \"$TOTAL\" -eq 0 ]; then\n  echo \"⚠️  Unable to parse compliance report\"\n  echo \"compliance_percent=0\"\n  exit 0\nfi\n\n# Calculate percentage (full credit for implemented, half credit for partial)\nWEIGHTED=$((IMPLEMENTED * 100 + PARTIAL * 50))\nCOMPLIANCE_PERCENT=$((WEIGHTED / TOTAL))\n\necho \"PRD Compliance Summary:\"\necho \"  ✅ Implemented: $IMPLEMENTED\"\necho \"  ⚠️  Partial: $PARTIAL\"\necho \"  ❌ Missing: $MISSING\"\necho \"  \U0001F4CA Compliance: ${COMPLIANCE_PERCENT}%\"\necho \"\"\necho \"$COMPLIANCE_PERCENT\" > \"$SCRATCH/compliance_percent.txt\"\n"
       timeout: 10
     outputs:
       compliance_percent:
-        type: int
+        type: num
         path: "$SCRATCH/compliance_percent.txt"
         description: "PRD compliance percentage (0-100)"
     depends_on:
       - request_prd_compliance
-
   - id: update_state_phase6
     type: Shell
     inputs:
@@ -567,7 +512,6 @@ blocks:
       - run_quality_checks
       - run_bandit_scan
       - run_safety_scan
-
   - id: final_quality_checkpoint
     type: Prompt
     inputs:
@@ -598,9 +542,9 @@ blocks:
         All quality gates passed. System is production-ready.
 
         Approve Phase 6 completion and deployment readiness?
-        
+
         Respond with 'yes' or 'no'
-        
+
         Respond with 'yes' or 'no'
       operation: "phase6_quality_checkpoint"
       details:
@@ -611,7 +555,6 @@ blocks:
         prd_compliance: "{{blocks.calculate_compliance.outputs.stdout}}"
     depends_on:
       - update_state_phase6
-
   - id: generate_quality_report
     type: Shell
     inputs:
@@ -660,71 +603,55 @@ blocks:
       timeout: 30
     depends_on:
       - final_quality_checkpoint
-
   - id: phase6_summary
     type: Shell
     inputs:
-      command: |
-        echo "╔════════════════════════════════════════════════════════════════╗"
-        echo "║       TDD PHASE 6: QUALITY VALIDATION COMPLETE                ║"
-        echo "╚════════════════════════════════════════════════════════════════╝"
-        echo ""
-        echo "Test Results:"
-        echo "  ✅ Total tests: {{blocks.run_all_tests.outputs.tests_passed}}"
-        echo "  📊 Coverage: {{blocks.run_all_tests.outputs.coverage_percent}}% (threshold: {{inputs.coverage_threshold}}%)"
-        echo ""
-        echo "Quality Gates:"
-        echo "  ✓ Linting: {{blocks.run_quality_checks.outputs.linting_passed}}"
-        echo "  ✓ Type checking: {{blocks.run_quality_checks.outputs.typing_passed}}"
-        echo "  ✓ Formatting: {{blocks.run_quality_checks.outputs.formatting_passed}}"
-        echo ""
-        echo "Security:"
-        echo "  ✓ Bandit: {{blocks.run_bandit_scan.outputs.exit_code}}"
-        echo "  ✓ Safety: {{blocks.run_safety_scan.outputs.exit_code}}"
-        echo ""
-        echo "PRD Compliance:"
-        echo "  {{blocks.calculate_compliance.outputs.stdout}}"
-        echo ""
-        echo "Files Created:"
-        echo "  - {{inputs.project_path}}/QUALITY_REPORT.md"
-        echo "  - {{inputs.project_path}}/{{inputs.state_file}} (updated)"
-        echo ""
-        echo "🎉 PRODUCTION READY - All quality gates passed!"
+      command: "echo \"╔════════════════════════════════════════════════════════════════╗\"\necho \"║       TDD PHASE 6: QUALITY VALIDATION COMPLETE                ║\"\necho \"╚════════════════════════════════════════════════════════════════╝\"\necho \"\"\necho \"Test Results:\"\necho \"  ✅ Total tests: {{blocks.run_all_tests.outputs.tests_passed}}\"\necho \"  \U0001F4CA Coverage: {{blocks.run_all_tests.outputs.coverage_percent}}% (threshold: {{inputs.coverage_threshold}}%)\"\necho \"\"\necho \"Quality Gates:\"\necho \"  ✓ Linting: {{blocks.run_quality_checks.outputs.linting_passed}}\"\necho \"  ✓ Type checking: {{blocks.run_quality_checks.outputs.typing_passed}}\"\necho \"  ✓ Formatting: {{blocks.run_quality_checks.outputs.formatting_passed}}\"\necho \"\"\necho \"Security:\"\necho \"  ✓ Bandit: {{blocks.run_bandit_scan.outputs.exit_code}}\"\necho \"  ✓ Safety: {{blocks.run_safety_scan.outputs.exit_code}}\"\necho \"\"\necho \"PRD Compliance:\"\necho \"  {{blocks.calculate_compliance.outputs.stdout}}\"\necho \"\"\necho \"Files Created:\"\necho \"  - {{inputs.project_path}}/QUALITY_REPORT.md\"\necho \"  - {{inputs.project_path}}/{{inputs.state_file}} (updated)\"\necho \"\"\necho \"\U0001F389 PRODUCTION READY - All quality gates passed!\"\n"
       timeout: 10
     depends_on:
       - generate_quality_report
-
 outputs:
   # Test metrics
-  total_tests: "{{blocks.run_all_tests.outputs.tests_passed}}"
-  tests_passing: "{{blocks.run_all_tests.outputs.tests_passed}}"
-  tests_failing: "{{blocks.run_all_tests.outputs.tests_failed}}"
-  overall_coverage: "{{blocks.run_all_tests.outputs.coverage_percent}}"
-
+  total_tests:
+    value: "{{blocks.run_all_tests.outputs.tests_passed}}"
+  tests_passing:
+    value: "{{blocks.run_all_tests.outputs.tests_passed}}"
+  tests_failing:
+    value: "{{blocks.run_all_tests.outputs.tests_failed}}"
+  overall_coverage:
+    value: "{{blocks.run_all_tests.outputs.coverage_percent}}"
   # Quality gate results
-  linting_passed: "{{blocks.run_quality_checks.outputs.linting_passed}}"
-  type_checking_passed: "{{blocks.run_quality_checks.outputs.typing_passed}}"
-  formatting_passed: "{{blocks.run_quality_checks.outputs.formatting_passed}}"
-  all_quality_gates_passed: "{{blocks.run_quality_checks.outputs.all_checks_passed}}"
-
+  linting_passed:
+    value: "{{blocks.run_quality_checks.outputs.linting_passed}}"
+  type_checking_passed:
+    value: "{{blocks.run_quality_checks.outputs.typing_passed}}"
+  formatting_passed:
+    value: "{{blocks.run_quality_checks.outputs.formatting_passed}}"
+  all_quality_gates_passed:
+    value: "{{blocks.run_quality_checks.outputs.all_checks_passed}}"
   # Security scan results
-  security_bandit_exit_code: "{{blocks.run_bandit_scan.outputs.exit_code}}"
-  security_safety_exit_code: "{{blocks.run_safety_scan.outputs.exit_code}}"
-  security_scan_clean: "{{blocks.validate_security.succeeded}}"
-
+  security_bandit_exit_code:
+    value: "{{blocks.run_bandit_scan.outputs.exit_code}}"
+  security_safety_exit_code:
+    value: "{{blocks.run_safety_scan.outputs.exit_code}}"
+  security_scan_clean:
+    value: "{{blocks.validate_security.succeeded}}"
   # PRD compliance
-  prd_compliance: "{{blocks.calculate_compliance.outputs.stdout}}"
-
+  prd_compliance:
+    value: "{{blocks.calculate_compliance.outputs.stdout}}"
   # Overall status
-  all_gates_passed: "{{blocks.validate_quality_gates.succeeded}} and {{blocks.validate_security.succeeded}}"
-  production_ready: "{{blocks.final_quality_checkpoint.outputs.response}} == 'yes'"
-
+  all_gates_passed:
+    value: "{{blocks.validate_quality_gates.succeeded}} and {{blocks.validate_security.succeeded}}"
+  production_ready:
+    value: "{{blocks.final_quality_checkpoint.outputs.response}} == 'yes'"
   # Checkpoint
-  checkpoint_approved: "{{blocks.final_quality_checkpoint.outputs.response}} == 'yes'"
-
+  checkpoint_approved:
+    value: "{{blocks.final_quality_checkpoint.outputs.response}} == 'yes'"
   # State and reports
-  state_updated: "{{blocks.update_state_phase6.succeeded}}"
-  quality_report_path: "{{inputs.project_path}}/QUALITY_REPORT.md"
-
+  state_updated:
+    value: "{{blocks.update_state_phase6.succeeded}}"
+  quality_report_path:
+    value: "{{inputs.project_path}}/QUALITY_REPORT.md"
   # Summary
-  summary: "{{blocks.phase6_summary.outputs.stdout}}"
+  summary:
+    value: "{{blocks.phase6_summary.outputs.stdout}}"

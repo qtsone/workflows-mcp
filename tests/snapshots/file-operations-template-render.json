@@ -1,8 +1,8 @@
 {
   "outputs": {
-    "cleanup_done": "true",
-    "file_content": "# TestProject\n\nGenerated: TIMESTAMP\nShell Output: data_from_shell\n\n\n## Features\n\n- Feature 1\n\n- Feature 2\n\n- Feature 3\n",
-    "template_rendered": "true"
+    "cleanup_done": true,
+    "file_content": "# TestProject\n\nGenerated: TIMESTAMP\nShell Output: data_from_shell\n\n\n## Features\n\n- Feature 1\n\n- Feature 2\n\n- Feature 3",
+    "template_rendered": true
   },
   "status": "success"
 }

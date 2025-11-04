@@ -8,44 +8,36 @@ inputs:
     type: str
     description: Target environment (dev, staging, production)
     default: "dev"
-
   deploy_path:
     type: str
     description: Deployment directory or path
     default: "./deploy"
-
   run_tests_first:
     type: bool
     description: Run tests before deployment
     default: true
-
   require_approval:
     type: bool
     description: Require manual approval (production only)
     default: false
-
   build_artifacts:
     type: bool
     description: Build artifacts before deployment
     default: true
-
   venv_path:
     type: str
     description: Virtual environment path for test execution
     default: ""
-
   auto_install:
     type: bool
     description: Automatically install testing tools if not found
     default: false
-
 blocks:
   # Validate environment
   - id: validate_env
     type: Shell
     inputs:
       command: 'printf "Validating deployment to {{inputs.environment}} environment"'
-
   # Run pre-deployment tests
   - id: run_tests
     type: Workflow
@@ -61,7 +53,6 @@ blocks:
     depends_on:
       - validate_env
     condition: "{{inputs.run_tests_first}}"
-
   # Build artifacts
   - id: build_artifacts
     type: Shell
@@ -69,11 +60,9 @@ blocks:
       command: "python -m build"
       working_dir: "."
       timeout: 300
-
     depends_on:
       - run_tests
     condition: "{{inputs.build_artifacts}} and (not {{inputs.run_tests_first}} or {{blocks.run_tests.succeeded}})"
-
   # Development deployment
   - id: deploy_dev
     type: Shell
@@ -84,7 +73,6 @@ blocks:
     depends_on:
       - build_artifacts
     condition: "{{inputs.environment}} == 'dev' and (not {{inputs.build_artifacts}} or {{blocks.build_artifacts.outputs.exit_code}} == 0)"
-
   # Staging deployment
   - id: deploy_staging
     type: Shell
@@ -95,7 +83,6 @@ blocks:
     depends_on:
       - build_artifacts
     condition: "{{inputs.environment}} == 'staging' and (not {{inputs.build_artifacts}} or {{blocks.build_artifacts.outputs.exit_code}} == 0)"
-
   # Production deployment (requires approval)
   - id: production_check
     type: Shell
@@ -104,7 +91,6 @@ blocks:
     depends_on:
       - build_artifacts
     condition: "{{inputs.environment}} == 'production'"
-
   - id: deploy_production
     type: Shell
     inputs:
@@ -114,7 +100,6 @@ blocks:
     depends_on:
       - production_check
     condition: "{{inputs.environment}} == 'production' and not {{inputs.require_approval}} and (not {{inputs.build_artifacts}} or {{blocks.build_artifacts.outputs.exit_code}} == 0)"
-
   # Post-deployment verification
   - id: verify_deployment
     type: Shell
@@ -122,43 +107,35 @@ blocks:
       command: "ls -la {{inputs.deploy_path}}/{{inputs.environment}} 2>/dev/null || echo 'Deployment directory not found'"
       working_dir: "."
       timeout: 30
-
     depends_on:
       - deploy_dev
       - deploy_staging
       - deploy_production
-
   # Generate status displays
   - id: get_test_display_passed
     type: Shell
     inputs:
       command: "echo '✓ PASSED'"
       timeout: 5
-
     condition: "{{inputs.run_tests_first}} and {{blocks.run_tests.succeeded}}"
     depends_on:
       - run_tests
-
   - id: get_test_display_failed
     type: Shell
     inputs:
       command: "echo '✗ FAILED'"
       timeout: 5
-
     condition: "{{inputs.run_tests_first}} and not {{blocks.run_tests.succeeded}}"
     depends_on:
       - run_tests
-
   - id: get_test_display_skipped
     type: Shell
     inputs:
       command: "echo '⊘ SKIPPED'"
       timeout: 5
-
     condition: "not {{inputs.run_tests_first}}"
     depends_on:
       - run_tests
-
   - id: get_test_display
     type: Shell
     inputs:
@@ -174,12 +151,10 @@ blocks:
           echo "$STATUS_SKIPPED"
         fi
       timeout: 5
-
     depends_on:
       - get_test_display_passed
       - get_test_display_failed
       - get_test_display_skipped
-
   - id: get_artifacts_display
     type: Shell
     inputs:
@@ -194,10 +169,8 @@ blocks:
           echo '⊘ SKIPPED'
         fi
       timeout: 5
-
     depends_on:
       - build_artifacts
-
   - id: get_dev_display
     type: Shell
     inputs:
@@ -212,10 +185,8 @@ blocks:
           echo '⊘ N/A'
         fi
       timeout: 5
-
     depends_on:
       - deploy_dev
-
   - id: get_staging_display
     type: Shell
     inputs:
@@ -230,10 +201,8 @@ blocks:
           echo '⊘ N/A'
         fi
       timeout: 5
-
     depends_on:
       - deploy_staging
-
   - id: get_production_display
     type: Shell
     inputs:
@@ -252,10 +221,8 @@ blocks:
           echo '⊘ N/A'
         fi
       timeout: 5
-
     depends_on:
       - deploy_production
-
   # Generate deployment report
   - id: deployment_report
     type: Shell
@@ -280,24 +247,29 @@ blocks:
       - get_staging_display
       - get_production_display
       - verify_deployment
-
 outputs:
   # Deployment status
-  deployed: "({{inputs.environment}} == 'dev' and {{blocks.deploy_dev.outputs.exit_code}} == 0) or ({{inputs.environment}} == 'staging' and {{blocks.deploy_staging.outputs.exit_code}} == 0) or ({{inputs.environment}} == 'production' and not {{inputs.require_approval}} and {{blocks.deploy_production.outputs.exit_code}} == 0)}"
-  environment: "{{inputs.environment}}"
-
+  deployed:
+    value: "({{inputs.environment}} == 'dev' and {{blocks.deploy_dev.outputs.exit_code}} == 0) or ({{inputs.environment}} == 'staging' and {{blocks.deploy_staging.outputs.exit_code}} == 0) or ({{inputs.environment}} == 'production' and not {{inputs.require_approval}} and {{blocks.deploy_production.outputs.exit_code}} == 0)}"
+  environment:
+    value: "{{inputs.environment}}"
   # Test results
-  tests_passed: "not {{inputs.run_tests_first}} or {{blocks.run_tests.succeeded}}"
-
+  tests_passed:
+    value: "not {{inputs.run_tests_first}} or {{blocks.run_tests.succeeded}}"
   # Build results
-  artifacts_built: "not {{inputs.build_artifacts}} or {{blocks.build_artifacts.outputs.exit_code}} == 0"
-
+  artifacts_built:
+    value: "not {{inputs.build_artifacts}} or {{blocks.build_artifacts.outputs.exit_code}} == 0"
   # Environment-specific status
-  dev_deployed: "{{inputs.environment}} == 'dev' and {{blocks.deploy_dev.outputs.exit_code}} == 0"
-  staging_deployed: "{{inputs.environment}} == 'staging' and {{blocks.deploy_staging.outputs.exit_code}} == 0"
-  production_deployed: "{{inputs.environment}} == 'production' and not {{inputs.require_approval}} and {{blocks.deploy_production.outputs.exit_code}} == 0"
-  production_approval_required: "{{inputs.environment}} == 'production' and {{inputs.require_approval}}"
-
+  dev_deployed:
+    value: "{{inputs.environment}} == 'dev' and {{blocks.deploy_dev.outputs.exit_code}} == 0"
+  staging_deployed:
+    value: "{{inputs.environment}} == 'staging' and {{blocks.deploy_staging.outputs.exit_code}} == 0"
+  production_deployed:
+    value: "{{inputs.environment}} == 'production' and not {{inputs.require_approval}} and {{blocks.deploy_production.outputs.exit_code}} == 0"
+  production_approval_required:
+    value: "{{inputs.environment}} == 'production' and {{inputs.require_approval}}"
   # Report
-  report: "{{blocks.deployment_report.outputs.stdout}}"
-  verification_output: "{{blocks.verify_deployment.outputs.stdout}}"
+  report:
+    value: "{{blocks.deployment_report.outputs.stdout}}"
+  verification_output:
+    value: "{{blocks.verify_deployment.outputs.stdout}}"

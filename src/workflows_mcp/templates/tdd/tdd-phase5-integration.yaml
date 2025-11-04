@@ -50,50 +50,42 @@ description: TDD Phase 5 - Integration and E2E testing to validate module intera
 version: "1.0"
 author: MCP Workflows Team
 tags: [tdd, integration, e2e, testing, phase5, validation]
-
 inputs:
   project_path:
     type: str
     description: Path to project root directory
     default: "."
     required: false
-
   state_file:
     type: str
     description: Path to TDD state file (JSON)
     default: ".tdd-state.json"
     required: false
-
   test_path:
     type: str
     description: Path to test directory (relative to project_path)
     default: "tests"
     required: false
-
   source_path:
     type: str
     description: Path to source directory (relative to project_path)
     default: "src"
     required: false
-
   language:
     type: str
     description: Programming language for the project (python, javascript, go, etc.)
     default: "python"
     required: false
-
   coverage_threshold:
-    type: int
+    type: num
     description: Minimum integration test coverage percentage
     default: 75
     required: false
-
 blocks:
   - id: read_state
     type: ReadJSONState
     inputs:
       path: "{{inputs.project_path}}/{{inputs.state_file}}"
-
   - id: validate_phase4_complete
     type: Shell
     inputs:
@@ -112,7 +104,6 @@ blocks:
       timeout: 10
     depends_on:
       - read_state
-
   - id: create_integration_dir
     type: Shell
     inputs:
@@ -122,7 +113,6 @@ blocks:
       timeout: 10
     depends_on:
       - validate_phase4_complete
-
   - id: request_integration_tests
     type: Prompt
     inputs:
@@ -148,15 +138,14 @@ blocks:
         Provide integration test file(s) content below.
         Format: filename.py followed by complete file content.
         Separate multiple files with "--- FILE: filename.py ---"
-        
+
         Respond with 'yes' or 'no'
-        
+
         Respond with 'yes' or 'no'
-        
+
         Respond with 'yes' or 'no'
     depends_on:
       - create_integration_dir
-
   - id: parse_integration_files
     type: Shell
     inputs:
@@ -184,7 +173,6 @@ blocks:
       timeout: 30
     depends_on:
       - request_integration_tests
-
   - id: run_integration_tests
     type: Workflow
     inputs:
@@ -197,7 +185,6 @@ blocks:
         working_dir: "{{inputs.project_path}}"
     depends_on:
       - parse_integration_files
-
   - id: check_integration_results
     type: Shell
     inputs:
@@ -218,10 +205,8 @@ blocks:
           exit 1
         fi
       timeout: 10
-
     depends_on:
       - run_integration_tests
-
   - id: request_integration_fixes
     type: Prompt
     inputs:
@@ -252,7 +237,6 @@ blocks:
     depends_on:
       - check_integration_results
     condition: "{{blocks.check_integration_results.failed}}"
-
   - id: apply_integration_fixes
     type: Shell
     inputs:
@@ -269,7 +253,6 @@ blocks:
     depends_on:
       - request_integration_fixes
     condition: "{{blocks.check_integration_results.failed}}"
-
   - id: create_e2e_dir
     type: Shell
     inputs:
@@ -280,7 +263,6 @@ blocks:
     depends_on:
       - check_integration_results
     condition: "{{blocks.check_integration_results.succeeded}}"
-
   - id: request_e2e_tests
     type: Prompt
     inputs:
@@ -306,16 +288,15 @@ blocks:
         Provide E2E test file(s) content below.
         Format: filename.py followed by complete file content.
         Separate multiple files with "--- FILE: filename.py ---"
-        
+
         Respond with 'yes' or 'no'
-        
+
         Respond with 'yes' or 'no'
-        
+
         Respond with 'yes' or 'no'
     depends_on:
       - create_e2e_dir
     condition: "{{blocks.check_integration_results.succeeded}}"
-
   - id: parse_e2e_files
     type: Shell
     inputs:
@@ -340,7 +321,6 @@ blocks:
     depends_on:
       - request_e2e_tests
     condition: "{{blocks.check_integration_results.succeeded}}"
-
   - id: run_e2e_tests
     type: Workflow
     inputs:
@@ -349,12 +329,11 @@ blocks:
         language: "{{inputs.language}}"
         test_path: "{{inputs.test_path}}/e2e"
         source_path: "{{inputs.source_path}}"
-        coverage_threshold: 0  # E2E focuses on workflows, not coverage
+        coverage_threshold: 0 # E2E focuses on workflows, not coverage
         working_dir: "{{inputs.project_path}}"
     depends_on:
       - parse_e2e_files
     condition: "{{blocks.check_integration_results.succeeded}}"
-
   - id: check_e2e_results
     type: Shell
     inputs:
@@ -375,11 +354,9 @@ blocks:
           exit 1
         fi
       timeout: 10
-
     depends_on:
       - run_e2e_tests
     condition: "{{blocks.check_integration_results.succeeded}}"
-
   - id: request_e2e_fixes
     type: Prompt
     inputs:
@@ -410,7 +387,6 @@ blocks:
     depends_on:
       - check_e2e_results
     condition: "{{blocks.check_e2e_results.failed}}"
-
   - id: apply_e2e_fixes
     type: Shell
     inputs:
@@ -426,7 +402,6 @@ blocks:
     depends_on:
       - request_e2e_fixes
     condition: "{{blocks.check_e2e_results.failed}}"
-
   - id: update_state_phase5
     type: Shell
     inputs:
@@ -495,7 +470,6 @@ blocks:
       - check_integration_results
       - check_e2e_results
     condition: "{{blocks.check_integration_results.succeeded}} and {{blocks.check_e2e_results.succeeded}}"
-
   - id: integration_checkpoint
     type: Prompt
     inputs:
@@ -518,9 +492,9 @@ blocks:
         Modules are properly integrated and complete workflows validated.
 
         Approve Phase 5 completion and proceed to Phase 6 (Validation & Quality)?
-        
+
         Respond with 'yes' or 'no'
-        
+
         Respond with 'yes' or 'no'
       operation: "phase5_integration_checkpoint"
       details:
@@ -531,56 +505,43 @@ blocks:
     depends_on:
       - update_state_phase5
     condition: "{{blocks.check_integration_results.succeeded}} and {{blocks.check_e2e_results.succeeded}}"
-
   - id: phase5_summary
     type: Shell
     inputs:
-      command: |
-        echo "╔════════════════════════════════════════════════════════════════╗"
-        echo "║         TDD PHASE 5: INTEGRATION TESTING COMPLETE             ║"
-        echo "╚════════════════════════════════════════════════════════════════╝"
-        echo ""
-        echo "Integration Testing:"
-        echo "  ✅ Tests passed: {{blocks.run_integration_tests.outputs.tests_passed}}"
-        echo "  ❌ Tests failed: {{blocks.run_integration_tests.outputs.tests_failed}}"
-        echo "  📊 Coverage: {{blocks.run_integration_tests.outputs.coverage_percent}}%"
-        echo ""
-        echo "E2E Testing:"
-        echo "  ✅ Tests passed: {{blocks.run_e2e_tests.outputs.tests_passed}}"
-        echo "  ❌ Tests failed: {{blocks.run_e2e_tests.outputs.tests_failed}}"
-        echo ""
-        echo "Files Created:"
-        echo "  - {{inputs.project_path}}/{{inputs.test_path}}/integration/test_integration.py"
-        echo "  - {{inputs.project_path}}/{{inputs.test_path}}/e2e/test_e2e.py"
-        echo "  - {{inputs.project_path}}/{{inputs.state_file}} (updated)"
-        echo ""
-        echo "Next Phase: Phase 6 - Validation & Quality"
+      command: "echo \"╔════════════════════════════════════════════════════════════════╗\"\necho \"║         TDD PHASE 5: INTEGRATION TESTING COMPLETE             ║\"\necho \"╚════════════════════════════════════════════════════════════════╝\"\necho \"\"\necho \"Integration Testing:\"\necho \"  ✅ Tests passed: {{blocks.run_integration_tests.outputs.tests_passed}}\"\necho \"  ❌ Tests failed: {{blocks.run_integration_tests.outputs.tests_failed}}\"\necho \"  \U0001F4CA Coverage: {{blocks.run_integration_tests.outputs.coverage_percent}}%\"\necho \"\"\necho \"E2E Testing:\"\necho \"  ✅ Tests passed: {{blocks.run_e2e_tests.outputs.tests_passed}}\"\necho \"  ❌ Tests failed: {{blocks.run_e2e_tests.outputs.tests_failed}}\"\necho \"\"\necho \"Files Created:\"\necho \"  - {{inputs.project_path}}/{{inputs.test_path}}/integration/test_integration.py\"\necho \"  - {{inputs.project_path}}/{{inputs.test_path}}/e2e/test_e2e.py\"\necho \"  - {{inputs.project_path}}/{{inputs.state_file}} (updated)\"\necho \"\"\necho \"Next Phase: Phase 6 - Validation & Quality\"\n"
       timeout: 10
     depends_on:
       - integration_checkpoint
-
 outputs:
   # Integration test metrics
-  integration_tests_count: "{{blocks.run_integration_tests.outputs.tests_passed}}"
-  integration_tests_passing: "{{blocks.run_integration_tests.outputs.tests_passed}}"
-  integration_tests_failed: "{{blocks.run_integration_tests.outputs.tests_failed}}"
-  integration_coverage: "{{blocks.run_integration_tests.outputs.coverage_percent}}"
-
+  integration_tests_count:
+    value: "{{blocks.run_integration_tests.outputs.tests_passed}}"
+  integration_tests_passing:
+    value: "{{blocks.run_integration_tests.outputs.tests_passed}}"
+  integration_tests_failed:
+    value: "{{blocks.run_integration_tests.outputs.tests_failed}}"
+  integration_coverage:
+    value: "{{blocks.run_integration_tests.outputs.coverage_percent}}"
   # E2E test metrics
-  e2e_tests_count: "{{blocks.run_e2e_tests.outputs.tests_passed}}"
-  e2e_tests_passing: "{{blocks.run_e2e_tests.outputs.tests_passed}}"
-  e2e_tests_failed: "{{blocks.run_e2e_tests.outputs.tests_failed}}"
-
+  e2e_tests_count:
+    value: "{{blocks.run_e2e_tests.outputs.tests_passed}}"
+  e2e_tests_passing:
+    value: "{{blocks.run_e2e_tests.outputs.tests_passed}}"
+  e2e_tests_failed:
+    value: "{{blocks.run_e2e_tests.outputs.tests_failed}}"
   # Overall status
-  all_integration_passing: "{{blocks.check_integration_results.succeeded}}"
-  all_e2e_passing: "{{blocks.check_e2e_results.succeeded}}"
-  all_tests_passing: "{{blocks.check_integration_results.succeeded}} and {{blocks.check_e2e_results.succeeded}}"
-
+  all_integration_passing:
+    value: "{{blocks.check_integration_results.succeeded}}"
+  all_e2e_passing:
+    value: "{{blocks.check_e2e_results.succeeded}}"
+  all_tests_passing:
+    value: "{{blocks.check_integration_results.succeeded}} and {{blocks.check_e2e_results.succeeded}}"
   # Checkpoint
-  checkpoint_approved: "{{blocks.integration_checkpoint.outputs.response}} == 'yes'"
-
+  checkpoint_approved:
+    value: "{{blocks.integration_checkpoint.outputs.response}} == 'yes'"
   # State
-  state_updated: "{{blocks.update_state_phase5.succeeded}}"
-
+  state_updated:
+    value: "{{blocks.update_state_phase5.succeeded}}"
   # Summary
-  summary: "{{blocks.phase5_summary.outputs.stdout}}"
+  summary:
+    value: "{{blocks.phase5_summary.outputs.stdout}}"

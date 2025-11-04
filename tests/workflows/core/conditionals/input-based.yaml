@@ -17,6 +17,12 @@ blocks:
       command: echo "conditional_ran"
     condition: "{{inputs.should_run}}"
 outputs:
-  always_ran: "{{blocks.always_run.succeeded}}"
-  conditional_ran: "{{blocks.conditional_block.succeeded}}"
-  conditional_skipped: "{{blocks.conditional_block.skipped}}"
+  always_ran:
+    value: "{{blocks.always_run.succeeded}}"
+    type: bool
+  conditional_ran:
+    value: "{{blocks.conditional_block.succeeded}}"
+    type: bool
+  conditional_skipped:
+    value: "{{blocks.conditional_block.skipped}}"
+    type: bool

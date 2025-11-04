@@ -6,7 +6,7 @@
     "final_phase": "complete",
     "project_name": "TestProject",
     "report_content": "# TestProject\n\nWorkflow: integration-end-to-end\nTimestamp: TIMESTAMP\n\n## Data Streams\n- Stream 1: data1\n- Stream 2: data2\n\n## Status\nPhase: report_generation",
-    "validation_passed": "true",
+    "validation_passed": true,
     "workflow_name": "integration-end-to-end"
   },
   "status": "success"

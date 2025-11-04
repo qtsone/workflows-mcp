@@ -1,7 +1,7 @@
 {
   "outputs": {
-    "number_result": "42\n",
-    "string_result": "test_value\n"
+    "number_result": "42",
+    "string_result": "test_value"
   },
   "status": "success"
 }

@@ -25,8 +25,7 @@
             "type": {
               "enum": [
                 "str",
-                "int",
-                "float",
+                "num",
                 "bool",
                 "list",
                 "dict"
@@ -48,10 +47,42 @@
     },
     "outputs": {
       "type": "object",
-      "description": "Workflow output expressions",
+      "description": "Workflow output expressions with type coercion",
       "patternProperties": {
         ".*": {
-          "type": "string"
+          "additionalProperties": false,
+          "description": "Schema for workflow-level output with type coercion.\n\nDefines outputs that the workflow exposes to callers. Outputs are expressions\nthat reference block outputs, with optional type coercion.\n\nAttributes:\n    value: Expression (e.g., \"{{block.outputs.field}}\" or \"{{block.exit_code}}\")\n    type: Output type (str, int, float, bool, json, list, dict) - defaults to str\n    description: Optional human-readable output description\n\nType Coercion:\n    When type is specified, the resolved value is coerced to that type:\n    - str: Convert any value to string\n    - int: Parse string to int or validate existing int\n    - float: Parse string to float or validate existing float\n    - bool: Parse string (\"true\"/\"false\") or validate existing bool\n    - json: Parse JSON string to dict/list or validate existing JSON-compatible value\n    - list: Validate existing list\n    - dict: Validate existing dict\n\nExamples:\n    # Minimal (type defaults to str)\n    outputs:\n      message:\n        value: \"{{blocks.foo.outputs.msg}}\"\n\n    # With type coercion\n    outputs:\n      count:\n        value: \"{{blocks.foo.outputs.count}}\"\n        type: int\n        description: \"Number of items\"\n\n    # Logical expression (evaluates to bool)\n      success:\n        value: \"{{blocks.test.outputs.exit_code}} == 0\"\n        type: bool\n        description: \"Whether tests passed\"",
+          "properties": {
+            "value": {
+              "description": "Expression referencing block outputs",
+              "minLength": 1,
+              "title": "Value",
+              "type": "string"
+            },
+            "type": {
+              "$ref": "#/$defs/ValueType",
+              "default": "str",
+              "description": "Output type with automatic coercion (defaults to str)"
+            },
+            "description": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "description": "Human-readable description",
+              "title": "Description"
+            }
+          },
+          "required": [
+            "value"
+          ],
+          "title": "WorkflowOutputSchema",
+          "type": "object"
         }
       }
     },
@@ -840,7 +871,20 @@
       }
     }
   },
-  "definitions": {
+  "$defs": {
+    "ValueType": {
+      "description": "Unified Python type system for workflow values.\n\nSingle source of truth for all type declarations across:\n- Workflow inputs\n- Block outputs (file-based)\n- Workflow outputs\n- Output parsing logic\n\nThese match Python's built-in types for consistency with:\n- isinstance() checks in conditions: isinstance({{inputs.name}}, str)\n- Type annotations in executor models: Field(default=\"\", description=\"...\")\n- Variable resolution return types\n\nType mappings:\n- str: Text values (Python str)\n- num: Numeric values (int or float)\n- bool: Boolean values (Python bool)\n- list: List/array values (Python list)\n- dict: Dictionary/object values (Python dict)\n- json: Special - parse as JSON (returns dict/list/str/int/float/bool/None)",
+      "enum": [
+        "str",
+        "num",
+        "bool",
+        "list",
+        "dict",
+        "json"
+      ],
+      "title": "ValueType",
+      "type": "string"
+    },
     "ShellInput": {
       "additionalProperties": false,
       "description": "Input model for Shell executor.\n\nArchitecture (ADR-006):\n- Execute returns ShellOutput directly\n- Operation outcome determined by exit_code\n- Exceptions indicate execution failure",

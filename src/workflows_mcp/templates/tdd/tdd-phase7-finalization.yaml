@@ -57,55 +57,46 @@ description: TDD Phase 7 - Generate deployment documentation and finalize projec
 version: "1.0"
 author: MCP Workflows Team
 tags: [tdd, finalization, documentation, deployment, production, phase7]
-
 inputs:
   project_path:
     type: str
     description: Path to project root directory
     default: "."
     required: false
-
   state_file:
     type: str
     description: Path to TDD state file (JSON)
     default: ".tdd-state.json"
     required: false
-
   project_name:
     type: str
     description: Project name
     required: true
-
   version:
     type: str
     description: Project version
     default: "1.0.0"
     required: false
-
   author:
     type: str
     description: Author name or organization
     default: "Development Team"
     required: false
-
   python_version:
     type: str
     description: Python version requirement
     default: "3.12+"
     required: false
-
   coverage_threshold:
-    type: int
+    type: num
     description: Code coverage threshold from Phase 6
     default: 80
     required: false
-
 blocks:
   - id: read_state
     type: ReadJSONState
     inputs:
       path: "{{inputs.project_path}}/{{inputs.state_file}}"
-
   - id: validate_phase6_complete
     type: Shell
     inputs:
@@ -131,18 +122,17 @@ blocks:
       timeout: 10
     outputs:
       test_count:
-        type: int
+        type: num
         path: "$SCRATCH/test_count.txt"
         description: "Total number of tests from Phase 6"
         required: false
       coverage:
-        type: float
+        type: num
         path: "$SCRATCH/coverage.txt"
         description: "Test coverage percentage from Phase 6"
         required: false
     depends_on:
       - read_state
-
   - id: create_docs_directory
     type: Shell
     inputs:
@@ -153,7 +143,6 @@ blocks:
       timeout: 10
     depends_on:
       - validate_phase6_complete
-
   - id: request_deployment_guide
     type: Prompt
     inputs:
@@ -207,11 +196,10 @@ blocks:
         - Verification after rollback
 
         Provide the COMPLETE deployment guide content as markdown.
-        
+
         Respond with 'yes' or 'no'
     depends_on:
       - create_docs_directory
-
   - id: write_deployment_guide
     type: CreateFile
     inputs:
@@ -220,7 +208,6 @@ blocks:
       encoding: "utf-8"
     depends_on:
       - request_deployment_guide
-
   - id: request_user_guide
     type: Prompt
     inputs:
@@ -270,11 +257,10 @@ blocks:
         - Contact information
 
         Provide the COMPLETE user guide content as markdown.
-        
+
         Respond with 'yes' or 'no'
     depends_on:
       - write_deployment_guide
-
   - id: write_user_guide
     type: CreateFile
     inputs:
@@ -283,7 +269,6 @@ blocks:
       encoding: "utf-8"
     depends_on:
       - request_user_guide
-
   - id: request_api_docs
     type: Prompt
     inputs:
@@ -338,15 +323,14 @@ blocks:
 
         Provide the COMPLETE API documentation content as markdown.
         If this project has no API, provide a brief explanation and skip API-specific sections.
-        
+
         Respond with 'yes' or 'no'
-        
+
         Respond with 'yes' or 'no'
-        
+
         Respond with 'yes' or 'no'
     depends_on:
       - write_user_guide
-
   - id: write_api_docs
     type: CreateFile
     inputs:
@@ -355,7 +339,6 @@ blocks:
       encoding: "utf-8"
     depends_on:
       - request_api_docs
-
   - id: request_runbook
     type: Prompt
     inputs:
@@ -420,11 +403,10 @@ blocks:
         - Emergency procedures
 
         Provide the COMPLETE operations runbook content as markdown.
-        
+
         Respond with 'yes' or 'no'
     depends_on:
       - write_api_docs
-
   - id: write_runbook
     type: CreateFile
     inputs:
@@ -433,7 +415,6 @@ blocks:
       encoding: "utf-8"
     depends_on:
       - request_runbook
-
   - id: request_readme_update
     type: Prompt
     inputs:
@@ -525,15 +506,14 @@ blocks:
         [How to get help]
 
         Provide the COMPLETE README.md content as markdown.
-        
+
         Respond with 'yes' or 'no'
-        
+
         Respond with 'yes' or 'no'
-        
+
         Respond with 'yes' or 'no'
     depends_on:
       - write_runbook
-
   - id: write_readme
     type: CreateFile
     inputs:
@@ -542,7 +522,6 @@ blocks:
       encoding: "utf-8"
     depends_on:
       - request_readme_update
-
   - id: extract_requirements_list
     type: Shell
     inputs:
@@ -565,12 +544,11 @@ blocks:
       timeout: 10
     outputs:
       module_count:
-        type: int
+        type: num
         path: "$SCRATCH/module_count.txt"
         description: "Number of modules from Phase 4"
     depends_on:
       - validate_phase6_complete
-
   - id: create_changelog
     type: Shell
     inputs:
@@ -615,7 +593,6 @@ blocks:
       timeout: 30
     depends_on:
       - write_readme
-
   - id: verify_project_config
     type: Shell
     inputs:
@@ -657,7 +634,6 @@ blocks:
         description: "Whether project configuration is verified"
     depends_on:
       - create_changelog
-
   - id: generate_requirements
     type: Shell
     inputs:
@@ -693,7 +669,6 @@ blocks:
           echo "false" > "$SCRATCH/requirements_generated.txt"
         fi
       timeout: 60
-      
     outputs:
       requirements_generated:
         type: bool
@@ -701,7 +676,6 @@ blocks:
         description: "Whether requirements.txt was successfully generated"
     depends_on:
       - verify_project_config
-
   - id: create_deployment_checklist
     type: Shell
     inputs:
@@ -833,7 +807,6 @@ blocks:
       timeout: 30
     depends_on:
       - generate_requirements
-
   - id: update_state_phase7
     type: Shell
     inputs:
@@ -904,49 +877,10 @@ blocks:
       timeout: 30
     depends_on:
       - create_deployment_checklist
-
   - id: final_completion_checkpoint
     type: Prompt
     inputs:
-      prompt: |
-        ╔═══════════════════════════════════════════════════════════╗
-        ║  🎉 TDD PROJECT DEVELOPMENT COMPLETE! 🎉                  ║
-        ╚═══════════════════════════════════════════════════════════╝
-
-        Project: {{inputs.project_name}} v{{inputs.version}}
-        Completed: $(date)
-
-        📊 Project Statistics:
-        - Total tests: $(echo "{{blocks.validate_phase6_complete.stdout}}" | grep test_count | cut -d= -f2)
-        - Test coverage: $(echo "{{blocks.validate_phase6_complete.stdout}}" | grep coverage | cut -d= -f2)%
-        - Coverage threshold: {{inputs.coverage_threshold}}%
-
-        📚 Documentation Generated:
-        - ✅ docs/DEPLOYMENT.md - Deployment guide
-        - ✅ docs/USER_GUIDE.md - User documentation
-        - ✅ docs/API.md - API documentation
-        - ✅ docs/RUNBOOK.md - Operations runbook
-        - ✅ docs/DEPLOYMENT_CHECKLIST.md - Deployment checklist
-        - ✅ README.md - Project overview
-        - ✅ CHANGELOG.md - Version history
-
-        📦 Package Status:
-        - ✅ Project configuration verified
-        - ✅ Dependencies documented
-        - ✅ Ready for deployment
-
-        🚀 Next Steps:
-        1. Review all documentation in docs/
-        2. Follow docs/DEPLOYMENT_CHECKLIST.md
-        3. Deploy to staging environment
-        4. Run final acceptance tests
-        5. Deploy to production
-
-        Confirm project completion and deployment readiness?
-        
-        Respond with 'yes' or 'no'
-        
-        Respond with 'yes' or 'no'
+      prompt: "╔═══════════════════════════════════════════════════════════╗\n║  \U0001F389 TDD PROJECT DEVELOPMENT COMPLETE! \U0001F389                  ║\n╚═══════════════════════════════════════════════════════════╝\n\nProject: {{inputs.project_name}} v{{inputs.version}}\nCompleted: $(date)\n\n\U0001F4CA Project Statistics:\n- Total tests: $(echo \"{{blocks.validate_phase6_complete.stdout}}\" | grep test_count | cut -d= -f2)\n- Test coverage: $(echo \"{{blocks.validate_phase6_complete.stdout}}\" | grep coverage | cut -d= -f2)%\n- Coverage threshold: {{inputs.coverage_threshold}}%\n\n\U0001F4DA Documentation Generated:\n- ✅ docs/DEPLOYMENT.md - Deployment guide\n- ✅ docs/USER_GUIDE.md - User documentation\n- ✅ docs/API.md - API documentation\n- ✅ docs/RUNBOOK.md - Operations runbook\n- ✅ docs/DEPLOYMENT_CHECKLIST.md - Deployment checklist\n- ✅ README.md - Project overview\n- ✅ CHANGELOG.md - Version history\n\n\U0001F4E6 Package Status:\n- ✅ Project configuration verified\n- ✅ Dependencies documented\n- ✅ Ready for deployment\n\n\U0001F680 Next Steps:\n1. Review all documentation in docs/\n2. Follow docs/DEPLOYMENT_CHECKLIST.md\n3. Deploy to staging environment\n4. Run final acceptance tests\n5. Deploy to production\n\nConfirm project completion and deployment readiness?\n\nRespond with 'yes' or 'no'\n\nRespond with 'yes' or 'no'\n"
       operation: "phase7_completion_checkpoint"
       details:
         project_name: "{{inputs.project_name}}"
@@ -955,86 +889,57 @@ blocks:
         deployment_ready: "true"
     depends_on:
       - update_state_phase7
-
   - id: final_summary
     type: Shell
     inputs:
-      command: |
-        # Extract metrics
-        TOTAL_TESTS="{{blocks.validate_phase6_complete.outputs.test_count}}"
-        COVERAGE="{{blocks.validate_phase6_complete.outputs.coverage}}"
-        MODULE_COUNT="{{blocks.extract_requirements_list.outputs.module_count}}"
-
-        echo "╔═══════════════════════════════════════════════════════════╗"
-        echo "║       TDD PHASE 7: FINALIZATION COMPLETE                 ║"
-        echo "╚═══════════════════════════════════════════════════════════╝"
-        echo ""
-        echo "Project: {{inputs.project_name}} v{{inputs.version}}"
-        echo "Author: {{inputs.author}}"
-        echo "Completion Date: $(date)"
-        echo ""
-        echo "📊 Project Statistics:"
-        echo "  - Modules implemented: ${MODULE_COUNT:-N/A}"
-        echo "  - Total tests: ${TOTAL_TESTS:-N/A}"
-        echo "  - Test coverage: ${COVERAGE:-N/A}%"
-        echo "  - Quality gates: All passed ✅"
-        echo ""
-        echo "📚 Documentation Generated:"
-        echo "  ✅ {{inputs.project_path}}/docs/DEPLOYMENT.md"
-        echo "  ✅ {{inputs.project_path}}/docs/USER_GUIDE.md"
-        echo "  ✅ {{inputs.project_path}}/docs/API.md"
-        echo "  ✅ {{inputs.project_path}}/docs/RUNBOOK.md"
-        echo "  ✅ {{inputs.project_path}}/docs/DEPLOYMENT_CHECKLIST.md"
-        echo "  ✅ {{inputs.project_path}}/README.md"
-        echo "  ✅ {{inputs.project_path}}/CHANGELOG.md"
-        echo ""
-        echo "📦 Package Status:"
-        echo "  - Configuration: $(echo "{{blocks.verify_project_config.stdout}}" | grep config_verified | cut -d= -f2)"
-        echo "  - Requirements: $(echo "{{blocks.generate_requirements.stdout}}" | grep requirements_generated | cut -d= -f2)"
-        echo "  - Deployment: Ready ✅"
-        echo ""
-        echo "🚀 Deployment Instructions:"
-        echo "  1. Review: {{inputs.project_path}}/docs/DEPLOYMENT_CHECKLIST.md"
-        echo "  2. Follow: {{inputs.project_path}}/docs/DEPLOYMENT.md"
-        echo "  3. Monitor: {{inputs.project_path}}/docs/RUNBOOK.md"
-        echo ""
-        echo "✅ PROJECT READY FOR PRODUCTION DEPLOYMENT!"
-        echo ""
-        echo "State file: {{inputs.project_path}}/{{inputs.state_file}}"
-        echo "Project complete: true"
+      command: "# Extract metrics\nTOTAL_TESTS=\"{{blocks.validate_phase6_complete.outputs.test_count}}\"\nCOVERAGE=\"{{blocks.validate_phase6_complete.outputs.coverage}}\"\nMODULE_COUNT=\"{{blocks.extract_requirements_list.outputs.module_count}}\"\n\necho \"╔═══════════════════════════════════════════════════════════╗\"\necho \"║       TDD PHASE 7: FINALIZATION COMPLETE                 ║\"\necho \"╚═══════════════════════════════════════════════════════════╝\"\necho \"\"\necho \"Project: {{inputs.project_name}} v{{inputs.version}}\"\necho \"Author: {{inputs.author}}\"\necho \"Completion Date: $(date)\"\necho \"\"\necho \"\U0001F4CA Project Statistics:\"\necho \"  - Modules implemented: ${MODULE_COUNT:-N/A}\"\necho \"  - Total tests: ${TOTAL_TESTS:-N/A}\"\necho \"  - Test coverage: ${COVERAGE:-N/A}%\"\necho \"  - Quality gates: All passed ✅\"\necho \"\"\necho \"\U0001F4DA Documentation Generated:\"\necho \"  ✅ {{inputs.project_path}}/docs/DEPLOYMENT.md\"\necho \"  ✅ {{inputs.project_path}}/docs/USER_GUIDE.md\"\necho \"  ✅ {{inputs.project_path}}/docs/API.md\"\necho \"  ✅ {{inputs.project_path}}/docs/RUNBOOK.md\"\necho \"  ✅ {{inputs.project_path}}/docs/DEPLOYMENT_CHECKLIST.md\"\necho \"  ✅ {{inputs.project_path}}/README.md\"\necho \"  ✅ {{inputs.project_path}}/CHANGELOG.md\"\necho \"\"\necho \"\U0001F4E6 Package Status:\"\necho \"  - Configuration: $(echo \"{{blocks.verify_project_config.stdout}}\" | grep config_verified | cut -d= -f2)\"\necho \"  - Requirements: $(echo \"{{blocks.generate_requirements.stdout}}\" | grep requirements_generated | cut -d= -f2)\"\necho \"  - Deployment: Ready ✅\"\necho \"\"\necho \"\U0001F680 Deployment Instructions:\"\necho \"  1. Review: {{inputs.project_path}}/docs/DEPLOYMENT_CHECKLIST.md\"\necho \"  2. Follow: {{inputs.project_path}}/docs/DEPLOYMENT.md\"\necho \"  3. Monitor: {{inputs.project_path}}/docs/RUNBOOK.md\"\necho \"\"\necho \"✅ PROJECT READY FOR PRODUCTION DEPLOYMENT!\"\necho \"\"\necho \"State file: {{inputs.project_path}}/{{inputs.state_file}}\"\necho \"Project complete: true\"\n"
       timeout: 10
     depends_on:
       - final_completion_checkpoint
-
 outputs:
   # Documentation paths
-  deployment_guide_path: "{{inputs.project_path}}/docs/DEPLOYMENT.md"
-  user_guide_path: "{{inputs.project_path}}/docs/USER_GUIDE.md"
-  api_docs_path: "{{inputs.project_path}}/docs/API.md"
-  runbook_path: "{{inputs.project_path}}/docs/RUNBOOK.md"
-  changelog_path: "{{inputs.project_path}}/CHANGELOG.md"
-  readme_path: "{{inputs.project_path}}/README.md"
-  deployment_checklist_path: "{{inputs.project_path}}/docs/DEPLOYMENT_CHECKLIST.md"
-
+  deployment_guide_path:
+    value: "{{inputs.project_path}}/docs/DEPLOYMENT.md"
+  user_guide_path:
+    value: "{{inputs.project_path}}/docs/USER_GUIDE.md"
+  api_docs_path:
+    value: "{{inputs.project_path}}/docs/API.md"
+  runbook_path:
+    value: "{{inputs.project_path}}/docs/RUNBOOK.md"
+  changelog_path:
+    value: "{{inputs.project_path}}/CHANGELOG.md"
+  readme_path:
+    value: "{{inputs.project_path}}/README.md"
+  deployment_checklist_path:
+    value: "{{inputs.project_path}}/docs/DEPLOYMENT_CHECKLIST.md"
   # Status indicators
-  documentation_complete: "true"
-  readme_updated: "true"
-  package_created: "{{blocks.verify_project_config.outputs.config_verified}}"
-  requirements_generated: "{{blocks.generate_requirements.outputs.requirements_generated}}"
-  project_complete: "true"
-  deployment_ready: "{{blocks.final_completion_checkpoint.outputs.response}} == 'yes'"
-
+  documentation_complete:
+    value: "true"
+  readme_updated:
+    value: "true"
+  package_created:
+    value: "{{blocks.verify_project_config.outputs.config_verified}}"
+  requirements_generated:
+    value: "{{blocks.generate_requirements.outputs.requirements_generated}}"
+  project_complete:
+    value: "true"
+  deployment_ready:
+    value: "{{blocks.final_completion_checkpoint.outputs.response}} == 'yes'"
   # Project info
-  project_name: "{{inputs.project_name}}"
-  project_version: "{{inputs.version}}"
-  project_author: "{{inputs.author}}"
-
+  project_name:
+    value: "{{inputs.project_name}}"
+  project_version:
+    value: "{{inputs.version}}"
+  project_author:
+    value: "{{inputs.author}}"
   # Checkpoint
-  completion_confirmed: "{{blocks.final_completion_checkpoint.outputs.response}} == 'yes'"
-
+  completion_confirmed:
+    value: "{{blocks.final_completion_checkpoint.outputs.response}} == 'yes'"
   # State
-  state_updated: "{{blocks.update_state_phase7.succeeded}}"
-  state_file_path: "{{inputs.project_path}}/{{inputs.state_file}}"
-
+  state_updated:
+    value: "{{blocks.update_state_phase7.succeeded}}"
+  state_file_path:
+    value: "{{inputs.project_path}}/{{inputs.state_file}}"
   # Summary
-  summary: "{{blocks.final_summary.outputs.stdout}}"
+  summary:
+    value: "{{blocks.final_summary.outputs.stdout}}"

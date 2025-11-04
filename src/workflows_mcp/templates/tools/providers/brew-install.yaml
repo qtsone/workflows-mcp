@@ -3,23 +3,19 @@ description: Install package using Homebrew (macOS package manager)
 version: "1.0"
 author: Workflows MCP Team
 tags: [tools, provider, brew, homebrew, macos, installation]
-
 inputs:
   package_name:
     type: str
     description: Package/formula name to install (e.g., "pytest", "git")
     required: true
-
   cask:
     type: bool
     description: Install as cask (GUI applications)
     default: false
-
   upgrade:
     type: bool
     description: Upgrade if already installed
     default: false
-
 blocks:
   # Check if brew is available (macOS only)
   - id: check_brew_available
@@ -36,8 +32,6 @@ blocks:
         # Check if brew command exists
         command -v brew >/dev/null 2>&1
       timeout: 5
-      
-
   # Check if package already installed
   - id: check_installed
     type: Shell
@@ -50,11 +44,9 @@ blocks:
           brew list "{{inputs.package_name}}" >/dev/null 2>&1
         fi
       timeout: 10
-      
     condition: "{{blocks.check_brew_available.succeeded}}"
     depends_on:
       - check_brew_available
-
   # Build brew install command
   - id: build_install_command
     type: Shell
@@ -78,22 +70,18 @@ blocks:
           fi
         fi
       timeout: 5
-      
     condition: "{{blocks.check_brew_available.succeeded}} and (not {{blocks.check_installed.succeeded}} or {{inputs.upgrade}})"
     depends_on:
       - check_brew_available
       - check_installed
-
   # Execute brew install/upgrade
   - id: install_package
     type: Shell
     inputs:
       command: "{{blocks.build_install_command.outputs.stdout}}"
       timeout: 600
-      
     depends_on:
       - build_install_command
-
   # Get installed version
   - id: get_installed_version
     type: Shell
@@ -108,11 +96,9 @@ blocks:
 
         echo "$VERSION"
       timeout: 10
-      
     condition: "{{blocks.check_brew_available.succeeded}}"
     depends_on:
       - install_package
-
   # Generate installation summary
   - id: installation_summary
     type: Shell
@@ -131,14 +117,22 @@ blocks:
       - check_installed
       - install_package
       - get_installed_version
-
 outputs:
-  success: "{{blocks.install_package.outputs.exit_code}} == 0"
-  installed_version: "{{blocks.get_installed_version.outputs.stdout}}"
-  exit_code: "{{blocks.install_package.outputs.exit_code}}"
-  stdout: "{{blocks.install_package.outputs.stdout}}"
-  stderr: "{{blocks.install_package.outputs.stderr}}"
-  command_executed: "{{blocks.build_install_command.outputs.stdout}}"
-  brew_available: "{{blocks.check_brew_available.succeeded}}"
-  already_installed: "{{blocks.check_installed.succeeded}}"
-  summary: "{{blocks.installation_summary.outputs.stdout}}"
+  success:
+    value: "{{blocks.install_package.outputs.exit_code}} == 0"
+  installed_version:
+    value: "{{blocks.get_installed_version.outputs.stdout}}"
+  exit_code:
+    value: "{{blocks.install_package.outputs.exit_code}}"
+  stdout:
+    value: "{{blocks.install_package.outputs.stdout}}"
+  stderr:
+    value: "{{blocks.install_package.outputs.stderr}}"
+  command_executed:
+    value: "{{blocks.build_install_command.outputs.stdout}}"
+  brew_available:
+    value: "{{blocks.check_brew_available.succeeded}}"
+  already_installed:
+    value: "{{blocks.check_installed.succeeded}}"
+  summary:
+    value: "{{blocks.installation_summary.outputs.stdout}}"

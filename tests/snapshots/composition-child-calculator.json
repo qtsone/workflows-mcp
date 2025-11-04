@@ -1,7 +1,7 @@
 {
   "outputs": {
-    "calculate_success": "true",
-    "result": "0"
+    "result": 3,
+    "success": true
   },
   "status": "success"
 }

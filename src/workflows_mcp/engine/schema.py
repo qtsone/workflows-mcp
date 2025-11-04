@@ -46,8 +46,7 @@ class ValueType(str, Enum):
 
     Type mappings:
     - str: Text values (Python str)
-    - int: Integer values (Python int)
-    - float: Floating-point values (Python float)
+    - num: Numeric values (int or float)
     - bool: Boolean values (Python bool)
     - list: List/array values (Python list)
     - dict: Dictionary/object values (Python dict)
@@ -55,8 +54,7 @@ class ValueType(str, Enum):
     """
 
     STR = "str"
-    INT = "int"
-    FLOAT = "float"
+    NUM = "num"
     BOOL = "bool"
     LIST = "list"
     DICT = "dict"
@@ -67,8 +65,7 @@ class ValueType(str, Enum):
         """Get tuple of input type values (all types)."""
         return (
             cls.STR.value,
-            cls.INT.value,
-            cls.FLOAT.value,
+            cls.NUM.value,
             cls.BOOL.value,
             cls.LIST.value,
             cls.DICT.value,
@@ -77,7 +74,7 @@ class ValueType(str, Enum):
     @classmethod
     def output_types(cls) -> tuple[str, ...]:
         """Get tuple of output type values (excludes list/dict, adds json)."""
-        return (cls.STR.value, cls.INT.value, cls.FLOAT.value, cls.BOOL.value, cls.JSON.value)
+        return (cls.STR.value, cls.NUM.value, cls.BOOL.value, cls.JSON.value)
 
 
 # Input types - uses ValueType for consistency
@@ -90,8 +87,7 @@ class InputType(str, Enum):
     """
 
     STR = ValueType.STR.value
-    INT = ValueType.INT.value
-    FLOAT = ValueType.FLOAT.value
+    NUM = ValueType.NUM.value
     BOOL = ValueType.BOOL.value
     LIST = ValueType.LIST.value
     DICT = ValueType.DICT.value
@@ -245,10 +241,10 @@ class WorkflowInputDeclaration(BaseModel):
             return self
 
         # Type validation mapping (Python types)
+        # Note: bool check needed because bool is subclass of int in Python
         type_validators = {
             InputType.STR: lambda v: isinstance(v, str),
-            InputType.INT: lambda v: isinstance(v, int) and not isinstance(v, bool),
-            InputType.FLOAT: lambda v: isinstance(v, float) and not isinstance(v, bool),
+            InputType.NUM: lambda v: isinstance(v, (int, float)) and not isinstance(v, bool),
             InputType.BOOL: lambda v: isinstance(v, bool),
             InputType.LIST: lambda v: isinstance(v, list),
             InputType.DICT: lambda v: isinstance(v, dict),
@@ -401,31 +397,50 @@ class BlockDefinition(BaseModel):
 
 class WorkflowOutputSchema(BaseModel):
     """
-    Schema for workflow-level output.
+    Schema for workflow-level output with type coercion.
 
-    Defines outputs that the workflow exposes to callers. These are typically
-    expressions that reference block outputs.
+    Defines outputs that the workflow exposes to callers. Outputs are expressions
+    that reference block outputs, with optional type coercion.
 
     Attributes:
         value: Expression (e.g., "{{block.outputs.field}}" or "{{block.exit_code}}")
-        type: Output type (str, int, float, bool, json)
+        type: Output type (str, int, float, bool, json, list, dict) - defaults to str
         description: Optional human-readable output description
 
-    Example:
+    Type Coercion:
+        When type is specified, the resolved value is coerced to that type:
+        - str: Convert any value to string
+        - int: Parse string to int or validate existing int
+        - float: Parse string to float or validate existing float
+        - bool: Parse string ("true"/"false") or validate existing bool
+        - json: Parse JSON string to dict/list or validate existing JSON-compatible value
+        - list: Validate existing list
+        - dict: Validate existing dict
+
+    Examples:
+        # Minimal (type defaults to str)
         outputs:
-          test_results:
-            value: "{{run_tests.outputs.test_results}}"
-            type: json
-            description: "Test execution results"
-          success:
-            value: "{{run_tests.exit_code}}"
+          message:
+            value: "{{blocks.foo.outputs.msg}}"
+
+        # With type coercion
+        outputs:
+          count:
+            value: "{{blocks.foo.outputs.count}}"
             type: int
-            description: "Test exit code"
+            description: "Number of items"
+
+        # Logical expression (evaluates to bool)
+          success:
+            value: "{{blocks.test.outputs.exit_code}} == 0"
+            type: bool
+            description: "Whether tests passed"
     """
 
     value: str = Field(description="Expression referencing block outputs", min_length=1)
     type: ValueType = Field(
-        description="Output type: Python native types or 'json' for JSON parsing"
+        default=ValueType.STR,
+        description="Output type with automatic coercion (defaults to str)",
     )
     description: str | None = Field(default=None, description="Human-readable description")
 
@@ -496,8 +511,9 @@ class WorkflowSchema(BaseModel):
         default_factory=dict, description="Input parameter declarations"
     )
     blocks: list[BlockDefinition] = Field(description="Workflow block definitions", min_length=1)
-    outputs: dict[str, str | WorkflowOutputSchema] = Field(
-        default_factory=dict, description="Output mappings with variable substitution"
+    outputs: dict[str, WorkflowOutputSchema] = Field(
+        default_factory=dict,
+        description="Output mappings with type coercion (value expression + optional type)",
     )
 
     model_config = {"extra": "forbid"}

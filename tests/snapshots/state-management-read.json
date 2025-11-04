@@ -1,9 +1,9 @@
 {
   "outputs": {
-    "cleanup_done": "true",
-    "count": "42",
+    "cleanup_done": true,
+    "count": 42,
     "nested_key": "value",
-    "nonexistent_found": "false",
+    "nonexistent_found": false,
     "phase": "test"
   },
   "status": "success"

@@ -3,33 +3,27 @@ description: Setup Python project environment with virtual environment and depen
 version: "1.0"
 author: Workflows MCP Team
 tags: [python, setup, environment, venv, dependencies]
-
 inputs:
   python_version:
     type: str
     description: Python version to use (e.g., "3.12", "3.11")
     default: "3.12"
-
   project_path:
     type: str
     description: Project directory path
     default: "."
-
   requirements_file:
     type: str
     description: Requirements file path relative to project_path
     default: "requirements.txt"
-
   venv_name:
     type: str
     description: Virtual environment directory name
     default: ".venv"
-
   upgrade_pip:
     type: bool
     description: Upgrade pip to latest version
     default: true
-
 blocks:
   # Check Python version availability
   - id: check_python
@@ -38,7 +32,6 @@ blocks:
       command: "python{{inputs.python_version}} --version"
       working_dir: "{{inputs.project_path}}"
       timeout: 10
-
   # Create virtual environment
   - id: create_venv
     type: Shell
@@ -49,7 +42,6 @@ blocks:
     depends_on:
       - check_python
     condition: "{{blocks.check_python.outputs.exit_code}} == 0"
-
   # Upgrade pip if requested
   - id: upgrade_pip
     type: Shell
@@ -60,7 +52,6 @@ blocks:
     depends_on:
       - create_venv
     condition: "{{inputs.upgrade_pip}} and {{blocks.create_venv.outputs.exit_code}} == 0"
-
   # Check if requirements file exists
   - id: check_requirements
     type: Shell
@@ -70,7 +61,6 @@ blocks:
       timeout: 5
     depends_on:
       - create_venv
-
   # Install dependencies
   - id: install_deps
     type: Shell
@@ -82,7 +72,6 @@ blocks:
       - upgrade_pip
       - check_requirements
     condition: "'exists' in {{blocks.check_requirements.outputs.stdout}}"
-
   # Verify installation
   - id: verify_install
     type: Shell
@@ -92,13 +81,20 @@ blocks:
       timeout: 30
     depends_on:
       - install_deps
-
 outputs:
-  success: "{{blocks.verify_install.outputs.exit_code}} == 0"
-  python_version: "{{blocks.check_python.outputs.stdout}}"
-  venv_path: "{{inputs.project_path}}/{{inputs.venv_name}}"
-  python_executable: "{{inputs.project_path}}/{{inputs.venv_name}}/bin/python"
-  pip_executable: "{{inputs.project_path}}/{{inputs.venv_name}}/bin/pip"
-  installed_packages: "{{blocks.verify_install.outputs.stdout}}"
-  requirements_found: "'exists' in {{blocks.check_requirements.outputs.stdout}}"
-  execution_summary: "Python {{inputs.python_version}} environment created at {{inputs.project_path}}/{{inputs.venv_name}}"
+  success:
+    value: "{{blocks.verify_install.outputs.exit_code}} == 0"
+  python_version:
+    value: "{{blocks.check_python.outputs.stdout}}"
+  venv_path:
+    value: "{{inputs.project_path}}/{{inputs.venv_name}}"
+  python_executable:
+    value: "{{inputs.project_path}}/{{inputs.venv_name}}/bin/python"
+  pip_executable:
+    value: "{{inputs.project_path}}/{{inputs.venv_name}}/bin/pip"
+  installed_packages:
+    value: "{{blocks.verify_install.outputs.stdout}}"
+  requirements_found:
+    value: "'exists' in {{blocks.check_requirements.outputs.stdout}}"
+  execution_summary:
+    value: "Python {{inputs.python_version}} environment created at {{inputs.project_path}}/{{inputs.venv_name}}"

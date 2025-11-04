@@ -1,8 +1,8 @@
 {
   "outputs": {
-    "cleanup_done": "true",
-    "count": "1",
-    "merge_succeeded": "true",
+    "cleanup_done": true,
+    "count": 1,
+    "merge_succeeded": true,
     "new_field": "added",
     "phase": "updated"
   },

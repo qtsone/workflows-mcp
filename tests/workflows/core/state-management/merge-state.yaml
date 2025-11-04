@@ -34,8 +34,18 @@ blocks:
       command: rm -f "{{inputs.state_file}}"
     depends_on: [read_result]
 outputs:
-  phase: "{{blocks.read_result.outputs.data.phase}}"
-  count: "{{blocks.read_result.outputs.data.count}}"
-  new_field: "{{blocks.read_result.outputs.data.new_field}}"
-  merge_succeeded: "{{blocks.merge_update.succeeded}}"
-  cleanup_done: "{{blocks.cleanup.succeeded}}"
+  phase:
+    value: "{{blocks.read_result.outputs.data.phase}}"
+    type: str
+  count:
+    value: "{{blocks.read_result.outputs.data.count}}"
+    type: num
+  new_field:
+    value: "{{blocks.read_result.outputs.data.new_field}}"
+    type: str
+  merge_succeeded:
+    value: "{{blocks.merge_update.succeeded}}"
+    type: bool
+  cleanup_done:
+    value: "{{blocks.cleanup.succeeded}}"
+    type: bool

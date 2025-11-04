@@ -3,54 +3,45 @@ description: Ensure tool availability (validate + install if needed)
 version: "1.0"
 author: Workflows MCP Team
 tags: [tools, core, validation, installation]
-
 inputs:
   tool_name:
     type: str
     description: Tool name (e.g., "pytest", "ruff", "git")
     required: true
-
   tool_type:
     type: str
     description: Tool type ("python_package", "system_command", "node_package")
     required: true
-
   provider:
     type: str
     description: "Installation provider (default: auto-detect based on tool_type)"
     default: ""
     required: false
-
   version:
     type: str
     description: Version constraint (e.g., ">=7.0.0", "~=7.4", "==7.4.3")
     default: ""
     required: false
-
   venv_path:
     type: str
     description: Virtual environment path (for Python tools)
     default: ""
     required: false
-
   auto_install:
     type: bool
     description: Automatically install if missing or version mismatch
     default: true
     required: false
-
   fail_if_missing:
     type: bool
     description: Fail workflow if tool unavailable and auto_install=false
     default: true
     required: false
-
   version_flag:
     type: str
     description: Command to check version (e.g., "--version")
     default: "--version"
     required: false
-
 blocks:
   - id: validate_command
     type: Workflow
@@ -60,7 +51,6 @@ blocks:
         command: "{{inputs.tool_name}}"
         version_flag: "{{inputs.version_flag}}"
         required_version: "{{inputs.version}}"
-
   # Step 2: Determine if installation needed
   - id: check_installation_needed
     type: Shell
@@ -83,10 +73,8 @@ blocks:
           exit 1  # Exit 1 = no installation needed (auto_install disabled)
         fi
       timeout: 5
-      
     depends_on:
       - validate_command
-
   # Step 3: Detect platform for provider selection
   - id: detect_platform
     type: Shell
@@ -99,8 +87,6 @@ blocks:
           *) echo "unknown" ;;
         esac
       timeout: 5
-      
-
   # Step 4: Select installation provider
   - id: select_provider
     type: Shell
@@ -160,10 +146,8 @@ blocks:
         # Fallback
         echo "manual"
       timeout: 5
-      
     depends_on:
       - detect_platform
-
   # Step 5: Install via pip (if provider is pip and installation needed)
   - id: install_via_pip
     type: Shell
@@ -194,12 +178,10 @@ blocks:
         $PIP install "$PACKAGE_SPEC" --upgrade
       working_dir: "."
       timeout: 300
-      
     condition: "{{blocks.check_installation_needed.outputs.exit_code}} == 0 and {{blocks.select_provider.outputs.stdout}} == 'pip'"
     depends_on:
       - check_installation_needed
       - select_provider
-
   # Step 6: Install via uv (if provider is uv and installation needed)
   - id: install_via_uv
     type: Shell
@@ -235,12 +217,10 @@ blocks:
         fi
       working_dir: "."
       timeout: 300
-      
     condition: "{{blocks.check_installation_needed.outputs.exit_code}} == 0 and {{blocks.select_provider.outputs.stdout}} == 'uv'"
     depends_on:
       - check_installation_needed
       - select_provider
-
   # Step 7: Install via brew (if provider is brew and installation needed)
   - id: install_via_brew
     type: Shell
@@ -256,12 +236,10 @@ blocks:
           exit 1
         fi
       timeout: 600
-      
     condition: "{{blocks.check_installation_needed.outputs.exit_code}} == 0 and {{blocks.select_provider.outputs.stdout}} == 'brew'"
     depends_on:
       - check_installation_needed
       - select_provider
-
   # Step 8: Validate installation was successful
   - id: validate_installation
     type: Workflow
@@ -276,7 +254,6 @@ blocks:
       - install_via_pip
       - install_via_uv
       - install_via_brew
-
   # Step 9: Determine action taken
   - id: determine_action
     type: Shell
@@ -290,93 +267,77 @@ blocks:
           echo "upgraded"
         fi
       timeout: 5
-      
     condition: "{{blocks.check_installation_needed.outputs.exit_code}} == 0"
     depends_on:
       - check_installation_needed
       - validate_command
-
   # Fallback action for when installation not needed
   - id: determine_action_no_install
     type: Shell
     inputs:
       command: echo "already_available"
       timeout: 5
-      
     condition: "{{blocks.check_installation_needed.outputs.exit_code}} != 0"
     depends_on:
       - check_installation_needed
       - validate_command
-
   # Step 10: Check if tool is now available (after installation)
   - id: check_final_availability_installed
     type: Shell
     inputs:
       command: echo "{{blocks.validate_installation.outputs.found}}"
       timeout: 5
-      
     condition: "{{blocks.check_installation_needed.outputs.exit_code}} == 0"
     depends_on:
       - determine_action
       - validate_installation
-
   # Check final availability (no installation needed)
   - id: check_final_availability_existing
     type: Shell
     inputs:
       command: echo "{{blocks.validate_command.outputs.found}}"
       timeout: 5
-      
     condition: "{{blocks.check_installation_needed.outputs.exit_code}} != 0"
     depends_on:
       - determine_action_no_install
-
   # Step 11: Get final version (after installation)
   - id: get_final_version_installed
     type: Shell
     inputs:
       command: echo "{{blocks.validate_installation.outputs.version}}"
       timeout: 5
-      
     condition: "{{blocks.check_installation_needed.outputs.exit_code}} == 0"
     depends_on:
       - determine_action
       - validate_installation
-
   # Get final version (no installation needed)
   - id: get_final_version_existing
     type: Shell
     inputs:
       command: echo "{{blocks.validate_command.outputs.version}}"
       timeout: 5
-      
     condition: "{{blocks.check_installation_needed.outputs.exit_code}} != 0"
     depends_on:
       - determine_action_no_install
-
   # Step 12: Get final path (after installation)
   - id: get_final_path_installed
     type: Shell
     inputs:
       command: echo "{{blocks.validate_installation.outputs.path}}"
       timeout: 5
-      
     condition: "{{blocks.check_installation_needed.outputs.exit_code}} == 0"
     depends_on:
       - determine_action
       - validate_installation
-
   # Get final path (no installation needed)
   - id: get_final_path_existing
     type: Shell
     inputs:
       command: echo "{{blocks.validate_command.outputs.path}}"
       timeout: 5
-      
     condition: "{{blocks.check_installation_needed.outputs.exit_code}} != 0"
     depends_on:
       - determine_action_no_install
-
   # Step 13: Consolidate outputs for summary
   - id: consolidate_action
     type: Shell
@@ -391,11 +352,9 @@ blocks:
           echo "$ACTION_EXISTING"
         fi
       timeout: 5
-      
     depends_on:
       - determine_action
       - determine_action_no_install
-
   - id: consolidate_availability
     type: Shell
     inputs:
@@ -408,11 +367,9 @@ blocks:
           echo "$AVAIL_EXISTING"
         fi
       timeout: 5
-      
     depends_on:
       - check_final_availability_installed
       - check_final_availability_existing
-
   - id: consolidate_version
     type: Shell
     inputs:
@@ -425,11 +382,9 @@ blocks:
           echo "$VER_EXISTING"
         fi
       timeout: 5
-      
     depends_on:
       - get_final_version_installed
       - get_final_version_existing
-
   - id: consolidate_path
     type: Shell
     inputs:
@@ -442,11 +397,9 @@ blocks:
           echo "$PATH_EXISTING"
         fi
       timeout: 5
-      
     depends_on:
       - get_final_path_installed
       - get_final_path_existing
-
   # Step 14: Generate summary
   - id: ensure_summary
     type: Shell
@@ -466,13 +419,20 @@ blocks:
       - consolidate_availability
       - consolidate_version
       - consolidate_path
-
 outputs:
-  available: "{{blocks.consolidate_availability.outputs.stdout}}"
-  installed_by_workflow: "{{blocks.check_installation_needed.outputs.exit_code}} == 0"
-  version: "{{blocks.consolidate_version.outputs.stdout}}"
-  provider_used: "{{blocks.select_provider.outputs.stdout}}"
-  tool_path: "{{blocks.consolidate_path.outputs.stdout}}"
-  action_taken: "{{blocks.consolidate_action.outputs.stdout}}"
-  validation_output: "{{blocks.validate_command.outputs.summary}}"
-  summary: "{{blocks.ensure_summary.outputs.stdout}}"
+  available:
+    value: "{{blocks.consolidate_availability.outputs.stdout}}"
+  installed_by_workflow:
+    value: "{{blocks.check_installation_needed.outputs.exit_code}} == 0"
+  version:
+    value: "{{blocks.consolidate_version.outputs.stdout}}"
+  provider_used:
+    value: "{{blocks.select_provider.outputs.stdout}}"
+  tool_path:
+    value: "{{blocks.consolidate_path.outputs.stdout}}"
+  action_taken:
+    value: "{{blocks.consolidate_action.outputs.stdout}}"
+  validation_output:
+    value: "{{blocks.validate_command.outputs.summary}}"
+  summary:
+    value: "{{blocks.ensure_summary.outputs.stdout}}"

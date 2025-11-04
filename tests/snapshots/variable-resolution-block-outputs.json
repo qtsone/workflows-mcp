@@ -1,7 +1,7 @@
 {
   "outputs": {
-    "consumer_output": "Consumed: produced_value\n\n",
-    "producer_output": "produced_value\n"
+    "consumer_output": "Consumed: produced_value",
+    "producer_output": "produced_value"
   },
   "status": "success"
 }

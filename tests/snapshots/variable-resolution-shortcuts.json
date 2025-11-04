@@ -1,17 +1,17 @@
 {
   "outputs": {
     "outcome_full_path_value": "success",
-    "outcome_full_path_works": "true",
+    "outcome_full_path_works": true,
     "outcome_shortcut_value": "success",
-    "outcome_shortcut_works": "true",
+    "outcome_shortcut_works": true,
     "status_full_path_value": "completed",
-    "status_full_path_works": "true",
+    "status_full_path_works": true,
     "status_shortcut_value": "completed",
-    "status_shortcut_works": "true",
-    "success_full_path_value": "true",
-    "success_full_path_works": "true",
-    "success_shortcut_value": "true",
-    "success_shortcut_works": "true"
+    "status_shortcut_works": true,
+    "success_full_path_value": true,
+    "success_full_path_works": true,
+    "success_shortcut_value": true,
+    "success_shortcut_works": true
   },
   "status": "success"
 }

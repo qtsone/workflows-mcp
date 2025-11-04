@@ -1,10 +1,10 @@
 {
   "outputs": {
     "get_status": "503",
-    "get_success": "true",
-    "json_verified": "true",
+    "get_success": true,
+    "json_verified": true,
     "post_status": "503",
-    "post_success": "true"
+    "post_success": true
   },
   "status": "success"
 }

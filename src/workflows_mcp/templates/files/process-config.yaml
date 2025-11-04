@@ -8,39 +8,32 @@ inputs:
     type: str
     description: Path to input configuration file
     default: "config.json"
-
   output_path:
     type: str
     description: Path to output configuration file
     default: "config.processed.json"
-
   environment:
     type: str
     description: Target environment (dev, staging, production)
     default: "dev"
-
   validate_only:
     type: bool
     description: Only validate config without transforming
     default: false
-
   add_metadata:
     type: bool
     description: Add processing metadata to output
     default: true
-
   backup_original:
     type: bool
     description: Create backup of original file
     default: true
-
 blocks:
   # Read input configuration (validates file existence automatically)
   - id: read_config
     type: ReadFile
     inputs:
       path: "{{inputs.config_path}}"
-
   # Validate configuration format
   - id: validate_format
     type: Shell
@@ -48,18 +41,15 @@ blocks:
       command: 'printf "Validating config format: {{inputs.config_path}} ({{blocks.read_config.outputs.size_bytes}} bytes)"'
     depends_on:
       - read_config
-
   # Backup original file if requested
   - id: backup_config
     type: Shell
     inputs:
       command: "cp {{inputs.config_path}} {{inputs.config_path}}.backup"
       timeout: 30
-      
     depends_on:
       - read_config
     condition: "{{inputs.backup_original}} and not {{inputs.validate_only}}"
-
   # Transform configuration for environment
   - id: transform_config
     type: RenderTemplate
@@ -87,7 +77,6 @@ blocks:
       - validate_format
       - backup_config
     condition: "not {{inputs.validate_only}}"
-
   # Write processed configuration
   - id: write_output
     type: CreateFile
@@ -98,7 +87,6 @@ blocks:
     depends_on:
       - transform_config
     condition: "not {{inputs.validate_only}}"
-
   # Verify output file
   - id: verify_output
     type: ReadFile
@@ -107,17 +95,14 @@ blocks:
     depends_on:
       - write_output
     condition: "not {{inputs.validate_only}}"
-
   # Generate status displays
   - id: get_mode_display
     type: Shell
     inputs:
       command: "test '{{inputs.validate_only}}' = 'true' && echo 'Mode: VALIDATION ONLY' || echo 'Mode: TRANSFORM AND WRITE'"
       timeout: 5
-      
     depends_on:
       - validate_format
-
   - id: get_backup_display
     type: Shell
     inputs:
@@ -136,10 +121,8 @@ blocks:
           fi
         fi
       timeout: 5
-      
     depends_on:
       - backup_config
-
   - id: get_output_display
     type: Shell
     inputs:
@@ -150,10 +133,8 @@ blocks:
           echo "Output: {{inputs.output_path}} ({{blocks.verify_output.outputs.size_bytes}} bytes)"
         fi
       timeout: 5
-      
     depends_on:
       - verify_output
-
   # Generate processing report
   - id: processing_report
     type: Shell
@@ -174,22 +155,30 @@ blocks:
       - get_mode_display
       - get_backup_display
       - get_output_display
-
 outputs:
-  success: "{{blocks.read_config.succeeded}}"
-  input_exists: "{{blocks.read_config.succeeded}}"
-  config_path: "{{inputs.config_path}}"
-  input_size: "{{blocks.read_config.outputs.size_bytes}}"
-
-  validation_passed: "true"
-  validate_only_mode: "{{inputs.validate_only}}"
-
-  backup_created: "{{inputs.backup_original}} and not {{inputs.validate_only}} and {{blocks.backup_config.outputs.exit_code}} == 0"
-  backup_path: "{{inputs.config_path}}.backup"
-
-  output_written: "not {{inputs.validate_only}}"
-  output_path: "{{inputs.output_path}}"
-  output_size: "{{blocks.verify_output.outputs.size_bytes}}"
-
-  environment: "{{inputs.environment}}"
-  report: "{{blocks.processing_report.outputs.stdout}}"
+  success:
+    value: "{{blocks.read_config.succeeded}}"
+  input_exists:
+    value: "{{blocks.read_config.succeeded}}"
+  config_path:
+    value: "{{inputs.config_path}}"
+  input_size:
+    value: "{{blocks.read_config.outputs.size_bytes}}"
+  validation_passed:
+    value: "true"
+  validate_only_mode:
+    value: "{{inputs.validate_only}}"
+  backup_created:
+    value: "{{inputs.backup_original}} and not {{inputs.validate_only}} and {{blocks.backup_config.outputs.exit_code}} == 0"
+  backup_path:
+    value: "{{inputs.config_path}}.backup"
+  output_written:
+    value: "not {{inputs.validate_only}}"
+  output_path:
+    value: "{{inputs.output_path}}"
+  output_size:
+    value: "{{blocks.verify_output.outputs.size_bytes}}"
+  environment:
+    value: "{{inputs.environment}}"
+  report:
+    value: "{{blocks.processing_report.outputs.stdout}}"

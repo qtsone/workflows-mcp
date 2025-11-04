@@ -47,38 +47,32 @@ description: TDD Phase 2 - Design system architecture, define modules, plan test
 version: "1.0"
 author: MCP Workflows Team
 tags: [tdd, architecture, design, modules, setup, phase2]
-
 inputs:
   project_path:
     type: str
     description: Path to project root directory
     default: "."
     required: false
-
   state_file:
     type: str
     description: Path to TDD state file (JSON) relative to project_path
     default: ".tdd-state.json"
     required: false
-
   spec_path:
     type: str
     description: Path to technical specification from Phase 1
     default: "TECHNICAL_SPEC.md"
     required: false
-
   architecture_output_path:
     type: str
     description: Path for architecture document output
     default: "ARCHITECTURE.md"
     required: false
-
 blocks:
   - id: read_state
     type: ReadJSONState
     inputs:
       path: "{{inputs.project_path}}/{{inputs.state_file}}"
-
   - id: validate_phase1_complete
     type: Shell
     inputs:
@@ -97,7 +91,6 @@ blocks:
       timeout: 10
     depends_on:
       - read_state
-
   - id: validate_spec_exists
     type: Shell
     inputs:
@@ -113,7 +106,6 @@ blocks:
       timeout: 10
     depends_on:
       - validate_phase1_complete
-
   - id: design_architecture
     type: Prompt
     inputs:
@@ -152,7 +144,6 @@ blocks:
         Provide a comprehensive architectural design document.
     depends_on:
       - validate_spec_exists
-
   - id: define_data_models
     type: Prompt
     inputs:
@@ -191,7 +182,6 @@ blocks:
         Define ALL data models needed for the system.
     depends_on:
       - design_architecture
-
   - id: identify_modules
     type: Prompt
     inputs:
@@ -226,11 +216,10 @@ blocks:
         - List modules in dependency order (foundational first)
 
         Provide a complete list of ALL modules needed.
-        
+
         Respond with 'yes' or 'no'
     depends_on:
       - define_data_models
-
   - id: define_interfaces
     type: Prompt
     inputs:
@@ -285,7 +274,6 @@ blocks:
         Define interfaces for ALL modules.
     depends_on:
       - identify_modules
-
   - id: plan_test_strategy
     type: Prompt
     inputs:
@@ -328,11 +316,10 @@ blocks:
            - Performance test requirements
 
         Provide a complete test strategy document.
-        
+
         Respond with 'yes' or 'no'
     depends_on:
       - define_interfaces
-
   - id: document_architecture
     type: Prompt
     inputs:
@@ -388,15 +375,14 @@ blocks:
         [Performance, security, scalability]
 
         Provide the COMPLETE architecture document content.
-        
+
         Respond with 'yes' or 'no'
-        
+
         Respond with 'yes' or 'no'
-        
+
         Respond with 'yes' or 'no'
     depends_on:
       - plan_test_strategy
-
   - id: create_architecture_file
     type: CreateFile
     inputs:
@@ -405,7 +391,6 @@ blocks:
       encoding: "utf-8"
     depends_on:
       - document_architecture
-
   - id: extract_modules
     type: Shell
     inputs:
@@ -430,7 +415,7 @@ blocks:
       timeout: 30
     outputs:
       module_count:
-        type: int
+        type: num
         path: "$SCRATCH/module_count.txt"
         description: "Number of modules identified in architecture"
       modules_list:
@@ -439,7 +424,6 @@ blocks:
         description: "Comma-separated list of module names"
     depends_on:
       - create_architecture_file
-
   - id: update_state_phase2_complete
     type: Shell
     inputs:
@@ -503,7 +487,6 @@ blocks:
       timeout: 30
     depends_on:
       - extract_modules
-
   - id: checkpoint_review
     type: Prompt
     inputs:
@@ -523,9 +506,9 @@ blocks:
         5. Are architectural decisions documented?
 
         Approve to proceed to Phase 3 (Scaffolding)?
-        
+
         Respond with 'yes' or 'no'
-        
+
         Respond with 'yes' or 'no'
       operation: "approve_phase2_complete"
       details:
@@ -534,56 +517,43 @@ blocks:
         state_updated: "true"
     depends_on:
       - update_state_phase2_complete
-
   - id: completion_summary
     type: Shell
     inputs:
-      command: |
-        echo "╔════════════════════════════════════════════════════════════════╗"
-        echo "║           TDD PHASE 2: ARCHITECTURE COMPLETE                  ║"
-        echo "╚════════════════════════════════════════════════════════════════╝"
-        echo ""
-        echo "Phase 2 Results:"
-        echo "  ✅ System architecture designed"
-        echo "  ✅ Data models defined"
-        echo "  ✅ Modules identified and scoped"
-        echo "  ✅ Module interfaces defined"
-        echo "  ✅ Test strategy planned"
-        echo "  ✅ Architecture document created"
-        echo ""
-        echo "Output:"
-        echo "  📐 Architecture: {{inputs.project_path}}/{{inputs.architecture_output_path}}"
-        echo "  🧩 Modules: {{blocks.extract_modules.outputs.modules_list}}"
-        echo "  💾 State File: {{inputs.project_path}}/{{inputs.state_file}}"
-        echo ""
-        echo "Next Phase: Scaffolding (Phase 3)"
-        echo "  Run: execute_workflow('tdd-phase3-scaffolding', {'project_path': '{{inputs.project_path}}'})"
-        echo ""
-        echo "Checkpoint Approved: {{blocks.checkpoint_review.outputs.response}} == \'yes\'"
+      command: "echo \"╔════════════════════════════════════════════════════════════════╗\"\necho \"║           TDD PHASE 2: ARCHITECTURE COMPLETE                  ║\"\necho \"╚════════════════════════════════════════════════════════════════╝\"\necho \"\"\necho \"Phase 2 Results:\"\necho \"  ✅ System architecture designed\"\necho \"  ✅ Data models defined\"\necho \"  ✅ Modules identified and scoped\"\necho \"  ✅ Module interfaces defined\"\necho \"  ✅ Test strategy planned\"\necho \"  ✅ Architecture document created\"\necho \"\"\necho \"Output:\"\necho \"  \U0001F4D0 Architecture: {{inputs.project_path}}/{{inputs.architecture_output_path}}\"\necho \"  \U0001F9E9 Modules: {{blocks.extract_modules.outputs.modules_list}}\"\necho \"  \U0001F4BE State File: {{inputs.project_path}}/{{inputs.state_file}}\"\necho \"\"\necho \"Next Phase: Scaffolding (Phase 3)\"\necho \"  Run: execute_workflow('tdd-phase3-scaffolding', {'project_path': '{{inputs.project_path}}'})\"\necho \"\"\necho \"Checkpoint Approved: {{blocks.checkpoint_review.outputs.response}} == \\'yes\\'\"\n"
       timeout: 10
     depends_on:
       - checkpoint_review
-
 outputs:
-  phase_complete: "{{blocks.checkpoint_review.outputs.response}} == 'yes'"
-  architecture_path: "{{inputs.project_path}}/{{inputs.architecture_output_path}}"
-  modules: "{{blocks.extract_modules.outputs.modules_list}}"
-  module_count: "{{blocks.extract_modules.outputs.module_count}}"
-  test_strategy_defined: "true"
-  checkpoint_approved: "{{blocks.checkpoint_review.outputs.response}} == 'yes'"
-
+  phase_complete:
+    value: "{{blocks.checkpoint_review.outputs.response}} == 'yes'"
+  architecture_path:
+    value: "{{inputs.project_path}}/{{inputs.architecture_output_path}}"
+  modules:
+    value: "{{blocks.extract_modules.outputs.modules_list}}"
+  module_count:
+    value: "{{blocks.extract_modules.outputs.module_count}}"
+  test_strategy_defined:
+    value: "true"
+  checkpoint_approved:
+    value: "{{blocks.checkpoint_review.outputs.response}} == 'yes'"
   # State tracking
-  state_file_path: "{{inputs.project_path}}/{{inputs.state_file}}"
-
+  state_file_path:
+    value: "{{inputs.project_path}}/{{inputs.state_file}}"
   # Architecture outputs
-  system_architecture: "{{blocks.design_architecture.response}}"
-  data_models: "{{blocks.define_data_models.response}}"
-  module_definitions: "{{blocks.identify_modules.response}}"
-  module_interfaces: "{{blocks.define_interfaces.response}}"
-  test_strategy: "{{blocks.plan_test_strategy.response}}"
-
+  system_architecture:
+    value: "{{blocks.design_architecture.response}}"
+  data_models:
+    value: "{{blocks.define_data_models.response}}"
+  module_definitions:
+    value: "{{blocks.identify_modules.response}}"
+  module_interfaces:
+    value: "{{blocks.define_interfaces.response}}"
+  test_strategy:
+    value: "{{blocks.plan_test_strategy.response}}"
   # Summary
-  summary: "{{blocks.completion_summary.outputs.stdout}}"
-
+  summary:
+    value: "{{blocks.completion_summary.outputs.stdout}}"
   # Next phase readiness
-  ready_for_phase3: "{{blocks.checkpoint_review.outputs.response}} == 'yes'"
+  ready_for_phase3:
+    value: "{{blocks.checkpoint_review.outputs.response}} == 'yes'"

@@ -7,7 +7,7 @@ inputs:
     default: "test_value"
     description: "String input for testing"
   number_input:
-    type: int
+    type: num
     default: 42
     description: "Numeric input for testing"
 blocks:
@@ -20,5 +20,9 @@ blocks:
     inputs:
       command: echo "{{inputs.number_input}}"
 outputs:
-  string_result: "{{blocks.use_string.outputs.stdout}}"
-  number_result: "{{blocks.use_number.outputs.stdout}}"
+  string_result:
+    value: "{{blocks.use_string.outputs.stdout}}"
+    type: str
+  number_result:
+    value: "{{blocks.use_number.outputs.stdout}}"
+    type: str

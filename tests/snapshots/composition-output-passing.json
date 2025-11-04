@@ -1,8 +1,8 @@
 {
   "outputs": {
-    "add_result": "60",
+    "add_result": 55,
     "both_succeeded": true,
-    "multiply_result": "50"
+    "multiply_result": 50
   },
   "status": "success"
 }

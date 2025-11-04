@@ -113,7 +113,7 @@ def mock_context():
                 "default": "World",
             }
         },
-        outputs={"result": "{{blocks.step1.outputs.stdout}}"},
+        outputs={"result": {"value": "{{blocks.step1.outputs.stdout}}"}},
     )
     registry.register(test_workflow)
 
@@ -338,7 +338,8 @@ blocks:
     inputs:
       command: echo 'Inline test'
 outputs:
-  result: "{{blocks.echo.outputs.stdout}}"
+  result:
+    value: "{{blocks.echo.outputs.stdout}}"
 """
 
         result = await execute_inline_workflow(workflow_yaml=workflow_yaml, ctx=mock_context)
@@ -777,9 +778,9 @@ class TestInteractiveWorkflows:
 
             # Verify approved_action executed (condition was true)
             assert "approved_action" in debug_data["blocks"], "approved_action should execute"
-            assert (
-                debug_data["blocks"]["approved_action"]["metadata"]["status"] == "completed"
-            ), "approved_action should complete (ADR-007: block status = completed)"
+            assert debug_data["blocks"]["approved_action"]["metadata"]["status"] == "completed", (
+                "approved_action should complete (ADR-007: block status = completed)"
+            )
 
             # Verify denied_action was skipped (condition was false)
             assert "denied_action" in debug_data["blocks"], "denied_action should exist"
@@ -850,14 +851,14 @@ class TestInteractiveWorkflows:
             assert debug_data["blocks"]["approval"]["outputs"]["response"] == "no"
 
             # Verify denied_action executed (condition was true)
-            assert (
-                debug_data["blocks"]["denied_action"]["metadata"]["status"] == "completed"
-            ), "denied_action should complete when response is 'no' (ADR-007: block status)"
+            assert debug_data["blocks"]["denied_action"]["metadata"]["status"] == "completed", (
+                "denied_action should complete when response is 'no' (ADR-007: block status)"
+            )
 
             # Verify approved_action was skipped (condition was false)
-            assert (
-                debug_data["blocks"]["approved_action"]["metadata"]["status"] == "skipped"
-            ), "approved_action should be skipped when response is 'no'"
+            assert debug_data["blocks"]["approved_action"]["metadata"]["status"] == "skipped", (
+                "approved_action should be skipped when response is 'no'"
+            )
 
             # Verify outputs (variable resolution returns strings, not booleans)
             assert resume_response["outputs"]["approval_response"] == "no"
@@ -1065,9 +1066,7 @@ class TestQualityAssurance:
     @pytest.mark.asyncio
     async def test_workflow_response_structure(self, mock_context) -> None:
         """Test workflow response structure consistency."""
-        result = await execute_workflow(
-            workflow="test-workflow", debug=True, ctx=mock_context
-        )
+        result = await execute_workflow(workflow="test-workflow", debug=True, ctx=mock_context)
 
         assert "status" in result
         assert result["status"] in ["success", "failure", "paused"]

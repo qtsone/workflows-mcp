@@ -11,5 +11,9 @@ blocks:
     inputs:
       command: echo "{{metadata.start_time}}"
 outputs:
-  workflow_name: "{{blocks.use_workflow_name.outputs.stdout}}"
-  start_time: "{{blocks.use_start_time.outputs.stdout}}"
+  workflow_name:
+    value: "{{blocks.use_workflow_name.outputs.stdout}}"
+    type: str
+  start_time:
+    value: "{{blocks.use_start_time.outputs.stdout}}"
+    type: str

@@ -226,8 +226,32 @@ blocks:
       command: printf "Hello, {{inputs.name}}!"
 
 outputs:
-  greeting: "{{blocks.greet.outputs.stdout}}"
+  greeting:
+    value: "{{blocks.greet.outputs.stdout}}"
+    type: str
+    description: "The greeting message"
 ```
+
+### Workflow Outputs
+
+Workflow outputs support automatic type coercion, allowing you to declare the expected type and get properly typed values:
+
+```yaml
+outputs:
+  output_name:
+    value: "{{blocks.block_id.outputs.field}}"  # Variable expression
+    type: str                                     # Type declaration (optional)
+    description: "Human-readable description"    # Documentation (optional)
+```
+
+**Supported Types:**
+
+- **str** - Text values (default if type not specified)
+- **num** - Numeric values (integer or float - JSON doesn't distinguish)
+- **bool** - Boolean values (true/false)
+- **list** - List/array values
+- **dict** - Dictionary/object values
+- **json** - Parse JSON string into dict/list/str/num/bool/None
 
 ### Key Features
 

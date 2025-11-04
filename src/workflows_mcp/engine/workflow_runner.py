@@ -838,7 +838,17 @@ class WorkflowRunner:
         workflow: WorkflowSchema,
         exec_context: Execution,
     ) -> dict[str, Any]:
-        """Evaluate workflow-level outputs (async for secrets support)."""
+        """
+        Evaluate workflow-level outputs with type coercion (async for secrets support).
+
+        All outputs use WorkflowOutputSchema with:
+        - value: Expression referencing block outputs
+        - type: Output type (defaults to str)
+        - description: Optional documentation
+
+        Type coercion applies based on declared type, converting resolved values to:
+        str, int, float, bool, json, list, or dict.
+        """
         if not workflow.outputs:
             return {}
 
@@ -853,13 +863,19 @@ class WorkflowRunner:
 
         comparison_ops = ["==", "!=", ">=", "<=", ">", "<", " and ", " or ", " not "]
 
-        for output_name, output_value in workflow.outputs.items():
-            output_expr = output_value if isinstance(output_value, str) else output_value.value
+        for output_name, output_schema in workflow.outputs.items():
+            # Extract expression and type from WorkflowOutputSchema
+            output_expr = output_schema.value
+            output_type = (
+                output_schema.type.value
+                if hasattr(output_schema.type, "value")
+                else output_schema.type
+            )
 
             # Resolve variables (async for secrets support)
             resolved_value = await resolver.resolve_async(output_expr)
 
-            # Evaluate boolean expressions if present
+            # Evaluate boolean expressions if present (before type coercion)
             is_string = isinstance(resolved_value, str)
             has_operator = (
                 any(op in resolved_value for op in comparison_ops) if is_string else False
@@ -869,6 +885,18 @@ class WorkflowRunner:
                     resolved_value = evaluator.evaluate(resolved_value, context_dict)
                 except InvalidConditionError:
                     pass
+
+            # Apply type coercion
+            from .executors_core import coerce_value_type
+
+            try:
+                resolved_value = coerce_value_type(resolved_value, output_type)
+            except ValueError as e:
+                # Type coercion failed - log error and keep original value
+                logger.error(
+                    f"Failed to coerce output '{output_name}' to type '{output_type}': {e}. "
+                    f"Using uncoerced value: {resolved_value}"
+                )
 
             outputs[output_name] = resolved_value
 

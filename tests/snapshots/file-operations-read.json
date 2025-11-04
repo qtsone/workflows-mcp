@@ -1,9 +1,9 @@
 {
   "outputs": {
-    "cleanup_done": "true",
-    "content_has_data": "Test content with \u4f60\u597d\n",
-    "file_read": "true",
-    "optional_not_found": "true"
+    "cleanup_done": true,
+    "content_has_data": "Test content with \u4f60\u597d",
+    "file_read": true,
+    "optional_not_found": true
   },
   "status": "success"
 }

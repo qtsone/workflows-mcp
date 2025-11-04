@@ -3,43 +3,35 @@ description: Run comprehensive Python code quality checks (ruff, mypy, formattin
 version: "1.0"
 author: Workflows MCP Team
 tags: [python, linting, ruff, mypy, code-quality, static-analysis]
-
 inputs:
   working_dir:
     type: str
     description: Project directory to lint
     default: "."
-
   src_path:
     type: str
     description: Source code directory or file path
     default: "src/"
-
   strict_mode:
     type: bool
     description: Enable strict type checking (mypy --strict)
     default: false
-
   fix_issues:
     type: bool
     description: Auto-fix issues where possible (ruff --fix and ruff format)
     default: false
-
   skip_mypy:
     type: bool
     description: Skip mypy type checking
     default: false
-
   venv_path:
     type: str
     description: Virtual environment path (will use {{inputs.venv_path}}/bin/ruff and {{inputs.venv_path}}/bin/mypy if available)
     default: ""
-
   auto_install:
     type: bool
     description: Automatically install ruff and mypy if not found
     default: true
-
 blocks:
   # Ensure ruff is installed (only if auto_install is enabled)
   - id: ensure_ruff
@@ -53,7 +45,6 @@ blocks:
         venv_path: "{{inputs.venv_path}}"
         auto_install: true
     condition: "{{inputs.auto_install}}"
-
   # Ensure mypy is installed (only if auto_install is enabled and skip_mypy is false)
   - id: ensure_mypy
     type: Workflow
@@ -66,7 +57,6 @@ blocks:
         venv_path: "{{inputs.venv_path}}"
         auto_install: true
     condition: "{{inputs.auto_install}} and not {{inputs.skip_mypy}}"
-
   # Build ruff command
   - id: build_ruff_command
     type: Shell
@@ -87,7 +77,6 @@ blocks:
         CMD="$CMD {{inputs.src_path}}"
         echo "$CMD"
       timeout: 5
-
   # Run ruff linting
   - id: run_ruff
     type: Shell
@@ -95,10 +84,8 @@ blocks:
       command: "{{blocks.build_ruff_command.outputs.stdout}}"
       working_dir: "{{inputs.working_dir}}"
       timeout: 300
-      
     depends_on:
       - build_ruff_command
-
   # Build mypy command
   - id: build_mypy_command
     type: Shell
@@ -121,7 +108,6 @@ blocks:
       timeout: 5
     depends_on:
       - run_ruff
-
   # Run mypy type checking
   - id: run_mypy
     type: Shell
@@ -129,11 +115,9 @@ blocks:
       command: "{{blocks.build_mypy_command.outputs.stdout}}"
       working_dir: "{{inputs.working_dir}}"
       timeout: 300
-      
     depends_on:
       - build_mypy_command
     condition: "not {{inputs.skip_mypy}}"
-
   # Check or fix formatting with ruff format
   - id: check_format
     type: Shell
@@ -154,39 +138,31 @@ blocks:
         fi
       working_dir: "{{inputs.working_dir}}"
       timeout: 300
-      
     depends_on:
       - run_ruff
-
   # Determine result statuses
   - id: get_ruff_status
     type: Shell
     inputs:
       command: "test {{blocks.run_ruff.outputs.exit_code}} -eq 0 && echo '✓ PASSED' || echo '✗ FAILED'"
       timeout: 5
-      
     depends_on:
       - run_ruff
-
   - id: get_mypy_status
     type: Shell
     inputs:
       command: "test {{blocks.run_mypy.outputs.exit_code}} -eq 0 && echo '✓ PASSED' || echo '✗ FAILED'"
       timeout: 5
-      
     depends_on:
       - run_mypy
     condition: "not {{inputs.skip_mypy}}"
-
   - id: get_format_status
     type: Shell
     inputs:
       command: "test {{blocks.check_format.outputs.exit_code}} -eq 0 && echo '✓ PASSED' || echo '✗ FAILED'"
       timeout: 5
-      
     depends_on:
       - check_format
-
   # Generate mypy status display
   - id: get_mypy_display
     type: Shell
@@ -198,10 +174,8 @@ blocks:
           test {{blocks.run_mypy.outputs.exit_code}} -eq 0 && echo '✓ PASSED' || echo '✗ FAILED'
         fi
       timeout: 5
-      
     depends_on:
       - get_mypy_status
-
   - id: get_overall_status
     type: Shell
     inputs:
@@ -214,12 +188,10 @@ blocks:
           echo '✗ ISSUES FOUND'
         fi
       timeout: 5
-      
     depends_on:
       - get_ruff_status
       - get_mypy_display
       - get_format_status
-
   # Aggregate results
   - id: aggregate_results
     type: Shell
@@ -234,23 +206,29 @@ blocks:
         printf "Overall: {{blocks.get_overall_status.outputs.stdout}}"
     depends_on:
       - get_overall_status
-
 outputs:
   # Individual tool results
-  ruff_passed: "{{blocks.run_ruff.outputs.exit_code}} == 0"
-  ruff_output: "{{blocks.run_ruff.outputs.stdout}}"
-  ruff_errors: "{{blocks.run_ruff.outputs.stderr}}"
-
-  mypy_passed: "{{inputs.skip_mypy}} or {{blocks.run_mypy.outputs.exit_code}} == 0"
-  mypy_output: "{{blocks.run_mypy.outputs.stdout}}"
-  mypy_errors: "{{blocks.run_mypy.outputs.stderr}}"
-
-  format_passed: "{{blocks.check_format.outputs.exit_code}} == 0"
-  format_output: "{{blocks.check_format.outputs.stdout}}"
-
+  ruff_passed:
+    value: "{{blocks.run_ruff.outputs.exit_code}} == 0"
+  ruff_output:
+    value: "{{blocks.run_ruff.outputs.stdout}}"
+  ruff_errors:
+    value: "{{blocks.run_ruff.outputs.stderr}}"
+  mypy_passed:
+    value: "{{inputs.skip_mypy}} or {{blocks.run_mypy.outputs.exit_code}} == 0"
+  mypy_output:
+    value: "{{blocks.run_mypy.outputs.stdout}}"
+  mypy_errors:
+    value: "{{blocks.run_mypy.outputs.stderr}}"
+  format_passed:
+    value: "{{blocks.check_format.outputs.exit_code}} == 0"
+  format_output:
+    value: "{{blocks.check_format.outputs.stdout}}"
   # Overall status
-  all_passed: "{{blocks.run_ruff.outputs.exit_code}} == 0 and ({{inputs.skip_mypy}} or {{blocks.run_mypy.outputs.exit_code}} == 0) and {{blocks.check_format.outputs.exit_code}} == 0"
-  summary: "{{blocks.aggregate_results.outputs.stdout}}"
-
+  all_passed:
+    value: "{{blocks.run_ruff.outputs.exit_code}} == 0 and ({{inputs.skip_mypy}} or {{blocks.run_mypy.outputs.exit_code}} == 0) and {{blocks.check_format.outputs.exit_code}} == 0"
+  summary:
+    value: "{{blocks.aggregate_results.outputs.stdout}}"
   # Execution metadata
-  total_execution_time_ms: "{{blocks.aggregate_results.metadata.execution_time_ms}}"
+  total_execution_time_ms:
+    value: "{{blocks.aggregate_results.metadata.execution_time_ms}}"

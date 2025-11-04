@@ -1,0 +1,20 @@
+name: workflow-output-type-coercion
+description: Test workflow output type coercion for int type
+version: "1.0"
+tags: [test, types]
+outputs:
+  # Test: Shell block returns exit_code as int, workflow output preserves it
+  exit_code_int:
+    value: "{{blocks.run_command.outputs.exit_code}}"
+    type: num
+    description: "Exit code preserved as int"
+  # Test: Logical expression evaluates to bool
+  command_succeeded:
+    value: "{{blocks.run_command.outputs.exit_code}} == 0"
+    type: bool
+    description: "Success check as bool"
+blocks:
+  - id: run_command
+    type: Shell
+    inputs:
+      command: echo "Test successful"

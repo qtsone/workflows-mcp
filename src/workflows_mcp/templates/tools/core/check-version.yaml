@@ -3,25 +3,21 @@ description: Check if a command is available in PATH and validate version constr
 version: "2.0"
 author: Workflows MCP Team
 tags: [tools, validation, command, version, core]
-
 inputs:
   tool_name:
     type: str
     description: Command name to validate (e.g., "pytest", "git", "ruff")
     required: true
-
   pattern:
     type: str
     description: Regex pattern to extract version (e.g., '(\d+\.\d+\.\d+)')
     default: '(\d+\.\d+\.\d+)'
     required: false
-
   version:
     type: str
     description: Version constraint (e.g., ">=7.0.0", "~=7.4", "==7.4.3")
     default: ""
     required: false
-
 blocks:
   - id: check_command
     description: Check if command exists and get its path
@@ -41,7 +37,6 @@ blocks:
         type: str
         description: Full path to the command if found
         path: "$SCRATCH/path.txt"
-
   # Try multiple common version flags to get version
   - id: get_version
     type: Shell
@@ -67,7 +62,6 @@ blocks:
     depends_on:
       - block: check_command
         required: false
-
   # Validate version constraint using Python for clean comparison
   - id: validate_version
     type: Shell
@@ -128,13 +122,15 @@ blocks:
         sys.exit(0 if result else 1)
         '
       timeout: 5
-
     condition: "{{inputs.version}} != '' and {{blocks.get_version.outputs.version}} != 'unknown'"
     depends_on:
       - get_version
-
 outputs:
-  found: "{{blocks.check_command.succeeded}}"
-  path: "{{blocks.check_command.outputs.path}}"
-  version: "{{blocks.get_version.outputs.version}}"
-  meets_constraints: "{{blocks.validate_version.succeeded}}"
+  found:
+    value: "{{blocks.check_command.succeeded}}"
+  path:
+    value: "{{blocks.check_command.outputs.path}}"
+  version:
+    value: "{{blocks.get_version.outputs.version}}"
+  meets_constraints:
+    value: "{{blocks.validate_version.succeeded}}"
