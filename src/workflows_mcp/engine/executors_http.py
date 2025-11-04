@@ -61,7 +61,7 @@ class HttpCallInput(BlockInput):
         default=30,
         description="Request timeout in seconds",
         ge=1,
-        le=300,
+        le=1800,
     )
     follow_redirects: bool = Field(default=True, description="Whether to follow HTTP redirects")
     verify_ssl: bool = Field(default=True, description="Whether to verify SSL certificates")

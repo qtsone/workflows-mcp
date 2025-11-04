@@ -78,6 +78,7 @@
               "ReadFile",
               "RenderTemplate",
               "HttpCall",
+              "LLMCall",
               "Prompt",
               "ReadJSONState",
               "WriteJSONState",
@@ -491,7 +492,7 @@
                     "timeout": {
                       "default": 30,
                       "description": "Request timeout in seconds",
-                      "maximum": 300,
+                      "maximum": 1800,
                       "minimum": 1,
                       "title": "Timeout",
                       "type": "integer"
@@ -513,6 +514,169 @@
                     "url"
                   ],
                   "title": "HttpCallInput",
+                  "type": "object"
+                }
+              }
+            }
+          },
+          {
+            "if": {
+              "properties": {
+                "type": {
+                  "const": "LLMCall"
+                }
+              }
+            },
+            "then": {
+              "properties": {
+                "inputs": {
+                  "additionalProperties": false,
+                  "description": "Inputs for LLMCall block",
+                  "properties": {
+                    "provider": {
+                      "default": "openai",
+                      "description": "LLM provider",
+                      "enum": [
+                        "openai",
+                        "anthropic",
+                        "gemini",
+                        "ollama"
+                      ],
+                      "title": "Provider",
+                      "type": "string"
+                    },
+                    "model": {
+                      "description": "Model name (e.g., gpt-4o, claude-3-5-sonnet-20241022, gemini-2.0-flash-exp)",
+                      "title": "Model",
+                      "type": "string"
+                    },
+                    "prompt": {
+                      "description": "User prompt to send to the LLM",
+                      "title": "Prompt",
+                      "type": "string"
+                    },
+                    "system_instructions": {
+                      "anyOf": [
+                        {
+                          "type": "string"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ],
+                      "default": null,
+                      "description": "System instructions (optional)",
+                      "title": "System Instructions"
+                    },
+                    "api_key": {
+                      "anyOf": [
+                        {
+                          "type": "string"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ],
+                      "default": null,
+                      "description": "API key (pre-resolved from {{secrets.PROVIDER_API_KEY}})",
+                      "title": "Api Key"
+                    },
+                    "api_url": {
+                      "anyOf": [
+                        {
+                          "type": "string"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ],
+                      "default": null,
+                      "description": "Custom API endpoint URL (optional, for custom deployments)",
+                      "title": "Api Url"
+                    },
+                    "response_schema": {
+                      "anyOf": [
+                        {
+                          "additionalProperties": true,
+                          "type": "object"
+                        },
+                        {
+                          "type": "string"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ],
+                      "default": null,
+                      "description": "JSON Schema for expected response structure (dict or JSON string, enables validation and retry)",
+                      "title": "Response Schema"
+                    },
+                    "max_retries": {
+                      "default": 3,
+                      "description": "Maximum number of retry attempts",
+                      "maximum": 10,
+                      "minimum": 1,
+                      "title": "Max Retries",
+                      "type": "integer"
+                    },
+                    "retry_delay": {
+                      "default": 2.0,
+                      "description": "Initial retry delay in seconds (exponential backoff)",
+                      "maximum": 60.0,
+                      "minimum": 0.1,
+                      "title": "Retry Delay",
+                      "type": "number"
+                    },
+                    "timeout": {
+                      "default": 60,
+                      "description": "Request timeout in seconds",
+                      "maximum": 1800,
+                      "minimum": 1,
+                      "title": "Timeout",
+                      "type": "integer"
+                    },
+                    "temperature": {
+                      "anyOf": [
+                        {
+                          "maximum": 2.0,
+                          "minimum": 0.0,
+                          "type": "number"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ],
+                      "default": null,
+                      "description": "Sampling temperature (0.0-2.0)",
+                      "title": "Temperature"
+                    },
+                    "max_tokens": {
+                      "anyOf": [
+                        {
+                          "maximum": 128000,
+                          "minimum": 1,
+                          "type": "integer"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ],
+                      "default": null,
+                      "description": "Maximum tokens to generate",
+                      "title": "Max Tokens"
+                    },
+                    "validation_prompt_template": {
+                      "default": "Your previous response failed JSON schema validation.\n\nError: {validation_error}\n\nExpected schema:\n{schema}\n\nPlease provide a valid response that conforms to the schema.",
+                      "description": "Template for validation retry prompt",
+                      "title": "Validation Prompt Template",
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "model",
+                    "prompt"
+                  ],
+                  "title": "LLMCallInput",
                   "type": "object"
                 }
               }
@@ -964,7 +1128,7 @@
         "timeout": {
           "default": 30,
           "description": "Request timeout in seconds",
-          "maximum": 300,
+          "maximum": 1800,
           "minimum": 1,
           "title": "Timeout",
           "type": "integer"
@@ -986,6 +1150,156 @@
         "url"
       ],
       "title": "HttpCallInput",
+      "type": "object"
+    },
+    "LLMCallInput": {
+      "additionalProperties": false,
+      "description": "Input model for LLMCall executor.\n\nAll inputs are pre-resolved by VariableResolver:\n- {{secrets.OPENAI_API_KEY}} \u2192 actual key value\n- {{inputs.prompt}} \u2192 actual prompt text\n- {{blocks.previous.outputs.data}} \u2192 actual data",
+      "properties": {
+        "provider": {
+          "default": "openai",
+          "description": "LLM provider",
+          "enum": [
+            "openai",
+            "anthropic",
+            "gemini",
+            "ollama"
+          ],
+          "title": "Provider",
+          "type": "string"
+        },
+        "model": {
+          "description": "Model name (e.g., gpt-4o, claude-3-5-sonnet-20241022, gemini-2.0-flash-exp)",
+          "title": "Model",
+          "type": "string"
+        },
+        "prompt": {
+          "description": "User prompt to send to the LLM",
+          "title": "Prompt",
+          "type": "string"
+        },
+        "system_instructions": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "System instructions (optional)",
+          "title": "System Instructions"
+        },
+        "api_key": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "API key (pre-resolved from {{secrets.PROVIDER_API_KEY}})",
+          "title": "Api Key"
+        },
+        "api_url": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Custom API endpoint URL (optional, for custom deployments)",
+          "title": "Api Url"
+        },
+        "response_schema": {
+          "anyOf": [
+            {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "JSON Schema for expected response structure (dict or JSON string, enables validation and retry)",
+          "title": "Response Schema"
+        },
+        "max_retries": {
+          "default": 3,
+          "description": "Maximum number of retry attempts",
+          "maximum": 10,
+          "minimum": 1,
+          "title": "Max Retries",
+          "type": "integer"
+        },
+        "retry_delay": {
+          "default": 2.0,
+          "description": "Initial retry delay in seconds (exponential backoff)",
+          "maximum": 60.0,
+          "minimum": 0.1,
+          "title": "Retry Delay",
+          "type": "number"
+        },
+        "timeout": {
+          "default": 60,
+          "description": "Request timeout in seconds",
+          "maximum": 1800,
+          "minimum": 1,
+          "title": "Timeout",
+          "type": "integer"
+        },
+        "temperature": {
+          "anyOf": [
+            {
+              "maximum": 2.0,
+              "minimum": 0.0,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Sampling temperature (0.0-2.0)",
+          "title": "Temperature"
+        },
+        "max_tokens": {
+          "anyOf": [
+            {
+              "maximum": 128000,
+              "minimum": 1,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Maximum tokens to generate",
+          "title": "Max Tokens"
+        },
+        "validation_prompt_template": {
+          "default": "Your previous response failed JSON schema validation.\n\nError: {validation_error}\n\nExpected schema:\n{schema}\n\nPlease provide a valid response that conforms to the schema.",
+          "description": "Template for validation retry prompt",
+          "title": "Validation Prompt Template",
+          "type": "string"
+        }
+      },
+      "required": [
+        "model",
+        "prompt"
+      ],
+      "title": "LLMCallInput",
       "type": "object"
     },
     "PromptInput": {

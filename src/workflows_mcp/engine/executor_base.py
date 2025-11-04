@@ -588,6 +588,7 @@ def create_default_registry() -> ExecutorRegistry:
     from .executors_file import CreateFileExecutor, ReadFileExecutor, RenderTemplateExecutor
     from .executors_http import HttpCallExecutor
     from .executors_interactive import PromptExecutor
+    from .executors_llm import LLMCallExecutor
     from .executors_state import (
         MergeJSONStateExecutor,
         ReadJSONStateExecutor,
@@ -608,6 +609,9 @@ def create_default_registry() -> ExecutorRegistry:
 
     # Register HTTP executor
     registry.register(HttpCallExecutor())
+
+    # Register LLM executor
+    registry.register(LLMCallExecutor())
 
     # Register interactive executor
     registry.register(PromptExecutor())
