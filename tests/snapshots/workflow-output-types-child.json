@@ -1,7 +1,0 @@
-{
-  "outputs": {
-    "_error": "Output evaluation failed: Variable '{{blocks.create_results.outputs.content}}' not found. At segment 'content', available keys: ['path', 'size_bytes', 'created']",
-    "_note": "Check debug log for partial execution details"
-  },
-  "status": "success"
-}

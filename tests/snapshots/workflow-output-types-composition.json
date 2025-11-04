@@ -1,4 +1,0 @@
-{
-  "error": "Condition evaluation failed: Variable resolution failed: Variable '{{blocks.run_search.outputs.total_found}}' not found. At segment 'total_found', available keys: ['_error', '_note']",
-  "status": "failure"
-}
