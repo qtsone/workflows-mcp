@@ -1,44 +1,7 @@
 {
-  "blocks": {
-    "calculate": {
-      "blocks": {},
-      "depth": 0,
-      "inputs": {
-        "command": "case + in\n  +|-|/|\\*)\n    echo \"$((0 + 0))\" > $SCRATCH/result.txt\n    ;;\n  *)\n    echo \"'+' is an unsupported operation\" >&2\n    exit 1\n    ;;\nesac\n"
-      },
-      "metadata": {
-        "completed_at": "TIMESTAMP",
-        "execution_order": 0,
-        "execution_time_ms": "EXECUTION_TIME",
-        "failed": false,
-        "message": null,
-        "outcome": "success",
-        "skipped": false,
-        "started_at": "TIMESTAMP",
-        "status": "completed",
-        "succeeded": true,
-        "wave": 0
-      },
-      "outputs": {
-        "exit_code": 0,
-        "result": 0,
-        "stderr": "",
-        "stdout": ""
-      }
-    }
-  },
-  "metadata": {
-    "completed_at": "TIMESTAMP",
-    "execution_time_seconds": "EXECUTION_TIME",
-    "execution_waves": 1,
-    "secret_access_count": 0,
-    "start_time": "TIMESTAMP",
-    "total_blocks": 1,
-    "workflow_name": "composition-child-calculator"
-  },
   "outputs": {
-    "calculate_success": "true",
-    "result": "0"
+    "result": 3,
+    "success": true
   },
   "status": "success"
 }

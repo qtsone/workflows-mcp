@@ -165,7 +165,7 @@ def parse_output_value(content: str, output_type: str) -> Any:
 
     Args:
         content: Raw file content
-        output_type: One of ValueType values: str, int, float, bool, json
+        output_type: One of ValueType values: str, num, bool, json
 
     Returns:
         Parsed value with correct Python type
@@ -177,16 +177,15 @@ def parse_output_value(content: str, output_type: str) -> Any:
 
     if output_type == "str":
         return str(content)  # Explicit cast for consistency
-    elif output_type == "int":
+    elif output_type == "num":
+        # Parse as number (int or float)
         try:
-            return int(content)
+            # Try float first (accepts both int and float strings)
+            value = float(content)
+            # Return int if it's a whole number, otherwise float
+            return int(value) if value.is_integer() else value
         except ValueError:
-            raise ValueError(f"Cannot parse as int: {content}")
-    elif output_type == "float":
-        try:
-            return float(content)
-        except ValueError:
-            raise ValueError(f"Cannot parse as float: {content}")
+            raise ValueError(f"Cannot parse as num: {content}")
     elif output_type == "bool":
         # Accept: true/false, 1/0, yes/no (case-insensitive)
         lower = content.lower()
@@ -204,6 +203,98 @@ def parse_output_value(content: str, output_type: str) -> Any:
             return json.loads(content)
         except json.JSONDecodeError as e:
             raise ValueError(f"Cannot parse as JSON: {e}")
+    else:
+        raise ValueError(f"Unknown output type: {output_type}")
+
+
+def coerce_value_type(value: Any, output_type: str) -> Any:
+    """
+    Coerce a value to the declared type (flexible version of parse_output_value).
+
+    Handles both string values that need parsing and already-typed values.
+    Used for workflow output type coercion where values may already be correctly typed
+    from nested workflows or block outputs.
+
+    Args:
+        value: Value to coerce (can be str, int, float, bool, dict, list, etc.)
+        output_type: One of ValueType values: str, num, bool, json, list, dict
+
+    Returns:
+        Value coerced to correct Python type
+
+    Raises:
+        ValueError: If value cannot be coerced to declared type
+
+    Examples:
+        # String values (parsed)
+        coerce_value_type("42", "num") -> 42
+        coerce_value_type("42.5", "num") -> 42.5
+        coerce_value_type("true", "bool") -> True
+        coerce_value_type('{"a":1}', "json") -> {"a": 1}
+
+        # Already-typed values (validated and passed through)
+        coerce_value_type(42, "num") -> 42
+        coerce_value_type(42.5, "num") -> 42.5
+        coerce_value_type(True, "bool") -> True
+        coerce_value_type({"a": 1}, "json") -> {"a": 1}
+
+        # Type conversion when needed
+        coerce_value_type(42, "str") -> "42"
+        coerce_value_type(42.5, "str") -> "42.5"
+    """
+    # Handle string values using existing parser
+    if isinstance(value, str):
+        # Use existing parse_output_value for strings
+        return parse_output_value(value, output_type)
+
+    # Handle already-typed values with validation and conversion
+    if output_type == "str":
+        # Convert any value to string
+        return str(value)
+
+    elif output_type == "num":
+        # Accept both int and float (exclude bool since it's subclass of int)
+        if isinstance(value, (int, float)) and not isinstance(value, bool):
+            return value
+        # Try to convert
+        try:
+            result = float(value)
+            # Return int if whole number, otherwise float
+            return int(result) if result.is_integer() else result
+        except (ValueError, TypeError):
+            raise ValueError(f"Cannot coerce {type(value).__name__} to num: {value}")
+
+    elif output_type == "bool":
+        # If already bool, return as-is
+        if isinstance(value, bool):
+            return value
+        # Try to convert using standard Python truthiness
+        # But be strict - only accept actual booleans or 1/0 integers
+        if isinstance(value, int) and value in [0, 1]:
+            return bool(value)
+        raise ValueError(
+            f"Cannot coerce {type(value).__name__} to bool: {value}. "
+            f"Only bool values or integers 0/1 are accepted."
+        )
+
+    elif output_type == "json":
+        # Accept dict, list, or JSON-compatible primitives
+        if isinstance(value, (dict, list, str, int, float, bool, type(None))):
+            return value
+        raise ValueError(f"Cannot coerce {type(value).__name__} to json: {value}")
+
+    elif output_type == "list":
+        # If already list, return as-is
+        if isinstance(value, list):
+            return value
+        raise ValueError(f"Cannot coerce {type(value).__name__} to list: {value}")
+
+    elif output_type == "dict":
+        # If already dict, return as-is
+        if isinstance(value, dict):
+            return value
+        raise ValueError(f"Cannot coerce {type(value).__name__} to dict: {value}")
+
     else:
         raise ValueError(f"Unknown output type: {output_type}")
 

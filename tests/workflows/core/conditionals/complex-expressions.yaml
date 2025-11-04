@@ -33,6 +33,12 @@ blocks:
       command: echo "NOT passed"
     condition: "not {{inputs.flag_b}}"
 outputs:
-  and_passed: "{{blocks.and_condition.succeeded}}"
-  or_passed: "{{blocks.or_condition.succeeded}}"
-  not_passed: "{{blocks.not_condition.succeeded}}"
+  and_passed:
+    value: "{{blocks.and_condition.succeeded}}"
+    type: bool
+  or_passed:
+    value: "{{blocks.or_condition.succeeded}}"
+    type: bool
+  not_passed:
+    value: "{{blocks.not_condition.succeeded}}"
+    type: bool

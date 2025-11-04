@@ -8,17 +8,14 @@ inputs:
     type: str
     description: "Project directory containing package.json"
     default: "."
-
   test_script:
     type: str
     description: "npm script to run (from package.json)"
     default: "test"
-
   with_coverage:
     type: bool
     description: "Run tests with coverage"
     default: true
-
 blocks:
   - id: check_package_json
     type: Shell
@@ -26,7 +23,6 @@ blocks:
       command: "test -f package.json && echo 'package.json found'"
       working_dir: "{{inputs.working_dir}}"
       timeout: 10
-
   - id: build_test_command
     type: Shell
     inputs:
@@ -39,7 +35,6 @@ blocks:
       timeout: 5
     depends_on:
       - check_package_json
-
   - id: run_npm_test
     type: Shell
     inputs:
@@ -51,10 +46,14 @@ blocks:
         NODE_ENV: "test"
     depends_on:
       - build_test_command
-
 outputs:
-  success: "{{blocks.run_npm_test.succeeded}}"
-  exit_code: "{{blocks.run_npm_test.outputs.exit_code}}"
-  test_output: "{{blocks.run_npm_test.outputs.stdout}}"
-  errors: "{{blocks.run_npm_test.outputs.stderr}}"
-  execution_time_ms: "{{blocks.run_npm_test.metadata.execution_time_ms}}"
+  success:
+    value: "{{blocks.run_npm_test.succeeded}}"
+  exit_code:
+    value: "{{blocks.run_npm_test.outputs.exit_code}}"
+  test_output:
+    value: "{{blocks.run_npm_test.outputs.stdout}}"
+  errors:
+    value: "{{blocks.run_npm_test.outputs.stderr}}"
+  execution_time_ms:
+    value: "{{blocks.run_npm_test.metadata.execution_time_ms}}"

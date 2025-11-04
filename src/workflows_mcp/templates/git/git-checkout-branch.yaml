@@ -3,37 +3,31 @@ description: Create and checkout a new feature branch from base branch
 version: "2.0"
 author: Workflows MCP Team
 tags: [git, checkout, branch, feature]
-
 inputs:
   branch_name:
     type: str
     description: (Required) Name of the feature branch to create
     required: true
-
   base_branch:
     type: str
     description: (Optional) Base branch to branch from (main, master, develop)
     default: ""
     required: false
-
   working_dir:
     type: str
     description: (Optional) Git repository directory
     default: "."
     required: false
-
   fetch_first:
     type: bool
     description: (Optional) Fetch from remote before creating branch
     default: true
     required: false
-
   push_to_remote:
     type: bool
     description: (Optional) Push branch to remote after creation
     default: false
     required: false
-
 blocks:
   - id: fetch_remote
     type: Shell
@@ -43,7 +37,6 @@ blocks:
       working_dir: "{{inputs.working_dir}}"
       timeout: 5
     condition: "{{inputs.fetch_first}}"
-
   - id: current_branch
     type: Shell
     inputs:
@@ -56,7 +49,6 @@ blocks:
         type: str
         path: "$SCRATCH/current_branch.txt"
         description: "Current branch name"
-
   - id: checkout_base
     type: Shell
     description: "Checkout base branch"
@@ -70,7 +62,6 @@ blocks:
         required: false
       - block: current_branch
         required: true
-
   - id: create_branch
     type: Shell
     inputs:
@@ -80,7 +71,6 @@ blocks:
     depends_on:
       - block: checkout_base
         required: false
-
   - id: push_branch
     depends_on:
       - block: current_branch
@@ -91,7 +81,6 @@ blocks:
       command: "git push -u origin {{inputs.branch_name}}"
       working_dir: "{{inputs.working_dir}}"
       timeout: 60
-
   - id: summary
     type: RenderTemplate
     inputs:
@@ -111,6 +100,6 @@ blocks:
         required: true
       - block: push_branch
         required: false
-
 outputs:
-  summary: "{{blocks.summary.outputs.content}}"
+  summary:
+    value: "{{blocks.summary.outputs.content}}"

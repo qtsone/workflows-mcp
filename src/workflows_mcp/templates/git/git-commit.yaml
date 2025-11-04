@@ -15,32 +15,27 @@ description: |
 version: "4.0.0"
 author: "workflows-mcp"
 tags: [git, commit, semantic, conventional-commits, interactive, composed]
-
 inputs:
   stage_all:
     type: bool
     default: false
     description: "(Optional) Stage all modified files before analyzing (default: use already staged files)"
     required: false
-
   working_dir:
     type: str
     default: "."
     description: "(Optional) Path to the git repository"
     required: false
-
   auto_commit:
     type: bool
     default: true
     description: "(Optional) Skip interactive confirmation and commit immediately with generated message"
     required: false
-
   commit_message:
     type: str
     default: ""
     description: "(Optional) Manually provide commit message (bypasses LLM generation)"
     required: false
-
 blocks:
   - id: stage_files
     type: Shell
@@ -49,7 +44,6 @@ blocks:
       command: git add -A
       working_dir: "{{inputs.working_dir}}"
     condition: "{{inputs.stage_all}}"
-
   - id: analyze_changes
     type: Workflow
     description: "Analyze staged changes in git repository"
@@ -57,7 +51,6 @@ blocks:
       workflow: "git-analyze-changes"
       inputs:
         working_dir: "{{inputs.working_dir}}"
-
   - id: no_changes_message
     type: Shell
     description: "No changes to commit"
@@ -66,7 +59,6 @@ blocks:
     condition: "not {{blocks.analyze_changes.outputs.has_changes}}"
     depends_on:
       - analyze_changes
-
   - id: llm_generate_message
     type: Prompt
     description: "Generate semantic commit message using LLM"
@@ -105,7 +97,6 @@ blocks:
     condition: "{{blocks.analyze_changes.outputs.has_changes}} and {{inputs.commit_message}} == ''"
     depends_on:
       - analyze_changes
-
   - id: select_message
     type: Shell
     description: "Select final commit message: manual override or LLM-generated"
@@ -129,7 +120,6 @@ blocks:
       message:
         type: str
         path: "$SCRATCH/message.txt"
-
   - id: confirm_commit
     type: Prompt
     description: "Prompt user for commit confirmation"
@@ -143,7 +133,6 @@ blocks:
     condition: "{{blocks.analyze_changes.outputs.has_changes}} and not {{inputs.auto_commit}}"
     depends_on:
       - select_message
-
   - id: create_commit
     type: Shell
     description: "Create git commit with semantic message"
@@ -159,10 +148,14 @@ blocks:
       - select_message
       - block: confirm_commit
         required: false
-
 outputs:
-  has_changes: "{{blocks.analyze_changes.outputs.has_changes}}"
-  commit_succeeded: "{{blocks.create_commit.succeeded}}"
-  commit_failed: "{{blocks.create_commit.failed}}"
-  commit_skipped: "{{blocks.create_commit.skipped}}"
-  commit_hash: "{{blocks.create_commit.outputs.stdout}}"
+  has_changes:
+    value: "{{blocks.analyze_changes.outputs.has_changes}}"
+  commit_succeeded:
+    value: "{{blocks.create_commit.succeeded}}"
+  commit_failed:
+    value: "{{blocks.create_commit.failed}}"
+  commit_skipped:
+    value: "{{blocks.create_commit.skipped}}"
+  commit_hash:
+    value: "{{blocks.create_commit.outputs.stdout}}"

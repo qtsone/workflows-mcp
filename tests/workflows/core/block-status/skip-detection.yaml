@@ -21,5 +21,9 @@ blocks:
       - block: skippable_block
         required: false
 outputs:
-  block_skipped: "{{blocks.skippable_block.skipped}}"
-  detection_worked: "{{blocks.check_skipped.succeeded}}"
+  block_skipped:
+    value: "{{blocks.skippable_block.skipped}}"
+    type: bool
+  detection_worked:
+    value: "{{blocks.check_skipped.succeeded}}"
+    type: bool

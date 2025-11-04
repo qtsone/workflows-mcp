@@ -27,7 +27,11 @@ from typing import Any
 from mcp import ClientSession, StdioServerParameters
 from mcp.client.stdio import stdio_client
 from mcp.types import TextContent
+from test_secrets import setup_test_secrets
 from test_utils import normalize_dynamic_fields
+
+# Configure test secrets (required for secrets-related workflows)
+setup_test_secrets()
 
 # Test workflows directory
 TEST_WORKFLOWS_DIR = Path(__file__).parent / "workflows"
@@ -76,7 +80,7 @@ async def generate_snapshot(workflow_name: str, client: ClientSession) -> dict[s
         arguments={
             "workflow": workflow_name,
             "inputs": {},
-            "response_format": "detailed",
+            "debug": False,  # Minimal response (status + outputs/error only)
         },
     )
 
@@ -84,8 +88,12 @@ async def generate_snapshot(workflow_name: str, client: ClientSession) -> dict[s
     content = result.content[0]
     if isinstance(content, TextContent):
         response: dict[str, Any] = json.loads(content.text)
-        # Normalize dynamic fields before saving
+
+        # Normalize dynamic fields (timestamps, IPs, secrets) for stable snapshots
+        # Even minimal responses can contain dynamic data in workflow outputs
+        # Example: variable-resolution-metadata outputs {{metadata.start_time}}
         normalized_response = normalize_dynamic_fields(response)
+
         return normalized_response
     else:
         raise ValueError(f"Expected TextContent, got {type(content)}")

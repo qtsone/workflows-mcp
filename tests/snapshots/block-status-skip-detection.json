@@ -1,66 +1,7 @@
 {
-  "blocks": {
-    "check_skipped": {
-      "blocks": {},
-      "depth": 0,
-      "inputs": {
-        "command": "echo \"detected_skip\""
-      },
-      "metadata": {
-        "completed_at": "TIMESTAMP",
-        "execution_order": 0,
-        "execution_time_ms": "EXECUTION_TIME",
-        "failed": false,
-        "message": null,
-        "outcome": "success",
-        "skipped": false,
-        "started_at": "TIMESTAMP",
-        "status": "completed",
-        "succeeded": true,
-        "wave": 1
-      },
-      "outputs": {
-        "exit_code": 0,
-        "stderr": "",
-        "stdout": "detected_skip\n"
-      }
-    },
-    "skippable_block": {
-      "blocks": {},
-      "depth": 0,
-      "inputs": {},
-      "metadata": {
-        "completed_at": "TIMESTAMP",
-        "execution_order": 0,
-        "execution_time_ms": "EXECUTION_TIME",
-        "failed": false,
-        "message": "Condition 'not {{inputs.should_skip}}' evaluated to False",
-        "outcome": "n/a",
-        "skipped": true,
-        "started_at": "TIMESTAMP",
-        "status": "skipped",
-        "succeeded": false,
-        "wave": 0
-      },
-      "outputs": {
-        "exit_code": 0,
-        "stderr": "",
-        "stdout": ""
-      }
-    }
-  },
-  "metadata": {
-    "completed_at": "TIMESTAMP",
-    "execution_time_seconds": "EXECUTION_TIME",
-    "execution_waves": 2,
-    "secret_access_count": 0,
-    "start_time": "TIMESTAMP",
-    "total_blocks": 1,
-    "workflow_name": "block-status-skip-detection"
-  },
   "outputs": {
-    "block_skipped": "true",
-    "detection_worked": "true"
+    "block_skipped": true,
+    "detection_worked": true
   },
   "status": "success"
 }

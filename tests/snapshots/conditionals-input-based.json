@@ -1,69 +1,8 @@
 {
-  "blocks": {
-    "always_run": {
-      "blocks": {},
-      "depth": 0,
-      "inputs": {
-        "command": "echo \"always\""
-      },
-      "metadata": {
-        "completed_at": "TIMESTAMP",
-        "execution_order": 0,
-        "execution_time_ms": "EXECUTION_TIME",
-        "failed": false,
-        "message": null,
-        "outcome": "success",
-        "skipped": false,
-        "started_at": "TIMESTAMP",
-        "status": "completed",
-        "succeeded": true,
-        "wave": 0
-      },
-      "outputs": {
-        "exit_code": 0,
-        "stderr": "",
-        "stdout": "always\n"
-      }
-    },
-    "conditional_block": {
-      "blocks": {},
-      "depth": 0,
-      "inputs": {
-        "command": "echo \"conditional_ran\""
-      },
-      "metadata": {
-        "completed_at": "TIMESTAMP",
-        "execution_order": 0,
-        "execution_time_ms": "EXECUTION_TIME",
-        "failed": false,
-        "message": null,
-        "outcome": "success",
-        "skipped": false,
-        "started_at": "TIMESTAMP",
-        "status": "completed",
-        "succeeded": true,
-        "wave": 0
-      },
-      "outputs": {
-        "exit_code": 0,
-        "stderr": "",
-        "stdout": "conditional_ran\n"
-      }
-    }
-  },
-  "metadata": {
-    "completed_at": "TIMESTAMP",
-    "execution_time_seconds": "EXECUTION_TIME",
-    "execution_waves": 1,
-    "secret_access_count": 0,
-    "start_time": "TIMESTAMP",
-    "total_blocks": 2,
-    "workflow_name": "conditionals-input-based"
-  },
   "outputs": {
-    "always_ran": "true",
-    "conditional_ran": "true",
-    "conditional_skipped": "false"
+    "always_ran": true,
+    "conditional_ran": true,
+    "conditional_skipped": false
   },
   "status": "success"
 }

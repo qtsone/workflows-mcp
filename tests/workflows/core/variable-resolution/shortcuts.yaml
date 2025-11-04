@@ -1,65 +1,81 @@
 name: variable-resolution-shortcuts
 description: Test shortcut syntax for block outputs (blocks.id.field vs blocks.id.outputs.field)
 tags: [test, core, variables, shortcuts]
-
 blocks:
   - id: producer
     type: Shell
     inputs:
       command: echo "value"
-
   - id: use_status_shortcut
     description: "Use shortcut syntax to access block output"
     type: Shell
     inputs:
       command: echo "{{blocks.producer.status}}"
     depends_on: [producer]
-
   - id: use_status_full_path
     description: "Use full path to access block output"
     type: Shell
     inputs:
       command: echo "{{blocks.producer.metadata.status}}"
     depends_on: [producer]
-
   - id: use_outcome_shortcut
     description: "Use shortcut syntax to access block output"
     type: Shell
     inputs:
       command: echo "{{blocks.producer.outcome}}"
     depends_on: [producer]
-
   - id: use_outcome_full_path
     description: "Use full path to access block output"
     type: Shell
     inputs:
       command: echo "{{blocks.producer.metadata.outcome}}"
     depends_on: [producer]
-
   - id: use_success_shortcut
     description: "Use shortcut syntax to access block output"
     type: Shell
     inputs:
       command: echo "{{blocks.producer.succeeded}}"
     depends_on: [producer]
-
   - id: use_success_full_path
     description: "Use full path to access block output"
     type: Shell
     inputs:
       command: echo "{{blocks.producer.metadata.succeeded}}"
     depends_on: [producer]
-
 outputs:
-  status_shortcut_works: "{{blocks.use_status_shortcut.succeeded}}"
-  status_full_path_works: "{{blocks.use_status_full_path.succeeded}}"
-  outcome_shortcut_works: "{{blocks.use_outcome_shortcut.succeeded}}"
-  outcome_full_path_works: "{{blocks.use_outcome_full_path.succeeded}}"
-  success_shortcut_works: "{{blocks.use_success_shortcut.succeeded}}"
-  success_full_path_works: "{{blocks.use_success_full_path.succeeded}}"
-  status_shortcut_value: "{{blocks.producer.status}}"
-  status_full_path_value: "{{blocks.producer.metadata.status}}"
-  outcome_shortcut_value: "{{blocks.producer.outcome}}"
-  outcome_full_path_value: "{{blocks.producer.metadata.outcome}}"
-  success_shortcut_value: "{{blocks.producer.succeeded}}"
-  success_full_path_value: "{{blocks.producer.metadata.succeeded}}"
+  status_shortcut_works:
+    value: "{{blocks.use_status_shortcut.succeeded}}"
+    type: bool
+  status_full_path_works:
+    value: "{{blocks.use_status_full_path.succeeded}}"
+    type: bool
+  outcome_shortcut_works:
+    value: "{{blocks.use_outcome_shortcut.succeeded}}"
+    type: bool
+  outcome_full_path_works:
+    value: "{{blocks.use_outcome_full_path.succeeded}}"
+    type: bool
+  success_shortcut_works:
+    value: "{{blocks.use_success_shortcut.succeeded}}"
+    type: bool
+  success_full_path_works:
+    value: "{{blocks.use_success_full_path.succeeded}}"
+    type: bool
+  status_shortcut_value:
+    value: "{{blocks.producer.status}}"
+    type: str
+  status_full_path_value:
+    value: "{{blocks.producer.metadata.status}}"
+    type: str
+  outcome_shortcut_value:
+    value: "{{blocks.producer.outcome}}"
+    type: str
+  outcome_full_path_value:
+    value: "{{blocks.producer.metadata.outcome}}"
+    type: str
+  success_shortcut_value:
+    value: "{{blocks.producer.succeeded}}"
+    type: bool
+  success_full_path_value:
+    value: "{{blocks.producer.metadata.succeeded}}"
+    type: bool

@@ -29,8 +29,18 @@ blocks:
       command: rm -f "{{inputs.state_file}}"
     depends_on: [read_state, read_nonexistent]
 outputs:
-  phase: "{{blocks.read_state.outputs.data.phase}}"
-  count: "{{blocks.read_state.outputs.data.count}}"
-  nested_key: "{{blocks.read_state.outputs.data.nested.key}}"
-  nonexistent_found: "{{blocks.read_nonexistent.outputs.found}}"
-  cleanup_done: "{{blocks.cleanup.succeeded}}"
+  phase:
+    value: "{{blocks.read_state.outputs.data.phase}}"
+    type: str
+  count:
+    value: "{{blocks.read_state.outputs.data.count}}"
+    type: num
+  nested_key:
+    value: "{{blocks.read_state.outputs.data.nested.key}}"
+    type: str
+  nonexistent_found:
+    value: "{{blocks.read_nonexistent.outputs.found}}"
+    type: bool
+  cleanup_done:
+    value: "{{blocks.cleanup.succeeded}}"
+    type: bool

@@ -3,7 +3,6 @@ description: |
   Test basic HttpCall functionality with GET request
   Uses httpbin.org for reliable, predictable responses
 tags: [test, core, http, api]
-
 blocks:
   # Test basic GET request
   - id: get_request
@@ -12,7 +11,6 @@ blocks:
       url: "https://httpbin.org/get"
       method: "GET"
       timeout: 10
-
   # Test POST request with JSON body
   - id: post_json
     type: HttpCall
@@ -27,7 +25,6 @@ blocks:
         number: 42
       timeout: 10
     depends_on: [get_request]
-
   # Test that response is valid JSON
   - id: verify_json_response
     type: Shell
@@ -41,10 +38,19 @@ blocks:
           exit 1
         fi
     depends_on: [post_json]
-
 outputs:
-  get_status: "{{blocks.get_request.outputs.status_code}}"
-  get_success: "{{blocks.get_request.succeeded}}"
-  post_status: "{{blocks.post_json.outputs.status_code}}"
-  post_success: "{{blocks.post_json.succeeded}}"
-  json_verified: "{{blocks.verify_json_response.succeeded}}"
+  get_status:
+    value: "{{blocks.get_request.outputs.status_code}}"
+    type: str
+  get_success:
+    value: "{{blocks.get_request.succeeded}}"
+    type: bool
+  post_status:
+    value: "{{blocks.post_json.outputs.status_code}}"
+    type: str
+  post_success:
+    value: "{{blocks.post_json.succeeded}}"
+    type: bool
+  json_verified:
+    value: "{{blocks.verify_json_response.succeeded}}"
+    type: bool

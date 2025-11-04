@@ -25,5 +25,9 @@ blocks:
       command: rm -f "{{inputs.state_file}}"
     depends_on: [write_state]
 outputs:
-  write_succeeded: "{{blocks.write_state.succeeded}}"
-  cleanup_done: "{{blocks.cleanup.succeeded}}"
+  write_succeeded:
+    value: "{{blocks.write_state.succeeded}}"
+    type: bool
+  cleanup_done:
+    value: "{{blocks.cleanup.succeeded}}"
+    type: bool

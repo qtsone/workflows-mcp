@@ -3,21 +3,18 @@ description: mypy tool specifications and installation metadata
 version: "1.0"
 author: Workflows MCP Team
 tags: [tools, catalog, mypy, python, type-checking, static-analysis]
-
 # Catalog files are metadata-only (minimal no-op block for validation)
 blocks:
   - id: catalog_marker
     type: Shell
     inputs:
       command: 'printf "Catalog file: mypy tool specifications"'
-
 # Tool metadata stored as workflow inputs
 inputs:
   tool_catalog_type:
     type: str
     description: Marker indicating this is a catalog file
     default: "catalog"
-
   metadata:
     type: dict
     description: Tool metadata and specifications
@@ -26,43 +23,35 @@ inputs:
       tool_type: python_package
       command_name: mypy
       description: Optional static type checker for Python
-
       # Version checking configuration
       version_check:
         command: mypy --version
         pattern: 'mypy (\d+\.\d+)'
         import_name: mypy
-
       # Installation options (priority order)
       installation:
         uv:
           package_name: mypy
           recommended: true
           notes: Fastest installation method via uv pip
-
         pip:
           package_name: mypy
           notes: Standard installation via pip
-
         brew:
           formula: mypy
           platforms: [macos]
           notes: System-wide installation via Homebrew (macOS only)
-
       # Package extras
       extras:
         dmypy:
           packages: [psutil]
           description: Daemon mode for faster repeated checks
-
         reports:
           packages: [lxml]
           description: Generate HTML type checking reports
-
         all:
           packages: [psutil, lxml]
           description: All optional mypy dependencies
-
       # Version constraints
       constraints:
         python_version: '>=3.8'
@@ -70,13 +59,11 @@ inputs:
         recommended_version: '>=1.8.0'
         tested_versions: ['1.8.0', '1.9.0', '1.10.0']
         notes: Version 1.0+ provides stable type checking with protocol support
-
       # Platform-specific notes
       platform_notes:
         macos: Homebrew installation recommended for system-wide use
         linux: pip installation recommended
         windows: pip installation recommended
-
       # Documentation links
       documentation:
         homepage: https://mypy-lang.org/
@@ -84,7 +71,6 @@ inputs:
         configuration: https://mypy.readthedocs.io/en/stable/config_file.html
         cheat_sheet: https://mypy.readthedocs.io/en/stable/cheat_sheet_py3.html
         common_issues: https://mypy.readthedocs.io/en/stable/common_issues.html
-
       # Common use cases
       usage:
         check: mypy .
@@ -92,7 +78,8 @@ inputs:
         strict: mypy --strict .
         incremental: mypy --incremental .
         daemon: dmypy run -- .
-
 outputs:
-  catalog_type: "catalog"
-  tool_catalog_marker: "{{blocks.catalog_marker.outputs.stdout}}"
+  catalog_type:
+    value: "catalog"
+  tool_catalog_marker:
+    value: "{{blocks.catalog_marker.outputs.stdout}}"

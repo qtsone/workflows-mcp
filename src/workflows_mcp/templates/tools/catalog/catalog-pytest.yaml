@@ -3,21 +3,18 @@ description: pytest tool specifications and installation metadata
 version: "1.0"
 author: Workflows MCP Team
 tags: [tools, catalog, pytest, python, testing]
-
 # Catalog files are metadata-only (minimal no-op block for validation)
 blocks:
   - id: catalog_marker
     type: Shell
     inputs:
       command: 'printf "Catalog file: pytest tool specifications"'
-
 # Tool metadata stored as workflow inputs
 inputs:
   tool_catalog_type:
     type: str
     description: Marker indicating this is a catalog file
     default: "catalog"
-
   metadata:
     type: dict
     description: Tool metadata and specifications
@@ -26,43 +23,35 @@ inputs:
       tool_type: python_package
       command_name: pytest
       description: Python testing framework with fixtures and plugins
-
       # Version checking configuration
       version_check:
         command: pytest --version
         pattern: 'pytest (\d+\.\d+\.\d+)'
         import_name: pytest
-
       # Installation options (priority order)
       installation:
         uv:
           package_name: pytest
           recommended: true
           notes: Fastest installation method via uv pip
-
         pip:
           package_name: pytest
           notes: Standard installation via pip
-
         brew:
           formula: pytest
           platforms: [macos]
           notes: System-wide installation via Homebrew (macOS only)
-
       # Package extras and their purposes
       extras:
         testing:
           packages: [pytest-cov, pytest-xdist]
           description: Coverage reporting and parallel testing
-
         dev:
           packages: [pytest-mock, pytest-asyncio]
           description: Development and async testing support
-
         all:
           packages: [pytest-cov, pytest-xdist, pytest-mock, pytest-asyncio]
           description: All common pytest plugins
-
       # Version constraints
       constraints:
         python_version: ">=3.8"
@@ -70,20 +59,19 @@ inputs:
         recommended_version: ">=8.0.0"
         tested_versions: ["7.4.0", "8.0.0", "8.1.0"]
         notes: Version 7.0+ required for modern Python async support
-
       # Platform-specific notes
       platform_notes:
         macos: Homebrew installation recommended for system-wide use
         linux: Use pip for venv, apt-get for system installation
         windows: pip installation recommended
-
       # Documentation links
       documentation:
         homepage: https://pytest.org
         installation: https://docs.pytest.org/en/stable/getting-started.html
         troubleshooting: https://docs.pytest.org/en/stable/how-to/failures.html
         plugins: https://docs.pytest.org/en/stable/reference/plugin_list.html
-
 outputs:
-  catalog_type: "catalog"
-  tool_catalog_marker: "{{blocks.catalog_marker.outputs.stdout}}"
+  catalog_type:
+    value: "catalog"
+  tool_catalog_marker:
+    value: "{{blocks.catalog_marker.outputs.stdout}}"

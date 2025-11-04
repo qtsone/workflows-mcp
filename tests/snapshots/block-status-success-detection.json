@@ -1,68 +1,7 @@
 {
-  "blocks": {
-    "check_success": {
-      "blocks": {},
-      "depth": 0,
-      "inputs": {
-        "command": "echo \"detected\""
-      },
-      "metadata": {
-        "completed_at": "TIMESTAMP",
-        "execution_order": 1,
-        "execution_time_ms": "EXECUTION_TIME",
-        "failed": false,
-        "message": null,
-        "outcome": "success",
-        "skipped": false,
-        "started_at": "TIMESTAMP",
-        "status": "completed",
-        "succeeded": true,
-        "wave": 1
-      },
-      "outputs": {
-        "exit_code": 0,
-        "stderr": "",
-        "stdout": "detected\n"
-      }
-    },
-    "successful_block": {
-      "blocks": {},
-      "depth": 0,
-      "inputs": {
-        "command": "echo \"success\""
-      },
-      "metadata": {
-        "completed_at": "TIMESTAMP",
-        "execution_order": 0,
-        "execution_time_ms": "EXECUTION_TIME",
-        "failed": false,
-        "message": null,
-        "outcome": "success",
-        "skipped": false,
-        "started_at": "TIMESTAMP",
-        "status": "completed",
-        "succeeded": true,
-        "wave": 0
-      },
-      "outputs": {
-        "exit_code": 0,
-        "stderr": "",
-        "stdout": "success\n"
-      }
-    }
-  },
-  "metadata": {
-    "completed_at": "TIMESTAMP",
-    "execution_time_seconds": "EXECUTION_TIME",
-    "execution_waves": 2,
-    "secret_access_count": 0,
-    "start_time": "TIMESTAMP",
-    "total_blocks": 2,
-    "workflow_name": "block-status-success-detection"
-  },
   "outputs": {
-    "block_succeeded": "true",
-    "detection_worked": "true"
+    "block_succeeded": true,
+    "detection_worked": true
   },
   "status": "success"
 }

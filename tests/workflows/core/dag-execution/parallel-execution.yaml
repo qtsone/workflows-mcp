@@ -32,9 +32,16 @@ blocks:
     depends_on:
       - after_parallel
 outputs:
-  parallel_1_output: "{{blocks.parallel_1.outputs.stdout}}"
-  parallel_2_output: "{{blocks.parallel_2.outputs.stdout}}"
-  parallel_3_output: "{{blocks.parallel_3.outputs.stdout}}"
-  all_succeeded: >
-    {{blocks.parallel_1.succeeded}} and {{blocks.parallel_2.succeeded}} and {{blocks.parallel_3.succeeded}} and {{blocks.final.succeeded}}
-
+  parallel_1_output:
+    value: "{{blocks.parallel_1.outputs.stdout}}"
+    type: str
+  parallel_2_output:
+    value: "{{blocks.parallel_2.outputs.stdout}}"
+    type: str
+  parallel_3_output:
+    value: "{{blocks.parallel_3.outputs.stdout}}"
+    type: str
+  all_succeeded:
+    value: >
+      {{blocks.parallel_1.succeeded}} and {{blocks.parallel_2.succeeded}} and {{blocks.parallel_3.succeeded}} and {{blocks.final.succeeded}}
+    type: bool

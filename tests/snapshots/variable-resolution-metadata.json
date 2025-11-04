@@ -1,68 +1,7 @@
 {
-  "blocks": {
-    "use_start_time": {
-      "blocks": {},
-      "depth": 0,
-      "inputs": {
-        "command": "echo \"TIMESTAMP\""
-      },
-      "metadata": {
-        "completed_at": "TIMESTAMP",
-        "execution_order": 0,
-        "execution_time_ms": "EXECUTION_TIME",
-        "failed": false,
-        "message": null,
-        "outcome": "success",
-        "skipped": false,
-        "started_at": "TIMESTAMP",
-        "status": "completed",
-        "succeeded": true,
-        "wave": 0
-      },
-      "outputs": {
-        "exit_code": 0,
-        "stderr": "",
-        "stdout": "TIMESTAMP\n"
-      }
-    },
-    "use_workflow_name": {
-      "blocks": {},
-      "depth": 0,
-      "inputs": {
-        "command": "echo \"variable-resolution-metadata\""
-      },
-      "metadata": {
-        "completed_at": "TIMESTAMP",
-        "execution_order": 0,
-        "execution_time_ms": "EXECUTION_TIME",
-        "failed": false,
-        "message": null,
-        "outcome": "success",
-        "skipped": false,
-        "started_at": "TIMESTAMP",
-        "status": "completed",
-        "succeeded": true,
-        "wave": 0
-      },
-      "outputs": {
-        "exit_code": 0,
-        "stderr": "",
-        "stdout": "variable-resolution-metadata\n"
-      }
-    }
-  },
-  "metadata": {
-    "completed_at": "TIMESTAMP",
-    "execution_time_seconds": "EXECUTION_TIME",
-    "execution_waves": 1,
-    "secret_access_count": 0,
-    "start_time": "TIMESTAMP",
-    "total_blocks": 2,
-    "workflow_name": "variable-resolution-metadata"
-  },
   "outputs": {
     "start_time": "TIMESTAMP",
-    "workflow_name": "variable-resolution-metadata\n"
+    "workflow_name": "variable-resolution-metadata"
   },
   "status": "success"
 }

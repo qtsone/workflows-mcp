@@ -50,6 +50,12 @@ blocks:
       command: rm -rf "{{inputs.test_dir}}"
     depends_on: [verify_file_created]
 outputs:
-  template_rendered: "{{blocks.render_template.succeeded}}"
-  file_content: "{{blocks.verify_file_created.outputs.content}}"
-  cleanup_done: "{{blocks.cleanup.succeeded}}"
+  template_rendered:
+    value: "{{blocks.render_template.succeeded}}"
+    type: bool
+  file_content:
+    value: "{{blocks.verify_file_created.outputs.content}}"
+    type: str
+  cleanup_done:
+    value: "{{blocks.cleanup.succeeded}}"
+    type: bool

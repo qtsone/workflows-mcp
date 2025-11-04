@@ -70,6 +70,7 @@ Restart your LLM client, and you're ready to go!
 
 - **DAG-Based Workflows**: Automatic dependency resolution and parallel execution
 - **🔐 Secrets Management**: Server-side credential handling with automatic redaction (v5.0.0+)
+- **🤖 LLM Integration**: Native LLM API calls with schema validation and retry logic
 - **Workflow Composition**: Reusable workflows via Workflow blocks
 - **Conditional Execution**: Boolean expressions for dynamic control flow
 - **Variable Resolution**: Five-namespace system (inputs, metadata, blocks, secrets, __internal__)
@@ -113,6 +114,47 @@ blocks:
   }
 }
 ```
+
+### 🤖 LLM Integration
+
+Call LLM APIs directly from workflows with automatic retry logic and JSON schema validation:
+
+```yaml
+blocks:
+  - id: extract_data
+    type: LLMCall
+    inputs:
+      provider: openai
+      model: gpt-4o-mini
+      api_key: "{{secrets.OPENAI_API_KEY}}"
+      prompt: "Extract key information from: {{inputs.text}}"
+      response_schema:
+        type: object
+        required: [summary, confidence]
+        properties:
+          summary: {type: string}
+          confidence: {type: number, minimum: 0, maximum: 1}
+      max_retries: 3
+```
+
+**Supported Providers:**
+
+- **OpenAI** - API access with native Structured Outputs
+- **Anthropic** - API access for Claude models
+- **Gemini** - API access for Gemini models
+- **Ollama** - Local Ollama server API
+- **OpenAI-compatible** - LM Studio, vLLM, and other compatible endpoints
+
+**Key Features:**
+
+- ✅ **Native schema validation** - Send JSON Schema to API for guaranteed structure
+- ✅ **Automatic retry** - Exponential backoff with validation feedback loop
+- ✅ **Token tracking** - Monitor usage and costs
+- ✅ **Secrets integration** - Secure API key management
+
+**For Local CLI Tools:**
+
+To use local Claude CLI or Gemini CLI instead of APIs, use the `llm-process` workflow template which wraps CLI commands.
 
 ## What Can You Do With It?
 
@@ -184,8 +226,32 @@ blocks:
       command: printf "Hello, {{inputs.name}}!"
 
 outputs:
-  greeting: "{{blocks.greet.outputs.stdout}}"
+  greeting:
+    value: "{{blocks.greet.outputs.stdout}}"
+    type: str
+    description: "The greeting message"
 ```
+
+### Workflow Outputs
+
+Workflow outputs support automatic type coercion, allowing you to declare the expected type and get properly typed values:
+
+```yaml
+outputs:
+  output_name:
+    value: "{{blocks.block_id.outputs.field}}"  # Variable expression
+    type: str                                     # Type declaration (optional)
+    description: "Human-readable description"    # Documentation (optional)
+```
+
+**Supported Types:**
+
+- **str** - Text values (default if type not specified)
+- **num** - Numeric values (integer or float - JSON doesn't distinguish)
+- **bool** - Boolean values (true/false)
+- **list** - List/array values
+- **dict** - Dictionary/object values
+- **json** - Parse JSON string into dict/list/str/num/bool/None
 
 ### Key Features
 

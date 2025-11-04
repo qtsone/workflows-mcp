@@ -13,5 +13,9 @@ blocks:
     condition: "{{blocks.successful_block.succeeded}}"
     depends_on: [successful_block]
 outputs:
-  block_succeeded: "{{blocks.successful_block.succeeded}}"
-  detection_worked: "{{blocks.check_success.succeeded}}"
+  block_succeeded:
+    value: "{{blocks.successful_block.succeeded}}"
+    type: bool
+  detection_worked:
+    value: "{{blocks.check_success.succeeded}}"
+    type: bool

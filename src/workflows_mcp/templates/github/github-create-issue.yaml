@@ -11,30 +11,25 @@ description: |
   Requirements:
   - GitHub CLI (`gh`) installed and authenticated
   - Git repository with GitHub remote
-
 tags:
   - github
   - interactive
   - issues
-
 inputs:
   repo_path:
     type: str
     default: "."
     description: Path to git repository
     required: false
-
   auto_confirm:
     type: bool
     default: false
     description: Skip confirmation prompt and create issue immediately
     required: false
-
 blocks:
   # ============================================================================
   # Phase 1: Prerequisite Validation
   # ============================================================================
-
   - id: check_gh_installed
     type: Shell
     inputs:
@@ -45,7 +40,6 @@ blocks:
           exit 1
         fi
         echo "GitHub CLI found: $(gh --version | head -1)"
-
   - id: check_git_repo
     type: Shell
     inputs:
@@ -59,7 +53,6 @@ blocks:
       working_dir: "{{inputs.repo_path}}"
     depends_on:
       - check_gh_installed
-
   - id: check_gh_auth
     type: Shell
     inputs:
@@ -73,11 +66,9 @@ blocks:
       working_dir: "{{inputs.repo_path}}"
     depends_on:
       - check_git_repo
-
   # ============================================================================
   # Phase 2: Repository Context Gathering (Parallel Execution)
   # ============================================================================
-
   - id: get_repo_info
     type: Shell
     inputs:
@@ -105,7 +96,6 @@ blocks:
       repo_url:
         type: str
         path: "$SCRATCH/repo_url.txt"
-
   - id: get_repo_labels
     type: Shell
     inputs:
@@ -131,7 +121,6 @@ blocks:
       label_names:
         type: str
         path: "$SCRATCH/label_names.txt"
-
   - id: get_recent_issues
     type: Shell
     inputs:
@@ -154,43 +143,20 @@ blocks:
       recent_issues:
         type: str
         path: "$SCRATCH/recent_issues_formatted.txt"
-
   # ============================================================================
   # Phase 3: Interactive Issue Description
   # ============================================================================
-
   - id: get_issue_description
     type: Prompt
     inputs:
-      prompt: |
-        # 🐛 GitHub Issue Creator
-
-        **Repository**: {{blocks.get_repo_info.outputs.repo_name}}
-        **Description**: {{blocks.get_repo_info.outputs.repo_desc}}
-
-        ## Describe the issue you want to create
-
-        Please provide a comprehensive description including:
-        - **Problem or feature request**: What is the issue about?
-        - **Context**: When does this occur? What triggers it?
-        - **Expected behavior**: What should happen?
-        - **Actual behavior** (for bugs): What actually happens?
-        - **Additional context**: Any relevant details, logs, or examples
-
-        The more detail you provide, the better the generated issue will be.
-
-        ---
-
-        **Your description**:
+      prompt: "# \U0001F41B GitHub Issue Creator\n\n**Repository**: {{blocks.get_repo_info.outputs.repo_name}}\n**Description**: {{blocks.get_repo_info.outputs.repo_desc}}\n\n## Describe the issue you want to create\n\nPlease provide a comprehensive description including:\n- **Problem or feature request**: What is the issue about?\n- **Context**: When does this occur? What triggers it?\n- **Expected behavior**: What should happen?\n- **Actual behavior** (for bugs): What actually happens?\n- **Additional context**: Any relevant details, logs, or examples\n\nThe more detail you provide, the better the generated issue will be.\n\n---\n\n**Your description**:\n"
     depends_on:
       - get_repo_info
       - get_repo_labels
       - get_recent_issues
-
   # ============================================================================
   # Phase 4: LLM Content Generation
   # ============================================================================
-
   - id: generate_title
     type: Prompt
     inputs:
@@ -219,7 +185,6 @@ blocks:
         **Generated title**:
     depends_on:
       - get_issue_description
-
   - id: generate_body
     type: Prompt
     inputs:
@@ -243,7 +208,6 @@ blocks:
         Provide ONLY the Markdown body (no explanatory text, no quotes):
     depends_on:
       - generate_title
-
   - id: filter_relevant_labels
     type: Shell
     inputs:
@@ -286,7 +250,6 @@ blocks:
       filtered_labels:
         type: str
         path: "$SCRATCH/filtered_labels.txt"
-
   - id: select_labels
     type: Prompt
     inputs:
@@ -312,50 +275,21 @@ blocks:
     depends_on:
       - generate_body
       - filter_relevant_labels
-
   # ============================================================================
   # Phase 5: Preview and Confirmation
   # ============================================================================
-
   - id: preview_and_confirm
     type: Prompt
     inputs:
-      prompt: |
-        # 📝 GitHub Issue Preview
-
-        Ready to create the following issue in **{{blocks.get_repo_info.outputs.repo_name}}**:
-
-        ---
-
-        ## Title
-        {{blocks.generate_title.outputs.response}}
-
-        ## Labels
-        {{blocks.select_labels.outputs.response}}
-
-        ## Body
-        ```markdown
-        {{blocks.generate_body.outputs.response}}
-        ```
-
-        ---
-
-        **Create this issue?**
-
-        Respond:
-        - **'yes'** to create the issue
-        - **'no'** to cancel
-        - **'edit'** if you want to modify anything (note: editing not implemented in v1, will cancel)
+      prompt: "# \U0001F4DD GitHub Issue Preview\n\nReady to create the following issue in **{{blocks.get_repo_info.outputs.repo_name}}**:\n\n---\n\n## Title\n{{blocks.generate_title.outputs.response}}\n\n## Labels\n{{blocks.select_labels.outputs.response}}\n\n## Body\n```markdown\n{{blocks.generate_body.outputs.response}}\n```\n\n---\n\n**Create this issue?**\n\nRespond:\n- **'yes'** to create the issue\n- **'no'** to cancel\n- **'edit'** if you want to modify anything (note: editing not implemented in v1, will cancel)\n"
     condition: "not {{inputs.auto_confirm}}"
     depends_on:
       - generate_title
       - generate_body
       - select_labels
-
   # ============================================================================
   # Phase 6: Issue Creation
   # ============================================================================
-
   - id: create_issue
     type: Shell
     inputs:
@@ -408,9 +342,12 @@ blocks:
       issue_url:
         type: str
         path: "$SCRATCH/issue_url.txt"
-
 outputs:
-  created: "{{blocks.create_issue.succeeded}}"
-  issue_url: "{{blocks.create_issue.outputs.issue_url}}"
-  title: "{{blocks.generate_title.outputs.response}}"
-  labels: "{{blocks.select_labels.outputs.response}}"
+  created:
+    value: "{{blocks.create_issue.succeeded}}"
+  issue_url:
+    value: "{{blocks.create_issue.outputs.issue_url}}"
+  title:
+    value: "{{blocks.generate_title.outputs.response}}"
+  labels:
+    value: "{{blocks.select_labels.outputs.response}}"

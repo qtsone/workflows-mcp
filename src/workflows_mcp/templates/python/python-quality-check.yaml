@@ -3,43 +3,35 @@ description: Comprehensive Python quality checks (ruff linting, mypy type checki
 version: "1.0"
 author: Workflows MCP Team
 tags: [python, quality, linting, mypy, ruff, formatting, tdd]
-
 inputs:
   source_path:
     type: str
     description: Path to source code directory or file to check
     default: "src/"
-
   strict:
     type: bool
     description: Enable strict mode (fail on any warnings, strict mypy)
     default: false
-
   check_linting:
     type: bool
     description: Enable ruff linting checks
     default: true
-
   check_types:
     type: bool
     description: Enable mypy type checking
     default: true
-
   check_formatting:
     type: bool
     description: Enable ruff format validation
     default: true
-
   working_dir:
     type: str
     description: Working directory for checks
     default: "."
-
   venv_path:
     type: str
     description: Virtual environment path (will use {{inputs.venv_path}}/bin/{ruff,mypy} if available)
     default: ""
-
 blocks:
   # Build ruff check command (prefer uv for proper venv management)
   - id: build_ruff_command
@@ -57,7 +49,6 @@ blocks:
         echo "$RUFF check {{inputs.source_path}}"
       timeout: 5
     condition: "{{inputs.check_linting}}"
-
   # Run ruff linting
   - id: run_ruff_linting
     type: Shell
@@ -65,11 +56,9 @@ blocks:
       command: "{{blocks.build_ruff_command.outputs.stdout}}"
       working_dir: "{{inputs.working_dir}}"
       timeout: 300
-      
     depends_on:
       - build_ruff_command
     condition: "{{inputs.check_linting}}"
-
   # Build mypy command (prefer uv for proper venv management)
   - id: build_mypy_command
     type: Shell
@@ -92,7 +81,6 @@ blocks:
         fi
       timeout: 5
     condition: "{{inputs.check_types}}"
-
   # Run mypy type checking
   - id: run_mypy_checking
     type: Shell
@@ -100,11 +88,9 @@ blocks:
       command: "{{blocks.build_mypy_command.outputs.stdout}}"
       working_dir: "{{inputs.working_dir}}"
       timeout: 300
-      
     depends_on:
       - build_mypy_command
     condition: "{{inputs.check_types}}"
-
   # Build ruff format check command (prefer uv for proper venv management)
   - id: build_format_command
     type: Shell
@@ -121,7 +107,6 @@ blocks:
         echo "$RUFF format --check {{inputs.source_path}}"
       timeout: 5
     condition: "{{inputs.check_formatting}}"
-
   # Run ruff format validation
   - id: run_format_check
     type: Shell
@@ -129,11 +114,9 @@ blocks:
       command: "{{blocks.build_format_command.outputs.stdout}}"
       working_dir: "{{inputs.working_dir}}"
       timeout: 300
-      
     depends_on:
       - build_format_command
     condition: "{{inputs.check_formatting}}"
-
   # Determine individual check statuses
   - id: get_linting_status
     type: Shell
@@ -147,10 +130,8 @@ blocks:
           echo "failed"
         fi
       timeout: 5
-      
     depends_on:
       - run_ruff_linting
-
   - id: get_typing_status
     type: Shell
     inputs:
@@ -163,10 +144,8 @@ blocks:
           echo "failed"
         fi
       timeout: 5
-      
     depends_on:
       - run_mypy_checking
-
   - id: get_formatting_status
     type: Shell
     inputs:
@@ -179,10 +158,8 @@ blocks:
           echo "failed"
         fi
       timeout: 5
-      
     depends_on:
       - run_format_check
-
   # Calculate overall pass/fail status
   # A check "passes" if it's skipped OR if it succeeded
   - id: calculate_overall_status
@@ -214,12 +191,10 @@ blocks:
           echo "failed"
         fi
       timeout: 5
-      
     depends_on:
       - get_linting_status
       - get_typing_status
       - get_formatting_status
-
   # Generate display symbols for summary
   - id: format_linting_display
     type: Shell
@@ -232,10 +207,8 @@ blocks:
           "skipped") echo "⊘ SKIPPED" ;;
         esac
       timeout: 5
-      
     depends_on:
       - get_linting_status
-
   - id: format_typing_display
     type: Shell
     inputs:
@@ -247,10 +220,8 @@ blocks:
           "skipped") echo "⊘ SKIPPED" ;;
         esac
       timeout: 5
-      
     depends_on:
       - get_typing_status
-
   - id: format_formatting_display
     type: Shell
     inputs:
@@ -262,10 +233,8 @@ blocks:
           "skipped") echo "⊘ SKIPPED" ;;
         esac
       timeout: 5
-      
     depends_on:
       - get_formatting_status
-
   - id: format_overall_display
     type: Shell
     inputs:
@@ -277,10 +246,8 @@ blocks:
           echo "✗ QUALITY ISSUES FOUND"
         fi
       timeout: 5
-      
     depends_on:
       - calculate_overall_status
-
   # Generate comprehensive summary
   - id: generate_summary
     type: Shell
@@ -304,28 +271,33 @@ blocks:
       - format_typing_display
       - format_formatting_display
       - format_overall_display
-
 outputs:
   # Individual check results (boolean expressions)
-  linting_passed: "{{blocks.get_linting_status.outputs.stdout}} != 'failed'"
-  linting_exit_code: "{{blocks.run_ruff_linting.outputs.exit_code}}"
-
-  typing_passed: "{{blocks.get_typing_status.outputs.stdout}} != 'failed'"
-  typing_exit_code: "{{blocks.run_mypy_checking.outputs.exit_code}}"
-
-  formatting_passed: "{{blocks.get_formatting_status.outputs.stdout}} != 'failed'"
-  formatting_exit_code: "{{blocks.run_format_check.outputs.exit_code}}"
-
+  linting_passed:
+    value: "{{blocks.get_linting_status.outputs.stdout}} != 'failed'"
+  linting_exit_code:
+    value: "{{blocks.run_ruff_linting.outputs.exit_code}}"
+  typing_passed:
+    value: "{{blocks.get_typing_status.outputs.stdout}} != 'failed'"
+  typing_exit_code:
+    value: "{{blocks.run_mypy_checking.outputs.exit_code}}"
+  formatting_passed:
+    value: "{{blocks.get_formatting_status.outputs.stdout}} != 'failed'"
+  formatting_exit_code:
+    value: "{{blocks.run_format_check.outputs.exit_code}}"
   # Overall status
-  all_checks_passed: "{{blocks.calculate_overall_status.outputs.stdout}} == 'passed'"
-
+  all_checks_passed:
+    value: "{{blocks.calculate_overall_status.outputs.stdout}} == 'passed'"
   # Summary and metadata
-  summary: "{{blocks.generate_summary.outputs.stdout}}"
-
+  summary:
+    value: "{{blocks.generate_summary.outputs.stdout}}"
   # Full outputs for debugging
-  linting_output: "{{blocks.run_ruff_linting.outputs.stdout}}"
-  typing_output: "{{blocks.run_mypy_checking.outputs.stdout}}"
-  formatting_output: "{{blocks.run_format_check.outputs.stdout}}"
-
+  linting_output:
+    value: "{{blocks.run_ruff_linting.outputs.stdout}}"
+  typing_output:
+    value: "{{blocks.run_mypy_checking.outputs.stdout}}"
+  formatting_output:
+    value: "{{blocks.run_format_check.outputs.stdout}}"
   # Execution time
-  execution_time_ms: "{{blocks.generate_summary.metadata.execution_time_ms}}"
+  execution_time_ms:
+    value: "{{blocks.generate_summary.metadata.execution_time_ms}}"

@@ -211,7 +211,7 @@ __marimo__/
 .hooks/
 .mcp.json
 .scratch/
-local/
+.workflows/
 ARCHITECTURE.md
 CLAUDE.md
 docs/

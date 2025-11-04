@@ -115,8 +115,8 @@ class WorkflowRunner:
             # Execute workflow (may raise exceptions)
             execution = await self._execute_workflow_internal(workflow, runtime_inputs, context)
 
-            # Success - wrap in ExecutionResult
-            return ExecutionResult.success(execution)
+            # Success - wrap in ExecutionResult with secret redactor
+            return ExecutionResult.success(execution, self.secret_redactor)
 
         except ExecutionPaused as e:
             # Workflow paused - execution context in exception
@@ -125,6 +125,7 @@ class WorkflowRunner:
                 prompt=e.prompt,
                 execution=e.execution,
                 pause_metadata=e.checkpoint_data,
+                secret_redactor=self.secret_redactor,
             )
 
         except Exception as e:
@@ -144,8 +145,8 @@ class WorkflowRunner:
                     blocks={},
                 )
 
-            # Failure - wrap partial execution in ExecutionResult
-            return ExecutionResult.failure(str(e), partial_execution)
+            # Failure - wrap partial execution in ExecutionResult with secret redactor
+            return ExecutionResult.failure(str(e), partial_execution, self.secret_redactor)
 
     async def resume(
         self,
@@ -171,8 +172,8 @@ class WorkflowRunner:
             # Call internal resume method (returns Execution)
             execution = await self._resume_workflow_internal(checkpoint_id, response or "", context)
 
-            # Success - wrap in ExecutionResult
-            return ExecutionResult.success(execution)
+            # Success - wrap in ExecutionResult with secret redactor
+            return ExecutionResult.success(execution, self.secret_redactor)
 
         except ValueError as e:
             # Checkpoint or workflow not found
@@ -181,7 +182,7 @@ class WorkflowRunner:
                 metadata={"error": "Checkpoint not found", "checkpoint_id": checkpoint_id},
                 blocks={},
             )
-            return ExecutionResult.failure(str(e), minimal_execution)
+            return ExecutionResult.failure(str(e), minimal_execution, self.secret_redactor)
 
         except ExecutionPaused as e:
             # Workflow paused again
@@ -190,6 +191,7 @@ class WorkflowRunner:
                 prompt=e.prompt,
                 execution=e.execution,
                 pause_metadata=e.checkpoint_data,
+                secret_redactor=self.secret_redactor,
             )
 
     async def _execute_workflow_internal(
@@ -708,12 +710,25 @@ class WorkflowRunner:
         execution_waves: list[list[str]],
         start_time: float | None = None,
     ) -> None:
-        """Finalize execution context with outputs and metadata (async for secrets support)."""
-        # Evaluate workflow outputs
-        workflow_outputs = await self._evaluate_workflow_outputs(workflow, exec_context)
-        exec_context.outputs = workflow_outputs
+        """Finalize execution context with outputs and metadata (async for secrets support).
 
-        # Update metadata
+        CRITICAL: This method MUST NOT raise exceptions to ensure partial execution
+        is preserved even if output evaluation fails.
+        """
+        # Evaluate workflow outputs (wrapped to catch resolution errors)
+        try:
+            workflow_outputs = await self._evaluate_workflow_outputs(workflow, exec_context)
+            exec_context.outputs = workflow_outputs
+        except Exception as output_error:
+            # Output evaluation failed (e.g., variable resolution error)
+            # Set outputs to empty dict with error info
+            logger.warning(f"Failed to evaluate workflow outputs: {output_error}")
+            exec_context.outputs = {
+                "_error": f"Output evaluation failed: {output_error}",
+                "_note": "Check debug log for partial execution details",
+            }
+
+        # Update metadata (safe operations, should not fail)
         metadata_updates: dict[str, Any] = {
             "total_blocks": len(completed_blocks),
             "execution_waves": len(execution_waves),
@@ -823,7 +838,17 @@ class WorkflowRunner:
         workflow: WorkflowSchema,
         exec_context: Execution,
     ) -> dict[str, Any]:
-        """Evaluate workflow-level outputs (async for secrets support)."""
+        """
+        Evaluate workflow-level outputs with type coercion (async for secrets support).
+
+        All outputs use WorkflowOutputSchema with:
+        - value: Expression referencing block outputs
+        - type: Output type (defaults to str)
+        - description: Optional documentation
+
+        Type coercion applies based on declared type, converting resolved values to:
+        str, int, float, bool, json, list, or dict.
+        """
         if not workflow.outputs:
             return {}
 
@@ -838,13 +863,19 @@ class WorkflowRunner:
 
         comparison_ops = ["==", "!=", ">=", "<=", ">", "<", " and ", " or ", " not "]
 
-        for output_name, output_value in workflow.outputs.items():
-            output_expr = output_value if isinstance(output_value, str) else output_value.value
+        for output_name, output_schema in workflow.outputs.items():
+            # Extract expression and type from WorkflowOutputSchema
+            output_expr = output_schema.value
+            output_type = (
+                output_schema.type.value
+                if hasattr(output_schema.type, "value")
+                else output_schema.type
+            )
 
             # Resolve variables (async for secrets support)
             resolved_value = await resolver.resolve_async(output_expr)
 
-            # Evaluate boolean expressions if present
+            # Evaluate boolean expressions if present (before type coercion)
             is_string = isinstance(resolved_value, str)
             has_operator = (
                 any(op in resolved_value for op in comparison_ops) if is_string else False
@@ -854,6 +885,18 @@ class WorkflowRunner:
                     resolved_value = evaluator.evaluate(resolved_value, context_dict)
                 except InvalidConditionError:
                     pass
+
+            # Apply type coercion
+            from .executors_core import coerce_value_type
+
+            try:
+                resolved_value = coerce_value_type(resolved_value, output_type)
+            except ValueError as e:
+                # Type coercion failed - log error and keep original value
+                logger.error(
+                    f"Failed to coerce output '{output_name}' to type '{output_type}': {e}. "
+                    f"Using uncoerced value: {resolved_value}"
+                )
 
             outputs[output_name] = resolved_value
 

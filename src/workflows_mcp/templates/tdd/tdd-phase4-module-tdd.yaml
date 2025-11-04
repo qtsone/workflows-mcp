@@ -35,55 +35,46 @@ description: Core TDD red-green-refactor cycle for single module implementation 
 version: "1.0"
 author: MCP Workflows Team
 tags: [tdd, implementation, red-green-refactor, test-first, python, interactive]
-
 inputs:
   project_path:
     type: str
     description: Path to project root directory
     default: "."
     required: false
-
   state_file:
     type: str
     description: Path to TDD state file (JSON)
     default: ".tdd-state.json"
     required: false
-
   module_name:
     type: str
     description: Name of module to implement (required)
     required: true
-
   test_path:
     type: str
     description: Path to test directory (relative to project_path)
     default: "tests"
     required: false
-
   source_path:
     type: str
     description: Path to source directory (relative to project_path)
     default: "src"
     required: false
-
   coverage_threshold:
-    type: int
+    type: num
     description: Minimum code coverage percentage for module
     default: 80
     required: false
-
   language:
     type: str
     description: Programming language for the project (python, javascript, go, etc.)
     default: "python"
     required: false
-
 blocks:
   - id: read_state
     type: ReadJSONState
     inputs:
       path: "{{inputs.project_path}}/{{inputs.state_file}}"
-
   - id: confirm_start
     type: Prompt
     inputs:
@@ -96,7 +87,7 @@ blocks:
         - Completed: {{blocks.read_state.state.completed_modules}}
 
         Ready to begin RED-GREEN-REFACTOR cycle?
-        
+
         Respond with 'yes' or 'no'
       operation: "start_tdd_module_{{inputs.module_name}}"
       details:
@@ -107,7 +98,6 @@ blocks:
         state_loaded: "{{blocks.read_state.outputs.found}}"
     depends_on:
       - read_state
-
   - id: request_test_code
     type: Prompt
     inputs:
@@ -125,12 +115,11 @@ blocks:
         5. Aim for comprehensive coverage ({{inputs.coverage_threshold}}%+ target)
 
         Provide the COMPLETE test file content below:
-        
+
         Respond with 'yes' or 'no'
     depends_on:
       - confirm_start
     condition: "{{blocks.confirm_start.outputs.response}} == 'yes'"
-
   - id: write_test_file
     type: CreateFile
     inputs:
@@ -139,7 +128,6 @@ blocks:
       encoding: "utf-8"
     depends_on:
       - request_test_code
-
   - id: run_tests_verify_fail
     type: Workflow
     inputs:
@@ -153,7 +141,6 @@ blocks:
         working_dir: "{{inputs.project_path}}"
     depends_on:
       - write_test_file
-
   - id: validate_red_phase
     type: Shell
     inputs:
@@ -172,7 +159,6 @@ blocks:
       timeout: 10
     depends_on:
       - run_tests_verify_fail
-
   - id: confirm_red_phase
     type: Prompt
     inputs:
@@ -185,9 +171,9 @@ blocks:
         - This confirms tests will catch missing implementation
 
         Proceed to GREEN phase (implement code)?
-        
+
         Respond with 'yes' or 'no'
-        
+
         Respond with 'yes' or 'no'
       operation: "confirm_red_phase_{{inputs.module_name}}"
       details:
@@ -195,7 +181,6 @@ blocks:
         test_file: "{{inputs.project_path}}/{{inputs.test_path}}/test_{{inputs.module_name}}.py"
     depends_on:
       - validate_red_phase
-
   - id: request_implementation
     type: Prompt
     inputs:
@@ -215,12 +200,11 @@ blocks:
         {{blocks.run_tests_verify_fail.outputs.stderr}}
 
         Provide the COMPLETE implementation file content below:
-        
+
         Respond with 'yes' or 'no'
     depends_on:
       - confirm_red_phase
     condition: "{{blocks.confirm_red_phase.outputs.response}} == 'yes'"
-
   - id: write_implementation
     type: CreateFile
     inputs:
@@ -229,7 +213,6 @@ blocks:
       encoding: "utf-8"
     depends_on:
       - request_implementation
-
   - id: run_tests_verify_pass
     type: Workflow
     inputs:
@@ -243,7 +226,6 @@ blocks:
         working_dir: "{{inputs.project_path}}"
     depends_on:
       - write_implementation
-
   - id: validate_green_phase
     type: Shell
     inputs:
@@ -261,7 +243,6 @@ blocks:
       timeout: 10
     depends_on:
       - run_tests_verify_pass
-
   - id: confirm_green_phase
     type: Prompt
     inputs:
@@ -276,9 +257,9 @@ blocks:
         - Implementation complete and verified
 
         Proceed to REFACTOR phase (improve code quality)?
-        
+
         Respond with 'yes' or 'no'
-        
+
         Respond with 'yes' or 'no'
       operation: "confirm_green_phase_{{inputs.module_name}}"
       details:
@@ -289,7 +270,6 @@ blocks:
         implementation_file: "{{inputs.project_path}}/{{inputs.source_path}}/{{inputs.module_name}}.py"
     depends_on:
       - validate_green_phase
-
   - id: request_refactor
     type: Prompt
     inputs:
@@ -313,7 +293,6 @@ blocks:
     depends_on:
       - confirm_green_phase
     condition: "{{blocks.confirm_green_phase.outputs.response}} == 'yes'"
-
   - id: write_refactored
     type: CreateFile
     inputs:
@@ -322,7 +301,6 @@ blocks:
       encoding: "utf-8"
     depends_on:
       - request_refactor
-
   - id: run_tests_after_refactor
     type: Workflow
     inputs:
@@ -336,7 +314,6 @@ blocks:
         working_dir: "{{inputs.project_path}}"
     depends_on:
       - write_refactored
-
   - id: validate_refactor_phase
     type: Shell
     inputs:
@@ -354,7 +331,6 @@ blocks:
       timeout: 10
     depends_on:
       - run_tests_after_refactor
-
   - id: confirm_refactor_success
     type: Prompt
     inputs:
@@ -370,9 +346,9 @@ blocks:
         - Code quality improved
 
         Mark module as complete in TDD state?
-        
+
         Respond with 'yes' or 'no'
-        
+
         Respond with 'yes' or 'no'
       operation: "confirm_refactor_complete_{{inputs.module_name}}"
       details:
@@ -383,7 +359,6 @@ blocks:
         refactored_file: "{{inputs.project_path}}/{{inputs.source_path}}/{{inputs.module_name}}.py"
     depends_on:
       - validate_refactor_phase
-
   - id: update_state
     type: Shell
     inputs:
@@ -449,7 +424,6 @@ blocks:
     depends_on:
       - confirm_refactor_success
     condition: "{{blocks.confirm_refactor_success.outputs.response}} == 'yes'"
-
   - id: ask_continue
     type: Prompt
     inputs:
@@ -462,62 +436,52 @@ blocks:
         - ✅ REFACTOR: Code improved, tests still passing
 
         What would you like to do next?
-        
+
         Respond with 'yes' or 'no'
     depends_on:
       - update_state
-
   - id: completion_summary
     type: Shell
     inputs:
-      command: |
-        echo "╔════════════════════════════════════════════════════════════════╗"
-        echo "║         TDD RED-GREEN-REFACTOR CYCLE COMPLETE                 ║"
-        echo "╚════════════════════════════════════════════════════════════════╝"
-        echo ""
-        echo "Module: {{inputs.module_name}}"
-        echo ""
-        echo "Phase Results:"
-        echo "  🔴 RED:     Tests written and failed correctly"
-        echo "  🟢 GREEN:   Implementation made tests pass"
-        echo "  🔵 REFACTOR: Code improved while tests passing"
-        echo ""
-        echo "Final Metrics:"
-        echo "  Tests passed: {{blocks.run_tests_after_refactor.outputs.tests_passed}}"
-        echo "  Tests failed: {{blocks.run_tests_after_refactor.outputs.tests_failed}}"
-        echo "  Coverage: {{blocks.run_tests_after_refactor.outputs.coverage_percent}}%"
-        echo ""
-        echo "Files Updated:"
-        echo "  - {{inputs.project_path}}/{{inputs.test_path}}/test_{{inputs.module_name}}.py"
-        echo "  - {{inputs.project_path}}/{{inputs.source_path}}/{{inputs.module_name}}.py"
-        echo "  - {{inputs.project_path}}/{{inputs.state_file}}"
-        echo ""
-        echo "Next Action: {{blocks.ask_continue.response}}"
+      command: "echo \"╔════════════════════════════════════════════════════════════════╗\"\necho \"║         TDD RED-GREEN-REFACTOR CYCLE COMPLETE                 ║\"\necho \"╚════════════════════════════════════════════════════════════════╝\"\necho \"\"\necho \"Module: {{inputs.module_name}}\"\necho \"\"\necho \"Phase Results:\"\necho \"  \U0001F534 RED:     Tests written and failed correctly\"\necho \"  \U0001F7E2 GREEN:   Implementation made tests pass\"\necho \"  \U0001F535 REFACTOR: Code improved while tests passing\"\necho \"\"\necho \"Final Metrics:\"\necho \"  Tests passed: {{blocks.run_tests_after_refactor.outputs.tests_passed}}\"\necho \"  Tests failed: {{blocks.run_tests_after_refactor.outputs.tests_failed}}\"\necho \"  Coverage: {{blocks.run_tests_after_refactor.outputs.coverage_percent}}%\"\necho \"\"\necho \"Files Updated:\"\necho \"  - {{inputs.project_path}}/{{inputs.test_path}}/test_{{inputs.module_name}}.py\"\necho \"  - {{inputs.project_path}}/{{inputs.source_path}}/{{inputs.module_name}}.py\"\necho \"  - {{inputs.project_path}}/{{inputs.state_file}}\"\necho \"\"\necho \"Next Action: {{blocks.ask_continue.response}}\"\n"
       timeout: 10
     depends_on:
       - ask_continue
-
 outputs:
-  module_name: "{{inputs.module_name}}"
-  tests_written: "{{blocks.write_test_file.succeeded}}"
-  tests_passing: "{{blocks.run_tests_after_refactor.succeeded}}"
-  tests_passed: "{{blocks.run_tests_after_refactor.outputs.tests_passed}}"
-  tests_failed: "{{blocks.run_tests_after_refactor.outputs.tests_failed}}"
-  coverage_percent: "{{blocks.run_tests_after_refactor.outputs.coverage_percent}}"
-  refactored: "{{blocks.confirm_refactor_success.outputs.response}} == 'yes'"
-  continue_choice: "{{blocks.ask_continue.response}}"
-  continue_to_next_module: "{{blocks.ask_continue.response}}.lower().startswith('yes')"
-  state_updated: "{{blocks.update_state.succeeded}}"
-
+  module_name:
+    value: "{{inputs.module_name}}"
+  tests_written:
+    value: "{{blocks.write_test_file.succeeded}}"
+  tests_passing:
+    value: "{{blocks.run_tests_after_refactor.succeeded}}"
+  tests_passed:
+    value: "{{blocks.run_tests_after_refactor.outputs.tests_passed}}"
+  tests_failed:
+    value: "{{blocks.run_tests_after_refactor.outputs.tests_failed}}"
+  coverage_percent:
+    value: "{{blocks.run_tests_after_refactor.outputs.coverage_percent}}"
+  refactored:
+    value: "{{blocks.confirm_refactor_success.outputs.response}} == 'yes'"
+  continue_choice:
+    value: "{{blocks.ask_continue.response}}"
+  continue_to_next_module:
+    value: "{{blocks.ask_continue.response}}.lower().startswith('yes')"
+  state_updated:
+    value: "{{blocks.update_state.succeeded}}"
   # Phase completion flags
-  red_phase_complete: "{{blocks.validate_red_phase.succeeded}}"
-  green_phase_complete: "{{blocks.validate_green_phase.succeeded}}"
-  refactor_phase_complete: "{{blocks.validate_refactor_phase.succeeded}}"
-
+  red_phase_complete:
+    value: "{{blocks.validate_red_phase.succeeded}}"
+  green_phase_complete:
+    value: "{{blocks.validate_green_phase.succeeded}}"
+  refactor_phase_complete:
+    value: "{{blocks.validate_refactor_phase.succeeded}}"
   # File paths
-  test_file: "{{inputs.project_path}}/{{inputs.test_path}}/test_{{inputs.module_name}}.py"
-  source_file: "{{inputs.project_path}}/{{inputs.source_path}}/{{inputs.module_name}}.py"
-  state_file: "{{inputs.project_path}}/{{inputs.state_file}}"
-
+  test_file:
+    value: "{{inputs.project_path}}/{{inputs.test_path}}/test_{{inputs.module_name}}.py"
+  source_file:
+    value: "{{inputs.project_path}}/{{inputs.source_path}}/{{inputs.module_name}}.py"
+  state_file:
+    value: "{{inputs.project_path}}/{{inputs.state_file}}"
   # Summary
-  summary: "{{blocks.completion_summary.outputs.stdout}}"
+  summary:
+    value: "{{blocks.completion_summary.outputs.stdout}}"

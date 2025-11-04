@@ -113,7 +113,7 @@ def mock_context():
                 "default": "World",
             }
         },
-        outputs={"result": "{{blocks.step1.outputs.stdout}}"},
+        outputs={"result": {"value": "{{blocks.step1.outputs.stdout}}"}},
     )
     registry.register(test_workflow)
 
@@ -239,7 +239,7 @@ class TestWorkflowExecution:
         result = await execute_workflow(
             workflow="test-workflow",
             inputs={"message": "Test"},
-            response_format="minimal",
+            debug=False,
             ctx=mock_context,
         )
 
@@ -250,21 +250,21 @@ class TestWorkflowExecution:
         assert "metadata" not in result
 
     @pytest.mark.asyncio
-    async def test_execute_workflow_detailed_format(self, mock_context) -> None:
-        """Test workflow execution with detailed response format."""
+    async def test_execute_workflow_debug_mode(self, mock_context) -> None:
+        """Test workflow execution with debug mode (writes logfile)."""
         result = await execute_workflow(
             workflow="test-workflow",
             inputs={"message": "Test"},
-            response_format="detailed",
+            debug=True,
             ctx=mock_context,
         )
 
         assert result["status"] == "success"
         assert "outputs" in result
-        # Detailed format includes blocks and metadata
-        assert "blocks" in result
-        assert "metadata" in result
-        assert len(result["blocks"]) > 0
+        # Debug mode includes logfile path instead of inline blocks/metadata
+        assert "logfile" in result
+        assert result["logfile"].startswith("/tmp/")
+        assert result["logfile"].endswith(".json")
 
     @pytest.mark.asyncio
     async def test_execute_workflow_not_found(self, mock_context) -> None:
@@ -316,13 +316,13 @@ class TestWorkflowExecution:
         result = await execute_workflow(
             workflow="test-workflow",
             inputs={"message": "CustomMessage"},
-            response_format="detailed",
+            debug=True,
             ctx=mock_context,
         )
 
         assert result["status"] == "success"
-        assert "metadata" in result
-        assert isinstance(result["metadata"], dict)
+        assert "logfile" in result
+        assert result["logfile"].startswith("/tmp/")
 
     # Inline workflow execution tests
 
@@ -338,7 +338,8 @@ blocks:
     inputs:
       command: echo 'Inline test'
 outputs:
-  result: "{{blocks.echo.outputs.stdout}}"
+  result:
+    value: "{{blocks.echo.outputs.stdout}}"
 """
 
         result = await execute_inline_workflow(workflow_yaml=workflow_yaml, ctx=mock_context)
@@ -677,7 +678,7 @@ class TestInteractiveWorkflows:
                 arguments={
                     "workflow": "interactive-simple-approval",
                     "inputs": {"message": "Test approval?"},
-                    "response_format": "detailed",
+                    "debug": True,
                 },
             )
 
@@ -698,10 +699,17 @@ class TestInteractiveWorkflows:
             assert "prompt" in response, "Should include prompt message"
             assert "Test approval?" in response["prompt"], "Prompt should contain message"
 
-            # Verify blocks executed before pause
-            assert "blocks" in response
-            assert "start" in response["blocks"], "start block should have executed"
-            assert response["blocks"]["start"]["metadata"]["status"] == "completed", (
+            # Verify debug logfile was created
+            assert "logfile" in response
+            assert response["logfile"].startswith("/tmp/")
+
+            # Optionally verify blocks in logfile (if needed for detailed validation)
+            logfile_path = Path(response["logfile"])
+            assert logfile_path.exists(), "Logfile should exist"
+            debug_data = json.loads(logfile_path.read_text())
+            assert "blocks" in debug_data
+            assert "start" in debug_data["blocks"], "start block should have executed"
+            assert debug_data["blocks"]["start"]["metadata"]["status"] == "completed", (
                 "start should be completed (ADR-007: block status = completed)"
             )
 
@@ -722,7 +730,7 @@ class TestInteractiveWorkflows:
                 arguments={
                     "workflow": "interactive-simple-approval",
                     "inputs": {"message": "Approve deployment?"},
-                    "response_format": "detailed",
+                    "debug": True,
                 },
             )
 
@@ -741,7 +749,7 @@ class TestInteractiveWorkflows:
                 arguments={
                     "checkpoint_id": checkpoint_id,
                     "response": "yes",
-                    "response_format": "detailed",
+                    "debug": True,
                 },
             )
 
@@ -754,21 +762,29 @@ class TestInteractiveWorkflows:
             # Verify workflow completed successfully
             assert resume_response["status"] == "success", "Workflow should complete after resume"
 
+            # Read debug logfile to verify block execution details
+            assert "logfile" in resume_response, "Debug mode should include logfile"
+            logfile_path = resume_response["logfile"]
+            assert os.path.exists(logfile_path), f"Logfile should exist at {logfile_path}"
+
+            with open(logfile_path, encoding="utf-8") as f:
+                debug_data: dict[str, Any] = json.load(f)
+
             # Verify approval block has response
-            assert "approval" in resume_response["blocks"]
-            assert resume_response["blocks"]["approval"]["outputs"]["response"] == "yes", (
+            assert "approval" in debug_data["blocks"]
+            assert debug_data["blocks"]["approval"]["outputs"]["response"] == "yes", (
                 "Response should be captured"
             )
 
             # Verify approved_action executed (condition was true)
-            assert "approved_action" in resume_response["blocks"], "approved_action should execute"
-            assert (
-                resume_response["blocks"]["approved_action"]["metadata"]["status"] == "completed"
-            ), "approved_action should complete (ADR-007: block status = completed)"
+            assert "approved_action" in debug_data["blocks"], "approved_action should execute"
+            assert debug_data["blocks"]["approved_action"]["metadata"]["status"] == "completed", (
+                "approved_action should complete (ADR-007: block status = completed)"
+            )
 
             # Verify denied_action was skipped (condition was false)
-            assert "denied_action" in resume_response["blocks"], "denied_action should exist"
-            assert resume_response["blocks"]["denied_action"]["metadata"]["status"] == "skipped", (
+            assert "denied_action" in debug_data["blocks"], "denied_action should exist"
+            assert debug_data["blocks"]["denied_action"]["metadata"]["status"] == "skipped", (
                 "denied_action should be skipped"
             )
 
@@ -793,7 +809,7 @@ class TestInteractiveWorkflows:
                 arguments={
                     "workflow": "interactive-simple-approval",
                     "inputs": {},
-                    "response_format": "detailed",
+                    "debug": True,
                 },
             )
 
@@ -810,7 +826,7 @@ class TestInteractiveWorkflows:
                 arguments={
                     "checkpoint_id": checkpoint_id,
                     "response": "no",
-                    "response_format": "detailed",
+                    "debug": True,
                 },
             )
 
@@ -823,18 +839,26 @@ class TestInteractiveWorkflows:
             # Verify workflow completed
             assert resume_response["status"] == "success"
 
+            # Read debug logfile to verify block execution details
+            assert "logfile" in resume_response, "Debug mode should include logfile"
+            logfile_path = resume_response["logfile"]
+            assert os.path.exists(logfile_path), f"Logfile should exist at {logfile_path}"
+
+            with open(logfile_path, encoding="utf-8") as f:
+                debug_data: dict[str, Any] = json.load(f)
+
             # Verify response captured
-            assert resume_response["blocks"]["approval"]["outputs"]["response"] == "no"
+            assert debug_data["blocks"]["approval"]["outputs"]["response"] == "no"
 
             # Verify denied_action executed (condition was true)
-            assert (
-                resume_response["blocks"]["denied_action"]["metadata"]["status"] == "completed"
-            ), "denied_action should complete when response is 'no' (ADR-007: block status)"
+            assert debug_data["blocks"]["denied_action"]["metadata"]["status"] == "completed", (
+                "denied_action should complete when response is 'no' (ADR-007: block status)"
+            )
 
             # Verify approved_action was skipped (condition was false)
-            assert (
-                resume_response["blocks"]["approved_action"]["metadata"]["status"] == "skipped"
-            ), "approved_action should be skipped when response is 'no'"
+            assert debug_data["blocks"]["approved_action"]["metadata"]["status"] == "skipped", (
+                "approved_action should be skipped when response is 'no'"
+            )
 
             # Verify outputs (variable resolution returns strings, not booleans)
             assert resume_response["outputs"]["approval_response"] == "no"
@@ -858,7 +882,7 @@ class TestInteractiveWorkflows:
                 arguments={
                     "workflow": "interactive-simple-approval",
                     "inputs": {"message": "Custom message for testing"},
-                    "response_format": "detailed",
+                    "debug": True,
                 },
             )
 
@@ -918,7 +942,7 @@ class TestInteractiveWorkflows:
                 arguments={
                     "workflow": "interactive-simple-approval",
                     "inputs": {},
-                    "response_format": "detailed",
+                    "debug": True,
                 },
             )
 
@@ -975,7 +999,7 @@ class TestInteractiveWorkflows:
                 arguments={
                     "workflow": "interactive-simple-approval",
                     "inputs": {},
-                    "response_format": "detailed",
+                    "debug": True,
                 },
             )
 
@@ -992,7 +1016,7 @@ class TestInteractiveWorkflows:
                 arguments={
                     "checkpoint_id": checkpoint_id,
                     "response": "yes",
-                    "response_format": "minimal",
+                    "debug": False,
                 },
             )
 
@@ -1042,17 +1066,15 @@ class TestQualityAssurance:
     @pytest.mark.asyncio
     async def test_workflow_response_structure(self, mock_context) -> None:
         """Test workflow response structure consistency."""
-        result = await execute_workflow(
-            workflow="test-workflow", response_format="detailed", ctx=mock_context
-        )
+        result = await execute_workflow(workflow="test-workflow", debug=True, ctx=mock_context)
 
         assert "status" in result
         assert result["status"] in ["success", "failure", "paused"]
 
         if result["status"] == "success":
             assert "outputs" in result
-            assert "blocks" in result
-            assert "metadata" in result
+            assert "logfile" in result  # Debug mode writes to file
+            assert result["logfile"].startswith("/tmp/")
         elif result["status"] == "failure":
             assert "error" in result
 
@@ -1134,14 +1156,14 @@ class TestWorkflowSnapshots:
         Note: Snapshots are pre-normalized by generate_snapshots.py, so we only
         normalize the actual response. This ensures stable snapshots and reliable tests.
         """
-        # Execute workflow via MCP with detailed response format
+        # Execute workflow via MCP with minimal response format
         async with get_mcp_client() as mcp_client:
             result = await mcp_client.call_tool(
                 "execute_workflow",
                 arguments={
                     "workflow": workflow_name,
                     "inputs": {},
-                    "response_format": "detailed",
+                    "debug": False,  # Minimal response (status + outputs/error only)
                 },
             )
 
@@ -1171,10 +1193,12 @@ class TestWorkflowSnapshots:
         with open(snapshot_file) as f:
             expected_response: dict[str, Any] = json.load(f)
 
-        # Normalize actual response only (snapshot is already normalized)
+        # Normalize actual response before comparison
+        # Even minimal responses can contain dynamic data in workflow outputs
+        # Example: variable-resolution-metadata outputs {{metadata.start_time}}
         normalized_actual = normalize_dynamic_fields(actual_response)
 
-        # Compare normalized actual vs normalized expected (snapshot)
+        # Compare normalized actual vs expected (snapshot already normalized)
         if normalized_actual != expected_response:
             diff = format_diff(normalized_actual, expected_response, workflow_name)
             pytest.fail(diff)

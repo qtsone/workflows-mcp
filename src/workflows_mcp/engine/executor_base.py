@@ -23,7 +23,7 @@ from pydantic import BaseModel, PrivateAttr
 
 from .block import BlockInput, BlockOutput
 from .execution import Execution
-from .schema import InputType
+from .schema import InputType, WorkflowOutputSchema
 
 
 class ExecutorSecurityLevel(Enum):
@@ -254,10 +254,15 @@ class ExecutorRegistry(BaseModel):
             with open("workflow-schema.json", "w") as f:
                 json.dump(schema, f, indent=2)
         """
-        # Collect all executor input schemas
+        # Collect all executor input schemas and shared type definitions
         definitions = {}
         block_types = []
         type_conditionals = []
+
+        # Extract WorkflowOutputSchema and merge its $defs to root level
+        # This ensures ValueType enum is accessible at the root for proper $ref resolution
+        output_schema = WorkflowOutputSchema.model_json_schema()
+        definitions.update(output_schema.pop("$defs", {}))
 
         for type_name, executor in self._executors.items():
             # Get the actual Pydantic schema from the executor
@@ -377,8 +382,8 @@ class ExecutorRegistry(BaseModel):
                 },
                 "outputs": {
                     "type": "object",
-                    "description": "Workflow output expressions",
-                    "patternProperties": {".*": {"type": "string"}},
+                    "description": "Workflow output expressions with type coercion",
+                    "patternProperties": {".*": output_schema},
                 },
                 "blocks": {
                     "type": "array",
@@ -386,7 +391,7 @@ class ExecutorRegistry(BaseModel):
                     "items": base_block_schema,
                 },
             },
-            "definitions": definitions,
+            "$defs": definitions,
         }
 
     def discover_entry_points(self, group: str = "mcp_workflows.executors") -> int:
@@ -588,6 +593,7 @@ def create_default_registry() -> ExecutorRegistry:
     from .executors_file import CreateFileExecutor, ReadFileExecutor, RenderTemplateExecutor
     from .executors_http import HttpCallExecutor
     from .executors_interactive import PromptExecutor
+    from .executors_llm import LLMCallExecutor
     from .executors_state import (
         MergeJSONStateExecutor,
         ReadJSONStateExecutor,
@@ -608,6 +614,9 @@ def create_default_registry() -> ExecutorRegistry:
 
     # Register HTTP executor
     registry.register(HttpCallExecutor())
+
+    # Register LLM executor
+    registry.register(LLMCallExecutor())
 
     # Register interactive executor
     registry.register(PromptExecutor())

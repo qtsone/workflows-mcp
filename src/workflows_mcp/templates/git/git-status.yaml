@@ -3,14 +3,12 @@ description: Check git repository status and information
 version: "2.0"
 author: Workflows MCP Team
 tags: [git, status]
-
 inputs:
   working_dir:
     type: str
     description: "(Optional) Path to git repository"
     default: "."
     required: false
-
 blocks:
   - id: analyze_changes
     type: Workflow
@@ -19,7 +17,6 @@ blocks:
       workflow: "git-analyze-changes"
       inputs:
         working_dir: "{{inputs.working_dir}}"
-
   - id: git_branch
     type: Shell
     description: "Get current git branch name"
@@ -32,7 +29,6 @@ blocks:
         type: str
         path: "$SCRATCH/current_branch.txt"
         description: "Current branch name"
-
   - id: check_recent_commits
     type: Shell
     inputs:
@@ -42,7 +38,6 @@ blocks:
     depends_on:
       - analyze_changes
       - git_branch
-
   - id: summary
     type: RenderTemplate
     inputs:
@@ -66,13 +61,20 @@ blocks:
       - analyze_changes
       - git_branch
       - check_recent_commits
-
 outputs:
-  current_branch: "{{blocks.git_branch.outputs.name}}"
-  has_changes: "{{blocks.analyze_changes.outputs.has_changes}}"
-  file_status: "{{blocks.analyze_changes.outputs.file_status}}"
-  staged_diff: "{{blocks.analyze_changes.outputs.staged_diff}}"
-  unstaged_diff: "{{blocks.analyze_changes.outputs.unstaged_diff}}"
-  diff_stat: "{{blocks.analyze_changes.outputs.diff_stat}}"
-  recent_commits: "{{blocks.check_recent_commits.outputs.stdout}}"
-  summary: "{{blocks.summary.outputs.content}}"
+  current_branch:
+    value: "{{blocks.git_branch.outputs.name}}"
+  has_changes:
+    value: "{{blocks.analyze_changes.outputs.has_changes}}"
+  file_status:
+    value: "{{blocks.analyze_changes.outputs.file_status}}"
+  staged_diff:
+    value: "{{blocks.analyze_changes.outputs.staged_diff}}"
+  unstaged_diff:
+    value: "{{blocks.analyze_changes.outputs.unstaged_diff}}"
+  diff_stat:
+    value: "{{blocks.analyze_changes.outputs.diff_stat}}"
+  recent_commits:
+    value: "{{blocks.check_recent_commits.outputs.stdout}}"
+  summary:
+    value: "{{blocks.summary.outputs.content}}"

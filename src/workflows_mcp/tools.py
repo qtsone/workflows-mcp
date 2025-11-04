@@ -66,20 +66,22 @@ async def execute_workflow(
             )
         ),
     ] = None,
-    response_format: Annotated[
-        Literal["minimal", "detailed"],
+    debug: Annotated[
+        bool,
         Field(
             description=(
-                "Output verbosity control (default: 'minimal' for normal execution):\n"
-                "- 'minimal': Returns status, outputs, and errors.\n"
-                "- 'detailed': Includes full block execution details. Use when:\n"
+                "Enable debug mode (default: False):\n"
+                "- False: Returns minimal response (status, outputs, errors)\n"
+                "- True: Writes detailed execution info to /tmp/<workflow-name>-<timestamp>.json\n"
+                "  and returns minimal response with 'logfile' field containing the file path.\n"
+                "Use debug mode when:\n"
                 "  * Debugging workflow failures\n"
                 "  * Investigating unexpected behavior\n"
-                "  * Analyzing block-level timing\n"
-                "WARNING: 'detailed' mode increases token usage significantly."
+                "  * Analyzing block-level execution details\n"
+                "Benefits: Full execution details without overwhelming LLM context."
             )
         ),
-    ] = "minimal",
+    ] = False,
     *,
     ctx: AppContextType,
 ) -> dict[str, Any]:
@@ -147,7 +149,7 @@ async def execute_workflow(
     )
 
     # Format response using ExecutionResult.to_response()
-    return result.to_response(response_format)
+    return result.to_response(debug)
 
 
 @mcp.tool(
@@ -180,20 +182,22 @@ async def execute_inline_workflow(
             )
         ),
     ] = None,
-    response_format: Annotated[
-        Literal["minimal", "detailed"],
+    debug: Annotated[
+        bool,
         Field(
             description=(
-                "Output verbosity control (default: 'minimal' for normal execution):\n"
-                "- 'minimal': Returns status, outputs, and errors.\n"
-                "- 'detailed': Includes full block execution details. Use when:\n"
+                "Enable debug mode (default: False):\n"
+                "- False: Returns minimal response (status, outputs, errors)\n"
+                "- True: Writes detailed execution info to /tmp/<workflow-name>-<timestamp>.json\n"
+                "  and returns minimal response with 'logfile' field containing the file path.\n"
+                "Use debug mode when:\n"
                 "  * Debugging workflow failures\n"
                 "  * Investigating unexpected behavior\n"
-                "  * Analyzing block-level timing\n"
-                "WARNING: 'detailed' mode increases token usage significantly."
+                "  * Analyzing block-level execution details\n"
+                "Benefits: Full execution details without overwhelming LLM context."
             )
         ),
-    ] = "minimal",
+    ] = False,
     *,
     ctx: AppContextType,
 ) -> dict[str, Any]:
@@ -255,7 +259,7 @@ async def execute_inline_workflow(
     )
 
     # Format response using ExecutionResult.to_response()
-    return result.to_response(response_format)
+    return result.to_response(debug)
 
 
 @mcp.tool(
@@ -569,20 +573,22 @@ async def resume_workflow(
             max_length=10000,
         ),
     ] = "",
-    response_format: Annotated[
-        Literal["minimal", "detailed"],
+    debug: Annotated[
+        bool,
         Field(
             description=(
-                "Output verbosity control (default: 'minimal' for normal execution):\n"
-                "- 'minimal': Returns status, outputs, and errors.\n"
-                "- 'detailed': Includes full block execution details. Use when:\n"
+                "Enable debug mode (default: False):\n"
+                "- False: Returns minimal response (status, outputs, errors)\n"
+                "- True: Writes detailed execution info to /tmp/<workflow-name>-<timestamp>.json\n"
+                "  and returns minimal response with 'logfile' field containing the file path.\n"
+                "Use debug mode when:\n"
                 "  * Debugging workflow failures\n"
                 "  * Investigating unexpected behavior\n"
-                "  * Analyzing block-level timing\n"
-                "WARNING: 'detailed' mode increases token usage significantly."
+                "  * Analyzing block-level execution details\n"
+                "Benefits: Full execution details without overwhelming LLM context."
             )
         ),
-    ] = "minimal",
+    ] = False,
     *,
     ctx: AppContextType,
 ) -> dict[str, Any]:
@@ -610,7 +616,7 @@ async def resume_workflow(
     )
 
     # Format response using ExecutionResult.to_response()
-    return result.to_response(response_format)
+    return result.to_response(debug)
 
 
 @mcp.tool(

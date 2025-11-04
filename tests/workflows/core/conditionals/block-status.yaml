@@ -27,5 +27,9 @@ blocks:
       - block: failure_block
         required: false
 outputs:
-  runs_on_success_executed: "{{blocks.runs_on_success.succeeded}}"
-  runs_on_failure_executed: "{{blocks.runs_on_failure.succeeded}}"
+  runs_on_success_executed:
+    value: "{{blocks.runs_on_success.succeeded}}"
+    type: bool
+  runs_on_failure_executed:
+    value: "{{blocks.runs_on_failure.succeeded}}"
+    type: bool

@@ -1,68 +1,7 @@
 {
-  "blocks": {
-    "consumer": {
-      "blocks": {},
-      "depth": 0,
-      "inputs": {
-        "command": "echo \"Consumed: produced_value\n\""
-      },
-      "metadata": {
-        "completed_at": "TIMESTAMP",
-        "execution_order": 1,
-        "execution_time_ms": "EXECUTION_TIME",
-        "failed": false,
-        "message": null,
-        "outcome": "success",
-        "skipped": false,
-        "started_at": "TIMESTAMP",
-        "status": "completed",
-        "succeeded": true,
-        "wave": 1
-      },
-      "outputs": {
-        "exit_code": 0,
-        "stderr": "",
-        "stdout": "Consumed: produced_value\n\n"
-      }
-    },
-    "producer": {
-      "blocks": {},
-      "depth": 0,
-      "inputs": {
-        "command": "echo \"produced_value\""
-      },
-      "metadata": {
-        "completed_at": "TIMESTAMP",
-        "execution_order": 0,
-        "execution_time_ms": "EXECUTION_TIME",
-        "failed": false,
-        "message": null,
-        "outcome": "success",
-        "skipped": false,
-        "started_at": "TIMESTAMP",
-        "status": "completed",
-        "succeeded": true,
-        "wave": 0
-      },
-      "outputs": {
-        "exit_code": 0,
-        "stderr": "",
-        "stdout": "produced_value\n"
-      }
-    }
-  },
-  "metadata": {
-    "completed_at": "TIMESTAMP",
-    "execution_time_seconds": "EXECUTION_TIME",
-    "execution_waves": 2,
-    "secret_access_count": 0,
-    "start_time": "TIMESTAMP",
-    "total_blocks": 2,
-    "workflow_name": "variable-resolution-block-outputs"
-  },
   "outputs": {
-    "consumer_output": "Consumed: produced_value\n\n",
-    "producer_output": "produced_value\n"
+    "consumer_output": "Consumed: produced_value",
+    "producer_output": "produced_value"
   },
   "status": "success"
 }

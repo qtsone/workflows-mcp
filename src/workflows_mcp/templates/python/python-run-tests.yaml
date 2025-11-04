@@ -3,44 +3,37 @@ description: Execute pytest with coverage, parse results, and return structured 
 version: "1.0"
 author: Workflows MCP Team
 tags: [python, testing, pytest, coverage, tdd, quality]
-
 inputs:
   test_path:
     type: str
     description: Path to test directory or specific test file
     default: "tests/"
     required: false
-
   source_path:
     type: str
     description: Path to source code for coverage measurement
     default: "src/"
     required: false
-
   coverage_threshold:
-    type: int
+    type: num
     description: Minimum coverage percentage required (0-100)
     default: 80
     required: false
-
   pytest_args:
     type: str
     description: Additional pytest arguments
     default: "-v"
     required: false
-
   working_dir:
     type: str
     description: Working directory for test execution
     default: "."
     required: false
-
   venv_path:
     type: str
     description: Virtual environment path (will use {{inputs.venv_path}}/bin/pytest if available)
     default: ""
     required: false
-
 blocks:
   # Determine pytest executable (prefer uv for proper venv management)
   - id: build_pytest_command
@@ -57,7 +50,6 @@ blocks:
         fi
         echo "$PYTEST {{inputs.test_path}} --cov={{inputs.source_path}} --cov-report=json --cov-report=term-missing {{inputs.pytest_args}}"
       timeout: 5
-
   # Execute pytest with coverage
   # Coverage is saved to coverage.json for parsing
   - id: run_pytest
@@ -66,10 +58,8 @@ blocks:
       command: "{{blocks.build_pytest_command.outputs.stdout}}"
       working_dir: "{{inputs.working_dir}}"
       timeout: 600
-      
     depends_on:
       - build_pytest_command
-
   # Parse coverage percentage from coverage.json
   # Returns 0 if coverage.json doesn't exist or can't be parsed
   - id: extract_coverage
@@ -99,10 +89,8 @@ blocks:
         fi
       working_dir: "{{inputs.working_dir}}"
       timeout: 10
-      
     depends_on:
       - run_pytest
-
   # Parse test counts from pytest output
   # Expected format: "X passed" or "X passed, Y failed, Z skipped"
   - id: parse_test_results
@@ -124,38 +112,30 @@ blocks:
         echo "FAILED=$FAILED"
         echo "SKIPPED=$SKIPPED"
       timeout: 10
-      
     depends_on:
       - run_pytest
-
   # Extract individual test counts as separate values for workflow logic
   - id: extract_passed_count
     type: Shell
     inputs:
       command: "echo '{{blocks.parse_test_results.outputs.stdout}}' | grep '^PASSED=' | cut -d= -f2"
       timeout: 5
-      
     depends_on:
       - parse_test_results
-
   - id: extract_failed_count
     type: Shell
     inputs:
       command: "echo '{{blocks.parse_test_results.outputs.stdout}}' | grep '^FAILED=' | cut -d= -f2"
       timeout: 5
-      
     depends_on:
       - parse_test_results
-
   - id: extract_skipped_count
     type: Shell
     inputs:
       command: "echo '{{blocks.parse_test_results.outputs.stdout}}' | grep '^SKIPPED=' | cut -d= -f2"
       timeout: 5
-      
     depends_on:
       - parse_test_results
-
   # Check if coverage threshold was met
   - id: check_coverage_threshold
     type: Shell
@@ -168,10 +148,8 @@ blocks:
         RESULT=$(awk -v cov="$COVERAGE" -v thresh="$THRESHOLD" 'BEGIN { print (cov >= thresh) ? "true" : "false" }')
         echo "$RESULT"
       timeout: 5
-      
     depends_on:
       - extract_coverage
-
   # Generate comprehensive test summary
   - id: generate_summary
     type: Shell
@@ -201,26 +179,33 @@ blocks:
       - extract_failed_count
       - extract_skipped_count
       - check_coverage_threshold
-
 outputs:
   # Test execution status
-  exit_code: "{{blocks.run_pytest.outputs.exit_code}}"
-  success: "{{blocks.run_pytest.outputs.exit_code}} == 0"
-
+  exit_code:
+    value: "{{blocks.run_pytest.outputs.exit_code}}"
+  success:
+    value: "{{blocks.run_pytest.outputs.exit_code}} == 0"
   # Test counts (as strings for now, can be converted to int in workflow logic)
-  tests_passed: "{{blocks.extract_passed_count.outputs.stdout}}"
-  tests_failed: "{{blocks.extract_failed_count.outputs.stdout}}"
-  tests_skipped: "{{blocks.extract_skipped_count.outputs.stdout}}"
-
+  tests_passed:
+    value: "{{blocks.extract_passed_count.outputs.stdout}}"
+  tests_failed:
+    value: "{{blocks.extract_failed_count.outputs.stdout}}"
+  tests_skipped:
+    value: "{{blocks.extract_skipped_count.outputs.stdout}}"
   # Coverage information
-  coverage_percent: "{{blocks.extract_coverage.outputs.stdout}}"
-  coverage_threshold_met: "{{blocks.check_coverage_threshold.outputs.stdout}}"
-
+  coverage_percent:
+    value: "{{blocks.extract_coverage.outputs.stdout}}"
+  coverage_threshold_met:
+    value: "{{blocks.check_coverage_threshold.outputs.stdout}}"
   # Full output for debugging
-  stdout: "{{blocks.run_pytest.outputs.stdout}}"
-  stderr: "{{blocks.run_pytest.outputs.stderr}}"
-
+  stdout:
+    value: "{{blocks.run_pytest.outputs.stdout}}"
+  stderr:
+    value: "{{blocks.run_pytest.outputs.stderr}}"
   # Summary and metadata
-  summary: "{{blocks.generate_summary.outputs.stdout}}"
-  execution_time_ms: "{{blocks.run_pytest.metadata.execution_time_ms}}"
-  command_executed: "{{blocks.build_pytest_command.outputs.stdout}}"
+  summary:
+    value: "{{blocks.generate_summary.outputs.stdout}}"
+  execution_time_ms:
+    value: "{{blocks.run_pytest.metadata.execution_time_ms}}"
+  command_executed:
+    value: "{{blocks.build_pytest_command.outputs.stdout}}"

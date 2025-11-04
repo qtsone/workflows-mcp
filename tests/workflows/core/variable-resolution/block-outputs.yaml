@@ -12,5 +12,9 @@ blocks:
       command: 'echo "Consumed: {{blocks.producer.outputs.stdout}}"'
     depends_on: [producer]
 outputs:
-  producer_output: "{{blocks.producer.outputs.stdout}}"
-  consumer_output: "{{blocks.consumer.outputs.stdout}}"
+  producer_output:
+    value: "{{blocks.producer.outputs.stdout}}"
+    type: str
+  consumer_output:
+    value: "{{blocks.consumer.outputs.stdout}}"
+    type: str
