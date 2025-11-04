@@ -2,6 +2,28 @@
 
 All notable changes to this project will be documented in this file.
 
+# [5.0.0](https://github.com/qtsone/workflows-mcp/compare/v4.4.0...v5.0.0) (2025-11-04)
+
+
+### Code Refactoring
+
+* unify int/float types to num and fix composition bug ([0537afc](https://github.com/qtsone/workflows-mcp/commit/0537afce73701e0d175dcaf5a0e0eaefa1c92e16))
+
+
+### Features
+
+* **LLMCall:** BREAKING CHANGE Add support for LLM Executor ([4d831fe](https://github.com/qtsone/workflows-mcp/commit/4d831fe59526d09898bb07abf7ed0a07309d6390))
+* **LLMCall:** BREAKING CHANGE Add support for LLM Executor ([#18](https://github.com/qtsone/workflows-mcp/issues/18)) ([5a54cb9](https://github.com/qtsone/workflows-mcp/commit/5a54cb93508448a1fbdecbd793bf1a612c05066d))
+
+
+### BREAKING CHANGES
+
+* **LLMCall:** **
+- Workflow YAML files using `type: int` or `type: float` should migrate
+to `type: num`
+* **
+- Workflow YAML files using `type: int` or `type: float` should migrate to `type: num`
+
 # [4.4.0](https://github.com/qtsone/workflows-mcp/compare/v4.3.0...v4.4.0) (2025-11-02)
 
 
