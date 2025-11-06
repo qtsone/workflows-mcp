@@ -59,8 +59,7 @@ class HttpCallInput(BlockInput):
     json: dict[str, Any] | None = Field(  # type: ignore[assignment]
         default=None,
         description=(
-            "JSON request body (mutually exclusive with content). "
-            "Matches httpx parameter name."
+            "JSON request body (mutually exclusive with content). Matches httpx parameter name."
         ),
     )
     # Note: Field name 'json' intentionally shadows Pydantic's deprecated .json() method

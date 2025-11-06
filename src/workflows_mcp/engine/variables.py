@@ -119,12 +119,12 @@ class VariableResolver:
     #   {{blocks.id[0].field}}                - bracket notation with numeric index
     #   {{each.value.nested.field}}           - each namespace
     VAR_PATTERN = re.compile(
-        r'\{\{([a-zA-Z_][a-zA-Z0-9_]*(?:'
-        r'(?:\.[a-zA-Z_][a-zA-Z0-9_]*)|'  # Dot notation: .identifier
+        r"\{\{([a-zA-Z_][a-zA-Z0-9_]*(?:"
+        r"(?:\.[a-zA-Z_][a-zA-Z0-9_]*)|"  # Dot notation: .identifier
         r'(?:\["[^"]+"\])|'  # Bracket notation (double quotes): ["key"]
         r"(?:\['[^']+'\])|"  # Bracket notation (single quotes): ['key']
-        r'(?:\[\d+\])'  # Bracket notation (numeric index): [0], [123]
-        r')*)\}\}'
+        r"(?:\[\d+\])"  # Bracket notation (numeric index): [0], [123]
+        r")*)\}\}"
     )
 
     def __init__(
@@ -210,9 +210,8 @@ class VariableResolver:
 
                 # Extract key (strip quotes if present, or use numeric index)
                 key_with_quotes = var_path[i + 1 : close_bracket]
-                if (
-                    (key_with_quotes.startswith('"') and key_with_quotes.endswith('"'))
-                    or (key_with_quotes.startswith("'") and key_with_quotes.endswith("'"))
+                if (key_with_quotes.startswith('"') and key_with_quotes.endswith('"')) or (
+                    key_with_quotes.startswith("'") and key_with_quotes.endswith("'")
                 ):
                     # String key (for dict access): ['key'] or ["key"]
                     key = key_with_quotes[1:-1]
@@ -223,7 +222,7 @@ class VariableResolver:
                 else:
                     raise ValueError(
                         f"Bracket notation requires quoted keys or numeric indices: "
-                        f"{var_path[i:close_bracket+1]}"
+                        f"{var_path[i : close_bracket + 1]}"
                     )
 
                 i = close_bracket + 1
@@ -344,8 +343,7 @@ class VariableResolver:
                 if not isinstance(value, dict):
                     partial_path = ".".join(segments[:i])
                     raise VariableNotFoundError(
-                        f"Cannot access '{segment}' on non-dict value "
-                        f"at '{{{{{partial_path}}}}}'"
+                        f"Cannot access '{segment}' on non-dict value at '{{{{{partial_path}}}}}'"
                     )
                 if segment not in value:
                     available = list(value.keys()) if isinstance(value, dict) else []

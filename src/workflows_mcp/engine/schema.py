@@ -394,8 +394,7 @@ class BlockDefinition(BaseModel):
     for_each: str | None = Field(
         default=None,
         description=(
-            "Variable expression evaluating to dict/list for iteration "
-            "(e.g., '{{inputs.files}}')"
+            "Variable expression evaluating to dict/list for iteration (e.g., '{{inputs.files}}')"
         ),
     )
     for_each_mode: str = Field(

@@ -121,8 +121,7 @@ class WorkflowExecutor(BlockExecutor):
         exec_context = context.execution_context
         if exec_context is None:
             raise RuntimeError(
-                "ExecutionContext not found - "
-                "workflow composition not supported in this context"
+                "ExecutionContext not found - workflow composition not supported in this context"
             )
 
         workflow_name = inputs.workflow
@@ -280,8 +279,7 @@ class WorkflowExecutor(BlockExecutor):
         exec_context = context.execution_context
         if exec_context is None:
             raise RuntimeError(
-                "ExecutionContext not found - "
-                "workflow composition not supported in this context"
+                "ExecutionContext not found - workflow composition not supported in this context"
             )
 
         # 3. Create WorkflowRunner and resume child workflow
