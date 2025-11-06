@@ -18,7 +18,7 @@ import logging
 import time
 import uuid
 from datetime import UTC, datetime
-from typing import Any
+from typing import Any, Literal, cast
 
 from .checkpoint import CheckpointConfig, CheckpointState
 from .context_vars import block_custom_outputs
@@ -94,7 +94,7 @@ class WorkflowRunner:
         Args:
             workflow: Workflow definition (Pydantic model with validated DAG)
             runtime_inputs: Runtime input overrides
-            context: Execution context (optional, created if None)
+            context: Execution context (REQUIRED - provides registries and dependencies)
 
         Returns:
             ExecutionResult (success/failure/paused) with full execution context
@@ -111,6 +111,14 @@ class WorkflowRunner:
             # result.error == "Missing required input: project"
             # result.execution.blocks == {"block1": {...}}  # Completed before error!
         """
+        # Validate required context parameter
+        if context is None:
+            raise ValueError(
+                "ExecutionContext is required. "
+                "Create one via AppContext.create_execution_context() "
+                "or ExecutionContext(...) with proper registries."
+            )
+
         try:
             # Execute workflow (may raise exceptions)
             execution = await self._execute_workflow_internal(workflow, runtime_inputs, context)
@@ -136,12 +144,10 @@ class WorkflowRunner:
 
             if partial_execution is None:
                 # Fallback: create minimal empty execution
+                # Workflow-level Execution has no metadata - only blocks have metadata
                 partial_execution = Execution(
                     inputs=runtime_inputs or {},
-                    metadata={
-                        "workflow_name": workflow.name,
-                        "error": "Execution failed before context creation",
-                    },
+                    metadata=None,
                     blocks={},
                 )
 
@@ -179,7 +185,7 @@ class WorkflowRunner:
             # Checkpoint or workflow not found
             minimal_execution = Execution(
                 inputs={},
-                metadata={"error": "Checkpoint not found", "checkpoint_id": checkpoint_id},
+                metadata=None,
                 blocks={},
             )
             return ExecutionResult.failure(str(e), minimal_execution, self.secret_redactor)
@@ -192,6 +198,18 @@ class WorkflowRunner:
                 execution=e.execution,
                 pause_metadata=e.checkpoint_data,
                 secret_redactor=self.secret_redactor,
+            )
+
+        except Exception as e:
+            # Catch-all for unexpected exceptions
+            logger.exception("Unexpected error during workflow resume: %s", e)
+            minimal_execution = Execution(
+                inputs={},
+                metadata=None,
+                blocks={},
+            )
+            return ExecutionResult.failure(
+                f"Unexpected error: {e}", minimal_execution, self.secret_redactor
             )
 
     async def _execute_workflow_internal(
@@ -463,6 +481,8 @@ class WorkflowRunner:
         """
         Execute a single block using BlockOrchestrator.
 
+        Supports both regular blocks and for_each blocks (ADR-009).
+
         Args:
             block_id: Block ID
             block_def: Block definition
@@ -475,17 +495,29 @@ class WorkflowRunner:
             Exception: On execution errors
         """
         # Get execution context from internal state
-        context = exec_context._internal.get("execution_context")
+        context = exec_context.execution_context
         if context is None:
             raise RuntimeError("ExecutionContext not found in Execution._internal")
 
+        # Get executor from context
+        executor = context.executor_registry.get(block_def.type)
+
+        # ADR-009: Check if block has for_each
+        if block_def.for_each:
+            await self._execute_for_each_block(
+                block_id=block_id,
+                block_def=block_def,
+                executor=executor,
+                exec_context=exec_context,
+                wave_idx=wave_idx,
+            )
+            return
+
+        # Regular block execution (existing logic)
         # 1. Resolve variables in inputs (async for secrets support)
         resolved_inputs = await self._resolve_block_inputs(block_def.inputs, exec_context)
 
-        # 2. Get executor from context
-        executor = context.executor_registry.get(block_def.type)
-
-        # 3. Create input model
+        # 2. Create input model
         input_model = executor.input_type(**resolved_inputs)
 
         # 3.5. Set custom outputs using contextvars (with resolved paths)
@@ -512,11 +544,13 @@ class WorkflowRunner:
 
         # 4. Execute via orchestrator
         block_execution = await self.orchestrator.execute_block(
+            id=block_id,  # Pass block ID to orchestrator
             executor=executor,
             inputs=input_model,
             context=exec_context,
             wave=wave_idx,
             execution_order=execution_order,
+            depth=exec_context.depth,
         )
 
         # 5. Handle pause
@@ -559,8 +593,100 @@ class WorkflowRunner:
                 block_id=block_id,
                 inputs=resolved_inputs,
                 outputs=block_execution.output.model_dump() if block_execution.output else {},
-                metadata=block_execution.metadata,
+                metadata=block_execution.metadata,  # Metadata from orchestrator
             )
+
+    async def _execute_for_each_block(
+        self,
+        block_id: str,
+        block_def: BlockDefinition,
+        executor: Any,
+        exec_context: Execution,
+        wave_idx: int,
+    ) -> None:
+        """
+        Execute a for_each block with multiple iterations (ADR-009).
+
+        Args:
+            block_id: Block ID
+            block_def: Block definition with for_each field
+            executor: Block executor
+            exec_context: Execution context
+            wave_idx: Wave index
+
+        Raises:
+            ExecutionPaused: If any iteration pauses (not yet supported for for_each)
+            Exception: On execution errors
+        """
+        # 1. Resolve for_each expression to get iterations
+        context_dict = self._execution_to_dict(exec_context)
+
+        # Get workflow name safely from internal metadata
+        workflow_metadata = exec_context.workflow_metadata
+        workflow_name = workflow_metadata.get("workflow_name", "")
+
+        resolver = VariableResolver(
+            context_dict,
+            secret_provider=self.secret_provider,
+            secret_audit_log=self.secret_audit_log,
+            workflow_name=workflow_name,
+            block_id=block_id,
+        )
+        for_each_value = await resolver.resolve_async(block_def.for_each)
+
+        # 2. Convert to dict format (ADR-009: iterations are always dicts)
+        if isinstance(for_each_value, list):
+            # Convert list to dict with numeric string keys: ["a", "b"] → {"0": "a", "1": "b"}
+            iterations = {str(i): value for i, value in enumerate(for_each_value)}
+        elif isinstance(for_each_value, dict):
+            # Already a dict, use as-is
+            iterations = for_each_value
+        else:
+            raise ValueError(
+                f"for_each expression must evaluate to dict or list, "
+                f"got {type(for_each_value).__name__}: {block_def.for_each}"
+            )
+
+        # 3. Handle empty collection - mark block as skipped
+        if not iterations:
+            # Empty for_each is valid - mark block as skipped (like conditional execution)
+            self._mark_block_skipped(
+                block_id=block_id,
+                block_def=block_def,
+                exec_context=exec_context,
+                wave_idx=wave_idx,
+                execution_order=0,
+                reason=f"for_each expression resulted in empty collection: {block_def.for_each}",
+            )
+            return
+
+        # 4. Execute via orchestrator.execute_for_each()
+        # Cast mode to Literal type for type safety
+        mode = cast(Literal["parallel", "sequential"], block_def.for_each_mode)
+
+        iteration_results, parent_meta = await self.orchestrator.execute_for_each(
+            id=block_id,
+            executor=executor,
+            inputs_template=block_def.inputs,
+            iterations=iterations,
+            context=exec_context,
+            mode=mode,
+            max_parallel=block_def.max_parallel,
+            continue_on_error=block_def.continue_on_error,
+            wave=wave_idx,
+            depth=exec_context.depth,
+        )
+
+        # 5. Store results in execution context using fractal structure
+        exec_context.set_for_each_result(
+            block_id=block_id,
+            parent_meta=parent_meta,
+            iteration_results=iteration_results,
+        )
+
+        # Note: Pause handling for for_each blocks is not yet implemented.
+        # If any iteration pauses, the entire for_each block would need to pause,
+        # storing iteration state in checkpoint. This is Phase 2+ enhancement.
 
     def _should_skip_block(
         self,
@@ -591,11 +717,15 @@ class WorkflowRunner:
     ) -> None:
         """Mark a block as skipped."""
         skip_time = datetime.now(UTC).isoformat()
-        metadata = Metadata.from_skipped(
-            message=reason,
-            timestamp=skip_time,
+        metadata = Metadata.create_leaf_skipped(
+            type=block_def.type,
+            id=block_id,
+            started_at=skip_time,
             wave=wave_idx,
             execution_order=execution_order,
+            index=execution_order,
+            depth=exec_context.depth,
+            message=reason,
         )
 
         default_outputs = self._create_default_outputs(block_def.type, exec_context)
@@ -618,13 +748,16 @@ class WorkflowRunner:
     ) -> None:
         """Mark a block as failed due to execution error."""
         fail_time = datetime.now(UTC).isoformat()
-        metadata = Metadata.from_execution_failure(
-            message=error,
-            execution_time_ms=0.0,
+        metadata = Metadata.create_leaf_failure(
+            type=block_def.type,
+            id=block_id,
+            duration_ms=0,
             started_at=fail_time,
-            completed_at=fail_time,
             wave=wave_idx,
             execution_order=execution_order,
+            index=execution_order,
+            depth=exec_context.depth,
+            message=error,
         )
 
         default_outputs = self._create_default_outputs(block_def.type, exec_context)
@@ -637,36 +770,22 @@ class WorkflowRunner:
         )
 
     def _create_default_outputs(self, block_type: str, exec_context: Execution) -> dict[str, Any]:
-        """Create default outputs for skipped/failed blocks."""
-        context = exec_context._internal.get("execution_context")
+        """Create default outputs for skipped/failed blocks.
+
+        All executor output models define Pydantic field defaults, so we can simply
+        instantiate the model with no arguments to get a semantically meaningful
+        "failed state" (e.g., status_code=0, success=False).
+
+        This approach is consistent with orchestrator's crash handling.
+        """
+        context = exec_context.execution_context
         if context is None:
             return {}
 
         try:
             executor = context.executor_registry.get(block_type)
-            output_model_class = executor.output_type
-
-            defaults: dict[str, Any] = {}
-            for field_name, field_info in output_model_class.model_fields.items():
-                field_type = field_info.annotation
-
-                # Type-based defaults
-                if "str" in str(field_type):
-                    defaults[field_name] = ""
-                elif "int" in str(field_type):
-                    defaults[field_name] = 0
-                elif "float" in str(field_type):
-                    defaults[field_name] = 0.0
-                elif "bool" in str(field_type):
-                    defaults[field_name] = False
-                elif "dict" in str(field_type):
-                    defaults[field_name] = {}
-                elif "list" in str(field_type):
-                    defaults[field_name] = []
-                else:
-                    defaults[field_name] = None
-
-            return defaults
+            # Instantiate output model with defaults, then convert to dict
+            return executor.output_type().model_dump()
 
         except Exception:
             return {}
@@ -678,27 +797,28 @@ class WorkflowRunner:
         context: ExecutionContext | None,
     ) -> Execution:
         """Create fresh Execution context for workflow start."""
+        # Create execution context (workflow-level has no metadata - only blocks have metadata)
+        workflow_start_time = datetime.now(UTC).isoformat()
         exec_context = Execution(
             inputs=self._merge_workflow_inputs(workflow, runtime_inputs),
-            metadata={
-                "workflow_name": workflow.name,
-                "start_time": datetime.now(UTC).isoformat(),
-            },
+            metadata=None,  # Workflow-level Execution has no block metadata
             blocks={},
             depth=len(context.workflow_stack) if context else 0,
         )
 
-        # Store ExecutionContext in _internal (if provided)
+        # Store workflow metadata and ExecutionContext in _internal
+        workflow_metadata_dict = {
+            "workflow_name": workflow.name,
+            "started_at": workflow_start_time,
+        }
+
         if context:
-            exec_context._internal = {
-                "execution_context": context,
-                "workflow_stack": context.workflow_stack + [workflow.name],
-            }
+            exec_context.set_execution_context(context)
+            exec_context._internal.workflow_stack = context.workflow_stack + [workflow.name]
+            exec_context.set_workflow_metadata(workflow_metadata_dict)
         else:
-            exec_context._internal = {
-                "execution_context": None,
-                "workflow_stack": [workflow.name],
-            }
+            exec_context._internal.workflow_stack = [workflow.name]
+            exec_context.set_workflow_metadata(workflow_metadata_dict)
 
         return exec_context
 
@@ -742,24 +862,13 @@ class WorkflowRunner:
         if self.secret_audit_log:
             metadata_updates["secret_access_count"] = len(self.secret_audit_log.events)
 
-        if isinstance(exec_context.metadata, dict):
-            existing_metadata = exec_context.metadata.copy()
-            existing_metadata.update(metadata_updates)
-            exec_context.metadata = existing_metadata
-        else:
-            workflow_name_value = getattr(exec_context.metadata, "workflow_name", "")
-            exec_context.metadata = {
-                "workflow_name": workflow_name_value,
-                **metadata_updates,
-            }
+        # Update workflow metadata in _internal storage
+        exec_context.update_workflow_metadata(**metadata_updates)
 
     def _execution_to_dict(self, exec_context: Execution) -> dict[str, Any]:
         """Convert Execution model to dict for variable resolution."""
-        metadata = (
-            exec_context.metadata
-            if isinstance(exec_context.metadata, dict)
-            else exec_context.metadata.model_dump()
-        )
+        # Get workflow metadata from _internal storage
+        metadata = exec_context.workflow_metadata
         blocks = {
             block_id: (block_exec.model_dump() if isinstance(block_exec, Execution) else block_exec)
             for block_id, block_exec in exec_context.blocks.items()
@@ -984,10 +1093,8 @@ class WorkflowRunner:
         # Restore execution context
         exec_context = checkpoint.context
         workflow_stack = [ws.get("name", "") for ws in checkpoint.workflow_stack]
-        exec_context._internal = {
-            "execution_context": context,
-            "workflow_stack": workflow_stack,
-        }
+        exec_context.set_execution_context(context)
+        exec_context._internal.workflow_stack = workflow_stack
 
         # Resume paused block if needed
         completed_blocks = checkpoint.completed_blocks.copy()
@@ -1011,9 +1118,9 @@ class WorkflowRunner:
                     execution_order=len(completed_blocks),
                 )
 
-                # Verify resumed block succeeded
+                # Verify resumed block succeeded (ADR-009: status is now a string)
                 resumed_block_metadata = exec_context.get_block_metadata(paused_block_id)
-                if resumed_block_metadata and resumed_block_metadata.status.is_failed():
+                if resumed_block_metadata and resumed_block_metadata.failed:
                     error_msg = f"Failed to resume block '{paused_block_id}'"
                     error_detail = resumed_block_metadata.message
                     raise ValueError(f"{error_msg}: {error_detail}")
@@ -1078,7 +1185,7 @@ class WorkflowRunner:
     ) -> None:
         """Resume a paused block execution."""
         # Get execution context
-        context = exec_context._internal.get("execution_context")
+        context = exec_context.execution_context
         if context is None:
             raise RuntimeError("ExecutionContext not found in Execution._internal")
 
@@ -1093,6 +1200,7 @@ class WorkflowRunner:
 
         # Resume via orchestrator
         block_execution = await self.orchestrator.resume_block(
+            id=block_id,  # Pass block ID to orchestrator
             executor=executor,
             inputs=input_model,
             context=exec_context,
@@ -1100,6 +1208,7 @@ class WorkflowRunner:
             pause_metadata=pause_metadata,
             wave=wave_idx,
             execution_order=execution_order,
+            depth=exec_context.depth,
         )
 
         # Handle pause (block paused again)

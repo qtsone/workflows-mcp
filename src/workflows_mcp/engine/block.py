@@ -15,7 +15,9 @@ Key Benefits:
 - Automatic schema generation for MCP tools
 """
 
-from pydantic import BaseModel
+from typing import Any
+
+from pydantic import BaseModel, Field
 
 
 class BlockInput(BaseModel):
@@ -29,6 +31,15 @@ class BlockOutput(BaseModel):
 
     Allows extra fields to support dynamic outputs from custom block configurations
     and child workflow outputs in Workflow blocks.
+
+    Executors can populate meta with executor-specific metadata fields
+    (e.g., exit_code for Shell, tokens_used for LLMCall). The orchestrator
+    will merge these with core timing/execution fields when creating Metadata.
     """
+
+    meta: dict[str, Any] = Field(
+        default_factory=dict,
+        description="Executor-specific metadata fields (exit_code, tokens_used, etc.)",
+    )
 
     model_config = {"extra": "allow"}

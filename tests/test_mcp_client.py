@@ -757,6 +757,10 @@ class TestInteractiveWorkflows:
             if not isinstance(resume_content, TextContent):
                 raise ValueError(f"Expected TextContent, got {type(resume_content)}")
 
+            # Debug: print resume content if empty or invalid
+            if not resume_content.text:
+                raise ValueError(f"resume_content.text is empty. Full result: {resume_result}")
+
             resume_response: dict[str, Any] = json.loads(resume_content.text)
 
             # Verify workflow completed successfully
@@ -1142,7 +1146,9 @@ class TestWorkflowSnapshots:
     - No orphaned snapshots allowed
     """
 
-    async def test_workflow_execution_matches_snapshot(self, workflow_name: str) -> None:
+    async def test_workflow_execution_matches_snapshot(
+        self, workflow_name: str, workflow_inputs: dict[str, str]
+    ) -> None:
         """Execute workflow and validate against snapshot.
 
         Test Flow:
@@ -1162,7 +1168,7 @@ class TestWorkflowSnapshots:
                 "execute_workflow",
                 arguments={
                     "workflow": workflow_name,
-                    "inputs": {},
+                    "inputs": workflow_inputs,  # Inject base_url for HTTP workflows
                     "debug": False,  # Minimal response (status + outputs/error only)
                 },
             )

@@ -18,18 +18,6 @@ blocks:
     inputs:
       command: echo "{{blocks.producer.metadata.status}}"
     depends_on: [producer]
-  - id: use_outcome_shortcut
-    description: "Use shortcut syntax to access block output"
-    type: Shell
-    inputs:
-      command: echo "{{blocks.producer.outcome}}"
-    depends_on: [producer]
-  - id: use_outcome_full_path
-    description: "Use full path to access block output"
-    type: Shell
-    inputs:
-      command: echo "{{blocks.producer.metadata.outcome}}"
-    depends_on: [producer]
   - id: use_success_shortcut
     description: "Use shortcut syntax to access block output"
     type: Shell
@@ -49,12 +37,6 @@ outputs:
   status_full_path_works:
     value: "{{blocks.use_status_full_path.succeeded}}"
     type: bool
-  outcome_shortcut_works:
-    value: "{{blocks.use_outcome_shortcut.succeeded}}"
-    type: bool
-  outcome_full_path_works:
-    value: "{{blocks.use_outcome_full_path.succeeded}}"
-    type: bool
   success_shortcut_works:
     value: "{{blocks.use_success_shortcut.succeeded}}"
     type: bool
@@ -66,12 +48,6 @@ outputs:
     type: str
   status_full_path_value:
     value: "{{blocks.producer.metadata.status}}"
-    type: str
-  outcome_shortcut_value:
-    value: "{{blocks.producer.outcome}}"
-    type: str
-  outcome_full_path_value:
-    value: "{{blocks.producer.metadata.outcome}}"
     type: str
   success_shortcut_value:
     value: "{{blocks.producer.succeeded}}"

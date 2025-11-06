@@ -27,6 +27,7 @@ from pydantic import BaseModel, Field, field_validator, model_validator
 # Schema validation only checks structural validity (YAML structure, dependencies, etc.)
 from .dag import DAGResolver
 from .load_result import LoadResult
+from .variables import VariableResolver
 
 
 class ValueType(str, Enum):
@@ -270,9 +271,10 @@ class WorkflowInputDeclaration(BaseModel):
 
 class BlockDefinition(BaseModel):
     """
-    Workflow block definition.
+    Workflow block definition with for_each support (ADR-009).
 
     Defines a single block in the workflow with its inputs and dependencies.
+    Supports fractal for_each abstraction where regular blocks are for_each with count=1.
 
     Attributes:
         id: Unique block identifier within workflow
@@ -282,21 +284,25 @@ class BlockDefinition(BaseModel):
         depends_on: List of block IDs this block depends on
         condition: Optional boolean expression for conditional execution
         outputs: Optional custom file-based outputs (for Shell blocks)
+        for_each: Variable expression evaluating to dict/list for iteration (ADR-009)
+        for_each_mode: Execution mode for iterations (parallel or sequential)
+        max_parallel: Maximum concurrent iterations (1-20, default: 5)
+        continue_on_error: Continue executing iterations on failure (default: False)
 
-    Example:
+    Example (Regular Block):
         blocks:
           - id: create_worktree
             type: CreateWorktree
             description: "Create isolated git worktree for feature development"
             inputs:
-              branch: "feature/{{issue_number}}"
+              branch: "feature/{{inputs.issue_number}}"
               base_branch: "main"
 
           - id: create_file
             type: CreateFile
             description: "Create initial README file in worktree"
             inputs:
-              path: "{{create_worktree.worktree_path}}/README.md"
+              path: "{{blocks.create_worktree.worktree_path}}/README.md"
               content: "# Feature"
             depends_on:
               - create_worktree
@@ -317,9 +323,47 @@ class BlockDefinition(BaseModel):
             description: "Deploy to production if tests pass"
             inputs:
               command: "echo 'Deploying...'"
-            condition: "{{run_tests.exit_code}} == 0"
+            condition: "{{blocks.run_tests.exit_code}} == 0"
             depends_on:
               - run_tests
+
+    Example (For_Each - Parallel):
+        blocks:
+          - id: analyze_files
+            type: LLMCall
+            description: "Analyze each source file in parallel"
+            for_each: "{{inputs.source_files}}"  # List: ["src/a.py", "src/b.py"]
+            for_each_mode: parallel
+            max_parallel: 10
+            inputs:
+              provider: openai
+              model: gpt-4o
+              prompt: "Analyze this file: {{each.value}}"
+            # Creates iterations: each.key="0", each.value="src/a.py"
+            #                     each.key="1", each.value="src/b.py"
+
+    Example (For_Each - Sequential):
+        blocks:
+          - id: deploy_services
+            type: Shell
+            description: "Deploy services sequentially with health checks"
+            for_each: "{{inputs.services}}"  # Dict: {"api": {...}, "worker": {...}}
+            for_each_mode: sequential
+            inputs:
+              command: "kubectl apply -f {{each.value.manifest}}"
+            # Creates iterations: each.key="api", each.value={"manifest": "api.yaml"}
+            #                     each.key="worker", each.value={"manifest": "worker.yaml"}
+
+    Example (For_Each - Continue on Error):
+        blocks:
+          - id: test_services
+            type: HttpCall
+            description: "Health check all services, continue on failure"
+            for_each: "{{inputs.endpoints}}"
+            continue_on_error: true
+            inputs:
+              url: "{{each.value}}/health"
+              method: GET
     """
 
     id: str = Field(
@@ -344,6 +388,29 @@ class BlockDefinition(BaseModel):
     )
     outputs: dict[str, OutputSchema] | None = Field(
         default=None, description="Custom file-based outputs"
+    )
+
+    # ADR-009: For_Each Abstraction (fractal design)
+    for_each: str | None = Field(
+        default=None,
+        description=(
+            "Variable expression evaluating to dict/list for iteration (e.g., '{{inputs.files}}')"
+        ),
+    )
+    for_each_mode: str = Field(
+        default="parallel",
+        description="Execution mode: 'parallel' (default) or 'sequential'",
+        pattern="^(parallel|sequential)$",
+    )
+    max_parallel: int = Field(
+        default=5,
+        ge=1,
+        le=20,
+        description="Maximum concurrent iterations for parallel mode (1-20, default: 5)",
+    )
+    continue_on_error: bool = Field(
+        default=False,
+        description="Continue executing iterations if some fail (default: False)",
     )
 
     model_config = {"extra": "forbid"}
@@ -618,17 +685,27 @@ class WorkflowSchema(BaseModel):
     @model_validator(mode="after")
     def validate_variable_substitution_syntax(self) -> "WorkflowSchema":
         """Validate variable substitution syntax in all string values."""
-        # Pattern: {{namespace.path.to.field}} - captures full dotted path
-        var_pattern = re.compile(r"\{\{([a-z_][a-z0-9_.]*)\}\}")
+        # Pattern: {{...}} - captures variable expression (supports bracket notation)
+        var_pattern = re.compile(r"\{\{([^}]+)\}\}")
 
         block_ids = {block.id for block in self.blocks}
         input_names = set(self.inputs.keys())
 
-        def validate_string_value(value: str, context: str) -> None:
+        # Build mapping of block_id -> whether it has for_each (for 'each' namespace validation)
+        for_each_blocks = {block.id for block in self.blocks if block.for_each}
+
+        def validate_string_value(value: str, context: str, allow_each: bool = False) -> None:
             """Validate variable references in a string value."""
             matches = var_pattern.findall(value)
             for var_path in matches:
-                parts = var_path.split(".")
+                # Use VariableResolver.parse_variable_path for consistent parsing
+                # Handles both dot notation and bracket notation (ADR-009)
+                try:
+                    parts = VariableResolver.parse_variable_path(var_path)
+                except ValueError as e:
+                    raise ValueError(
+                        f"{context}: Invalid variable reference '{{{{{var_path}}}}}'. {e}"
+                    )
 
                 # {{inputs.field}} - workflow input
                 if parts[0] == "inputs":
@@ -678,28 +755,65 @@ class WorkflowSchema(BaseModel):
                     # Metadata references are valid (read-only workflow metadata)
                     pass
 
+                # {{secrets.KEY}} - secret references (ADR-008)
+                elif parts[0] == "secrets":
+                    if len(parts) < 2:
+                        raise ValueError(
+                            f"{context}: Invalid variable reference '{{{{{var_path}}}}}'. "
+                            f"Secret reference must include key name: {{{{secrets.KEY_NAME}}}}"
+                        )
+                    # Secret key validation happens at runtime, not schema validation
+
+                # {{each.*}} - iteration context (ADR-009)
+                elif parts[0] == "each":
+                    if not allow_each:
+                        raise ValueError(
+                            f"{context}: Invalid variable reference '{{{{{var_path}}}}}'. "
+                            f"The 'each' namespace is only available in for_each blocks. "
+                            f"Add 'for_each' field to this block to enable iteration."
+                        )
+                    # Validate each.* fields
+                    if len(parts) < 2:
+                        raise ValueError(
+                            f"{context}: Invalid variable reference '{{{{{var_path}}}}}'. "
+                            f"'each' reference must include field: "
+                            f"{{{{each.key}}}}, {{{{each.value}}}}, {{{{each.index}}}}, "
+                            f"or {{{{each.count}}}}"
+                        )
+                    # Valid each fields are: key, value, index, count
+                    # But we also allow nested access like each.value.nested for dict values
+
                 # Unknown namespace
                 else:
                     raise ValueError(
                         f"{context}: Invalid variable reference '{{{{{var_path}}}}}'. "
                         f"Unknown namespace '{parts[0]}'. "
-                        f"Valid namespaces: 'inputs', 'blocks', 'metadata'"
+                        f"Valid namespaces: 'inputs', 'blocks', 'metadata', 'secrets', "
+                        f"'each' (for_each blocks only)"
                     )
 
-        def check_dict_values(obj: Any, path: str) -> None:
+        def check_dict_values(obj: Any, path: str, allow_each: bool = False) -> None:
             """Recursively check all string values in nested structures."""
+            # Skip validation for Jinja2 template fields (contain template syntax)
+            # These fields use {{...}} for Jinja2, not workflow variable substitution
+            jinja2_template_fields = [".template"]  # RenderTemplate.template field
+            if any(path.endswith(field) for field in jinja2_template_fields):
+                return  # Skip validation for this field
+
             if isinstance(obj, str):
-                validate_string_value(obj, path)
+                validate_string_value(obj, path, allow_each=allow_each)
             elif isinstance(obj, dict):
                 for key, value in obj.items():
-                    check_dict_values(value, f"{path}.{key}")
+                    check_dict_values(value, f"{path}.{key}", allow_each=allow_each)
             elif isinstance(obj, list):
                 for idx, item in enumerate(obj):
-                    check_dict_values(item, f"{path}[{idx}]")
+                    check_dict_values(item, f"{path}[{idx}]", allow_each=allow_each)
 
         # Validate block inputs
         for block in self.blocks:
-            check_dict_values(block.inputs, f"Block '{block.id}' inputs")
+            # Allow 'each' namespace in for_each blocks
+            allow_each_ns = block.id in for_each_blocks
+            check_dict_values(block.inputs, f"Block '{block.id}' inputs", allow_each=allow_each_ns)
 
         # Validate outputs
         for output_name, output_value in self.outputs.items():

@@ -103,7 +103,16 @@ def normalize_dynamic_fields(data: Any, path: str = "") -> Any:
             normalized_str,
         )
 
-        # Normalize IP addresses (IPv4 and IPv6)
+        # Normalize host:port patterns (localhost, IP addresses with ports)
+        # Pattern: localhost:8080, 127.0.0.1:8080, 192.168.1.1:8080, etc.
+        # Must come before standalone IP/localhost normalization
+        normalized_str = re.sub(
+            r"\b(?:localhost|(?:\d{1,3}\.){3}\d{1,3}):\d{1,5}\b",
+            "IP_ADDRESS:PORT",
+            normalized_str,
+        )
+
+        # Normalize standalone IP addresses (IPv4 and IPv6)
         # IPv4: 192.168.1.1, 10.0.0.1, etc.
         normalized_str = re.sub(
             r"\b(?:\d{1,3}\.){3}\d{1,3}\b",
@@ -113,6 +122,13 @@ def normalize_dynamic_fields(data: Any, path: str = "") -> Any:
         # IPv6: 2001:db8::1, ::1, etc.
         normalized_str = re.sub(
             r"\b(?:[0-9a-fA-F]{1,4}:){7}[0-9a-fA-F]{1,4}\b|::1\b",
+            "IP_ADDRESS",
+            normalized_str,
+        )
+
+        # Normalize standalone localhost (without port)
+        normalized_str = re.sub(
+            r"\blocalhost\b",
             "IP_ADDRESS",
             normalized_str,
         )

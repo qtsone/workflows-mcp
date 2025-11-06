@@ -4,11 +4,12 @@ This is a specialized error monad used exclusively by the loader/registry
 layer for file I/O operations. It is NOT used for workflow execution.
 
 For execution results, see:
-- Metadata (execution state + operation outcome)
-- ExecutionStatus (block lifecycle)
-- OperationOutcome (operation success/failure)
+- Metadata (ADR-009: universal node metadata for fractal for_each)
+- ExecutionResult (workflow execution monad)
+- BlockExecution (block execution result with Metadata)
 
 Post ADR-006: Executors return BaseModel directly and raise exceptions.
+Post ADR-009: Metadata provides fractal metadata structure.
 """
 
 from dataclasses import dataclass, field

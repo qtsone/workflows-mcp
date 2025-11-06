@@ -43,11 +43,24 @@ class CreateFileInput(BlockInput):
 
 
 class CreateFileOutput(BlockOutput):
-    """Output model for CreateFile executor."""
+    """Output model for CreateFile executor.
 
-    path: str = Field(description="Absolute path to created file")
-    size_bytes: int = Field(description="File size in bytes")
-    created: bool = Field(description="True if file was created, False if overwritten")
+    All fields have defaults to support graceful degradation when file creation fails.
+    A default-constructed instance represents a failed/crashed file creation operation.
+    """
+
+    path: str = Field(
+        default="",
+        description="Absolute path to created file (empty string if failed)",
+    )
+    size_bytes: int = Field(
+        default=0,
+        description="File size in bytes (0 if failed)",
+    )
+    created: bool = Field(
+        default=False,
+        description="True if file was created, False if overwritten or failed",
+    )
 
 
 class CreateFileExecutor(BlockExecutor):
@@ -155,12 +168,28 @@ class ReadFileInput(BlockInput):
 
 
 class ReadFileOutput(BlockOutput):
-    """Output model for ReadFile executor."""
+    """Output model for ReadFile executor.
 
-    content: str = Field(description="File content")
-    path: str = Field(description="Absolute path to file")
-    size_bytes: int = Field(description="File size in bytes")
-    found: bool = Field(description="True if file was found, False if missing (required=False)")
+    All fields have defaults to support graceful degradation when file reading fails.
+    A default-constructed instance represents a failed/crashed file read operation.
+    """
+
+    content: str = Field(
+        default="",
+        description="File content (empty string if failed)",
+    )
+    path: str = Field(
+        default="",
+        description="Absolute path to file (empty string if failed)",
+    )
+    size_bytes: int = Field(
+        default=0,
+        description="File size in bytes (0 if failed or not found)",
+    )
+    found: bool = Field(
+        default=False,
+        description="True if file was found, False if missing (required=False) or failed",
+    )
 
 
 class ReadFileExecutor(BlockExecutor):
@@ -263,16 +292,23 @@ class RenderTemplateInput(BlockInput):
 
 
 class RenderTemplateOutput(BlockOutput):
-    """Output model for RenderTemplate executor."""
+    """Output model for RenderTemplate executor.
 
-    content: str = Field(description="RenderTemplateed template content")
+    All fields have defaults to support graceful degradation when template rendering fails.
+    A default-constructed instance represents a failed/crashed rendering operation.
+    """
+
+    content: str = Field(
+        default="",
+        description="Rendered template content (empty string if failed)",
+    )
     output_path: str | None = Field(
         default=None,
-        description="Absolute path to output file (if output_path specified)",
+        description="Absolute path to output file (None if not specified or failed)",
     )
     size_bytes: int | None = Field(
         default=None,
-        description="Output file size in bytes (if output_path specified)",
+        description="Output file size in bytes (None if not written or failed)",
     )
 
 

@@ -48,4 +48,4 @@ outputs:
     type: bool
   cleanup_done:
     value: "{{blocks.cleanup.succeeded}}"
-    type: str
+    type: bool

@@ -37,11 +37,24 @@ class ReadJSONStateInput(BlockInput):
 
 
 class ReadJSONStateOutput(BlockOutput):
-    """Output for ReadJSONState executor."""
+    """Output for ReadJSONState executor.
 
-    data: dict[str, Any] = Field(description="JSON data from file")
-    found: bool = Field(description="Whether file was found")
-    path: str = Field(description="Absolute path to file")
+    All fields have defaults to support graceful degradation when reading fails.
+    A default-constructed instance represents a failed/crashed read operation.
+    """
+
+    data: dict[str, Any] = Field(
+        default_factory=dict,
+        description="JSON data from file (empty dict if failed or not found)",
+    )
+    found: bool = Field(
+        default=False,
+        description="Whether file was found (False if failed or not found)",
+    )
+    path: str = Field(
+        default="",
+        description="Absolute path to file (empty string if failed)",
+    )
 
 
 class ReadJSONStateExecutor(BlockExecutor):
@@ -117,10 +130,20 @@ class WriteJSONStateInput(BlockInput):
 
 
 class WriteJSONStateOutput(BlockOutput):
-    """Output for WriteJSONState executor."""
+    """Output for WriteJSONState executor.
 
-    path: str = Field(description="Absolute path to file")
-    size_bytes: int = Field(description="Size of written file in bytes")
+    All fields have defaults to support graceful degradation when writing fails.
+    A default-constructed instance represents a failed/crashed write operation.
+    """
+
+    path: str = Field(
+        default="",
+        description="Absolute path to file (empty string if failed)",
+    )
+    size_bytes: int = Field(
+        default=0,
+        description="Size of written file in bytes (0 if failed)",
+    )
 
 
 class WriteJSONStateExecutor(BlockExecutor):
@@ -204,11 +227,24 @@ class MergeJSONStateInput(BlockInput):
 
 
 class MergeJSONStateOutput(BlockOutput):
-    """Output for MergeJSONState executor."""
+    """Output for MergeJSONState executor.
 
-    path: str = Field(description="Absolute path to file")
-    created: bool = Field(description="Whether file was created (vs updated)")
-    merged_data: dict[str, Any] = Field(description="Result after merge")
+    All fields have defaults to support graceful degradation when merging fails.
+    A default-constructed instance represents a failed/crashed merge operation.
+    """
+
+    path: str = Field(
+        default="",
+        description="Absolute path to file (empty string if failed)",
+    )
+    created: bool = Field(
+        default=False,
+        description="Whether file was created (vs updated), False if failed",
+    )
+    merged_data: dict[str, Any] = Field(
+        default_factory=dict,
+        description="Result after merge (empty dict if failed)",
+    )
 
 
 class MergeJSONStateExecutor(BlockExecutor):

@@ -426,12 +426,8 @@ class ExecutorRegistry(BaseModel):
         discovered = 0
         eps = entry_points()
 
-        # Handle both new and old entry_points() API
-        if hasattr(eps, "select"):
-            group_eps = eps.select(group=group)
-        else:
-            # Fallback for older API
-            group_eps = eps.get(group, []) if hasattr(eps, "get") else []
+        # Use Python 3.12+ entry_points() API
+        group_eps = eps.select(group=group)
 
         for entry_point in group_eps:
             try:

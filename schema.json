@@ -493,7 +493,7 @@
                       "title": "Headers",
                       "type": "object"
                     },
-                    "body_json": {
+                    "json": {
                       "anyOf": [
                         {
                           "additionalProperties": true,
@@ -504,12 +504,16 @@
                         }
                       ],
                       "default": null,
-                      "description": "JSON request body (mutually exclusive with body_text)",
-                      "title": "Body Json"
+                      "description": "JSON request body (mutually exclusive with content). Matches httpx parameter name.",
+                      "title": "Json"
                     },
-                    "body_text": {
+                    "content": {
                       "anyOf": [
                         {
+                          "type": "string"
+                        },
+                        {
+                          "format": "binary",
                           "type": "string"
                         },
                         {
@@ -517,8 +521,8 @@
                         }
                       ],
                       "default": null,
-                      "description": "Text request body (mutually exclusive with body_json)",
-                      "title": "Body Text"
+                      "description": "Text or binary request body (mutually exclusive with json). Matches httpx parameter name.",
+                      "title": "Content"
                     },
                     "timeout": {
                       "default": 30,
@@ -1121,7 +1125,7 @@
     },
     "HttpCallInput": {
       "additionalProperties": false,
-      "description": "Input model for HttpCall executor.",
+      "description": "Input model for HttpCall executor.\n\nField names match httpx.AsyncClient.request() parameters for consistency\nand to avoid type confusion during parameter passing.",
       "properties": {
         "url": {
           "description": "Request URL (supports ${ENV_VAR} substitution)",
@@ -1142,7 +1146,7 @@
           "title": "Headers",
           "type": "object"
         },
-        "body_json": {
+        "json": {
           "anyOf": [
             {
               "additionalProperties": true,
@@ -1153,12 +1157,16 @@
             }
           ],
           "default": null,
-          "description": "JSON request body (mutually exclusive with body_text)",
-          "title": "Body Json"
+          "description": "JSON request body (mutually exclusive with content). Matches httpx parameter name.",
+          "title": "Json"
         },
-        "body_text": {
+        "content": {
           "anyOf": [
             {
+              "type": "string"
+            },
+            {
+              "format": "binary",
               "type": "string"
             },
             {
@@ -1166,8 +1174,8 @@
             }
           ],
           "default": null,
-          "description": "Text request body (mutually exclusive with body_json)",
-          "title": "Body Text"
+          "description": "Text or binary request body (mutually exclusive with json). Matches httpx parameter name.",
+          "title": "Content"
         },
         "timeout": {
           "default": 30,

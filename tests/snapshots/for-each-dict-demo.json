@@ -1,0 +1,8 @@
+{
+  "outputs": {
+    "all_successful": true,
+    "execution_mode": "sequential",
+    "services_configured": 3
+  },
+  "status": "success"
+}

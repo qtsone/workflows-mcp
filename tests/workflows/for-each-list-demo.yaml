@@ -1,0 +1,72 @@
+name: for-each-list-demo
+description: |
+  Demonstrates for_each with a list input (ADR-009).
+
+  Iterates over a list of files and processes each one in parallel.
+  Shows how list items are converted to dict with numeric string keys.
+
+tags:
+  - test
+  - for_each
+  - parallel
+
+inputs:
+  files:
+    type: list
+    default: ["README.md", "LICENSE", "pyproject.toml"]
+    description: List of files to process
+
+blocks:
+  # For_each with list: processes each file in parallel
+  - id: analyze_files
+    type: Shell
+    for_each: "{{inputs.files}}"
+    for_each_mode: parallel
+    max_parallel: 3
+    continue_on_error: true
+    inputs:
+      command: |
+        echo "Processing file: {{each.value}}"
+        echo "Index: {{each.index}}"
+        echo "Key: {{each.key}}"
+        if [ -f "{{each.value}}" ]; then
+          wc -l "{{each.value}}"
+        else
+          echo "File not found: {{each.value}}"
+          exit 1
+        fi
+
+  # Summary block: accesses for_each results
+  - id: summary
+    type: Shell
+    depends_on: [analyze_files]
+    inputs:
+      command: |
+        echo "=== For_Each Summary ==="
+        echo "Total iterations: {{blocks.analyze_files.metadata.count}}"
+        echo "Failed iterations: {{blocks.analyze_files.metadata.count_failed}}"
+        echo "Skipped iterations: {{blocks.analyze_files.metadata.count_skipped}}"
+        echo "Overall success: {{blocks.analyze_files.metadata.succeeded}}"
+        echo "Execution mode: {{blocks.analyze_files.metadata.mode}}"
+
+        # Access specific iteration results using bracket notation
+        echo ""
+        echo "=== Individual Results ==="
+        echo "File 0 exit code: {{blocks.analyze_files['0'].outputs.exit_code}}"
+        echo "File 1 exit code: {{blocks.analyze_files['1'].outputs.exit_code}}"
+
+outputs:
+  total_files:
+    value: "{{blocks.analyze_files.metadata.count}}"
+    type: num
+    description: Total number of files processed
+
+  failed_count:
+    value: "{{blocks.analyze_files.metadata.count_failed}}"
+    type: num
+    description: Number of failed file processing tasks
+
+  all_succeeded:
+    value: "{{blocks.analyze_files.metadata.succeeded}}"
+    type: bool
+    description: Whether all files were processed successfully

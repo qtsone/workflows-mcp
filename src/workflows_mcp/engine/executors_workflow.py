@@ -117,12 +117,11 @@ class WorkflowExecutor(BlockExecutor):
             ExecutionPaused: Child workflow paused (bubbles automatically)
             Exception: Any other child execution failure
         """
-        # 1. Get ExecutionContext from parent context._internal
-        exec_context = context._internal.get("execution_context")
+        # 1. Get ExecutionContext from parent context (typed accessor)
+        exec_context = context.execution_context
         if exec_context is None:
             raise RuntimeError(
-                "ExecutionContext not found in context._internal - "
-                "workflow composition not supported in this context"
+                "ExecutionContext not found - workflow composition not supported in this context"
             )
 
         workflow_name = inputs.workflow
@@ -234,9 +233,7 @@ class WorkflowExecutor(BlockExecutor):
                     "child_checkpoint_id": child_checkpoint_id,
                     "child_workflow": child_workflow,  # Immediate child's name
                     "child_pause_metadata": child_pause.checkpoint_data,  # Nested metadata
-                    "parent_workflow": context._internal.get("workflow_stack", [])[-1]
-                    if context._internal.get("workflow_stack")
-                    else "",
+                    "parent_workflow": context.get_parent_workflow() or "",
                 },
                 execution=context,  # Parent execution context
             )
@@ -278,12 +275,11 @@ class WorkflowExecutor(BlockExecutor):
                 "Missing child_checkpoint_id in pause_metadata - cannot resume nested workflow"
             )
 
-        # 2. Get ExecutionContext from parent context
-        exec_context = context._internal.get("execution_context")
+        # 2. Get ExecutionContext from parent context (typed accessor)
+        exec_context = context.execution_context
         if exec_context is None:
             raise RuntimeError(
-                "ExecutionContext not found in context._internal - "
-                "workflow composition not supported in this context"
+                "ExecutionContext not found - workflow composition not supported in this context"
             )
 
         # 3. Create WorkflowRunner and resume child workflow

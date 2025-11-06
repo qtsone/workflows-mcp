@@ -1,26 +1,31 @@
 name: http-basic-get
 description: |
   Test basic HttpCall functionality with GET request
-  Uses httpbin.org for reliable, predictable responses
+  Uses local httpbin mock (via base_url input) for reliable, fast tests
 tags: [test, core, http, api]
+inputs:
+  base_url:
+    type: str
+    default: "https://httpbin.org"
+    description: "Base URL for HTTP endpoints (no trailing slash)"
 blocks:
   # Test basic GET request
   - id: get_request
     type: HttpCall
     inputs:
-      url: "https://httpbin.org/get"
+      url: "{{inputs.base_url}}/get"
       method: "GET"
       timeout: 10
   # Test POST request with JSON body
   - id: post_json
     type: HttpCall
     inputs:
-      url: "https://httpbin.org/post"
+      url: "{{inputs.base_url}}/post"
       method: "POST"
       headers:
         Content-Type: "application/json"
         User-Agent: "workflows-mcp-test"
-      body_json:
+      json:
         test_key: "test_value"
         number: 42
       timeout: 10

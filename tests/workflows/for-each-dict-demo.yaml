@@ -1,0 +1,83 @@
+name: for-each-dict-demo
+description: |
+  Demonstrates for_each with a dict input (ADR-009).
+
+  Iterates over a dictionary of services with their configurations,
+  processing each service sequentially with custom settings.
+
+tags:
+  - test
+  - for_each
+  - sequential
+
+inputs:
+  services:
+    type: dict
+    default:
+      api:
+        port: 8000
+        workers: 4
+      worker:
+        port: 8001
+        workers: 2
+      admin:
+        port: 8002
+        workers: 1
+    description: Dictionary of services to configure
+
+blocks:
+  # For_each with dict: processes each service sequentially
+  - id: configure_services
+    type: Shell
+    for_each: "{{inputs.services}}"
+    for_each_mode: sequential
+    continue_on_error: false
+    inputs:
+      command: |
+        echo "=== Configuring Service: {{each.key}} ==="
+        echo "Index: {{each.index}}"
+        echo "Port: {{each.value.port}}"
+        echo "Workers: {{each.value.workers}}"
+        echo ""
+        echo "Service {{each.key}} configured on port {{each.value.port}}"
+        echo "Ready with {{each.value.workers}} workers"
+
+  # Verify configurations using bracket notation
+  - id: verify_configurations
+    type: Shell
+    depends_on: [configure_services]
+    inputs:
+      command: |
+        echo "=== Configuration Verification ==="
+        echo ""
+        echo "API Service:"
+        echo "  Status: {{blocks.configure_services['api'].metadata.status}}"
+        echo "  Succeeded: {{blocks.configure_services['api'].metadata.succeeded}}"
+        echo "  Exit Code: {{blocks.configure_services['api'].outputs.exit_code}}"
+        echo ""
+        echo "Worker Service:"
+        echo "  Status: {{blocks.configure_services['worker'].metadata.status}}"
+        echo "  Succeeded: {{blocks.configure_services['worker'].metadata.succeeded}}"
+        echo ""
+        echo "Admin Service:"
+        echo "  Status: {{blocks.configure_services['admin'].metadata.status}}"
+        echo "  Succeeded: {{blocks.configure_services['admin'].metadata.succeeded}}"
+        echo ""
+        echo "Overall Status: {{blocks.configure_services.metadata.status}}"
+        echo "All services configured: {{blocks.configure_services.metadata.succeeded}}"
+
+outputs:
+  services_configured:
+    value: "{{blocks.configure_services.metadata.count}}"
+    type: num
+    description: Number of services configured
+
+  all_successful:
+    value: "{{blocks.configure_services.metadata.succeeded}}"
+    type: bool
+    description: Whether all services configured successfully
+
+  execution_mode:
+    value: "{{blocks.configure_services.metadata.mode}}"
+    type: str
+    description: Execution mode used (sequential)
