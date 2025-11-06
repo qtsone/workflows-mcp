@@ -2,6 +2,52 @@
 
 All notable changes to this project will be documented in this file.
 
+# [6.0.0](https://github.com/qtsone/workflows-mcp/compare/v5.0.0...v6.0.0) (2025-11-06)
+
+
+* refactor(engine)!: replace _internal dict with strongly-typed ExecutionInternal model ([15df1b1](https://github.com/qtsone/workflows-mcp/commit/15df1b1b4605d1800d33efe32a55b8e3707b7fb2))
+
+
+### Features
+
+* **ADR-009:** add outcome field to distinguish operation failure from executor crash ([e3e2d45](https://github.com/qtsone/workflows-mcp/commit/e3e2d45176d2f83d86f5bc8a96b68d27c94cb765))
+* **engine:** implement for_each type preservation and empty collection handling ([0e2f8ab](https://github.com/qtsone/workflows-mcp/commit/0e2f8abb9492498b9104c160cca1e8820cac49fe))
+
+
+### BREAKING CHANGES
+
+* HttpCallInput field names changed. Update workflows to use
+'json' instead of 'body_json' and 'content' instead of 'body_text'.
+* **ADR-009:** NodeMeta now includes 'outcome' field
+
+ADR-009 Implementation - Phase 2: Outcome Field
+
+Changes:
+- Added 'outcome' field to NodeMeta with values: success, failure, crash, n/a
+- Updated all NodeMeta factory methods to set appropriate outcome values
+- Modified orchestrator.py to pass outcome="crash" for executor exceptions
+- For_each parent aggregates outcome from children (crash > failure > success)
+- Fixed resume_workflow status check from .is_failed() to .failed property
+- Added model_validator to Execution for checkpoint deserialization
+
+Key Outcomes:
+- Operation failure: executor runs, operation fails (e.g., exit 1) - outcome="failure"
+- Executor crash: executor crashes with exception - outcome="crash"
+- Skipped blocks: never executed - outcome="n/a"
+- Successful blocks: operation succeeded - outcome="success"
+
+Test Status: 88/91 tests passing (96.7%)
+- 2 resume_workflow tests failing (investigation ongoing - MCP server crash issue)
+- 1 secrets-http-auth test failing (external httpbin.org 503 error)
+
+Files Modified:
+- src/workflows_mcp/engine/node_meta.py: Added outcome field, updated factories
+- src/workflows_mcp/engine/orchestrator.py: Pass outcome="crash" for exceptions
+- src/workflows_mcp/engine/workflow_runner.py: Fixed .is_failed() → .failed
+- src/workflows_mcp/engine/execution.py: Added model_validator for checkpoint deserialization
+
+See: docs/adr/ADR-009-FOR-EACH-ABSTRACTION.md
+
 # [5.0.0](https://github.com/qtsone/workflows-mcp/compare/v4.4.0...v5.0.0) (2025-11-04)
 
 
