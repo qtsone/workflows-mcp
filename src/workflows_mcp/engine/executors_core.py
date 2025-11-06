@@ -262,6 +262,9 @@ def coerce_value_type(value: Any, output_type: str) -> Any:
     # Handle already-typed values with validation and conversion
     if output_type == "str":
         # Convert any value to string
+        # Special handling for booleans to produce JSON-compatible strings
+        if isinstance(value, bool):
+            return "true" if value else "false"
         return str(value)
 
     elif output_type == "num":

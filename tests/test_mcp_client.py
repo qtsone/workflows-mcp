@@ -1146,7 +1146,9 @@ class TestWorkflowSnapshots:
     - No orphaned snapshots allowed
     """
 
-    async def test_workflow_execution_matches_snapshot(self, workflow_name: str) -> None:
+    async def test_workflow_execution_matches_snapshot(
+        self, workflow_name: str, workflow_inputs: dict[str, str]
+    ) -> None:
         """Execute workflow and validate against snapshot.
 
         Test Flow:
@@ -1166,7 +1168,7 @@ class TestWorkflowSnapshots:
                 "execute_workflow",
                 arguments={
                     "workflow": workflow_name,
-                    "inputs": {},
+                    "inputs": workflow_inputs,  # Inject base_url for HTTP workflows
                     "debug": False,  # Minimal response (status + outputs/error only)
                 },
             )
