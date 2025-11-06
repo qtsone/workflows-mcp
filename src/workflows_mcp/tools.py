@@ -60,9 +60,9 @@ async def execute_workflow(
         dict[str, Any] | None,
         Field(
             description=(
-                "Runtime inputs as key-value pairs for block variable substitution. "
-                "Example: {'project_name': 'my-app', 'branch_name': 'feature/new-ui'}. "
-                "Use get_workflow_info(workflow) to see required inputs for a workflow."
+                "Runtime inputs for variable substitution ({{inputs.*}} in workflow). "
+                "Examples: {'project_path': './app'}, {'branch': 'main', 'force': True}, "
+                "{'python_version': '3.12'}. Optional: get_workflow_info() shows expected inputs."
             )
         ),
     ] = None,
@@ -70,38 +70,37 @@ async def execute_workflow(
         bool,
         Field(
             description=(
-                "Enable debug mode (default: False):\n"
-                "- False: Returns minimal response (status, outputs, errors)\n"
-                "- True: Writes detailed execution info to /tmp/<workflow-name>-<timestamp>.json\n"
-                "  and returns minimal response with 'logfile' field containing the file path.\n"
-                "Use debug mode when:\n"
-                "  * Debugging workflow failures\n"
-                "  * Investigating unexpected behavior\n"
-                "  * Analyzing block-level execution details\n"
-                "Benefits: Full execution details without overwhelming LLM context."
+                "Enable debug logging (default: False). Writes detailed execution log to "
+                "/tmp/<workflow>-<timestamp>.json with block details, variable resolution, "
+                "DAG waves. Use for: debugging failures, analyzing execution order."
             )
         ),
     ] = False,
     *,
     ctx: AppContextType,
 ) -> dict[str, Any]:
-    """Execute a DAG-based workflow with inputs.
+    """Execute a registered workflow template.
 
-    Supports git operations, bash commands, templates, and workflow composition.
+    Runs pre-registered workflows from the template library. Workflows execute as DAGs
+    with parallel execution of independent blocks. Supports shell commands, git operations,
+    file operations, HTTP calls, LLM calls, and workflow composition.
+
+    Use execute_workflow for: Pre-built templates used repeatedly
+    Use execute_inline_workflow for: Ad-hoc YAML definitions, testing, one-off tasks
 
     Returns:
-        Workflow execution result with structure:
         {
             "status": "success" | "failure" | "paused",
-            "outputs": {...},  # Workflow outputs
-            "blocks": {...},   # Block execution details (detailed mode only)
-            "metadata": {...}, # Execution metadata (detailed mode only)
-            "error": "...",    # Error message (if status is "failure")
+            "outputs": {...},        # Workflow outputs (if defined)
+            "error": "...",          # Error details (if failed)
+            "checkpoint_id": "...",  # Resume token (if paused)
+            "prompt": "..."          # Prompt text (if paused)
         }
 
-    Examples:
-        - Execute python-ci-pipeline: workflow="python-ci-pipeline"
-        - Run sequential-echo: workflow="sequential-echo", inputs={"message": "Hello"}
+    Tool Call Examples:
+        execute_workflow(workflow="python-ci-pipeline", inputs={"project_path": "./app"})
+        execute_workflow(workflow="git-checkout-branch", inputs={"branch": "main"})
+        execute_workflow(workflow="node-build", inputs={"workspace": "./frontend"}, debug=True)
     """
     # Validate context availability
     if ctx is None:
@@ -165,9 +164,9 @@ async def execute_inline_workflow(
         str,
         Field(
             description=(
-                "Complete workflow definition as YAML string including name, description, blocks. "
-                "Must be valid YAML syntax following the workflow schema. "
-                "Use validate_workflow_yaml() to check YAML before execution."
+                "Complete workflow YAML definition. Must include: name, description, blocks. "
+                "Recommend: validate_workflow_yaml() first to catch errors. "
+                "Quote {{...}} variables: use 'value: \"{{var}}\"' or block scalars (| or >)."
             ),
             min_length=10,
             max_length=100000,
@@ -177,8 +176,8 @@ async def execute_inline_workflow(
         dict[str, Any] | None,
         Field(
             description=(
-                "Runtime inputs as key-value pairs for block variable substitution. "
-                "Example: {'source_path': 'src/', 'output_dir': 'dist/'}."
+                "Runtime inputs for variable substitution ({{inputs.*}} in YAML). "
+                "Examples: {'source': 'src/'}, {'dir': '/tmp', 'force': True}."
             )
         ),
     ] = None,
@@ -186,28 +185,39 @@ async def execute_inline_workflow(
         bool,
         Field(
             description=(
-                "Enable debug mode (default: False):\n"
-                "- False: Returns minimal response (status, outputs, errors)\n"
-                "- True: Writes detailed execution info to /tmp/<workflow-name>-<timestamp>.json\n"
-                "  and returns minimal response with 'logfile' field containing the file path.\n"
-                "Use debug mode when:\n"
-                "  * Debugging workflow failures\n"
-                "  * Investigating unexpected behavior\n"
-                "  * Analyzing block-level execution details\n"
-                "Benefits: Full execution details without overwhelming LLM context."
+                "Enable debug logging (default: False). Writes detailed execution log to "
+                "/tmp/<workflow>-<timestamp>.json with block details, variable resolution, "
+                "DAG waves. Use for: debugging failures, analyzing execution order."
             )
         ),
     ] = False,
     *,
     ctx: AppContextType,
 ) -> dict[str, Any]:
-    """Execute a workflow provided as YAML string without registering it.
+    """Execute a workflow from YAML string without registering it.
 
-    Enables dynamic workflow execution without file system modifications.
-    Useful for ad-hoc workflows, one-off tasks, or testing workflow definitions.
+    Enables ad-hoc workflow execution without file system modifications. Useful for testing
+    workflow definitions, one-off tasks, or dynamically generated workflows.
+
+    Use execute_inline_workflow for: Testing, prototyping, LLM-generated workflows
+    Use execute_workflow for: Pre-built templates, production workflows
 
     Returns:
-        Workflow execution result with structure similar to execute_workflow.
+        Same structure as execute_workflow (status, outputs, error, checkpoint_id, prompt).
+
+    Tool Call Example:
+        execute_inline_workflow(
+            workflow_yaml='''
+name: test-workflow
+description: Test workflow
+blocks:
+  - id: echo
+    type: Shell
+    inputs:
+      command: echo "{{inputs.message}}"
+            ''',
+            inputs={"message": "Hello"}
+        )
     """
     # Validate context availability
     if ctx is None:
@@ -273,8 +283,8 @@ async def list_workflows(
         list[str],
         Field(
             description=(
-                "Optional list of tags to filter workflows (e.g. ['git', 'ci']). "
-                "Workflows matching ALL tags are returned (AND logic). "
+                "Filter by tags (AND logic - all tags must match). "
+                "Examples: ['git'], ['python', 'ci'], ['node', 'test']. "
                 "Empty list returns all workflows."
             ),
             max_length=20,
@@ -284,24 +294,27 @@ async def list_workflows(
         Literal["json", "markdown"],
         Field(
             description=(
-                "Response format:\n"
-                "  - json: JSON string with list of workflow names\n"
-                "  - markdown: Human-readable formatted list with headers"
+                "Response format: 'json' (workflow names array) or "
+                "'markdown' (formatted list with headers)."
             )
         ),
     ] = "json",
     *,
     ctx: AppContextType,
 ) -> str:
-    """
-    List all available workflows, optionally filtered by tags.
+    """List available workflow templates, optionally filtered by tags.
 
-    Discover workflows by name or filter by tags to find workflows for specific tasks.
-    Returns workflow names only - use `get_workflow_info()` for detailed information.
+    Discover workflows by name or filter by domain-specific tags (git, python, node, ci, test).
+    Returns workflow names only - use get_workflow_info() for detailed information.
 
     Returns:
-        JSON format: JSON string with list of workflow names
-        Markdown format: Formatted list with headers
+        JSON: Array of workflow names ["workflow1", "workflow2"]
+        Markdown: Formatted list with headers and descriptions
+
+    Tool Call Examples:
+        list_workflows()  # All workflows
+        list_workflows(tags=["git"])  # Git workflows only
+        list_workflows(tags=["python", "ci"], format="markdown")  # Python CI, formatted
     """
     # Access shared resources from lifespan context
     app_ctx = ctx.request_context.lifespan_context
@@ -327,8 +340,8 @@ async def get_workflow_info(
         str,
         Field(
             description=(
-                "Workflow name to retrieve information about (e.g., 'python-ci-pipeline'). "
-                "Use list_workflows() to see all available workflows."
+                "Workflow name to inspect. "
+                "Examples: 'python-ci-pipeline', 'git-checkout-branch'."
             ),
             min_length=1,
             max_length=200,
@@ -338,23 +351,27 @@ async def get_workflow_info(
         Literal["json", "markdown"],
         Field(
             description=(
-                "Response format:\n"
-                "- 'json': Structured data with workflow metadata, blocks, inputs, outputs\n"
-                "- 'markdown': Human-readable formatted description with sections"
+                "Response format: 'json' (structured metadata) or "
+                "'markdown' (formatted description)."
             )
         ),
     ] = "json",
     *,
     ctx: AppContextType,
 ) -> dict[str, Any] | str:
-    """Get detailed information about a specific workflow.
+    """Get detailed information about a workflow template.
 
-    Retrieve comprehensive metadata including description, blocks, inputs, outputs,
-    and dependencies. Use before executing a workflow to understand its requirements.
+    Returns metadata including: description, block structure, required/optional inputs,
+    output definitions, and dependencies. Useful for understanding workflow requirements
+    before execution.
 
     Returns:
-        JSON format: Structured workflow metadata
-        Markdown format: Human-readable formatted description
+        JSON: {name, description, blocks: [{id, type, depends_on}], inputs, outputs}
+        Markdown: Formatted sections with block details and input/output schemas
+
+    Tool Call Examples:
+        get_workflow_info(workflow="python-ci-pipeline")
+        get_workflow_info(workflow="git-checkout-branch", format="markdown")
     """
     # Access shared resources from lifespan context
     app_ctx = ctx.request_context.lifespan_context
@@ -419,19 +436,18 @@ async def get_workflow_info(
     )
 )
 async def get_workflow_schema() -> dict[str, Any]:
-    """Get complete JSON Schema for workflow validation.
+    """Get JSON Schema for workflow validation and generation.
 
-    Returns the auto-generated JSON Schema that describes the structure of
-    workflow YAML files, including all registered block types and their inputs.
+    Returns complete schema describing workflow YAML structure, including all registered
+    block types (Shell, Workflow, CreateFile, etc.) and their input schemas.
 
-    This schema can be used for:
-    - Pre-execution validation
-    - Editor autocomplete (VS Code YAML extension)
-    - Documentation generation
-    - Client-side validation
+    Use for: Generating workflows, validating YAML, discovering block types and parameters.
 
     Returns:
-        Complete JSON Schema for workflow definitions
+        JSON Schema with workflow structure, block type definitions, and parameter schemas
+
+    Tool Call Example:
+        get_workflow_schema()  # No parameters required
     """
     # Schema can be generated from executor registry without context
     from .engine.executor_base import create_default_registry
@@ -453,27 +469,40 @@ async def validate_workflow_yaml(
         str,
         Field(
             description=(
-                "YAML workflow definition to validate. Must be complete workflow YAML "
-                "including name, description, and blocks sections."
+                "Complete workflow YAML to validate. Must include: name, description, blocks. "
+                "Use before execute_inline_workflow to catch syntax/schema errors."
             ),
             min_length=10,
             max_length=100000,
         ),
     ],
 ) -> dict[str, Any]:
-    """Validate workflow YAML against schema before execution.
+    """Validate workflow YAML without execution.
 
-    Performs comprehensive validation without executing the workflow. Use before
-    execute_inline_workflow to catch errors early and get clear validation feedback.
+    Checks: YAML syntax, required fields (name, description, blocks), block type existence,
+    and schema compliance. Use before execute_inline_workflow to catch errors early.
 
     Returns:
-        Validation result with detailed feedback:
         {
-            "valid": bool,                    # True if all validation passes
-            "errors": list[str],              # List of validation errors (empty if valid)
-            "warnings": list[str],            # List of warnings (non-blocking issues)
-            "block_types_used": list[str]     # List of block types found in workflow
+            "valid": bool,               # True if validation passes
+            "errors": list[str],         # Validation errors (empty if valid)
+            "warnings": list[str],       # Non-blocking warnings
+            "block_types_used": list[str]  # Block types found in workflow
         }
+
+        Common errors: Invalid YAML syntax, missing required fields, unknown block types,
+        incorrect indentation. Errors include actionable fix suggestions.
+
+    Tool Call Example:
+        validate_workflow_yaml(yaml_content='''
+name: test
+description: Test workflow
+blocks:
+  - id: test
+    type: Shell
+    inputs:
+      command: echo "test"
+        ''')
     """
     # Parse workflow YAML
     load_result = load_workflow_from_yaml(yaml_content, source="<validation>")
@@ -554,9 +583,8 @@ async def resume_workflow(
         str,
         Field(
             description=(
-                "Checkpoint token from pause or list_checkpoints "
-                "(e.g., 'pause_abc123', 'auto_def456'). "
-                "Use list_checkpoints() to see all available checkpoints."
+                "Checkpoint ID from paused workflow. Get from: execute_workflow response "
+                "(if paused) or list_checkpoints(). Format: 'pause_abc123'."
             ),
             min_length=1,
             max_length=100,
@@ -566,9 +594,8 @@ async def resume_workflow(
         str,
         Field(
             description=(
-                "Your response to the pause prompt (required for paused workflows). "
-                "For Prompt blocks, provide appropriate text based on the prompt. "
-                "The workflow will interpret your response using conditions or subsequent blocks."
+                "Response to pause prompt. For Prompt blocks, provide text based on the prompt. "
+                "Workflow continues execution using this value in subsequent blocks or conditions."
             ),
             max_length=10000,
         ),
@@ -577,28 +604,26 @@ async def resume_workflow(
         bool,
         Field(
             description=(
-                "Enable debug mode (default: False):\n"
-                "- False: Returns minimal response (status, outputs, errors)\n"
-                "- True: Writes detailed execution info to /tmp/<workflow-name>-<timestamp>.json\n"
-                "  and returns minimal response with 'logfile' field containing the file path.\n"
-                "Use debug mode when:\n"
-                "  * Debugging workflow failures\n"
-                "  * Investigating unexpected behavior\n"
-                "  * Analyzing block-level execution details\n"
-                "Benefits: Full execution details without overwhelming LLM context."
+                "Enable debug logging (default: False). Writes detailed execution log to "
+                "/tmp/<workflow>-<timestamp>.json with block details, variable resolution, "
+                "DAG waves. Use for: debugging failures, analyzing execution order."
             )
         ),
     ] = False,
     *,
     ctx: AppContextType,
 ) -> dict[str, Any]:
-    """Resume a paused or checkpointed workflow.
+    """Resume a paused workflow from checkpoint.
 
-    Continue workflow execution from a checkpoint created during pause (interactive blocks)
-    or automatic checkpointing. Provides crash recovery and interactive workflow support.
+    Continues workflow execution from where it paused (Prompt blocks pause for LLM input).
+    Use when execute_workflow returns status="paused" with checkpoint_id.
 
     Returns:
-        Workflow execution result similar to execute_workflow.
+        Same structure as execute_workflow (status, outputs, error, checkpoint_id, prompt)
+
+    Tool Call Examples:
+        resume_workflow(checkpoint_id="pause_abc123", response="yes")
+        resume_workflow(checkpoint_id="pause_xyz789", response="proceed with deployment")
     """
     # Access shared resources from lifespan context
     app_ctx = ctx.request_context.lifespan_context
@@ -630,8 +655,8 @@ async def list_checkpoints(
         str,
         Field(
             description=(
-                "Filter checkpoints by workflow name (e.g., 'python-ci-pipeline'). "
-                "Empty string returns checkpoints for all workflows."
+                "Filter by workflow name. Examples: 'python-ci-pipeline', ''. "
+                "Empty string returns all checkpoints."
             ),
             max_length=200,
         ),
@@ -640,23 +665,26 @@ async def list_checkpoints(
         Literal["json", "markdown"],
         Field(
             description=(
-                "Response format:\n"
-                "- 'json': Structured data with checkpoints list and metadata\n"
-                "- 'markdown': Human-readable formatted list with checkpoint details"
+                "Response format: 'json' (structured list) or 'markdown' (formatted)."
             )
         ),
     ] = "json",
     *,
     ctx: AppContextType,
 ) -> dict[str, Any] | str:
-    """List available workflow checkpoints.
+    """List workflow checkpoints.
 
-    Shows all checkpoints, including both automatic checkpoints (for crash recovery)
-    and pause checkpoints (for interactive workflows).
+    Shows paused workflows awaiting resume. Each checkpoint includes: ID, workflow name,
+    creation time, pause prompt, type (pause vs automatic).
 
     Returns:
-        JSON format: Dictionary with checkpoints list and total count
-        Markdown format: Formatted string with headers and checkpoint details
+        JSON: {checkpoints: [{checkpoint_id, workflow, created_at, ...}], total: N}
+        Markdown: Formatted table with checkpoint details
+
+    Tool Call Examples:
+        list_checkpoints()  # All checkpoints
+        list_checkpoints(workflow_name="python-ci-pipeline")  # Filter by workflow
+        list_checkpoints(format="markdown")  # Formatted output
     """
     # Access shared resources from lifespan context
     app_ctx = ctx.request_context.lifespan_context
@@ -697,8 +725,7 @@ async def get_checkpoint_info(
         str,
         Field(
             description=(
-                "Checkpoint token to retrieve information about (e.g., 'pause_abc123'). "
-                "Use list_checkpoints() to see all available checkpoints."
+                "Checkpoint ID to inspect. Get from list_checkpoints() or execute response."
             ),
             min_length=1,
             max_length=100,
@@ -708,22 +735,25 @@ async def get_checkpoint_info(
         Literal["json", "markdown"],
         Field(
             description=(
-                "Response format:\n"
-                "- 'json': Structured data with detailed checkpoint information\n"
-                "- 'markdown': Human-readable formatted details with progress sections"
+                "Response format: 'json' (detailed metadata) or 'markdown' (formatted)."
             )
         ),
     ] = "json",
     *,
     ctx: AppContextType,
 ) -> dict[str, Any] | str:
-    """Get detailed information about a specific checkpoint.
+    """Get checkpoint details.
 
-    Useful for inspecting checkpoint state before resuming.
+    Returns detailed checkpoint state including: workflow name, creation time, pause prompt,
+    paused block ID, completed blocks, execution progress percentage.
 
     Returns:
-        JSON format: Dictionary with detailed checkpoint information
-        Markdown format: Formatted string with sections and progress details
+        JSON: {checkpoint_id, workflow_name, paused_block_id, progress_percentage, ...}
+        Markdown: Formatted sections with progress details
+
+    Tool Call Examples:
+        get_checkpoint_info(checkpoint_id="pause_abc123")
+        get_checkpoint_info(checkpoint_id="pause_abc123", format="markdown")
     """
     # Access shared resources from lifespan context
     app_ctx = ctx.request_context.lifespan_context
@@ -772,9 +802,8 @@ async def delete_checkpoint(
         str,
         Field(
             description=(
-                "Checkpoint token to delete (e.g., 'pause_abc123'). "
-                "Use list_checkpoints() to see all available checkpoints. "
-                "Useful for cleaning up paused workflows that are no longer needed."
+                "Checkpoint ID to delete. Get from list_checkpoints(). "
+                "Use for cleaning up abandoned paused workflows."
             ),
             min_length=1,
             max_length=100,
@@ -785,10 +814,14 @@ async def delete_checkpoint(
 ) -> dict[str, Any]:
     """Delete a checkpoint.
 
-    Useful for cleaning up paused workflows that are no longer needed.
+    Removes checkpoint permanently. Use for cleaning up paused workflows that won't be resumed.
+    Cannot be undone.
 
     Returns:
-        Deletion status
+        {deleted: bool, checkpoint_id: str, message: str}
+
+    Tool Call Example:
+        delete_checkpoint(checkpoint_id="pause_abc123")
     """
     # Access shared resources from lifespan context
     app_ctx = ctx.request_context.lifespan_context
