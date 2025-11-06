@@ -285,7 +285,61 @@ class VariableResolver:
             SecretNotFoundError: If a secret reference cannot be resolved (from provider)
         """
         if isinstance(value, str):
-            return await self._resolve_string_async(value, for_eval=for_eval)
+            # Check if this is a pure variable reference (e.g., "{{inputs.services}}")
+            # If so, return the actual object; otherwise return string interpolation
+            match = self.VAR_PATTERN.fullmatch(value)
+            if match:
+                # Pure variable reference - return actual object (preserves type)
+                # This is critical for for_each expressions that need dict/list objects
+                var_path = match.group(1)
+
+                # Security: Block access to internal namespace
+                if var_path.startswith("__internal__") or ".__internal__" in var_path:
+                    raise VariableNotFoundError(
+                        f"Access to internal namespace is not allowed: {{{{{var_path}}}}}"
+                    )
+
+                # Handle {{secrets.*}} references
+                if var_path.startswith("secrets."):
+                    secret_key = var_path[8:]  # Remove "secrets." prefix
+
+                    if not self.secret_provider:
+                        raise VariableNotFoundError(
+                            f"Secret provider not configured. Cannot resolve: {{{{{var_path}}}}}"
+                        )
+
+                    from .secrets import SecretNotFoundError
+
+                    try:
+                        secret_value = await self.secret_provider.get_secret(secret_key)
+
+                        if self.secret_audit_log:
+                            await self.secret_audit_log.log_access(
+                                workflow_name=self.workflow_name,
+                                block_id=self.block_id,
+                                secret_key=secret_key,
+                                success=True,
+                            )
+
+                        return secret_value  # Return actual object, not string
+
+                    except SecretNotFoundError as e:
+                        if self.secret_audit_log:
+                            await self.secret_audit_log.log_access(
+                                workflow_name=self.workflow_name,
+                                block_id=self.block_id,
+                                secret_key=secret_key,
+                                success=False,
+                                error_message=str(e),
+                            )
+                        raise
+                else:
+                    # Regular variable - resolve and return actual object
+                    return self._get_variable_value(var_path)
+            else:
+                # String with surrounding text or multiple variables
+                # Use string interpolation
+                return await self._resolve_string_async(value, for_eval=for_eval)
         elif isinstance(value, dict):
             resolved: dict[Any, Any] = {}
             for key, val in value.items():
@@ -299,6 +353,89 @@ class VariableResolver:
         else:
             # Primitive types (int, float, bool, None) pass through
             return value
+
+    def _get_variable_value(self, var_path: str) -> Any:
+        """
+        Get the raw value of a variable without formatting (for pure variable references).
+
+        This is used when resolving pure variable references like "{{inputs.services}}"
+        where we need to preserve the actual object type (dict, list, etc.) instead
+        of converting to a string.
+
+        Args:
+            var_path: Variable path (e.g., "inputs.services", "blocks.id.outputs.data")
+
+        Returns:
+            Raw variable value (preserving type: dict, list, str, int, etc.)
+
+        Raises:
+            VariableNotFoundError: If variable not found or inaccessible
+        """
+        # Security: Block access to internal namespace
+        if var_path.startswith("__internal__") or ".__internal__" in var_path:
+            raise VariableNotFoundError(
+                f"Access to internal namespace is not allowed: {{{{{var_path}}}}}"
+            )
+
+        # Parse path with bracket notation support (ADR-009)
+        segments = self.parse_variable_path(var_path)
+
+        # ADR-009: Handle 'each' namespace (for_each iteration context)
+        if segments[0] == "each":
+            if "each" not in self.context:
+                raise VariableNotFoundError(
+                    f"Variable '{{{{{var_path}}}}}' not found. "
+                    f"'each' namespace only available within for_each iterations."
+                )
+            # Navigate from 'each' namespace
+            value = self.context["each"]
+            for i, segment in enumerate(segments[1:], start=1):
+                if not isinstance(value, dict):
+                    partial_path = ".".join(segments[:i])
+                    raise VariableNotFoundError(
+                        f"Cannot access '{segment}' on non-dict value at '{{{{{partial_path}}}}}'"
+                    )
+                if segment not in value:
+                    available = list(value.keys()) if isinstance(value, dict) else []
+                    raise VariableNotFoundError(
+                        f"Variable '{{{{{var_path}}}}}' not found. "
+                        f"At segment '{segment}', available keys: {available}"
+                    )
+                value = value[segment]
+            return value  # Return raw value
+
+        # ADR-007: Three-tier status reference model
+        # Transform shortcuts to metadata namespace
+        if (
+            len(segments) == 3
+            and segments[0] == "blocks"
+            and segments[2] in ("succeeded", "failed", "skipped")
+        ):
+            segments = segments[:2] + ["metadata"] + segments[2:]
+        elif len(segments) == 3 and segments[0] == "blocks" and segments[2] == "status":
+            segments = segments[:2] + ["metadata"] + segments[2:]
+        elif len(segments) == 3 and segments[0] == "blocks" and segments[2] == "outcome":
+            segments = segments[:2] + ["metadata"] + segments[2:]
+
+        # Dictionary navigation with bracket notation support
+        value = self.context
+        for i, segment in enumerate(segments):
+            if not isinstance(value, dict):
+                partial_path = ".".join(segments[:i])
+                raise VariableNotFoundError(
+                    f"Cannot access '{segment}' on non-dict value at '{{{{{partial_path}}}}}'"
+                )
+
+            if segment not in value:
+                available = list(value.keys()) if isinstance(value, dict) else []
+                raise VariableNotFoundError(
+                    f"Variable '{{{{{var_path}}}}}' not found. "
+                    f"At segment '{segment}', available keys: {available}"
+                )
+
+            value = value[segment]
+
+        return value  # Return raw value without formatting
 
     def _resolve_variable(self, var_path: str, for_eval: bool = False) -> str:
         """

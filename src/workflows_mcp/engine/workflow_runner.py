@@ -647,11 +647,18 @@ class WorkflowRunner:
                 f"got {type(for_each_value).__name__}: {block_def.for_each}"
             )
 
-        # 3. Validate non-empty
+        # 3. Handle empty collection - mark block as skipped
         if not iterations:
-            raise ValueError(
-                f"for_each expression resulted in empty collection: {block_def.for_each}"
+            # Empty for_each is valid - mark block as skipped (like conditional execution)
+            self._mark_block_skipped(
+                block_id=block_id,
+                block_def=block_def,
+                exec_context=exec_context,
+                wave_idx=wave_idx,
+                execution_order=0,
+                reason=f"for_each expression resulted in empty collection: {block_def.for_each}",
             )
+            return
 
         # 4. Execute via orchestrator.execute_for_each()
         # Cast mode to Literal type for type safety

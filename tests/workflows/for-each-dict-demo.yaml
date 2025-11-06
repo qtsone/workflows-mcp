@@ -6,7 +6,7 @@ description: |
   processing each service sequentially with custom settings.
 
 tags:
-  - example
+  - test
   - for_each
   - sequential
 

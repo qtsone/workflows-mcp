@@ -6,7 +6,7 @@ description: |
   Shows how list items are converted to dict with numeric string keys.
 
 tags:
-  - example
+  - test
   - for_each
   - parallel
 
