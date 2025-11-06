@@ -16,7 +16,7 @@ blocks:
     description: "Use full path to access block output"
     type: Shell
     inputs:
-      command: echo "{{blocks.producer.__meta__.status}}"
+      command: echo "{{blocks.producer.metadata.status}}"
     depends_on: [producer]
   - id: use_success_shortcut
     description: "Use shortcut syntax to access block output"
@@ -28,7 +28,7 @@ blocks:
     description: "Use full path to access block output"
     type: Shell
     inputs:
-      command: echo "{{blocks.producer.__meta__.succeeded}}"
+      command: echo "{{blocks.producer.metadata.succeeded}}"
     depends_on: [producer]
 outputs:
   status_shortcut_works:
@@ -47,11 +47,11 @@ outputs:
     value: "{{blocks.producer.status}}"
     type: str
   status_full_path_value:
-    value: "{{blocks.producer.__meta__.status}}"
+    value: "{{blocks.producer.metadata.status}}"
     type: str
   success_shortcut_value:
     value: "{{blocks.producer.succeeded}}"
     type: bool
   success_full_path_value:
-    value: "{{blocks.producer.__meta__.succeeded}}"
+    value: "{{blocks.producer.metadata.succeeded}}"
     type: bool

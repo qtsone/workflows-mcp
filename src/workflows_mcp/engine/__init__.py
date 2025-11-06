@@ -12,7 +12,7 @@ Key Components (Post ADR-008):
 - BlockExecutor: Base class for executor implementations
 - BlockInput/BlockOutput: Pydantic v2 base classes for I/O validation
 - Execution: Fractal execution context model (ADR-009)
-- NodeMeta: Universal node metadata for fractal for_each (ADR-009)
+- Metadata: Universal node metadata for fractal for_each (ADR-009)
 - DAGResolver: Dependency resolution via Kahn's algorithm
 - WorkflowRegistry: Registry for managing workflow definitions
 - WorkflowSchema: Pydantic v2 schema for YAML validation (with execution_waves)

@@ -1,7 +1,7 @@
 """Block execution orchestrator for ADR-006 and ADR-009.
 
 The orchestrator wraps executor.execute() calls to:
-1. Catch exceptions → create appropriate NodeMeta
+1. Catch exceptions → create appropriate Metadata
 2. Catch ExecutionPaused → signal pause to caller
 3. Determine operation outcome (for Shell: exit_code)
 4. Return structured BlockExecution result
@@ -9,7 +9,7 @@ The orchestrator wraps executor.execute() calls to:
 6. Execute for_each iterations (parallel/sequential)
 
 This is the bridge between executors (which return BaseModel or raise exceptions)
-and the workflow execution layer (which needs NodeMeta).
+and the workflow execution layer (which needs Metadata).
 """
 
 from __future__ import annotations
@@ -24,7 +24,7 @@ from .block import BlockInput
 from .exceptions import ExecutionPaused, RecursionDepthExceededError
 from .execution import Execution
 from .executor_base import BlockExecutor
-from .node_meta import NodeMeta
+from .metadata import Metadata
 from .validation import validate_iteration_keys
 
 if TYPE_CHECKING:
@@ -42,7 +42,7 @@ class BlockExecution(BaseModel):
     output: BaseModel | None
 
     # Execution metadata (always present) - ADR-009 fractal design
-    metadata: NodeMeta
+    metadata: Metadata
 
     # Pause information (only if paused)
     paused: bool = False
@@ -56,11 +56,11 @@ class BlockOrchestrator:
 
     This is the bridge between:
     - Executors (which return BaseModel or raise exceptions)
-    - Workflow execution layer (which needs NodeMeta)
+    - Workflow execution layer (which needs Metadata)
 
     Responsibilities:
     - Call executor.execute()
-    - Catch exceptions → create NodeMeta
+    - Catch exceptions → create Metadata
     - Catch ExecutionPaused → signal pause
     - Determine operation outcome (e.g., Shell exit_code)
     - Resolve secrets in inputs before execution
@@ -98,7 +98,7 @@ class BlockOrchestrator:
         Execute a block with orchestration (exception handling + metadata).
 
         Args:
-            id: Block identifier or iteration key (for NodeMeta)
+            id: Block identifier or iteration key (for Metadata)
             executor: Block executor to run
             inputs: Validated block inputs
             context: Current execution context
@@ -107,7 +107,7 @@ class BlockOrchestrator:
             depth: Nesting depth (0 for root blocks, 1+ for iterations)
 
         Returns:
-            BlockExecution with output and metadata (__meta__)
+            BlockExecution with output and metadata
 
         Pause Handling:
             If executor raises ExecutionPaused, returns BlockExecution with:
@@ -132,11 +132,16 @@ class BlockOrchestrator:
                 # Reconstruct output with redacted values
                 output = type(output)(**redacted_dict)
 
-            # Success! Create NodeMeta from output
+            # Success! Create Metadata from output
             execution_time_ms = int(datetime.now(UTC).timestamp() * 1000 - start_time_ms)
 
-            # Extract executor-specific metadata from output.__meta__
+            # Extract executor-specific metadata from output.meta
             executor_fields = getattr(output, "meta", {}).copy() if hasattr(output, "meta") else {}
+
+            # Check for exit_code field on output (Shell executor stores it on output directly)
+            exit_code = getattr(output, "exit_code", None) if hasattr(output, "exit_code") else None
+            if exit_code is not None:
+                executor_fields["exit_code"] = exit_code
 
             # Determine success/failure based on executor-specific logic
             # Shell blocks: exit_code != 0 means operation failure
@@ -145,7 +150,7 @@ class BlockOrchestrator:
                 # Shell command failed (non-zero exit code)
                 exit_code = executor_fields["exit_code"]
                 executor_fields["message"] = f"Command exited with code {exit_code}"
-                metadata = NodeMeta.create_leaf_failure(
+                metadata = Metadata.create_leaf_failure(
                     type=executor.type_name,
                     id=id,
                     duration_ms=execution_time_ms,
@@ -158,7 +163,7 @@ class BlockOrchestrator:
                 )
             else:
                 # Operation succeeded
-                metadata = NodeMeta.create_leaf_success(
+                metadata = Metadata.create_leaf_success(
                     type=executor.type_name,
                     id=id,
                     duration_ms=execution_time_ms,
@@ -180,7 +185,7 @@ class BlockOrchestrator:
             # Block paused for external input
             execution_time_ms = int(datetime.now(UTC).timestamp() * 1000 - start_time_ms)
 
-            metadata = NodeMeta.create_leaf_paused(
+            metadata = Metadata.create_leaf_paused(
                 type=executor.type_name,
                 id=id,
                 duration_ms=execution_time_ms,
@@ -212,7 +217,7 @@ class BlockOrchestrator:
             # Get error message
             error_msg = f"{type(e).__name__}: {str(e)}"
 
-            metadata = NodeMeta.create_leaf_failure(
+            metadata = Metadata.create_leaf_failure(
                 type=executor.type_name,
                 id=id,
                 duration_ms=execution_time_ms,
@@ -225,8 +230,14 @@ class BlockOrchestrator:
                 message=error_msg,
             )
 
+            # Create default output instance to prevent VariableNotFoundError
+            # When a block crashes, downstream blocks/outputs may reference its outputs
+            # All executor output models define defaults, so instantiation with no args
+            # produces a semantically meaningful "failed state" (e.g., status_code=0)
+            output = executor.output_type()
+
             return BlockExecution(
-                output=None,
+                output=output,
                 metadata=metadata,
                 paused=False,
             )
@@ -273,10 +284,10 @@ class BlockOrchestrator:
             # Success!
             execution_time_ms = int(datetime.now(UTC).timestamp() * 1000 - start_time_ms)
 
-            # Extract executor-specific metadata from output.__meta__
+            # Extract executor-specific metadata from output.meta
             executor_fields = getattr(output, "meta", {}).copy() if hasattr(output, "meta") else {}
 
-            metadata = NodeMeta.create_leaf_success(
+            metadata = Metadata.create_leaf_success(
                 type=executor.type_name,
                 id=id,
                 duration_ms=execution_time_ms,
@@ -298,7 +309,7 @@ class BlockOrchestrator:
             # Block paused again (multi-step interaction)
             execution_time_ms = int(datetime.now(UTC).timestamp() * 1000 - start_time_ms)
 
-            metadata = NodeMeta.create_leaf_paused(
+            metadata = Metadata.create_leaf_paused(
                 type=executor.type_name,
                 id=id,
                 duration_ms=execution_time_ms,
@@ -324,7 +335,7 @@ class BlockOrchestrator:
 
             error_msg = f"{type(e).__name__}: {str(e)}"
 
-            metadata = NodeMeta.create_leaf_failure(
+            metadata = Metadata.create_leaf_failure(
                 type=executor.type_name,
                 id=id,
                 duration_ms=execution_time_ms,
@@ -354,7 +365,7 @@ class BlockOrchestrator:
         continue_on_error: bool = False,
         wave: int = 0,
         depth: int = 0,
-    ) -> tuple[dict[str, BlockExecution], NodeMeta]:
+    ) -> tuple[dict[str, BlockExecution], Metadata]:
         """
         Execute a for_each block with multiple iterations (ADR-009).
 
@@ -373,13 +384,13 @@ class BlockOrchestrator:
         Returns:
             Tuple of (iteration_results_dict, parent_metadata)
             - iteration_results_dict: Dict[iteration_key, BlockExecution]
-            - parent_metadata: Aggregated NodeMeta for the for_each block
+            - parent_metadata: Aggregated Metadata for the for_each block
 
         Notes:
             - Creates iteration contexts with {{each.key}}, {{each.value}},
               {{each.index}}, {{each.count}}
-            - Aggregates child NodeMeta into parent using
-              NodeMeta.create_for_each_parent()
+            - Aggregates child Metadata into parent using
+              Metadata.create_for_each_parent()
             - Handles continue_on_error: false (fail-fast) and true (resilient)
         """
         from .variables import VariableResolver
@@ -471,7 +482,7 @@ class BlockOrchestrator:
                             # Mark remaining iterations as skipped
                             for remaining_key in iteration_keys:
                                 if remaining_key not in completed_keys:
-                                    skipped_meta = NodeMeta.create_leaf_skipped(
+                                    skipped_metadata = Metadata.create_leaf_skipped(
                                         type=executor.type_name,
                                         id=remaining_key,
                                         started_at=datetime.now(UTC).isoformat(),
@@ -484,7 +495,7 @@ class BlockOrchestrator:
                                     )
                                     iteration_results[remaining_key] = BlockExecution(
                                         output=None,
-                                        metadata=skipped_meta,
+                                        metadata=skipped_metadata,
                                         paused=False,
                                     )
                             break
@@ -504,7 +515,7 @@ class BlockOrchestrator:
                     # Mark remaining iterations as skipped
                     for remaining_idx in range(idx + 1, len(iteration_keys)):
                         remaining_key = iteration_keys[remaining_idx]
-                        skipped_meta = NodeMeta.create_leaf_skipped(
+                        skipped_metadata = Metadata.create_leaf_skipped(
                             type=executor.type_name,
                             id=remaining_key,
                             started_at=datetime.now(UTC).isoformat(),
@@ -517,14 +528,14 @@ class BlockOrchestrator:
                         )
                         iteration_results[remaining_key] = BlockExecution(
                             output=None,
-                            metadata=skipped_meta,
+                            metadata=skipped_metadata,
                             paused=False,
                         )
                     break
 
-        # Aggregate child metadata into parent NodeMeta
+        # Aggregate child metadata into parent Metadata
         child_metas = [result.metadata for result in iteration_results.values()]
-        parent_metadata = NodeMeta.create_for_each_parent(
+        parent_metadata = Metadata.create_for_each_parent(
             type=executor.type_name,
             id=id,
             iterations=iterations,

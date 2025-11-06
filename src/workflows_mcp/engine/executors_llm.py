@@ -154,37 +154,45 @@ class LLMCallInput(BlockInput):
 class LLMCallOutput(BlockOutput):
     """Output model for LLMCall executor.
 
+    All fields have defaults to support graceful degradation when LLM calls fail.
+    A default-constructed instance represents a failed/crashed LLM call.
+
     Clean separation (aligned with industry standards):
-    - response: Raw LLM response text (always present)
+    - response: Raw LLM response text (empty string if crashed)
     - response_json: Parsed JSON dict (empty if validation failed or not JSON)
-    - success: Overall operation success
-    - metadata: Execution details (attempts, validation, tokens, etc.)
+    - success: Overall operation success (False if crashed)
+    - metadata: Execution details (empty dict if crashed before execution)
 
     Design rationale:
     - response_json is always a dict (never None) to prevent downstream errors
-    - Empty dict {} indicates: validation failed, or response wasn't JSON
+    - Empty dict {} indicates: validation failed, response wasn't JSON, or crashed
     - Use success + metadata.validation_passed to distinguish scenarios
     """
 
     response: str = Field(
-        description="Raw LLM response text",
+        default="",
+        description="Raw LLM response text (empty string if request failed or crashed)",
     )
     response_json: dict[str, Any] = Field(
         default_factory=dict,
         description=(
-            "Parsed JSON response. Empty dict if validation failed or response is plain text. "
-            "Check success/metadata.validation_passed to distinguish scenarios."
+            "Parsed JSON response. Empty dict if validation failed, response is plain text, "
+            "or request crashed. Check success/metadata.validation_passed to distinguish scenarios."
         ),
     )
     success: bool = Field(
-        description="True if LLM call succeeded and passed validation (if schema provided)",
+        default=False,
+        description=(
+            "True if LLM call succeeded and passed validation (if schema provided), "
+            "False if crashed"
+        ),
     )
     metadata: dict[str, Any] = Field(
         default_factory=dict,
         description=(
             "Execution metadata: attempts (int), validation_passed (bool), "
             "validation_error (str, if failed), model (str), usage (dict), "
-            "finish_reason (str), etc."
+            "finish_reason (str), etc. Empty dict if crashed before execution."
         ),
     )
 

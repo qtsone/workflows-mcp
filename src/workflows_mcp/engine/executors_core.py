@@ -52,11 +52,23 @@ class ShellOutput(BlockOutput):
 
     Custom outputs declared in YAML are merged directly as fields via extra="allow".
     No separate custom_outputs dict needed.
+
+    All fields have defaults to support graceful degradation when commands fail.
+    A default-constructed instance represents a failed/crashed command execution.
     """
 
-    exit_code: int = Field(description="Process exit code")
-    stdout: str = Field(description="Standard output")
-    stderr: str = Field(description="Standard error")
+    exit_code: int = Field(
+        default=0,
+        description="Process exit code (0 if command crashed before execution)",
+    )
+    stdout: str = Field(
+        default="",
+        description="Standard output (empty if command crashed)",
+    )
+    stderr: str = Field(
+        default="",
+        description="Standard error (empty if command crashed)",
+    )
 
     model_config = {"extra": "allow"}  # Allow dynamic custom output fields
 

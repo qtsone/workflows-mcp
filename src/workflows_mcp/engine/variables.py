@@ -358,17 +358,17 @@ class VariableResolver:
             return self._format_for_eval(value) if for_eval else self._format_for_string(value)
 
         # ADR-007: Three-tier status reference model
-        # Transform shortcuts to __meta__ namespace
+        # Transform shortcuts to metadata namespace
         if (
             len(segments) == 3
             and segments[0] == "blocks"
             and segments[2] in ("succeeded", "failed", "skipped")
         ):
-            segments = segments[:2] + ["__meta__"] + segments[2:]
+            segments = segments[:2] + ["metadata"] + segments[2:]
         elif len(segments) == 3 and segments[0] == "blocks" and segments[2] == "status":
-            segments = segments[:2] + ["__meta__"] + segments[2:]
+            segments = segments[:2] + ["metadata"] + segments[2:]
         elif len(segments) == 3 and segments[0] == "blocks" and segments[2] == "outcome":
-            segments = segments[:2] + ["__meta__"] + segments[2:]
+            segments = segments[:2] + ["metadata"] + segments[2:]
 
         # Dictionary navigation with bracket notation support
         value = self.context

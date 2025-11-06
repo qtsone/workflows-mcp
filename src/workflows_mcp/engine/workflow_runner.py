@@ -26,7 +26,7 @@ from .exceptions import ExecutionPaused, RecursionDepthExceededError
 from .execution import Execution
 from .execution_context import ExecutionContext
 from .execution_result import ExecutionResult
-from .node_meta import NodeMeta
+from .metadata import Metadata
 from .orchestrator import BlockOrchestrator
 from .schema import BlockDefinition, DependencySpec, WorkflowSchema
 from .secrets import EnvVarSecretProvider, SecretAuditLog, SecretRedactor
@@ -94,7 +94,7 @@ class WorkflowRunner:
         Args:
             workflow: Workflow definition (Pydantic model with validated DAG)
             runtime_inputs: Runtime input overrides
-            context: Execution context (optional, created if None)
+            context: Execution context (REQUIRED - provides registries and dependencies)
 
         Returns:
             ExecutionResult (success/failure/paused) with full execution context
@@ -111,6 +111,14 @@ class WorkflowRunner:
             # result.error == "Missing required input: project"
             # result.execution.blocks == {"block1": {...}}  # Completed before error!
         """
+        # Validate required context parameter
+        if context is None:
+            raise ValueError(
+                "ExecutionContext is required. "
+                "Create one via AppContext.create_execution_context() "
+                "or ExecutionContext(...) with proper registries."
+            )
+
         try:
             # Execute workflow (may raise exceptions)
             execution = await self._execute_workflow_internal(workflow, runtime_inputs, context)
@@ -136,12 +144,10 @@ class WorkflowRunner:
 
             if partial_execution is None:
                 # Fallback: create minimal empty execution
+                # Workflow-level Execution has no metadata - only blocks have metadata
                 partial_execution = Execution(
                     inputs=runtime_inputs or {},
-                    metadata={
-                        "workflow_name": workflow.name,
-                        "error": "Execution failed before context creation",
-                    },
+                    metadata=None,
                     blocks={},
                 )
 
@@ -179,7 +185,7 @@ class WorkflowRunner:
             # Checkpoint or workflow not found
             minimal_execution = Execution(
                 inputs={},
-                metadata={"error": "Checkpoint not found", "checkpoint_id": checkpoint_id},
+                metadata=None,
                 blocks={},
             )
             return ExecutionResult.failure(str(e), minimal_execution, self.secret_redactor)
@@ -192,6 +198,18 @@ class WorkflowRunner:
                 execution=e.execution,
                 pause_metadata=e.checkpoint_data,
                 secret_redactor=self.secret_redactor,
+            )
+
+        except Exception as e:
+            # Catch-all for unexpected exceptions
+            logger.exception("Unexpected error during workflow resume: %s", e)
+            minimal_execution = Execution(
+                inputs={},
+                metadata=None,
+                blocks={},
+            )
+            return ExecutionResult.failure(
+                f"Unexpected error: {e}", minimal_execution, self.secret_redactor
             )
 
     async def _execute_workflow_internal(
@@ -575,7 +593,7 @@ class WorkflowRunner:
                 block_id=block_id,
                 inputs=resolved_inputs,
                 outputs=block_execution.output.model_dump() if block_execution.output else {},
-                meta=block_execution.metadata,  # NodeMeta from orchestrator
+                metadata=block_execution.metadata,  # Metadata from orchestrator
             )
 
     async def _execute_for_each_block(
@@ -692,7 +710,7 @@ class WorkflowRunner:
     ) -> None:
         """Mark a block as skipped."""
         skip_time = datetime.now(UTC).isoformat()
-        meta = NodeMeta.create_leaf_skipped(
+        metadata = Metadata.create_leaf_skipped(
             type=block_def.type,
             id=block_id,
             started_at=skip_time,
@@ -709,7 +727,7 @@ class WorkflowRunner:
             block_id=block_id,
             inputs={},
             outputs=default_outputs,
-            meta=meta,
+            metadata=metadata,
         )
 
     def _mark_block_failed(
@@ -723,7 +741,7 @@ class WorkflowRunner:
     ) -> None:
         """Mark a block as failed due to execution error."""
         fail_time = datetime.now(UTC).isoformat()
-        meta = NodeMeta.create_leaf_failure(
+        metadata = Metadata.create_leaf_failure(
             type=block_def.type,
             id=block_id,
             duration_ms=0,
@@ -741,40 +759,26 @@ class WorkflowRunner:
             block_id=block_id,
             inputs={},
             outputs=default_outputs,
-            meta=meta,
+            metadata=metadata,
         )
 
     def _create_default_outputs(self, block_type: str, exec_context: Execution) -> dict[str, Any]:
-        """Create default outputs for skipped/failed blocks."""
+        """Create default outputs for skipped/failed blocks.
+
+        All executor output models define Pydantic field defaults, so we can simply
+        instantiate the model with no arguments to get a semantically meaningful
+        "failed state" (e.g., status_code=0, success=False).
+
+        This approach is consistent with orchestrator's crash handling.
+        """
         context = exec_context._internal.get("execution_context")
         if context is None:
             return {}
 
         try:
             executor = context.executor_registry.get(block_type)
-            output_model_class = executor.output_type
-
-            defaults: dict[str, Any] = {}
-            for field_name, field_info in output_model_class.model_fields.items():
-                field_type = field_info.annotation
-
-                # Type-based defaults
-                if "str" in str(field_type):
-                    defaults[field_name] = ""
-                elif "int" in str(field_type):
-                    defaults[field_name] = 0
-                elif "float" in str(field_type):
-                    defaults[field_name] = 0.0
-                elif "bool" in str(field_type):
-                    defaults[field_name] = False
-                elif "dict" in str(field_type):
-                    defaults[field_name] = {}
-                elif "list" in str(field_type):
-                    defaults[field_name] = []
-                else:
-                    defaults[field_name] = None
-
-            return defaults
+            # Instantiate output model with defaults, then convert to dict
+            return executor.output_type().model_dump()
 
         except Exception:
             return {}
@@ -786,26 +790,32 @@ class WorkflowRunner:
         context: ExecutionContext | None,
     ) -> Execution:
         """Create fresh Execution context for workflow start."""
+        # Create execution context (workflow-level has no metadata - only blocks have metadata)
+        workflow_start_time = datetime.now(UTC).isoformat()
         exec_context = Execution(
             inputs=self._merge_workflow_inputs(workflow, runtime_inputs),
-            metadata={
-                "workflow_name": workflow.name,
-                "start_time": datetime.now(UTC).isoformat(),
-            },
+            metadata=None,  # Workflow-level Execution has no block metadata
             blocks={},
             depth=len(context.workflow_stack) if context else 0,
         )
 
-        # Store ExecutionContext in _internal (if provided)
+        # Store workflow metadata and ExecutionContext in _internal
+        workflow_metadata_dict = {
+            "workflow_name": workflow.name,
+            "started_at": workflow_start_time,
+        }
+
         if context:
             exec_context._internal = {
                 "execution_context": context,
                 "workflow_stack": context.workflow_stack + [workflow.name],
+                "workflow_metadata": workflow_metadata_dict,
             }
         else:
             exec_context._internal = {
                 "execution_context": None,
                 "workflow_stack": [workflow.name],
+                "workflow_metadata": workflow_metadata_dict,
             }
 
         return exec_context

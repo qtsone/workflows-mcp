@@ -32,16 +32,14 @@ class BlockOutput(BaseModel):
     Allows extra fields to support dynamic outputs from custom block configurations
     and child workflow outputs in Workflow blocks.
 
-    Executors can populate __meta__ with executor-specific metadata fields
+    Executors can populate meta with executor-specific metadata fields
     (e.g., exit_code for Shell, tokens_used for LLMCall). The orchestrator
-    will merge these with core timing/execution fields when creating NodeMeta.
+    will merge these with core timing/execution fields when creating Metadata.
     """
 
     meta: dict[str, Any] = Field(
         default_factory=dict,
-        alias="__meta__",
-        serialization_alias="__meta__",
         description="Executor-specific metadata fields (exit_code, tokens_used, etc.)",
     )
 
-    model_config = {"extra": "allow", "populate_by_name": True}
+    model_config = {"extra": "allow"}

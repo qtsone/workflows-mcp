@@ -68,16 +68,32 @@ class HttpCallInput(BlockInput):
 
 
 class HttpCallOutput(BlockOutput):
-    """Output model for HttpCall executor."""
+    """Output model for HttpCall executor.
 
-    status_code: int = Field(description="HTTP response status code")
-    response_body: str = Field(description="Response body as text")
+    All fields have defaults to support graceful degradation when HTTP calls fail.
+    A default-constructed instance represents a failed/crashed HTTP call.
+    """
+
+    status_code: int = Field(
+        default=0,
+        description="HTTP response status code (0 if request failed before receiving response)",
+    )
+    response_body: str = Field(
+        default="",
+        description="Response body as text (empty string if request failed)",
+    )
     response_json: dict[str, Any] | None = Field(
         default=None,
-        description="Parsed JSON response (None if not valid JSON)",
+        description="Parsed JSON response (None if not valid JSON or request failed)",
     )
-    headers: dict[str, str] = Field(description="Response headers")
-    success: bool = Field(description="True if status code is 2xx, False otherwise")
+    headers: dict[str, str] = Field(
+        default_factory=dict,
+        description="Response headers (empty dict if request failed)",
+    )
+    success: bool = Field(
+        default=False,
+        description="True if status code is 2xx, False otherwise or if request failed",
+    )
 
 
 class HttpCallExecutor(BlockExecutor):

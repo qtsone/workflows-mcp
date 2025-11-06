@@ -47,10 +47,16 @@ class PromptInput(BlockInput):
 class PromptOutput(BlockOutput):
     """Output for Prompt executor.
 
+    All fields have defaults to support graceful degradation when prompting fails.
+    A default-constructed instance represents a failed/crashed prompt operation.
+
     Simple design: single response field containing raw LLM response.
     """
 
-    response: str = Field(description="Raw LLM response to the prompt")
+    response: str = Field(
+        default="",
+        description="Raw LLM response to the prompt (empty string if failed or crashed)",
+    )
 
 
 class PromptExecutor(BlockExecutor):

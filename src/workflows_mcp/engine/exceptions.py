@@ -78,7 +78,7 @@ class ExecutionPaused(Exception):  # noqa: N818
     3. Resume will be called later with LLM response
 
     The orchestrator catches this exception and:
-    - Creates NodeMeta.create_leaf_paused()
+    - Creates Metadata.create_leaf_paused()
     - Stores checkpoint with pause data
     - Returns BlockExecution with paused=True
 

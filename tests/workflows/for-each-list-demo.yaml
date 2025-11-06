@@ -43,11 +43,11 @@ blocks:
     inputs:
       command: |
         echo "=== For_Each Summary ==="
-        echo "Total iterations: {{blocks.analyze_files.__meta__.count}}"
-        echo "Failed iterations: {{blocks.analyze_files.__meta__.count_failed}}"
-        echo "Skipped iterations: {{blocks.analyze_files.__meta__.count_skipped}}"
-        echo "Overall success: {{blocks.analyze_files.__meta__.succeeded}}"
-        echo "Execution mode: {{blocks.analyze_files.__meta__.mode}}"
+        echo "Total iterations: {{blocks.analyze_files.metadata.count}}"
+        echo "Failed iterations: {{blocks.analyze_files.metadata.count_failed}}"
+        echo "Skipped iterations: {{blocks.analyze_files.metadata.count_skipped}}"
+        echo "Overall success: {{blocks.analyze_files.metadata.succeeded}}"
+        echo "Execution mode: {{blocks.analyze_files.metadata.mode}}"
 
         # Access specific iteration results using bracket notation
         echo ""
@@ -57,16 +57,16 @@ blocks:
 
 outputs:
   total_files:
-    value: "{{blocks.analyze_files.__meta__.count}}"
+    value: "{{blocks.analyze_files.metadata.count}}"
     type: num
     description: Total number of files processed
 
   failed_count:
-    value: "{{blocks.analyze_files.__meta__.count_failed}}"
+    value: "{{blocks.analyze_files.metadata.count_failed}}"
     type: num
     description: Number of failed file processing tasks
 
   all_succeeded:
-    value: "{{blocks.analyze_files.__meta__.succeeded}}"
+    value: "{{blocks.analyze_files.metadata.succeeded}}"
     type: bool
     description: Whether all files were processed successfully

@@ -51,33 +51,33 @@ blocks:
         echo "=== Configuration Verification ==="
         echo ""
         echo "API Service:"
-        echo "  Status: {{blocks.configure_services['api'].__meta__.status}}"
-        echo "  Succeeded: {{blocks.configure_services['api'].__meta__.succeeded}}"
+        echo "  Status: {{blocks.configure_services['api'].metadata.status}}"
+        echo "  Succeeded: {{blocks.configure_services['api'].metadata.succeeded}}"
         echo "  Exit Code: {{blocks.configure_services['api'].outputs.exit_code}}"
         echo ""
         echo "Worker Service:"
-        echo "  Status: {{blocks.configure_services['worker'].__meta__.status}}"
-        echo "  Succeeded: {{blocks.configure_services['worker'].__meta__.succeeded}}"
+        echo "  Status: {{blocks.configure_services['worker'].metadata.status}}"
+        echo "  Succeeded: {{blocks.configure_services['worker'].metadata.succeeded}}"
         echo ""
         echo "Admin Service:"
-        echo "  Status: {{blocks.configure_services['admin'].__meta__.status}}"
-        echo "  Succeeded: {{blocks.configure_services['admin'].__meta__.succeeded}}"
+        echo "  Status: {{blocks.configure_services['admin'].metadata.status}}"
+        echo "  Succeeded: {{blocks.configure_services['admin'].metadata.succeeded}}"
         echo ""
-        echo "Overall Status: {{blocks.configure_services.__meta__.status}}"
-        echo "All services configured: {{blocks.configure_services.__meta__.succeeded}}"
+        echo "Overall Status: {{blocks.configure_services.metadata.status}}"
+        echo "All services configured: {{blocks.configure_services.metadata.succeeded}}"
 
 outputs:
   services_configured:
-    value: "{{blocks.configure_services.__meta__.count}}"
+    value: "{{blocks.configure_services.metadata.count}}"
     type: num
     description: Number of services configured
 
   all_successful:
-    value: "{{blocks.configure_services.__meta__.succeeded}}"
+    value: "{{blocks.configure_services.metadata.succeeded}}"
     type: bool
     description: Whether all services configured successfully
 
   execution_mode:
-    value: "{{blocks.configure_services.__meta__.mode}}"
+    value: "{{blocks.configure_services.metadata.mode}}"
     type: str
     description: Execution mode used (sequential)
