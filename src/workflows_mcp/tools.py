@@ -196,28 +196,28 @@ async def execute_inline_workflow(
 ) -> dict[str, Any]:
     """Execute a workflow from YAML string without registering it.
 
-    Enables ad-hoc workflow execution without file system modifications. Useful for testing
-    workflow definitions, one-off tasks, or dynamically generated workflows.
+        Enables ad-hoc workflow execution without file system modifications. Useful for testing
+        workflow definitions, one-off tasks, or dynamically generated workflows.
 
-    Use execute_inline_workflow for: Testing, prototyping, LLM-generated workflows
-    Use execute_workflow for: Pre-built templates, production workflows
+        Use execute_inline_workflow for: Testing, prototyping, LLM-generated workflows
+        Use execute_workflow for: Pre-built templates, production workflows
 
-    Returns:
-        Same structure as execute_workflow (status, outputs, error, checkpoint_id, prompt).
+        Returns:
+            Same structure as execute_workflow (status, outputs, error, checkpoint_id, prompt).
 
-    Tool Call Example:
-        execute_inline_workflow(
-            workflow_yaml='''
-name: test-workflow
-description: Test workflow
-blocks:
-  - id: echo
-    type: Shell
-    inputs:
-      command: echo "{{inputs.message}}"
-            ''',
-            inputs={"message": "Hello"}
-        )
+        Tool Call Example:
+            execute_inline_workflow(
+                workflow_yaml='''
+    name: test-workflow
+    description: Test workflow
+    blocks:
+      - id: echo
+        type: Shell
+        inputs:
+          command: echo "{{inputs.message}}"
+                ''',
+                inputs={"message": "Hello"}
+            )
     """
     # Validate context availability
     if ctx is None:
@@ -340,8 +340,7 @@ async def get_workflow_info(
         str,
         Field(
             description=(
-                "Workflow name to inspect. "
-                "Examples: 'python-ci-pipeline', 'git-checkout-branch'."
+                "Workflow name to inspect. Examples: 'python-ci-pipeline', 'git-checkout-branch'."
             ),
             min_length=1,
             max_length=200,
@@ -479,30 +478,30 @@ async def validate_workflow_yaml(
 ) -> dict[str, Any]:
     """Validate workflow YAML without execution.
 
-    Checks: YAML syntax, required fields (name, description, blocks), block type existence,
-    and schema compliance. Use before execute_inline_workflow to catch errors early.
+        Checks: YAML syntax, required fields (name, description, blocks), block type existence,
+        and schema compliance. Use before execute_inline_workflow to catch errors early.
 
-    Returns:
-        {
-            "valid": bool,               # True if validation passes
-            "errors": list[str],         # Validation errors (empty if valid)
-            "warnings": list[str],       # Non-blocking warnings
-            "block_types_used": list[str]  # Block types found in workflow
-        }
+        Returns:
+            {
+                "valid": bool,               # True if validation passes
+                "errors": list[str],         # Validation errors (empty if valid)
+                "warnings": list[str],       # Non-blocking warnings
+                "block_types_used": list[str]  # Block types found in workflow
+            }
 
-        Common errors: Invalid YAML syntax, missing required fields, unknown block types,
-        incorrect indentation. Errors include actionable fix suggestions.
+            Common errors: Invalid YAML syntax, missing required fields, unknown block types,
+            incorrect indentation. Errors include actionable fix suggestions.
 
-    Tool Call Example:
-        validate_workflow_yaml(yaml_content='''
-name: test
-description: Test workflow
-blocks:
-  - id: test
-    type: Shell
-    inputs:
-      command: echo "test"
-        ''')
+        Tool Call Example:
+            validate_workflow_yaml(yaml_content='''
+    name: test
+    description: Test workflow
+    blocks:
+      - id: test
+        type: Shell
+        inputs:
+          command: echo "test"
+            ''')
     """
     # Parse workflow YAML
     load_result = load_workflow_from_yaml(yaml_content, source="<validation>")
@@ -663,11 +662,7 @@ async def list_checkpoints(
     ] = "",
     format: Annotated[  # noqa: A002
         Literal["json", "markdown"],
-        Field(
-            description=(
-                "Response format: 'json' (structured list) or 'markdown' (formatted)."
-            )
-        ),
+        Field(description=("Response format: 'json' (structured list) or 'markdown' (formatted).")),
     ] = "json",
     *,
     ctx: AppContextType,
@@ -734,9 +729,7 @@ async def get_checkpoint_info(
     format: Annotated[  # noqa: A002
         Literal["json", "markdown"],
         Field(
-            description=(
-                "Response format: 'json' (detailed metadata) or 'markdown' (formatted)."
-            )
+            description=("Response format: 'json' (detailed metadata) or 'markdown' (formatted).")
         ),
     ] = "json",
     *,
