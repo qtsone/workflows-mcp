@@ -495,7 +495,7 @@ class WorkflowRunner:
             Exception: On execution errors
         """
         # Get execution context from internal state
-        context = exec_context._internal.get("execution_context")
+        context = exec_context.execution_context
         if context is None:
             raise RuntimeError("ExecutionContext not found in Execution._internal")
 
@@ -622,7 +622,7 @@ class WorkflowRunner:
         context_dict = self._execution_to_dict(exec_context)
 
         # Get workflow name safely from internal metadata
-        workflow_metadata = exec_context._internal.get("workflow_metadata", {})
+        workflow_metadata = exec_context.workflow_metadata
         workflow_name = workflow_metadata.get("workflow_name", "")
 
         resolver = VariableResolver(
@@ -771,7 +771,7 @@ class WorkflowRunner:
 
         This approach is consistent with orchestrator's crash handling.
         """
-        context = exec_context._internal.get("execution_context")
+        context = exec_context.execution_context
         if context is None:
             return {}
 
@@ -806,17 +806,12 @@ class WorkflowRunner:
         }
 
         if context:
-            exec_context._internal = {
-                "execution_context": context,
-                "workflow_stack": context.workflow_stack + [workflow.name],
-                "workflow_metadata": workflow_metadata_dict,
-            }
+            exec_context.set_execution_context(context)
+            exec_context._internal.workflow_stack = context.workflow_stack + [workflow.name]
+            exec_context.set_workflow_metadata(workflow_metadata_dict)
         else:
-            exec_context._internal = {
-                "execution_context": None,
-                "workflow_stack": [workflow.name],
-                "workflow_metadata": workflow_metadata_dict,
-            }
+            exec_context._internal.workflow_stack = [workflow.name]
+            exec_context.set_workflow_metadata(workflow_metadata_dict)
 
         return exec_context
 
@@ -861,14 +856,12 @@ class WorkflowRunner:
             metadata_updates["secret_access_count"] = len(self.secret_audit_log.events)
 
         # Update workflow metadata in _internal storage
-        workflow_metadata = exec_context._internal.get("workflow_metadata", {})
-        workflow_metadata.update(metadata_updates)
-        exec_context._internal["workflow_metadata"] = workflow_metadata
+        exec_context.update_workflow_metadata(**metadata_updates)
 
     def _execution_to_dict(self, exec_context: Execution) -> dict[str, Any]:
         """Convert Execution model to dict for variable resolution."""
         # Get workflow metadata from _internal storage
-        metadata = exec_context._internal.get("workflow_metadata", {})
+        metadata = exec_context.workflow_metadata
         blocks = {
             block_id: (block_exec.model_dump() if isinstance(block_exec, Execution) else block_exec)
             for block_id, block_exec in exec_context.blocks.items()
@@ -1093,10 +1086,8 @@ class WorkflowRunner:
         # Restore execution context
         exec_context = checkpoint.context
         workflow_stack = [ws.get("name", "") for ws in checkpoint.workflow_stack]
-        exec_context._internal = {
-            "execution_context": context,
-            "workflow_stack": workflow_stack,
-        }
+        exec_context.set_execution_context(context)
+        exec_context._internal.workflow_stack = workflow_stack
 
         # Resume paused block if needed
         completed_blocks = checkpoint.completed_blocks.copy()
@@ -1187,7 +1178,7 @@ class WorkflowRunner:
     ) -> None:
         """Resume a paused block execution."""
         # Get execution context
-        context = exec_context._internal.get("execution_context")
+        context = exec_context.execution_context
         if context is None:
             raise RuntimeError("ExecutionContext not found in Execution._internal")
 

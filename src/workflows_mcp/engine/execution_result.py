@@ -241,8 +241,8 @@ class ExecutionResult:
 
     def _metadata_to_dict(self) -> dict[str, Any]:
         """Convert execution workflow metadata to dict format for JSON serialization."""
-        # Get workflow metadata from _internal storage
-        return self.execution._internal.get("workflow_metadata", {})
+        # Get workflow metadata from typed accessor
+        return self.execution.workflow_metadata
 
     def _write_debug_file(self) -> str:
         """

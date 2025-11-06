@@ -2,11 +2,42 @@
 
 from __future__ import annotations
 
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from pydantic import BaseModel, Field, PrivateAttr, model_validator
 
 from .metadata import Metadata
+
+if TYPE_CHECKING:
+    from .execution_context import ExecutionContext
+
+
+class ExecutionInternal(BaseModel):
+    """Strongly-typed internal state for Execution.
+
+    This replaces the type-unsafe dict[str, Any] with explicit fields,
+    providing full type safety and IDE autocomplete support.
+
+    These fields are not accessible in workflow variable resolution
+    (hidden from {{...}} expressions) as they contain execution infrastructure.
+    """
+
+    model_config = {"arbitrary_types_allowed": True}
+
+    execution_context: ExecutionContext | None = Field(
+        default=None,
+        description="Dependency injection context (registries, stores, etc.)",
+    )
+
+    workflow_metadata: dict[str, Any] = Field(
+        default_factory=dict,
+        description="Workflow-level metadata (name, start_time, etc.)",
+    )
+
+    workflow_stack: list[str] = Field(
+        default_factory=list,
+        description="Stack of workflow names for recursion tracking",
+    )
 
 
 class Execution(BaseModel):
@@ -68,8 +99,44 @@ class Execution(BaseModel):
     """
 
     # Internal namespace (hidden from variable resolution)
-    _internal: dict[str, Any] = PrivateAttr(default_factory=dict)
-    """Internal state not accessible in variable resolution."""
+    _internal: ExecutionInternal = PrivateAttr(default_factory=ExecutionInternal)
+    """Strongly-typed internal state not accessible in variable resolution."""
+
+    # Typed accessors for internal state
+    @property
+    def execution_context(self) -> ExecutionContext | None:
+        """Get the execution context (dependency injection)."""
+        return self._internal.execution_context
+
+    def set_execution_context(self, ctx: ExecutionContext) -> None:
+        """Set the execution context (dependency injection)."""
+        self._internal.execution_context = ctx
+
+    @property
+    def workflow_metadata(self) -> dict[str, Any]:
+        """Get workflow-level metadata."""
+        return self._internal.workflow_metadata
+
+    def set_workflow_metadata(self, metadata: dict[str, Any]) -> None:
+        """Set workflow-level metadata."""
+        self._internal.workflow_metadata = metadata
+
+    def update_workflow_metadata(self, **kwargs: Any) -> None:
+        """Update workflow metadata with new key-value pairs."""
+        self._internal.workflow_metadata.update(kwargs)
+
+    @property
+    def workflow_stack(self) -> list[str]:
+        """Get workflow stack for recursion tracking."""
+        return self._internal.workflow_stack
+
+    def push_workflow(self, workflow_name: str) -> None:
+        """Push workflow onto stack (for recursion tracking)."""
+        self._internal.workflow_stack.append(workflow_name)
+
+    def get_parent_workflow(self) -> str | None:
+        """Get parent workflow name (for composition)."""
+        return self._internal.workflow_stack[-1] if self._internal.workflow_stack else None
 
     @model_validator(mode="before")
     @classmethod

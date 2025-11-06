@@ -19,10 +19,13 @@ from __future__ import annotations
 
 import json
 import os
-from typing import Any, ClassVar
+from typing import TYPE_CHECKING, Any, ClassVar
 
 import httpx
-from pydantic import Field
+from pydantic import Field, model_validator
+
+if TYPE_CHECKING:
+    from typing import Self
 
 from .block import BlockInput, BlockOutput
 from .execution import Execution
@@ -38,7 +41,11 @@ from .executor_base import (
 
 
 class HttpCallInput(BlockInput):
-    """Input model for HttpCall executor."""
+    """Input model for HttpCall executor.
+
+    Field names match httpx.AsyncClient.request() parameters for consistency
+    and to avoid type confusion during parameter passing.
+    """
 
     url: str = Field(description="Request URL (supports ${ENV_VAR} substitution)")
     method: str = Field(
@@ -49,13 +56,21 @@ class HttpCallInput(BlockInput):
         default_factory=dict,
         description="HTTP headers (supports ${ENV_VAR} substitution in values)",
     )
-    body_json: dict[str, Any] | None = Field(
+    json: dict[str, Any] | None = Field(  # type: ignore[assignment]
         default=None,
-        description="JSON request body (mutually exclusive with body_text)",
+        description=(
+            "JSON request body (mutually exclusive with content). "
+            "Matches httpx parameter name."
+        ),
     )
-    body_text: str | None = Field(
+    # Note: Field name 'json' intentionally shadows Pydantic's deprecated .json() method
+    # to match httpx.AsyncClient.request() API for type-safe parameter passthrough
+    content: str | bytes | None = Field(
         default=None,
-        description="Text request body (mutually exclusive with body_json)",
+        description=(
+            "Text or binary request body (mutually exclusive with json). "
+            "Matches httpx parameter name."
+        ),
     )
     timeout: int = Field(
         default=30,
@@ -65,6 +80,13 @@ class HttpCallInput(BlockInput):
     )
     follow_redirects: bool = Field(default=True, description="Whether to follow HTTP redirects")
     verify_ssl: bool = Field(default=True, description="Whether to verify SSL certificates")
+
+    @model_validator(mode="after")
+    def validate_body_exclusive(self) -> Self:
+        """Validate that json and content are mutually exclusive."""
+        if self.json is not None and self.content is not None:
+            raise ValueError("Cannot specify both 'json' and 'content' parameters")
+        return self
 
 
 class HttpCallOutput(BlockOutput):
@@ -136,29 +158,20 @@ class HttpCallExecutor(BlockExecutor):
             HttpCallOutput with status code, response body, headers
 
         Raises:
-            ValueError: Invalid inputs (both body_json and body_text specified)
+            ValueError: Invalid inputs (validated by Pydantic)
             httpx.TimeoutException: Request timeout
             httpx.NetworkError: Network connectivity issues
             httpx.HTTPStatusError: HTTP error responses (can be caught)
             Exception: Other HTTP client errors
         """
-        # Validate mutually exclusive body inputs
-        if inputs.body_json is not None and inputs.body_text is not None:
-            raise ValueError("Cannot specify both body_json and body_text")
-
         # Substitute environment variables in URL and headers
         url = self._substitute_env_vars(inputs.url)
         headers = {key: self._substitute_env_vars(value) for key, value in inputs.headers.items()}
 
-        # Prepare request body
-        body: str | bytes | dict[str, Any] | None = None
-        if inputs.body_json is not None:
-            body = inputs.body_json
-            # Set Content-Type if not already specified
+        # Set Content-Type for JSON if not already specified
+        if inputs.json is not None:
             if "Content-Type" not in headers and "content-type" not in headers:
                 headers["Content-Type"] = "application/json"
-        elif inputs.body_text is not None:
-            body = inputs.body_text
 
         # Create HTTP client with configuration
         async with httpx.AsyncClient(
@@ -166,14 +179,14 @@ class HttpCallExecutor(BlockExecutor):
             follow_redirects=inputs.follow_redirects,
             verify=inputs.verify_ssl,
         ) as client:
-            # Make HTTP request
+            # Make HTTP request (parameters pass through directly to httpx)
             try:
                 response = await client.request(
                     method=inputs.method.upper(),
                     url=url,
                     headers=headers,
-                    json=body if inputs.body_json is not None else None,
-                    content=body if inputs.body_text is not None else None,
+                    json=inputs.json,  # Direct passthrough - type-safe!
+                    content=inputs.content,  # Direct passthrough - type-safe!
                 )
             except httpx.TimeoutException as e:
                 raise httpx.TimeoutException(

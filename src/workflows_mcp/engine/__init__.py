@@ -42,6 +42,10 @@ from . import (  # noqa: F401
 )
 from .block import BlockInput, BlockOutput
 from .dag import DAGResolver
+
+# Rebuild Execution models after ExecutionContext is fully defined
+# This resolves forward references in ExecutionInternal
+from .execution import Execution, ExecutionInternal
 from .execution_context import ExecutionContext
 from .execution_result import ExecutionResult, PauseData
 from .executor_base import create_default_registry
@@ -92,6 +96,9 @@ from .registry import WorkflowRegistry
 from .schema import WorkflowSchema
 from .validation import IterationKeyValidationError, validate_iteration_keys
 from .workflow_runner import WorkflowRunner
+
+ExecutionInternal.model_rebuild()
+Execution.model_rebuild()
 
 __all__ = [
     # Core types (ADR-008)

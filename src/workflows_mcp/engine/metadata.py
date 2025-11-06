@@ -588,6 +588,7 @@ class Metadata(BaseModel):
         # - Any crash → "crash"
         # - Any failure (no crash) → "failure"
         # - All success → "success"
+        outcome: Literal["success", "failure", "crash", "n/a"]
         if count_skipped == count:
             outcome = "n/a"  # All children skipped
         elif any(m.outcome == "crash" for m in child_metas):
