@@ -709,7 +709,7 @@ class TestInteractiveWorkflows:
             debug_data = json.loads(logfile_path.read_text())
             assert "blocks" in debug_data
             assert "start" in debug_data["blocks"], "start block should have executed"
-            assert debug_data["blocks"]["start"]["metadata"]["status"] == "completed", (
+            assert debug_data["blocks"]["start"]["__meta__"]["status"] == "completed", (
                 "start should be completed (ADR-007: block status = completed)"
             )
 
@@ -757,6 +757,10 @@ class TestInteractiveWorkflows:
             if not isinstance(resume_content, TextContent):
                 raise ValueError(f"Expected TextContent, got {type(resume_content)}")
 
+            # Debug: print resume content if empty or invalid
+            if not resume_content.text:
+                raise ValueError(f"resume_content.text is empty. Full result: {resume_result}")
+
             resume_response: dict[str, Any] = json.loads(resume_content.text)
 
             # Verify workflow completed successfully
@@ -778,13 +782,13 @@ class TestInteractiveWorkflows:
 
             # Verify approved_action executed (condition was true)
             assert "approved_action" in debug_data["blocks"], "approved_action should execute"
-            assert debug_data["blocks"]["approved_action"]["metadata"]["status"] == "completed", (
+            assert debug_data["blocks"]["approved_action"]["__meta__"]["status"] == "completed", (
                 "approved_action should complete (ADR-007: block status = completed)"
             )
 
             # Verify denied_action was skipped (condition was false)
             assert "denied_action" in debug_data["blocks"], "denied_action should exist"
-            assert debug_data["blocks"]["denied_action"]["metadata"]["status"] == "skipped", (
+            assert debug_data["blocks"]["denied_action"]["__meta__"]["status"] == "skipped", (
                 "denied_action should be skipped"
             )
 
@@ -851,12 +855,12 @@ class TestInteractiveWorkflows:
             assert debug_data["blocks"]["approval"]["outputs"]["response"] == "no"
 
             # Verify denied_action executed (condition was true)
-            assert debug_data["blocks"]["denied_action"]["metadata"]["status"] == "completed", (
+            assert debug_data["blocks"]["denied_action"]["__meta__"]["status"] == "completed", (
                 "denied_action should complete when response is 'no' (ADR-007: block status)"
             )
 
             # Verify approved_action was skipped (condition was false)
-            assert debug_data["blocks"]["approved_action"]["metadata"]["status"] == "skipped", (
+            assert debug_data["blocks"]["approved_action"]["__meta__"]["status"] == "skipped", (
                 "approved_action should be skipped when response is 'no'"
             )
 

@@ -16,19 +16,7 @@ blocks:
     description: "Use full path to access block output"
     type: Shell
     inputs:
-      command: echo "{{blocks.producer.metadata.status}}"
-    depends_on: [producer]
-  - id: use_outcome_shortcut
-    description: "Use shortcut syntax to access block output"
-    type: Shell
-    inputs:
-      command: echo "{{blocks.producer.outcome}}"
-    depends_on: [producer]
-  - id: use_outcome_full_path
-    description: "Use full path to access block output"
-    type: Shell
-    inputs:
-      command: echo "{{blocks.producer.metadata.outcome}}"
+      command: echo "{{blocks.producer.__meta__.status}}"
     depends_on: [producer]
   - id: use_success_shortcut
     description: "Use shortcut syntax to access block output"
@@ -40,7 +28,7 @@ blocks:
     description: "Use full path to access block output"
     type: Shell
     inputs:
-      command: echo "{{blocks.producer.metadata.succeeded}}"
+      command: echo "{{blocks.producer.__meta__.succeeded}}"
     depends_on: [producer]
 outputs:
   status_shortcut_works:
@@ -48,12 +36,6 @@ outputs:
     type: bool
   status_full_path_works:
     value: "{{blocks.use_status_full_path.succeeded}}"
-    type: bool
-  outcome_shortcut_works:
-    value: "{{blocks.use_outcome_shortcut.succeeded}}"
-    type: bool
-  outcome_full_path_works:
-    value: "{{blocks.use_outcome_full_path.succeeded}}"
     type: bool
   success_shortcut_works:
     value: "{{blocks.use_success_shortcut.succeeded}}"
@@ -65,17 +47,11 @@ outputs:
     value: "{{blocks.producer.status}}"
     type: str
   status_full_path_value:
-    value: "{{blocks.producer.metadata.status}}"
-    type: str
-  outcome_shortcut_value:
-    value: "{{blocks.producer.outcome}}"
-    type: str
-  outcome_full_path_value:
-    value: "{{blocks.producer.metadata.outcome}}"
+    value: "{{blocks.producer.__meta__.status}}"
     type: str
   success_shortcut_value:
     value: "{{blocks.producer.succeeded}}"
     type: bool
   success_full_path_value:
-    value: "{{blocks.producer.metadata.succeeded}}"
+    value: "{{blocks.producer.__meta__.succeeded}}"
     type: bool

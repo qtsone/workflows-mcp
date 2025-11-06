@@ -69,7 +69,7 @@ blocks:
       variables:
         project: "{{inputs.project_name}}"
         workflow: "{{metadata.workflow_name}}"
-        timestamp: "{{metadata.start_time}}"
+        timestamp: "{{metadata.started_at}}"
         data1: "{{blocks.gen_data1.outputs.stdout}}"
         data2: "{{blocks.gen_data2.outputs.stdout}}"
         phase: "report_generation"

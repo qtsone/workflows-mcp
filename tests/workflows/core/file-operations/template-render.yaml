@@ -30,7 +30,7 @@ blocks:
         {% endfor %}
       variables:
         project_name: "{{inputs.project_name}}"
-        timestamp: "{{metadata.start_time}}"
+        timestamp: "{{metadata.started_at}}"
         shell_data: "{{blocks.create_shell_data.outputs.stdout}}"
         features:
           - "Feature 1"

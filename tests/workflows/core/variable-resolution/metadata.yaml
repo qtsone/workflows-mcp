@@ -6,14 +6,14 @@ blocks:
     type: Shell
     inputs:
       command: echo "{{metadata.workflow_name}}"
-  - id: use_start_time
+  - id: use_started_at
     type: Shell
     inputs:
-      command: echo "{{metadata.start_time}}"
+      command: echo "{{metadata.started_at}}"
 outputs:
   workflow_name:
     value: "{{blocks.use_workflow_name.outputs.stdout}}"
     type: str
-  start_time:
-    value: "{{blocks.use_start_time.outputs.stdout}}"
+  started_at:
+    value: "{{blocks.use_started_at.outputs.stdout}}"
     type: str

@@ -70,8 +70,13 @@ class VariableResolver:
         - {{blocks.block_id.outputs.field}} - Block output
         - {{blocks.block_id.inputs.field}} - Block input (debugging)
         - {{blocks.block_id.metadata.field}} - Block metadata
+        - {{blocks.block_id["iteration_key"].outputs.field}} - For_each iteration output (ADR-009)
         - {{metadata.field}} - Workflow metadata
         - {{secrets.SECRET_KEY}} - Secret from SecretProvider (async)
+        - {{each.key}} - Current iteration key (within for_each) (ADR-009)
+        - {{each.value}} - Current iteration value (within for_each) (ADR-009)
+        - {{each.index}} - Current iteration index (within for_each) (ADR-009)
+        - {{each.count}} - Total iteration count (within for_each) (ADR-009)
 
     Block Status References (ADR-007 - Industry-Aligned Three-Tier Model):
 
@@ -106,8 +111,21 @@ class VariableResolver:
         # Returns: "Path: /tmp/worktree"
     """
 
-    # Pattern: {{identifier}} or {{identifier.field}} or {{identifier.field.subfield}} (any depth)
-    VAR_PATTERN = re.compile(r"\{\{([a-zA-Z_][a-zA-Z0-9_]*(?:\.[a-zA-Z_][a-zA-Z0-9_]*)*)\}\}")
+    # Pattern: Supports dot notation and bracket notation (ADR-009)
+    # Examples:
+    #   {{identifier.field}}                  - dot notation
+    #   {{blocks.id["key"].outputs.field}}    - bracket notation with double quotes
+    #   {{blocks.id['key'].field}}            - bracket notation with single quotes
+    #   {{blocks.id[0].field}}                - bracket notation with numeric index
+    #   {{each.value.nested.field}}           - each namespace
+    VAR_PATTERN = re.compile(
+        r'\{\{([a-zA-Z_][a-zA-Z0-9_]*(?:'
+        r'(?:\.[a-zA-Z_][a-zA-Z0-9_]*)|'  # Dot notation: .identifier
+        r'(?:\["[^"]+"\])|'  # Bracket notation (double quotes): ["key"]
+        r"(?:\['[^']+'\])|"  # Bracket notation (single quotes): ['key']
+        r'(?:\[\d+\])'  # Bracket notation (numeric index): [0], [123]
+        r')*)\}\}'
+    )
 
     def __init__(
         self,
@@ -132,6 +150,94 @@ class VariableResolver:
         self.secret_audit_log = secret_audit_log
         self.workflow_name = workflow_name
         self.block_id = block_id
+
+    @staticmethod
+    def parse_variable_path(var_path: str) -> list[str]:
+        """
+        Parse variable path into segments, handling bracket notation (ADR-009).
+
+        PUBLIC METHOD: Can be used by other modules (e.g., schema validator)
+        for consistent variable path parsing across the codebase.
+
+        Converts mixed dot and bracket notation into a list of segments:
+        - "blocks.analyze_files.outputs" → ["blocks", "analyze_files", "outputs"]
+        - 'blocks.analyze["file1"].outputs' → ["blocks", "analyze", "file1", "outputs"]
+        - "each.value.nested" → ["each", "value", "nested"]
+        - " branch_name " → ["branch_name"] (strips whitespace for Jinja2 compatibility)
+
+        Args:
+            var_path: Variable path string (e.g., 'blocks.id["key"].field')
+
+        Returns:
+            List of segments for dictionary navigation
+
+        Raises:
+            ValueError: If bracket notation is malformed (unclosed brackets, unquoted keys)
+
+        Example:
+            >>> VariableResolver.parse_variable_path('blocks.analyze["file1"].outputs.response')
+            ["blocks", "analyze", "file1", "outputs", "response"]
+            >>> VariableResolver.parse_variable_path(' branch_name ')
+            ["branch_name"]
+        """
+        # Strip leading/trailing whitespace (Jinja2 templates like {{ var }} include spaces)
+        var_path = var_path.strip()
+
+        segments: list[str] = []
+        current = ""
+        i = 0
+
+        while i < len(var_path):
+            char = var_path[i]
+
+            if char == ".":
+                # Dot separator - finalize current segment
+                if current:
+                    segments.append(current)
+                    current = ""
+                i += 1
+
+            elif char == "[":
+                # Bracket notation - finalize current identifier, extract quoted key
+                if current:
+                    segments.append(current)
+                    current = ""
+
+                # Find closing bracket
+                close_bracket = var_path.find("]", i)
+                if close_bracket == -1:
+                    raise ValueError(f"Unclosed bracket in variable path: {var_path}")
+
+                # Extract key (strip quotes if present, or use numeric index)
+                key_with_quotes = var_path[i + 1 : close_bracket]
+                if (
+                    (key_with_quotes.startswith('"') and key_with_quotes.endswith('"'))
+                    or (key_with_quotes.startswith("'") and key_with_quotes.endswith("'"))
+                ):
+                    # String key (for dict access): ['key'] or ["key"]
+                    key = key_with_quotes[1:-1]
+                    segments.append(key)
+                elif key_with_quotes.isdigit():
+                    # Numeric index (for array access): [0], [123]
+                    segments.append(key_with_quotes)
+                else:
+                    raise ValueError(
+                        f"Bracket notation requires quoted keys or numeric indices: "
+                        f"{var_path[i:close_bracket+1]}"
+                    )
+
+                i = close_bracket + 1
+
+            else:
+                # Regular identifier character
+                current += char
+                i += 1
+
+        # Add final segment
+        if current:
+            segments.append(current)
+
+        return segments
 
     def resolve(self, value: Any, for_eval: bool = False) -> Any:
         """
@@ -195,6 +301,96 @@ class VariableResolver:
             # Primitive types (int, float, bool, None) pass through
             return value
 
+    def _resolve_variable(self, var_path: str, for_eval: bool = False) -> str:
+        """
+        Resolve a single variable path to its value (DRY helper for both sync/async).
+
+        Handles:
+        - Security checks (__internal__ blocking)
+        - Bracket notation parsing (ADR-009)
+        - 'each' namespace (ADR-009)
+        - Status shortcuts (ADR-007)
+        - Dictionary navigation
+
+        Args:
+            var_path: Variable path (e.g., "blocks.id['key'].outputs.field")
+            for_eval: If True, format for Python eval
+
+        Returns:
+            Formatted string value
+
+        Raises:
+            VariableNotFoundError: If variable not found or inaccessible
+        """
+        # Security: Block access to internal namespace
+        if var_path.startswith("__internal__") or ".__internal__" in var_path:
+            raise VariableNotFoundError(
+                f"Access to internal namespace is not allowed: {{{{{var_path}}}}}"
+            )
+
+        # Parse path with bracket notation support (ADR-009)
+        segments = self.parse_variable_path(var_path)
+
+        # ADR-009: Handle 'each' namespace (for_each iteration context)
+        if segments[0] == "each":
+            if "each" not in self.context:
+                raise VariableNotFoundError(
+                    f"Variable '{{{{{var_path}}}}}' not found. "
+                    f"'each' namespace only available within for_each iterations."
+                )
+            # Navigate from 'each' namespace
+            value = self.context["each"]
+            for i, segment in enumerate(segments[1:], start=1):
+                if not isinstance(value, dict):
+                    partial_path = ".".join(segments[:i])
+                    raise VariableNotFoundError(
+                        f"Cannot access '{segment}' on non-dict value "
+                        f"at '{{{{{partial_path}}}}}'"
+                    )
+                if segment not in value:
+                    available = list(value.keys()) if isinstance(value, dict) else []
+                    raise VariableNotFoundError(
+                        f"Variable '{{{{{var_path}}}}}' not found. "
+                        f"At segment '{segment}', available keys: {available}"
+                    )
+                value = value[segment]
+
+            return self._format_for_eval(value) if for_eval else self._format_for_string(value)
+
+        # ADR-007: Three-tier status reference model
+        # Transform shortcuts to __meta__ namespace
+        if (
+            len(segments) == 3
+            and segments[0] == "blocks"
+            and segments[2] in ("succeeded", "failed", "skipped")
+        ):
+            segments = segments[:2] + ["__meta__"] + segments[2:]
+        elif len(segments) == 3 and segments[0] == "blocks" and segments[2] == "status":
+            segments = segments[:2] + ["__meta__"] + segments[2:]
+        elif len(segments) == 3 and segments[0] == "blocks" and segments[2] == "outcome":
+            segments = segments[:2] + ["__meta__"] + segments[2:]
+
+        # Dictionary navigation with bracket notation support
+        value = self.context
+        for i, segment in enumerate(segments):
+            if not isinstance(value, dict):
+                partial_path = ".".join(segments[:i])
+                raise VariableNotFoundError(
+                    f"Cannot access '{segment}' on non-dict value at '{{{{{partial_path}}}}}'"
+                )
+
+            if segment not in value:
+                available = list(value.keys()) if isinstance(value, dict) else []
+                raise VariableNotFoundError(
+                    f"Variable '{{{{{var_path}}}}}' not found. "
+                    f"At segment '{segment}', available keys: {available}"
+                )
+
+            value = value[segment]
+
+        # Format value for return
+        return self._format_for_eval(value) if for_eval else self._format_for_string(value)
+
     def _resolve_string(self, text: str, for_eval: bool = False) -> str:
         """
         Replace {{var}} patterns with context values (synchronous version).
@@ -215,14 +411,8 @@ class VariableResolver:
         """
 
         def replace_var(match: re.Match[str]) -> str:
-            """Replace a single variable match with dictionary navigation."""
+            """Replace a single variable match using shared resolution logic."""
             var_path = match.group(1)
-
-            # Security: Block access to internal namespace
-            if var_path.startswith("__internal__") or ".__internal__" in var_path:
-                raise VariableNotFoundError(
-                    f"Access to internal namespace is not allowed: {{{{{var_path}}}}}"
-                )
 
             # Block {{secrets.*}} in synchronous resolution
             if var_path.startswith("secrets."):
@@ -231,54 +421,8 @@ class VariableResolver:
                     f"Use resolve_async() instead of resolve() for: {{{{{var_path}}}}}"
                 )
 
-            segments = var_path.split(".")
-
-            # ADR-007: Three-tier status reference model
-            # Tier 1: Boolean shortcuts (GitHub Actions style)
-            # Transform: blocks.block_id.{succeeded|failed|skipped}
-            # Into: blocks.block_id.metadata.{succeeded|failed|skipped}
-            if (
-                len(segments) == 3
-                and segments[0] == "blocks"
-                and segments[2] in ("succeeded", "failed", "skipped")
-            ):
-                # Insert 'metadata' between block_id and state accessor
-                segments = segments[:2] + ["metadata"] + segments[2:]
-
-            # Tier 2: Status string (Argo Workflows style)
-            # Transform: blocks.block_id.status
-            # Into: blocks.block_id.metadata.status (will be converted to string)
-            elif len(segments) == 3 and segments[0] == "blocks" and segments[2] == "status":
-                # Insert 'metadata' between block_id and status
-                segments = segments[:2] + ["metadata"] + segments[2:]
-
-            # Tier 3: Outcome string (precision)
-            # Transform: blocks.block_id.outcome
-            # Into: blocks.block_id.metadata.outcome (will be converted to string)
-            elif len(segments) == 3 and segments[0] == "blocks" and segments[2] == "outcome":
-                # Insert 'metadata' between block_id and outcome
-                segments = segments[:2] + ["metadata"] + segments[2:]
-
-            # Simple dictionary navigation - no special cases!
-            value = self.context
-            for i, segment in enumerate(segments):
-                if not isinstance(value, dict):
-                    partial_path = ".".join(segments[:i])
-                    raise VariableNotFoundError(
-                        f"Cannot access '{segment}' on non-dict value at '{{{{{partial_path}}}}}'"
-                    )
-
-                if segment not in value:
-                    available = list(value.keys()) if isinstance(value, dict) else []
-                    raise VariableNotFoundError(
-                        f"Variable '{{{{{var_path}}}}}' not found. "
-                        f"At segment '{segment}', available keys: {available}"
-                    )
-
-                value = value[segment]
-
-            # Format value for return
-            return self._format_for_eval(value) if for_eval else self._format_for_string(value)
+            # Use shared resolution logic (DRY)
+            return self._resolve_variable(var_path, for_eval=for_eval)
 
         return self.VAR_PATTERN.sub(replace_var, text)
 
@@ -364,45 +508,8 @@ class VariableResolver:
                     raise
 
             else:
-                # Handle regular variable (same logic as synchronous version)
-                segments = var_path.split(".")
-
-                # ADR-007: Three-tier status reference model
-                # (same transformations as synchronous version)
-                if (
-                    len(segments) == 3
-                    and segments[0] == "blocks"
-                    and segments[2] in ("succeeded", "failed", "skipped")
-                ):
-                    segments = segments[:2] + ["metadata"] + segments[2:]
-                elif len(segments) == 3 and segments[0] == "blocks" and segments[2] == "status":
-                    segments = segments[:2] + ["metadata"] + segments[2:]
-                elif len(segments) == 3 and segments[0] == "blocks" and segments[2] == "outcome":
-                    segments = segments[:2] + ["metadata"] + segments[2:]
-
-                # Simple dictionary navigation
-                value = self.context
-                for i, segment in enumerate(segments):
-                    if not isinstance(value, dict):
-                        partial_path = ".".join(segments[:i])
-                        raise VariableNotFoundError(
-                            f"Cannot access '{segment}' on non-dict value "
-                            f"at '{{{{{partial_path}}}}}'"
-                        )
-
-                    if segment not in value:
-                        available = list(value.keys()) if isinstance(value, dict) else []
-                        raise VariableNotFoundError(
-                            f"Variable '{{{{{var_path}}}}}' not found. "
-                            f"At segment '{segment}', available keys: {available}"
-                        )
-
-                    value = value[segment]
-
-                # Format and replace
-                formatted_value = (
-                    self._format_for_eval(value) if for_eval else self._format_for_string(value)
-                )
+                # Handle regular variable using shared resolution logic (DRY)
+                formatted_value = self._resolve_variable(var_path, for_eval=for_eval)
                 result = result[: match.start()] + formatted_value + result[match.end() :]
 
         return result

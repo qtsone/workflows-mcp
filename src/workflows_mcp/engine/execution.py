@@ -4,9 +4,9 @@ from __future__ import annotations
 
 from typing import Any
 
-from pydantic import BaseModel, Field, PrivateAttr
+from pydantic import BaseModel, Field, PrivateAttr, model_validator
 
-from .metadata import Metadata
+from .node_meta import NodeMeta
 
 
 class Execution(BaseModel):
@@ -23,15 +23,29 @@ class Execution(BaseModel):
 
     model_config = {"arbitrary_types_allowed": True}
 
-    # Namespaces (ADR-005 + unified)
+    # Namespaces (ADR-009 unified fractal architecture)
     inputs: dict[str, Any] = Field(default_factory=dict)
     """Execution inputs (parameters)."""
 
     outputs: dict[str, Any] = Field(default_factory=dict)
     """Execution outputs (results)."""
 
-    metadata: Metadata | dict[str, Any] = Field(default_factory=dict)
-    """Execution metadata (state, timing, outcome)."""
+    # Use alias to support __meta__ field name (Pydantic handles the double-underscore)
+    meta: NodeMeta | dict[str, Any] = Field(
+        default_factory=dict,
+        alias="__meta__",
+        serialization_alias="__meta__",
+    )
+    """
+    Universal node metadata (ADR-009 fractal for_each design).
+
+    Unified structure supporting:
+    - Regular blocks (count=1, mode=None, iterations={})
+    - For_each iterations (count>1, mode="parallel"|"sequential", iterations={...})
+    - Recursive nesting (iterations can contain iterations)
+
+    See node_meta.py for NodeMeta documentation.
+    """
 
     # Recursive structure - executions contain executions!
     blocks: dict[str, Execution] = Field(default_factory=dict)
@@ -59,30 +73,96 @@ class Execution(BaseModel):
     _internal: dict[str, Any] = PrivateAttr(default_factory=dict)
     """Internal state not accessible in variable resolution."""
 
+    @model_validator(mode="before")
+    @classmethod
+    def validate_meta_field(cls, data: Any) -> Any:
+        """Convert dict meta to NodeMeta if needed (for checkpoint deserialization)."""
+        if isinstance(data, dict):
+            # Handle both 'meta' and '__meta__' keys
+            meta_value = data.get("meta") or data.get("__meta__")
+            if meta_value and isinstance(meta_value, dict):
+                try:
+                    data["meta"] = NodeMeta(**meta_value)
+                    if "__meta__" in data:
+                        data["__meta__"] = data["meta"]
+                except Exception:
+                    # If conversion fails, leave as dict
+                    pass
+        return data
+
     def set_block_result(
         self,
         block_id: str,
         inputs: dict[str, Any],
         outputs: dict[str, Any],
-        metadata: Metadata,
+        meta: NodeMeta,
     ) -> None:
         """
-        Store a block execution result.
+        Store a block execution result (leaf block).
 
         Args:
             block_id: Block identifier
             inputs: Block inputs
             outputs: Block outputs
-            metadata: Block execution metadata
+            meta: Block execution metadata (__meta__)
         """
-        self.blocks[block_id] = Execution(
-            inputs=inputs,
-            outputs=outputs,
-            metadata=metadata,
-            blocks={},  # Leaf blocks have no sub-blocks
-        )
+        execution = Execution(inputs=inputs, outputs=outputs, blocks={})
+        execution.meta = meta
+        self.blocks[block_id] = execution
 
-    def get_block_metadata(self, block_id: str) -> Metadata | None:
+    def set_for_each_result(
+        self,
+        block_id: str,
+        parent_meta: NodeMeta,
+        iteration_results: dict[str, Any],
+    ) -> None:
+        """
+        Store a for_each block execution result with nested iterations (ADR-009).
+
+        Creates fractal structure where iterations are stored in the parent block's
+        'blocks' field, enabling bracket notation access: blocks.id["key"].outputs.field
+
+        Args:
+            block_id: Block identifier
+            parent_meta: Aggregated parent metadata (from NodeMeta.create_for_each_parent)
+            iteration_results: Dict mapping iteration_key to BlockExecution or
+                             tuple of (inputs, outputs, meta)
+
+        Example:
+            # From execute_for_each() return value
+            iteration_results, parent_meta = await orchestrator.execute_for_each(...)
+            execution.set_for_each_result(
+                "analyze_files",
+                parent_meta,
+                iteration_results  # Dict[str, BlockExecution]
+            )
+
+            # Access: blocks.analyze_files["file1"].outputs.response
+        """
+        # Create child Execution objects for each iteration
+        iteration_executions: dict[str, Execution] = {}
+
+        for iteration_key, result in iteration_results.items():
+            # Handle both BlockExecution and tuple formats
+            if hasattr(result, "output") and hasattr(result, "metadata"):
+                # BlockExecution format (from execute_for_each)
+                outputs = result.output.model_dump() if result.output else {}
+                meta = result.metadata
+                inputs = {}  # Inputs not stored in BlockExecution
+            else:
+                # Tuple format: (inputs, outputs, meta)
+                inputs, outputs, meta = result
+
+            iter_exec = Execution(inputs=inputs, outputs=outputs, blocks={})
+            iter_exec.meta = meta
+            iteration_executions[iteration_key] = iter_exec
+
+        # Store parent with iterations as child blocks
+        parent_exec = Execution(inputs={}, outputs={}, blocks=iteration_executions)
+        parent_exec.meta = parent_meta
+        self.blocks[block_id] = parent_exec
+
+    def get_block_metadata(self, block_id: str) -> NodeMeta | None:
         """
         Get metadata for a specific block.
 
@@ -90,11 +170,11 @@ class Execution(BaseModel):
             block_id: Block identifier
 
         Returns:
-            Metadata object if block exists, None otherwise
+            NodeMeta object if block exists, None otherwise
         """
         block = self.blocks.get(block_id)
-        if block and isinstance(block.metadata, Metadata):
-            return block.metadata
+        if block and isinstance(block.meta, NodeMeta):
+            return block.meta
         return None
 
     def get_block_output(self, block_id: str, output_key: str) -> Any:
@@ -115,18 +195,18 @@ class Execution(BaseModel):
 
     def model_dump(self, **kwargs: Any) -> dict[str, Any]:
         """
-        Override model_dump to ensure Metadata computed properties are included.
+        Override model_dump to ensure NodeMeta computed properties are included.
 
         When Pydantic serializes nested models, it doesn't automatically use
-        custom model_dump() methods. We need to explicitly handle Metadata
-        serialization to include ADR-005 shortcut accessors.
+        custom model_dump() methods. We need to explicitly handle NodeMeta
+        serialization to include ADR-007 shortcut accessors (succeeded, failed, skipped, status).
         """
-        # Get base serialization
+        # Get base serialization (includes __meta__ via alias)
         data = super().model_dump(**kwargs)
 
-        # If metadata is a Metadata object, ensure it's properly serialized
-        if isinstance(self.metadata, Metadata):
-            data["metadata"] = self.metadata.model_dump(**kwargs)
+        # If __meta__ is a NodeMeta object, ensure it's properly serialized with computed properties
+        if isinstance(self.meta, NodeMeta):
+            data["__meta__"] = self.meta.model_dump(**kwargs)
 
         # Recursively handle nested Execution objects in blocks
         if "blocks" in data:
