@@ -12,7 +12,7 @@ from __future__ import annotations
 from typing import Any, ClassVar
 
 from jinja2 import Environment, StrictUndefined
-from pydantic import Field
+from pydantic import Field, field_validator
 
 from .block import BlockInput, BlockOutput
 from .block_utils import FileOperations, PathResolver
@@ -21,6 +21,10 @@ from .executor_base import (
     BlockExecutor,
     ExecutorCapabilities,
     ExecutorSecurityLevel,
+)
+from .interpolation import (
+    interpolatable_boolean_validator,
+    resolve_interpolatable_boolean,
 )
 
 # ============================================================================
@@ -38,8 +42,21 @@ class CreateFileInput(BlockInput):
         default=None,
         description="File permissions (Unix only, e.g., 0o644, 644, or '644')",
     )
-    overwrite: bool = Field(default=True, description="Whether to overwrite existing file")
-    create_parents: bool = Field(default=True, description="Create parent directories if missing")
+    overwrite: bool | str = Field(
+        default=True, description="Whether to overwrite existing file (or interpolation string)"
+    )
+    create_parents: bool | str = Field(
+        default=True,
+        description="Create parent directories if missing (or interpolation string)",
+    )
+
+    # Validators for boolean fields with interpolation support
+    _validate_overwrite = field_validator("overwrite", mode="before")(
+        interpolatable_boolean_validator()
+    )
+    _validate_create_parents = field_validator("create_parents", mode="before")(
+        interpolatable_boolean_validator()
+    )
 
 
 class CreateFileOutput(BlockOutput):
@@ -101,6 +118,10 @@ class CreateFileExecutor(BlockExecutor):
             FileExistsError: File exists and overwrite=False
             Exception: Other I/O errors
         """
+        # Resolve interpolatable fields to their actual types
+        overwrite = resolve_interpolatable_boolean(inputs.overwrite, "overwrite")
+        create_parents = resolve_interpolatable_boolean(inputs.create_parents, "create_parents")
+
         # Resolve path with security validation
         path_result = PathResolver.resolve_and_validate(inputs.path, allow_traversal=True)
         if not path_result.is_success:
@@ -112,7 +133,7 @@ class CreateFileExecutor(BlockExecutor):
 
         # Check overwrite protection
         file_existed = file_path.exists()
-        if file_existed and not inputs.overwrite:
+        if file_existed and not overwrite:
             raise FileExistsError(f"File exists and overwrite=False: {file_path}")
 
         # Convert mode to integer if it's a string
@@ -136,7 +157,7 @@ class CreateFileExecutor(BlockExecutor):
             content=inputs.content,
             encoding=inputs.encoding,
             mode=mode_int,
-            create_parents=inputs.create_parents,
+            create_parents=create_parents,
         )
 
         if not write_result.is_success:
@@ -161,9 +182,17 @@ class ReadFileInput(BlockInput):
 
     path: str = Field(description="File path to read (absolute or relative)")
     encoding: str = Field(default="utf-8", description="Text encoding")
-    required: bool = Field(
+    required: bool | str = Field(
         default=True,
-        description="If False, missing file returns empty content instead of error",
+        description=(
+            "If False, missing file returns empty content instead of error "
+            "(or interpolation string)"
+        ),
+    )
+
+    # Validator for boolean field with interpolation support
+    _validate_required = field_validator("required", mode="before")(
+        interpolatable_boolean_validator()
     )
 
 
@@ -222,6 +251,9 @@ class ReadFileExecutor(BlockExecutor):
             FileNotFoundError: File not found and required=True
             Exception: Other I/O errors
         """
+        # Resolve interpolatable fields to their actual types
+        required = resolve_interpolatable_boolean(inputs.required, "required")
+
         # Resolve path
         path_result = PathResolver.resolve_and_validate(inputs.path, allow_traversal=True)
         if not path_result.is_success:
@@ -233,7 +265,7 @@ class ReadFileExecutor(BlockExecutor):
 
         # Check if file exists
         if not file_path.exists():
-            if inputs.required:
+            if required:
                 raise FileNotFoundError(f"File not found: {file_path}")
             else:
                 # Graceful: return empty content

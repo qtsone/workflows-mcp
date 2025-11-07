@@ -187,10 +187,17 @@
                       "type": "string"
                     },
                     "timeout": {
+                      "anyOf": [
+                        {
+                          "type": "integer"
+                        },
+                        {
+                          "type": "string"
+                        }
+                      ],
                       "default": 120,
-                      "description": "Timeout in seconds",
-                      "title": "Timeout",
-                      "type": "integer"
+                      "description": "Timeout in seconds (or interpolation string)",
+                      "title": "Timeout"
                     },
                     "env": {
                       "additionalProperties": {
@@ -331,16 +338,30 @@
                       "title": "Mode"
                     },
                     "overwrite": {
+                      "anyOf": [
+                        {
+                          "type": "boolean"
+                        },
+                        {
+                          "type": "string"
+                        }
+                      ],
                       "default": true,
-                      "description": "Whether to overwrite existing file",
-                      "title": "Overwrite",
-                      "type": "boolean"
+                      "description": "Whether to overwrite existing file (or interpolation string)",
+                      "title": "Overwrite"
                     },
                     "create_parents": {
+                      "anyOf": [
+                        {
+                          "type": "boolean"
+                        },
+                        {
+                          "type": "string"
+                        }
+                      ],
                       "default": true,
-                      "description": "Create parent directories if missing",
-                      "title": "Create Parents",
-                      "type": "boolean"
+                      "description": "Create parent directories if missing (or interpolation string)",
+                      "title": "Create Parents"
                     }
                   },
                   "required": [
@@ -379,10 +400,17 @@
                       "type": "string"
                     },
                     "required": {
+                      "anyOf": [
+                        {
+                          "type": "boolean"
+                        },
+                        {
+                          "type": "string"
+                        }
+                      ],
                       "default": true,
-                      "description": "If False, missing file returns empty content instead of error",
-                      "title": "Required",
-                      "type": "boolean"
+                      "description": "If False, missing file returns empty content instead of error (or interpolation string)",
+                      "title": "Required"
                     }
                   },
                   "required": [
@@ -525,24 +553,43 @@
                       "title": "Content"
                     },
                     "timeout": {
+                      "anyOf": [
+                        {
+                          "type": "integer"
+                        },
+                        {
+                          "type": "string"
+                        }
+                      ],
                       "default": 30,
-                      "description": "Request timeout in seconds",
-                      "maximum": 1800,
-                      "minimum": 1,
-                      "title": "Timeout",
-                      "type": "integer"
+                      "description": "Request timeout in seconds (or interpolation string)",
+                      "title": "Timeout"
                     },
                     "follow_redirects": {
+                      "anyOf": [
+                        {
+                          "type": "boolean"
+                        },
+                        {
+                          "type": "string"
+                        }
+                      ],
                       "default": true,
-                      "description": "Whether to follow HTTP redirects",
-                      "title": "Follow Redirects",
-                      "type": "boolean"
+                      "description": "Whether to follow HTTP redirects (or interpolation string)",
+                      "title": "Follow Redirects"
                     },
                     "verify_ssl": {
+                      "anyOf": [
+                        {
+                          "type": "boolean"
+                        },
+                        {
+                          "type": "string"
+                        }
+                      ],
                       "default": true,
-                      "description": "Whether to verify SSL certificates",
-                      "title": "Verify Ssl",
-                      "type": "boolean"
+                      "description": "Whether to verify SSL certificates (or interpolation string)",
+                      "title": "Verify Ssl"
                     }
                   },
                   "required": [
@@ -565,20 +612,34 @@
             "then": {
               "properties": {
                 "inputs": {
-                  "additionalProperties": false,
-                  "description": "Inputs for LLMCall block",
-                  "properties": {
-                    "provider": {
-                      "default": "openai",
-                      "description": "LLM provider",
+                  "$defs": {
+                    "LLMProvider": {
+                      "description": "Enum for supported LLM providers.",
                       "enum": [
                         "openai",
                         "anthropic",
                         "gemini",
                         "ollama"
                       ],
-                      "title": "Provider",
+                      "title": "LLMProvider",
                       "type": "string"
+                    }
+                  },
+                  "additionalProperties": false,
+                  "description": "Inputs for LLMCall block",
+                  "properties": {
+                    "provider": {
+                      "anyOf": [
+                        {
+                          "$ref": "#/$defs/LLMProvider"
+                        },
+                        {
+                          "type": "string"
+                        }
+                      ],
+                      "default": "openai",
+                      "description": "LLM provider (enum or interpolation string)",
+                      "title": "Provider"
                     },
                     "model": {
                       "description": "Model name (e.g., gpt-4o, claude-3-5-sonnet-20241022, gemini-2.0-flash-exp)",
@@ -647,57 +708,74 @@
                       "title": "Response Schema"
                     },
                     "max_retries": {
+                      "anyOf": [
+                        {
+                          "type": "integer"
+                        },
+                        {
+                          "type": "string"
+                        }
+                      ],
                       "default": 3,
-                      "description": "Maximum number of retry attempts",
-                      "maximum": 10,
-                      "minimum": 1,
-                      "title": "Max Retries",
-                      "type": "integer"
+                      "description": "Maximum number of retry attempts (or interpolation string)",
+                      "title": "Max Retries"
                     },
                     "retry_delay": {
+                      "anyOf": [
+                        {
+                          "type": "number"
+                        },
+                        {
+                          "type": "string"
+                        }
+                      ],
                       "default": 2.0,
-                      "description": "Initial retry delay in seconds (exponential backoff)",
-                      "maximum": 60.0,
-                      "minimum": 0.1,
-                      "title": "Retry Delay",
-                      "type": "number"
+                      "description": "Initial retry delay in seconds (exponential backoff, or interpolation string)",
+                      "title": "Retry Delay"
                     },
                     "timeout": {
+                      "anyOf": [
+                        {
+                          "type": "integer"
+                        },
+                        {
+                          "type": "string"
+                        }
+                      ],
                       "default": 60,
-                      "description": "Request timeout in seconds",
-                      "maximum": 1800,
-                      "minimum": 1,
-                      "title": "Timeout",
-                      "type": "integer"
+                      "description": "Request timeout in seconds (or interpolation string)",
+                      "title": "Timeout"
                     },
                     "temperature": {
                       "anyOf": [
                         {
-                          "maximum": 2.0,
-                          "minimum": 0.0,
                           "type": "number"
+                        },
+                        {
+                          "type": "string"
                         },
                         {
                           "type": "null"
                         }
                       ],
                       "default": null,
-                      "description": "Sampling temperature (0.0-2.0)",
+                      "description": "Sampling temperature 0.0-2.0 (or interpolation string)",
                       "title": "Temperature"
                     },
                     "max_tokens": {
                       "anyOf": [
                         {
-                          "maximum": 128000,
-                          "minimum": 1,
                           "type": "integer"
+                        },
+                        {
+                          "type": "string"
                         },
                         {
                           "type": "null"
                         }
                       ],
                       "default": null,
-                      "description": "Maximum tokens to generate",
+                      "description": "Maximum tokens to generate (or interpolation string)",
                       "title": "Max Tokens"
                     },
                     "validation_prompt_template": {
@@ -766,10 +844,17 @@
                       "type": "string"
                     },
                     "required": {
+                      "anyOf": [
+                        {
+                          "type": "boolean"
+                        },
+                        {
+                          "type": "string"
+                        }
+                      ],
                       "default": false,
-                      "description": "Whether file must exist (False returns empty dict)",
-                      "title": "Required",
-                      "type": "boolean"
+                      "description": "Whether file must exist (False returns empty dict, or interpolation string)",
+                      "title": "Required"
                     }
                   },
                   "required": [
@@ -807,10 +892,17 @@
                       "type": "object"
                     },
                     "create_parents": {
+                      "anyOf": [
+                        {
+                          "type": "boolean"
+                        },
+                        {
+                          "type": "string"
+                        }
+                      ],
                       "default": true,
-                      "description": "Create parent directories if missing",
-                      "title": "Create Parents",
-                      "type": "boolean"
+                      "description": "Create parent directories if missing (or interpolation string)",
+                      "title": "Create Parents"
                     }
                   },
                   "required": [
@@ -849,16 +941,30 @@
                       "type": "object"
                     },
                     "create_if_missing": {
+                      "anyOf": [
+                        {
+                          "type": "boolean"
+                        },
+                        {
+                          "type": "string"
+                        }
+                      ],
                       "default": true,
-                      "description": "Create file if it doesn't exist",
-                      "title": "Create If Missing",
-                      "type": "boolean"
+                      "description": "Create file if it doesn't exist (or interpolation string)",
+                      "title": "Create If Missing"
                     },
                     "create_parents": {
+                      "anyOf": [
+                        {
+                          "type": "boolean"
+                        },
+                        {
+                          "type": "string"
+                        }
+                      ],
                       "default": true,
-                      "description": "Create parent directories if missing",
-                      "title": "Create Parents",
-                      "type": "boolean"
+                      "description": "Create parent directories if missing (or interpolation string)",
+                      "title": "Create Parents"
                     }
                   },
                   "required": [
@@ -905,10 +1011,17 @@
           "type": "string"
         },
         "timeout": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "string"
+            }
+          ],
           "default": 120,
-          "description": "Timeout in seconds",
-          "title": "Timeout",
-          "type": "integer"
+          "description": "Timeout in seconds (or interpolation string)",
+          "title": "Timeout"
         },
         "env": {
           "additionalProperties": {
@@ -1023,16 +1136,30 @@
           "title": "Mode"
         },
         "overwrite": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "string"
+            }
+          ],
           "default": true,
-          "description": "Whether to overwrite existing file",
-          "title": "Overwrite",
-          "type": "boolean"
+          "description": "Whether to overwrite existing file (or interpolation string)",
+          "title": "Overwrite"
         },
         "create_parents": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "string"
+            }
+          ],
           "default": true,
-          "description": "Create parent directories if missing",
-          "title": "Create Parents",
-          "type": "boolean"
+          "description": "Create parent directories if missing (or interpolation string)",
+          "title": "Create Parents"
         }
       },
       "required": [
@@ -1058,10 +1185,17 @@
           "type": "string"
         },
         "required": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "string"
+            }
+          ],
           "default": true,
-          "description": "If False, missing file returns empty content instead of error",
-          "title": "Required",
-          "type": "boolean"
+          "description": "If False, missing file returns empty content instead of error (or interpolation string)",
+          "title": "Required"
         }
       },
       "required": [
@@ -1178,24 +1312,43 @@
           "title": "Content"
         },
         "timeout": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "string"
+            }
+          ],
           "default": 30,
-          "description": "Request timeout in seconds",
-          "maximum": 1800,
-          "minimum": 1,
-          "title": "Timeout",
-          "type": "integer"
+          "description": "Request timeout in seconds (or interpolation string)",
+          "title": "Timeout"
         },
         "follow_redirects": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "string"
+            }
+          ],
           "default": true,
-          "description": "Whether to follow HTTP redirects",
-          "title": "Follow Redirects",
-          "type": "boolean"
+          "description": "Whether to follow HTTP redirects (or interpolation string)",
+          "title": "Follow Redirects"
         },
         "verify_ssl": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "string"
+            }
+          ],
           "default": true,
-          "description": "Whether to verify SSL certificates",
-          "title": "Verify Ssl",
-          "type": "boolean"
+          "description": "Whether to verify SSL certificates (or interpolation string)",
+          "title": "Verify Ssl"
         }
       },
       "required": [
@@ -1205,20 +1358,34 @@
       "type": "object"
     },
     "LLMCallInput": {
-      "additionalProperties": false,
-      "description": "Input model for LLMCall executor.\n\nAll inputs are pre-resolved by VariableResolver:\n- {{secrets.OPENAI_API_KEY}} \u2192 actual key value\n- {{inputs.prompt}} \u2192 actual prompt text\n- {{blocks.previous.outputs.data}} \u2192 actual data",
-      "properties": {
-        "provider": {
-          "default": "openai",
-          "description": "LLM provider",
+      "$defs": {
+        "LLMProvider": {
+          "description": "Enum for supported LLM providers.",
           "enum": [
             "openai",
             "anthropic",
             "gemini",
             "ollama"
           ],
-          "title": "Provider",
+          "title": "LLMProvider",
           "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "description": "Input model for LLMCall executor.\n\nAll inputs are pre-resolved by VariableResolver:\n- {{secrets.OPENAI_API_KEY}} \u2192 actual key value\n- {{inputs.prompt}} \u2192 actual prompt text\n- {{blocks.previous.outputs.data}} \u2192 actual data",
+      "properties": {
+        "provider": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/LLMProvider"
+            },
+            {
+              "type": "string"
+            }
+          ],
+          "default": "openai",
+          "description": "LLM provider (enum or interpolation string)",
+          "title": "Provider"
         },
         "model": {
           "description": "Model name (e.g., gpt-4o, claude-3-5-sonnet-20241022, gemini-2.0-flash-exp)",
@@ -1287,57 +1454,74 @@
           "title": "Response Schema"
         },
         "max_retries": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "string"
+            }
+          ],
           "default": 3,
-          "description": "Maximum number of retry attempts",
-          "maximum": 10,
-          "minimum": 1,
-          "title": "Max Retries",
-          "type": "integer"
+          "description": "Maximum number of retry attempts (or interpolation string)",
+          "title": "Max Retries"
         },
         "retry_delay": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "string"
+            }
+          ],
           "default": 2.0,
-          "description": "Initial retry delay in seconds (exponential backoff)",
-          "maximum": 60.0,
-          "minimum": 0.1,
-          "title": "Retry Delay",
-          "type": "number"
+          "description": "Initial retry delay in seconds (exponential backoff, or interpolation string)",
+          "title": "Retry Delay"
         },
         "timeout": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "string"
+            }
+          ],
           "default": 60,
-          "description": "Request timeout in seconds",
-          "maximum": 1800,
-          "minimum": 1,
-          "title": "Timeout",
-          "type": "integer"
+          "description": "Request timeout in seconds (or interpolation string)",
+          "title": "Timeout"
         },
         "temperature": {
           "anyOf": [
             {
-              "maximum": 2.0,
-              "minimum": 0.0,
               "type": "number"
+            },
+            {
+              "type": "string"
             },
             {
               "type": "null"
             }
           ],
           "default": null,
-          "description": "Sampling temperature (0.0-2.0)",
+          "description": "Sampling temperature 0.0-2.0 (or interpolation string)",
           "title": "Temperature"
         },
         "max_tokens": {
           "anyOf": [
             {
-              "maximum": 128000,
-              "minimum": 1,
               "type": "integer"
+            },
+            {
+              "type": "string"
             },
             {
               "type": "null"
             }
           ],
           "default": null,
-          "description": "Maximum tokens to generate",
+          "description": "Maximum tokens to generate (or interpolation string)",
           "title": "Max Tokens"
         },
         "validation_prompt_template": {
@@ -1380,10 +1564,17 @@
           "type": "string"
         },
         "required": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "string"
+            }
+          ],
           "default": false,
-          "description": "Whether file must exist (False returns empty dict)",
-          "title": "Required",
-          "type": "boolean"
+          "description": "Whether file must exist (False returns empty dict, or interpolation string)",
+          "title": "Required"
         }
       },
       "required": [
@@ -1408,10 +1599,17 @@
           "type": "object"
         },
         "create_parents": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "string"
+            }
+          ],
           "default": true,
-          "description": "Create parent directories if missing",
-          "title": "Create Parents",
-          "type": "boolean"
+          "description": "Create parent directories if missing (or interpolation string)",
+          "title": "Create Parents"
         }
       },
       "required": [
@@ -1437,16 +1635,30 @@
           "type": "object"
         },
         "create_if_missing": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "string"
+            }
+          ],
           "default": true,
-          "description": "Create file if it doesn't exist",
-          "title": "Create If Missing",
-          "type": "boolean"
+          "description": "Create file if it doesn't exist (or interpolation string)",
+          "title": "Create If Missing"
         },
         "create_parents": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "string"
+            }
+          ],
           "default": true,
-          "description": "Create parent directories if missing",
-          "title": "Create Parents",
-          "type": "boolean"
+          "description": "Create parent directories if missing (or interpolation string)",
+          "title": "Create Parents"
         }
       },
       "required": [
