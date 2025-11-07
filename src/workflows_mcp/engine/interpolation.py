@@ -165,9 +165,7 @@ def interpolatable_literal_validator(
 
         # Invalid value
         valid_repr = ", ".join(repr(val) for val in allowed_values)
-        raise ValueError(
-            f"must be one of [{valid_repr}] or an interpolation string. Got: {v!r}"
-        )
+        raise ValueError(f"must be one of [{valid_repr}] or an interpolation string. Got: {v!r}")
 
     # Return the function - field_validator handles classmethod wrapping
     return validator
@@ -214,8 +212,7 @@ def resolve_interpolatable_enum(
         # Should NOT contain interpolation anymore (variables resolved)
         if has_interpolation(value):
             raise ValueError(
-                f"{field_name}: Variable interpolation was not resolved. "
-                f"Still contains: {value!r}"
+                f"{field_name}: Variable interpolation was not resolved. Still contains: {value!r}"
             )
 
         # Try to convert to enum
@@ -223,14 +220,11 @@ def resolve_interpolatable_enum(
             return enum_class(value)
         except ValueError:
             valid_values = ", ".join(repr(e.value) for e in enum_class)
-            raise ValueError(
-                f"Invalid {field_name}: {value!r}. Must be one of: {valid_values}"
-            )
+            raise ValueError(f"Invalid {field_name}: {value!r}. Must be one of: {valid_values}")
 
     # Unexpected type
     raise ValueError(
-        f"{field_name} must be {enum_class.__name__} or string, "
-        f"got {type(value).__name__}"
+        f"{field_name} must be {enum_class.__name__} or string, got {type(value).__name__}"
     )
 
 
@@ -256,8 +250,7 @@ def resolve_interpolatable_literal(
     # Check for unresolved interpolation
     if isinstance(value, str) and has_interpolation(value):
         raise ValueError(
-            f"{field_name}: Variable interpolation was not resolved. "
-            f"Still contains: {value!r}"
+            f"{field_name}: Variable interpolation was not resolved. Still contains: {value!r}"
         )
 
     # Check if value is allowed
@@ -266,9 +259,7 @@ def resolve_interpolatable_literal(
 
     # Invalid value
     valid_repr = ", ".join(repr(val) for val in allowed_values)
-    raise ValueError(
-        f"Invalid {field_name}: {value!r}. Must be one of: {valid_repr}"
-    )
+    raise ValueError(f"Invalid {field_name}: {value!r}. Must be one of: {valid_repr}")
 
 
 def interpolatable_numeric_validator(
@@ -432,8 +423,7 @@ def resolve_interpolatable_numeric(
         # Check for unresolved interpolation first
         if has_interpolation(value):
             raise ValueError(
-                f"{field_name}: Variable interpolation was not resolved. "
-                f"Still contains: {value!r}"
+                f"{field_name}: Variable interpolation was not resolved. Still contains: {value!r}"
             )
 
         # Convert string to numeric
@@ -449,8 +439,7 @@ def resolve_interpolatable_numeric(
         num_value = numeric_type(value)
     else:
         raise ValueError(
-            f"{field_name} must be {numeric_type.__name__} or string, "
-            f"got {type(value).__name__}"
+            f"{field_name} must be {numeric_type.__name__} or string, got {type(value).__name__}"
         )
 
     # Validate constraints
@@ -506,9 +495,7 @@ def interpolatable_boolean_validator() -> Callable[[type[Any], bool | str], bool
 
         # Must be a string from here
         if not isinstance(v, str):
-            raise ValueError(
-                f"must be a boolean or string, got {type(v).__name__}"
-            )
+            raise ValueError(f"must be a boolean or string, got {type(v).__name__}")
 
         # Interpolation string - pass through for later resolution
         if has_interpolation(v):
@@ -522,8 +509,7 @@ def interpolatable_boolean_validator() -> Callable[[type[Any], bool | str], bool
             return False
         else:
             raise ValueError(
-                f"must be a boolean (true/false) or an interpolation string. "
-                f"Got: {v!r}"
+                f"must be a boolean (true/false) or an interpolation string. Got: {v!r}"
             )
 
     return validator
@@ -560,8 +546,7 @@ def resolve_interpolatable_boolean(value: bool | str, field_name: str) -> bool:
         # Check for unresolved interpolation
         if has_interpolation(value):
             raise ValueError(
-                f"{field_name}: Variable interpolation was not resolved. "
-                f"Still contains: {value!r}"
+                f"{field_name}: Variable interpolation was not resolved. Still contains: {value!r}"
             )
 
         # Convert string to boolean
@@ -576,9 +561,7 @@ def resolve_interpolatable_boolean(value: bool | str, field_name: str) -> bool:
                 f"Use 'true'/'false', '1'/'0', 'yes'/'no', etc."
             )
 
-    raise ValueError(
-        f"{field_name} must be boolean or string, got {type(value).__name__}"
-    )
+    raise ValueError(f"{field_name} must be boolean or string, got {type(value).__name__}")
 
 
 # Type alias for documentation

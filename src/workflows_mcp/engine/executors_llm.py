@@ -306,20 +306,14 @@ class LLMCallExecutor(BlockExecutor):
         retry_delay = resolve_interpolatable_numeric(
             inputs.retry_delay, float, "retry_delay", ge=0.1, le=60.0
         )
-        timeout = resolve_interpolatable_numeric(
-            inputs.timeout, int, "timeout", ge=1, le=1800
-        )
+        timeout = resolve_interpolatable_numeric(inputs.timeout, int, "timeout", ge=1, le=1800)
         temperature = (
-            resolve_interpolatable_numeric(
-                inputs.temperature, float, "temperature", ge=0.0, le=2.0
-            )
+            resolve_interpolatable_numeric(inputs.temperature, float, "temperature", ge=0.0, le=2.0)
             if inputs.temperature is not None
             else None
         )
         max_tokens = (
-            resolve_interpolatable_numeric(
-                inputs.max_tokens, int, "max_tokens", ge=1, le=128000
-            )
+            resolve_interpolatable_numeric(inputs.max_tokens, int, "max_tokens", ge=1, le=128000)
             if inputs.max_tokens is not None
             else None
         )
