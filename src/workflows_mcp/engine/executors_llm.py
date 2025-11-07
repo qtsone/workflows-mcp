@@ -18,7 +18,8 @@ from __future__ import annotations
 
 import asyncio
 import json
-from typing import Any, ClassVar, Literal
+from enum import Enum
+from typing import Any, ClassVar
 
 import httpx
 from pydantic import Field, field_validator
@@ -30,10 +31,30 @@ from .executor_base import (
     ExecutorCapabilities,
     ExecutorSecurityLevel,
 )
+from .interpolation import (
+    interpolatable_enum_validator,
+    interpolatable_numeric_validator,
+    resolve_interpolatable_enum,
+    resolve_interpolatable_numeric,
+)
 
-# ============================================================================
+# ===========================================================================
+# Type Definitions
+# ===========================================================================
+
+
+class LLMProvider(str, Enum):
+    """Enum for supported LLM providers."""
+
+    OPENAI = "openai"
+    ANTHROPIC = "anthropic"
+    GEMINI = "gemini"
+    OLLAMA = "ollama"
+
+
+# ===========================================================================
 # LLMCall Executor
-# ============================================================================
+# ===========================================================================
 
 
 class LLMCallInput(BlockInput):
@@ -45,9 +66,14 @@ class LLMCallInput(BlockInput):
     - {{blocks.previous.outputs.data}} → actual data
     """
 
-    provider: Literal["openai", "anthropic", "gemini", "ollama"] = Field(
-        default="openai",
-        description="LLM provider",
+    provider: LLMProvider | str = Field(
+        default=LLMProvider.OPENAI,
+        description="LLM provider (enum or interpolation string)",
+    )
+
+    # Validator allows enum values, valid strings, and interpolation strings
+    _validate_provider = field_validator("provider", mode="before")(
+        interpolatable_enum_validator(LLMProvider)
     )
     model: str = Field(
         description="Model name (e.g., gpt-4o, claude-3-5-sonnet-20241022, gemini-2.0-flash-exp)",
@@ -74,35 +100,42 @@ class LLMCallInput(BlockInput):
             "(dict or JSON string, enables validation and retry)"
         ),
     )
-    max_retries: int = Field(
+    max_retries: int | str = Field(
         default=3,
-        description="Maximum number of retry attempts",
-        ge=1,
-        le=10,
+        description="Maximum number of retry attempts (or interpolation string)",
     )
-    retry_delay: float = Field(
+    retry_delay: float | str = Field(
         default=2.0,
-        description="Initial retry delay in seconds (exponential backoff)",
-        ge=0.1,
-        le=60.0,
+        description="Initial retry delay in seconds (exponential backoff, or interpolation string)",
     )
-    timeout: int = Field(
+    timeout: int | str = Field(
         default=60,
-        description="Request timeout in seconds",
-        ge=1,
-        le=1800,
+        description="Request timeout in seconds (or interpolation string)",
     )
-    temperature: float | None = Field(
+    temperature: float | str | None = Field(
         default=None,
-        description="Sampling temperature (0.0-2.0)",
-        ge=0.0,
-        le=2.0,
+        description="Sampling temperature 0.0-2.0 (or interpolation string)",
     )
-    max_tokens: int | None = Field(
+    max_tokens: int | str | None = Field(
         default=None,
-        description="Maximum tokens to generate",
-        ge=1,
-        le=128000,
+        description="Maximum tokens to generate (or interpolation string)",
+    )
+
+    # Validators for numeric fields with interpolation support
+    _validate_max_retries = field_validator("max_retries", mode="before")(
+        interpolatable_numeric_validator(int, ge=1, le=10)
+    )
+    _validate_retry_delay = field_validator("retry_delay", mode="before")(
+        interpolatable_numeric_validator(float, ge=0.1, le=60.0)
+    )
+    _validate_timeout = field_validator("timeout", mode="before")(
+        interpolatable_numeric_validator(int, ge=1, le=1800)
+    )
+    _validate_temperature = field_validator("temperature", mode="before")(
+        interpolatable_numeric_validator(float, ge=0.0, le=2.0)
+    )
+    _validate_max_tokens = field_validator("max_tokens", mode="before")(
+        interpolatable_numeric_validator(int, ge=1, le=128000)
     )
     validation_prompt_template: str = Field(
         default=(
@@ -266,6 +299,31 @@ class LLMCallExecutor(BlockExecutor):
             httpx.HTTPStatusError: HTTP error from provider
             Exception: Other unrecoverable errors
         """
+        # Resolve interpolatable numeric fields to their actual types
+        max_retries = resolve_interpolatable_numeric(
+            inputs.max_retries, int, "max_retries", ge=1, le=10
+        )
+        retry_delay = resolve_interpolatable_numeric(
+            inputs.retry_delay, float, "retry_delay", ge=0.1, le=60.0
+        )
+        timeout = resolve_interpolatable_numeric(
+            inputs.timeout, int, "timeout", ge=1, le=1800
+        )
+        temperature = (
+            resolve_interpolatable_numeric(
+                inputs.temperature, float, "temperature", ge=0.0, le=2.0
+            )
+            if inputs.temperature is not None
+            else None
+        )
+        max_tokens = (
+            resolve_interpolatable_numeric(
+                inputs.max_tokens, int, "max_tokens", ge=1, le=128000
+            )
+            if inputs.max_tokens is not None
+            else None
+        )
+
         attempts = 0
         last_error: Exception | None = None
         validation_error: str | None = None
@@ -273,7 +331,7 @@ class LLMCallExecutor(BlockExecutor):
         # Determine if we need schema validation
         needs_validation = inputs.response_schema is not None
 
-        for attempt in range(inputs.max_retries):
+        for attempt in range(max_retries):
             attempts += 1
 
             try:
@@ -289,6 +347,9 @@ class LLMCallExecutor(BlockExecutor):
                 response_text, provider_metadata = await self._call_provider(
                     inputs=inputs,
                     prompt=prompt,
+                    timeout=timeout,
+                    temperature=temperature,
+                    max_tokens=max_tokens,
                     context=context,
                 )
 
@@ -317,7 +378,7 @@ class LLMCallExecutor(BlockExecutor):
                         last_error = e
 
                         # If this is the last attempt, return with validation failure
-                        if attempt == inputs.max_retries - 1:
+                        if attempt == max_retries - 1:
                             return LLMCallOutput(
                                 response=response_text,
                                 response_json={},  # Empty dict - validation failed
@@ -331,7 +392,7 @@ class LLMCallExecutor(BlockExecutor):
                             )
 
                         # Otherwise, wait and retry with feedback
-                        delay = inputs.retry_delay * (2**attempt)
+                        delay = retry_delay * (2**attempt)
                         await asyncio.sleep(delay)
                         continue
                 else:
@@ -361,11 +422,11 @@ class LLMCallExecutor(BlockExecutor):
                 last_error = e
 
                 # If this is the last attempt, raise
-                if attempt == inputs.max_retries - 1:
+                if attempt == max_retries - 1:
                     raise
 
                 # Otherwise, wait and retry with exponential backoff
-                delay = inputs.retry_delay * (2**attempt)
+                delay = retry_delay * (2**attempt)
                 await asyncio.sleep(delay)
                 continue
 
@@ -382,13 +443,19 @@ class LLMCallExecutor(BlockExecutor):
         self,
         inputs: LLMCallInput,
         prompt: str,
+        timeout: int,
+        temperature: float | None,
+        max_tokens: int | None,
         context: Execution,
     ) -> tuple[str, dict[str, Any]]:
         """Call the specified LLM provider.
 
         Args:
-            inputs: Validated input model (pre-resolved)
+            inputs: Validated input model (variables already resolved by VariableResolver)
             prompt: Processed prompt (may include validation feedback)
+            timeout: Resolved timeout in seconds
+            temperature: Resolved temperature parameter (or None)
+            max_tokens: Resolved max tokens parameter (or None)
             context: Execution context
 
         Returns:
@@ -398,21 +465,30 @@ class LLMCallExecutor(BlockExecutor):
             ValueError: Invalid provider or configuration
             httpx exceptions: Network/API errors
         """
-        if inputs.provider == "openai":
-            return await self._call_openai(inputs, prompt)
-        elif inputs.provider == "anthropic":
-            return await self._call_anthropic(inputs, prompt)
-        elif inputs.provider == "gemini":
-            return await self._call_gemini(inputs, prompt)
-        elif inputs.provider == "ollama":
-            return await self._call_ollama(inputs, prompt)
+        # Validate and coerce provider to enum
+        # At this point, variables like {{inputs.llm_provider}} are already resolved
+        # We just need to convert the string to enum
+        provider = resolve_interpolatable_enum(inputs.provider, LLMProvider, "provider")
+
+        if provider == LLMProvider.OPENAI:
+            return await self._call_openai(inputs, prompt, timeout, temperature, max_tokens)
+        elif provider == LLMProvider.ANTHROPIC:
+            return await self._call_anthropic(inputs, prompt, timeout, temperature, max_tokens)
+        elif provider == LLMProvider.GEMINI:
+            return await self._call_gemini(inputs, prompt, timeout, temperature, max_tokens)
+        elif provider == LLMProvider.OLLAMA:
+            return await self._call_ollama(inputs, prompt, timeout, temperature, max_tokens)
         else:
-            raise ValueError(f"Unsupported provider: {inputs.provider}")
+            # This case should be unreachable due to the Enum validation
+            raise ValueError(f"Unsupported provider: {provider}")
 
     async def _call_openai(
         self,
         inputs: LLMCallInput,
         prompt: str,
+        timeout: int,
+        temperature: float | None,
+        max_tokens: int | None,
     ) -> tuple[str, dict[str, Any]]:
         """Call OpenAI API with optional native schema validation."""
         url = inputs.api_url or "https://api.openai.com/v1/chat/completions"
@@ -427,10 +503,10 @@ class LLMCallExecutor(BlockExecutor):
             "messages": messages,
         }
 
-        if inputs.temperature is not None:
-            body["temperature"] = inputs.temperature
-        if inputs.max_tokens is not None:
-            body["max_tokens"] = inputs.max_tokens
+        if temperature is not None:
+            body["temperature"] = temperature
+        if max_tokens is not None:
+            body["max_tokens"] = max_tokens
 
         # Native schema validation (OpenAI Structured Outputs)
         # Send schema to API if provided - compatible APIs will use it
@@ -455,7 +531,7 @@ class LLMCallExecutor(BlockExecutor):
         if inputs.api_key:
             headers["Authorization"] = f"Bearer {inputs.api_key}"
 
-        async with httpx.AsyncClient(timeout=inputs.timeout) as client:
+        async with httpx.AsyncClient(timeout=timeout) as client:
             response = await client.post(url, json=body, headers=headers)
             response.raise_for_status()
 
@@ -475,6 +551,9 @@ class LLMCallExecutor(BlockExecutor):
         self,
         inputs: LLMCallInput,
         prompt: str,
+        timeout: int,
+        temperature: float | None,
+        max_tokens: int | None,
     ) -> tuple[str, dict[str, Any]]:
         """Call Anthropic API."""
         url = inputs.api_url or "https://api.anthropic.com/v1/messages"
@@ -482,13 +561,13 @@ class LLMCallExecutor(BlockExecutor):
         body: dict[str, Any] = {
             "model": inputs.model,
             "messages": [{"role": "user", "content": prompt}],
-            "max_tokens": inputs.max_tokens or 4096,
+            "max_tokens": max_tokens or 4096,
         }
 
         if inputs.system_instructions:
             body["system"] = inputs.system_instructions
-        if inputs.temperature is not None:
-            body["temperature"] = inputs.temperature
+        if temperature is not None:
+            body["temperature"] = temperature
 
         headers = {
             "Content-Type": "application/json",
@@ -497,7 +576,7 @@ class LLMCallExecutor(BlockExecutor):
         if inputs.api_key:
             headers["x-api-key"] = inputs.api_key
 
-        async with httpx.AsyncClient(timeout=inputs.timeout) as client:
+        async with httpx.AsyncClient(timeout=timeout) as client:
             response = await client.post(url, json=body, headers=headers)
             response.raise_for_status()
 
@@ -516,6 +595,9 @@ class LLMCallExecutor(BlockExecutor):
         self,
         inputs: LLMCallInput,
         prompt: str,
+        timeout: int,
+        temperature: float | None,
+        max_tokens: int | None,
     ) -> tuple[str, dict[str, Any]]:
         """Call Google Gemini API."""
         if not inputs.api_key:
@@ -534,15 +616,15 @@ class LLMCallExecutor(BlockExecutor):
             body["system_instruction"] = {"parts": [{"text": inputs.system_instructions}]}
 
         generation_config: dict[str, Any] = {}
-        if inputs.temperature is not None:
-            generation_config["temperature"] = inputs.temperature
-        if inputs.max_tokens is not None:
-            generation_config["maxOutputTokens"] = inputs.max_tokens
+        if temperature is not None:
+            generation_config["temperature"] = temperature
+        if max_tokens is not None:
+            generation_config["maxOutputTokens"] = max_tokens
 
         if generation_config:
             body["generationConfig"] = generation_config
 
-        async with httpx.AsyncClient(timeout=inputs.timeout) as client:
+        async with httpx.AsyncClient(timeout=timeout) as client:
             response = await client.post(
                 url,
                 json=body,
@@ -565,6 +647,9 @@ class LLMCallExecutor(BlockExecutor):
         self,
         inputs: LLMCallInput,
         prompt: str,
+        timeout: int,
+        temperature: float | None,
+        max_tokens: int | None,
     ) -> tuple[str, dict[str, Any]]:
         """Call Ollama local API."""
         url = inputs.api_url or "http://localhost:11434/api/generate"
@@ -580,10 +665,10 @@ class LLMCallExecutor(BlockExecutor):
             "stream": False,
         }
 
-        if inputs.temperature is not None:
-            body["options"] = {"temperature": inputs.temperature}
+        if temperature is not None:
+            body["options"] = {"temperature": temperature}
 
-        async with httpx.AsyncClient(timeout=inputs.timeout) as client:
+        async with httpx.AsyncClient(timeout=timeout) as client:
             response = await client.post(
                 url,
                 json=body,

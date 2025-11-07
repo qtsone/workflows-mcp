@@ -22,7 +22,7 @@ import os
 from typing import TYPE_CHECKING, Any, ClassVar
 
 import httpx
-from pydantic import Field, model_validator
+from pydantic import Field, field_validator, model_validator
 
 if TYPE_CHECKING:
     from typing import Self
@@ -33,6 +33,12 @@ from .executor_base import (
     BlockExecutor,
     ExecutorCapabilities,
     ExecutorSecurityLevel,
+)
+from .interpolation import (
+    interpolatable_boolean_validator,
+    interpolatable_numeric_validator,
+    resolve_interpolatable_boolean,
+    resolve_interpolatable_numeric,
 )
 
 # ============================================================================
@@ -71,14 +77,27 @@ class HttpCallInput(BlockInput):
             "Matches httpx parameter name."
         ),
     )
-    timeout: int = Field(
+    timeout: int | str = Field(
         default=30,
-        description="Request timeout in seconds",
-        ge=1,
-        le=1800,
+        description="Request timeout in seconds (or interpolation string)",
     )
-    follow_redirects: bool = Field(default=True, description="Whether to follow HTTP redirects")
-    verify_ssl: bool = Field(default=True, description="Whether to verify SSL certificates")
+    follow_redirects: bool | str = Field(
+        default=True, description="Whether to follow HTTP redirects (or interpolation string)"
+    )
+    verify_ssl: bool | str = Field(
+        default=True, description="Whether to verify SSL certificates (or interpolation string)"
+    )
+
+    # Validators for numeric and boolean fields with interpolation support
+    _validate_timeout = field_validator("timeout", mode="before")(
+        interpolatable_numeric_validator(int, ge=1, le=1800)
+    )
+    _validate_follow_redirects = field_validator("follow_redirects", mode="before")(
+        interpolatable_boolean_validator()
+    )
+    _validate_verify_ssl = field_validator("verify_ssl", mode="before")(
+        interpolatable_boolean_validator()
+    )
 
     @model_validator(mode="after")
     def validate_body_exclusive(self) -> Self:
@@ -163,6 +182,13 @@ class HttpCallExecutor(BlockExecutor):
             httpx.HTTPStatusError: HTTP error responses (can be caught)
             Exception: Other HTTP client errors
         """
+        # Resolve interpolatable fields to their actual types
+        timeout = resolve_interpolatable_numeric(inputs.timeout, int, "timeout", ge=1, le=1800)
+        follow_redirects = resolve_interpolatable_boolean(
+            inputs.follow_redirects, "follow_redirects"
+        )
+        verify_ssl = resolve_interpolatable_boolean(inputs.verify_ssl, "verify_ssl")
+
         # Substitute environment variables in URL and headers
         url = self._substitute_env_vars(inputs.url)
         headers = {key: self._substitute_env_vars(value) for key, value in inputs.headers.items()}
@@ -174,9 +200,9 @@ class HttpCallExecutor(BlockExecutor):
 
         # Create HTTP client with configuration
         async with httpx.AsyncClient(
-            timeout=inputs.timeout,
-            follow_redirects=inputs.follow_redirects,
-            verify=inputs.verify_ssl,
+            timeout=timeout,
+            follow_redirects=follow_redirects,
+            verify=verify_ssl,
         ) as client:
             # Make HTTP request (parameters pass through directly to httpx)
             try:
@@ -188,9 +214,7 @@ class HttpCallExecutor(BlockExecutor):
                     content=inputs.content,  # Direct passthrough - type-safe!
                 )
             except httpx.TimeoutException as e:
-                raise httpx.TimeoutException(
-                    f"Request timeout after {inputs.timeout}s: {url}"
-                ) from e
+                raise httpx.TimeoutException(f"Request timeout after {timeout}s: {url}") from e
             except httpx.NetworkError as e:
                 raise httpx.NetworkError(f"Network error for {url}: {e}") from e
 

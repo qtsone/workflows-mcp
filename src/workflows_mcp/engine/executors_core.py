@@ -7,7 +7,7 @@ import shlex
 from pathlib import Path
 from typing import Any, ClassVar
 
-from pydantic import Field
+from pydantic import Field, field_validator
 
 from .block import BlockInput, BlockOutput
 from .context_vars import block_custom_outputs
@@ -16,6 +16,10 @@ from .executor_base import (
     BlockExecutor,
     ExecutorCapabilities,
     ExecutorSecurityLevel,
+)
+from .interpolation import (
+    interpolatable_numeric_validator,
+    resolve_interpolatable_numeric,
 )
 
 # ============================================================================
@@ -36,7 +40,9 @@ class ShellInput(BlockInput):
 
     command: str = Field(description="Shell command to execute")
     working_dir: str = Field(default="", description="Working directory (empty = current dir)")
-    timeout: int = Field(default=120, description="Timeout in seconds")
+    timeout: int | str = Field(
+        default=120, description="Timeout in seconds (or interpolation string)"
+    )
     env: dict[str, str] = Field(default_factory=dict, description="Environment variables")
     capture_output: bool = Field(default=True, description="Capture stdout/stderr")
     shell: bool = Field(default=True, description="Execute via shell")
@@ -44,6 +50,11 @@ class ShellInput(BlockInput):
         default=None,
         description="Custom file-based outputs to read after execution",
         exclude=True,
+    )
+
+    # Validator for numeric field with interpolation support
+    _validate_timeout = field_validator("timeout", mode="before")(
+        interpolatable_numeric_validator(int, ge=1, le=3600)
     )
 
 
@@ -361,6 +372,9 @@ class ShellExecutor(BlockExecutor):
             TimeoutError: If command times out
             Exception: For other execution failures
         """
+        # Resolve interpolatable fields to their actual types
+        timeout = resolve_interpolatable_numeric(inputs.timeout, int, "timeout", ge=1, le=3600)
+
         # Prepare working directory
         cwd = Path(inputs.working_dir) if inputs.working_dir else Path.cwd()
         if not cwd.exists():
@@ -408,14 +422,12 @@ class ShellExecutor(BlockExecutor):
         # Wait for completion with timeout
         try:
             stdout_bytes, stderr_bytes = await asyncio.wait_for(
-                process.communicate(), timeout=inputs.timeout
+                process.communicate(), timeout=timeout
             )
         except TimeoutError:
             process.kill()
             await process.wait()
-            raise TimeoutError(
-                f"Command timed out after {inputs.timeout} seconds: {inputs.command}"
-            )
+            raise TimeoutError(f"Command timed out after {timeout} seconds: {inputs.command}")
 
         # Decode output
         stdout = stdout_bytes.decode("utf-8") if stdout_bytes else ""

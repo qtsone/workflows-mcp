@@ -11,7 +11,7 @@ from __future__ import annotations
 
 from typing import Any, ClassVar
 
-from pydantic import Field
+from pydantic import Field, field_validator
 
 from .block import BlockInput, BlockOutput
 from .block_utils import JSONOperations, PathResolver
@@ -20,6 +20,10 @@ from .executor_base import (
     BlockExecutor,
     ExecutorCapabilities,
     ExecutorSecurityLevel,
+)
+from .interpolation import (
+    interpolatable_boolean_validator,
+    resolve_interpolatable_boolean,
 )
 
 # ============================================================================
@@ -31,8 +35,14 @@ class ReadJSONStateInput(BlockInput):
     """Input for ReadJSONState executor."""
 
     path: str = Field(description="Path to JSON file")
-    required: bool = Field(
-        default=False, description="Whether file must exist (False returns empty dict)"
+    required: bool | str = Field(
+        default=False,
+        description="Whether file must exist (False returns empty dict, or interpolation string)",
+    )
+
+    # Validator for boolean field with interpolation support
+    _validate_required = field_validator("required", mode="before")(
+        interpolatable_boolean_validator()
     )
 
 
@@ -87,6 +97,9 @@ class ReadJSONStateExecutor(BlockExecutor):
             FileNotFoundError: File not found and required=True
             Exception: JSON parsing errors or I/O errors
         """
+        # Resolve interpolatable fields to their actual types
+        required = resolve_interpolatable_boolean(inputs.required, "required")
+
         # Resolve path with security validation
         path_result = PathResolver.resolve_and_validate(inputs.path, allow_traversal=True)
         if not path_result.is_success:
@@ -96,7 +109,7 @@ class ReadJSONStateExecutor(BlockExecutor):
         assert file_path is not None
 
         # Read JSON using utility (handles missing files gracefully)
-        read_result = JSONOperations.read_json(file_path, required=inputs.required)
+        read_result = JSONOperations.read_json(file_path, required=required)
 
         if not read_result.is_success:
             assert read_result.error is not None
@@ -126,7 +139,14 @@ class WriteJSONStateInput(BlockInput):
 
     path: str = Field(description="Path to JSON file")
     data: dict[str, Any] = Field(description="JSON data to write")
-    create_parents: bool = Field(default=True, description="Create parent directories if missing")
+    create_parents: bool | str = Field(
+        default=True, description="Create parent directories if missing (or interpolation string)"
+    )
+
+    # Validator for boolean field with interpolation support
+    _validate_create_parents = field_validator("create_parents", mode="before")(
+        interpolatable_boolean_validator()
+    )
 
 
 class WriteJSONStateOutput(BlockOutput):
@@ -175,6 +195,9 @@ class WriteJSONStateExecutor(BlockExecutor):
             OSError: Failed to create directories or write file
             Exception: JSON serialization errors
         """
+        # Resolve interpolatable fields to their actual types
+        create_parents = resolve_interpolatable_boolean(inputs.create_parents, "create_parents")
+
         # Resolve path with security validation
         path_result = PathResolver.resolve_and_validate(inputs.path, allow_traversal=True)
         if not path_result.is_success:
@@ -184,7 +207,7 @@ class WriteJSONStateExecutor(BlockExecutor):
         assert file_path is not None
 
         # Create parents if needed
-        if inputs.create_parents:
+        if create_parents:
             try:
                 file_path.parent.mkdir(parents=True, exist_ok=True)
             except OSError as e:
@@ -222,8 +245,20 @@ class MergeJSONStateInput(BlockInput):
 
     path: str = Field(description="Path to JSON file")
     updates: dict[str, Any] = Field(description="Updates to merge")
-    create_if_missing: bool = Field(default=True, description="Create file if it doesn't exist")
-    create_parents: bool = Field(default=True, description="Create parent directories if missing")
+    create_if_missing: bool | str = Field(
+        default=True, description="Create file if it doesn't exist (or interpolation string)"
+    )
+    create_parents: bool | str = Field(
+        default=True, description="Create parent directories if missing (or interpolation string)"
+    )
+
+    # Validators for boolean fields with interpolation support
+    _validate_create_if_missing = field_validator("create_if_missing", mode="before")(
+        interpolatable_boolean_validator()
+    )
+    _validate_create_parents = field_validator("create_parents", mode="before")(
+        interpolatable_boolean_validator()
+    )
 
 
 class MergeJSONStateOutput(BlockOutput):
@@ -284,6 +319,12 @@ class MergeJSONStateExecutor(BlockExecutor):
             OSError: Failed to create directories or write file
             Exception: JSON errors
         """
+        # Resolve interpolatable fields to their actual types
+        create_if_missing = resolve_interpolatable_boolean(
+            inputs.create_if_missing, "create_if_missing"
+        )
+        create_parents = resolve_interpolatable_boolean(inputs.create_parents, "create_parents")
+
         # Resolve path with security validation
         path_result = PathResolver.resolve_and_validate(inputs.path, allow_traversal=True)
         if not path_result.is_success:
@@ -294,7 +335,7 @@ class MergeJSONStateExecutor(BlockExecutor):
 
         # Check if file exists
         file_existed = file_path.exists()
-        if not file_existed and not inputs.create_if_missing:
+        if not file_existed and not create_if_missing:
             raise FileNotFoundError(f"File does not exist and create_if_missing=False: {file_path}")
 
         # Read existing data or start with empty dict
@@ -321,7 +362,7 @@ class MergeJSONStateExecutor(BlockExecutor):
         merged_data = deep_merge(existing_data, inputs.updates)
 
         # Create parent directories if needed
-        if inputs.create_parents:
+        if create_parents:
             try:
                 file_path.parent.mkdir(parents=True, exist_ok=True)
             except OSError as e:

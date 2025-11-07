@@ -490,7 +490,7 @@ class TestLLMCallExecutor:
         # Override provider to invalid value
         inputs.provider = "invalid_provider"  # type: ignore[assignment]
 
-        with pytest.raises(ValueError, match="Unsupported provider"):
+        with pytest.raises(ValueError, match="Invalid provider"):
             await executor.execute(inputs, mock_context)
 
     def test_executor_metadata(self, executor):
