@@ -2,6 +2,14 @@
 
 All notable changes to this project will be documented in this file.
 
+## [6.1.1](https://github.com/qtsone/workflows-mcp/compare/v6.1.0...v6.1.1) (2025-11-07)
+
+
+### Bug Fixes
+
+* **schema:** resolve LLMProvider $ref by moving nested $defs to root level ([4b402f7](https://github.com/qtsone/workflows-mcp/commit/4b402f7c776cff6db3ef838774de58b7763b6919))
+* **schema:** resolve LLMProvider $ref by moving nested $defs to root level ([#21](https://github.com/qtsone/workflows-mcp/issues/21)) ([5f13750](https://github.com/qtsone/workflows-mcp/commit/5f13750b12b70e2f40086cc72f9372d9ed16fa74))
+
 # [6.1.0](https://github.com/qtsone/workflows-mcp/compare/v6.0.0...v6.1.0) (2025-11-07)
 
 
