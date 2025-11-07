@@ -612,19 +612,6 @@
             "then": {
               "properties": {
                 "inputs": {
-                  "$defs": {
-                    "LLMProvider": {
-                      "description": "Enum for supported LLM providers.",
-                      "enum": [
-                        "openai",
-                        "anthropic",
-                        "gemini",
-                        "ollama"
-                      ],
-                      "title": "LLMProvider",
-                      "type": "string"
-                    }
-                  },
                   "additionalProperties": false,
                   "description": "Inputs for LLMCall block",
                   "properties": {
@@ -1357,20 +1344,18 @@
       "title": "HttpCallInput",
       "type": "object"
     },
+    "LLMProvider": {
+      "description": "Enum for supported LLM providers.",
+      "enum": [
+        "openai",
+        "anthropic",
+        "gemini",
+        "ollama"
+      ],
+      "title": "LLMProvider",
+      "type": "string"
+    },
     "LLMCallInput": {
-      "$defs": {
-        "LLMProvider": {
-          "description": "Enum for supported LLM providers.",
-          "enum": [
-            "openai",
-            "anthropic",
-            "gemini",
-            "ollama"
-          ],
-          "title": "LLMProvider",
-          "type": "string"
-        }
-      },
       "additionalProperties": false,
       "description": "Input model for LLMCall executor.\n\nAll inputs are pre-resolved by VariableResolver:\n- {{secrets.OPENAI_API_KEY}} \u2192 actual key value\n- {{inputs.prompt}} \u2192 actual prompt text\n- {{blocks.previous.outputs.data}} \u2192 actual data",
       "properties": {
