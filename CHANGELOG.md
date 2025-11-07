@@ -2,6 +2,14 @@
 
 All notable changes to this project will be documented in this file.
 
+# [6.1.0](https://github.com/qtsone/workflows-mcp/compare/v6.0.0...v6.1.0) (2025-11-07)
+
+
+### Features
+
+* **engine:** add interpolatable field support for dynamic type resolution ([652a1ce](https://github.com/qtsone/workflows-mcp/commit/652a1ce703c97bef4d4b9b344cc9697fe8e14dd0))
+* **engine:** add interpolatable field support for dynamic type resolution ([#20](https://github.com/qtsone/workflows-mcp/issues/20)) ([c860c44](https://github.com/qtsone/workflows-mcp/commit/c860c44355282820cc1b88256987abb00b332996))
+
 # [6.0.0](https://github.com/qtsone/workflows-mcp/compare/v5.0.0...v6.0.0) (2025-11-06)
 
 
