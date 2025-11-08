@@ -268,6 +268,12 @@ class ExecutorRegistry(BaseModel):
             # Get the actual Pydantic schema from the executor
             input_schema = executor.get_input_schema()
 
+            # Extract and merge nested $defs to root level (same as WorkflowOutputSchema)
+            # This ensures types like LLMProvider are accessible at root for $ref
+            # $ref uses absolute paths (#/$defs/Type), so nested $defs won't resolve
+            nested_defs = input_schema.pop("$defs", {})
+            definitions.update(nested_defs)
+
             # Store in definitions
             definitions[f"{type_name}Input"] = input_schema
             block_types.append(type_name)

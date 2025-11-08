@@ -15,9 +15,12 @@ Design Principles:
 
 import asyncio
 import logging
+import shutil
+import tempfile
 import time
 import uuid
 from datetime import UTC, datetime
+from pathlib import Path
 from typing import Any, Literal, cast
 
 from .checkpoint import CheckpointConfig, CheckpointState
@@ -85,6 +88,7 @@ class WorkflowRunner:
         workflow: WorkflowSchema,
         runtime_inputs: dict[str, Any] | None = None,
         context: ExecutionContext | None = None,
+        debug: bool = False,
     ) -> ExecutionResult:
         """
         Execute workflow and return ExecutionResult.
@@ -95,6 +99,7 @@ class WorkflowRunner:
             workflow: Workflow definition (Pydantic model with validated DAG)
             runtime_inputs: Runtime input overrides
             context: Execution context (REQUIRED - provides registries and dependencies)
+            debug: If True, preserve scratch directory for debugging
 
         Returns:
             ExecutionResult (success/failure/paused) with full execution context
@@ -119,15 +124,18 @@ class WorkflowRunner:
                 "or ExecutionContext(...) with proper registries."
             )
 
+        scratch_dir: Path | None = None
+
         try:
             # Execute workflow (may raise exceptions)
             execution = await self._execute_workflow_internal(workflow, runtime_inputs, context)
+            scratch_dir = execution.scratch_dir
 
             # Success - wrap in ExecutionResult with secret redactor
             return ExecutionResult.success(execution, self.secret_redactor)
 
         except ExecutionPaused as e:
-            # Workflow paused - execution context in exception
+            # Workflow paused - execution context in exception (scratch preserved in checkpoint)
             return ExecutionResult.paused(
                 checkpoint_id=e.checkpoint_data.get("checkpoint_id", ""),
                 prompt=e.prompt,
@@ -150,9 +158,24 @@ class WorkflowRunner:
                     metadata=None,
                     blocks={},
                 )
+            else:
+                scratch_dir = partial_execution.scratch_dir
 
             # Failure - wrap partial execution in ExecutionResult with secret redactor
             return ExecutionResult.failure(str(e), partial_execution, self.secret_redactor)
+
+        finally:
+            # Cleanup scratch directory unless debug mode
+            if scratch_dir and scratch_dir.exists() and not debug:
+                try:
+                    shutil.rmtree(scratch_dir)
+                    logger.debug(f"Cleaned up scratch directory: {scratch_dir}")
+                except Exception as cleanup_error:
+                    logger.warning(
+                        f"Failed to cleanup scratch directory {scratch_dir}: {cleanup_error}"
+                    )
+            elif scratch_dir and debug:
+                logger.info(f"Debug mode: scratch directory preserved at {scratch_dir}")
 
     async def resume(
         self,
@@ -797,6 +820,11 @@ class WorkflowRunner:
         context: ExecutionContext | None,
     ) -> Execution:
         """Create fresh Execution context for workflow start."""
+        # Create workflow-scoped scratch directory
+        execution_id = f"{workflow.name}-{uuid.uuid4().hex[:8]}"
+        scratch_dir = Path(tempfile.gettempdir()) / f"workflows-{execution_id}"
+        scratch_dir.mkdir(parents=True, exist_ok=True, mode=0o700)
+
         # Create execution context (workflow-level has no metadata - only blocks have metadata)
         workflow_start_time = datetime.now(UTC).isoformat()
         exec_context = Execution(
@@ -806,10 +834,15 @@ class WorkflowRunner:
             depth=len(context.workflow_stack) if context else 0,
         )
 
+        # Set scratch directory
+        exec_context.set_scratch_dir(scratch_dir)
+
         # Store workflow metadata and ExecutionContext in _internal
         workflow_metadata_dict = {
             "workflow_name": workflow.name,
             "started_at": workflow_start_time,
+            "execution_id": execution_id,
+            "scratch_dir": str(scratch_dir),
         }
 
         if context:
@@ -819,6 +852,8 @@ class WorkflowRunner:
         else:
             exec_context._internal.workflow_stack = [workflow.name]
             exec_context.set_workflow_metadata(workflow_metadata_dict)
+
+        logger.debug(f"Created scratch directory for workflow '{workflow.name}': {scratch_dir}")
 
         return exec_context
 
@@ -1095,6 +1130,12 @@ class WorkflowRunner:
         workflow_stack = [ws.get("name", "") for ws in checkpoint.workflow_stack]
         exec_context.set_execution_context(context)
         exec_context._internal.workflow_stack = workflow_stack
+
+        # Recreate scratch directory if it doesn't exist (may have been cleaned up)
+        scratch_dir = exec_context.scratch_dir
+        if scratch_dir and not scratch_dir.exists():
+            scratch_dir.mkdir(parents=True, exist_ok=True, mode=0o700)
+            logger.debug(f"Recreated scratch directory on resume: {scratch_dir}")
 
         # Resume paused block if needed
         completed_blocks = checkpoint.completed_blocks.copy()
