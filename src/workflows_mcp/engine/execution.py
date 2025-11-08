@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from pydantic import BaseModel, Field, PrivateAttr, model_validator
@@ -37,6 +38,11 @@ class ExecutionInternal(BaseModel):
     workflow_stack: list[str] = Field(
         default_factory=list,
         description="Stack of workflow names for recursion tracking",
+    )
+
+    scratch_dir: Path | None = Field(
+        default=None,
+        description="Workflow-scoped scratch directory (absolute path in system temp)",
     )
 
 
@@ -137,6 +143,15 @@ class Execution(BaseModel):
     def get_parent_workflow(self) -> str | None:
         """Get parent workflow name (for composition)."""
         return self._internal.workflow_stack[-1] if self._internal.workflow_stack else None
+
+    @property
+    def scratch_dir(self) -> Path | None:
+        """Get workflow-scoped scratch directory."""
+        return self._internal.scratch_dir
+
+    def set_scratch_dir(self, scratch_dir: Path) -> None:
+        """Set workflow-scoped scratch directory."""
+        self._internal.scratch_dir = scratch_dir
 
     @model_validator(mode="before")
     @classmethod

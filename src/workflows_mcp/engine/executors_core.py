@@ -380,23 +380,19 @@ class ShellExecutor(BlockExecutor):
         if not cwd.exists():
             raise FileNotFoundError(f"Working directory does not exist: {cwd}")
 
-        # Setup scratch directory
-        scratch_dir = cwd / ".scratch"
-        scratch_dir.mkdir(exist_ok=True, mode=0o700)
+        # Get workflow-scoped scratch directory from execution context
+        scratch_dir = context.scratch_dir
+        if scratch_dir is None:
+            raise RuntimeError(
+                "Scratch directory not initialized in execution context. "
+                "This indicates a workflow runner initialization issue."
+            )
 
-        # Update .gitignore if it exists
-        gitignore = cwd / ".gitignore"
-        if gitignore.exists():
-            content = gitignore.read_text()
-            if ".scratch/" not in content:
-                with gitignore.open("a") as f:
-                    f.write("\n.scratch/\n")
-
-        # Prepare environment with SCRATCH
+        # Prepare environment with SCRATCH (absolute path)
         env = dict(os.environ)
         if inputs.env:
             env.update(inputs.env)
-        env["SCRATCH"] = ".scratch"
+        env["SCRATCH"] = str(scratch_dir)
 
         # Execute command
         if inputs.shell:
@@ -445,40 +441,38 @@ class ShellExecutor(BlockExecutor):
         # Access from context variable (async-safe, no race condition)
         custom_outputs = block_custom_outputs.get()
         if custom_outputs:
-            # Set SCRATCH for path expansion
-            original_env = os.environ.get("SCRATCH")
-            os.environ["SCRATCH"] = ".scratch"
+            for output_name, output_schema in custom_outputs.items():
+                try:
+                    raw_path = output_schema["path"]
 
-            try:
-                for output_name, output_schema in custom_outputs.items():
-                    try:
-                        # Validate path
-                        file_path = validate_output_path(
-                            output_name,
-                            output_schema["path"],
-                            cwd,
-                            output_schema.get("unsafe", False),
-                        )
+                    # Replace $SCRATCH with absolute scratch directory
+                    output_path = raw_path.replace("$SCRATCH", str(scratch_dir))
 
-                        # Read file
-                        content = file_path.read_text()
+                    # Scratch paths need unsafe=True to allow absolute paths
+                    is_scratch_path = "$SCRATCH" in raw_path
+                    allow_absolute = output_schema.get("unsafe", False) or is_scratch_path
 
-                        # Parse type
-                        value = parse_output_value(content, output_schema["type"])
+                    # Validate path
+                    file_path = validate_output_path(
+                        output_name,
+                        output_path,
+                        cwd,
+                        allow_absolute,
+                    )
 
-                        # Merge directly into output dict
-                        output_dict[output_name] = value
+                    # Read file
+                    content = file_path.read_text()
 
-                    except (OutputSecurityError, OutputNotFoundError, ValueError) as e:
-                        if output_schema.get("required", True):
-                            raise ValueError(f"Output '{output_name}' error: {e}")
-                        # Optional output, continue without it
-            finally:
-                # Restore original environment
-                if original_env is not None:
-                    os.environ["SCRATCH"] = original_env
-                elif "SCRATCH" in os.environ:
-                    del os.environ["SCRATCH"]
+                    # Parse type
+                    value = parse_output_value(content, output_schema["type"])
+
+                    # Merge directly into output dict
+                    output_dict[output_name] = value
+
+                except (OutputSecurityError, OutputNotFoundError, ValueError) as e:
+                    if output_schema.get("required", True):
+                        raise ValueError(f"Output '{output_name}' error: {e}")
+                    # Optional output, continue without it
 
         # Create output with merged fields (extra="allow" handles custom fields)
         return ShellOutput(**output_dict)  # type: ignore[arg-type]

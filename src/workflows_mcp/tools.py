@@ -145,6 +145,7 @@ async def execute_workflow(
         workflow=workflow_schema,
         runtime_inputs=inputs,
         context=exec_context,
+        debug=debug,
     )
 
     # Format response using ExecutionResult.to_response()
@@ -266,6 +267,7 @@ async def execute_inline_workflow(
         workflow=workflow_schema,
         runtime_inputs=inputs,
         context=exec_context,
+        debug=debug,
     )
 
     # Format response using ExecutionResult.to_response()
