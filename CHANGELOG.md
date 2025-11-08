@@ -2,6 +2,14 @@
 
 All notable changes to this project will be documented in this file.
 
+# [6.2.0](https://github.com/qtsone/workflows-mcp/compare/v6.1.1...v6.2.0) (2025-11-08)
+
+
+### Features
+
+* **llm:** add profile-based configuration system ([d7acdb8](https://github.com/qtsone/workflows-mcp/commit/d7acdb80dc739068b3a0f7ae98b0d06fb4d95866))
+* **llm:** add profile-based configuration system ([#23](https://github.com/qtsone/workflows-mcp/issues/23)) ([d0a124c](https://github.com/qtsone/workflows-mcp/commit/d0a124cfc05717b845377f62b768cc53ac125ffb))
+
 ## [6.1.1](https://github.com/qtsone/workflows-mcp/compare/v6.1.0...v6.1.1) (2025-11-07)
 
 
