@@ -21,6 +21,7 @@ if TYPE_CHECKING:
     from .checkpoint_store import CheckpointStore
     from .execution import Execution
     from .executor_base import ExecutorRegistry
+    from .llm_config import LLMConfigLoader
     from .registry import WorkflowRegistry
     from .schema import WorkflowSchema
 
@@ -48,6 +49,7 @@ class ExecutionContext:
         workflow_registry: WorkflowRegistry,
         executor_registry: ExecutorRegistry,
         checkpoint_store: CheckpointStore,
+        llm_config_loader: LLMConfigLoader,
         parent: Execution | None = None,
         workflow_stack: list[str] | None = None,
         max_recursion_depth: int = 50,
@@ -59,6 +61,7 @@ class ExecutionContext:
             workflow_registry: Registry of workflow definitions
             executor_registry: Registry of block executors
             checkpoint_store: Store for checkpoints (pause/resume)
+            llm_config_loader: Loader for LLM profile configuration
             parent: Parent execution (for nested workflows)
             workflow_stack: Workflow execution stack (depth tracking)
             max_recursion_depth: Maximum allowed recursion depth (default: 50)
@@ -66,6 +69,7 @@ class ExecutionContext:
         self.workflow_registry = workflow_registry
         self.executor_registry = executor_registry
         self.checkpoint_store = checkpoint_store
+        self.llm_config_loader = llm_config_loader
         self.parent = parent
         self.workflow_stack = workflow_stack or []
         self.max_recursion_depth = max_recursion_depth
@@ -107,6 +111,7 @@ class ExecutionContext:
             workflow_registry=self.workflow_registry,
             executor_registry=self.executor_registry,
             checkpoint_store=self.checkpoint_store,
+            llm_config_loader=self.llm_config_loader,
             parent=parent_execution,
             workflow_stack=self.workflow_stack + [workflow_name],
             max_recursion_depth=self.max_recursion_depth,

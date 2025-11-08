@@ -22,7 +22,7 @@ from enum import Enum
 from typing import Any, ClassVar
 
 import httpx
-from pydantic import Field, field_validator
+from pydantic import Field, field_validator, model_validator
 
 from .block import BlockInput, BlockOutput
 from .execution import Execution
@@ -64,19 +64,56 @@ class LLMCallInput(BlockInput):
     - {{secrets.OPENAI_API_KEY}} → actual key value
     - {{inputs.prompt}} → actual prompt text
     - {{blocks.previous.outputs.data}} → actual data
+
+    Configuration Modes:
+    1. Profile-based (NEW): Specify profile name, optionally override parameters
+    2. Direct specification (backward compatible): Specify provider + model directly
+
+    Examples:
+        # Profile-based (recommended)
+        profile: quick
+        prompt: "..."
+
+        # Profile with overrides
+        profile: standard
+        temperature: 1.0
+        max_tokens: 8000
+        prompt: "..."
+
+        # Direct specification (backward compatible)
+        provider: openai
+        model: gpt-4o
+        api_key: "{{secrets.OPENAI_API_KEY}}"
+        prompt: "..."
     """
 
-    provider: LLMProvider | str = Field(
-        default=LLMProvider.OPENAI,
-        description="LLM provider (enum or interpolation string)",
+    profile: str | None = Field(
+        default=None,
+        description=(
+            "Profile name from ~/.workflows/llm-config.yml (e.g., 'cloud', 'local', 'default'). "
+            "If specified, provider/model are loaded from config. "
+            "Mutually exclusive with direct provider/model specification."
+        ),
+    )
+
+    provider: LLMProvider | str | None = Field(
+        default=None,
+        description=(
+            "LLM provider (enum or interpolation string). "
+            "Required if profile not specified. Ignored if profile specified."
+        ),
     )
 
     # Validator allows enum values, valid strings, and interpolation strings
     _validate_provider = field_validator("provider", mode="before")(
         interpolatable_enum_validator(LLMProvider)
     )
-    model: str = Field(
-        description="Model name (e.g., gpt-4o, claude-3-5-sonnet-20241022, gemini-2.0-flash-exp)",
+    model: str | None = Field(
+        default=None,
+        description=(
+            "Model name (e.g., gpt-4o, claude-3-5-sonnet-20241022, gemini-2.0-flash-exp). "
+            "Required if profile not specified. Can override profile model if both specified."
+        ),
     )
     prompt: str = Field(
         description="User prompt to send to the LLM",
@@ -182,6 +219,37 @@ class LLMCallInput(BlockInput):
             raise ValueError("response_schema must have a 'type' field")
 
         return v
+
+    @model_validator(mode="after")
+    def validate_profile_or_provider_model(self) -> LLMCallInput:
+        """Validate that either profile OR (provider + model) is specified.
+
+        Resolution logic:
+        - If profile is specified: Use profile, ignore provider/model (unless overriding)
+        - If profile is NOT specified: provider and model are REQUIRED
+
+        This validator runs AFTER all field validators, so we have access to
+        all resolved field values.
+
+        Returns:
+            self
+
+        Raises:
+            ValueError: If neither profile nor (provider + model) is specified
+        """
+        if self.profile is None:
+            # No profile - provider and model are required
+            if self.provider is None:
+                raise ValueError(
+                    "Either 'profile' OR 'provider' must be specified. "
+                    "Use profile for config-based setup, or direct provider+model."
+                )
+            if self.model is None:
+                raise ValueError(
+                    "When 'provider' is specified without 'profile', 'model' is required."
+                )
+
+        return self
 
 
 class LLMCallOutput(BlockOutput):
@@ -290,31 +358,47 @@ class LLMCallExecutor(BlockExecutor):
     ) -> LLMCallOutput:
         """Execute LLM call with retry logic and optional schema validation.
 
+        Profile Resolution:
+        - If inputs.profile is specified: Load config from ~/.workflows/llm-config.yml
+        - Merge profile config with inline parameter overrides from inputs
+        - If inputs.profile is None: Use direct provider/model specification (backward compatible)
+
         Returns:
             LLMCallOutput with response, validation status, and metadata
 
         Raises:
-            ValueError: Invalid inputs or configuration
+            ValueError: Invalid inputs, configuration, or profile not found
             httpx.TimeoutException: All retry attempts timed out
             httpx.HTTPStatusError: HTTP error from provider
             Exception: Other unrecoverable errors
         """
-        # Resolve interpolatable numeric fields to their actual types
+        # Step 1: Profile Resolution (if profile specified)
+        effective_inputs = inputs
+        if inputs.profile is not None:
+            effective_inputs = await self._resolve_profile_to_inputs(inputs, context)
+
+        # Step 2: Resolve interpolatable numeric fields to their actual types
         max_retries = resolve_interpolatable_numeric(
-            inputs.max_retries, int, "max_retries", ge=1, le=10
+            effective_inputs.max_retries, int, "max_retries", ge=1, le=10
         )
         retry_delay = resolve_interpolatable_numeric(
-            inputs.retry_delay, float, "retry_delay", ge=0.1, le=60.0
+            effective_inputs.retry_delay, float, "retry_delay", ge=0.1, le=60.0
         )
-        timeout = resolve_interpolatable_numeric(inputs.timeout, int, "timeout", ge=1, le=1800)
+        timeout = resolve_interpolatable_numeric(
+            effective_inputs.timeout, int, "timeout", ge=1, le=1800
+        )
         temperature = (
-            resolve_interpolatable_numeric(inputs.temperature, float, "temperature", ge=0.0, le=2.0)
-            if inputs.temperature is not None
+            resolve_interpolatable_numeric(
+                effective_inputs.temperature, float, "temperature", ge=0.0, le=2.0
+            )
+            if effective_inputs.temperature is not None
             else None
         )
         max_tokens = (
-            resolve_interpolatable_numeric(inputs.max_tokens, int, "max_tokens", ge=1, le=128000)
-            if inputs.max_tokens is not None
+            resolve_interpolatable_numeric(
+                effective_inputs.max_tokens, int, "max_tokens", ge=1, le=128000
+            )
+            if effective_inputs.max_tokens is not None
             else None
         )
 
@@ -323,23 +407,23 @@ class LLMCallExecutor(BlockExecutor):
         validation_error: str | None = None
 
         # Determine if we need schema validation
-        needs_validation = inputs.response_schema is not None
+        needs_validation = effective_inputs.response_schema is not None
 
         for attempt in range(max_retries):
             attempts += 1
 
             try:
                 # Build prompt (add validation feedback if retry due to validation failure)
-                prompt = inputs.prompt
+                prompt = effective_inputs.prompt
                 if validation_error and attempt > 0:
-                    prompt = inputs.validation_prompt_template.format(
+                    prompt = effective_inputs.validation_prompt_template.format(
                         validation_error=validation_error,
-                        schema=json.dumps(inputs.response_schema, indent=2),
+                        schema=json.dumps(effective_inputs.response_schema, indent=2),
                     )
 
                 # Make LLM API call
                 response_text, provider_metadata = await self._call_provider(
-                    inputs=inputs,
+                    inputs=effective_inputs,
                     prompt=prompt,
                     timeout=timeout,
                     temperature=temperature,
@@ -352,7 +436,7 @@ class LLMCallExecutor(BlockExecutor):
                     try:
                         validated_response = self._validate_response(
                             response_text=response_text,
-                            schema=inputs.response_schema,  # type: ignore[arg-type]
+                            schema=effective_inputs.response_schema,  # type: ignore[arg-type]
                         )
 
                         # Success! Return validated response
@@ -433,6 +517,92 @@ class LLMCallExecutor(BlockExecutor):
             raise last_error
         raise RuntimeError("LLM call failed after all retry attempts")
 
+    async def _resolve_profile_to_inputs(
+        self, inputs: LLMCallInput, context: Execution
+    ) -> LLMCallInput:
+        """Resolve profile configuration to effective inputs.
+
+        This method:
+        1. Loads profile config from llm_config_loader (via ExecutionContext)
+        2. Merges profile config with inline parameter overrides from inputs
+        3. Resolves API key from secrets if api_key_secret is specified
+        4. Returns new LLMCallInput with all values resolved
+
+        Args:
+            inputs: Original inputs with profile specified
+            context: Execution context (provides access to llm_config_loader and secrets)
+
+        Returns:
+            New LLMCallInput with profile-resolved values
+
+        Raises:
+            ValueError: If profile not found or llm_config_loader not available
+        """
+        # Get llm_config_loader from execution context
+        execution_context = context._internal.execution_context
+        if execution_context is None:
+            raise ValueError(
+                "ExecutionContext not available. Cannot resolve LLM profile. "
+                "This is a system error - execution context should always be set."
+            )
+
+        llm_config_loader = execution_context.llm_config_loader
+
+        # Build inline overrides from inputs (filter out None values)
+        inline_overrides = {
+            key: value
+            for key, value in {
+                "provider": inputs.provider,
+                "model": inputs.model,
+                "api_url": inputs.api_url,
+                "api_key": inputs.api_key,
+                "timeout": inputs.timeout,
+                "max_retries": inputs.max_retries,
+                "retry_delay": inputs.retry_delay,
+                "temperature": inputs.temperature,
+                "max_tokens": inputs.max_tokens,
+                "system_instructions": inputs.system_instructions,
+            }.items()
+            if value is not None
+        }
+
+        # Resolve profile
+        resolved_config = llm_config_loader.resolve_profile(
+            profile=inputs.profile, inline_overrides=inline_overrides
+        )
+
+        if resolved_config is None:
+            # This shouldn't happen because model_validator ensures profile is not None when called
+            raise ValueError("Profile resolution returned None unexpectedly")
+
+        # Resolve API key from secrets if api_key_secret is specified
+        api_key = None
+        if resolved_config.api_key_secret:
+            # Get secret provider (use default EnvVarSecretProvider)
+            from .secrets import EnvVarSecretProvider
+
+            secret_provider = EnvVarSecretProvider()
+            api_key = await secret_provider.get_secret(resolved_config.api_key_secret)
+
+        # Create new LLMCallInput with resolved values
+        # Preserve original prompt and validation settings
+        return LLMCallInput(
+            profile=None,  # Clear profile (already resolved)
+            provider=resolved_config.provider,
+            model=resolved_config.model,
+            prompt=inputs.prompt,
+            system_instructions=resolved_config.system_instructions or inputs.system_instructions,
+            api_key=api_key,
+            api_url=resolved_config.api_url,
+            response_schema=inputs.response_schema,
+            max_retries=resolved_config.max_retries,
+            retry_delay=resolved_config.retry_delay,
+            timeout=resolved_config.timeout,
+            temperature=resolved_config.temperature,
+            max_tokens=resolved_config.max_tokens,
+            validation_prompt_template=inputs.validation_prompt_template,
+        )
+
     async def _call_provider(
         self,
         inputs: LLMCallInput,
@@ -461,7 +631,11 @@ class LLMCallExecutor(BlockExecutor):
         """
         # Validate and coerce provider to enum
         # At this point, variables like {{inputs.llm_provider}} are already resolved
-        # We just need to convert the string to enum
+        # Profile resolution ensures provider is not None
+        if inputs.provider is None:
+            raise ValueError(
+                "provider must be specified. This should not happen after profile resolution."
+            )
         provider = resolve_interpolatable_enum(inputs.provider, LLMProvider, "provider")
 
         if provider == LLMProvider.OPENAI:

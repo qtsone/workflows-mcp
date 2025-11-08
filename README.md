@@ -117,44 +117,85 @@ blocks:
 
 ### 🤖 LLM Integration
 
-Call LLM APIs directly from workflows with automatic retry logic and JSON schema validation:
+Call LLM APIs directly from workflows with automatic retry logic and JSON schema validation.
+
+**Profile-Based Configuration (Recommended):**
+
+Centralized LLM configuration via `~/.workflows/llm-config.yml`:
 
 ```yaml
-blocks:
-  - id: extract_data
-    type: LLMCall
-    inputs:
-      provider: openai
-      model: gpt-4o-mini
-      api_key: "{{secrets.OPENAI_API_KEY}}"
-      prompt: "Extract key information from: {{inputs.text}}"
-      response_schema:
-        type: object
-        required: [summary, confidence]
-        properties:
-          summary: {type: string}
-          confidence: {type: number, minimum: 0, maximum: 1}
-      max_retries: 3
+version: "1.0"
+
+providers:
+  cloud:
+    type: openai
+    api_key_secret: "OPENAI_API_KEY"
+
+  local:
+    type: openai
+    api_url: "http://127.0.0.1:1234/v1/chat/completions"
+
+profiles:
+  default:
+    provider: cloud
+    model: gpt-4o-mini
+    temperature: 0.7
+    max_tokens: 4000
+
+  local:
+    provider: local
+    model: ""
+    temperature: 0.8
+    max_tokens: 4000
+
+default_profile: default
 ```
 
-**Supported Providers:**
+Usage:
 
-- **OpenAI** - API access with native Structured Outputs
-- **Anthropic** - API access for Claude models
-- **Gemini** - API access for Gemini models
-- **Ollama** - Local Ollama server API
-- **OpenAI-compatible** - LM Studio, vLLM, and other compatible endpoints
+```yaml
+# Profile-based
+- id: analyze
+  type: LLMCall
+  inputs:
+    profile: default
+    prompt: "Analyze: {{inputs.text}}"
+
+# Profile with overrides
+- id: summary
+  type: LLMCall
+  inputs:
+    profile: default
+    temperature: 0.1
+    prompt: "Summarize: {{inputs.text}}"
+```
+
+**Direct Specification (Backward Compatible):**
+
+```yaml
+- id: extract_data
+  type: LLMCall
+  inputs:
+    provider: openai
+    model: gpt-4o-mini
+    api_key: "{{secrets.OPENAI_API_KEY}}"
+    prompt: "Extract: {{inputs.text}}"
+    response_schema:
+      type: object
+      required: [summary, confidence]
+      properties:
+        summary: {type: string}
+        confidence: {type: number, minimum: 0, maximum: 1}
+```
+
+**Supported Providers:** OpenAI, Anthropic, Gemini, Ollama, OpenAI-compatible (LM Studio, vLLM)
 
 **Key Features:**
 
-- ✅ **Native schema validation** - Send JSON Schema to API for guaranteed structure
-- ✅ **Automatic retry** - Exponential backoff with validation feedback loop
+- ✅ **Profile-based config** - Centralized provider/model management
+- ✅ **Schema validation** - Guaranteed JSON structure with automatic retry
 - ✅ **Token tracking** - Monitor usage and costs
 - ✅ **Secrets integration** - Secure API key management
-
-**For Local CLI Tools:**
-
-To use local Claude CLI or Gemini CLI instead of APIs, use the `llm-process` workflow template which wraps CLI commands.
 
 ## What Can You Do With It?
 

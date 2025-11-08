@@ -615,6 +615,19 @@
                   "additionalProperties": false,
                   "description": "Inputs for LLMCall block",
                   "properties": {
+                    "profile": {
+                      "anyOf": [
+                        {
+                          "type": "string"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ],
+                      "default": null,
+                      "description": "Profile name from ~/.workflows/llm-config.yml (e.g., 'cloud', 'local', 'default'). If specified, provider/model are loaded from config. Mutually exclusive with direct provider/model specification.",
+                      "title": "Profile"
+                    },
                     "provider": {
                       "anyOf": [
                         {
@@ -622,16 +635,27 @@
                         },
                         {
                           "type": "string"
+                        },
+                        {
+                          "type": "null"
                         }
                       ],
-                      "default": "openai",
-                      "description": "LLM provider (enum or interpolation string)",
+                      "default": null,
+                      "description": "LLM provider (enum or interpolation string). Required if profile not specified. Ignored if profile specified.",
                       "title": "Provider"
                     },
                     "model": {
-                      "description": "Model name (e.g., gpt-4o, claude-3-5-sonnet-20241022, gemini-2.0-flash-exp)",
-                      "title": "Model",
-                      "type": "string"
+                      "anyOf": [
+                        {
+                          "type": "string"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ],
+                      "default": null,
+                      "description": "Model name (e.g., gpt-4o, claude-3-5-sonnet-20241022, gemini-2.0-flash-exp). Required if profile not specified. Can override profile model if both specified.",
+                      "title": "Model"
                     },
                     "prompt": {
                       "description": "User prompt to send to the LLM",
@@ -773,7 +797,6 @@
                     }
                   },
                   "required": [
-                    "model",
                     "prompt"
                   ],
                   "title": "LLMCallInput",
@@ -1357,8 +1380,21 @@
     },
     "LLMCallInput": {
       "additionalProperties": false,
-      "description": "Input model for LLMCall executor.\n\nAll inputs are pre-resolved by VariableResolver:\n- {{secrets.OPENAI_API_KEY}} \u2192 actual key value\n- {{inputs.prompt}} \u2192 actual prompt text\n- {{blocks.previous.outputs.data}} \u2192 actual data",
+      "description": "Input model for LLMCall executor.\n\nAll inputs are pre-resolved by VariableResolver:\n- {{secrets.OPENAI_API_KEY}} \u2192 actual key value\n- {{inputs.prompt}} \u2192 actual prompt text\n- {{blocks.previous.outputs.data}} \u2192 actual data\n\nConfiguration Modes:\n1. Profile-based (NEW): Specify profile name, optionally override parameters\n2. Direct specification (backward compatible): Specify provider + model directly\n\nExamples:\n    # Profile-based (recommended)\n    profile: quick\n    prompt: \"...\"\n\n    # Profile with overrides\n    profile: standard\n    temperature: 1.0\n    max_tokens: 8000\n    prompt: \"...\"\n\n    # Direct specification (backward compatible)\n    provider: openai\n    model: gpt-4o\n    api_key: \"{{secrets.OPENAI_API_KEY}}\"\n    prompt: \"...\"",
       "properties": {
+        "profile": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Profile name from ~/.workflows/llm-config.yml (e.g., 'cloud', 'local', 'default'). If specified, provider/model are loaded from config. Mutually exclusive with direct provider/model specification.",
+          "title": "Profile"
+        },
         "provider": {
           "anyOf": [
             {
@@ -1366,16 +1402,27 @@
             },
             {
               "type": "string"
+            },
+            {
+              "type": "null"
             }
           ],
-          "default": "openai",
-          "description": "LLM provider (enum or interpolation string)",
+          "default": null,
+          "description": "LLM provider (enum or interpolation string). Required if profile not specified. Ignored if profile specified.",
           "title": "Provider"
         },
         "model": {
-          "description": "Model name (e.g., gpt-4o, claude-3-5-sonnet-20241022, gemini-2.0-flash-exp)",
-          "title": "Model",
-          "type": "string"
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Model name (e.g., gpt-4o, claude-3-5-sonnet-20241022, gemini-2.0-flash-exp). Required if profile not specified. Can override profile model if both specified.",
+          "title": "Model"
         },
         "prompt": {
           "description": "User prompt to send to the LLM",
@@ -1517,7 +1564,6 @@
         }
       },
       "required": [
-        "model",
         "prompt"
       ],
       "title": "LLMCallInput",
