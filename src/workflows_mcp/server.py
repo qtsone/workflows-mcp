@@ -206,6 +206,18 @@ async def app_lifespan(_server: FastMCP) -> AsyncIterator[AppContext]:
         # Log secret keys (not values!) for debugging
         logger.debug(f"Secret keys: {', '.join(sorted(secret_keys))}")
 
+    # Initialize LLM config loader
+    from .engine.llm_config import LLMConfigLoader
+
+    llm_config_loader = LLMConfigLoader()
+    llm_config = llm_config_loader.load_config()
+
+    logger.info(
+        f"LLM config: {len(llm_config.providers)} providers, {len(llm_config.profiles)} profiles"
+    )
+    if llm_config.default_profile:
+        logger.info(f"Default LLM profile: {llm_config.default_profile}")
+
     # Create executor registry with all built-in executors
     executor_registry = create_default_registry()
 
@@ -224,6 +236,7 @@ async def app_lifespan(_server: FastMCP) -> AsyncIterator[AppContext]:
             registry=registry,
             executor_registry=executor_registry,
             checkpoint_store=checkpoint_store,
+            llm_config_loader=llm_config_loader,
             max_recursion_depth=max_recursion_depth,
         )
     finally:

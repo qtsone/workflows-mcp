@@ -37,6 +37,7 @@ from . import (  # noqa: F401
     executors_file,  # File operation executors
     executors_http,  # HTTP/REST API executor
     executors_interactive,  # Interactive executors
+    executors_llm,  # LLM call executor
     executors_state,  # JSON state executors
     executors_workflow,  # Workflow executor (ADR-008)
 )

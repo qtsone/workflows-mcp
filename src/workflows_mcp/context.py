@@ -12,6 +12,7 @@ from mcp.server.session import ServerSession
 from .engine import ExecutionContext, WorkflowRegistry
 from .engine.checkpoint_store import CheckpointStore
 from .engine.executor_base import ExecutorRegistry
+from .engine.llm_config import LLMConfigLoader
 
 
 @dataclass
@@ -27,6 +28,7 @@ class AppContext:
     registry: WorkflowRegistry
     executor_registry: ExecutorRegistry
     checkpoint_store: CheckpointStore
+    llm_config_loader: LLMConfigLoader
     max_recursion_depth: int = 50  # Default recursion depth limit
 
     def create_execution_context(self) -> ExecutionContext:
@@ -39,6 +41,7 @@ class AppContext:
             workflow_registry=self.registry,
             executor_registry=self.executor_registry,
             checkpoint_store=self.checkpoint_store,
+            llm_config_loader=self.llm_config_loader,
             parent=None,
             workflow_stack=[],
             max_recursion_depth=self.max_recursion_depth,

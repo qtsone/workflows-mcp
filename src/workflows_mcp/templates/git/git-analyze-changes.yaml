@@ -1,7 +1,7 @@
 name: git-analyze-changes
 description: Analyze git repository for uncommitted changes and extract diff information
 version: 1.0.0
-tags: [git, diff, analysis]
+tags: [git, diff, analysis, agent, layer1]
 inputs:
   working_dir:
     type: str

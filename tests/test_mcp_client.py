@@ -54,6 +54,7 @@ from test_utils import format_diff, normalize_dynamic_fields
 from workflows_mcp.context import AppContext
 from workflows_mcp.engine.checkpoint_store import InMemoryCheckpointStore
 from workflows_mcp.engine.executor_base import create_default_registry
+from workflows_mcp.engine.llm_config import LLMConfigLoader
 from workflows_mcp.engine.registry import WorkflowRegistry
 from workflows_mcp.engine.schema import WorkflowSchema
 from workflows_mcp.tools import (
@@ -87,6 +88,7 @@ def mock_context():
     - WorkflowRegistry with test workflows
     - ExecutorRegistry with Shell executor
     - InMemoryCheckpointStore for checkpoint tests
+    - LLMConfigLoader with built-in defaults
 
     Returns:
         Mock context object with request_context.lifespan_context structure
@@ -94,6 +96,7 @@ def mock_context():
     registry = WorkflowRegistry()
     executor_registry = create_default_registry()
     checkpoint_store = InMemoryCheckpointStore()
+    llm_config_loader = LLMConfigLoader()
 
     # Register test workflow with Shell executor
     test_workflow = WorkflowSchema(
@@ -122,6 +125,7 @@ def mock_context():
         registry=registry,
         executor_registry=executor_registry,
         checkpoint_store=checkpoint_store,
+        llm_config_loader=llm_config_loader,
     )
 
     mock_ctx = MagicMock()
