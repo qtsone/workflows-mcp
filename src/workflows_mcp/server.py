@@ -213,8 +213,7 @@ async def app_lifespan(_server: FastMCP) -> AsyncIterator[AppContext]:
     llm_config = llm_config_loader.load_config()
 
     logger.info(
-        f"LLM config: {len(llm_config.providers)} providers, "
-        f"{len(llm_config.profiles)} profiles"
+        f"LLM config: {len(llm_config.providers)} providers, {len(llm_config.profiles)} profiles"
     )
     if llm_config.default_profile:
         logger.info(f"Default LLM profile: {llm_config.default_profile}")

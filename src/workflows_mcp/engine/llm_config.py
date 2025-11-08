@@ -83,9 +83,7 @@ class ProviderConfig(BaseModel):
     Defines connection details and defaults for an LLM provider endpoint.
     """
 
-    type: str = Field(
-        description="Provider type (openai, anthropic, gemini, ollama, azure-openai)"
-    )
+    type: str = Field(description="Provider type (openai, anthropic, gemini, ollama, azure-openai)")
     api_url: str | None = Field(
         default=None,
         description="API endpoint URL (optional, uses provider defaults if not specified)",
@@ -137,9 +135,7 @@ class ProfileConfig(BaseModel):
     model parameters. Profiles enable right-sizing models for different tasks.
     """
 
-    provider: str = Field(
-        description="Provider name (must reference a key in providers section)"
-    )
+    provider: str = Field(description="Provider name (must reference a key in providers section)")
     model: str = Field(
         description="Model name (e.g., gpt-4o, claude-sonnet-4, gemini-2.0-flash-exp)"
     )
@@ -420,9 +416,7 @@ class LLMConfigLoader:
             else:
                 # Config exists but profile not found
                 available = ", ".join(config.profiles.keys())
-                raise ValueError(
-                    f"Profile '{profile}' not found. Available profiles: {available}"
-                )
+                raise ValueError(f"Profile '{profile}' not found. Available profiles: {available}")
 
         profile_config = config.profiles[profile]
 
