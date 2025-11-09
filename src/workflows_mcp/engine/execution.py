@@ -233,14 +233,30 @@ class Execution(BaseModel):
             # Handle both BlockExecution and tuple formats
             if hasattr(result, "output") and hasattr(result, "metadata"):
                 # BlockExecution format (from execute_for_each)
-                outputs = result.output.model_dump() if result.output else {}
                 metadata = result.metadata
-                inputs = {}  # Inputs not stored in BlockExecution
+                inputs = result.inputs
+
+                # Special handling for Workflow executors (fractal pattern)
+                if isinstance(result.output, Execution):
+                    # Workflow block - extract outputs and blocks separately
+                    child_exec = result.output
+                    iter_exec = Execution(
+                        inputs=inputs,
+                        outputs=child_exec.outputs,
+                        blocks=child_exec.blocks,
+                        metadata=metadata,
+                    )
+                else:
+                    # Regular block - dump output model
+                    outputs = result.output.model_dump() if result.output else {}
+                    iter_exec = Execution(
+                        inputs=inputs, outputs=outputs, blocks={}, metadata=metadata
+                    )
             else:
                 # Tuple format: (inputs, outputs, metadata)
                 inputs, outputs, metadata = result
+                iter_exec = Execution(inputs=inputs, outputs=outputs, blocks={}, metadata=metadata)
 
-            iter_exec = Execution(inputs=inputs, outputs=outputs, blocks={}, metadata=metadata)
             iteration_executions[iteration_key] = iter_exec
 
         # Store parent with iterations as child blocks

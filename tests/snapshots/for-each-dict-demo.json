@@ -1,6 +1,7 @@
 {
   "outputs": {
     "all_successful": true,
+    "api_exit_code": 0,
     "execution_mode": "sequential",
     "services_configured": 3
   },

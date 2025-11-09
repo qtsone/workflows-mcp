@@ -1,0 +1,11 @@
+{
+  "outputs": {
+    "all_succeeded": true,
+    "api_exit_code": 0,
+    "dynamic_matches_static": true,
+    "secondary_exit_code": 0,
+    "target_exit_code": 0,
+    "total_services": 3
+  },
+  "status": "success"
+}
