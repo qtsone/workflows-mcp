@@ -94,7 +94,7 @@ Install the complete workflows plugin with agent, skills, and auto-configuration
 /plugin install workflows@qtsone
 ```
 
-This automatically configures the MCP server with custom workflow directories: `~/.workflows` and `./.workflows`
+This automatically configures the MCP server to look for custom workflows in `~/.workflows` and `./.workflows` (optional directories you can create if you want to add custom workflows).
 
 **Method 2: Manual Configuration**
 
@@ -115,6 +115,8 @@ Add this to your Claude Desktop config file:
   }
 }
 ```
+
+**Note:** The `WORKFLOWS_TEMPLATE_PATHS` directories are optional. Only create them if you want to add custom workflows. The server works perfectly fine with just the built-in workflows. We recommend using `~/.workflows` as it's also the default location for optional LLM configuration (`llm-config.yml`).
 
 #### For Other MCP-Compatible AI Assistants
 
@@ -204,7 +206,12 @@ Let's create a simple workflow that greets a user:
 
 ### 1. Create a YAML file
 
-Save this as `~/.workflows/greet-user.yaml`:
+First, create the workflows directory (if it doesn't exist):
+```bash
+mkdir -p ~/.workflows
+```
+
+Then save this as `~/.workflows/greet-user.yaml`:
 
 ```yaml
 name: greet-user
@@ -336,7 +343,7 @@ Call AI models directly from workflows with automatic retry and validation:
 
 **Profile-based (Recommended):**
 
-Create `~/.workflows/llm-config.yml`:
+Optionally create `~/.workflows/llm-config.yml` (you'll need to create the directory first if it doesn't exist):
 
 ```yaml
 version: "1.0"
@@ -645,7 +652,9 @@ Configure the server behavior with these environment variables:
 
 The server loads workflows from:
 1. Built-in templates (always loaded)
-2. Custom directories (specified in `WORKFLOWS_TEMPLATE_PATHS`)
+2. Custom directories (specified in `WORKFLOWS_TEMPLATE_PATHS`, optional)
+
+**Note:** Custom workflow directories are not created automatically. You need to create them manually if you want to add your own workflows. The server works fine without them using only built-in workflows.
 
 **Load order priority:** Later directories override earlier ones by workflow name.
 
@@ -950,10 +959,13 @@ uv venv --python 3.12
 
 **Solution:**
 ```bash
+# First, make sure you created the directory
+mkdir -p ~/.workflows
+
 # Verify WORKFLOWS_TEMPLATE_PATHS is correct
 # Paths should exist and contain .yaml files
 
-# Check directory exists
+# Check directory exists and contains workflows
 ls ~/.workflows/
 
 # Check YAML syntax
