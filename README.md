@@ -750,7 +750,7 @@ blocks:
         3. Installation complexity (1-10)
 
         README:
-        {{blocks.fetch_readme.outputs.body}}
+        {{blocks.fetch_readme.outputs.response_body}}
       response_schema:
         type: object
         required: [purpose, technologies, complexity]
@@ -761,7 +761,7 @@ blocks:
 
 outputs:
   analysis:
-    value: "{{blocks.analyze.outputs.parsed_response}}"
+    value: "{{blocks.analyze.outputs.response_json}}"
     type: dict
 ```
 
