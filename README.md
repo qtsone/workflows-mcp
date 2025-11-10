@@ -1,35 +1,90 @@
 # Workflows MCP
 
-**A Model Context Protocol (MCP) server that turns complex automation into simple workflow definitions.**
+**Automate anything with simple YAML workflows for your AI assistant.**
 
-Think of it as your personal automation assistant—define what you want done in YAML, and this MCP server handles the execution. Perfect for CI/CD pipelines, Python development workflows, git operations, or any multi-step automation you can dream up.
+Workflows MCP is a [Model Context Protocol](https://modelcontextprotocol.io/) (MCP) server that lets you define powerful, reusable automation workflows in YAML and execute them through AI assistants like Claude. Think of it as GitHub Actions for your AI assistant—define your automation once, run it anywhere.
 
-## What's This All About?
+---
 
-Workflows MCP is an MCP server that exposes workflow execution capabilities to AI assistants like Claude. Instead of writing the same bash scripts over and over, you define workflows once and execute them with a single tool call.
+## Table of Contents
 
-Each workflow is a DAG (Directed Acyclic Graph) of tasks that can run in parallel or sequence, with smart variable substitution, conditionals, and the ability to compose workflows together. It's like having GitHub Actions, but integrated directly into your AI assistant.
+- [What Does This Give Me?](#what-does-this-give-me)
+- [Why Should I Use This?](#why-should-i-use-this)
+- [Quick Start](#quick-start)
+- [How It Works](#how-it-works)
+- [What Can I Build?](#what-can-i-build)
+- [Creating Your First Workflow](#creating-your-first-workflow)
+- [Key Features](#key-features)
+- [Built-in Workflows](#built-in-workflows)
+- [Available MCP Tools](#available-mcp-tools)
+- [Configuration Reference](#configuration-reference)
+- [Examples](#examples)
+- [Development](#development)
+- [Troubleshooting](#troubleshooting)
+- [License](#license)
+
+---
+
+## What Does This Give Me?
+
+Workflows MCP transforms your AI assistant into an automation powerhouse. Instead of manually running commands or writing repetitive scripts, you define workflows in YAML, and your AI assistant executes them for you.
+
+**Real-world example:**
+```
+You: "Run the Python CI pipeline on my project"
+Claude: *Executes workflow that sets up environment, runs linting, and runs tests*
+Claude: "✓ All checks passed! Linting: ✓, Tests: ✓, Coverage: 92%"
+```
+
+---
+
+## Why Should I Use This?
+
+### For Non-Technical Users
+- **No coding required** - Define automation in simple YAML
+- **Reusable templates** - Use pre-built workflows for common tasks
+- **AI-powered execution** - Just ask your AI assistant in plain English
+
+### For Developers
+- **DRY principle** - Define once, use everywhere
+- **Parallel execution** - Automatic optimization of independent tasks
+- **Type-safe** - Validated inputs and outputs
+- **Composable** - Build complex workflows from simple building blocks
+
+### For Teams
+- **Shared automation** - Version control your workflows
+- **Consistent processes** - Everyone uses the same tested workflows
+- **Custom templates** - Build company-specific automation libraries
+
+---
 
 ## Quick Start
 
-### Installation
+### Step 1: Install
 
+Choose one of these installation methods:
+
+**Option A: Using `uv` (Recommended - Faster)**
 ```bash
-# Using uv (recommended)
 uv pip install workflows-mcp
+```
 
-# Or with pip
+**Option B: Using `pip`**
+```bash
 pip install workflows-mcp
 ```
 
-### Configuration
+**Requirements:**
+- Python 3.12 or higher
+- That's it!
 
-**Option 1: Install via QTS Marketplace (Claude Desktop & Claude Code)**
+### Step 2: Configure Your AI Assistant
 
-Install the `workflows` plugin from the [qtsone marketplace](https://github.com/qtsone/marketplace) which includes:
-- 🤖 **workflows-specialist agent** - Dedicated agent for workflow orchestration
-- 📚 **workflows-expert skill** - Comprehensive knowledge base and best practices
-- ⚙️ **MCP auto-configuration** - Automatic workflows-mcp server setup
+#### For Claude Desktop or Claude Code
+
+**Method 1: QTS Marketplace (Easiest)**
+
+Install the complete workflows plugin with agent, skills, and auto-configuration:
 
 ```bash
 # Add the marketplace (one-time setup)
@@ -39,54 +94,229 @@ Install the `workflows` plugin from the [qtsone marketplace](https://github.com/
 /plugin install workflows@qtsone
 ```
 
-The plugin automatically configures the MCP server with custom workflow directories: `~/.workflows` and `./.workflows`
+This automatically configures the MCP server with custom workflow directories: `~/.workflows` and `./.workflows`
 
-**Option 2: Manual MCP Configuration (Any MCP-Compatible LLM)**
+**Method 2: Manual Configuration**
+
+Add this to your Claude Desktop config file:
+- **macOS**: `~/Library/Application Support/Claude/claude_desktop_config.json`
+- **Windows**: `%APPDATA%\Claude\claude_desktop_config.json`
 
 ```json
 {
   "mcpServers": {
     "workflows": {
       "command": "uvx",
-      "args": [
-        "workflows-mcp",
-        "--refresh"
-      ],
+      "args": ["workflows-mcp", "--refresh"],
       "env": {
-        "WORKFLOWS_TEMPLATE_PATHS": "~/.workflows,./.workflows",
-        "WORKFLOWS_LOG_LEVEL": "INFO",
-        "WORKFLOWS_MAX_RECURSION_DEPTH": "50"
+        "WORKFLOWS_TEMPLATE_PATHS": "~/.workflows,./.workflows"
       }
     }
   }
 }
 ```
 
-All `env` variables are optional. The `--refresh` flag is recommended to ensure `uvx` always fetches the latest version of `workflows-mcp`. For Gemini CLI, this configuration would be in `~/.gemini/settings.json`.
+#### For Other MCP-Compatible AI Assistants
 
-Restart your LLM client, and you're ready to go!
+The configuration is similar. For example, Gemini CLI users would add this to `~/.gemini/settings.json` with the same structure.
 
-## ✨ Features
+### Step 3: Restart and Test
 
-- **DAG-Based Workflows**: Automatic dependency resolution and parallel execution
-- **🔐 Secrets Management**: Server-side credential handling with automatic redaction (v5.0.0+)
-- **🤖 LLM Integration**: Native LLM API calls with schema validation and retry logic
-- **🔁 Universal Iteration**: for_each on ANY block type (Shell, LLMCall, Workflow, etc.) with parallel/sequential modes
-- **Workflow Composition**: Reusable workflows via Workflow blocks
-- **Conditional Execution**: Boolean expressions for dynamic control flow
-- **Variable Resolution**: Five-namespace system (inputs, metadata, blocks, secrets, __internal__)
-- **File Operations**: CreateFile, ReadFile, RenderTemplate with Jinja2
-- **HTTP Integration**: HttpCall for REST API interactions
-- **Interactive Workflows**: Prompt blocks for user input
-- **MCP Integration**: Exposed as tools for LLM agents via Model Context Protocol
+1. Restart your AI assistant (e.g., Claude Desktop)
+2. Try it out:
 
-### 🔐 Secrets Management
+```
+You: "List all available workflows"
+```
 
-Securely manage API keys, passwords, and tokens in workflows:
+Your AI assistant will show you all the built-in workflows ready to use!
+
+---
+
+## How It Works
+
+Workflows MCP operates on three simple concepts:
+
+### 1. **Workflows** (The What)
+YAML files that define what you want to automate. Each workflow has:
+- **Inputs** - Parameters users can customize
+- **Blocks** - Individual tasks to execute
+- **Outputs** - Results returned to the user
+
+### 2. **Blocks** (The How)
+Individual tasks within a workflow. Available block types:
+- `Shell` - Run shell commands
+- `LLMCall` - Call AI/LLM APIs
+- `HttpCall` - Make HTTP requests
+- `CreateFile`, `ReadFile`, `RenderTemplate` - File operations
+- `Workflow` - Call other workflows (composition)
+- `Prompt` - Interactive user prompts
+- `ReadJSONState`, `WriteJSONState`, `MergeJSONState` - State management
+
+### 3. **Execution** (The Magic)
+The server automatically:
+- Analyzes dependencies between blocks
+- Runs independent blocks in parallel
+- Handles errors gracefully
+- Substitutes variables dynamically
+
+**Example Flow:**
+```yaml
+# Python CI Pipeline
+setup_env → run_linting ↘
+                         → validate_results
+setup_env → run_tests   ↗
+```
+
+Tasks run in parallel when possible, saving time!
+
+---
+
+## What Can I Build?
+
+The possibilities are endless. Here are some examples:
+
+### Development Automation
+- **CI/CD Pipelines** - Automated testing, linting, building
+- **Code Quality Checks** - Run multiple linters and formatters in parallel
+- **Deployment Workflows** - Build, test, and deploy applications
+
+### Git Operations
+- **Smart Branch Management** - Create feature branches with proper naming
+- **Automated Commits** - Stage files and commit with generated messages
+- **Repository Analysis** - Analyze changes, detect patterns
+
+### Data Processing
+- **File Transformations** - Process and transform files in batch
+- **API Orchestration** - Chain multiple API calls together
+- **Report Generation** - Generate reports from templates
+
+### AI-Powered Tasks
+- **Content Analysis** - Use LLMs to analyze and extract insights
+- **Code Generation** - Generate code based on specifications
+- **Automated Review** - Review code, documents, or data
+
+---
+
+## Creating Your First Workflow
+
+Let's create a simple workflow that greets a user:
+
+### 1. Create a YAML file
+
+Save this as `~/.workflows/greet-user.yaml`:
+
+```yaml
+name: greet-user
+description: A friendly greeting workflow
+tags: [example, greeting]
+
+inputs:
+  name:
+    type: str
+    description: Name of the person to greet
+    default: "World"
+
+  language:
+    type: str
+    description: Language for greeting (en, es, fr)
+    default: "en"
+
+blocks:
+  - id: create_greeting
+    type: Shell
+    inputs:
+      command: |
+        case "{{inputs.language}}" in
+          es) echo "¡Hola, {{inputs.name}}!" ;;
+          fr) echo "Bonjour, {{inputs.name}}!" ;;
+          *) echo "Hello, {{inputs.name}}!" ;;
+        esac
+
+outputs:
+  greeting:
+    value: "{{blocks.create_greeting.outputs.stdout}}"
+    type: str
+    description: The personalized greeting
+```
+
+### 2. Restart your AI assistant
+
+The workflow is automatically discovered from `~/.workflows/`
+
+### 3. Use it!
+
+```
+You: "Run the greet-user workflow with name=Alice and language=es"
+Claude: *Executes workflow*
+Claude: "¡Hola, Alice!"
+```
+
+### Understanding the Workflow
+
+- **inputs** - Define customizable parameters
+- **blocks** - Each block is a task (here, running a shell command)
+- **{{inputs.name}}** - Variable substitution (replaced at runtime)
+- **outputs** - What gets returned to the user
+
+---
+
+## Key Features
+
+### 🚀 Smart Parallel Execution
+
+The server automatically detects which tasks can run in parallel:
 
 ```yaml
 blocks:
-  - id: call_github_api
+  - id: setup
+    type: Shell
+    inputs:
+      command: "npm install"
+
+  # These run in PARALLEL after setup
+  - id: lint
+    type: Shell
+    depends_on: [setup]
+    inputs:
+      command: "npm run lint"
+
+  - id: test
+    type: Shell
+    depends_on: [setup]
+    inputs:
+      command: "npm test"
+
+  # This waits for both
+  - id: report
+    type: Shell
+    depends_on: [lint, test]
+    inputs:
+      command: "echo 'All checks passed!'"
+```
+
+### 🔐 Secure Secrets Management
+
+Store sensitive data like API keys securely:
+
+```json
+{
+  "mcpServers": {
+    "workflows": {
+      "env": {
+        "WORKFLOW_SECRET_GITHUB_TOKEN": "ghp_your_token_here",
+        "WORKFLOW_SECRET_OPENAI_API_KEY": "sk-your_key_here"
+      }
+    }
+  }
+}
+```
+
+Use in workflows:
+
+```yaml
+blocks:
+  - id: call_api
     type: HttpCall
     inputs:
       url: "https://api.github.com/user"
@@ -94,382 +324,511 @@ blocks:
         Authorization: "Bearer {{secrets.GITHUB_TOKEN}}"
 ```
 
-**Key Features:**
+**Security features:**
+- ✅ Secrets never appear in LLM context
+- ✅ Automatic redaction in all outputs
+- ✅ Server-side resolution only
+- ✅ Fail-fast on missing secrets
 
-- ✅ **Server-side resolution** - Secrets never reach LLM context
-- ✅ **Automatic redaction** - Secret values sanitized from all outputs
-- ✅ **Fail-fast behavior** - Missing secrets cause immediate workflow failure
-- ✅ **Audit logging** - Comprehensive tracking for compliance
+### 🤖 LLM Integration
 
-**Configuration:**
+Call AI models directly from workflows with automatic retry and validation:
+
+**Profile-based (Recommended):**
+
+Create `~/.workflows/llm-config.yml`:
+
+```yaml
+version: "1.0"
+
+providers:
+  openai:
+    type: openai
+    api_key_secret: "OPENAI_API_KEY"
+
+  local:
+    type: openai
+    api_url: "http://localhost:1234/v1/chat/completions"
+
+profiles:
+  default:
+    provider: openai
+    model: gpt-4o-mini
+    temperature: 0.7
+    max_tokens: 4000
+
+default_profile: default
+```
+
+Use in workflows:
+
+```yaml
+blocks:
+  - id: analyze_code
+    type: LLMCall
+    inputs:
+      profile: default
+      prompt: "Analyze this code and suggest improvements: {{inputs.code}}"
+      response_schema:
+        type: object
+        required: [summary, suggestions]
+        properties:
+          summary: {type: string}
+          suggestions: {type: array, items: {type: string}}
+```
+
+**Supported providers:** OpenAI, Anthropic, Gemini, Ollama, OpenAI-compatible (LM Studio, vLLM)
+
+### 🔁 Universal Iteration (for_each)
+
+Iterate over collections with ANY block type:
+
+```yaml
+blocks:
+  - id: process_files
+    type: Shell
+    for_each:
+      file1: {path: "src/main.py", lines: 150}
+      file2: {path: "src/utils.py", lines: 80}
+    for_each_mode: parallel  # or sequential
+    max_parallel: 3
+    continue_on_error: true
+    inputs:
+      command: "echo Processing {{each.key}}: {{each.value.path}}"
+```
+
+**Iteration variables:**
+- `{{each.key}}` - Current key ("file1", "file2")
+- `{{each.value}}` - Current value
+- `{{each.index}}` - Zero-based position (0, 1, 2...)
+- `{{each.count}}` - Total iterations
+
+**Access results:**
+```yaml
+# Use bracket notation
+{{blocks.process_files["file1"].outputs.stdout}}
+
+# Block-level aggregations
+{{blocks.process_files.succeeded}}  # All succeeded?
+{{blocks.process_files.metadata.count}}  # Total count
+```
+
+### 🔄 Workflow Composition
+
+Build complex workflows from simple reusable pieces:
+
+```yaml
+name: full-ci-pipeline
+blocks:
+  - id: setup
+    type: Workflow
+    inputs:
+      workflow: setup-python-env
+      inputs:
+        python_version: "3.12"
+
+  - id: lint
+    type: Workflow
+    depends_on: [setup]
+    inputs:
+      workflow: lint-python
+
+  - id: test
+    type: Workflow
+    depends_on: [setup]
+    inputs:
+      workflow: run-pytest
+```
+
+**Supports recursion** with configurable depth limits!
+
+### 📝 Conditional Execution
+
+Run blocks only when conditions are met:
+
+```yaml
+blocks:
+  - id: check_env
+    type: Shell
+    inputs:
+      command: "echo $ENVIRONMENT"
+
+  - id: deploy_prod
+    type: Shell
+    condition: "{{blocks.check_env.outputs.stdout}} == 'production'"
+    depends_on: [check_env]
+    inputs:
+      command: "./deploy.sh production"
+
+  - id: deploy_staging
+    type: Shell
+    condition: "{{blocks.check_env.outputs.stdout}} != 'production'"
+    depends_on: [check_env]
+    inputs:
+      command: "./deploy.sh staging"
+```
+
+### 💬 Interactive Workflows
+
+Pause workflows to get user input:
+
+```yaml
+blocks:
+  - id: ask_confirmation
+    type: Prompt
+    inputs:
+      prompt: "Deploy to production? (yes/no)"
+      input_type: str
+
+  - id: deploy
+    type: Shell
+    condition: "{{blocks.ask_confirmation.outputs.user_input}} == 'yes'"
+    depends_on: [ask_confirmation]
+    inputs:
+      command: "./deploy.sh"
+```
+
+Use `resume_workflow` MCP tool to continue paused workflows.
+
+---
+
+## Built-in Workflows
+
+The server includes many ready-to-use workflows:
+
+### Python Development
+
+| Workflow | Description |
+|----------|-------------|
+| `python-ci-pipeline` | Complete CI: setup, lint, test with coverage |
+| `setup-python-env` | Set up Python environment with dependencies |
+| `lint-python` | Run ruff and mypy linters |
+| `run-pytest` | Execute tests with coverage reporting |
+
+### Git Operations
+
+| Workflow | Description |
+|----------|-------------|
+| `git-checkout-branch` | Create and checkout feature branches |
+| `git-commit` | Stage and commit changes |
+| `git-status` | Check repository status |
+| `git-analyze-changes` | Analyze uncommitted changes |
+
+### Node.js Development
+
+| Workflow | Description |
+|----------|-------------|
+| `run-npm-test` | Run npm tests with reporting |
+
+### File & Template Operations
+
+| Workflow | Description |
+|----------|-------------|
+| `generate-readme` | Generate README from templates |
+| `process-config` | Transform configuration files |
+
+### GitHub Integration
+
+| Workflow | Description |
+|----------|-------------|
+| `github-create-issue` | Create GitHub issues |
+| `process-todo-create-issues` | Convert TODO comments to issues |
+
+### Test-Driven Development
+
+| Workflow | Description |
+|----------|-------------|
+| `tdd-master` | Complete TDD workflow orchestrator |
+| `tdd-phase1-analysis` | Requirements analysis |
+| `tdd-phase2-architecture` | Architecture design |
+| `tdd-phase3-scaffolding` | Project scaffolding |
+| `tdd-phase4-module-tdd` | Module-level TDD |
+| `tdd-phase5-integration` | Integration testing |
+| `tdd-phase6-validation` | Final validation |
+| `tdd-phase7-finalization` | Documentation & cleanup |
+
+**View all workflows:**
+```
+You: "List all available workflows"
+```
+
+**Get details about a workflow:**
+```
+You: "Show me details about the python-ci-pipeline workflow"
+```
+
+---
+
+## Available MCP Tools
+
+When you configure workflows-mcp, your AI assistant gets these tools:
+
+### Workflow Execution
+
+- **execute_workflow** - Run a registered workflow by name
+  ```
+  Usage: "Run the python-ci-pipeline workflow on ./my-project"
+  ```
+
+- **execute_inline_workflow** - Execute YAML directly without registration
+  ```
+  Usage: "Execute this workflow: [YAML content]"
+  ```
+
+### Workflow Discovery
+
+- **list_workflows** - List all available workflows (optional tag filtering)
+  ```
+  Usage: "List workflows tagged with 'python'"
+  ```
+
+- **get_workflow_info** - Get detailed information about a workflow
+  ```
+  Usage: "Show me the python-ci-pipeline workflow details"
+  ```
+
+### Workflow Validation
+
+- **validate_workflow_yaml** - Validate YAML before execution
+  ```
+  Usage: "Validate this workflow YAML: [content]"
+  ```
+
+- **get_workflow_schema** - Get the complete JSON schema
+  ```
+  Usage: "Show me the workflow schema"
+  ```
+
+### Checkpoint Management (for interactive workflows)
+
+- **resume_workflow** - Resume a paused workflow
+- **list_checkpoints** - List all saved checkpoints
+- **get_checkpoint_info** - Inspect checkpoint details
+- **delete_checkpoint** - Clean up old checkpoints
+
+---
+
+## Configuration Reference
+
+### Environment Variables
+
+Configure the server behavior with these environment variables:
+
+| Variable | Description | Default | Range |
+|----------|-------------|---------|-------|
+| `WORKFLOWS_TEMPLATE_PATHS` | Comma-separated workflow directories | *(none)* | Valid paths |
+| `WORKFLOWS_MAX_RECURSION_DEPTH` | Maximum workflow recursion depth | `50` | `1-10000` |
+| `WORKFLOWS_LOG_LEVEL` | Logging verbosity | `INFO` | DEBUG, INFO, WARNING, ERROR, CRITICAL |
+| `WORKFLOW_SECRET_<NAME>` | Secret value (e.g., `WORKFLOW_SECRET_API_KEY`) | *(none)* | Any string |
+
+### Example Configuration
 
 ```json
 {
   "mcpServers": {
     "workflows": {
+      "command": "uvx",
+      "args": ["workflows-mcp", "--refresh"],
       "env": {
-        "WORKFLOW_SECRET_GITHUB_TOKEN": "ghp_xxx",
-        "WORKFLOW_SECRET_OPENAI_API_KEY": "sk-xxx"
+        "WORKFLOWS_TEMPLATE_PATHS": "~/.workflows,./project-workflows",
+        "WORKFLOWS_LOG_LEVEL": "DEBUG",
+        "WORKFLOWS_MAX_RECURSION_DEPTH": "100",
+        "WORKFLOW_SECRET_GITHUB_TOKEN": "ghp_xxxxx",
+        "WORKFLOW_SECRET_OPENAI_API_KEY": "sk-xxxxx"
       }
     }
   }
 }
 ```
 
-### 🤖 LLM Integration
+### Custom Workflow Directories
 
-Call LLM APIs directly from workflows with automatic retry logic and JSON schema validation.
+The server loads workflows from:
+1. Built-in templates (always loaded)
+2. Custom directories (specified in `WORKFLOWS_TEMPLATE_PATHS`)
 
-**Profile-Based Configuration (Recommended):**
+**Load order priority:** Later directories override earlier ones by workflow name.
 
-Centralized LLM configuration via `~/.workflows/llm-config.yml`:
+**Example:**
+```
+WORKFLOWS_TEMPLATE_PATHS="~/.workflows,./project-workflows"
 
-```yaml
-version: "1.0"
-
-providers:
-  cloud:
-    type: openai
-    api_key_secret: "OPENAI_API_KEY"
-
-  local:
-    type: openai
-    api_url: "http://127.0.0.1:1234/v1/chat/completions"
-
-profiles:
-  default:
-    provider: cloud
-    model: gpt-4o-mini
-    temperature: 0.7
-    max_tokens: 4000
-
-  local:
-    provider: local
-    model: ""
-    temperature: 0.8
-    max_tokens: 4000
-
-default_profile: default
+# Load order:
+# 1. Built-in templates
+# 2. ~/.workflows (overrides built-in by name)
+# 3. ./project-workflows (overrides both by name)
 ```
 
-Usage:
+---
+
+## Examples
+
+### Example 1: Simple Shell Command
 
 ```yaml
-# Profile-based
-- id: analyze
-  type: LLMCall
-  inputs:
-    profile: default
-    prompt: "Analyze: {{inputs.text}}"
-
-# Profile with overrides
-- id: summary
-  type: LLMCall
-  inputs:
-    profile: default
-    temperature: 0.1
-    prompt: "Summarize: {{inputs.text}}"
-```
-
-**Direct Specification (Backward Compatible):**
-
-```yaml
-- id: extract_data
-  type: LLMCall
-  inputs:
-    provider: openai
-    model: gpt-4o-mini
-    api_key: "{{secrets.OPENAI_API_KEY}}"
-    prompt: "Extract: {{inputs.text}}"
-    response_schema:
-      type: object
-      required: [summary, confidence]
-      properties:
-        summary: {type: string}
-        confidence: {type: number, minimum: 0, maximum: 1}
-```
-
-**Supported Providers:** OpenAI, Anthropic, Gemini, Ollama, OpenAI-compatible (LM Studio, vLLM)
-
-**Key Features:**
-
-- ✅ **Profile-based config** - Centralized provider/model management
-- ✅ **Schema validation** - Guaranteed JSON structure with automatic retry
-- ✅ **Token tracking** - Monitor usage and costs
-- ✅ **Secrets integration** - Secure API key management
-
-## What Can You Do With It?
-
-### Built-in Workflows
-
-The server comes with ready-to-use workflows for common tasks:
-
-**Python Development:**
-
-- `python-ci-pipeline` - Complete CI pipeline (setup, lint, test)
-- `setup-python-env` - Set up Python environment with dependencies
-- `lint-python` - Run ruff and mypy
-- `run-pytest` - Execute tests with coverage
-
-**Git Operations:**
-
-- `git-checkout-branch` - Create and checkout branches
-- `git-commit` - Stage and commit changes
-- `git-status` - Check repository status
-
-**File Processing:**
-
-- `generate-readme` - Create README files from templates
-- `process-config` - Transform configuration files
-
-**Examples & Tutorials:**
-
-- `hello-world` - The simplest possible workflow
-- `parallel-processing` - Run tasks in parallel
-- `conditional-pipeline` - Use conditions to control flow
-
-### Available Tools
-
-Claude can use these MCP tools to work with workflows:
-
-- **execute_workflow** - Run a workflow with inputs
-- **execute_inline_workflow** - Execute YAML directly without registration
-- **list_workflows** - See all available workflows (optionally filter by tags)
-- **get_workflow_info** - Get detailed info about a workflow
-- **validate_workflow_yaml** - Validate workflow definitions before running
-- **get_workflow_schema** - Get the complete JSON schema
-
-**Checkpoint Management:**
-
-- **resume_workflow** - Resume paused workflows
-- **list_checkpoints** - See all saved checkpoints
-- **get_checkpoint_info** - Inspect checkpoint details
-- **delete_checkpoint** - Clean up old checkpoints
-
-## Creating Your Own Workflows
-
-Workflows are defined in YAML. Here's the simplest example:
-
-```yaml
-name: hello-world
-description: Simple hello world workflow
-tags: [example, basic]
-
-inputs:
-  name:
-    type: str
-    description: Name to greet
-    default: "World"
+name: disk-usage
+description: Check disk usage
+tags: [utility, system]
 
 blocks:
-  - id: greet
+  - id: check_disk
     type: Shell
     inputs:
-      command: printf "Hello, {{inputs.name}}!"
+      command: "df -h"
 
 outputs:
-  greeting:
-    value: "{{blocks.greet.outputs.stdout}}"
+  disk_info:
+    value: "{{blocks.check_disk.outputs.stdout}}"
     type: str
-    description: "The greeting message"
 ```
 
-### Workflow Outputs
-
-Workflow outputs support automatic type coercion, allowing you to declare the expected type and get properly typed values:
+### Example 2: Parallel Processing
 
 ```yaml
-outputs:
-  output_name:
-    value: "{{blocks.block_id.outputs.field}}"  # Variable expression
-    type: str                                     # Type declaration (optional)
-    description: "Human-readable description"    # Documentation (optional)
-```
+name: multi-lint
+description: Run multiple linters in parallel
+tags: [python, linting]
 
-**Supported Types:**
+inputs:
+  project_path:
+    type: str
+    default: "."
 
-- **str** - Text values (default if type not specified)
-- **num** - Numeric values (integer or float - JSON doesn't distinguish)
-- **bool** - Boolean values (true/false)
-- **list** - List/array values
-- **dict** - Dictionary/object values
-- **json** - Parse JSON string into dict/list/str/num/bool/None
-
-### Key Features
-
-**Variable Substitution:**
-
-Reference inputs, block outputs, and metadata anywhere in your workflow.
-
-Examples:
-
-- [Using workflow inputs](tests/workflows/core/variable-resolution/inputs.yaml) - `{{inputs.field_name}}`
-- [Using block outputs](tests/workflows/core/variable-resolution/block-outputs.yaml) - `{{blocks.block_id.outputs.field}}`
-- [Using metadata](tests/workflows/core/variable-resolution/metadata.yaml) - `{{metadata.workflow_name}}`
-- [Variable shortcuts](tests/workflows/core/variable-resolution/shortcuts.yaml) - convenient shorthand syntax
-
-**Conditionals:**
-
-Run blocks only when conditions are met.
-
-Examples:
-
-- [Input-based conditions](tests/workflows/core/conditionals/input-based.yaml) - conditions using workflow inputs
-- [Block status conditions](tests/workflows/core/conditionals/block-status.yaml) - conditions based on block execution
-
-**Block Status Shortcuts:**
-
-Use simple shortcuts to check if blocks succeeded, failed, or were skipped.
-
-Examples:
-
-- [Success detection](tests/workflows/core/block-status/success-detection.yaml) - `{{blocks.id.succeeded}}`
-- [Failure detection](tests/workflows/core/block-status/failure-detection.yaml) - `{{blocks.id.failed}}`
-- [Skip detection](tests/workflows/core/block-status/skip-detection.yaml) - `{{blocks.id.skipped}}`
-
-**Parallel Execution:**
-
-Tasks with no dependencies run in parallel automatically.
-
-Example: [parallel-execution.yaml](tests/workflows/core/dag-execution/parallel-execution.yaml) - blocks with same dependencies execute concurrently
-
-**Workflow Composition & Recursion:**
-
-Workflows can call other workflows, including themselves (recursion supported with depth limits).
-
-Examples:
-
-- [Workflow composition](tests/workflows/core/composition/) - nested workflow patterns
-- [Recursive workflows](tests/workflows/core/composition/recursion.yaml) - self-calling workflows
-
-Control recursion depth with `WORKFLOWS_MAX_RECURSION_DEPTH` (default: 50, max: 10000).
-
-**Universal Iteration (for_each):**
-
-Iterate over collections with ANY block type - Shell, LLMCall, Workflow, or any executor.
-
-**Basic Syntax:**
-
-```yaml
-- id: process_files
-  type: Shell
-  for_each:
-    file1: {path: "src/main.py", lines: 150}
-    file2: {path: "src/utils.py", lines: 80}
-  for_each_mode: parallel  # or sequential (default: parallel)
-  max_parallel: 3          # concurrent iterations (default: 5, max: 20)
-  continue_on_error: true  # keep going if one fails (default: false)
-  inputs:
-    command: "echo Processing {{each.key}}: {{each.value.path}}"
-```
-
-**Iteration Variables:**
-- `{{each.key}}` - Current iteration key (`"file1"`, `"file2"`)
-- `{{each.value}}` - Current iteration value (dict or item from list)
-- `{{each.index}}` - Zero-based position (`0`, `1`, `2`, ...)
-- `{{each.count}}` - Total number of iterations
-
-**Access Pattern (Bracket Notation Required):**
-
-```yaml
-# Access iteration outputs using bracket notation (static keys)
-{{blocks.process_files["file1"].outputs.stdout}}
-{{blocks.process_files["file1"].metadata.duration_ms}}
-
-# Dynamic key access (nested variable interpolation)
-{{blocks.process_files[{{inputs.target_file}}].outputs.stdout}}
-
-# Block-level aggregations use dot notation
-{{blocks.process_files.succeeded}}         # All iterations succeeded?
-{{blocks.process_files.metadata.count}}     # Total iterations
-{{blocks.process_files.metadata.count_failed}}  # Failed count
-```
-
-**Nested Iteration:**
-
-Nest for_each via workflow composition:
-
-```yaml
-# Parent workflow
-- id: deploy_regions
-  type: Workflow
-  for_each:
-    us-east: {servers: ["web1", "web2"]}
-    eu-west: {servers: ["web3", "web4"]}
-  inputs:
-    workflow: deploy-servers
+blocks:
+  - id: ruff
+    type: Shell
     inputs:
-      region: "{{each.key}}"
-      servers: "{{each.value.servers}}"
+      command: "ruff check {{inputs.project_path}}"
 
-# Child workflow (deploy-servers.yaml)
-- id: deploy
-  type: Shell
-  for_each: "{{inputs.servers}}"  # Nested iteration!
-  inputs:
-    command: "deploy.sh {{each.key}} {{inputs.region}}"
+  - id: mypy
+    type: Shell
+    inputs:
+      command: "mypy {{inputs.project_path}}"
+
+  - id: black
+    type: Shell
+    inputs:
+      command: "black --check {{inputs.project_path}}"
+
+  - id: summary
+    type: Shell
+    depends_on: [ruff, mypy, black]
+    inputs:
+      command: |
+        echo "Linting Results:"
+        echo "  Ruff: {{blocks.ruff.succeeded}}"
+        echo "  Mypy: {{blocks.mypy.succeeded}}"
+        echo "  Black: {{blocks.black.succeeded}}"
+
+outputs:
+  all_passed:
+    value: "{{blocks.ruff.succeeded}} and {{blocks.mypy.succeeded}} and {{blocks.black.succeeded}}"
+    type: bool
 ```
 
-Access nested results: `{{blocks.deploy_regions["us-east"]["web1"].outputs.result}}`
+### Example 3: API Integration with LLM
 
-**Execution Modes:**
-- `parallel` - Run iterations concurrently (respects `max_parallel`)
-- `sequential` - Run one at a time in order
+```yaml
+name: analyze-github-repo
+description: Analyze a GitHub repository using AI
+tags: [github, ai, analysis]
 
-**Error Handling:**
-- `continue_on_error: false` - Stop on first failure, skip remaining
-- `continue_on_error: true` - Run all iterations, track failures in metadata
+inputs:
+  repo_url:
+    type: str
+    description: GitHub repository URL
+    required: true
 
-### Available Block Types
+blocks:
+  - id: fetch_readme
+    type: HttpCall
+    inputs:
+      url: "{{inputs.repo_url}}/raw/main/README.md"
+      method: GET
 
-- **Shell** - Execute shell commands
-- **Workflow** - Call another workflow (enables composition and recursion)
-- **CreateFile** - Create files with content
-- **ReadFile** - Read file contents
-- **RenderTemplate** - Process Jinja2 templates
-- **HttpCall** - Make HTTP/REST API calls with environment variable substitution
-- **Prompt** - Interactive user prompts (with pause/resume)
-- **ReadJSONState** / **WriteJSONState** / **MergeJSONState** - Manage JSON state files
+  - id: analyze
+    type: LLMCall
+    depends_on: [fetch_readme]
+    inputs:
+      profile: default
+      prompt: |
+        Analyze this GitHub repository README and provide:
+        1. Main purpose
+        2. Key technologies used
+        3. Installation complexity (1-10)
 
-## Custom Workflow Templates
+        README:
+        {{blocks.fetch_readme.outputs.body}}
+      response_schema:
+        type: object
+        required: [purpose, technologies, complexity]
+        properties:
+          purpose: {type: string}
+          technologies: {type: array, items: {type: string}}
+          complexity: {type: number, minimum: 1, maximum: 10}
 
-Want to add your own workflows? Set the `WORKFLOWS_TEMPLATE_PATHS` environment variable in your Claude Desktop configuration (see [Configure in Claude Desktop](#configure-in-claude-desktop) above).
+outputs:
+  analysis:
+    value: "{{blocks.analyze.outputs.parsed_response}}"
+    type: dict
+```
 
-Your custom workflows override built-in ones if they have the same name. Later directories in the path override earlier ones.
+### Example 4: Conditional Deployment
 
-## Configuration Options
+```yaml
+name: smart-deploy
+description: Deploy to staging or production based on branch
+tags: [deployment, git]
 
-### Environment Variables
+blocks:
+  - id: get_branch
+    type: Shell
+    inputs:
+      command: "git branch --show-current"
 
-- **WORKFLOWS_TEMPLATE_PATHS** - Comma-separated list of additional template directories
-- **WORKFLOWS_MAX_RECURSION_DEPTH** - Maximum workflow recursion depth (default: 50, range: 1-10000)
-- **WORKFLOWS_LOG_LEVEL** - Logging level (DEBUG, INFO, WARNING, ERROR, CRITICAL)
-- **WORKFLOW_SECRET_<NAME>** - Define secrets for workflow execution (e.g., `WORKFLOW_SECRET_GITHUB_TOKEN`)
+  - id: run_tests
+    type: Shell
+    inputs:
+      command: "npm test"
 
-## Example Usage with Claude
+  - id: deploy_production
+    type: Shell
+    condition: "{{blocks.get_branch.outputs.stdout}} == 'main' and {{blocks.run_tests.succeeded}}"
+    depends_on: [get_branch, run_tests]
+    inputs:
+      command: "./deploy.sh production"
 
-Once configured, you can ask Claude things like:
+  - id: deploy_staging
+    type: Shell
+    condition: "{{blocks.get_branch.outputs.stdout}} != 'main' and {{blocks.run_tests.succeeded}}"
+    depends_on: [get_branch, run_tests]
+    inputs:
+      command: "./deploy.sh staging"
 
-> "Run the Python CI pipeline on my project"
->
-> "List all available workflows tagged with 'python'"
->
-> "Execute the hello-world workflow with name='Claude'"
->
-> "Show me what the python-ci-pipeline workflow does"
+outputs:
+  deployed_to:
+    value: "{{blocks.deploy_production.succeeded}} ? 'production' : 'staging'"
+    type: str
+```
 
-Claude will use the appropriate MCP tools to execute workflows, check their status, and report results.
+---
 
 ## Development
 
 ### Running Tests
 
 ```bash
+# Install development dependencies
+uv sync --all-extras
+
 # Run all tests
 uv run pytest
 
 # With coverage
 uv run pytest --cov=workflows_mcp --cov-report=term-missing
+
+# Run specific test
+uv run pytest tests/test_mcp_client.py -v
 ```
 
 ### Code Quality
@@ -487,14 +846,179 @@ uv run ruff format src/workflows_mcp/
 
 ### Testing the MCP Server
 
-For interactive testing and debugging, create a `.mcp.json` config file:
+For interactive testing and debugging:
 
+**1. Create `.mcp.json`:**
 ```json
 {
   "mcpServers": {
     "workflows": {
       "command": "uv",
       "args": ["run", "workflows-mcp"],
+      "env": {
+        "WORKFLOWS_LOG_LEVEL": "DEBUG",
+        "WORKFLOWS_TEMPLATE_PATHS": "~/.workflows"
+      }
+    }
+  }
+}
+```
+
+**2. Run MCP Inspector:**
+```bash
+npx @modelcontextprotocol/inspector --config .mcp.json --server workflows
+```
+
+This opens a web interface for testing tool calls and debugging workflow execution.
+
+### Project Structure
+
+```
+workflows-mcp/
+├── src/workflows_mcp/          # Main source code
+│   ├── engine/                  # Workflow execution engine
+│   │   ├── executor_base.py     # Base executor class
+│   │   ├── executors_core.py    # Shell, Workflow executors
+│   │   ├── executors_file.py    # File operation executors
+│   │   ├── executors_http.py    # HTTP call executor
+│   │   ├── executors_llm.py     # LLM call executor
+│   │   ├── executors_state.py   # State management executors
+│   │   ├── workflow_runner.py   # Main workflow orchestrator
+│   │   ├── dag.py               # DAG resolution
+│   │   └── secrets/             # Secrets management
+│   ├── templates/               # Built-in workflow templates
+│   │   ├── python/              # Python workflows
+│   │   ├── git/                 # Git workflows
+│   │   ├── node/                # Node.js workflows
+│   │   └── ...
+│   ├── server.py                # MCP server setup
+│   ├── tools.py                 # MCP tool implementations
+│   └── __main__.py              # Entry point
+├── tests/                       # Test suite
+├── pyproject.toml               # Project configuration
+└── README.md                    # This file
+```
+
+---
+
+## Troubleshooting
+
+### Installation Issues
+
+**Problem:** `command not found: workflows-mcp`
+
+**Solution:**
+```bash
+# Ensure Python 3.12+ is installed
+python --version  # Should be 3.12 or higher
+
+# Reinstall with uv
+uv pip install --force-reinstall workflows-mcp
+
+# Or verify installation
+pip show workflows-mcp
+```
+
+**Problem:** Python version too old
+
+**Solution:**
+```bash
+# Install Python 3.12+ using your package manager
+# macOS (Homebrew)
+brew install python@3.12
+
+# Ubuntu/Debian
+sudo apt install python3.12
+
+# Update uv to use Python 3.12
+uv venv --python 3.12
+```
+
+### Configuration Issues
+
+**Problem:** Workflows not loading in Claude
+
+**Solution:**
+1. Verify config file location (see [Quick Start](#quick-start))
+2. Check JSON syntax with a validator
+3. Restart Claude Desktop completely
+4. Check Claude Desktop logs:
+   - macOS: `~/Library/Logs/Claude/`
+   - Windows: `%APPDATA%\Claude\logs\`
+
+**Problem:** Custom workflows not found
+
+**Solution:**
+```bash
+# Verify WORKFLOWS_TEMPLATE_PATHS is correct
+# Paths should exist and contain .yaml files
+
+# Check directory exists
+ls ~/.workflows/
+
+# Check YAML syntax
+python -c "import yaml; yaml.safe_load(open('~/.workflows/my-workflow.yaml'))"
+```
+
+### Workflow Execution Issues
+
+**Problem:** Workflow fails with "not found" error
+
+**Solution:**
+```
+You: "List all workflows"
+# This shows exact workflow names
+# Use the exact name from the list
+```
+
+**Problem:** Variables not substituting
+
+**Solution:**
+- Check syntax: `{{inputs.name}}` not `{inputs.name}`
+- Ensure input is defined in `inputs:` section
+- For block outputs: `{{blocks.block_id.outputs.field_name}}`
+
+**Problem:** Secrets not working
+
+**Solution:**
+1. Check environment variable name: `WORKFLOW_SECRET_<NAME>`
+2. Reference in workflow: `{{secrets.NAME}}` (without prefix)
+3. Verify secrets are in MCP server config, not workflow YAML
+4. Restart MCP server after adding secrets
+
+### Performance Issues
+
+**Problem:** Workflows running slowly
+
+**Solution:**
+- Check if tasks can run in parallel (remove unnecessary `depends_on`)
+- Enable debug logging to see execution waves:
+  ```
+  You: "Run workflow X with debug=true"
+  ```
+- Review task dependencies—too many serialized tasks slow execution
+
+**Problem:** Shell commands timing out
+
+**Solution:**
+```yaml
+blocks:
+  - id: long_task
+    type: Shell
+    inputs:
+      command: "./long-script.sh"
+      timeout: 600  # Increase timeout (default: 120 seconds)
+```
+
+### Debug Mode
+
+Enable detailed logging for troubleshooting:
+
+**Method 1: Environment variable**
+```json
+{
+  "mcpServers": {
+    "workflows": {
       "env": {
         "WORKFLOWS_LOG_LEVEL": "DEBUG"
       }
@@ -503,55 +1027,134 @@ For interactive testing and debugging, create a `.mcp.json` config file:
 }
 ```
 
-Then use the MCP Inspector:
-
-```bash
-npx @modelcontextprotocol/inspector --config .mcp.json --server workflows
+**Method 2: Per-execution debug**
+```
+You: "Run python-ci-pipeline with debug=true"
 ```
 
-This opens a web interface where you can test tool calls, inspect responses, and debug workflow execution.
+Debug logs are written to `/tmp/<workflow>-<timestamp>.json` with:
+- Block execution details
+- Variable resolution steps
+- DAG wave analysis
+- Timing information
+
+---
 
 ## Architecture
 
-The server uses a **fractal execution model** where workflows and blocks share the same execution context structure. This enables clean composition and recursive workflows.
+Workflows MCP uses a **fractal execution model** where workflows and blocks share the same execution context structure. This enables clean composition and recursive workflows.
 
-**Key Components:**
+### Key Components
 
 - **WorkflowRunner** - Orchestrates workflow execution
 - **BlockOrchestrator** - Executes individual blocks with error handling
 - **DAGResolver** - Resolves dependencies and computes parallel execution waves
-- **Variable Resolution** - Five-namespace variable system (inputs, blocks, metadata, secrets, __internal__)
-- **Checkpoint System** - Pause/resume support for interactive workflows
+- **Variable Resolution** - Five-namespace variable system:
+  - `inputs` - Workflow runtime inputs
+  - `blocks` - Block outputs and metadata
+  - `metadata` - Workflow metadata
+  - `secrets` - Server-side secrets (never exposed to LLM)
+  - `__internal__` - Internal execution state
 
-Workflows execute in **waves**—blocks with no dependencies or whose dependencies are satisfied run in parallel within each wave, maximizing efficiency.
+### Execution Model
 
-## Why Use This?
+Workflows execute in **waves**—groups of blocks that can run in parallel:
 
-**For AI Assistants:**
+```
+Wave 1: [setup]
+Wave 2: [lint, test]      ← Parallel execution
+Wave 3: [validate]
+```
 
-- Consistent, reliable automation without reinventing the wheel
-- Complex operations become simple tool calls
-- Built-in error handling and validation
+This maximizes efficiency by running independent tasks concurrently.
 
-**For Developers:**
+---
 
-- Define workflows once, use everywhere
-- Compose complex pipelines from simple building blocks
-- YAML definitions are easy to read and maintain
-- Parallel execution out of the box
+## Contributing
 
-**For Teams:**
+We welcome contributions! Here's how you can help:
 
-- Share common workflows across projects
-- Custom templates for company-specific processes
-- Version control your automation
+### Report Issues
+- [GitHub Issues](https://github.com/qtsone/workflows-mcp/issues)
 
-## License
+### Contribute Workflows
+1. Create a new workflow in appropriate category
+2. Test thoroughly
+3. Submit a pull request
 
-[AGPL-3.0-or-later](./LICENSE)
+### Improve Documentation
+- Fix typos or unclear explanations
+- Add examples
+- Improve troubleshooting guides
+
+### Code Contributions
+- Follow existing code style
+- Add tests for new features
+- Update documentation
+
+---
 
 ## Links
 
 - **GitHub**: [github.com/qtsone/workflows-mcp](https://github.com/qtsone/workflows-mcp)
 - **Issues**: [github.com/qtsone/workflows-mcp/issues](https://github.com/qtsone/workflows-mcp/issues)
+- **Changelog**: [CHANGELOG.md](./CHANGELOG.md)
 - **MCP Protocol**: [modelcontextprotocol.io](https://modelcontextprotocol.io/)
+
+---
+
+## License
+
+[AGPL-3.0-or-later](./LICENSE)
+
+---
+
+## FAQ
+
+### Do I need to know Python to use this?
+
+No! You only need to:
+1. Install the package (one command)
+2. Configure your AI assistant (copy-paste JSON)
+3. Write simple YAML workflows (or use built-in ones)
+
+### Do I need to know what MCP is?
+
+No! Just think of it as a way for your AI assistant to run workflows. The technical details are handled for you.
+
+### Can I use this without Claude?
+
+Yes! Any MCP-compatible AI assistant can use workflows-mcp. The configuration is similar across different assistants.
+
+### Are workflows secure?
+
+Yes! The server includes:
+- Server-side secret resolution (secrets never reach the AI)
+- Automatic redaction of sensitive data
+- Sandboxed execution contexts
+- Audit logging
+
+### Can I share workflows with my team?
+
+Absolutely! Workflows are just YAML files. You can:
+- Commit them to version control
+- Share them in a company repository
+- Publish them as packages
+
+### What's the performance like?
+
+Excellent! The DAG-based execution model automatically parallelizes independent tasks. Many users see 2-3x speedup compared to sequential execution.
+
+### Can workflows call other workflows?
+
+Yes! Use the `Workflow` block type to compose workflows. Recursion is supported with configurable depth limits.
+
+### How do I get help?
+
+1. Check [Troubleshooting](#troubleshooting)
+2. Search [GitHub Issues](https://github.com/qtsone/workflows-mcp/issues)
+3. Open a new issue with details
+
+---
+
+**Ready to automate?** Install workflows-mcp and start building powerful automation workflows today! 🚀
