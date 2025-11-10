@@ -504,6 +504,23 @@ Use `resume_workflow` MCP tool to continue paused workflows.
 
 The server includes many ready-to-use workflows:
 
+### 📋 A Note on Quality & Testing
+
+**Core workflows** (like `python-ci-pipeline`, `lint-python`, `run-pytest`, `git-checkout-branch`) are actively used and maintained. However, not all built-in workflows have comprehensive automated tests yet.
+
+**Why?** Some workflows interact with external systems (GitHub API, package managers, deployment services) which makes them difficult to test in CI without real credentials and infrastructure. We're actively working on expanding test coverage and will be refining the workflow library over time.
+
+**Our commitment:** The workflow library is evolving. We're focusing on testing and validating each workflow thoroughly before recommending them for production use.
+
+**How to stay safe:**
+- ✅ **Inspect before running** - Use `get_workflow_info` to see exactly what a workflow does
+- ✅ **Start with simple workflows** - Try core Python/Git workflows first
+- ✅ **Test in safe environments** - Run workflows on test projects before production
+- ✅ **Create your own** - The safest workflows are ones you write and understand yourself
+- ✅ **Check the source** - Workflows are just YAML files in `src/workflows_mcp/templates/`
+
+**Looking for battle-tested examples?** Check out the workflows in `tests/workflows/` - these are thoroughly tested in CI on every PR and demonstrate all the core features reliably.
+
 ### Python Development
 
 | Workflow | Description |
@@ -1146,6 +1163,14 @@ Yes! The server includes:
 - Automatic redaction of sensitive data
 - Sandboxed execution contexts
 - Audit logging
+
+### Are all built-in workflows production-ready?
+
+The core workflows (Python CI, Git operations, basic file operations) are actively used and reliable. Some advanced workflows (GitHub integration, TDD orchestration) are still being refined and tested.
+
+**Best practice:** Always inspect a workflow before using it (`get_workflow_info` tool) and test on non-production systems first. The workflows in `tests/workflows/` are thoroughly tested in CI and are great examples to learn from.
+
+We're actively expanding test coverage and refining the workflow library. Think of it as an evolving collection - contributions welcome!
 
 ### Can I share workflows with my team?
 
