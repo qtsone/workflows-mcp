@@ -117,13 +117,15 @@ class VariableResolver:
     #   {{blocks.id["key"].outputs.field}}    - bracket notation with double quotes
     #   {{blocks.id['key'].field}}            - bracket notation with single quotes
     #   {{blocks.id[0].field}}                - bracket notation with numeric index
+    #   {{blocks.id[{{var}}].field}}          - bracket notation with nested variable
     #   {{each.value.nested.field}}           - each namespace
     VAR_PATTERN = re.compile(
         r"\{\{([a-zA-Z_][a-zA-Z0-9_]*(?:"
         r"(?:\.[a-zA-Z_][a-zA-Z0-9_]*)|"  # Dot notation: .identifier
         r'(?:\["[^"]+"\])|'  # Bracket notation (double quotes): ["key"]
         r"(?:\['[^']+'\])|"  # Bracket notation (single quotes): ['key']
-        r"(?:\[\d+\])"  # Bracket notation (numeric index): [0], [123]
+        r"(?:\[\d+\])|"  # Bracket notation (numeric index): [0], [123]
+        r"(?:\[\{\{.+?\}\}\])"  # Bracket notation with nested variable: [{{var.path}}] (non-greedy)
         r")*)\}\}"
     )
 
@@ -184,55 +186,69 @@ class VariableResolver:
         var_path = var_path.strip()
 
         segments: list[str] = []
-        current = ""
+        current = ""  # Accumulator for current segment being parsed
         i = 0
 
         while i < len(var_path):
             char = var_path[i]
 
             if char == ".":
-                # Dot separator - finalize current segment
+                # Dot separator - finalize current segment and move to next
                 if current:
                     segments.append(current)
                     current = ""
                 i += 1
 
             elif char == "[":
-                # Bracket notation - finalize current identifier, extract quoted key
+                # Bracket notation - finalize current identifier (if any)
                 if current:
                     segments.append(current)
                     current = ""
 
-                # Find closing bracket
-                close_bracket = var_path.find("]", i)
-                if close_bracket == -1:
-                    raise ValueError(f"Unclosed bracket in variable path: {var_path}")
+                # ADR-009: For for_each blocks, insert 'blocks' namespace before bracket key
+                # Transform blocks.id['key'] → blocks.id.blocks['key'] at parse time
+                if len(segments) == 2 and segments[0] == "blocks":
+                    segments.append("blocks")
 
-                # Extract key (strip quotes if present, or use numeric index)
-                key_with_quotes = var_path[i + 1 : close_bracket]
-                if (key_with_quotes.startswith('"') and key_with_quotes.endswith('"')) or (
-                    key_with_quotes.startswith("'") and key_with_quotes.endswith("'")
-                ):
-                    # String key (for dict access): ['key'] or ["key"]
-                    key = key_with_quotes[1:-1]
-                    segments.append(key)
-                elif key_with_quotes.isdigit():
-                    # Numeric index (for array access): [0], [123]
-                    segments.append(key_with_quotes)
-                else:
+                # Extract bracket content using regex to handle nested {{...}}
+                # Match: [quoted-string], [digit], or [{{...}}]
+                bracket_pattern = re.compile(
+                    r"\["  # Opening bracket
+                    r"(?:"
+                    r'"([^"]+)"|'  # Double-quoted string
+                    r"'([^']+)'|"  # Single-quoted string
+                    r"(\d+)|"  # Numeric index
+                    r"(\{\{.+?\}\})"  # Nested variable (non-greedy)
+                    r")"
+                    r"\]"  # Closing bracket
+                )
+                match = bracket_pattern.match(var_path[i:])
+                if not match:
                     raise ValueError(
-                        f"Bracket notation requires quoted keys or numeric indices: "
-                        f"{var_path[i : close_bracket + 1]}"
+                        f"Invalid bracket notation at position {i}: {var_path[i : i + 20]}..."
                     )
 
-                i = close_bracket + 1
+                # Extract the matched content (one of the 4 groups)
+                double_quoted, single_quoted, numeric, nested_var = match.groups()
+                if double_quoted:
+                    segments.append(double_quoted)
+                elif single_quoted:
+                    segments.append(single_quoted)
+                elif numeric:
+                    segments.append(numeric)
+                elif nested_var:
+                    # Store nested variable for later resolution
+                    segments.append(nested_var)
+
+                i += match.end()  # Move past the entire bracket expression
+                continue  # Skip to next iteration, don't fall through to else
 
             else:
-                # Regular identifier character
+                # Regular identifier character - accumulate
                 current += char
                 i += 1
 
-        # Add final segment
+        # Add final segment (if any)
         if current:
             segments.append(current)
 
@@ -420,6 +436,12 @@ class VariableResolver:
         # Dictionary navigation with bracket notation support
         value = self.context
         for i, segment in enumerate(segments):
+            # Check if segment contains nested variable interpolation (e.g., {{inputs.key}})
+            if "{{" in segment and "}}" in segment:
+                # Resolve the nested variable first
+                resolved_segment = self._resolve_string(segment, for_eval=False)
+                segment = resolved_segment
+
             if not isinstance(value, dict):
                 partial_path = ".".join(segments[:i])
                 raise VariableNotFoundError(
@@ -508,6 +530,12 @@ class VariableResolver:
         # Dictionary navigation with bracket notation support
         value = self.context
         for i, segment in enumerate(segments):
+            # Check if segment contains nested variable interpolation (e.g., {{inputs.key}})
+            if "{{" in segment and "}}" in segment:
+                # Resolve the nested variable first
+                resolved_segment = self._resolve_string(segment, for_eval=False)
+                segment = resolved_segment
+
             if not isinstance(value, dict):
                 partial_path = ".".join(segments[:i])
                 raise VariableNotFoundError(

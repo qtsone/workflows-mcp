@@ -71,6 +71,7 @@ Restart your LLM client, and you're ready to go!
 - **DAG-Based Workflows**: Automatic dependency resolution and parallel execution
 - **🔐 Secrets Management**: Server-side credential handling with automatic redaction (v5.0.0+)
 - **🤖 LLM Integration**: Native LLM API calls with schema validation and retry logic
+- **🔁 Universal Iteration**: for_each on ANY block type (Shell, LLMCall, Workflow, etc.) with parallel/sequential modes
 - **Workflow Composition**: Reusable workflows via Workflow blocks
 - **Conditional Execution**: Boolean expressions for dynamic control flow
 - **Variable Resolution**: Five-namespace system (inputs, metadata, blocks, secrets, __internal__)
@@ -342,6 +343,82 @@ Examples:
 - [Recursive workflows](tests/workflows/core/composition/recursion.yaml) - self-calling workflows
 
 Control recursion depth with `WORKFLOWS_MAX_RECURSION_DEPTH` (default: 50, max: 10000).
+
+**Universal Iteration (for_each):**
+
+Iterate over collections with ANY block type - Shell, LLMCall, Workflow, or any executor.
+
+**Basic Syntax:**
+
+```yaml
+- id: process_files
+  type: Shell
+  for_each:
+    file1: {path: "src/main.py", lines: 150}
+    file2: {path: "src/utils.py", lines: 80}
+  for_each_mode: parallel  # or sequential (default: parallel)
+  max_parallel: 3          # concurrent iterations (default: 5, max: 20)
+  continue_on_error: true  # keep going if one fails (default: false)
+  inputs:
+    command: "echo Processing {{each.key}}: {{each.value.path}}"
+```
+
+**Iteration Variables:**
+- `{{each.key}}` - Current iteration key (`"file1"`, `"file2"`)
+- `{{each.value}}` - Current iteration value (dict or item from list)
+- `{{each.index}}` - Zero-based position (`0`, `1`, `2`, ...)
+- `{{each.count}}` - Total number of iterations
+
+**Access Pattern (Bracket Notation Required):**
+
+```yaml
+# Access iteration outputs using bracket notation (static keys)
+{{blocks.process_files["file1"].outputs.stdout}}
+{{blocks.process_files["file1"].metadata.duration_ms}}
+
+# Dynamic key access (nested variable interpolation)
+{{blocks.process_files[{{inputs.target_file}}].outputs.stdout}}
+
+# Block-level aggregations use dot notation
+{{blocks.process_files.succeeded}}         # All iterations succeeded?
+{{blocks.process_files.metadata.count}}     # Total iterations
+{{blocks.process_files.metadata.count_failed}}  # Failed count
+```
+
+**Nested Iteration:**
+
+Nest for_each via workflow composition:
+
+```yaml
+# Parent workflow
+- id: deploy_regions
+  type: Workflow
+  for_each:
+    us-east: {servers: ["web1", "web2"]}
+    eu-west: {servers: ["web3", "web4"]}
+  inputs:
+    workflow: deploy-servers
+    inputs:
+      region: "{{each.key}}"
+      servers: "{{each.value.servers}}"
+
+# Child workflow (deploy-servers.yaml)
+- id: deploy
+  type: Shell
+  for_each: "{{inputs.servers}}"  # Nested iteration!
+  inputs:
+    command: "deploy.sh {{each.key}} {{inputs.region}}"
+```
+
+Access nested results: `{{blocks.deploy_regions["us-east"]["web1"].outputs.result}}`
+
+**Execution Modes:**
+- `parallel` - Run iterations concurrently (respects `max_parallel`)
+- `sequential` - Run one at a time in order
+
+**Error Handling:**
+- `continue_on_error: false` - Stop on first failure, skip remaining
+- `continue_on_error: true` - Run all iterations, track failures in metadata
 
 ### Available Block Types
 

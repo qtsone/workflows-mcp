@@ -36,7 +36,11 @@ class BlockExecution(BaseModel):
     Result of executing a single block.
 
     This wraps the executor output with execution metadata.
+    Mirrors Execution structure for fractal consistency.
     """
+
+    # Resolved inputs used for execution (mirrors Execution.inputs)
+    inputs: dict[str, Any] = {}
 
     # Executor output (or None if paused/failed)
     output: BaseModel | None
@@ -176,6 +180,7 @@ class BlockOrchestrator:
                 )
 
             return BlockExecution(
+                inputs=inputs.model_dump(),
                 output=output,
                 metadata=metadata,
                 paused=False,
@@ -198,6 +203,7 @@ class BlockOrchestrator:
             )
 
             return BlockExecution(
+                inputs=inputs.model_dump(),
                 output=None,
                 metadata=metadata,
                 paused=True,
@@ -237,6 +243,7 @@ class BlockOrchestrator:
             output = executor.output_type()
 
             return BlockExecution(
+                inputs=inputs.model_dump(),
                 output=output,
                 metadata=metadata,
                 paused=False,
@@ -300,6 +307,7 @@ class BlockOrchestrator:
             )
 
             return BlockExecution(
+                inputs=inputs.model_dump(),
                 output=output,
                 metadata=metadata,
                 paused=False,
@@ -322,6 +330,7 @@ class BlockOrchestrator:
             )
 
             return BlockExecution(
+                inputs=inputs.model_dump(),
                 output=None,
                 metadata=metadata,
                 paused=True,
@@ -348,6 +357,7 @@ class BlockOrchestrator:
             )
 
             return BlockExecution(
+                inputs=inputs.model_dump(),
                 output=None,
                 metadata=metadata,
                 paused=False,

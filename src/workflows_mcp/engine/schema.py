@@ -685,8 +685,17 @@ class WorkflowSchema(BaseModel):
     @model_validator(mode="after")
     def validate_variable_substitution_syntax(self) -> "WorkflowSchema":
         """Validate variable substitution syntax in all string values."""
-        # Pattern: {{...}} - captures variable expression (supports bracket notation)
-        var_pattern = re.compile(r"\{\{([^}]+)\}\}")
+        # Pattern: Supports dot notation and bracket notation (ADR-009), including nested variables
+        # Must match VariableResolver.VAR_PATTERN for consistency
+        var_pattern = re.compile(
+            r"\{\{([a-zA-Z_][a-zA-Z0-9_]*(?:"
+            r"(?:\.[a-zA-Z_][a-zA-Z0-9_]*)|"  # Dot notation: .identifier
+            r'(?:\["[^"]+"\])|'  # Bracket notation (double quotes): ["key"]
+            r"(?:\['[^']+'\])|"  # Bracket notation (single quotes): ['key']
+            r"(?:\[\d+\])|"  # Bracket notation (numeric index): [0], [123]
+            r"(?:\[\{\{.+?\}\}\])"  # Bracket notation with nested variable: [{{var.path}}]
+            r")*)\}\}"
+        )
 
         block_ids = {block.id for block in self.blocks}
         input_names = set(self.inputs.keys())

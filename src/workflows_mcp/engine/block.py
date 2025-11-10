@@ -40,6 +40,7 @@ class BlockOutput(BaseModel):
     meta: dict[str, Any] = Field(
         default_factory=dict,
         description="Executor-specific metadata fields (exit_code, tokens_used, etc.)",
+        exclude=True,
     )
 
     model_config = {"extra": "allow"}

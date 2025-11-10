@@ -81,3 +81,8 @@ outputs:
     value: "{{blocks.configure_services.metadata.mode}}"
     type: str
     description: Execution mode used (sequential)
+
+  api_exit_code:
+    value: "{{blocks.configure_services['api'].outputs.exit_code}}"
+    type: num
+    description: Exit code from API service configuration

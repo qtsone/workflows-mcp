@@ -1,0 +1,104 @@
+name: for-each-dynamic-key
+description: |
+  Test dynamic key interpolation in bracket notation (ADR-009).
+
+  Validates that bracket notation supports variable interpolation:
+  blocks.id[{{inputs.key}}].outputs.field
+
+  This enables dynamic access to for_each iteration results.
+
+tags:
+  - test
+  - for_each
+  - dynamic
+  - interpolation
+
+inputs:
+  services:
+    type: dict
+    default:
+      api:
+        port: 8000
+        status: "running"
+      worker:
+        port: 8001
+        status: "idle"
+      admin:
+        port: 8002
+        status: "stopped"
+    description: Dictionary of services
+
+  target_service:
+    type: str
+    default: "api"
+    description: Service name to access dynamically
+
+  secondary_service:
+    type: str
+    default: "worker"
+    description: Second service for validation
+
+blocks:
+  # For_each block that processes all services
+  - id: check_services
+    type: Shell
+    for_each: "{{inputs.services}}"
+    for_each_mode: parallel
+    inputs:
+      command: |
+        echo "Checking service: {{each.key}}"
+        echo "Port: {{each.value.port}}"
+        echo "Status: {{each.value.status}}"
+        echo "Service {{each.key}} on port {{each.value.port}}: {{each.value.status}}"
+
+  # Use dynamic key to access specific service result
+  - id: verify_target
+    type: Shell
+    depends_on: [check_services]
+    inputs:
+      command: |
+        echo "=== Dynamic Key Access Test ==="
+        echo ""
+        echo "Target service: {{inputs.target_service}}"
+        echo "Target exit code: {{blocks.check_services[{{inputs.target_service}}].outputs.exit_code}}"
+        echo "Target succeeded: {{blocks.check_services[{{inputs.target_service}}].metadata.succeeded}}"
+        echo ""
+        echo "Secondary service: {{inputs.secondary_service}}"
+        echo "Secondary exit code: {{blocks.check_services[{{inputs.secondary_service}}].outputs.exit_code}}"
+        echo ""
+        echo "Dynamic access validated!"
+
+outputs:
+  # Static bracket access (baseline)
+  api_exit_code:
+    value: "{{blocks.check_services['api'].outputs.exit_code}}"
+    type: num
+    description: API service exit code (static key)
+
+  # Dynamic bracket access via interpolation
+  target_exit_code:
+    value: "{{blocks.check_services[{{inputs.target_service}}].outputs.exit_code}}"
+    type: num
+    description: Target service exit code (dynamic key)
+
+  secondary_exit_code:
+    value: "{{blocks.check_services[{{inputs.secondary_service}}].outputs.exit_code}}"
+    type: num
+    description: Secondary service exit code (dynamic key)
+
+  # Verify dynamic access matches static access
+  dynamic_matches_static:
+    value: "{{blocks.check_services[{{inputs.target_service}}].outputs.exit_code}} == {{blocks.check_services['api'].outputs.exit_code}}"
+    type: bool
+    description: Validates dynamic key resolves to same value as static
+
+  # Parent metadata access (should work regardless)
+  total_services:
+    value: "{{blocks.check_services.metadata.count}}"
+    type: num
+    description: Total services checked
+
+  all_succeeded:
+    value: "{{blocks.check_services.metadata.succeeded}}"
+    type: bool
+    description: All services succeeded

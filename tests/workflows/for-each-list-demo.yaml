@@ -70,3 +70,8 @@ outputs:
     value: "{{blocks.analyze_files.metadata.succeeded}}"
     type: bool
     description: Whether all files were processed successfully
+
+  first_file_exit_code:
+    value: "{{blocks.analyze_files['0'].outputs.exit_code}}"
+    type: num
+    description: Exit code from processing first file
