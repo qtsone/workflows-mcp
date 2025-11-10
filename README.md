@@ -521,66 +521,31 @@ The server includes many ready-to-use workflows:
 
 **Looking for battle-tested examples?** Check out the workflows in `tests/workflows/` - these are thoroughly tested in CI on every PR and demonstrate all the core features reliably.
 
-### Python Development
+### Discovering Workflows
 
-| Workflow | Description |
-|----------|-------------|
-| `python-ci-pipeline` | Complete CI: setup, lint, test with coverage |
-| `setup-python-env` | Set up Python environment with dependencies |
-| `lint-python` | Run ruff and mypy linters |
-| `run-pytest` | Execute tests with coverage reporting |
+The best way to see what workflows are available is to ask your AI assistant:
 
-### Git Operations
-
-| Workflow | Description |
-|----------|-------------|
-| `git-checkout-branch` | Create and checkout feature branches |
-| `git-commit` | Stage and commit changes |
-| `git-status` | Check repository status |
-| `git-analyze-changes` | Analyze uncommitted changes |
-
-### Node.js Development
-
-| Workflow | Description |
-|----------|-------------|
-| `run-npm-test` | Run npm tests with reporting |
-
-### File & Template Operations
-
-| Workflow | Description |
-|----------|-------------|
-| `generate-readme` | Generate README from templates |
-| `process-config` | Transform configuration files |
-
-### GitHub Integration
-
-| Workflow | Description |
-|----------|-------------|
-| `github-create-issue` | Create GitHub issues |
-| `process-todo-create-issues` | Convert TODO comments to issues |
-
-### Test-Driven Development
-
-| Workflow | Description |
-|----------|-------------|
-| `tdd-master` | Complete TDD workflow orchestrator |
-| `tdd-phase1-analysis` | Requirements analysis |
-| `tdd-phase2-architecture` | Architecture design |
-| `tdd-phase3-scaffolding` | Project scaffolding |
-| `tdd-phase4-module-tdd` | Module-level TDD |
-| `tdd-phase5-integration` | Integration testing |
-| `tdd-phase6-validation` | Final validation |
-| `tdd-phase7-finalization` | Documentation & cleanup |
-
-**View all workflows:**
+**List all workflows:**
 ```
 You: "List all available workflows"
 ```
 
-**Get details about a workflow:**
+Your AI will show you all currently available workflows with their descriptions.
+
+**Get detailed information:**
 ```
 You: "Show me details about the python-ci-pipeline workflow"
 ```
+
+This shows inputs, outputs, and what the workflow does - inspect before running!
+
+**Filter by category:**
+```
+You: "List workflows tagged with 'python'"
+You: "Show me all git workflows"
+```
+
+**Popular workflows include:** Python CI pipelines, Git operations (checkout, commit, status), linting tools, test runners, and file operations. The library evolves over time, so use the discovery tools above for the current list.
 
 ---
 
