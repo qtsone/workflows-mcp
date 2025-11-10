@@ -2,6 +2,14 @@
 
 All notable changes to this project will be documented in this file.
 
+# [6.3.0](https://github.com/qtsone/workflows-mcp/compare/v6.2.0...v6.3.0) (2025-11-10)
+
+
+### Features
+
+* **for_each:** add dynamic key interpolation and fractal execution s… ([#24](https://github.com/qtsone/workflows-mcp/issues/24)) ([3f404e5](https://github.com/qtsone/workflows-mcp/commit/3f404e5ddf7b01ee0fff6238b169ccf402edf5ac))
+* **for_each:** add dynamic key interpolation and fractal execution support ([a938de6](https://github.com/qtsone/workflows-mcp/commit/a938de67a6e0e9855fa3c2fde91836f5eecc33fc))
+
 # [6.2.0](https://github.com/qtsone/workflows-mcp/compare/v6.1.1...v6.2.0) (2025-11-08)
 
 
