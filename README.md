@@ -351,7 +351,7 @@ version: "1.0"
 providers:
   openai:
     type: openai
-    api_key_secret: "OPENAI_API_KEY"
+    api_key_secret: "OPENAI_API_KEY"  # References WORKFLOW_SECRET_OPENAI_API_KEY env var
 
   local:
     type: openai
@@ -366,6 +366,8 @@ profiles:
 
 default_profile: default
 ```
+
+**Important:** The `api_key_secret` value (e.g., `"OPENAI_API_KEY"`) is **not** your actual API key. It's the name that references your environment variable `WORKFLOW_SECRET_OPENAI_API_KEY` in your MCP server configuration. The actual key value should be set as an environment variable (see [Secure Secrets Management](#secure-secrets-management)).
 
 Use in workflows:
 
