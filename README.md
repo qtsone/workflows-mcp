@@ -487,11 +487,10 @@ blocks:
     type: Prompt
     inputs:
       prompt: "Deploy to production? (yes/no)"
-      input_type: str
 
   - id: deploy
     type: Shell
-    condition: "{{blocks.ask_confirmation.outputs.user_input}} == 'yes'"
+    condition: "{{blocks.ask_confirmation.outputs.response}} == 'yes'"
     depends_on: [ask_confirmation]
     inputs:
       command: "./deploy.sh"
