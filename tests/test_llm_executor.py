@@ -11,7 +11,7 @@ Tests cover:
 import json
 from unittest.mock import AsyncMock, Mock, patch
 
-import httpx
+import openai
 import pytest
 
 from workflows_mcp.engine.execution import Execution
@@ -42,27 +42,26 @@ class TestLLMCallExecutor:
             timeout=10,
         )
 
-        mock_response = Mock()
-        mock_response.status_code = 200
-        mock_response.json.return_value = {
-            "choices": [
-                {
-                    "message": {"content": "The answer is 4."},
-                    "finish_reason": "stop",
-                }
-            ],
-            "model": "gpt-4o",
-            "usage": {
-                "prompt_tokens": 10,
-                "completion_tokens": 5,
-                "total_tokens": 15,
-            },
-        }
-
-        with patch("httpx.AsyncClient") as mock_client:
-            mock_client.return_value.__aenter__.return_value.post = AsyncMock(
-                return_value=mock_response
+        # Mock the OpenAI completion response
+        mock_completion = Mock()
+        mock_completion.choices = [
+            Mock(
+                message=Mock(content="The answer is 4.", refusal=None, tool_calls=None),
+                finish_reason="stop",
             )
+        ]
+        mock_completion.model = "gpt-4o"
+        mock_completion.usage = Mock(
+            prompt_tokens=10,
+            completion_tokens=5,
+            total_tokens=15,
+        )
+
+        with patch("workflows_mcp.engine.executors_llm.AsyncOpenAI") as mock_client_class:
+            mock_client = AsyncMock()
+            mock_client.__aenter__.return_value = mock_client
+            mock_client.chat.completions.create = AsyncMock(return_value=mock_completion)
+            mock_client_class.return_value = mock_client
 
             result = await executor.execute(inputs, mock_context)
 
@@ -205,23 +204,25 @@ class TestLLMCallExecutor:
         # Mock response with valid JSON matching schema
         valid_json_response = json.dumps({"answer": "4", "confidence": 0.99})
 
-        mock_response = Mock()
-        mock_response.status_code = 200
-        mock_response.json.return_value = {
-            "choices": [
-                {
-                    "message": {"content": valid_json_response},
-                    "finish_reason": "stop",
-                }
-            ],
-            "model": "gpt-4o",
-            "usage": {"prompt_tokens": 10, "completion_tokens": 5, "total_tokens": 15},
-        }
-
-        with patch("httpx.AsyncClient") as mock_client:
-            mock_client.return_value.__aenter__.return_value.post = AsyncMock(
-                return_value=mock_response
+        mock_completion = Mock()
+        mock_completion.choices = [
+            Mock(
+                message=Mock(content=valid_json_response, refusal=None, tool_calls=None),
+                finish_reason="stop",
             )
+        ]
+        mock_completion.model = "gpt-4o"
+        mock_completion.usage = Mock(
+            prompt_tokens=10,
+            completion_tokens=5,
+            total_tokens=15,
+        )
+
+        with patch("workflows_mcp.engine.executors_llm.AsyncOpenAI") as mock_client_class:
+            mock_client = AsyncMock()
+            mock_client.__aenter__.return_value = mock_client
+            mock_client.chat.completions.create = AsyncMock(return_value=mock_completion)
+            mock_client_class.return_value = mock_client
 
             result = await executor.execute(inputs, mock_context)
 
@@ -346,32 +347,33 @@ class TestLLMCallExecutor:
         # First two calls timeout, third succeeds
         call_count = 0
 
-        async def mock_post(*args, **kwargs):
+        async def mock_create(*args, **kwargs):
             nonlocal call_count
             call_count += 1
             if call_count < 3:
-                raise httpx.TimeoutException("Request timeout")
+                # Raise APITimeoutError instead of httpx.TimeoutException
+                raise openai.APITimeoutError(request=Mock())
 
-            response = Mock()
-            response.status_code = 200
-            response.json.return_value = {
-                "choices": [
-                    {
-                        "message": {"content": "Success!"},
-                        "finish_reason": "stop",
-                    }
-                ],
-                "model": "gpt-4o",
-                "usage": {
-                    "prompt_tokens": 10,
-                    "completion_tokens": 5,
-                    "total_tokens": 15,
-                },
-            }
-            return response
+            mock_completion = Mock()
+            mock_completion.choices = [
+                Mock(
+                    message=Mock(content="Success!", refusal=None, tool_calls=None),
+                    finish_reason="stop",
+                )
+            ]
+            mock_completion.model = "gpt-4o"
+            mock_completion.usage = Mock(
+                prompt_tokens=10,
+                completion_tokens=5,
+                total_tokens=15,
+            )
+            return mock_completion
 
-        with patch("httpx.AsyncClient") as mock_client:
-            mock_client.return_value.__aenter__.return_value.post = AsyncMock(side_effect=mock_post)
+        with patch("workflows_mcp.engine.executors_llm.AsyncOpenAI") as mock_client_class:
+            mock_client = AsyncMock()
+            mock_client.__aenter__.return_value = mock_client
+            mock_client.chat.completions.create = AsyncMock(side_effect=mock_create)
+            mock_client_class.return_value = mock_client
 
             result = await executor.execute(inputs, mock_context)
 
@@ -392,13 +394,17 @@ class TestLLMCallExecutor:
             timeout=10,
         )
 
-        async def mock_post(*args, **kwargs):
-            raise httpx.TimeoutException("Request timeout")
+        async def mock_create(*args, **kwargs):
+            raise openai.APITimeoutError(request=Mock())
 
-        with patch("httpx.AsyncClient") as mock_client:
-            mock_client.return_value.__aenter__.return_value.post = AsyncMock(side_effect=mock_post)
+        with patch("workflows_mcp.engine.executors_llm.AsyncOpenAI") as mock_client_class:
+            mock_client = AsyncMock()
+            mock_client.__aenter__.return_value = mock_client
+            mock_client.chat.completions.create = AsyncMock(side_effect=mock_create)
+            mock_client_class.return_value = mock_client
 
-            with pytest.raises(httpx.TimeoutException):
+            # OpenAI SDK errors are raised directly after retry exhaustion
+            with pytest.raises(openai.APITimeoutError):
                 await executor.execute(inputs, mock_context)
 
     @pytest.mark.asyncio
@@ -416,37 +422,38 @@ class TestLLMCallExecutor:
 
         call_count = 0
 
-        async def mock_post(*args, **kwargs):
+        async def mock_create(*args, **kwargs):
             nonlocal call_count
             call_count += 1
 
-            response = Mock()
             if call_count < 2:
-                response.status_code = 500
-                response.raise_for_status.side_effect = httpx.HTTPStatusError(
-                    "Server error", request=Mock(), response=response
+                # Raise APIStatusError for HTTP 500
+                raise openai.APIStatusError(
+                    message="Server error",
+                    response=Mock(status_code=500),
+                    body=None,
                 )
             else:
-                response.status_code = 200
-                response.raise_for_status = Mock()
-                response.json.return_value = {
-                    "choices": [
-                        {
-                            "message": {"content": "Success after retry!"},
-                            "finish_reason": "stop",
-                        }
-                    ],
-                    "model": "gpt-4o",
-                    "usage": {
-                        "prompt_tokens": 10,
-                        "completion_tokens": 5,
-                        "total_tokens": 15,
-                    },
-                }
-            return response
+                mock_completion = Mock()
+                mock_completion.choices = [
+                    Mock(
+                        message=Mock(content="Success after retry!", refusal=None, tool_calls=None),
+                        finish_reason="stop",
+                    )
+                ]
+                mock_completion.model = "gpt-4o"
+                mock_completion.usage = Mock(
+                    prompt_tokens=10,
+                    completion_tokens=5,
+                    total_tokens=15,
+                )
+                return mock_completion
 
-        with patch("httpx.AsyncClient") as mock_client:
-            mock_client.return_value.__aenter__.return_value.post = AsyncMock(side_effect=mock_post)
+        with patch("workflows_mcp.engine.executors_llm.AsyncOpenAI") as mock_client_class:
+            mock_client = AsyncMock()
+            mock_client.__aenter__.return_value = mock_client
+            mock_client.chat.completions.create = AsyncMock(side_effect=mock_create)
+            mock_client_class.return_value = mock_client
 
             result = await executor.execute(inputs, mock_context)
 
