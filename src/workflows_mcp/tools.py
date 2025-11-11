@@ -884,9 +884,10 @@ async def get_job_status(
         {
             "id": str,
             "workflow": str,
-            "status": "queued" | "running" | "completed" | "failed" | "cancelled",
+            "status": "queued" | "running" | "completed" | "failed" | "cancelled" | "paused",
             "outputs": dict | None,  # Workflow outputs only
             "error": str | None,
+            "prompt": str | None,  # Pause prompt (only when status="paused")
             "created_at": str,
             "started_at": str | None,
             "completed_at": str | None,

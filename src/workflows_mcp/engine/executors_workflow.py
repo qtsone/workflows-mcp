@@ -235,7 +235,7 @@ class WorkflowExecutor(BlockExecutor):
                     "child_execution_state": child_execution_state,
                     "child_workflow": child_workflow,  # Immediate child's name
                     "child_pause_metadata": child_pause.checkpoint_data,  # Nested metadata
-                    "parent_workflow": context.get_parent_workflow() or "",
+                    "parent_workflow": context.parent_workflow or "",
                 },
                 execution=context,  # Parent execution context
             )
@@ -290,30 +290,22 @@ class WorkflowExecutor(BlockExecutor):
         # No checkpointing for nested workflows - parent handles all checkpointing
         runner = WorkflowRunner()
 
-        # TODO (Task 13): Use resume_from_state() when implemented
-        # For now, this will fail because resume() still expects checkpoint_id
-        # Need to implement WorkflowRunner.resume_from_state(execution_state, response)
-        try:
-            # Temporary: Try to get checkpoint_id from old checkpoint system
-            # This will be removed when checkpoint system is deleted
-            from .execution_result import ExecutionState
+        # Resume child workflow using unified Job architecture (ExecutionState)
+        from .execution_result import ExecutionState
 
-            if isinstance(child_execution_state, ExecutionState):
-                # New format - need resume_from_state (not yet implemented)
-                raise NotImplementedError(
-                    "WorkflowRunner.resume_from_state() not yet implemented. "
-                    "Nested workflow resume requires task 13 completion."
-                )
-            else:
-                # Old format (dict) - try legacy resume
-                checkpoint_id = child_execution_state.get("checkpoint_id", "")
-                child_execution_result = await runner.resume(
-                    checkpoint_id=checkpoint_id,
-                    response=response,
-                    context=exec_context,
-                )
-        except NotImplementedError:
-            raise
+        if not isinstance(child_execution_state, ExecutionState):
+            raise ValueError(
+                f"Invalid child execution state type: {type(child_execution_state)}. "
+                "Expected ExecutionState."
+            )
+
+        try:
+            # Resume child workflow from ExecutionState
+            child_execution_result = await runner.resume_from_state(
+                execution_state=child_execution_state,
+                response=response,
+                context=exec_context,
+            )
         except Exception as e:
             raise ValueError(f"Failed to resume child workflow: {e}") from e
 

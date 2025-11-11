@@ -539,7 +539,7 @@ class LLMCallExecutor(BlockExecutor):
             ValueError: If profile not found or llm_config_loader not available
         """
         # Get llm_config_loader from execution context
-        execution_context = context._internal.execution_context
+        execution_context = context.execution_context
         if execution_context is None:
             raise ValueError(
                 "ExecutionContext not available. Cannot resolve LLM profile. "

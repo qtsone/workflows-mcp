@@ -292,12 +292,15 @@ class JobQueue:
         result = job_data.get("result") or {}
         outputs = result.get("outputs")
 
+        # Extract pause prompt if job is paused (critical for resume)
+        prompt = result.get("prompt") if job_data["status"] == "paused" else None
+
         # Build result file path (full job data location for debugging)
         state_dir = StateConfig.get_state_dir()
         result_file = str(state_dir / "jobs" / f"{job_data['id']}.json")
 
         # Return minimal response optimized for LLM callers
-        return {
+        response = {
             "id": job_data["id"],
             "workflow": job_data["workflow"],
             "status": job_data["status"],
@@ -309,6 +312,12 @@ class JobQueue:
             "completed_at": job_data.get("completed_at"),
             "result_file": result_file,
         }
+
+        # Add prompt field when paused (so LLM/user knows what response is expected)
+        if prompt:
+            response["prompt"] = prompt
+
+        return response
 
     async def cancel_job(self, job_id: str) -> bool:
         """Cancel pending or running job.

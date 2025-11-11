@@ -164,68 +164,6 @@ class WorkflowRunner:
             elif scratch_dir and debug:
                 logger.info(f"Debug mode: scratch directory preserved at {scratch_dir}")
 
-    async def resume(
-        self,
-        checkpoint_id: str,
-        response: str | None = None,
-        context: ExecutionContext | None = None,
-    ) -> ExecutionResult:
-        """
-        Resume workflow from checkpoint.
-
-        Args:
-            checkpoint_id: Checkpoint ID
-            response: LLM response for paused workflows
-            context: Execution context (must contain checkpoint_store)
-
-        Returns:
-            ExecutionResult with resumed execution
-        """
-        if context is None:
-            raise ValueError("ExecutionContext required for resume operations")
-
-        try:
-            # Call internal resume method (returns Execution)
-            execution = await self._resume_workflow_internal(checkpoint_id, response or "", context)
-
-            # Success - wrap in ExecutionResult with secret redactor
-            return ExecutionResult.success(execution, self.secret_redactor)
-
-        except ValueError as e:
-            # Checkpoint or workflow not found
-            minimal_execution = Execution(
-                inputs={},
-                metadata=None,
-                blocks={},
-            )
-            return ExecutionResult.failure(str(e), minimal_execution, self.secret_redactor)
-
-        except ExecutionPaused as e:
-            # Workflow paused again - extract execution state
-            execution_state = e.checkpoint_data.get("execution_state")
-            if not execution_state:
-                raise RuntimeError("ExecutionPaused missing execution_state - invalid pause")
-
-            return ExecutionResult.paused(
-                prompt=e.prompt,
-                execution=e.execution,
-                execution_state=execution_state,
-                pause_metadata=e.checkpoint_data,
-                secret_redactor=self.secret_redactor,
-            )
-
-        except Exception as e:
-            # Catch-all for unexpected exceptions
-            logger.exception("Unexpected error during workflow resume: %s", e)
-            minimal_execution = Execution(
-                inputs={},
-                metadata=None,
-                blocks={},
-            )
-            return ExecutionResult.failure(
-                f"Unexpected error: {e}", minimal_execution, self.secret_redactor
-            )
-
     async def resume_from_state(
         self,
         execution_state: "ExecutionState",
@@ -312,8 +250,8 @@ class WorkflowRunner:
         """
         Resume workflow from ExecutionState (internal implementation).
 
-        Similar to _resume_workflow_internal but works with ExecutionState
-        instead of CheckpointState.
+        Restores the complete execution context from ExecutionState and continues
+        execution from where the workflow paused.
 
         Args:
             workflow: Workflow schema
@@ -336,6 +274,9 @@ class WorkflowRunner:
         current_wave_index = execution_state.current_wave_index
         execution_waves = execution_state.execution_waves
         paused_block_id = execution_state.paused_block_id
+
+        # Inject ExecutionContext (not serialized - runtime dependency)
+        exec_context.set_execution_context(context)
 
         # Resume paused block with response
         try:
@@ -1023,9 +964,9 @@ class WorkflowRunner:
         )
 
         # Set scratch directory
-        exec_context.set_scratch_dir(scratch_dir)
+        exec_context.scratch_dir = scratch_dir
 
-        # Store workflow metadata and ExecutionContext in _internal
+        # Store workflow metadata and ExecutionContext
         workflow_metadata_dict = {
             "workflow_name": workflow.name,
             "started_at": workflow_start_time,
@@ -1035,11 +976,11 @@ class WorkflowRunner:
 
         if context:
             exec_context.set_execution_context(context)
-            exec_context._internal.workflow_stack = context.workflow_stack + [workflow.name]
-            exec_context.set_workflow_metadata(workflow_metadata_dict)
+            exec_context.workflow_stack = context.workflow_stack + [workflow.name]
+            exec_context.workflow_metadata = workflow_metadata_dict
         else:
-            exec_context._internal.workflow_stack = [workflow.name]
-            exec_context.set_workflow_metadata(workflow_metadata_dict)
+            exec_context.workflow_stack = [workflow.name]
+            exec_context.workflow_metadata = workflow_metadata_dict
 
         logger.debug(f"Created scratch directory for workflow '{workflow.name}': {scratch_dir}")
 
