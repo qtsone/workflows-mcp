@@ -4,7 +4,6 @@ Execution context for dependency injection and fractal composition.
 Provides access to:
 - Workflow registry (for Workflow composition)
 - Executor registry (for block execution)
-- Checkpoint store (for pause/resume)
 - Parent execution (for nested workflows)
 
 This enables:
@@ -18,9 +17,9 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from .checkpoint_store import CheckpointStore
     from .execution import Execution
     from .executor_base import ExecutorRegistry
+    from .io_queue import IOQueue
     from .llm_config import LLMConfigLoader
     from .registry import WorkflowRegistry
     from .schema import WorkflowSchema
@@ -33,13 +32,12 @@ class ExecutionContext:
     Injected into block executors to enable:
     - Workflow composition (Workflow needs registry access)
     - Block execution (all executors need executor registry)
-    - Checkpointing (pause/resume functionality)
     - Fractal nesting (parent execution tracking)
     - Recursion depth limiting (prevents infinite recursion)
 
     Design:
     - Immutable after creation (use create_child for nesting)
-    - Contains references to shared resources (registries, stores)
+    - Contains references to shared resources (registries)
     - Tracks execution hierarchy (parent chain)
     - Enforces recursion depth limits (configurable)
     """
@@ -48,8 +46,8 @@ class ExecutionContext:
         self,
         workflow_registry: WorkflowRegistry,
         executor_registry: ExecutorRegistry,
-        checkpoint_store: CheckpointStore,
         llm_config_loader: LLMConfigLoader,
+        io_queue: IOQueue | None,
         parent: Execution | None = None,
         workflow_stack: list[str] | None = None,
         max_recursion_depth: int = 50,
@@ -60,16 +58,16 @@ class ExecutionContext:
         Args:
             workflow_registry: Registry of workflow definitions
             executor_registry: Registry of block executors
-            checkpoint_store: Store for checkpoints (pause/resume)
             llm_config_loader: Loader for LLM profile configuration
+            io_queue: IO queue for serialized file operations (optional)
             parent: Parent execution (for nested workflows)
             workflow_stack: Workflow execution stack (depth tracking)
             max_recursion_depth: Maximum allowed recursion depth (default: 50)
         """
         self.workflow_registry = workflow_registry
         self.executor_registry = executor_registry
-        self.checkpoint_store = checkpoint_store
         self.llm_config_loader = llm_config_loader
+        self.io_queue = io_queue
         self.parent = parent
         self.workflow_stack = workflow_stack or []
         self.max_recursion_depth = max_recursion_depth
@@ -110,8 +108,8 @@ class ExecutionContext:
         return ExecutionContext(
             workflow_registry=self.workflow_registry,
             executor_registry=self.executor_registry,
-            checkpoint_store=self.checkpoint_store,
             llm_config_loader=self.llm_config_loader,
+            io_queue=self.io_queue,
             parent=parent_execution,
             workflow_stack=self.workflow_stack + [workflow_name],
             max_recursion_depth=self.max_recursion_depth,

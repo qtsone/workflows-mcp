@@ -108,9 +108,8 @@ class ReadJSONStateExecutor(BlockExecutor):
         file_path = path_result.value
         assert file_path is not None
 
-        # Read JSON using utility (handles missing files gracefully)
+        # Read JSON directly (no serialization needed - reads don't cause race conditions)
         read_result = JSONOperations.read_json(file_path, required=required)
-
         if not read_result.is_success:
             assert read_result.error is not None
             # JSONOperations returns specific error messages
@@ -119,12 +118,14 @@ class ReadJSONStateExecutor(BlockExecutor):
                 raise FileNotFoundError(read_result.error)
             else:
                 raise ValueError(read_result.error)
+        assert read_result.value is not None
+        data = read_result.value
+        found = file_path.exists()
 
         # Build output
-        assert read_result.value is not None
         return ReadJSONStateOutput(
-            data=read_result.value,
-            found=file_path.exists(),
+            data=data,
+            found=found,
             path=str(file_path),
         )
 
@@ -215,18 +216,21 @@ class WriteJSONStateExecutor(BlockExecutor):
         elif not file_path.parent.exists():
             raise FileNotFoundError(f"Parent directory missing: {file_path.parent}")
 
-        # Write JSON using utility
-        write_result = JSONOperations.write_json(file_path, inputs.data)
+        # Define write operation for serialization
+        def write_operation() -> int:
+            """Write JSON and return file size."""
+            write_result = JSONOperations.write_json(file_path, inputs.data)
+            if not write_result.is_success:
+                assert write_result.error is not None
+                raise OSError(write_result.error)
+            return file_path.stat().st_size
 
-        if not write_result.is_success:
-            assert write_result.error is not None
-            raise OSError(write_result.error)
-
-        # Get file size
-        try:
-            size_bytes = file_path.stat().st_size
-        except OSError as e:
-            raise OSError(f"Failed to get file size: {e}") from e
+        # Execute via IO queue if available (serializes parallel writes)
+        if context.execution_context and context.execution_context.io_queue:
+            size_bytes = await context.execution_context.io_queue.submit(write_operation)
+        else:
+            # Fallback: direct execution (backward compatibility)
+            size_bytes = write_operation()
 
         # Build output
         return WriteJSONStateOutput(
@@ -333,20 +337,6 @@ class MergeJSONStateExecutor(BlockExecutor):
         file_path = path_result.value
         assert file_path is not None
 
-        # Check if file exists
-        file_existed = file_path.exists()
-        if not file_existed and not create_if_missing:
-            raise FileNotFoundError(f"File does not exist and create_if_missing=False: {file_path}")
-
-        # Read existing data or start with empty dict
-        existing_data: dict[str, Any] = {}
-        if file_existed:
-            read_result = JSONOperations.read_json(file_path, required=False)
-            if not read_result.is_success:
-                raise ValueError(f"Failed to read existing JSON: {read_result.error}")
-            assert read_result.value is not None
-            existing_data = read_result.value
-
         # Deep merge function
         def deep_merge(base: dict[str, Any], updates: dict[str, Any]) -> dict[str, Any]:
             """Deep merge updates into base dict."""
@@ -358,10 +348,7 @@ class MergeJSONStateExecutor(BlockExecutor):
                     result[key] = value
             return result
 
-        # Merge updates
-        merged_data = deep_merge(existing_data, inputs.updates)
-
-        # Create parent directories if needed
+        # Create parent directories if needed (before atomic operation)
         if create_parents:
             try:
                 file_path.parent.mkdir(parents=True, exist_ok=True)
@@ -370,14 +357,45 @@ class MergeJSONStateExecutor(BlockExecutor):
         elif not file_path.parent.exists():
             raise FileNotFoundError(f"Parent directory missing: {file_path.parent}")
 
-        # Write merged data
-        write_result = JSONOperations.write_json(file_path, merged_data)
-        if not write_result.is_success:
-            raise OSError(write_result.error)
+        # Define atomic read-modify-write operation for serialization
+        def merge_operation() -> tuple[bool, dict[str, Any]]:
+            """Atomically read, merge, and write JSON. Returns (created, merged_data)."""
+            # Check if file exists
+            file_existed = file_path.exists()
+            if not file_existed and not create_if_missing:
+                raise FileNotFoundError(
+                    f"File does not exist and create_if_missing=False: {file_path}"
+                )
+
+            # Read existing data or start with empty dict
+            existing_data: dict[str, Any] = {}
+            if file_existed:
+                read_result = JSONOperations.read_json(file_path, required=False)
+                if not read_result.is_success:
+                    raise ValueError(f"Failed to read existing JSON: {read_result.error}")
+                assert read_result.value is not None
+                existing_data = read_result.value
+
+            # Merge updates
+            merged_data = deep_merge(existing_data, inputs.updates)
+
+            # Write merged data
+            write_result = JSONOperations.write_json(file_path, merged_data)
+            if not write_result.is_success:
+                raise OSError(write_result.error)
+
+            return (not file_existed, merged_data)
+
+        # Execute via IO queue if available (prevents race conditions)
+        if context.execution_context and context.execution_context.io_queue:
+            created, merged_data = await context.execution_context.io_queue.submit(merge_operation)
+        else:
+            # Fallback: direct execution (backward compatibility)
+            created, merged_data = merge_operation()
 
         # Build output
         return MergeJSONStateOutput(
             path=str(file_path),
-            created=not file_existed,
+            created=created,
             merged_data=merged_data,
         )

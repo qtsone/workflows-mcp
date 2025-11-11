@@ -142,7 +142,7 @@ class WorkflowExecutor(BlockExecutor):
         from .workflow_runner import WorkflowRunner
 
         # No checkpointing for nested workflows - parent handles all checkpointing
-        runner = WorkflowRunner(checkpoint_config=None)
+        runner = WorkflowRunner()
 
         # Create child execution context
         child_context = exec_context.create_child_context(
@@ -179,29 +179,22 @@ class WorkflowExecutor(BlockExecutor):
                         f"Child workflow '{workflow_name}' failed: {child_execution_result.error}"
                     )
             elif child_execution_result.status == "paused":
-                # Child paused - re-raise with context, preserving nested metadata
+                # Child paused - re-raise with context, preserving execution state
+                # (Unified Job Architecture - no checkpoint_id, use execution_state)
+                child_execution_state = child_execution_result.execution_state
+                if not child_execution_state:
+                    raise RuntimeError(
+                        "Paused child workflow missing execution_state - invalid pause"
+                    )
+
                 child_pause_data = child_execution_result.pause_data
-                # Extract child's metadata (includes pause data from deeper nesting)
                 child_metadata = child_pause_data.metadata if child_pause_data else {}
 
-                # Use child's checkpoint_id directly (B's checkpoint, not C's)
-                child_checkpoint_id = child_pause_data.checkpoint_id if child_pause_data else ""
-
-                # Extract child's workflow name from metadata
-                # Priority: child_workflow (nested) > workflow_name (leaf) > fallback
-                if child_metadata:
-                    child_workflow = child_metadata.get("child_workflow") or child_metadata.get(
-                        "workflow_name", workflow_name
-                    )
-                else:
-                    child_workflow = workflow_name
-
                 checkpoint_data = {
-                    "child_checkpoint_id": child_checkpoint_id,
-                    "child_workflow": child_workflow,  # Child's actual name
+                    "child_execution_state": child_execution_state,
+                    "child_workflow": child_execution_state.workflow_name,
                 }
                 # Preserve entire child metadata structure for nested pause chains
-                # This preserves B's metadata which contains C's info
                 if child_metadata:
                     checkpoint_data["child_pause_metadata"] = child_metadata
 
@@ -217,20 +210,29 @@ class WorkflowExecutor(BlockExecutor):
         except ExecutionPaused as child_pause:
             # Child workflow paused - wrap with parent metadata (fractal pattern)
             # Preserve nested pause metadata for multi-level nesting
-            # Extract child checkpoint info from pause data
+            # (Unified Job Architecture - extract execution_state, not checkpoint_id)
             pause_data = child_pause.checkpoint_data
-            # Get child's checkpoint ID (fallback to checkpoint_id for leaf workflows)
-            child_checkpoint_id = pause_data.get("child_checkpoint_id") or pause_data.get(
-                "checkpoint_id", ""
+
+            # Get child's execution state (required for resume)
+            child_execution_state = pause_data.get("child_execution_state") or pause_data.get(
+                "execution_state"
             )
-            # Get child's workflow name - WorkflowRunner now adds "workflow_name"
-            # Priority: workflow_name (immediate child) > fallback to parameter
-            child_workflow = pause_data.get("workflow_name", workflow_name)
+            if not child_execution_state:
+                raise RuntimeError(
+                    "ExecutionPaused from child workflow missing execution_state - invalid pause"
+                )
+
+            # Get child's workflow name from execution state
+            child_workflow = (
+                child_execution_state.workflow_name
+                if hasattr(child_execution_state, "workflow_name")
+                else workflow_name
+            )
 
             raise ExecutionPaused(
                 prompt=child_pause.prompt,
                 checkpoint_data={
-                    "child_checkpoint_id": child_checkpoint_id,
+                    "child_execution_state": child_execution_state,
                     "child_workflow": child_workflow,  # Immediate child's name
                     "child_pause_metadata": child_pause.checkpoint_data,  # Nested metadata
                     "parent_workflow": context.get_parent_workflow() or "",
@@ -249,30 +251,30 @@ class WorkflowExecutor(BlockExecutor):
         Resume child workflow execution after pause.
 
         When a parent workflow resumes and this block was paused (nested workflow),
-        we extract the child's checkpoint_id and delegate resume to the child.
+        we extract the child's execution_state and delegate resume to the child.
 
         Args:
             inputs: Original WorkflowInput
             context: Parent execution context
             response: LLM's response to pause prompt
-            pause_metadata: Pause metadata containing child_checkpoint_id
+            pause_metadata: Pause metadata containing child_execution_state
 
         Returns:
             Full child Execution (resumed state)
 
         Raises:
-            ValueError: Missing checkpoint ID or workflow not found
+            ValueError: Missing execution state or workflow not found
             ExecutionPaused: Child paused again (bubbles automatically)
             Exception: Any other child execution failure
         """
         # Type assertion
         assert isinstance(inputs, WorkflowInput)
 
-        # 1. Extract child checkpoint ID from pause metadata
-        child_checkpoint_id = pause_metadata.get("child_checkpoint_id")
-        if not child_checkpoint_id:
+        # 1. Extract child execution state from pause metadata (unified Job architecture)
+        child_execution_state = pause_metadata.get("child_execution_state")
+        if not child_execution_state:
             raise ValueError(
-                "Missing child_checkpoint_id in pause_metadata - cannot resume nested workflow"
+                "Missing child_execution_state in pause_metadata - cannot resume nested workflow"
             )
 
         # 2. Get ExecutionContext from parent context (typed accessor)
@@ -286,29 +288,53 @@ class WorkflowExecutor(BlockExecutor):
         from .workflow_runner import WorkflowRunner
 
         # No checkpointing for nested workflows - parent handles all checkpointing
-        runner = WorkflowRunner(checkpoint_config=None)
+        runner = WorkflowRunner()
 
-        # Resume child workflow
-        child_execution_result = await runner.resume(
-            checkpoint_id=child_checkpoint_id,
-            response=response,
-            context=exec_context,
-        )
+        # TODO (Task 13): Use resume_from_state() when implemented
+        # For now, this will fail because resume() still expects checkpoint_id
+        # Need to implement WorkflowRunner.resume_from_state(execution_state, response)
+        try:
+            # Temporary: Try to get checkpoint_id from old checkpoint system
+            # This will be removed when checkpoint system is deleted
+            from .execution_result import ExecutionState
+
+            if isinstance(child_execution_state, ExecutionState):
+                # New format - need resume_from_state (not yet implemented)
+                raise NotImplementedError(
+                    "WorkflowRunner.resume_from_state() not yet implemented. "
+                    "Nested workflow resume requires task 13 completion."
+                )
+            else:
+                # Old format (dict) - try legacy resume
+                checkpoint_id = child_execution_state.get("checkpoint_id", "")
+                child_execution_result = await runner.resume(
+                    checkpoint_id=checkpoint_id,
+                    response=response,
+                    context=exec_context,
+                )
+        except NotImplementedError:
+            raise
+        except Exception as e:
+            raise ValueError(f"Failed to resume child workflow: {e}") from e
 
         # Check result status
         if child_execution_result.status == "failure":
             raise ValueError(f"Child workflow resume failed: {child_execution_result.error}")
         elif child_execution_result.status == "paused":
-            # Child paused again
+            # Child paused again - extract execution state and re-raise
+            child_execution_state_new = child_execution_result.execution_state
+            if not child_execution_state_new:
+                raise RuntimeError(
+                    "Paused child workflow missing execution_state - invalid pause"
+                )
+
             raise ExecutionPaused(
                 prompt=child_execution_result.pause_data.prompt
                 if child_execution_result.pause_data
                 else "Child workflow paused",
                 checkpoint_data={
-                    "child_checkpoint_id": child_execution_result.pause_data.checkpoint_id
-                    if child_execution_result.pause_data
-                    else "",
-                    "child_workflow": inputs.workflow,
+                    "child_execution_state": child_execution_state_new,
+                    "child_workflow": child_execution_state_new.workflow_name,
                 },
                 execution=context,
             )

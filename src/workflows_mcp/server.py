@@ -20,8 +20,9 @@ from mcp.server.fastmcp import FastMCP
 
 from .context import AppContext, AppContextType
 from .engine import WorkflowRegistry
-from .engine.checkpoint_store import InMemoryCheckpointStore
 from .engine.executor_base import create_default_registry
+from .engine.io_queue import IOQueue
+from .engine.job_queue import JobQueue
 
 logger = logging.getLogger(__name__)
 
@@ -224,35 +225,67 @@ async def app_lifespan(_server: FastMCP) -> AsyncIterator[AppContext]:
     # Create workflow registry
     registry = WorkflowRegistry()
 
-    # Create checkpoint store (for pause/resume functionality)
-    checkpoint_store = InMemoryCheckpointStore()
+    # Read queue configuration from environment variables
+    io_queue_enabled = os.getenv("WORKFLOWS_IO_QUEUE_ENABLED", "true").lower() == "true"
+    job_queue_enabled = os.getenv("WORKFLOWS_JOB_QUEUE_ENABLED", "true").lower() == "true"
+    num_workers = int(os.getenv("WORKFLOWS_JOB_QUEUE_WORKERS", "3"))
+
+    # Create IO queue if enabled (for serialized file operations)
+    io_queue = IOQueue() if io_queue_enabled else None
+
+    # Create AppContext first (needed by JobQueue)
+    app_context = AppContext(
+        registry=registry,
+        executor_registry=executor_registry,
+        llm_config_loader=llm_config_loader,
+        io_queue=io_queue,
+        job_queue=None,  # Will be set after JobQueue creation if enabled
+        max_recursion_depth=max_recursion_depth,
+    )
+
+    # Create and initialize JobQueue if enabled
+    job_queue = None
+    if job_queue_enabled:
+        job_queue = JobQueue(app_context, num_workers=num_workers)
+        app_context.job_queue = job_queue
 
     # Load workflows into registry
     load_workflows(registry)
 
+    # Start queues if enabled
+    if io_queue:
+        await io_queue.start()
+        logger.info("IO queue started")
+    else:
+        logger.info("IO queue disabled")
+
+    if job_queue:
+        await job_queue.start()
+        logger.info(f"Job queue started with {num_workers} workers")
+    else:
+        logger.info("Job queue disabled")
+
     try:
         # Make resources available to tools via AppContext
-        yield AppContext(
-            registry=registry,
-            executor_registry=executor_registry,
-            checkpoint_store=checkpoint_store,
-            llm_config_loader=llm_config_loader,
-            max_recursion_depth=max_recursion_depth,
-        )
+        yield app_context
     finally:
-        # Shutdown: cleanup resources
+        # Shutdown: cleanup resources (reverse order)
         logger.info("Shutting down MCP server...")
 
-        # No explicit cleanup required because:
+        # Stop job queue if enabled (don't wait for completion on shutdown)
+        if job_queue:
+            await job_queue.stop(wait_for_completion=False)
+            logger.info("Job queue stopped")
+
+        # Stop IO queue if enabled
+        if io_queue:
+            await io_queue.stop()
+            logger.info("IO queue stopped")
+
+        # No other explicit cleanup required because:
         # - WorkflowRegistry: In-memory only, no persistent state
-        # - InMemoryCheckpointStore: Uses dict storage, no resources to close
         # - ExecutorRegistry: Stateless executor instances
         # - No file handles, network connections, or external resources to close
-        #
-        # Future implementations (e.g., file-based checkpoint store) should add
-        # cleanup logic here, such as:
-        # if hasattr(checkpoint_store, 'close'):
-        #     await checkpoint_store.close()
 
 
 # Initialize MCP server with lifespan management

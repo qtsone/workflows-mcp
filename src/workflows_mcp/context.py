@@ -10,8 +10,9 @@ from mcp.server.fastmcp import Context
 from mcp.server.session import ServerSession
 
 from .engine import ExecutionContext, WorkflowRegistry
-from .engine.checkpoint_store import CheckpointStore
 from .engine.executor_base import ExecutorRegistry
+from .engine.io_queue import IOQueue
+from .engine.job_queue import JobQueue
 from .engine.llm_config import LLMConfigLoader
 
 
@@ -27,8 +28,9 @@ class AppContext:
 
     registry: WorkflowRegistry
     executor_registry: ExecutorRegistry
-    checkpoint_store: CheckpointStore
     llm_config_loader: LLMConfigLoader
+    io_queue: IOQueue | None  # Optional IO queue for serialized file operations
+    job_queue: JobQueue | None = None  # Optional job queue for async execution
     max_recursion_depth: int = 50  # Default recursion depth limit
 
     def create_execution_context(self) -> ExecutionContext:
@@ -40,8 +42,8 @@ class AppContext:
         return ExecutionContext(
             workflow_registry=self.registry,
             executor_registry=self.executor_registry,
-            checkpoint_store=self.checkpoint_store,
             llm_config_loader=self.llm_config_loader,
+            io_queue=self.io_queue,
             parent=None,
             workflow_stack=[],
             max_recursion_depth=self.max_recursion_depth,

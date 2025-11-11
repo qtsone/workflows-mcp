@@ -23,12 +23,11 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Literal, cast
 
-from .checkpoint import CheckpointConfig, CheckpointState
 from .context_vars import block_custom_outputs
 from .exceptions import ExecutionPaused, RecursionDepthExceededError
 from .execution import Execution
 from .execution_context import ExecutionContext
-from .execution_result import ExecutionResult
+from .execution_result import ExecutionResult, ExecutionState
 from .metadata import Metadata
 from .orchestrator import BlockOrchestrator
 from .schema import BlockDefinition, DependencySpec, WorkflowSchema
@@ -49,29 +48,13 @@ class WorkflowRunner:
     - Cleaner separation of concerns
 
     Usage:
-        runner = WorkflowRunner(checkpoint_config)
+        runner = WorkflowRunner()
         result = await runner.execute(workflow, inputs, context)
         response_dict = result.to_response(response_format="detailed")
     """
 
-    def __init__(
-        self,
-        checkpoint_config: CheckpointConfig | None = None,
-    ) -> None:
-        """
-        Initialize workflow runner.
-
-        Args:
-            checkpoint_config: Optional checkpoint configuration.
-                If None, checkpointing is disabled (default for nested workflows and MCP tools).
-                Pass CheckpointConfig() explicitly to enable checkpointing.
-        """
-        # Fix: When None is passed, disable checkpointing instead of using defaults
-        # This ensures nested workflows don't create checkpoints (executors_workflow.py:145)
-        self.checkpoint_config = (
-            checkpoint_config if checkpoint_config is not None else CheckpointConfig(enabled=False)
-        )
-
+    def __init__(self) -> None:
+        """Initialize workflow runner."""
         # Initialize secret management components
         self.secret_provider = EnvVarSecretProvider()
         self.secret_redactor = SecretRedactor(self.secret_provider)
@@ -135,11 +118,15 @@ class WorkflowRunner:
             return ExecutionResult.success(execution, self.secret_redactor)
 
         except ExecutionPaused as e:
-            # Workflow paused - execution context in exception (scratch preserved in checkpoint)
+            # Workflow paused - extract execution state (unified Job architecture)
+            execution_state = e.checkpoint_data.get("execution_state")
+            if not execution_state:
+                raise RuntimeError("ExecutionPaused missing execution_state - invalid pause")
+
             return ExecutionResult.paused(
-                checkpoint_id=e.checkpoint_data.get("checkpoint_id", ""),
                 prompt=e.prompt,
                 execution=e.execution,
+                execution_state=execution_state,
                 pause_metadata=e.checkpoint_data,
                 secret_redactor=self.secret_redactor,
             )
@@ -214,11 +201,15 @@ class WorkflowRunner:
             return ExecutionResult.failure(str(e), minimal_execution, self.secret_redactor)
 
         except ExecutionPaused as e:
-            # Workflow paused again
+            # Workflow paused again - extract execution state
+            execution_state = e.checkpoint_data.get("execution_state")
+            if not execution_state:
+                raise RuntimeError("ExecutionPaused missing execution_state - invalid pause")
+
             return ExecutionResult.paused(
-                checkpoint_id=e.checkpoint_data.get("checkpoint_id", ""),
                 prompt=e.prompt,
                 execution=e.execution,
+                execution_state=execution_state,
                 pause_metadata=e.checkpoint_data,
                 secret_redactor=self.secret_redactor,
             )
@@ -234,6 +225,223 @@ class WorkflowRunner:
             return ExecutionResult.failure(
                 f"Unexpected error: {e}", minimal_execution, self.secret_redactor
             )
+
+    async def resume_from_state(
+        self,
+        execution_state: "ExecutionState",
+        response: str,
+        context: ExecutionContext,
+    ) -> ExecutionResult:
+        """
+        Resume workflow from ExecutionState (unified Job architecture).
+
+        This is the new unified resume method that works with ExecutionState
+        embedded in Job.result, replacing the checkpoint-based resume system.
+
+        Args:
+            execution_state: ExecutionState containing all runtime state
+            response: LLM response for paused workflows
+            context: Execution context
+
+        Returns:
+            ExecutionResult with resumed execution
+
+        Raises:
+            ValueError: If workflow not found or invalid state
+        """
+        try:
+            # Get workflow from registry
+            workflow = context.get_workflow(execution_state.workflow_name)
+            if not workflow:
+                raise ValueError(f"Workflow not found: {execution_state.workflow_name}")
+
+            # Reconstruct workflow blocks from block_definitions
+            from .schema import BlockDefinition
+
+            blocks = [
+                BlockDefinition.model_validate(bd)
+                for bd in execution_state.block_definitions.values()
+            ]
+            # Update workflow schema with blocks (necessary if workflow was modified)
+            workflow.blocks = blocks
+
+            # Call internal resume with execution state
+            execution = await self._resume_from_execution_state(
+                workflow=workflow,
+                execution_state=execution_state,
+                response=response,
+                context=context,
+            )
+
+            # Success - wrap in ExecutionResult
+            return ExecutionResult.success(execution, self.secret_redactor)
+
+        except ExecutionPaused as e:
+            # Workflow paused again - extract execution state
+            execution_state_new = e.checkpoint_data.get("execution_state")
+            if not execution_state_new:
+                raise RuntimeError("ExecutionPaused missing execution_state - invalid pause")
+
+            return ExecutionResult.paused(
+                prompt=e.prompt,
+                execution=e.execution,
+                execution_state=execution_state_new,
+                pause_metadata=e.checkpoint_data,
+                secret_redactor=self.secret_redactor,
+            )
+
+        except Exception as e:
+            # Catch-all for unexpected exceptions
+            logger.exception("Unexpected error during workflow resume from state: %s", e)
+            minimal_execution = Execution(
+                inputs={},
+                metadata=None,
+                blocks={},
+            )
+            return ExecutionResult.failure(
+                f"Unexpected error: {e}", minimal_execution, self.secret_redactor
+            )
+
+    async def _resume_from_execution_state(
+        self,
+        workflow: WorkflowSchema,
+        execution_state: "ExecutionState",
+        response: str,
+        context: ExecutionContext,
+    ) -> Execution:
+        """
+        Resume workflow from ExecutionState (internal implementation).
+
+        Similar to _resume_workflow_internal but works with ExecutionState
+        instead of CheckpointState.
+
+        Args:
+            workflow: Workflow schema
+            execution_state: ExecutionState with runtime state
+            response: LLM response
+            context: Execution context
+
+        Returns:
+            Execution with resumed workflow state
+        """
+        start_time = time.time()
+
+        # Initialize secret audit log
+        self.secret_audit_log = SecretAuditLog()
+        await self.secret_redactor.initialize()
+
+        # Restore execution context from ExecutionState
+        exec_context = execution_state.context
+        completed_blocks = execution_state.completed_blocks.copy()
+        current_wave_index = execution_state.current_wave_index
+        execution_waves = execution_state.execution_waves
+        paused_block_id = execution_state.paused_block_id
+
+        # Resume paused block with response
+        try:
+            block_id = paused_block_id
+            block_definition_dict = execution_state.block_definitions.get(block_id)
+            if not block_definition_dict:
+                raise ValueError(f"Block definition not found for paused block: {block_id}")
+
+            from .schema import BlockDefinition
+
+            block_definition = BlockDefinition.model_validate(block_definition_dict)
+
+            # Get executor for this block type
+            executor = context.executor_registry.get(block_definition.type)
+            if not executor:
+                raise ValueError(f"Executor not found for block type: {block_definition.type}")
+
+            # Create variable resolver to resolve block inputs
+            context_dict = self._execution_to_dict(exec_context)
+            resolver = VariableResolver(
+                context_dict,
+                secret_provider=self.secret_provider,
+                secret_audit_log=self.secret_audit_log,
+            )
+
+            # Resolve block inputs (from execution state context)
+            resolved_inputs: dict[str, Any] = await resolver.resolve_async(
+                block_definition.inputs
+            )
+            block_inputs = executor.input_type(**resolved_inputs)
+
+            # Get pause metadata from execution state
+            pause_metadata = execution_state.pause_metadata or {}
+
+            # Execute resume on block
+            block_execution = await self.orchestrator.resume_block(
+                id=block_id,
+                executor=executor,
+                inputs=block_inputs,
+                context=exec_context,
+                response=response,
+                pause_metadata=pause_metadata,
+            )
+
+            # Store result using set_block_result (like regular block execution)
+            exec_context.set_block_result(
+                block_id=block_id,
+                inputs=resolved_inputs,
+                outputs=block_execution.output.model_dump() if block_execution.output else {},
+                metadata=block_execution.metadata,
+            )
+
+            # Mark block as completed
+            if block_id not in completed_blocks:
+                completed_blocks.append(block_id)
+
+        except ExecutionPaused as e:
+            # Block paused again - create execution state and re-raise
+            new_execution_state = self._create_execution_state(
+                workflow=workflow,
+                runtime_inputs=execution_state.runtime_inputs,
+                context=context,
+                exec_context=exec_context,
+                completed_blocks=completed_blocks,
+                current_wave_index=current_wave_index,
+                execution_waves=execution_waves,
+                pause_exception=e,
+            )
+
+            raise ExecutionPaused(
+                prompt=e.prompt,
+                checkpoint_data={
+                    **e.checkpoint_data,
+                    "execution_state": new_execution_state,
+                    "workflow_name": workflow.name,
+                },
+                execution=e.execution,
+            )
+
+        # Continue executing remaining waves
+        try:
+            await self._execute_waves_from(
+                start_wave_index=current_wave_index + 1,
+                execution_waves=execution_waves,
+                workflow=workflow,
+                runtime_inputs=execution_state.runtime_inputs,
+                context=context,
+                exec_context=exec_context,
+                completed_blocks=completed_blocks,
+            )
+        except ExecutionPaused:
+            # Pause bubbles up naturally
+            raise
+        except Exception:
+            # Finalize partial execution before re-raising
+            await self._finalize_execution_context(
+                workflow, exec_context, completed_blocks, execution_waves, start_time
+            )
+            raise
+
+        # Finalize execution
+        await self._finalize_execution_context(
+            workflow, exec_context, completed_blocks, execution_waves, start_time
+        )
+
+        return exec_context
 
     async def _execute_workflow_internal(
         self,
@@ -353,54 +561,34 @@ class WorkflowRunner:
                 )
                 completed_blocks.extend(executed_blocks)
 
-                # Checkpoint after wave (crash recovery)
-                if (
-                    context
-                    and self.checkpoint_config.enabled
-                    and self.checkpoint_config.checkpoint_every_wave
-                ):
-                    await self._save_checkpoint(
-                        workflow=workflow,
-                        runtime_inputs=runtime_inputs,
-                        context=context,
-                        exec_context=exec_context,
-                        completed_blocks=completed_blocks,
-                        current_wave_index=wave_idx,
-                        execution_waves=execution_waves,
-                    )
-
         except RecursionDepthExceededError:
             # Recursion depth exceeded - bubble up immediately without checkpointing
             raise
 
         except ExecutionPaused as e:
             # Workflow paused during wave execution
-            # Save ONE checkpoint with pause metadata
-            if context:
-                checkpoint_id = await self._save_checkpoint(
-                    workflow=workflow,
-                    runtime_inputs=runtime_inputs,
-                    context=context,
-                    exec_context=exec_context,
-                    completed_blocks=completed_blocks,
-                    current_wave_index=wave_idx,
-                    execution_waves=execution_waves,
-                    pause_exception=e,
-                )
+            # Create execution state (unified Job architecture - no checkpoint save)
+            execution_state = self._create_execution_state(
+                workflow=workflow,
+                runtime_inputs=runtime_inputs,
+                context=context,
+                exec_context=exec_context,
+                completed_blocks=completed_blocks,
+                current_wave_index=wave_idx,
+                execution_waves=execution_waves,
+                pause_exception=e,
+            )
 
-                # Update exception with saved checkpoint_id and workflow_name, then re-raise
-                raise ExecutionPaused(
-                    prompt=e.prompt,
-                    checkpoint_data={
-                        **e.checkpoint_data,
-                        "checkpoint_id": checkpoint_id,
-                        "workflow_name": workflow.name,
-                    },
-                    execution=e.execution,
-                )
-            else:
-                # No checkpoint store available - re-raise without checkpoint
-                raise
+            # Update exception with execution_state and workflow_name, then re-raise
+            raise ExecutionPaused(
+                prompt=e.prompt,
+                checkpoint_data={
+                    **e.checkpoint_data,
+                    "execution_state": execution_state,
+                    "workflow_name": workflow.name,
+                },
+                execution=e.execution,
+            )
 
     async def _execute_wave(
         self,
@@ -1046,47 +1234,51 @@ class WorkflowRunner:
 
         return outputs
 
-    async def _save_checkpoint(
+    def _create_execution_state(
         self,
         workflow: WorkflowSchema,
         runtime_inputs: dict[str, Any],
-        context: ExecutionContext,
+        context: ExecutionContext | None,
         exec_context: Execution,
         completed_blocks: list[str],
         current_wave_index: int,
         execution_waves: list[list[str]],
         pause_exception: ExecutionPaused | None = None,
-    ) -> str:
-        """Save workflow checkpoint for crash recovery or pause/resume."""
-        # Generate checkpoint ID
-        prefix = "pause" if pause_exception else "chk"
-        timestamp = int(time.time() * 1000)
-        checkpoint_id = f"{prefix}_{workflow.name}_{timestamp}_{uuid.uuid4().hex[:8]}"
+    ) -> "ExecutionState":
+        """
+        Package runtime execution state for resume (unified Job architecture).
 
-        # Extract workflow stack
-        workflow_stack = context.workflow_stack
+        This creates an ExecutionState containing all information needed to
+        resume workflow execution from a pause point. Replaces checkpoint saving.
+
+        Args:
+            workflow: Workflow schema
+            runtime_inputs: Original workflow inputs
+            context: Execution context (None for top-level workflows)
+            exec_context: Current execution state
+            completed_blocks: List of completed block IDs
+            current_wave_index: Current wave index in DAG
+            execution_waves: Full DAG wave structure
+            pause_exception: Optional pause exception with metadata
+
+        Returns:
+            ExecutionState ready for serialization in Job.result
+        """
+        # Extract workflow stack (empty for top-level workflows)
+        workflow_stack = context.workflow_stack if context else []
+        stack_list = [{"name": wf} for wf in workflow_stack]
 
         # Convert workflow blocks to dict
         block_definitions = {block.id: block.model_dump() for block in workflow.blocks}
 
-        # Extract pause metadata
-        paused_block_id = None
-        pause_prompt = None
+        # Extract paused block ID and metadata from exception
+        paused_block_id = ""
         pause_metadata = None
-
         if pause_exception:
-            paused_block_id = pause_exception.checkpoint_data.get("paused_block_id")
-            pause_prompt = pause_exception.prompt
+            paused_block_id = pause_exception.checkpoint_data.get("paused_block_id", "")
             pause_metadata = pause_exception.checkpoint_data
 
-        # Create checkpoint state
-        stack_list = [{"name": wf} for wf in workflow_stack]
-
-        checkpoint_state = CheckpointState(
-            checkpoint_id=checkpoint_id,
-            workflow_name=workflow.name,
-            created_at=time.time(),
-            runtime_inputs=runtime_inputs,
+        return ExecutionState(
             context=exec_context,
             completed_blocks=completed_blocks.copy(),
             current_wave_index=current_wave_index,
@@ -1094,201 +1286,57 @@ class WorkflowRunner:
             block_definitions=block_definitions,
             workflow_stack=stack_list,
             paused_block_id=paused_block_id,
-            pause_prompt=pause_prompt,
+            workflow_name=workflow.name,
+            runtime_inputs=runtime_inputs,
             pause_metadata=pause_metadata,
         )
 
-        # Save checkpoint
-        await context.checkpoint_store.save_checkpoint(checkpoint_state)
+    @staticmethod
+    def _extract_execution_state(job_result: dict[str, Any]) -> "ExecutionState":
+        """
+        Extract ExecutionState from Job.result dict (unified Job architecture).
 
-        logger.info(
-            f"Saved {'pause ' if pause_exception else ''}checkpoint '{checkpoint_id}' "
-            f"for workflow '{workflow.name}' at wave {current_wave_index}"
-        )
+        Reconstructs ExecutionState from the serialized format stored in Job.result
+        when a workflow pauses. This is the inverse of ExecutionState serialization
+        in ExecutionResult._build_debug_data().
 
-        return checkpoint_id
+        Args:
+            job_result: Job.result dict containing execution_state
 
-    async def _resume_workflow_internal(
-        self,
-        checkpoint_id: str,
-        response: str,
-        context: ExecutionContext,
-    ) -> Execution:
-        """Resume workflow from checkpoint."""
-        # Load checkpoint
-        checkpoint = await context.checkpoint_store.load_checkpoint(checkpoint_id)
-        if checkpoint is None:
-            raise ValueError(f"Checkpoint not found: {checkpoint_id}")
+        Returns:
+            ExecutionState ready for resume
 
-        # Get workflow
-        workflow = context.get_workflow(checkpoint.workflow_name)
-        if workflow is None:
-            raise ValueError(f"Workflow not found: {checkpoint.workflow_name}")
+        Raises:
+            ValueError: If execution_state missing or invalid format
+        """
+        # Extract execution_state from job result
+        execution_state_dict = job_result.get("execution_state")
+        if not execution_state_dict:
+            raise ValueError(
+                "Job result missing 'execution_state' field - cannot resume paused workflow"
+            )
 
-        # Restore execution context
-        exec_context = checkpoint.context
-        workflow_stack = [ws.get("name", "") for ws in checkpoint.workflow_stack]
-        exec_context.set_execution_context(context)
-        exec_context._internal.workflow_stack = workflow_stack
+        # Reconstruct Execution context from dict
+        from .execution import Execution
 
-        # Recreate scratch directory if it doesn't exist (may have been cleaned up)
-        scratch_dir = exec_context.scratch_dir
-        if scratch_dir and not scratch_dir.exists():
-            scratch_dir.mkdir(parents=True, exist_ok=True, mode=0o700)
-            logger.debug(f"Recreated scratch directory on resume: {scratch_dir}")
+        context_dict = execution_state_dict.get("context")
+        if not context_dict:
+            raise ValueError("Execution state missing 'context' field")
 
-        # Resume paused block if needed
-        completed_blocks = checkpoint.completed_blocks.copy()
-        if checkpoint.paused_block_id:
-            paused_block_id = checkpoint.paused_block_id
+        exec_context = Execution.model_validate(context_dict)
 
-            # Get block definition
-            if paused_block_id not in checkpoint.block_definitions:
-                raise ValueError(f"Paused block not found: {paused_block_id}")
-            block_def = BlockDefinition(**checkpoint.block_definitions[paused_block_id])
-
-            try:
-                # Resume paused block
-                await self._resume_paused_block(
-                    block_id=paused_block_id,
-                    block_def=block_def,
-                    exec_context=exec_context,
-                    response=response,
-                    pause_metadata=checkpoint.pause_metadata or {},
-                    wave_idx=checkpoint.current_wave_index,
-                    execution_order=len(completed_blocks),
-                )
-
-                # Verify resumed block succeeded (ADR-009: status is now a string)
-                resumed_block_metadata = exec_context.get_block_metadata(paused_block_id)
-                if resumed_block_metadata and resumed_block_metadata.failed:
-                    error_msg = f"Failed to resume block '{paused_block_id}'"
-                    error_detail = resumed_block_metadata.message
-                    raise ValueError(f"{error_msg}: {error_detail}")
-
-                completed_blocks.append(paused_block_id)
-
-            except ExecutionPaused as e:
-                # Block paused again during resume - save checkpoint and re-raise
-                if context:
-                    checkpoint_id = await self._save_checkpoint(
-                        workflow=workflow,
-                        runtime_inputs=checkpoint.runtime_inputs,
-                        context=context,
-                        exec_context=exec_context,
-                        completed_blocks=completed_blocks,
-                        current_wave_index=checkpoint.current_wave_index,
-                        execution_waves=checkpoint.execution_waves,
-                        pause_exception=e,
-                    )
-
-                    # Update exception with saved checkpoint_id and workflow_name, then re-raise
-                    raise ExecutionPaused(
-                        prompt=e.prompt,
-                        checkpoint_data={
-                            **e.checkpoint_data,
-                            "checkpoint_id": checkpoint_id,
-                            "workflow_name": workflow.name,
-                        },
-                        execution=e.execution,
-                    )
-                else:
-                    # No checkpoint store available - re-raise without checkpoint
-                    raise
-
-        # Execute remaining waves
-        await self._execute_waves_from(
-            start_wave_index=checkpoint.current_wave_index + 1,
-            execution_waves=checkpoint.execution_waves,
-            workflow=workflow,
-            runtime_inputs=checkpoint.runtime_inputs,
-            context=context,
-            exec_context=exec_context,
-            completed_blocks=completed_blocks,
-        )
-
-        # Finalize context
-        await self._finalize_execution_context(
-            workflow, exec_context, completed_blocks, checkpoint.execution_waves
-        )
-
-        return exec_context
-
-    async def _resume_paused_block(
-        self,
-        block_id: str,
-        block_def: BlockDefinition,
-        exec_context: Execution,
-        response: str,
-        pause_metadata: dict[str, Any],
-        wave_idx: int,
-        execution_order: int,
-    ) -> None:
-        """Resume a paused block execution."""
-        # Get execution context
-        context = exec_context.execution_context
-        if context is None:
-            raise RuntimeError("ExecutionContext not found in Execution._internal")
-
-        # Resolve inputs (async for secrets support)
-        resolved_inputs = await self._resolve_block_inputs(block_def.inputs, exec_context)
-
-        # Get executor
-        executor = context.executor_registry.get(block_def.type)
-
-        # Create input model
-        input_model = executor.input_type(**resolved_inputs)
-
-        # Resume via orchestrator
-        block_execution = await self.orchestrator.resume_block(
-            id=block_id,  # Pass block ID to orchestrator
-            executor=executor,
-            inputs=input_model,
+        # Reconstruct ExecutionState
+        return ExecutionState(
             context=exec_context,
-            response=response,
-            pause_metadata=pause_metadata,
-            wave=wave_idx,
-            execution_order=execution_order,
-            depth=exec_context.depth,
+            completed_blocks=execution_state_dict.get("completed_blocks", []),
+            current_wave_index=execution_state_dict.get("current_wave_index", 0),
+            execution_waves=execution_state_dict.get("execution_waves", []),
+            block_definitions=execution_state_dict.get("block_definitions", {}),
+            workflow_stack=execution_state_dict.get("workflow_stack", []),
+            paused_block_id=execution_state_dict.get("paused_block_id", ""),
+            workflow_name=execution_state_dict.get("workflow_name", ""),
+            runtime_inputs=execution_state_dict.get("runtime_inputs", {}),
         )
-
-        # Handle pause (block paused again)
-        if block_execution.paused:
-            pause_data = block_execution.pause_checkpoint_data or {}
-            pause_data["paused_block_id"] = block_id
-
-            raise ExecutionPaused(
-                prompt=block_execution.pause_prompt or "Execution paused",
-                checkpoint_data=pause_data,
-                execution=exec_context,
-            )
-
-        # Store result
-        if block_def.type == "Workflow":
-            if block_execution.output is None:
-                exec_context.blocks[block_id] = Execution(
-                    inputs=resolved_inputs,
-                    outputs={},
-                    metadata=block_execution.metadata,
-                    blocks={},
-                )
-            else:
-                assert isinstance(block_execution.output, Execution)
-                child_exec = block_execution.output
-                exec_context.blocks[block_id] = Execution(
-                    inputs=resolved_inputs,
-                    outputs=child_exec.outputs,
-                    metadata=block_execution.metadata,
-                    blocks=child_exec.blocks,
-                    depth=child_exec.depth,  # Preserve recursion depth
-                )
-        else:
-            exec_context.set_block_result(
-                block_id=block_id,
-                inputs=resolved_inputs,
-                outputs=block_execution.output.model_dump() if block_execution.output else {},
-                metadata=block_execution.metadata,
-            )
 
 
 __all__ = ["WorkflowRunner"]
