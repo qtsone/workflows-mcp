@@ -316,9 +316,7 @@ class WorkflowExecutor(BlockExecutor):
             # Child paused again - extract execution state and re-raise
             child_execution_state_new = child_execution_result.execution_state
             if not child_execution_state_new:
-                raise RuntimeError(
-                    "Paused child workflow missing execution_state - invalid pause"
-                )
+                raise RuntimeError("Paused child workflow missing execution_state - invalid pause")
 
             raise ExecutionPaused(
                 prompt=child_execution_result.pause_data.prompt

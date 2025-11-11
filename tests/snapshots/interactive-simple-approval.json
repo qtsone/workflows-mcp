@@ -1,6 +1,6 @@
 {
-  "checkpoint_id": "CHECKPOINT_ID",
-  "message": "Use resume_workflow(checkpoint_id: \"CHECKPOINT_ID\", response: \"<your-response>\") to continue",
+  "job_id": "job_f740858d",
+  "message": "Workflow paused. Use resume_workflow(job_id='job_f740858d') to continue.",
   "prompt": "Proceed with operation?",
   "status": "paused"
 }

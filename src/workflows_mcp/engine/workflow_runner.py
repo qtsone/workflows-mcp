@@ -303,9 +303,7 @@ class WorkflowRunner:
             )
 
             # Resolve block inputs (from execution state context)
-            resolved_inputs: dict[str, Any] = await resolver.resolve_async(
-                block_definition.inputs
-            )
+            resolved_inputs: dict[str, Any] = await resolver.resolve_async(block_definition.inputs)
             block_inputs = executor.input_type(**resolved_inputs)
 
             # Get pause metadata from execution state

@@ -605,9 +605,7 @@ class TestInteractiveWorkflows:
             # Verify paused state
             assert response["status"] == "paused", "Workflow should pause at Prompt block"
             assert "job_id" in response, "Should return job ID"
-            assert response["job_id"].startswith("job_"), (
-                "Job ID should have job_ prefix"
-            )
+            assert response["job_id"].startswith("job_"), "Job ID should have job_ prefix"
 
             # Verify prompt information is included
             assert "prompt" in response, "Should include prompt message"
@@ -861,9 +859,7 @@ class TestInteractiveWorkflows:
             job_id = exec_response["job_id"]
 
             # List paused jobs
-            list_result = await mcp_client.call_tool(
-                "list_jobs", arguments={"status": "paused"}
-            )
+            list_result = await mcp_client.call_tool("list_jobs", arguments={"status": "paused"})
 
             list_content = list_result.content[0]
             if not isinstance(list_content, TextContent):
@@ -928,9 +924,7 @@ class TestInteractiveWorkflows:
             assert status_before_data["status"] == "paused", "Job should be paused"
 
             # Cancel the paused job
-            cancel_result = await mcp_client.call_tool(
-                "cancel_job", arguments={"job_id": job_id}
-            )
+            cancel_result = await mcp_client.call_tool("cancel_job", arguments={"job_id": job_id})
 
             cancel_content = cancel_result.content[0]
             if not isinstance(cancel_content, TextContent):
@@ -981,6 +975,7 @@ class TestQualityAssurance:
             assert result["logfile"].startswith("/tmp/")
         elif result["status"] == "failure":
             assert "error" in result
+
     # Error message quality tests
 
     @pytest.mark.asyncio
