@@ -68,10 +68,9 @@ class TestLLMCallExecutor:
 
             assert isinstance(result, LLMCallOutput)
             assert result.success is True
-            assert result.response == "The answer is 4."
+            assert result.response == {"content": "The answer is 4."}
             assert result.metadata["attempts"] == 1
-            assert result.metadata["validation_passed"] is True
-            assert result.response_json == {}  # No JSON in plain text response
+            assert "validation_failed" not in result.metadata  # No schema requested
             assert result.metadata["model"] == "gpt-4o"
             assert result.metadata["usage"]["total_tokens"] == 15
 
@@ -107,7 +106,7 @@ class TestLLMCallExecutor:
             result = await executor.execute(inputs, mock_context)
 
             assert result.success is True
-            assert result.response == "Hello! How can I help you today?"
+            assert result.response == {"content": "Hello! How can I help you today?"}
             assert result.metadata["attempts"] == 1
             assert result.metadata["model"] == "claude-3-5-sonnet-20241022"
 
@@ -146,7 +145,7 @@ class TestLLMCallExecutor:
             result = await executor.execute(inputs, mock_context)
 
             assert result.success is True
-            assert "Quantum computing" in result.response
+            assert "Quantum computing" in result.response["content"]
             assert result.metadata["attempts"] == 1
 
     @pytest.mark.asyncio
@@ -179,7 +178,7 @@ class TestLLMCallExecutor:
             result = await executor.execute(inputs, mock_context)
 
             assert result.success is True
-            assert result.response == "Hello! How are you?"
+            assert result.response == {"content": "Hello! How are you?"}
             assert result.metadata["attempts"] == 1
 
     @pytest.mark.asyncio
@@ -227,15 +226,14 @@ class TestLLMCallExecutor:
             result = await executor.execute(inputs, mock_context)
 
             assert result.success is True
-            assert result.metadata["validation_passed"] is True
-            assert result.response_json is not None
-            assert result.response_json["answer"] == "4"
-            assert result.response_json["confidence"] == 0.99
+            assert "validation_failed" not in result.metadata
+            assert result.response["answer"] == "4"
+            assert result.response["confidence"] == 0.99
             assert result.metadata["attempts"] == 1
 
     @pytest.mark.asyncio
     async def test_schema_validation_retry(self, executor, mock_context):
-        """Test schema validation retry with feedback loop."""
+        """Test schema validation retry with feedback loop (Anthropic, no native schema)."""
         schema = {
             "type": "object",
             "required": ["answer"],
@@ -243,10 +241,10 @@ class TestLLMCallExecutor:
         }
 
         inputs = LLMCallInput(
-            provider="openai",
-            model="gpt-4o",
+            provider="anthropic",
+            model="claude-3-5-sonnet-20241022",
             prompt="What is 2+2?",
-            api_key="sk-test-key",
+            api_key="sk-ant-test",
             response_schema=schema,
             max_retries=2,
             retry_delay=0.1,  # Fast retry for testing
@@ -267,17 +265,12 @@ class TestLLMCallExecutor:
             response = Mock()
             response.status_code = 200
             response.json.return_value = {
-                "choices": [
-                    {
-                        "message": {"content": responses[call_count]},
-                        "finish_reason": "stop",
-                    }
-                ],
-                "model": "gpt-4o",
+                "content": [{"text": responses[call_count]}],
+                "model": "claude-3-5-sonnet-20241022",
+                "stop_reason": "end_turn",
                 "usage": {
-                    "prompt_tokens": 10,
-                    "completion_tokens": 5,
-                    "total_tokens": 15,
+                    "input_tokens": 10,
+                    "output_tokens": 5,
                 },
             }
             call_count += 1
@@ -289,13 +282,13 @@ class TestLLMCallExecutor:
             result = await executor.execute(inputs, mock_context)
 
             assert result.success is True
-            assert result.metadata["validation_passed"] is True
+            assert "validation_failed" not in result.metadata
             assert result.metadata["attempts"] == 2
-            assert result.response_json["answer"] == "4"
+            assert result.response["answer"] == "4"
 
     @pytest.mark.asyncio
     async def test_schema_validation_failure_exhausted_retries(self, executor, mock_context):
-        """Test schema validation failure after all retries exhausted."""
+        """Test schema validation failure after all retries exhausted (Anthropic)."""
         schema = {
             "type": "object",
             "required": ["answer"],
@@ -303,10 +296,10 @@ class TestLLMCallExecutor:
         }
 
         inputs = LLMCallInput(
-            provider="openai",
-            model="gpt-4o",
+            provider="anthropic",
+            model="claude-3-5-sonnet-20241022",
             prompt="What is 2+2?",
-            api_key="sk-test-key",
+            api_key="sk-ant-test",
             response_schema=schema,
             max_retries=2,
             retry_delay=0.1,
@@ -317,14 +310,10 @@ class TestLLMCallExecutor:
         mock_response = Mock()
         mock_response.status_code = 200
         mock_response.json.return_value = {
-            "choices": [
-                {
-                    "message": {"content": "This is not JSON"},
-                    "finish_reason": "stop",
-                }
-            ],
-            "model": "gpt-4o",
-            "usage": {"prompt_tokens": 10, "completion_tokens": 5, "total_tokens": 15},
+            "content": [{"text": "This is not JSON"}],
+            "model": "claude-3-5-sonnet-20241022",
+            "stop_reason": "end_turn",
+            "usage": {"input_tokens": 10, "output_tokens": 5},
         }
 
         with patch("httpx.AsyncClient") as mock_client:
@@ -334,11 +323,12 @@ class TestLLMCallExecutor:
 
             result = await executor.execute(inputs, mock_context)
 
-            assert result.success is False
-            assert result.metadata["validation_passed"] is False
-            assert result.response_json == {}  # Empty dict on validation failure
+            # API call succeeded, but validation failed
+            assert result.success is True
+            assert result.metadata.get("validation_failed") is True
+            assert result.response == {"content": "This is not JSON"}
             assert result.metadata["attempts"] == 2
-            assert "validation_error" in result.metadata  # Should have error message
+            assert "validation_error" in result.metadata
 
     @pytest.mark.asyncio
     async def test_retry_on_timeout(self, executor, mock_context):
@@ -386,7 +376,7 @@ class TestLLMCallExecutor:
             result = await executor.execute(inputs, mock_context)
 
             assert result.success is True
-            assert result.response == "Success!"
+            assert result.response == {"content": "Success!"}
             assert result.metadata["attempts"] == 3
 
     @pytest.mark.asyncio
@@ -461,7 +451,7 @@ class TestLLMCallExecutor:
             result = await executor.execute(inputs, mock_context)
 
             assert result.success is True
-            assert result.response == "Success after retry!"
+            assert result.response == {"content": "Success after retry!"}
             assert result.metadata["attempts"] == 2
 
     @pytest.mark.asyncio

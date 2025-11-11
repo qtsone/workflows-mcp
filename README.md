@@ -845,7 +845,7 @@ blocks:
 
 outputs:
   analysis:
-    value: "{{blocks.analyze.outputs.response_json}}"
+    value: "{{blocks.analyze.outputs.response}}"
     type: dict
 ```
 
