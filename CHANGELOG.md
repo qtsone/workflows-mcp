@@ -2,6 +2,16 @@
 
 All notable changes to this project will be documented in this file.
 
+# [6.5.0](https://github.com/qtsone/workflows-mcp/compare/v6.4.0...v6.5.0) (2025-11-12)
+
+
+### Features
+
+* **engine:** add comprehensive interpolation support for EditFile operations ([f3b890e](https://github.com/qtsone/workflows-mcp/commit/f3b890e0763462f635dc345b28e74df313038461))
+* **engine:** add EditFile block for deterministic file editing ([029a188](https://github.com/qtsone/workflows-mcp/commit/029a188db281a13919ea83b547148fe9993e2d7c))
+* **engine:** add EditFile block for deterministic file editing ([#28](https://github.com/qtsone/workflows-mcp/issues/28)) ([0b64c3a](https://github.com/qtsone/workflows-mcp/commit/0b64c3ad88a3308fdb89201f0f81985e5562fc75))
+* **tests:** enhance variable resolution test suite with comprehensive validation ([bb048f2](https://github.com/qtsone/workflows-mcp/commit/bb048f280a3816b06c3f3b0e5c7a158cd3941de2))
+
 # [6.4.0](https://github.com/qtsone/workflows-mcp/compare/v6.3.0...v6.4.0) (2025-11-12)
 
 
