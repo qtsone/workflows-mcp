@@ -1,0 +1,217 @@
+# EditFile Interpolation Test Workflow
+#
+# Tests that ALL EditFile operation fields support variable interpolation:
+# - old_text, new_text (replace_text)
+# - content (insert_lines)
+# - pattern, replacement (regex_replace)
+# - line_start, line_end (delete_lines)
+#
+# This validates the automatic nested structure resolution in VariableResolver.
+
+name: editfile-interpolation-test
+description: Test EditFile operation field interpolation support
+tags: [test, editfile, interpolation]
+
+inputs:
+  test_dir:
+    type: str
+    description: Test directory path
+    default: "/tmp/editfile-interpolation-test"
+  # String inputs for operation field interpolation
+  search_text:
+    type: str
+    description: Text to search for
+    default: "PLACEHOLDER"
+  replace_text:
+    type: str
+    description: Replacement text
+    default: "INTERPOLATED"
+  insert_content:
+    type: str
+    description: Content to insert
+    default: "# Interpolated header"
+  regex_pattern:
+    type: str
+    description: Regex pattern
+    default: 'print\("([^"]+)"\)'
+  regex_replacement:
+    type: str
+    description: Regex replacement
+    default: 'logger.info("\1")'
+  # Numeric inputs for line operations
+  delete_start:
+    type: num
+    description: Delete start line
+    default: 5
+  delete_end:
+    type: num
+    description: Delete end line
+    default: 6
+
+blocks:
+  # Setup: Create test file with placeholder content
+  - id: create_test_file
+    type: CreateFile
+    inputs:
+      path: "{{inputs.test_dir}}/test.py"
+      content: |
+        def test():
+            value = "PLACEHOLDER"
+            print("Hello, World!")
+            return value
+
+        # Extra line 1
+        # Extra line 2
+      create_parents: true
+
+  # Test 1: Interpolated replace_text (old_text + new_text)
+  - id: test_replace_text_interpolation
+    type: EditFile
+    inputs:
+      path: "{{inputs.test_dir}}/test.py"
+      operations:
+        - type: replace_text
+          old_text: "{{inputs.search_text}}"
+          new_text: "{{inputs.replace_text}}"
+          count: -1
+      backup: false
+    depends_on: [create_test_file]
+
+  # Test 2: Interpolated insert_lines (content)
+  - id: test_insert_lines_interpolation
+    type: EditFile
+    inputs:
+      path: "{{inputs.test_dir}}/test.py"
+      operations:
+        - type: insert_lines
+          line_start: 1
+          content: "{{inputs.insert_content}}"
+      backup: false
+    depends_on: [test_replace_text_interpolation]
+
+  # Test 3: Interpolated regex_replace (pattern + replacement)
+  - id: test_regex_replace_interpolation
+    type: EditFile
+    inputs:
+      path: "{{inputs.test_dir}}/test.py"
+      operations:
+        - type: regex_replace
+          pattern: "{{inputs.regex_pattern}}"
+          replacement: "{{inputs.regex_replacement}}"
+          flags: []
+      backup: false
+    depends_on: [test_insert_lines_interpolation]
+
+  # Test 4: Interpolated delete_lines (line_start + line_end)
+  - id: test_delete_lines_interpolation
+    type: EditFile
+    inputs:
+      path: "{{inputs.test_dir}}/test.py"
+      operations:
+        - type: delete_lines
+          line_start: "{{inputs.delete_start}}"
+          line_end: "{{inputs.delete_end}}"
+      backup: false
+    depends_on: [test_regex_replace_interpolation]
+
+  # Test 5: Multiple operations with mixed interpolation
+  - id: test_multiple_operations_interpolation
+    type: EditFile
+    inputs:
+      path: "{{inputs.test_dir}}/test.py"
+      operations:
+        # Operation 1: Use variable for old_text
+        - type: replace_text
+          old_text: "{{inputs.replace_text}}"
+          new_text: "FINAL_VALUE"
+          count: 1
+        # Operation 2: Use variable for content
+        - type: insert_lines
+          line_start: 1
+          content: "# Modified by {{inputs.test_dir}}"
+      backup: false
+    depends_on: [test_delete_lines_interpolation]
+
+  # Test 6: Nested variable references (block output interpolation)
+  - id: test_nested_interpolation
+    type: EditFile
+    inputs:
+      path: "{{inputs.test_dir}}/test.py"
+      operations:
+        - type: insert_lines
+          line_start: 1
+          content: |
+            # Test completed successfully: {{blocks.test_replace_text_interpolation.succeeded}}
+            # Lines added: {{blocks.test_insert_lines_interpolation.outputs.lines_added}}
+      backup: false
+    depends_on: [test_multiple_operations_interpolation]
+
+  # Test 7: Store operations as JSON state for interpolation
+  - id: store_operations
+    type: WriteJSONState
+    inputs:
+      path: "{{inputs.test_dir}}/operations.json"
+      data:
+        operations:
+          - type: "replace_text"
+            old_text: "FINAL_VALUE"
+            new_text: "OPERATIONS_INTERPOLATED"
+            count: 1
+    depends_on: [test_nested_interpolation]
+
+  # Test 8: Read operations from state
+  - id: read_operations
+    type: ReadJSONState
+    inputs:
+      path: "{{inputs.test_dir}}/operations.json"
+      required: true
+    depends_on: [store_operations]
+
+  # Test 9: Interpolate entire operations field from state
+  - id: test_operations_interpolation
+    type: EditFile
+    inputs:
+      path: "{{inputs.test_dir}}/test.py"
+      operations: "{{blocks.read_operations.outputs.data.operations}}"
+      backup: false
+    depends_on: [read_operations]
+
+  # Verify final content
+  - id: read_final
+    type: ReadFile
+    inputs:
+      path: "{{inputs.test_dir}}/test.py"
+    depends_on: [test_operations_interpolation]
+
+outputs:
+  final_content:
+    value: "{{blocks.read_final.outputs.content}}"
+    type: str
+    description: "Final file content with all interpolated edits"
+  all_operations_succeeded:
+    value: >
+      {{blocks.test_replace_text_interpolation.succeeded}} and
+      {{blocks.test_insert_lines_interpolation.succeeded}} and
+      {{blocks.test_regex_replace_interpolation.succeeded}} and
+      {{blocks.test_delete_lines_interpolation.succeeded}} and
+      {{blocks.test_multiple_operations_interpolation.succeeded}} and
+      {{blocks.test_nested_interpolation.succeeded}} and
+      {{blocks.test_operations_interpolation.succeeded}}
+    type: bool
+    description: "Whether all interpolation tests succeeded (including operations field)"
+  replace_text_lines_modified:
+    value: "{{blocks.test_replace_text_interpolation.outputs.lines_modified}}"
+    type: num
+    description: "Lines modified by interpolated replace_text"
+  insert_lines_count:
+    value: "{{blocks.test_insert_lines_interpolation.outputs.lines_added}}"
+    type: num
+    description: "Lines added by interpolated insert_lines"
+  delete_lines_count:
+    value: "{{blocks.test_delete_lines_interpolation.outputs.lines_removed}}"
+    type: num
+    description: "Lines removed by interpolated delete_lines"
+  operations_field_interpolation_success:
+    value: "{{blocks.test_operations_interpolation.succeeded}}"
+    type: bool
+    description: "Whether operations field interpolation succeeded"

@@ -46,11 +46,6 @@ class ShellInput(BlockInput):
     env: dict[str, str] = Field(default_factory=dict, description="Environment variables")
     capture_output: bool = Field(default=True, description="Capture stdout/stderr")
     shell: bool = Field(default=True, description="Execute via shell")
-    custom_outputs: dict[str, Any] | None = Field(
-        default=None,
-        description="Custom file-based outputs to read after execution",
-        exclude=True,
-    )
 
     # Validator for numeric field with interpolation support
     _validate_timeout = field_validator("timeout", mode="before")(

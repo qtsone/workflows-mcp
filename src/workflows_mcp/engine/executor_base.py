@@ -353,6 +353,40 @@ class ExecutorRegistry(BaseModel):
                     "type": "string",
                     "description": "Conditional execution expression",
                 },
+                "outputs": {
+                    "type": "object",
+                    "description": "Custom file-based outputs (Shell blocks only)",
+                    "patternProperties": {
+                        ".*": {
+                            "type": "object",
+                            "required": ["type", "path"],
+                            "properties": {
+                                "type": {
+                                    "$ref": "#/$defs/ValueType",
+                                    "description": "Output value type",
+                                },
+                                "path": {
+                                    "type": "string",
+                                    "description": "File path to read (supports $SCRATCH)",
+                                },
+                                "description": {
+                                    "type": "string",
+                                    "description": "Output description",
+                                },
+                                "required": {
+                                    "type": "boolean",
+                                    "default": True,
+                                    "description": "Whether this output is required",
+                                },
+                                "unsafe": {
+                                    "type": "boolean",
+                                    "default": False,
+                                    "description": "Allow absolute paths (default: false)",
+                                },
+                            },
+                        }
+                    },
+                },
             },
             # Add all the type-specific conditionals
             "allOf": type_conditionals,
@@ -592,7 +626,12 @@ def create_default_registry() -> ExecutorRegistry:
             # Test with isolated registry
     """
     from .executors_core import ShellExecutor
-    from .executors_file import CreateFileExecutor, ReadFileExecutor, RenderTemplateExecutor
+    from .executors_file import (
+        CreateFileExecutor,
+        EditFileExecutor,
+        ReadFileExecutor,
+        RenderTemplateExecutor,
+    )
     from .executors_http import HttpCallExecutor
     from .executors_interactive import PromptExecutor
     from .executors_llm import LLMCallExecutor
@@ -611,6 +650,7 @@ def create_default_registry() -> ExecutorRegistry:
 
     # Register file executors
     registry.register(CreateFileExecutor())
+    registry.register(EditFileExecutor())
     registry.register(ReadFileExecutor())
     registry.register(RenderTemplateExecutor())
 

@@ -1,7 +1,11 @@
 {
   "outputs": {
-    "number_result": "42",
-    "string_result": "test_value"
+    "all_passed": true,
+    "bool_valid": true,
+    "env_var_valid": true,
+    "multiple_valid": true,
+    "number_valid": true,
+    "string_valid": true
   },
   "status": "success"
 }

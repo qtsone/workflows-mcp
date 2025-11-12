@@ -150,7 +150,7 @@ Individual tasks within a workflow. Available block types:
 - `Shell` - Run shell commands
 - `LLMCall` - Call AI/LLM APIs
 - `HttpCall` - Make HTTP requests
-- `CreateFile`, `ReadFile`, `RenderTemplate` - File operations
+- `CreateFile`, `ReadFile`, `EditFile`, `RenderTemplate` - File operations
 - `Workflow` - Call other workflows (composition)
 - `Prompt` - Interactive user prompts
 - `ReadJSONState`, `WriteJSONState`, `MergeJSONState` - State management
@@ -269,6 +269,47 @@ Claude: "¡Hola, Alice!"
 ---
 
 ## Key Features
+
+### 📝 Boolean Formatting in Variables
+
+The workflow system formats boolean values intelligently based on context:
+
+**String Interpolation** (Shell commands, file content, HTTP bodies):
+- Booleans format as lowercase `true`/`false` (unquoted)
+- This works correctly for bash, JavaScript, JSON, Ruby, Java, C, Go, Rust, TypeScript, and most other languages
+
+```yaml
+blocks:
+  - id: create_config
+    type: CreateFile
+    inputs:
+      path: "config.json"
+      content: |
+        {"enabled": {{inputs.enabled}}, "debug": {{inputs.debug}}}
+# Results in: {"enabled": true, "debug": false}
+```
+
+**Condition Expressions**:
+- Booleans format as capitalized `True`/`False` for Python evaluation
+
+```yaml
+condition: "{{inputs.enabled}} and {{blocks.test.succeeded}}"
+# Results in: True and True
+```
+
+**Python Exception** (for Shell blocks executing Python code):
+- Use string interpolation with quotes as a workaround:
+
+```yaml
+- id: python_script
+  type: Shell
+  inputs:
+    command: |
+      python3 -c "
+      bool_val = '{{inputs.bool_flag}}' == 'true'
+      print(f'Boolean is: {bool_val}')
+      "
+```
 
 ### 🚀 Smart Parallel Execution
 
@@ -421,6 +462,124 @@ blocks:
 {{blocks.process_files.succeeded}}  # All succeeded?
 {{blocks.process_files.metadata.count}}  # Total count
 ```
+
+### ✏️ Deterministic File Editing
+
+The `EditFile` block provides powerful deterministic file editing with multiple operation strategies. Unlike simple find-replace, EditFile supports atomic transactions, backup creation, and comprehensive diff generation.
+
+**Key Features:**
+- ✅ 6 operation types (replace_text, replace_lines, insert_lines, delete_lines, patch, regex_replace)
+- ✅ Atomic transactions (all-or-nothing by default)
+- ✅ Automatic backup creation before editing
+- ✅ Dry-run mode for previewing changes
+- ✅ Comprehensive diff generation
+- ✅ Path traversal protection
+
+**Simple Text Replacement:**
+```yaml
+- id: update_config
+  type: EditFile
+  inputs:
+    path: "config.yaml"
+    operations:
+      - type: replace_text
+        old_text: "debug: false"
+        new_text: "debug: true"
+```
+
+**Line-Based Operations:**
+```yaml
+- id: update_imports
+  type: EditFile
+  inputs:
+    path: "main.py"
+    operations:
+      # Replace specific lines
+      - type: replace_lines
+        start_line: 5
+        end_line: 7
+        content: |
+          import os
+          import sys
+          from pathlib import Path
+
+      # Insert new lines
+      - type: insert_lines
+        line: 10
+        content: |
+          # New feature initialization
+          initialize_feature()
+
+      # Delete lines
+      - type: delete_lines
+        start_line: 20
+        end_line: 25
+```
+
+**Regex Patterns:**
+```yaml
+- id: update_version
+  type: EditFile
+  inputs:
+    path: "pyproject.toml"
+    operations:
+      - type: regex_replace
+        pattern: 'version = "(\d+\.\d+)\.\d+"'
+        replacement: 'version = "\1.99"'
+        flags: [MULTILINE]
+```
+
+**Patch Application:**
+```yaml
+- id: apply_patch
+  type: EditFile
+  inputs:
+    path: "source.py"
+    operations:
+      - type: patch
+        patch: |
+          --- a/source.py
+          +++ b/source.py
+          @@ -1,3 +1,3 @@
+          -def old_function():
+          +def new_function():
+               pass
+```
+
+**Advanced Options:**
+```yaml
+- id: safe_edit
+  type: EditFile
+  inputs:
+    path: "important.txt"
+    operations: [...]
+    create_if_missing: true    # Create file if doesn't exist
+    backup: true               # Create .bak backup (default: true)
+    dry_run: false             # Preview without applying (default: false)
+    atomic: true               # All-or-nothing (default: true)
+    encoding: "utf-8"          # File encoding
+```
+
+**Outputs:**
+```yaml
+# Access edit statistics
+{{blocks.update_file.outputs.operations_applied}}  # Number of operations
+{{blocks.update_file.outputs.lines_added}}        # Lines added
+{{blocks.update_file.outputs.lines_removed}}      # Lines removed
+{{blocks.update_file.outputs.lines_modified}}     # Lines modified
+{{blocks.update_file.outputs.diff}}               # Unified diff
+{{blocks.update_file.outputs.backup_path}}        # Backup file path
+{{blocks.update_file.succeeded}}                  # Success status
+{{blocks.update_file.outputs.errors}}             # Error messages (if any)
+```
+
+**Use Cases:**
+- Configuration file updates
+- Code refactoring and renaming
+- Version number bumps
+- Import statement management
+- Automated code fixes
+- Multi-file synchronized updates
 
 ### 🔄 Workflow Composition
 
@@ -887,6 +1046,90 @@ outputs:
     type: str
 ```
 
+### Example 5: Automated Version Bump
+
+```yaml
+name: version-bump
+description: Automatically bump version in multiple files
+tags: [versioning, automation]
+
+inputs:
+  bump_type:
+    type: str
+    description: Type of version bump (major, minor, patch)
+    default: "patch"
+
+blocks:
+  - id: get_current_version
+    type: Shell
+    inputs:
+      command: "grep -oP 'version = \"\\K[^\"]+' pyproject.toml"
+
+  - id: calculate_new_version
+    type: Shell
+    depends_on: [get_current_version]
+    inputs:
+      command: |
+        VERSION="{{blocks.get_current_version.outputs.stdout}}"
+        IFS='.' read -r major minor patch <<< "$VERSION"
+        case "{{inputs.bump_type}}" in
+          major) echo "$((major + 1)).0.0" ;;
+          minor) echo "$major.$((minor + 1)).0" ;;
+          patch) echo "$major.$minor.$((patch + 1))" ;;
+        esac
+
+  - id: update_pyproject
+    type: EditFile
+    depends_on: [calculate_new_version]
+    inputs:
+      path: "pyproject.toml"
+      backup: true
+      operations:
+        - type: regex_replace
+          pattern: 'version = "\d+\.\d+\.\d+"'
+          replacement: 'version = "{{blocks.calculate_new_version.outputs.stdout}}"'
+
+  - id: update_init
+    type: EditFile
+    depends_on: [calculate_new_version]
+    inputs:
+      path: "src/__init__.py"
+      backup: true
+      operations:
+        - type: regex_replace
+          pattern: '__version__ = "\d+\.\d+\.\d+"'
+          replacement: '__version__ = "{{blocks.calculate_new_version.outputs.stdout}}"'
+
+  - id: update_changelog
+    type: EditFile
+    depends_on: [calculate_new_version]
+    inputs:
+      path: "CHANGELOG.md"
+      backup: true
+      operations:
+        - type: insert_lines
+          line: 3
+          content: |
+            ## [{{blocks.calculate_new_version.outputs.stdout}}] - $(date +%Y-%m-%d)
+
+            ### Changed
+            - Version bump to {{blocks.calculate_new_version.outputs.stdout}}
+
+outputs:
+  old_version:
+    value: "{{blocks.get_current_version.outputs.stdout}}"
+    type: str
+  new_version:
+    value: "{{blocks.calculate_new_version.outputs.stdout}}"
+    type: str
+  files_updated:
+    value: "{{blocks.update_pyproject.succeeded}} and {{blocks.update_init.succeeded}} and {{blocks.update_changelog.succeeded}}"
+    type: bool
+  total_changes:
+    value: "{{blocks.update_pyproject.outputs.lines_modified}} + {{blocks.update_init.outputs.lines_modified}} + {{blocks.update_changelog.outputs.lines_added}}"
+    type: num
+```
+
 ---
 
 ## Development
@@ -955,7 +1198,7 @@ workflows-mcp/
 │   ├── engine/                  # Workflow execution engine
 │   │   ├── executor_base.py     # Base executor class
 │   │   ├── executors_core.py    # Shell, Workflow executors
-│   │   ├── executors_file.py    # File operation executors
+│   │   ├── executors_file.py    # File operation executors (CreateFile, ReadFile, EditFile, RenderTemplate)
 │   │   ├── executors_http.py    # HTTP call executor
 │   │   ├── executors_llm.py     # LLM call executor
 │   │   ├── executors_state.py   # State management executors

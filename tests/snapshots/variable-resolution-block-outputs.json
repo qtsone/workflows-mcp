@@ -1,7 +1,11 @@
 {
   "outputs": {
-    "consumer_output": "Consumed: produced_value",
-    "producer_output": "produced_value"
+    "all_passed": true,
+    "chained_valid": true,
+    "exit_code_valid": true,
+    "shortcuts_valid": true,
+    "stderr_valid": true,
+    "stdout_valid": true
   },
   "status": "success"
 }

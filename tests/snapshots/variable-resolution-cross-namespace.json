@@ -1,0 +1,12 @@
+{
+  "outputs": {
+    "all_namespaces_valid": true,
+    "all_passed": true,
+    "inputs_blocks_valid": true,
+    "inputs_metadata_valid": true,
+    "metadata_blocks_valid": true,
+    "nested_access_valid": true,
+    "summary": "Workflow variable-resolution-cross-namespace with base=10 produced number=42"
+  },
+  "status": "success"
+}

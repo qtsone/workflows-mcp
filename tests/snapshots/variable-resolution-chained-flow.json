@@ -1,0 +1,22 @@
+{
+  "outputs": {
+    "nested_json_access": 70,
+    "pipeline_valid": true,
+    "stage1_result": 10,
+    "stage2_result": 25,
+    "stage3_result": 35,
+    "stage4_result": 70,
+    "stage5_result": "value_70",
+    "stage6_result": {
+      "formatted_text": "value_70",
+      "pipeline_result": 70,
+      "stages": {
+        "stage1": 10,
+        "stage2": 25,
+        "stage3": 35,
+        "stage4": 70
+      }
+    }
+  },
+  "status": "success"
+}

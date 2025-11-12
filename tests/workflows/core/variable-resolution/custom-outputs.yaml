@@ -1,0 +1,153 @@
+name: variable-resolution-custom-outputs
+description: Test variable resolution with Shell block custom file-based outputs
+tags: [test, core, variables, custom-outputs, shell]
+blocks:
+  # Producer block with custom outputs (different types)
+  - id: producer
+    type: Shell
+    inputs:
+      command: |
+        # Write different types to files using $SCRATCH
+        echo "test_string_value" > "$SCRATCH/string_output.txt"
+        echo "42" > "$SCRATCH/number_output.txt"
+        echo "true" > "$SCRATCH/bool_output.txt"
+        echo '{"name": "test", "count": 5}' > "$SCRATCH/json_output.json"
+    outputs:
+      string_output:
+        type: str
+        path: "$SCRATCH/string_output.txt"
+        description: "Custom string output"
+      number_output:
+        type: num
+        path: "$SCRATCH/number_output.txt"
+        description: "Custom numeric output"
+      bool_output:
+        type: bool
+        path: "$SCRATCH/bool_output.txt"
+        description: "Custom boolean output"
+      json_output:
+        type: json
+        path: "$SCRATCH/json_output.json"
+        description: "Custom JSON output"
+
+  # Validate string custom output
+  - id: validate_string_output
+    type: Shell
+    inputs:
+      command: |
+        python3 -c "
+        value = '{{blocks.producer.outputs.string_output}}'
+        assert isinstance(value, str), f'Expected str, got {type(value).__name__}'
+        assert 'test_string_value' in value, f'Expected test_string_value, got {value}'
+        print(f'String output valid: {value.strip()}')
+        "
+    depends_on: [producer]
+
+  # Validate number custom output
+  - id: validate_number_output
+    type: Shell
+    inputs:
+      command: |
+        python3 -c "
+        value = {{blocks.producer.outputs.number_output}}
+        assert isinstance(value, (int, float)), f'Expected number, got {type(value).__name__}'
+        assert value == 42, f'Expected 42, got {value}'
+        result = value * 2
+        assert result == 84, f'Arithmetic failed: 42 * 2 = {result}'
+        print(f'Number output valid: {value}')
+        "
+    depends_on: [producer]
+
+  # Validate boolean custom output
+  - id: validate_bool_output
+    type: Shell
+    inputs:
+      command: |
+        python3 -c "
+        value = '{{blocks.producer.outputs.bool_output}}' == 'true'
+        assert isinstance(value, bool), f'Expected bool, got {type(value).__name__}'
+        assert value is True, f'Expected True, got {value}'
+        print(f'Boolean output valid: {value}')
+        "
+    depends_on: [producer]
+
+  # Validate JSON custom output
+  - id: validate_json_output
+    type: Shell
+    inputs:
+      command: |
+        python3 -c "
+        import json as json_module
+        value = {{blocks.producer.outputs.json_output}}
+        assert isinstance(value, dict), f'Expected dict, got {type(value).__name__}'
+        assert value['name'] == 'test', f'Expected name=test, got {value.get(\"name\")}'
+        assert value['count'] == 5, f'Expected count=5, got {value.get(\"count\")}'
+        print(f'JSON output valid: {value}')
+        "
+    depends_on: [producer]
+
+  # Test explicit outputs path (shortcut doesn't work for custom outputs)
+  - id: validate_explicit_path
+    type: Shell
+    inputs:
+      command: |
+        python3 -c "
+        # Only explicit path works for custom outputs
+        explicit = '{{blocks.producer.outputs.string_output}}'
+        assert 'test_string_value' in explicit, f'Expected test_string_value in {explicit}'
+        print(f'Explicit path works: {explicit.strip()}')
+        "
+    depends_on: [producer]
+
+  # Test using custom outputs in complex expressions
+  - id: validate_complex_expression
+    type: Shell
+    inputs:
+      command: |
+        python3 -c "
+        import json as json_module
+        # Mix standard and custom outputs
+        exit_code = {{blocks.producer.outputs.exit_code}}
+        number = {{blocks.producer.outputs.number_output}}
+        json_data = {{blocks.producer.outputs.json_output}}
+
+        assert exit_code == 0, f'Expected exit_code 0, got {exit_code}'
+        assert number == 42, f'Expected number 42, got {number}'
+        assert json_data['count'] == 5, f'Expected JSON count 5'
+
+        # Combine them
+        result = number + json_data['count']
+        assert result == 47, f'Expected 42 + 5 = 47, got {result}'
+        print(f'Complex expression valid: {exit_code}, {number}, {json_data}, result={result}')
+        "
+    depends_on: [producer]
+
+outputs:
+  string_output_valid:
+    value: "{{blocks.validate_string_output.succeeded}}"
+    type: bool
+  number_output_valid:
+    value: "{{blocks.validate_number_output.succeeded}}"
+    type: bool
+  bool_output_valid:
+    value: "{{blocks.validate_bool_output.succeeded}}"
+    type: bool
+  json_output_valid:
+    value: "{{blocks.validate_json_output.succeeded}}"
+    type: bool
+  explicit_path_valid:
+    value: "{{blocks.validate_explicit_path.succeeded}}"
+    type: bool
+  complex_expr_valid:
+    value: "{{blocks.validate_complex_expression.succeeded}}"
+    type: bool
+  all_passed:
+    value: >
+      {{blocks.validate_string_output.succeeded}} and
+      {{blocks.validate_number_output.succeeded}} and
+      {{blocks.validate_bool_output.succeeded}} and
+      {{blocks.validate_json_output.succeeded}} and
+      {{blocks.validate_explicit_path.succeeded}} and
+      {{blocks.validate_complex_expression.succeeded}}
+    type: bool
+    description: "All custom output validations passed"
