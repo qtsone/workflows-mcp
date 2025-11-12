@@ -564,16 +564,30 @@
                       "type": "string"
                     },
                     "overwrite": {
+                      "anyOf": [
+                        {
+                          "type": "boolean"
+                        },
+                        {
+                          "type": "string"
+                        }
+                      ],
                       "default": true,
-                      "description": "Whether to overwrite existing output file",
-                      "title": "Overwrite",
-                      "type": "boolean"
+                      "description": "Whether to overwrite existing output file (or interpolation string)",
+                      "title": "Overwrite"
                     },
                     "create_parents": {
+                      "anyOf": [
+                        {
+                          "type": "boolean"
+                        },
+                        {
+                          "type": "string"
+                        }
+                      ],
                       "default": true,
-                      "description": "Create parent directories for output file",
-                      "title": "Create Parents",
-                      "type": "boolean"
+                      "description": "Create parent directories for output file (or interpolation string)",
+                      "title": "Create Parents"
                     }
                   },
                   "required": [
@@ -1319,37 +1333,48 @@
           "title": "New Text"
         },
         "count": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "string"
+            }
+          ],
           "default": -1,
-          "description": "Maximum number of replacements (-1 = all occurrences)",
-          "title": "Count",
-          "type": "integer"
+          "description": "Maximum number of replacements (-1 = all occurrences, supports interpolation)",
+          "title": "Count"
         },
         "line_start": {
           "anyOf": [
             {
-              "minimum": 1,
               "type": "integer"
+            },
+            {
+              "type": "string"
             },
             {
               "type": "null"
             }
           ],
           "default": null,
-          "description": "1-indexed line number (required for line operations)",
+          "description": "1-indexed line number (required for line operations, supports interpolation)",
           "title": "Line Start"
         },
         "line_end": {
           "anyOf": [
             {
-              "minimum": 1,
               "type": "integer"
+            },
+            {
+              "type": "string"
             },
             {
               "type": "null"
             }
           ],
           "default": null,
-          "description": "Inclusive end line number (required for replace_lines, delete_lines)",
+          "description": "Inclusive end line number (required for replace_lines, delete_lines, supports interpolation)",
           "title": "Line End"
         },
         "content": {
@@ -1577,16 +1602,30 @@
           "type": "string"
         },
         "overwrite": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "string"
+            }
+          ],
           "default": true,
-          "description": "Whether to overwrite existing output file",
-          "title": "Overwrite",
-          "type": "boolean"
+          "description": "Whether to overwrite existing output file (or interpolation string)",
+          "title": "Overwrite"
         },
         "create_parents": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "string"
+            }
+          ],
           "default": true,
-          "description": "Create parent directories for output file",
-          "title": "Create Parents",
-          "type": "boolean"
+          "description": "Create parent directories for output file (or interpolation string)",
+          "title": "Create Parents"
         }
       },
       "required": [

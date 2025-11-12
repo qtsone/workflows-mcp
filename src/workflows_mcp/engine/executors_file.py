@@ -26,7 +26,9 @@ from .executor_base import (
 )
 from .interpolation import (
     interpolatable_boolean_validator,
+    interpolatable_numeric_validator,
     resolve_interpolatable_boolean,
+    resolve_interpolatable_numeric,
 )
 
 # ============================================================================
@@ -315,13 +317,21 @@ class RenderTemplateInput(BlockInput):
         description="Optional file path to write rendered content",
     )
     encoding: str = Field(default="utf-8", description="Text encoding for output file")
-    overwrite: bool = Field(
+    overwrite: bool | str = Field(
         default=True,
-        description="Whether to overwrite existing output file",
+        description="Whether to overwrite existing output file (or interpolation string)",
     )
-    create_parents: bool = Field(
+    create_parents: bool | str = Field(
         default=True,
-        description="Create parent directories for output file",
+        description="Create parent directories for output file (or interpolation string)",
+    )
+
+    # Validators for boolean fields with interpolation support
+    _validate_overwrite = field_validator("overwrite", mode="before")(
+        interpolatable_boolean_validator()
+    )
+    _validate_create_parents = field_validator("create_parents", mode="before")(
+        interpolatable_boolean_validator()
     )
 
 
@@ -381,6 +391,10 @@ class RenderTemplateExecutor(BlockExecutor):
             FileExistsError: Output file exists and overwrite=False
             Exception: Other errors
         """
+        # Resolve interpolatable fields to their actual types
+        overwrite = resolve_interpolatable_boolean(inputs.overwrite, "overwrite")
+        create_parents = resolve_interpolatable_boolean(inputs.create_parents, "create_parents")
+
         # RenderTemplate template (exceptions bubble up)
         env = Environment(undefined=StrictUndefined, autoescape=False)
         template = env.from_string(inputs.template)
@@ -403,7 +417,7 @@ class RenderTemplateExecutor(BlockExecutor):
             file_path = path_result.value
 
             # Check overwrite protection
-            if file_path.exists() and not inputs.overwrite:
+            if file_path.exists() and not overwrite:
                 raise FileExistsError(f"Output file exists and overwrite=False: {file_path}")
 
             # Write file using utility
@@ -412,7 +426,7 @@ class RenderTemplateExecutor(BlockExecutor):
                 content=rendered,
                 encoding=inputs.encoding,
                 mode=None,
-                create_parents=inputs.create_parents,
+                create_parents=create_parents,
             )
 
             if not write_result.is_success:
@@ -464,21 +478,37 @@ class EditOperation(BaseModel):
         default=None,
         description="Replacement text (required for replace_text)",
     )
-    count: int = Field(
+    count: int | str = Field(
         default=-1,
-        description="Maximum number of replacements (-1 = all occurrences)",
+        description=(
+            "Maximum number of replacements (-1 = all occurrences, supports interpolation)"
+        ),
     )
 
     # For replace_lines, insert_lines, delete_lines
-    line_start: int | None = Field(
+    line_start: int | str | None = Field(
         default=None,
-        ge=1,
-        description="1-indexed line number (required for line operations)",
+        description=(
+            "1-indexed line number (required for line operations, supports interpolation)"
+        ),
     )
-    line_end: int | None = Field(
+    line_end: int | str | None = Field(
         default=None,
-        ge=1,
-        description="Inclusive end line number (required for replace_lines, delete_lines)",
+        description=(
+            "Inclusive end line number "
+            "(required for replace_lines, delete_lines, supports interpolation)"
+        ),
+    )
+
+    # Validators for numeric fields with interpolation support
+    _validate_count = field_validator("count", mode="before")(
+        interpolatable_numeric_validator(int)
+    )
+    _validate_line_start = field_validator("line_start", mode="before")(
+        interpolatable_numeric_validator(int, ge=1)
+    )
+    _validate_line_end = field_validator("line_end", mode="before")(
+        interpolatable_numeric_validator(int, ge=1)
     )
     content: str | None = Field(
         default=None,
@@ -750,59 +780,58 @@ class EditFileExecutor(BlockExecutor):
         if op.type == "replace_text":
             if op.old_text is None or op.new_text is None:
                 raise ValueError("replace_text requires old_text and new_text")
-            return content.replace(op.old_text, op.new_text, op.count)
+            # Resolve count to int (handles interpolation)
+            count = resolve_interpolatable_numeric(op.count, int, "count")
+            return content.replace(op.old_text, op.new_text, count)
 
         elif op.type == "replace_lines":
             if op.line_start is None or op.line_end is None or op.content is None:
                 raise ValueError("replace_lines requires line_start, line_end, and content")
+            # Get lines first to determine file-specific bounds
             lines = content.splitlines(keepends=True)
-            if op.line_start < 1 or op.line_start > len(lines) + 1:
-                raise ValueError(
-                    f"line_start {op.line_start} out of range (1-{len(lines) + 1})"
-                )
-            if op.line_end < op.line_start or op.line_end > len(lines):
-                raise ValueError(
-                    f"line_end {op.line_end} out of range ({op.line_start}-{len(lines)})"
-                )
+            # Resolve line numbers with file-specific validation
+            line_start = resolve_interpolatable_numeric(
+                op.line_start, int, "line_start", ge=1, le=len(lines) + 1
+            )
+            line_end = resolve_interpolatable_numeric(
+                op.line_end, int, "line_end", ge=line_start, le=len(lines)
+            )
             # Ensure content ends with newline if original had newlines
             replacement = op.content
             if lines and not replacement.endswith("\n"):
                 replacement += "\n"
-            new_lines = (
-                lines[: op.line_start - 1] + [replacement] + lines[op.line_end :]
-            )
+            new_lines = lines[: line_start - 1] + [replacement] + lines[line_end:]
             return "".join(new_lines)
 
         elif op.type == "insert_lines":
             if op.line_start is None or op.content is None:
                 raise ValueError("insert_lines requires line_start and content")
+            # Get lines first to determine file-specific bounds
             lines = content.splitlines(keepends=True)
-            if op.line_start < 1 or op.line_start > len(lines) + 1:
-                raise ValueError(
-                    f"line_start {op.line_start} out of range (1-{len(lines) + 1})"
-                )
+            # Resolve line number with file-specific validation
+            line_start = resolve_interpolatable_numeric(
+                op.line_start, int, "line_start", ge=1, le=len(lines) + 1
+            )
             # Ensure content ends with newline if original had newlines
             insertion = op.content
             if lines and not insertion.endswith("\n"):
                 insertion += "\n"
-            new_lines = (
-                lines[: op.line_start - 1] + [insertion] + lines[op.line_start - 1 :]
-            )
+            new_lines = lines[: line_start - 1] + [insertion] + lines[line_start - 1 :]
             return "".join(new_lines)
 
         elif op.type == "delete_lines":
             if op.line_start is None or op.line_end is None:
                 raise ValueError("delete_lines requires line_start and line_end")
+            # Get lines first to determine file-specific bounds
             lines = content.splitlines(keepends=True)
-            if op.line_start < 1 or op.line_start > len(lines):
-                raise ValueError(
-                    f"line_start {op.line_start} out of range (1-{len(lines)})"
-                )
-            if op.line_end < op.line_start or op.line_end > len(lines):
-                raise ValueError(
-                    f"line_end {op.line_end} out of range ({op.line_start}-{len(lines)})"
-                )
-            new_lines = lines[: op.line_start - 1] + lines[op.line_end :]
+            # Resolve line numbers with file-specific validation
+            line_start = resolve_interpolatable_numeric(
+                op.line_start, int, "line_start", ge=1, le=len(lines)
+            )
+            line_end = resolve_interpolatable_numeric(
+                op.line_end, int, "line_end", ge=line_start, le=len(lines)
+            )
+            new_lines = lines[: line_start - 1] + lines[line_end:]
             return "".join(new_lines)
 
         elif op.type == "patch":
