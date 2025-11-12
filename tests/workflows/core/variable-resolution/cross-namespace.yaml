@@ -16,8 +16,8 @@ blocks:
     type: Shell
     inputs:
       command: |
-        echo "42" > "$SCRATCH/number.txt"
-        echo "suffix" > "$SCRATCH/text.txt"
+        printf "42" > "$SCRATCH/number.txt"
+        printf "suffix" > "$SCRATCH/text.txt"
     outputs:
       number:
         type: num
@@ -84,7 +84,7 @@ blocks:
         # From blocks namespace (standard outputs)
         producer_exit = {{blocks.producer.outputs.exit_code}}
         # Status shortcut (this DOES work)
-        producer_succeeded = {{blocks.producer.succeeded}}
+        producer_succeeded = '{{blocks.producer.succeeded}}' == 'true'
 
         assert producer_exit == 0, f'Expected exit 0, got {producer_exit}'
         assert producer_succeeded is True, f'Expected succeeded True'
@@ -144,9 +144,9 @@ blocks:
         stdout_explicit = '{{blocks.producer.outputs.stdout}}'
 
         assert number_explicit == 42, f'Expected number 42, got {number_explicit}'
-        assert len(stdout_explicit) > 0, f'Expected stdout content'
+        assert len(stdout_explicit) == 0, f'Expected empty stdout, got {len(stdout_explicit)} chars'
 
-        print(f'Nested access valid: number={number_explicit}, stdout={len(stdout_explicit)} chars')
+        print(f'Nested access valid: number={number_explicit}, stdout is empty (correct)')
         "
     depends_on: [producer]
 
