@@ -2,6 +2,18 @@
 
 All notable changes to this project will be documented in this file.
 
+# [6.4.0](https://github.com/qtsone/workflows-mcp/compare/v6.3.0...v6.4.0) (2025-11-12)
+
+
+### Bug Fixes
+
+* make job queue status filter test resilient to race conditions ([de50e10](https://github.com/qtsone/workflows-mcp/commit/de50e10bdef9601be0bf2a82b95cfdd8445c8dc4)), closes [#27](https://github.com/qtsone/workflows-mcp/issues/27)
+
+
+### Features
+
+* unified job architecture with async execution and queue support ([#27](https://github.com/qtsone/workflows-mcp/issues/27)) ([bca1d1c](https://github.com/qtsone/workflows-mcp/commit/bca1d1c4a81e684254fe3fb4d59fdb38be8bad5b))
+
 # [6.3.0](https://github.com/qtsone/workflows-mcp/compare/v6.2.0...v6.3.0) (2025-11-10)
 
 
