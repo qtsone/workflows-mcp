@@ -501,9 +501,7 @@ class EditOperation(BaseModel):
     )
 
     # Validators for numeric fields with interpolation support
-    _validate_count = field_validator("count", mode="before")(
-        interpolatable_numeric_validator(int)
-    )
+    _validate_count = field_validator("count", mode="before")(interpolatable_numeric_validator(int))
     _validate_line_start = field_validator("line_start", mode="before")(
         interpolatable_numeric_validator(int, ge=1)
     )
@@ -572,15 +570,11 @@ class EditFileInput(BlockInput):
     _validate_create_if_missing = field_validator("create_if_missing", mode="before")(
         interpolatable_boolean_validator()
     )
-    _validate_backup = field_validator("backup", mode="before")(
-        interpolatable_boolean_validator()
-    )
+    _validate_backup = field_validator("backup", mode="before")(interpolatable_boolean_validator())
     _validate_dry_run = field_validator("dry_run", mode="before")(
         interpolatable_boolean_validator()
     )
-    _validate_atomic = field_validator("atomic", mode="before")(
-        interpolatable_boolean_validator()
-    )
+    _validate_atomic = field_validator("atomic", mode="before")(interpolatable_boolean_validator())
 
 
 class EditFileOutput(BlockOutput):
