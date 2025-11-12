@@ -1,6 +1,0 @@
-{
-  "job_id": "job_f740858d",
-  "message": "Workflow paused. Use resume_workflow(job_id='job_f740858d') to continue.",
-  "prompt": "Proceed with operation?",
-  "status": "paused"
-}

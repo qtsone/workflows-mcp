@@ -117,7 +117,7 @@ async def execute_workflow(
             "status": "success" | "failure" | "paused",
             "outputs": {...},        # Workflow outputs (if defined)
             "error": "...",          # Error details (if failed)
-            "checkpoint_id": "...",  # Resume token (if paused)
+            "job_id": "...",         # Job ID for resume (if paused)
             "prompt": "..."          # Prompt text (if paused)
         }
 
