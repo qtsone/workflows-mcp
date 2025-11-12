@@ -1,0 +1,13 @@
+{
+  "outputs": {
+    "delete_lines_success": true,
+    "dry_run_success": true,
+    "final_content": "\"\"\"Test module for EditFile operations.\"\"\"\ndef hello():\n    logger.info(\"Hello, Python!\")\n    return 0\n\ndef goodbye():",
+    "insert_lines_success": true,
+    "lines_added": 1,
+    "lines_removed": 2,
+    "regex_replace_success": true,
+    "replace_text_success": true
+  },
+  "status": "success"
+}

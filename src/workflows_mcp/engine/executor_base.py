@@ -592,7 +592,12 @@ def create_default_registry() -> ExecutorRegistry:
             # Test with isolated registry
     """
     from .executors_core import ShellExecutor
-    from .executors_file import CreateFileExecutor, ReadFileExecutor, RenderTemplateExecutor
+    from .executors_file import (
+        CreateFileExecutor,
+        EditFileExecutor,
+        ReadFileExecutor,
+        RenderTemplateExecutor,
+    )
     from .executors_http import HttpCallExecutor
     from .executors_interactive import PromptExecutor
     from .executors_llm import LLMCallExecutor
@@ -611,6 +616,7 @@ def create_default_registry() -> ExecutorRegistry:
 
     # Register file executors
     registry.register(CreateFileExecutor())
+    registry.register(EditFileExecutor())
     registry.register(ReadFileExecutor())
     registry.register(RenderTemplateExecutor())
 

@@ -1,0 +1,140 @@
+# EditFile Operations Test Workflow
+#
+# Tests all 6 EditFile operation types:
+# 1. replace_text - Exact text replacement
+# 2. replace_lines - Line range replacement
+# 3. insert_lines - Insert at line number
+# 4. delete_lines - Delete line range
+# 5. patch - Apply unified diff
+# 6. regex_replace - Pattern-based replacement
+
+name: editfile-operations-test
+description: Test EditFile executor with all operation types
+tags: [test, editfile, files]
+
+inputs:
+  test_dir:
+    type: str
+    description: Test directory path
+    default: "/tmp/editfile-test"
+
+blocks:
+  # Setup: Create test file
+  - id: create_test_file
+    type: CreateFile
+    inputs:
+      path: "{{inputs.test_dir}}/test.py"
+      content: |
+        def hello():
+            print("Hello, World!")
+            return 0
+
+        def goodbye():
+            print("Goodbye!")
+            return 1
+      create_parents: true
+
+  # Test 1: replace_text operation
+  - id: test_replace_text
+    type: EditFile
+    inputs:
+      path: "{{inputs.test_dir}}/test.py"
+      operations:
+        - type: replace_text
+          old_text: "Hello, World!"
+          new_text: "Hello, Python!"
+          count: 1
+      backup: false
+    depends_on: [create_test_file]
+
+  # Test 2: insert_lines operation
+  - id: test_insert_lines
+    type: EditFile
+    inputs:
+      path: "{{inputs.test_dir}}/test.py"
+      operations:
+        - type: insert_lines
+          line_start: 1
+          content: |
+            """Test module for EditFile operations."""
+      backup: false
+    depends_on: [test_replace_text]
+
+  # Test 3: delete_lines operation
+  - id: test_delete_lines
+    type: EditFile
+    inputs:
+      path: "{{inputs.test_dir}}/test.py"
+      operations:
+        - type: delete_lines
+          line_start: 7
+          line_end: 8
+      backup: false
+    depends_on: [test_insert_lines]
+
+  # Test 4: regex_replace operation
+  - id: test_regex_replace
+    type: EditFile
+    inputs:
+      path: "{{inputs.test_dir}}/test.py"
+      operations:
+        - type: regex_replace
+          pattern: 'print\("([^"]+)"\)'
+          replacement: 'logger.info("\1")'
+          flags: []
+      backup: false
+    depends_on: [test_delete_lines]
+
+  # Test 5: dry_run mode
+  - id: test_dry_run
+    type: EditFile
+    inputs:
+      path: "{{inputs.test_dir}}/test.py"
+      operations:
+        - type: replace_text
+          old_text: "logger.info"
+          new_text: "print"
+      dry_run: true
+      backup: false
+    depends_on: [test_regex_replace]
+
+  # Verify final content
+  - id: read_final
+    type: ReadFile
+    inputs:
+      path: "{{inputs.test_dir}}/test.py"
+    depends_on: [test_dry_run]
+
+outputs:
+  final_content:
+    value: "{{blocks.read_final.outputs.content}}"
+    type: str
+    description: "Final file content after all edits"
+  replace_text_success:
+    value: "{{blocks.test_replace_text.succeeded}}"
+    type: bool
+    description: "Whether replace_text operation succeeded"
+  insert_lines_success:
+    value: "{{blocks.test_insert_lines.succeeded}}"
+    type: bool
+    description: "Whether insert_lines operation succeeded"
+  delete_lines_success:
+    value: "{{blocks.test_delete_lines.succeeded}}"
+    type: bool
+    description: "Whether delete_lines operation succeeded"
+  regex_replace_success:
+    value: "{{blocks.test_regex_replace.succeeded}}"
+    type: bool
+    description: "Whether regex_replace operation succeeded"
+  dry_run_success:
+    value: "{{blocks.test_dry_run.succeeded}}"
+    type: bool
+    description: "Whether dry_run test succeeded"
+  lines_added:
+    value: "{{blocks.test_insert_lines.outputs.lines_added}}"
+    type: num
+    description: "Lines added by insert operation"
+  lines_removed:
+    value: "{{blocks.test_delete_lines.outputs.lines_removed}}"
+    type: num
+    description: "Lines removed by delete operation"
