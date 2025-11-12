@@ -1,17 +1,8 @@
 """LLM call executor with retry logic and schema validation.
 
-Architecture (ADR-006):
-- Execute returns output directly (no Result wrapper)
-- Raises exceptions for failures
-- Uses Execution context (not dict)
-- Orchestrator creates Metadata based on success/exceptions
-
-Features:
-- Multiple LLM providers (OpenAI, Anthropic, Gemini, Ollama)
-- Automatic retry with exponential backoff
-- JSON Schema validation with feedback loop
-- Pre-resolved inputs ({{secrets.KEY}} resolved by VariableResolver)
-- Token usage tracking
+Supports multiple LLM providers (OpenAI, Anthropic, Gemini, Ollama) with automatic
+retry, JSON schema validation, and token usage tracking. All providers use client-side
+validation with feedback loop for maximum compatibility with OpenAI-like servers.
 """
 
 from __future__ import annotations
@@ -19,9 +10,12 @@ from __future__ import annotations
 import asyncio
 import json
 from enum import Enum
-from typing import Any, ClassVar
+from typing import Any, ClassVar, cast
 
 import httpx
+import jsonschema
+import openai
+from openai import AsyncOpenAI
 from pydantic import Field, field_validator, model_validator
 
 from .block import BlockInput, BlockOutput
@@ -44,7 +38,7 @@ from .interpolation import (
 
 
 class LLMProvider(str, Enum):
-    """Enum for supported LLM providers."""
+    """Supported LLM providers."""
 
     OPENAI = "openai"
     ANTHROPIC = "anthropic"
@@ -58,33 +52,15 @@ class LLMProvider(str, Enum):
 
 
 class LLMCallInput(BlockInput):
-    """Input model for LLMCall executor.
+    """Input schema for LLMCall block.
 
-    All inputs are pre-resolved by VariableResolver:
-    - {{secrets.OPENAI_API_KEY}} → actual key value
-    - {{inputs.prompt}} → actual prompt text
-    - {{blocks.previous.outputs.data}} → actual data
+    Supports two configuration modes:
+    - Profile-based: Load settings from ~/.workflows/llm-config.yml
+    - Direct: Specify provider and model inline
 
-    Configuration Modes:
-    1. Profile-based (NEW): Specify profile name, optionally override parameters
-    2. Direct specification (backward compatible): Specify provider + model directly
-
-    Examples:
-        # Profile-based (recommended)
-        profile: quick
-        prompt: "..."
-
-        # Profile with overrides
-        profile: standard
-        temperature: 1.0
-        max_tokens: 8000
-        prompt: "..."
-
-        # Direct specification (backward compatible)
-        provider: openai
-        model: gpt-4o
-        api_key: "{{secrets.OPENAI_API_KEY}}"
-        prompt: "..."
+    Variables are resolved by VariableResolver before execution. Schema validation
+    uses OpenAI native structured outputs (strict mode) or client-side validation
+    with retry feedback for other providers.
     """
 
     profile: str | None = Field(
@@ -187,18 +163,12 @@ class LLMCallInput(BlockInput):
     @field_validator("response_schema")
     @classmethod
     def validate_response_schema(cls, v: dict[str, Any] | str | None) -> dict[str, Any] | None:
-        """Validate and parse response_schema if provided.
+        """Parse and validate response schema.
 
-        Accepts:
-        - dict: Direct JSON Schema object
-        - str: JSON string that will be parsed into a dict
-        - None: No schema validation
-
-        Returns:
-            Parsed dict or None
+        Accepts dict (JSON Schema), str (JSON string), or None (no validation).
 
         Raises:
-            ValueError: If string is not valid JSON or schema is invalid
+            ValueError: Invalid JSON or missing 'type' field
         """
         if v is None:
             return None
@@ -222,20 +192,10 @@ class LLMCallInput(BlockInput):
 
     @model_validator(mode="after")
     def validate_profile_or_provider_model(self) -> LLMCallInput:
-        """Validate that either profile OR (provider + model) is specified.
-
-        Resolution logic:
-        - If profile is specified: Use profile, ignore provider/model (unless overriding)
-        - If profile is NOT specified: provider and model are REQUIRED
-
-        This validator runs AFTER all field validators, so we have access to
-        all resolved field values.
-
-        Returns:
-            self
+        """Ensure either profile OR (provider + model) is specified.
 
         Raises:
-            ValueError: If neither profile nor (provider + model) is specified
+            ValueError: Missing required configuration
         """
         if self.profile is None:
             # No profile - provider and model are required
@@ -253,97 +213,86 @@ class LLMCallInput(BlockInput):
 
 
 class LLMCallOutput(BlockOutput):
-    """Output model for LLMCall executor.
+    """Output schema for LLMCall block.
 
-    All fields have defaults to support graceful degradation when LLM calls fail.
-    A default-constructed instance represents a failed/crashed LLM call.
+    Unified response structure for clean workflow integration:
 
-    Clean separation (aligned with industry standards):
-    - response: Raw LLM response text (empty string if crashed)
-    - response_json: Parsed JSON dict (empty if validation failed or not JSON)
-    - success: Overall operation success (False if crashed)
-    - metadata: Execution details (empty dict if crashed before execution)
+    - No schema: response = {"content": "raw text"}
+    - Schema validation succeeds: response = {validated JSON structure}
+    - Schema validation fails: response = {"content": "raw text"}
+      + metadata.validation_failed = True
+    - Request fails: response = {} + success = False
 
-    Design rationale:
-    - response_json is always a dict (never None) to prevent downstream errors
-    - Empty dict {} indicates: validation failed, response wasn't JSON, or crashed
-    - Use success + metadata.validation_passed to distinguish scenarios
+    Fields:
+    - response: Always a dict (never None) containing either validated JSON
+      or raw text
+    - success: Whether the LLM API call succeeded
+    - metadata: Execution details (attempts, validation_failed,
+      validation_error, model, usage, etc.)
     """
 
-    response: str = Field(
-        default="",
-        description="Raw LLM response text (empty string if request failed or crashed)",
-    )
-    response_json: dict[str, Any] = Field(
+    response: dict[str, Any] = Field(
         default_factory=dict,
         description=(
-            "Parsed JSON response. Empty dict if validation failed, response is plain text, "
-            "or request crashed. Check success/metadata.validation_passed to distinguish scenarios."
+            "Response dictionary. Contains validated JSON structure if schema "
+            "provided and validation succeeded. "
+            "Contains {'content': 'raw text'} if no schema or validation failed. "
+            "Empty dict {} if request failed completely."
         ),
     )
     success: bool = Field(
         default=False,
         description=(
-            "True if LLM call succeeded and passed validation (if schema provided), "
-            "False if crashed"
+            "True if LLM API call succeeded (response received from provider). "
+            "False if request failed (network error, timeout, API error, etc.). "
+            "Independent of schema validation - "
+            "check metadata.validation_failed for validation status."
         ),
     )
     metadata: dict[str, Any] = Field(
         default_factory=dict,
         description=(
-            "Execution metadata: attempts (int), validation_passed (bool), "
-            "validation_error (str, if failed), model (str), usage (dict), "
-            "finish_reason (str), etc. Empty dict if crashed before execution."
+            "Execution metadata including: "
+            "attempts (int), "
+            "validation_failed (bool, if schema validation failed), "
+            "validation_error (str, error message if validation_failed=true), "
+            "model (str), usage (dict), finish_reason (str), etc. "
+            "Empty dict if request failed before execution."
         ),
     )
 
 
 class LLMCallExecutor(BlockExecutor):
-    """
-    LLM call executor with retry logic and schema validation.
+    """Executor for LLMCall blocks.
 
-    Architecture (ADR-006):
-    - Returns LLMCallOutput directly
-    - Raises exceptions for unrecoverable failures
-    - Uses Execution context
-    - All inputs pre-resolved by VariableResolver
+    Supports multiple LLM providers with automatic retry, exponential backoff, and
+    client-side schema validation for maximum compatibility. All providers validate
+    responses client-side (including OpenAI-compatible servers like LM Studio).
+    Token usage tracking and null safety checks included for all providers.
 
-    Features:
-    - Multiple LLM providers (OpenAI, Anthropic, Gemini, Ollama)
-    - Automatic retry with exponential backoff
-    - JSON Schema validation with feedback loop
-    - Token usage tracking
-    - Configurable timeouts and retry behavior
-
-    Usage:
+    Example:
         ```yaml
-        - id: call_gpt4
+        - id: extract_data
           type: LLMCall
           inputs:
             provider: openai
             model: gpt-4o
-            api_key: "{{secrets.OPENAI_API_KEY}}"  # Pre-resolved
-            prompt: "{{inputs.user_question}}"
-            response_schema:  # Can be dict or JSON string
+            api_key: "{{secrets.OPENAI_API_KEY}}"
+            prompt: "Extract: {{inputs.text}}"
+            response_schema:
               type: object
-              required: [answer, confidence]
+              required: [entities]
               properties:
-                answer: {type: string}
-                confidence: {type: number}
-            max_retries: 3
-
-        # Access outputs:
-        # {{blocks.call_gpt4.response}} - Raw text
-        # {{blocks.call_gpt4.response_json.answer}} - Parsed JSON field
-        # {{blocks.call_gpt4.succeeded}} - Boolean status
-        # {{blocks.call_gpt4.metadata.attempts}} - Retry count
+                entities: {type: array, items: {type: string}}
         ```
 
-    Security:
-    - API keys passed as pre-resolved inputs (from secrets system)
-    - SSL verification enabled by default
-    - No arbitrary code execution
-    - Response size limited by httpx defaults
+    Outputs:
+        - response: Always a dict containing either:
+            * Validated JSON structure if schema provided and validation succeeded
+            * {"content": "raw text"} if no schema or validation failed
+        - success: True if API call succeeded (independent of validation)
+        - metadata: Contains attempts, validation_failed (if applicable),
+                   validation_error (if failed), model, usage, finish_reason
     """
 
     type_name: ClassVar[str] = "LLMCall"
@@ -356,21 +305,14 @@ class LLMCallExecutor(BlockExecutor):
     async def execute(  # type: ignore[override]
         self, inputs: LLMCallInput, context: Execution
     ) -> LLMCallOutput:
-        """Execute LLM call with retry logic and optional schema validation.
+        """Execute LLM call with retry logic and client-side schema validation.
 
-        Profile Resolution:
-        - If inputs.profile is specified: Load config from ~/.workflows/llm-config.yml
-        - Merge profile config with inline parameter overrides from inputs
-        - If inputs.profile is None: Use direct provider/model specification (backward compatible)
-
-        Returns:
-            LLMCallOutput with response, validation status, and metadata
+        Resolves profile configuration, calls provider API with exponential backoff
+        retry, and validates responses client-side for maximum compatibility.
 
         Raises:
-            ValueError: Invalid inputs, configuration, or profile not found
-            httpx.TimeoutException: All retry attempts timed out
-            httpx.HTTPStatusError: HTTP error from provider
-            Exception: Other unrecoverable errors
+            ValueError: Invalid configuration
+            httpx.*: Network errors after retry exhaustion
         """
         # Step 1: Profile Resolution (if profile specified)
         effective_inputs = inputs
@@ -431,22 +373,20 @@ class LLMCallExecutor(BlockExecutor):
                     context=context,
                 )
 
-                # Validate response if schema provided
+                # Validate response if schema provided (client-side for all providers)
                 if needs_validation:
                     try:
                         validated_response = self._validate_response(
                             response_text=response_text,
-                            schema=effective_inputs.response_schema,  # type: ignore[arg-type]
+                            schema=cast(dict[str, Any], effective_inputs.response_schema),
                         )
 
-                        # Success! Return validated response
+                        # Success - return validated JSON structure directly
                         return LLMCallOutput(
-                            response=response_text,
-                            response_json=validated_response,
+                            response=validated_response,
                             success=True,
                             metadata={
                                 "attempts": attempts,
-                                "validation_passed": True,
                                 **provider_metadata,
                             },
                         )
@@ -458,12 +398,11 @@ class LLMCallExecutor(BlockExecutor):
                         # If this is the last attempt, return with validation failure
                         if attempt == max_retries - 1:
                             return LLMCallOutput(
-                                response=response_text,
-                                response_json={},  # Empty dict - validation failed
-                                success=False,
+                                response={"content": response_text},
+                                success=True,  # API call succeeded, validation failed
                                 metadata={
                                     "attempts": attempts,
-                                    "validation_passed": False,
+                                    "validation_failed": True,
                                     "validation_error": validation_error,
                                     **provider_metadata,
                                 },
@@ -474,29 +413,25 @@ class LLMCallExecutor(BlockExecutor):
                         await asyncio.sleep(delay)
                         continue
                 else:
-                    # No validation needed, but opportunistically parse JSON
-                    response_json = {}
-                    try:
-                        parsed = json.loads(response_text)
-                        # Only accept dicts (schema requires type: object)
-                        if isinstance(parsed, dict):
-                            response_json = parsed
-                    except (json.JSONDecodeError, ValueError):
-                        # Not JSON or not a dict, that's fine - keep empty dict
-                        pass
-
+                    # No schema provided - return raw text in content key
                     return LLMCallOutput(
-                        response=response_text,
-                        response_json=response_json,
+                        response={"content": response_text},
                         success=True,
                         metadata={
                             "attempts": attempts,
-                            "validation_passed": True,  # No schema = no validation needed
                             **provider_metadata,
                         },
                     )
 
-            except (httpx.TimeoutException, httpx.HTTPStatusError, httpx.NetworkError) as e:
+            except (
+                httpx.TimeoutException,
+                httpx.HTTPStatusError,
+                httpx.NetworkError,
+                openai.APITimeoutError,
+                openai.APIConnectionError,
+                openai.RateLimitError,
+                openai.APIStatusError,
+            ) as e:
                 last_error = e
 
                 # If this is the last attempt, raise
@@ -520,26 +455,16 @@ class LLMCallExecutor(BlockExecutor):
     async def _resolve_profile_to_inputs(
         self, inputs: LLMCallInput, context: Execution
     ) -> LLMCallInput:
-        """Resolve profile configuration to effective inputs.
+        """Resolve profile configuration from ~/.workflows/llm-config.yml.
 
-        This method:
-        1. Loads profile config from llm_config_loader (via ExecutionContext)
-        2. Merges profile config with inline parameter overrides from inputs
-        3. Resolves API key from secrets if api_key_secret is specified
-        4. Returns new LLMCallInput with all values resolved
-
-        Args:
-            inputs: Original inputs with profile specified
-            context: Execution context (provides access to llm_config_loader and secrets)
-
-        Returns:
-            New LLMCallInput with profile-resolved values
+        Loads profile, merges with inline overrides, resolves API key from secrets,
+        and returns merged LLMCallInput.
 
         Raises:
-            ValueError: If profile not found or llm_config_loader not available
+            ValueError: Profile not found or ExecutionContext unavailable
         """
         # Get llm_config_loader from execution context
-        execution_context = context._internal.execution_context
+        execution_context = context.execution_context
         if execution_context is None:
             raise ValueError(
                 "ExecutionContext not available. Cannot resolve LLM profile. "
@@ -612,22 +537,11 @@ class LLMCallExecutor(BlockExecutor):
         max_tokens: int | None,
         context: Execution,
     ) -> tuple[str, dict[str, Any]]:
-        """Call the specified LLM provider.
-
-        Args:
-            inputs: Validated input model (variables already resolved by VariableResolver)
-            prompt: Processed prompt (may include validation feedback)
-            timeout: Resolved timeout in seconds
-            temperature: Resolved temperature parameter (or None)
-            max_tokens: Resolved max tokens parameter (or None)
-            context: Execution context
-
-        Returns:
-            Tuple of (response_text, provider_metadata)
+        """Call LLM provider API.
 
         Raises:
             ValueError: Invalid provider or configuration
-            httpx exceptions: Network/API errors
+            httpx.*: Network/API errors
         """
         # Validate and coerce provider to enum
         # At this point, variables like {{inputs.llm_provider}} are already resolved
@@ -658,35 +572,60 @@ class LLMCallExecutor(BlockExecutor):
         temperature: float | None,
         max_tokens: int | None,
     ) -> tuple[str, dict[str, Any]]:
-        """Call OpenAI API with optional native schema validation."""
-        url = inputs.api_url or "https://api.openai.com/v1/chat/completions"
+        """Call OpenAI API using official AsyncOpenAI client.
 
-        messages = []
+        Uses OpenAI's official Python library with built-in retry logic, better error
+        handling, and native structured outputs support. Compatible with OpenAI-like
+        servers (LM Studio, vLLM, etc.) via custom base_url.
+
+        Raises:
+            ValueError: Null content, refusal, or unexpected format
+            openai.*: OpenAI SDK exceptions (APIConnectionError, RateLimitError, etc.)
+        """
+        # Build messages list
+        messages: list[dict[str, str]] = []
         if inputs.system_instructions:
             messages.append({"role": "system", "content": inputs.system_instructions})
         messages.append({"role": "user", "content": prompt})
 
-        body: dict[str, Any] = {
-            "model": inputs.model,
+        # Initialize AsyncOpenAI client with custom settings
+        client_kwargs: dict[str, Any] = {
+            "timeout": float(timeout),
+            "max_retries": 0,  # We handle retries at executor level
+        }
+
+        if inputs.api_key:
+            client_kwargs["api_key"] = inputs.api_key
+        else:
+            # Set a dummy key for OpenAI-compatible servers that don't require auth
+            client_kwargs["api_key"] = "sk-no-key-required"
+
+        if inputs.api_url:
+            # OpenAI SDK appends "/chat/completions" to base_url automatically
+            # Strip it if user provided full endpoint URL (common mistake)
+            base_url = inputs.api_url
+            if base_url.endswith("/chat/completions"):
+                base_url = base_url.rsplit("/chat/completions", 1)[0]
+            client_kwargs["base_url"] = base_url
+
+        # Prepare completion parameters
+        completion_kwargs: dict[str, Any] = {
+            "model": inputs.model or "",
             "messages": messages,
         }
 
         if temperature is not None:
-            body["temperature"] = temperature
+            completion_kwargs["temperature"] = temperature
         if max_tokens is not None:
-            body["max_tokens"] = max_tokens
+            completion_kwargs["max_tokens"] = max_tokens
 
         # Native schema validation (OpenAI Structured Outputs)
-        # Send schema to API if provided - compatible APIs will use it
         if inputs.response_schema:
-            # Type narrowing: validator ensures this is dict (never str at runtime)
-            assert isinstance(inputs.response_schema, dict), "Schema must be dict after validation"
-            # OpenAI requires additionalProperties: false for strict mode
-            schema = inputs.response_schema.copy()
+            schema = cast(dict[str, Any], inputs.response_schema).copy()
             if "additionalProperties" not in schema:
                 schema["additionalProperties"] = False
 
-            body["response_format"] = {
+            completion_kwargs["response_format"] = {
                 "type": "json_schema",
                 "json_schema": {
                     "name": "response_schema",
@@ -695,23 +634,43 @@ class LLMCallExecutor(BlockExecutor):
                 },
             }
 
-        headers = {"Content-Type": "application/json"}
-        if inputs.api_key:
-            headers["Authorization"] = f"Bearer {inputs.api_key}"
+        # Create client and make request
+        async with AsyncOpenAI(**client_kwargs) as client:
+            # Let OpenAI SDK exceptions propagate - they'll be caught by retry logic
+            response = await client.chat.completions.create(**completion_kwargs)
 
-        async with httpx.AsyncClient(timeout=timeout) as client:
-            response = await client.post(url, json=body, headers=headers)
-            response.raise_for_status()
+            # Extract content with null safety
+            message = response.choices[0].message
+            content = message.content
 
-            data = response.json()
-            response_text = data["choices"][0]["message"]["content"]
+            if content is None:
+                # Handle refusal or tool call scenarios
+                if message.refusal:
+                    raise ValueError(f"OpenAI refused request: {message.refusal}")
+                # Check for tool calls
+                if message.tool_calls:
+                    raise ValueError("OpenAI returned tool calls instead of text content")
+                raise ValueError("OpenAI returned null content (unexpected response format)")
 
-            provider_metadata = {
-                "model": data.get("model"),
-                "usage": data.get("usage", {}),
-                "finish_reason": data["choices"][0].get("finish_reason"),
-                "native_schema_sent": inputs.response_schema is not None,
+            response_text = content
+
+            # Build provider metadata
+            provider_metadata: dict[str, Any] = {
+                "model": response.model,
+                "finish_reason": response.choices[0].finish_reason,
             }
+
+            # Add usage stats if available
+            if response.usage:
+                provider_metadata["usage"] = {
+                    "prompt_tokens": response.usage.prompt_tokens,
+                    "completion_tokens": response.usage.completion_tokens,
+                    "total_tokens": response.usage.total_tokens,
+                }
+
+            # Add reasoning if available (for models like o1 that support CoT)
+            if hasattr(message, "reasoning") and message.reasoning:
+                provider_metadata["reasoning"] = message.reasoning
 
             return response_text, provider_metadata
 
@@ -723,12 +682,19 @@ class LLMCallExecutor(BlockExecutor):
         temperature: float | None,
         max_tokens: int | None,
     ) -> tuple[str, dict[str, Any]]:
-        """Call Anthropic API."""
+        """Call Anthropic API with null safety.
+
+        Raises:
+            ValueError: Empty content or null text
+            httpx.*: Network/API errors
+        """
         url = inputs.api_url or "https://api.anthropic.com/v1/messages"
 
         body: dict[str, Any] = {
             "model": inputs.model,
             "messages": [{"role": "user", "content": prompt}],
+            # max_tokens is required by Anthropic API - use 4096 as reasonable default
+            # (higher than docs example of 1024 to allow longer responses)
             "max_tokens": max_tokens or 4096,
         }
 
@@ -749,7 +715,21 @@ class LLMCallExecutor(BlockExecutor):
             response.raise_for_status()
 
             data = response.json()
-            response_text = data["content"][0]["text"]
+
+            # Extract content with null safety
+            content_blocks = data.get("content", [])
+            if not content_blocks:
+                raise ValueError("Anthropic returned empty content array")
+
+            text_content = content_blocks[0].get("text")
+            if text_content is None:
+                # Check for refusal
+                stop_reason = data.get("stop_reason")
+                if stop_reason == "end_turn":
+                    raise ValueError("Anthropic returned null text content")
+                raise ValueError(f"Anthropic returned null content (stop_reason: {stop_reason})")
+
+            response_text = text_content
 
             provider_metadata = {
                 "model": data.get("model"),
@@ -767,7 +747,12 @@ class LLMCallExecutor(BlockExecutor):
         temperature: float | None,
         max_tokens: int | None,
     ) -> tuple[str, dict[str, Any]]:
-        """Call Google Gemini API."""
+        """Call Google Gemini API with null safety.
+
+        Raises:
+            ValueError: Missing API key, empty content, or null text
+            httpx.*: Network/API errors
+        """
         if not inputs.api_key:
             raise ValueError("api_key is required for Gemini provider")
 
@@ -801,12 +786,33 @@ class LLMCallExecutor(BlockExecutor):
             response.raise_for_status()
 
             data = response.json()
-            response_text = data["candidates"][0]["content"]["parts"][0]["text"]
+
+            # Extract content with null safety
+            candidates = data.get("candidates", [])
+            if not candidates:
+                raise ValueError("Gemini returned empty candidates array")
+
+            candidate = candidates[0]
+            content = candidate.get("content", {})
+            parts = content.get("parts", [])
+
+            if not parts:
+                # Check for content filtering or safety blocks
+                finish_reason = candidate.get("finishReason")
+                if finish_reason and finish_reason != "STOP":
+                    raise ValueError(f"Gemini blocked content (finishReason: {finish_reason})")
+                raise ValueError("Gemini returned empty parts array")
+
+            text_content = parts[0].get("text")
+            if text_content is None:
+                raise ValueError("Gemini returned null text content")
+
+            response_text = text_content
 
             provider_metadata = {
                 "model": inputs.model,
                 "usage": data.get("usageMetadata", {}),
-                "finish_reason": data["candidates"][0].get("finishReason"),
+                "finish_reason": candidate.get("finishReason"),
             }
 
             return response_text, provider_metadata
@@ -819,7 +825,12 @@ class LLMCallExecutor(BlockExecutor):
         temperature: float | None,
         max_tokens: int | None,
     ) -> tuple[str, dict[str, Any]]:
-        """Call Ollama local API."""
+        """Call Ollama local API with null safety.
+
+        Raises:
+            ValueError: Null response
+            httpx.*: Network/API errors
+        """
         url = inputs.api_url or "http://localhost:11434/api/generate"
 
         # Combine system instructions and prompt for Ollama
@@ -845,7 +856,11 @@ class LLMCallExecutor(BlockExecutor):
             response.raise_for_status()
 
             data = response.json()
-            response_text = data["response"]
+
+            # Extract content with null safety
+            response_text = data.get("response")
+            if response_text is None:
+                raise ValueError("Ollama returned null response")
 
             provider_metadata = {
                 "model": data.get("model"),
@@ -859,38 +874,27 @@ class LLMCallExecutor(BlockExecutor):
 
     @staticmethod
     def _validate_response(response_text: str, schema: dict[str, Any]) -> dict[str, Any]:
-        """Validate LLM response against JSON Schema.
+        """Validate response against JSON Schema (client-side).
 
-        Args:
-            response_text: Raw text response from LLM
-            schema: JSON Schema to validate against
-
-        Returns:
-            Parsed and validated JSON object
+        Used by all providers for maximum compatibility with OpenAI-like servers.
 
         Raises:
-            ValueError: If response is not valid JSON or doesn't match schema
+            ValueError: Invalid JSON, non-dict response, or schema validation failure
         """
         # Try to parse as JSON
         try:
-            response_json = json.loads(response_text)
+            response = json.loads(response_text)
         except json.JSONDecodeError as e:
             raise ValueError(f"Response is not valid JSON: {e}")
 
         # Ensure it's a dict (schema requires type: object)
-        if not isinstance(response_json, dict):
-            raise ValueError(f"Response is not a JSON object, got {type(response_json).__name__}")
+        if not isinstance(response, dict):
+            raise ValueError(f"Response is not a JSON object, got {type(response).__name__}")
 
         # Validate against schema using jsonschema
         try:
-            import jsonschema
-
-            jsonschema.validate(instance=response_json, schema=schema)
-        except ImportError:
-            # jsonschema not installed, skip strict validation
-            # Just return the parsed JSON
-            pass
+            jsonschema.validate(instance=response, schema=schema)
         except jsonschema.ValidationError as e:
             raise ValueError(f"Response does not match schema: {e.message}")
 
-        return response_json
+        return response

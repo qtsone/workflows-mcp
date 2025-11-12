@@ -28,20 +28,36 @@ logger = logging.getLogger(__name__)
 
 
 @dataclass
+class ExecutionState:
+    """Runtime execution state needed to resume paused workflows.
+
+    This contains all the information needed to reconstruct the workflow
+    execution context and continue from where it paused.
+
+    Unified Job Architecture:
+    - Stored in Job.result["execution_state"] when workflow pauses
+    - Replaces separate CheckpointState storage
+    - Works for both sync and async execution modes
+    """
+
+    context: Execution  # Full execution context with block results
+    completed_blocks: list[str]  # IDs of blocks that have finished
+    current_wave_index: int  # Current position in DAG execution
+    execution_waves: list[list[str]]  # DAG wave structure
+    block_definitions: dict[str, Any]  # Block configuration data
+    workflow_stack: list[dict[str, Any]]  # Stack for workflow composition
+    paused_block_id: str  # ID of block that triggered pause
+    workflow_name: str  # Name of workflow being executed
+    runtime_inputs: dict[str, Any]  # Original inputs provided to workflow
+    pause_metadata: dict[str, Any] | None = None  # Pause metadata from ExecutionPaused
+
+
+@dataclass
 class PauseData:
     """Pause-specific metadata for paused workflows."""
 
-    checkpoint_id: str
     prompt: str
     metadata: dict[str, Any] | None = None
-
-    @property
-    def resume_message(self) -> str:
-        """Generate user-friendly resume instruction."""
-        return (
-            f'Use resume_workflow(checkpoint_id: "{self.checkpoint_id}", '
-            f'response: "<your-response>") to continue'
-        )
 
 
 @dataclass
@@ -75,6 +91,7 @@ class ExecutionResult:
     execution: Execution  # ALWAYS present - complete execution context
     error: str | None = None
     pause_data: PauseData | None = None
+    execution_state: ExecutionState | None = None  # Runtime state for resume (paused only)
     secret_redactor: SecretRedactor | None = None  # For debug file redaction
 
     # Factory Methods (Type-Safe Construction)
@@ -131,19 +148,24 @@ class ExecutionResult:
 
     @staticmethod
     def paused(
-        checkpoint_id: str,
         prompt: str,
         execution: Execution,
+        execution_state: ExecutionState,
         pause_metadata: dict[str, Any] | None = None,
         secret_redactor: SecretRedactor | None = None,
     ) -> ExecutionResult:
         """
         Create paused result with execution state for resume.
 
+        Unified Job Architecture:
+        - execution_state contains all runtime state needed for resume
+        - Stored in Job.result["execution_state"] when workflow pauses
+        - No separate checkpoint storage needed
+
         Args:
-            checkpoint_id: Checkpoint ID for resuming
             prompt: Prompt to show user
-            execution: Current execution state
+            execution: Current execution context
+            execution_state: Complete runtime state for resume
             pause_metadata: Optional pause-specific metadata
             secret_redactor: Optional secret redactor for debug file sanitization
 
@@ -151,7 +173,6 @@ class ExecutionResult:
             ExecutionResult with status="paused"
         """
         pause_data = PauseData(
-            checkpoint_id=checkpoint_id,
             prompt=prompt,
             metadata=pause_metadata,
         )
@@ -160,6 +181,7 @@ class ExecutionResult:
             execution=execution,
             error=None,
             pause_data=pause_data,
+            execution_state=execution_state,
             secret_redactor=secret_redactor,
         )
 
@@ -196,11 +218,12 @@ class ExecutionResult:
             {"status": "failure", "error": "...", "logfile": "/tmp/workflow-123.json"}
 
             # Paused - minimal (debug=False)
-            {"status": "paused", "checkpoint_id": "...", "prompt": "..."}
+            # Note: job_id added by caller (tools.py) after creating Job
+            {"status": "paused", "prompt": "..."}
 
             # Paused - debug mode (debug=True)
-            {"status": "paused", "checkpoint_id": "...", "prompt": "...",
-             "logfile": "/tmp/workflow-123.json"}
+            # Note: job_id added by caller (tools.py) after creating Job
+            {"status": "paused", "prompt": "...", "logfile": "/tmp/workflow-123.json"}
         """
         # Base response (status always included)
         response: dict[str, Any] = {
@@ -217,9 +240,9 @@ class ExecutionResult:
 
         elif self.status == "paused":
             assert self.pause_data is not None
-            response["checkpoint_id"] = self.pause_data.checkpoint_id
             response["prompt"] = self.pause_data.prompt
-            response["message"] = self.pause_data.resume_message
+            # Note: checkpoint_id/job_id not included here - added by caller (tools.py)
+            # Caller will create Job and return job_id for resume
 
         # Add debug logfile if requested (works for ALL statuses!)
         if debug:
@@ -244,9 +267,78 @@ class ExecutionResult:
         # Get workflow metadata from typed accessor
         return self.execution.workflow_metadata
 
+    def _execution_state_to_dict(self) -> dict[str, Any] | None:
+        """Convert ExecutionState to dict format for JSON serialization."""
+        if not self.execution_state:
+            return None
+
+        return {
+            "context": self.execution_state.context.model_dump(),
+            "completed_blocks": self.execution_state.completed_blocks,
+            "current_wave_index": self.execution_state.current_wave_index,
+            "execution_waves": self.execution_state.execution_waves,
+            "block_definitions": self.execution_state.block_definitions,
+            "workflow_stack": self.execution_state.workflow_stack,
+            "paused_block_id": self.execution_state.paused_block_id,
+            "workflow_name": self.execution_state.workflow_name,
+            "runtime_inputs": self.execution_state.runtime_inputs,
+        }
+
+    def _build_debug_data(self) -> dict[str, Any]:
+        """
+        Build debug data structure (canonical format for job persistence and debug files).
+
+        This is the CANONICAL format for:
+        - Job persistence (stored in job.result)
+        - Debug files (written to /tmp/)
+        - API responses (detailed format)
+
+        Format:
+        {
+            "status": "success" | "failure" | "paused",
+            "outputs": {...},         # Workflow outputs (success only)
+            "error": "...",           # Error message (failure only)
+            "blocks": {...},          # All block execution details
+            "metadata": {...},        # Workflow metadata (timing, counts)
+            "pause_data": {...},      # Pause metadata (paused only)
+            "prompt": "...",          # Prompt text (paused only)
+            "execution_state": {...}  # Runtime state for resume (paused only)
+        }
+
+        SECURITY: Secrets are automatically redacted.
+
+        Returns:
+            Dict containing complete execution details with secrets redacted
+        """
+        # Build complete debug data structure
+        data: dict[str, Any] = {
+            "status": self.status,
+            "outputs": self.execution.outputs if self.status == "success" else None,
+            "error": self.error,
+            "pause_data": self.pause_data.metadata if self.pause_data else None,
+            "blocks": self._blocks_to_dict(),
+            "metadata": self._metadata_to_dict(),
+        }
+
+        # Add pause-specific fields if paused
+        if self.status == "paused":
+            if self.pause_data:
+                data["prompt"] = self.pause_data.prompt
+            if self.execution_state:
+                data["execution_state"] = self._execution_state_to_dict()
+
+        # SECURITY: Redact secrets from entire data structure
+        if self.secret_redactor:
+            data = self.secret_redactor.redact(data)
+            logger.debug("Secrets redacted from debug data")
+
+        return data
+
     def _write_debug_file(self) -> str:
         """
         Write complete execution details to /tmp file for debugging.
+
+        Uses _build_debug_data() to ensure consistent format with job persistence.
 
         SECURITY: All secrets are redacted before writing to prevent leakage.
 
@@ -254,19 +346,16 @@ class ExecutionResult:
             Path to the created debug file
 
         File Format:
-            JSON file containing full execution details:
-            - status (success/failure/paused)
-            - outputs (workflow outputs if success)
-            - error (error message if failure)
-            - pause_data (pause metadata if paused)
-            - blocks (all block execution details - REDACTED)
-            - metadata (workflow execution metadata)
+            JSON file containing full execution details (see _build_debug_data())
 
         File Naming:
             /tmp/<workflow-name>-<timestamp-ms>.json
             Example: /tmp/python-ci-pipeline-1730000000123.json
         """
-        # Extract workflow name from metadata
+        # Get debug data (with secrets already redacted)
+        debug_data = self._build_debug_data()
+
+        # Extract workflow name from metadata for filename
         metadata_dict = self._metadata_to_dict()
         workflow_name = metadata_dict.get("workflow_name", "workflow")
 
@@ -276,26 +365,6 @@ class ExecutionResult:
         # Generate filename with timestamp
         timestamp_ms = int(datetime.now().timestamp() * 1000)
         filename = f"/tmp/{safe_workflow_name}-{timestamp_ms}.json"
-
-        # Build complete debug data (same structure as old "detailed" format)
-        debug_data: dict[str, Any] = {
-            "status": self.status,
-            "outputs": self.execution.outputs if self.status == "success" else None,
-            "error": self.error,
-            "pause_data": self.pause_data.metadata if self.pause_data else None,
-            "blocks": self._blocks_to_dict(),
-            "metadata": metadata_dict,
-        }
-
-        # Add pause-specific fields if paused
-        if self.status == "paused" and self.pause_data:
-            debug_data["checkpoint_id"] = self.pause_data.checkpoint_id
-            debug_data["prompt"] = self.pause_data.prompt
-
-        # SECURITY: Redact secrets from entire debug data structure
-        if self.secret_redactor:
-            debug_data = self.secret_redactor.redact(debug_data)
-            logger.debug("Secrets redacted from debug file")
 
         # Write to file with pretty formatting
         try:
@@ -311,4 +380,4 @@ class ExecutionResult:
             return f"ERROR: Failed to write debug file: {e}"
 
 
-__all__ = ["ExecutionResult", "PauseData"]
+__all__ = ["ExecutionResult", "ExecutionState", "PauseData"]

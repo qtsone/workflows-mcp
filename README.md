@@ -30,7 +30,7 @@ Workflows MCP is a [Model Context Protocol](https://modelcontextprotocol.io/) (M
 Workflows MCP transforms your AI assistant into an automation powerhouse. Instead of manually running commands or writing repetitive scripts, you define workflows in YAML, and your AI assistant executes them for you.
 
 **Real-world example:**
-```
+```text
 You: "Run the Python CI pipeline on my project"
 Claude: *Executes workflow that sets up environment, runs linting, and runs tests*
 Claude: "✓ All checks passed! Linting: ✓, Tests: ✓, Coverage: 92%"
@@ -127,7 +127,7 @@ The configuration is similar. For example, Gemini CLI users would add this to `~
 1. Restart your AI assistant (e.g., Claude Desktop)
 2. Try it out:
 
-```
+```text
 You: "List all available workflows"
 ```
 
@@ -253,7 +253,7 @@ The workflow is automatically discovered from `~/.workflows/`
 
 ### 3. Use it!
 
-```
+```text
 You: "Run the greet-user workflow with name=Alice and language=es"
 Claude: *Executes workflow*
 Claude: "¡Hola, Alice!"
@@ -496,7 +496,48 @@ blocks:
       command: "./deploy.sh"
 ```
 
-Use `resume_workflow` MCP tool to continue paused workflows.
+Workflows pause when they reach a `Prompt` block. Use `resume_workflow(job_id, response)` to continue execution with the user's input.
+
+**Example:**
+```text
+1. Execute workflow → Pauses at Prompt block, returns job_id
+2. Check status: get_job_status(job_id="job_abc123")
+3. Resume: resume_workflow(job_id="job_abc123", response="yes")
+```
+
+### ⚡ Async Execution
+
+Execute long-running workflows without blocking:
+
+```yaml
+# Start async workflow (returns immediately)
+execute_workflow(
+    workflow="long-running-deployment",
+    inputs={...},
+    mode="async",
+    timeout=3600  # 1 hour timeout (optional)
+)
+# Returns: {"job_id": "job_abc123", "status": "queued"}
+
+# Check progress
+get_job_status(job_id="job_abc123")
+# Returns: {"status": "running", ...}
+
+# Cancel if needed
+cancel_job(job_id="job_abc123")
+
+# List all jobs
+list_jobs(status="running")
+
+# Monitor queue health
+get_queue_stats()
+```
+
+**Use cases:**
+- Long CI/CD pipelines
+- Large-scale data processing
+- Multi-stage deployments
+- Resource-intensive analysis
 
 ---
 
@@ -526,21 +567,21 @@ The server includes many ready-to-use workflows:
 The best way to see what workflows are available is to ask your AI assistant:
 
 **List all workflows:**
-```
+```text
 You: "List all available workflows"
 ```
 
 Your AI will show you all currently available workflows with their descriptions.
 
 **Get detailed information:**
-```
+```text
 You: "Show me details about the python-ci-pipeline workflow"
 ```
 
 This shows inputs, outputs, and what the workflow does - inspect before running!
 
 **Filter by category:**
-```
+```text
 You: "List workflows tagged with 'python'"
 You: "Show me all git workflows"
 ```
@@ -556,45 +597,80 @@ When you configure workflows-mcp, your AI assistant gets these tools:
 ### Workflow Execution
 
 - **execute_workflow** - Run a registered workflow by name
-  ```
+  ```bash
   Usage: "Run the python-ci-pipeline workflow on ./my-project"
+  Parameters:
+    - mode: "sync" (default) or "async"
+    - timeout: Optional timeout in seconds for async mode (default: 3600, max: 86400)
+
+  Sync mode: Returns results immediately
+  Async mode: Returns job_id for tracking via get_job_status
   ```
 
 - **execute_inline_workflow** - Execute YAML directly without registration
-  ```
+  ```text
   Usage: "Execute this workflow: [YAML content]"
   ```
 
 ### Workflow Discovery
 
 - **list_workflows** - List all available workflows (optional tag filtering)
-  ```
+  ```text
   Usage: "List workflows tagged with 'python'"
   ```
 
 - **get_workflow_info** - Get detailed information about a workflow
-  ```
+  ```text
   Usage: "Show me the python-ci-pipeline workflow details"
   ```
 
 ### Workflow Validation
 
 - **validate_workflow_yaml** - Validate YAML before execution
-  ```
+  ```text
   Usage: "Validate this workflow YAML: [content]"
   ```
 
 - **get_workflow_schema** - Get the complete JSON schema
-  ```
+  ```text
   Usage: "Show me the workflow schema"
   ```
 
-### Checkpoint Management (for interactive workflows)
+### Job Management
+
+- **get_job_status** - Get status and outputs of a workflow job
+  ```bash
+  Usage: "Get status of job_abc123"
+  Parameters: job_id (from execute_workflow in async mode or paused workflows)
+  ```
+
+- **cancel_job** - Cancel a pending or running job
+  ```text
+  Usage: "Cancel job_abc123"
+  Parameters: job_id
+  ```
+
+- **list_jobs** - List workflow jobs with optional filtering
+  ```text
+  Usage: "List all running jobs" or "List completed jobs"
+  Parameters:
+    - status: Optional filter (queued, running, completed, failed, cancelled, paused)
+    - limit: Maximum results (default: 100)
+  ```
+
+- **get_queue_stats** - Get queue statistics for monitoring
+  ```text
+  Usage: "Show queue statistics"
+  Returns: IO queue and job queue metrics
+  ```
 
 - **resume_workflow** - Resume a paused workflow
-- **list_checkpoints** - List all saved checkpoints
-- **get_checkpoint_info** - Inspect checkpoint details
-- **delete_checkpoint** - Clean up old checkpoints
+  ```text
+  Usage: "Resume job_abc123 with response 'yes'"
+  Parameters:
+    - job_id: ID of paused workflow job
+    - response: User's response to the pause prompt
+  ```
 
 ---
 
@@ -610,6 +686,10 @@ Configure the server behavior with these environment variables:
 | `WORKFLOWS_MAX_RECURSION_DEPTH` | Maximum workflow recursion depth | `50` | `1-10000` |
 | `WORKFLOWS_LOG_LEVEL` | Logging verbosity | `INFO` | DEBUG, INFO, WARNING, ERROR, CRITICAL |
 | `WORKFLOW_SECRET_<NAME>` | Secret value (e.g., `WORKFLOW_SECRET_API_KEY`) | *(none)* | Any string |
+| `WORKFLOWS_IO_QUEUE_ENABLED` | Enable serialized I/O operations | `true` | true, false |
+| `WORKFLOWS_JOB_QUEUE_ENABLED` | Enable async workflow execution | `true` | true, false |
+| `WORKFLOWS_JOB_QUEUE_WORKERS` | Worker pool size for async jobs | `3` | 1-100 |
+| `WORKFLOWS_MAX_CONCURRENT_JOBS` | Maximum concurrent jobs | `100` | 1-10000 |
 
 ### Example Configuration
 
@@ -623,6 +703,10 @@ Configure the server behavior with these environment variables:
         "WORKFLOWS_TEMPLATE_PATHS": "~/.workflows,./project-workflows",
         "WORKFLOWS_LOG_LEVEL": "DEBUG",
         "WORKFLOWS_MAX_RECURSION_DEPTH": "100",
+        "WORKFLOWS_IO_QUEUE_ENABLED": "true",
+        "WORKFLOWS_JOB_QUEUE_ENABLED": "true",
+        "WORKFLOWS_JOB_QUEUE_WORKERS": "5",
+        "WORKFLOWS_MAX_CONCURRENT_JOBS": "200",
         "WORKFLOW_SECRET_GITHUB_TOKEN": "ghp_xxxxx",
         "WORKFLOW_SECRET_OPENAI_API_KEY": "sk-xxxxx"
       }
@@ -642,7 +726,7 @@ The server loads workflows from:
 **Load order priority:** Later directories override earlier ones by workflow name.
 
 **Example:**
-```
+```bash
 WORKFLOWS_TEMPLATE_PATHS="~/.workflows,./project-workflows"
 
 # Load order:
@@ -761,7 +845,7 @@ blocks:
 
 outputs:
   analysis:
-    value: "{{blocks.analyze.outputs.response_json}}"
+    value: "{{blocks.analyze.outputs.response}}"
     type: dict
 ```
 
@@ -865,7 +949,7 @@ This opens a web interface for testing tool calls and debugging workflow executi
 
 ### Project Structure
 
-```
+```bash
 workflows-mcp/
 ├── src/workflows_mcp/          # Main source code
 │   ├── engine/                  # Workflow execution engine
@@ -960,7 +1044,7 @@ python -c "import yaml; yaml.safe_load(open('~/.workflows/my-workflow.yaml'))"
 **Problem:** Workflow fails with "not found" error
 
 **Solution:**
-```
+```text
 You: "List all workflows"
 # This shows exact workflow names
 # Use the exact name from the list
@@ -988,9 +1072,10 @@ You: "List all workflows"
 **Solution:**
 - Check if tasks can run in parallel (remove unnecessary `depends_on`)
 - Enable debug logging to see execution waves:
-  ```
+  ```text
   You: "Run workflow X with debug=true"
   ```
+
 - Review task dependencies—too many serialized tasks slow execution
 
 **Problem:** Shell commands timing out
@@ -1023,7 +1108,7 @@ Enable detailed logging for troubleshooting:
 ```
 
 **Method 2: Per-execution debug**
-```
+```text
 You: "Run python-ci-pipeline with debug=true"
 ```
 
@@ -1055,7 +1140,7 @@ Workflows MCP uses a **fractal execution model** where workflows and blocks shar
 
 Workflows execute in **waves**—groups of blocks that can run in parallel:
 
-```
+```text
 Wave 1: [setup]
 Wave 2: [lint, test]      ← Parallel execution
 Wave 3: [validate]

@@ -46,16 +46,16 @@ blocks:
         - Branch: {{ branch_name }}
         - Has Changes: {{ has_changes }}
         - File Status:
-        {{ file_status }}
+        {{ summary }}
         - Diff Statistics:
-        {{ diff_stat }}
+        {{ diff }}
         - Recent Commits:
         {{ recent_commits }}
       variables:
         branch_name: "{{blocks.git_branch.outputs.name}}"
         has_changes: "{{blocks.analyze_changes.outputs.has_changes}}"
-        file_status: "{{blocks.analyze_changes.outputs.file_status}}"
-        diff_stat: "{{blocks.analyze_changes.outputs.diff_stat}}"
+        summary: "{{blocks.analyze_changes.outputs.summary}}"
+        diff: "{{blocks.analyze_changes.outputs.diff}}"
         recent_commits: "{{blocks.check_recent_commits.outputs.stdout}}"
     depends_on:
       - analyze_changes
@@ -64,17 +64,5 @@ blocks:
 outputs:
   current_branch:
     value: "{{blocks.git_branch.outputs.name}}"
-  has_changes:
-    value: "{{blocks.analyze_changes.outputs.has_changes}}"
-  file_status:
-    value: "{{blocks.analyze_changes.outputs.file_status}}"
-  staged_diff:
-    value: "{{blocks.analyze_changes.outputs.staged_diff}}"
-  unstaged_diff:
-    value: "{{blocks.analyze_changes.outputs.unstaged_diff}}"
-  diff_stat:
-    value: "{{blocks.analyze_changes.outputs.diff_stat}}"
-  recent_commits:
-    value: "{{blocks.check_recent_commits.outputs.stdout}}"
   summary:
     value: "{{blocks.summary.outputs.content}}"

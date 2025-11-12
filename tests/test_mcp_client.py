@@ -52,21 +52,17 @@ from mcp.types import TextContent
 from test_utils import format_diff, normalize_dynamic_fields
 
 from workflows_mcp.context import AppContext
-from workflows_mcp.engine.checkpoint_store import InMemoryCheckpointStore
 from workflows_mcp.engine.executor_base import create_default_registry
+from workflows_mcp.engine.io_queue import IOQueue
 from workflows_mcp.engine.llm_config import LLMConfigLoader
 from workflows_mcp.engine.registry import WorkflowRegistry
 from workflows_mcp.engine.schema import WorkflowSchema
 from workflows_mcp.tools import (
-    delete_checkpoint,
     execute_inline_workflow,
     execute_workflow,
-    get_checkpoint_info,
     get_workflow_info,
     get_workflow_schema,
-    list_checkpoints,
     list_workflows,
-    resume_workflow,
     validate_workflow_yaml,
 )
 
@@ -87,7 +83,6 @@ def mock_context():
     This fixture creates an isolated test environment with:
     - WorkflowRegistry with test workflows
     - ExecutorRegistry with Shell executor
-    - InMemoryCheckpointStore for checkpoint tests
     - LLMConfigLoader with built-in defaults
 
     Returns:
@@ -95,7 +90,6 @@ def mock_context():
     """
     registry = WorkflowRegistry()
     executor_registry = create_default_registry()
-    checkpoint_store = InMemoryCheckpointStore()
     llm_config_loader = LLMConfigLoader()
 
     # Register test workflow with Shell executor
@@ -120,12 +114,15 @@ def mock_context():
     )
     registry.register(test_workflow)
 
+    # Create IO queue (not started, fine for unit tests)
+    io_queue = IOQueue()
+
     # Create mock context matching MCP server structure
     app_context = AppContext(
         registry=registry,
         executor_registry=executor_registry,
-        checkpoint_store=checkpoint_store,
         llm_config_loader=llm_config_loader,
+        io_queue=io_queue,
     )
 
     mock_ctx = MagicMock()
@@ -196,9 +193,11 @@ class TestMCPServerHealth:
                 "get_workflow_schema",
                 "validate_workflow_yaml",
                 "resume_workflow",
-                "list_checkpoints",
-                "get_checkpoint_info",
-                "delete_checkpoint",
+                # Job queue tools (async execution)
+                "get_job_status",
+                "cancel_job",
+                "list_jobs",
+                "get_queue_stats",
             }
 
             missing = required_tools - tool_names
@@ -561,97 +560,8 @@ blocks: []
 # =============================================================================
 
 
-class TestCheckpointManagement:
-    """Complete checkpoint lifecycle management tests.
-
-    Tests checkpoint creation, listing, retrieval, resumption, and deletion.
-    Note: Full interactive resume tests are in TestInteractiveWorkflows.
-    These tests focus on error cases and basic checkpoint operations.
-    """
-
-    # Resume workflow error cases
-
-    @pytest.mark.asyncio
-    async def test_resume_workflow_invalid_checkpoint_id(self, mock_context) -> None:
-        """Test resume_workflow with invalid checkpoint ID."""
-        result = await resume_workflow(checkpoint_id="invalid", ctx=mock_context)
-
-        assert result["status"] == "failure"
-        assert "not found" in result["error"].lower()
-
-    @pytest.mark.asyncio
-    async def test_resume_workflow_checkpoint_not_found(self, mock_context) -> None:
-        """Test resume_workflow with non-existent checkpoint."""
-        result = await resume_workflow(checkpoint_id="non_existent_checkpoint", ctx=mock_context)
-
-        assert result["status"] == "failure"
-
-    # Checkpoint listing tests
-
-    @pytest.mark.asyncio
-    async def test_list_checkpoints_json_format(self, mock_context) -> None:
-        """Test list_checkpoints returns structured data."""
-        result = await list_checkpoints(format="json", ctx=mock_context)
-
-        assert "checkpoints" in result
-        assert "total" in result
-        assert isinstance(result["checkpoints"], list)
-        assert isinstance(result["total"], int)
-
-    @pytest.mark.asyncio
-    async def test_list_checkpoints_markdown_format(self, mock_context) -> None:
-        """Test list_checkpoints markdown format."""
-        result = await list_checkpoints(format="markdown", ctx=mock_context)
-
-        assert isinstance(result, str)
-        assert "checkpoints" in result.lower() or "no" in result.lower()
-
-    @pytest.mark.asyncio
-    async def test_list_checkpoints_with_workflow_filter(self, mock_context) -> None:
-        """Test list_checkpoints with workflow name filter."""
-        result = await list_checkpoints(
-            workflow_name="test-workflow", format="json", ctx=mock_context
-        )
-
-        assert "checkpoints" in result
-        assert "total" in result
-
-    # Checkpoint info retrieval tests
-
-    @pytest.mark.asyncio
-    async def test_get_checkpoint_info_json_format(self, mock_context) -> None:
-        """Test get_checkpoint_info with non-existent checkpoint."""
-        result = await get_checkpoint_info(
-            checkpoint_id="nonexistent", format="json", ctx=mock_context
-        )
-
-        assert result["found"] is False
-        assert "error" in result
-
-    @pytest.mark.asyncio
-    async def test_get_checkpoint_info_markdown_format(self, mock_context) -> None:
-        """Test get_checkpoint_info markdown format."""
-        result = await get_checkpoint_info(
-            checkpoint_id="nonexistent", format="markdown", ctx=mock_context
-        )
-
-        assert isinstance(result, str)
-        assert "not found" in result.lower() or "error" in result.lower()
-
-    # Checkpoint deletion tests
-
-    @pytest.mark.asyncio
-    async def test_delete_checkpoint_not_found(self, mock_context) -> None:
-        """Test delete_checkpoint with non-existent checkpoint."""
-        result = await delete_checkpoint(checkpoint_id="nonexistent", ctx=mock_context)
-
-        assert result["deleted"] is False
-        assert "message" in result
-        assert "not found" in result["message"].lower()
-
-
 # =============================================================================
-# Test Classes - Part 5: Interactive Workflows
+# Test Classes - Part 5: Interactive Workflows (with unified Job architecture)
 # =============================================================================
 
 
@@ -694,10 +604,8 @@ class TestInteractiveWorkflows:
 
             # Verify paused state
             assert response["status"] == "paused", "Workflow should pause at Prompt block"
-            assert "checkpoint_id" in response, "Should return checkpoint ID"
-            assert response["checkpoint_id"].startswith("pause_"), (
-                "Checkpoint ID should have pause_ prefix"
-            )
+            assert "job_id" in response, "Should return job ID"
+            assert response["job_id"].startswith("job_"), "Job ID should have job_ prefix"
 
             # Verify prompt information is included
             assert "prompt" in response, "Should include prompt message"
@@ -745,13 +653,13 @@ class TestInteractiveWorkflows:
             exec_response: dict[str, Any] = json.loads(exec_content.text)
 
             assert exec_response["status"] == "paused"
-            checkpoint_id = exec_response["checkpoint_id"]
+            job_id = exec_response["job_id"]
 
             # Step 2: Resume with 'yes' response
             resume_result = await mcp_client.call_tool(
                 "resume_workflow",
                 arguments={
-                    "checkpoint_id": checkpoint_id,
+                    "job_id": job_id,
                     "response": "yes",
                     "debug": True,
                 },
@@ -768,6 +676,9 @@ class TestInteractiveWorkflows:
             resume_response: dict[str, Any] = json.loads(resume_content.text)
 
             # Verify workflow completed successfully
+            if resume_response["status"] != "success":
+                error = resume_response.get("error", "No error message")
+                print(f"Resume failed with error: {error}")
             assert resume_response["status"] == "success", "Workflow should complete after resume"
 
             # Read debug logfile to verify block execution details
@@ -826,13 +737,13 @@ class TestInteractiveWorkflows:
                 raise ValueError(f"Expected TextContent, got {type(exec_content)}")
 
             exec_response: dict[str, Any] = json.loads(exec_content.text)
-            checkpoint_id = exec_response["checkpoint_id"]
+            job_id = exec_response["job_id"]
 
             # Step 2: Resume with 'no' response
             resume_result = await mcp_client.call_tool(
                 "resume_workflow",
                 arguments={
-                    "checkpoint_id": checkpoint_id,
+                    "job_id": job_id,
                     "response": "no",
                     "debug": True,
                 },
@@ -875,13 +786,12 @@ class TestInteractiveWorkflows:
 
     @pytest.mark.asyncio
     async def test_checkpoint_persists_workflow_state(self) -> None:
-        """Test that checkpoint preserves complete workflow state.
+        """Test that Job preserves complete workflow state for paused workflows.
 
         Validates:
-        - Completed blocks are preserved
-        - Input parameters are preserved
-        - Execution context is preserved
-        - Can retrieve checkpoint info before resuming
+        - Paused workflows are stored as Jobs
+        - Job status shows paused state
+        - Can retrieve Job info before resuming
         """
         async with get_mcp_client() as mcp_client:
             # Execute workflow until pause
@@ -899,49 +809,36 @@ class TestInteractiveWorkflows:
                 raise ValueError(f"Expected TextContent, got {type(exec_content)}")
 
             exec_response: dict[str, Any] = json.loads(exec_content.text)
-            checkpoint_id = exec_response["checkpoint_id"]
+            job_id = exec_response["job_id"]
 
-            # Retrieve checkpoint info
-            info_result = await mcp_client.call_tool(
-                "get_checkpoint_info",
-                arguments={"checkpoint_id": checkpoint_id, "format": "json"},
+            # Retrieve job status
+            status_result = await mcp_client.call_tool(
+                "get_job_status",
+                arguments={"job_id": job_id},
             )
 
-            info_content = info_result.content[0]
-            if not isinstance(info_content, TextContent):
-                raise ValueError(f"Expected TextContent, got {type(info_content)}")
+            status_content = status_result.content[0]
+            if not isinstance(status_content, TextContent):
+                raise ValueError(f"Expected TextContent, got {type(status_content)}")
 
-            checkpoint_info: dict[str, Any] = json.loads(info_content.text)
+            job_status: dict[str, Any] = json.loads(status_content.text)
 
-            # Verify checkpoint exists
-            assert checkpoint_info["found"] is True, "Checkpoint should be found"
-            assert checkpoint_info["checkpoint_id"] == checkpoint_id, "Checkpoint ID should match"
+            # Verify job exists and is paused
+            assert job_status["id"] == job_id, "Job ID should match"
+            assert job_status["status"] == "paused", "Job should be in paused state"
+            assert job_status["workflow"] == "interactive-simple-approval"
 
-            # Verify checkpoint metadata
-            assert checkpoint_info["workflow_name"] == "interactive-simple-approval"
-            assert checkpoint_info["is_paused"] is True, "Should be a pause checkpoint"
-            assert checkpoint_info["paused_block_id"] == "approval", "Paused at approval block"
-            assert "pause_prompt" in checkpoint_info, "Should have pause prompt"
-
-            # Verify completed blocks tracking
-            assert "completed_blocks" in checkpoint_info
-            assert "start" in checkpoint_info["completed_blocks"], (
-                "start block should be tracked as completed"
-            )
-
-            # Verify execution progress
-            assert "current_wave" in checkpoint_info
-            assert "total_waves" in checkpoint_info
-            assert "progress_percentage" in checkpoint_info
+            # Verify job has result file (execution state is stored there)
+            assert "result_file" in job_status, "Paused job should have result file"
 
     @pytest.mark.asyncio
     async def test_list_checkpoints_shows_paused_workflows(self) -> None:
-        """Test that list_checkpoints returns paused workflows.
+        """Test that list_jobs returns paused workflows.
 
         Validates:
-        - Paused workflows appear in checkpoint list
-        - Checkpoint metadata is accessible
-        - Can filter by workflow name
+        - Paused workflows appear in job list
+        - Job metadata is accessible
+        - Can filter by status
         """
         async with get_mcp_client() as mcp_client:
             # Execute workflow until pause
@@ -959,46 +856,43 @@ class TestInteractiveWorkflows:
                 raise ValueError(f"Expected TextContent, got {type(exec_content)}")
 
             exec_response: dict[str, Any] = json.loads(exec_content.text)
-            checkpoint_id = exec_response["checkpoint_id"]
+            job_id = exec_response["job_id"]
 
-            # List all checkpoints
-            list_result = await mcp_client.call_tool(
-                "list_checkpoints", arguments={"format": "json"}
-            )
+            # List paused jobs
+            list_result = await mcp_client.call_tool("list_jobs", arguments={"status": "paused"})
 
             list_content = list_result.content[0]
             if not isinstance(list_content, TextContent):
                 raise ValueError(f"Expected TextContent, got {type(list_content)}")
 
-            checkpoints_response: dict[str, Any] = json.loads(list_content.text)
+            jobs_response: dict[str, Any] = json.loads(list_content.text)
 
-            # Verify checkpoint appears in list
-            assert "checkpoints" in checkpoints_response
-            assert "total" in checkpoints_response
-            assert checkpoints_response["total"] > 0, "Should have at least one checkpoint"
+            # Verify job appears in list
+            assert "jobs" in jobs_response
+            assert "total" in jobs_response
+            assert jobs_response["total"] > 0, "Should have at least one paused job"
 
-            # Find our checkpoint
-            our_checkpoint = None
-            for cp in checkpoints_response["checkpoints"]:
-                if cp["checkpoint_id"] == checkpoint_id:
-                    our_checkpoint = cp
+            # Find our job
+            our_job = None
+            for job in jobs_response["jobs"]:
+                if job["id"] == job_id:
+                    our_job = job
                     break
 
-            assert our_checkpoint is not None, "Our checkpoint should be in the list"
-            assert our_checkpoint["workflow"] == "interactive-simple-approval", (
+            assert our_job is not None, "Our job should be in the list"
+            assert our_job["workflow"] == "interactive-simple-approval", (
                 "Workflow name should match"
             )
-            assert our_checkpoint["type"] == "pause", "Type should be pause"
-            assert our_checkpoint["is_paused"] is True, "Should be paused"
+            assert our_job["status"] == "paused", "Status should be paused"
 
     @pytest.mark.asyncio
     async def test_delete_checkpoint_after_resume(self) -> None:
-        """Test that checkpoint can be deleted after workflow resumes.
+        """Test that paused job can be cancelled.
 
         Validates:
-        - Checkpoint persists during pause
-        - Can delete checkpoint after completion
-        - Deleted checkpoint cannot be resumed
+        - Paused jobs can be cancelled
+        - Cancelled jobs show correct status
+        - Cannot resume cancelled jobs
         """
         async with get_mcp_client() as mcp_client:
             # Execute and pause
@@ -1016,45 +910,41 @@ class TestInteractiveWorkflows:
                 raise ValueError(f"Expected TextContent, got {type(exec_content)}")
 
             exec_response: dict[str, Any] = json.loads(exec_content.text)
-            checkpoint_id = exec_response["checkpoint_id"]
+            job_id = exec_response["job_id"]
 
-            # Resume and complete
-            await mcp_client.call_tool(
-                "resume_workflow",
-                arguments={
-                    "checkpoint_id": checkpoint_id,
-                    "response": "yes",
-                    "debug": False,
-                },
+            # Verify job is paused
+            status_before = await mcp_client.call_tool(
+                "get_job_status",
+                arguments={"job_id": job_id},
             )
+            status_before_content = status_before.content[0]
+            if not isinstance(status_before_content, TextContent):
+                raise ValueError(f"Expected TextContent, got {type(status_before_content)}")
+            status_before_data: dict[str, Any] = json.loads(status_before_content.text)
+            assert status_before_data["status"] == "paused", "Job should be paused"
 
-            # Delete checkpoint
-            delete_result = await mcp_client.call_tool(
-                "delete_checkpoint", arguments={"checkpoint_id": checkpoint_id}
+            # Cancel the paused job
+            cancel_result = await mcp_client.call_tool("cancel_job", arguments={"job_id": job_id})
+
+            cancel_content = cancel_result.content[0]
+            if not isinstance(cancel_content, TextContent):
+                raise ValueError(f"Expected TextContent, got {type(cancel_content)}")
+
+            cancel_response: dict[str, Any] = json.loads(cancel_content.text)
+
+            # Verify cancellation succeeded
+            assert cancel_response["cancelled"] is True, "Job should be successfully cancelled"
+
+            # Verify job status is now cancelled
+            status_after = await mcp_client.call_tool(
+                "get_job_status",
+                arguments={"job_id": job_id},
             )
-
-            delete_content = delete_result.content[0]
-            if not isinstance(delete_content, TextContent):
-                raise ValueError(f"Expected TextContent, got {type(delete_content)}")
-
-            delete_response: dict[str, Any] = json.loads(delete_content.text)
-
-            # Verify deletion succeeded
-            assert delete_response["deleted"] is True, "Checkpoint should be successfully deleted"
-
-            # Verify checkpoint no longer exists
-            info_result = await mcp_client.call_tool(
-                "get_checkpoint_info",
-                arguments={"checkpoint_id": checkpoint_id, "format": "json"},
-            )
-
-            info_content = info_result.content[0]
-            if not isinstance(info_content, TextContent):
-                raise ValueError(f"Expected TextContent, got {type(info_content)}")
-
-            info_response: dict[str, Any] = json.loads(info_content.text)
-
-            assert info_response["found"] is False, "Deleted checkpoint should not be found"
+            status_after_content = status_after.content[0]
+            if not isinstance(status_after_content, TextContent):
+                raise ValueError(f"Expected TextContent, got {type(status_after_content)}")
+            status_after_data: dict[str, Any] = json.loads(status_after_content.text)
+            assert status_after_data["status"] == "cancelled", "Job status should be cancelled"
 
 
 # =============================================================================
@@ -1085,24 +975,6 @@ class TestQualityAssurance:
             assert result["logfile"].startswith("/tmp/")
         elif result["status"] == "failure":
             assert "error" in result
-
-    @pytest.mark.asyncio
-    async def test_checkpoint_response_structure(self, mock_context) -> None:
-        """Test checkpoint-related response structures."""
-        # List checkpoints
-        list_result = await list_checkpoints(format="json", ctx=mock_context)
-        assert "checkpoints" in list_result
-        assert "total" in list_result
-
-        # Get checkpoint info
-        info_result = await get_checkpoint_info(
-            checkpoint_id="test", format="json", ctx=mock_context
-        )
-        assert "found" in info_result
-
-        # Delete checkpoint
-        delete_result = await delete_checkpoint(checkpoint_id="test", ctx=mock_context)
-        assert "deleted" in delete_result
 
     # Error message quality tests
 

@@ -181,11 +181,35 @@ async def main() -> None:
             content = result.content[0]
             if isinstance(content, TextContent):
                 # list_workflows returns a JSON list directly, not a dict
-                workflows: list[str] = json.loads(content.text)
+                all_workflows: list[str] = json.loads(content.text)
             else:
                 raise ValueError(f"Expected TextContent, got {type(content)}")
 
-            print(f"✅ Discovered {len(workflows)} test workflows\n")
+            # Exclude interactive workflows (they require resume_workflow)
+            # This matches pytest_generate_tests behavior in test_mcp_client.py
+            print(
+                f"📋 Found {len(all_workflows)} workflows with tag='test', filtering...",
+                flush=True,
+            )
+            workflows: list[str] = []
+            for wf_name in all_workflows:
+                info_result = await client.call_tool(
+                    "get_workflow_info", arguments={"workflow": wf_name, "format": "json"}
+                )
+                info_content = info_result.content[0]
+                if not isinstance(info_content, TextContent):
+                    continue
+
+                workflow_info = json.loads(info_content.text)
+                tags = workflow_info.get("tags", [])
+
+                # Exclude workflows tagged as 'interactive' (cannot complete via normal execution)
+                if "interactive" not in tags:
+                    workflows.append(wf_name)
+                else:
+                    print(f"   ⏭️  Skipping interactive workflow: {wf_name}", flush=True)
+
+            print(f"✅ Discovered {len(workflows)} non-interactive test workflows\n")
             print(f"📁 Snapshots will be saved to: {SNAPSHOTS_DIR}\n")
             print("=" * 80)
             print(f"EXECUTING {len(workflows)} WORKFLOWS")

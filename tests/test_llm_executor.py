@@ -11,7 +11,7 @@ Tests cover:
 import json
 from unittest.mock import AsyncMock, Mock, patch
 
-import httpx
+import openai
 import pytest
 
 from workflows_mcp.engine.execution import Execution
@@ -42,36 +42,34 @@ class TestLLMCallExecutor:
             timeout=10,
         )
 
-        mock_response = Mock()
-        mock_response.status_code = 200
-        mock_response.json.return_value = {
-            "choices": [
-                {
-                    "message": {"content": "The answer is 4."},
-                    "finish_reason": "stop",
-                }
-            ],
-            "model": "gpt-4o",
-            "usage": {
-                "prompt_tokens": 10,
-                "completion_tokens": 5,
-                "total_tokens": 15,
-            },
-        }
-
-        with patch("httpx.AsyncClient") as mock_client:
-            mock_client.return_value.__aenter__.return_value.post = AsyncMock(
-                return_value=mock_response
+        # Mock the OpenAI completion response
+        mock_completion = Mock()
+        mock_completion.choices = [
+            Mock(
+                message=Mock(content="The answer is 4.", refusal=None, tool_calls=None),
+                finish_reason="stop",
             )
+        ]
+        mock_completion.model = "gpt-4o"
+        mock_completion.usage = Mock(
+            prompt_tokens=10,
+            completion_tokens=5,
+            total_tokens=15,
+        )
+
+        with patch("workflows_mcp.engine.executors_llm.AsyncOpenAI") as mock_client_class:
+            mock_client = AsyncMock()
+            mock_client.__aenter__.return_value = mock_client
+            mock_client.chat.completions.create = AsyncMock(return_value=mock_completion)
+            mock_client_class.return_value = mock_client
 
             result = await executor.execute(inputs, mock_context)
 
             assert isinstance(result, LLMCallOutput)
             assert result.success is True
-            assert result.response == "The answer is 4."
+            assert result.response == {"content": "The answer is 4."}
             assert result.metadata["attempts"] == 1
-            assert result.metadata["validation_passed"] is True
-            assert result.response_json == {}  # No JSON in plain text response
+            assert "validation_failed" not in result.metadata  # No schema requested
             assert result.metadata["model"] == "gpt-4o"
             assert result.metadata["usage"]["total_tokens"] == 15
 
@@ -107,7 +105,7 @@ class TestLLMCallExecutor:
             result = await executor.execute(inputs, mock_context)
 
             assert result.success is True
-            assert result.response == "Hello! How can I help you today?"
+            assert result.response == {"content": "Hello! How can I help you today?"}
             assert result.metadata["attempts"] == 1
             assert result.metadata["model"] == "claude-3-5-sonnet-20241022"
 
@@ -146,7 +144,7 @@ class TestLLMCallExecutor:
             result = await executor.execute(inputs, mock_context)
 
             assert result.success is True
-            assert "Quantum computing" in result.response
+            assert "Quantum computing" in result.response["content"]
             assert result.metadata["attempts"] == 1
 
     @pytest.mark.asyncio
@@ -179,7 +177,7 @@ class TestLLMCallExecutor:
             result = await executor.execute(inputs, mock_context)
 
             assert result.success is True
-            assert result.response == "Hello! How are you?"
+            assert result.response == {"content": "Hello! How are you?"}
             assert result.metadata["attempts"] == 1
 
     @pytest.mark.asyncio
@@ -206,36 +204,37 @@ class TestLLMCallExecutor:
         # Mock response with valid JSON matching schema
         valid_json_response = json.dumps({"answer": "4", "confidence": 0.99})
 
-        mock_response = Mock()
-        mock_response.status_code = 200
-        mock_response.json.return_value = {
-            "choices": [
-                {
-                    "message": {"content": valid_json_response},
-                    "finish_reason": "stop",
-                }
-            ],
-            "model": "gpt-4o",
-            "usage": {"prompt_tokens": 10, "completion_tokens": 5, "total_tokens": 15},
-        }
-
-        with patch("httpx.AsyncClient") as mock_client:
-            mock_client.return_value.__aenter__.return_value.post = AsyncMock(
-                return_value=mock_response
+        mock_completion = Mock()
+        mock_completion.choices = [
+            Mock(
+                message=Mock(content=valid_json_response, refusal=None, tool_calls=None),
+                finish_reason="stop",
             )
+        ]
+        mock_completion.model = "gpt-4o"
+        mock_completion.usage = Mock(
+            prompt_tokens=10,
+            completion_tokens=5,
+            total_tokens=15,
+        )
+
+        with patch("workflows_mcp.engine.executors_llm.AsyncOpenAI") as mock_client_class:
+            mock_client = AsyncMock()
+            mock_client.__aenter__.return_value = mock_client
+            mock_client.chat.completions.create = AsyncMock(return_value=mock_completion)
+            mock_client_class.return_value = mock_client
 
             result = await executor.execute(inputs, mock_context)
 
             assert result.success is True
-            assert result.metadata["validation_passed"] is True
-            assert result.response_json is not None
-            assert result.response_json["answer"] == "4"
-            assert result.response_json["confidence"] == 0.99
+            assert "validation_failed" not in result.metadata
+            assert result.response["answer"] == "4"
+            assert result.response["confidence"] == 0.99
             assert result.metadata["attempts"] == 1
 
     @pytest.mark.asyncio
     async def test_schema_validation_retry(self, executor, mock_context):
-        """Test schema validation retry with feedback loop."""
+        """Test schema validation retry with feedback loop (Anthropic, no native schema)."""
         schema = {
             "type": "object",
             "required": ["answer"],
@@ -243,10 +242,10 @@ class TestLLMCallExecutor:
         }
 
         inputs = LLMCallInput(
-            provider="openai",
-            model="gpt-4o",
+            provider="anthropic",
+            model="claude-3-5-sonnet-20241022",
             prompt="What is 2+2?",
-            api_key="sk-test-key",
+            api_key="sk-ant-test",
             response_schema=schema,
             max_retries=2,
             retry_delay=0.1,  # Fast retry for testing
@@ -267,17 +266,12 @@ class TestLLMCallExecutor:
             response = Mock()
             response.status_code = 200
             response.json.return_value = {
-                "choices": [
-                    {
-                        "message": {"content": responses[call_count]},
-                        "finish_reason": "stop",
-                    }
-                ],
-                "model": "gpt-4o",
+                "content": [{"text": responses[call_count]}],
+                "model": "claude-3-5-sonnet-20241022",
+                "stop_reason": "end_turn",
                 "usage": {
-                    "prompt_tokens": 10,
-                    "completion_tokens": 5,
-                    "total_tokens": 15,
+                    "input_tokens": 10,
+                    "output_tokens": 5,
                 },
             }
             call_count += 1
@@ -289,13 +283,13 @@ class TestLLMCallExecutor:
             result = await executor.execute(inputs, mock_context)
 
             assert result.success is True
-            assert result.metadata["validation_passed"] is True
+            assert "validation_failed" not in result.metadata
             assert result.metadata["attempts"] == 2
-            assert result.response_json["answer"] == "4"
+            assert result.response["answer"] == "4"
 
     @pytest.mark.asyncio
     async def test_schema_validation_failure_exhausted_retries(self, executor, mock_context):
-        """Test schema validation failure after all retries exhausted."""
+        """Test schema validation failure after all retries exhausted (Anthropic)."""
         schema = {
             "type": "object",
             "required": ["answer"],
@@ -303,10 +297,10 @@ class TestLLMCallExecutor:
         }
 
         inputs = LLMCallInput(
-            provider="openai",
-            model="gpt-4o",
+            provider="anthropic",
+            model="claude-3-5-sonnet-20241022",
             prompt="What is 2+2?",
-            api_key="sk-test-key",
+            api_key="sk-ant-test",
             response_schema=schema,
             max_retries=2,
             retry_delay=0.1,
@@ -317,14 +311,10 @@ class TestLLMCallExecutor:
         mock_response = Mock()
         mock_response.status_code = 200
         mock_response.json.return_value = {
-            "choices": [
-                {
-                    "message": {"content": "This is not JSON"},
-                    "finish_reason": "stop",
-                }
-            ],
-            "model": "gpt-4o",
-            "usage": {"prompt_tokens": 10, "completion_tokens": 5, "total_tokens": 15},
+            "content": [{"text": "This is not JSON"}],
+            "model": "claude-3-5-sonnet-20241022",
+            "stop_reason": "end_turn",
+            "usage": {"input_tokens": 10, "output_tokens": 5},
         }
 
         with patch("httpx.AsyncClient") as mock_client:
@@ -334,11 +324,12 @@ class TestLLMCallExecutor:
 
             result = await executor.execute(inputs, mock_context)
 
-            assert result.success is False
-            assert result.metadata["validation_passed"] is False
-            assert result.response_json == {}  # Empty dict on validation failure
+            # API call succeeded, but validation failed
+            assert result.success is True
+            assert result.metadata.get("validation_failed") is True
+            assert result.response == {"content": "This is not JSON"}
             assert result.metadata["attempts"] == 2
-            assert "validation_error" in result.metadata  # Should have error message
+            assert "validation_error" in result.metadata
 
     @pytest.mark.asyncio
     async def test_retry_on_timeout(self, executor, mock_context):
@@ -356,37 +347,38 @@ class TestLLMCallExecutor:
         # First two calls timeout, third succeeds
         call_count = 0
 
-        async def mock_post(*args, **kwargs):
+        async def mock_create(*args, **kwargs):
             nonlocal call_count
             call_count += 1
             if call_count < 3:
-                raise httpx.TimeoutException("Request timeout")
+                # Raise APITimeoutError instead of httpx.TimeoutException
+                raise openai.APITimeoutError(request=Mock())
 
-            response = Mock()
-            response.status_code = 200
-            response.json.return_value = {
-                "choices": [
-                    {
-                        "message": {"content": "Success!"},
-                        "finish_reason": "stop",
-                    }
-                ],
-                "model": "gpt-4o",
-                "usage": {
-                    "prompt_tokens": 10,
-                    "completion_tokens": 5,
-                    "total_tokens": 15,
-                },
-            }
-            return response
+            mock_completion = Mock()
+            mock_completion.choices = [
+                Mock(
+                    message=Mock(content="Success!", refusal=None, tool_calls=None),
+                    finish_reason="stop",
+                )
+            ]
+            mock_completion.model = "gpt-4o"
+            mock_completion.usage = Mock(
+                prompt_tokens=10,
+                completion_tokens=5,
+                total_tokens=15,
+            )
+            return mock_completion
 
-        with patch("httpx.AsyncClient") as mock_client:
-            mock_client.return_value.__aenter__.return_value.post = AsyncMock(side_effect=mock_post)
+        with patch("workflows_mcp.engine.executors_llm.AsyncOpenAI") as mock_client_class:
+            mock_client = AsyncMock()
+            mock_client.__aenter__.return_value = mock_client
+            mock_client.chat.completions.create = AsyncMock(side_effect=mock_create)
+            mock_client_class.return_value = mock_client
 
             result = await executor.execute(inputs, mock_context)
 
             assert result.success is True
-            assert result.response == "Success!"
+            assert result.response == {"content": "Success!"}
             assert result.metadata["attempts"] == 3
 
     @pytest.mark.asyncio
@@ -402,13 +394,17 @@ class TestLLMCallExecutor:
             timeout=10,
         )
 
-        async def mock_post(*args, **kwargs):
-            raise httpx.TimeoutException("Request timeout")
+        async def mock_create(*args, **kwargs):
+            raise openai.APITimeoutError(request=Mock())
 
-        with patch("httpx.AsyncClient") as mock_client:
-            mock_client.return_value.__aenter__.return_value.post = AsyncMock(side_effect=mock_post)
+        with patch("workflows_mcp.engine.executors_llm.AsyncOpenAI") as mock_client_class:
+            mock_client = AsyncMock()
+            mock_client.__aenter__.return_value = mock_client
+            mock_client.chat.completions.create = AsyncMock(side_effect=mock_create)
+            mock_client_class.return_value = mock_client
 
-            with pytest.raises(httpx.TimeoutException):
+            # OpenAI SDK errors are raised directly after retry exhaustion
+            with pytest.raises(openai.APITimeoutError):
                 await executor.execute(inputs, mock_context)
 
     @pytest.mark.asyncio
@@ -426,42 +422,43 @@ class TestLLMCallExecutor:
 
         call_count = 0
 
-        async def mock_post(*args, **kwargs):
+        async def mock_create(*args, **kwargs):
             nonlocal call_count
             call_count += 1
 
-            response = Mock()
             if call_count < 2:
-                response.status_code = 500
-                response.raise_for_status.side_effect = httpx.HTTPStatusError(
-                    "Server error", request=Mock(), response=response
+                # Raise APIStatusError for HTTP 500
+                raise openai.APIStatusError(
+                    message="Server error",
+                    response=Mock(status_code=500),
+                    body=None,
                 )
             else:
-                response.status_code = 200
-                response.raise_for_status = Mock()
-                response.json.return_value = {
-                    "choices": [
-                        {
-                            "message": {"content": "Success after retry!"},
-                            "finish_reason": "stop",
-                        }
-                    ],
-                    "model": "gpt-4o",
-                    "usage": {
-                        "prompt_tokens": 10,
-                        "completion_tokens": 5,
-                        "total_tokens": 15,
-                    },
-                }
-            return response
+                mock_completion = Mock()
+                mock_completion.choices = [
+                    Mock(
+                        message=Mock(content="Success after retry!", refusal=None, tool_calls=None),
+                        finish_reason="stop",
+                    )
+                ]
+                mock_completion.model = "gpt-4o"
+                mock_completion.usage = Mock(
+                    prompt_tokens=10,
+                    completion_tokens=5,
+                    total_tokens=15,
+                )
+                return mock_completion
 
-        with patch("httpx.AsyncClient") as mock_client:
-            mock_client.return_value.__aenter__.return_value.post = AsyncMock(side_effect=mock_post)
+        with patch("workflows_mcp.engine.executors_llm.AsyncOpenAI") as mock_client_class:
+            mock_client = AsyncMock()
+            mock_client.__aenter__.return_value = mock_client
+            mock_client.chat.completions.create = AsyncMock(side_effect=mock_create)
+            mock_client_class.return_value = mock_client
 
             result = await executor.execute(inputs, mock_context)
 
             assert result.success is True
-            assert result.response == "Success after retry!"
+            assert result.response == {"content": "Success after retry!"}
             assert result.metadata["attempts"] == 2
 
     @pytest.mark.asyncio
