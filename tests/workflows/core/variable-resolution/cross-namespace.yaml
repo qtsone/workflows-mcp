@@ -1,0 +1,182 @@
+name: variable-resolution-cross-namespace
+description: Test variable resolution across multiple namespaces (inputs, metadata, blocks)
+tags: [test, core, variables, cross-namespace, complex]
+inputs:
+  base_value:
+    type: num
+    default: 10
+    description: "Base value for calculations"
+  prefix:
+    type: str
+    default: "TEST"
+    description: "Prefix for string operations"
+blocks:
+  # Producer with multiple outputs
+  - id: producer
+    type: Shell
+    inputs:
+      command: |
+        echo "42" > "$SCRATCH/number.txt"
+        echo "suffix" > "$SCRATCH/text.txt"
+    outputs:
+      number:
+        type: num
+        path: "$SCRATCH/number.txt"
+      text:
+        type: str
+        path: "$SCRATCH/text.txt"
+
+  # Test mixing inputs + metadata
+  - id: test_inputs_metadata
+    type: Shell
+    inputs:
+      command: |
+        python3 -c "
+        # From inputs namespace
+        base = {{inputs.base_value}}
+        prefix = '{{inputs.prefix}}'
+
+        # From metadata namespace
+        workflow_name = '{{metadata.workflow_name}}'
+
+        assert base == 10, f'Expected base 10, got {base}'
+        assert prefix == 'TEST', f'Expected TEST, got {prefix}'
+        assert 'cross-namespace' in workflow_name, f'Expected cross-namespace in workflow name'
+
+        print(f'Inputs + Metadata: base={base}, prefix={prefix}, workflow={workflow_name}')
+        "
+
+  # Test mixing inputs + blocks
+  - id: test_inputs_blocks
+    type: Shell
+    inputs:
+      command: |
+        python3 -c "
+        # From inputs namespace
+        base = {{inputs.base_value}}
+        prefix = '{{inputs.prefix}}'
+
+        # From blocks namespace (custom outputs)
+        number = {{blocks.producer.outputs.number}}
+        text = '{{blocks.producer.outputs.text}}'
+
+        # Arithmetic with mixed sources
+        result = base + number
+        assert result == 52, f'Expected 10 + 42 = 52, got {result}'
+
+        # String concatenation with mixed sources
+        combined = f'{prefix}_{text}'
+        assert combined == 'TEST_suffix', f'Expected TEST_suffix, got {combined}'
+
+        print(f'Inputs + Blocks: {base} + {number} = {result}, {prefix}_{text} = {combined}')
+        "
+    depends_on: [producer]
+
+  # Test mixing metadata + blocks
+  - id: test_metadata_blocks
+    type: Shell
+    inputs:
+      command: |
+        python3 -c "
+        # From metadata namespace
+        workflow_name = '{{metadata.workflow_name}}'
+
+        # From blocks namespace (standard outputs)
+        producer_exit = {{blocks.producer.outputs.exit_code}}
+        # Status shortcut (this DOES work)
+        producer_succeeded = {{blocks.producer.succeeded}}
+
+        assert producer_exit == 0, f'Expected exit 0, got {producer_exit}'
+        assert producer_succeeded is True, f'Expected succeeded True'
+        assert 'cross-namespace' in workflow_name
+
+        print(f'Metadata + Blocks: workflow={workflow_name}, exit={producer_exit}, succeeded={producer_succeeded}')
+        "
+    depends_on: [producer]
+
+  # Test all three namespaces together
+  - id: test_all_namespaces
+    type: Shell
+    inputs:
+      command: |
+        python3 -c "
+        # From inputs namespace
+        base = {{inputs.base_value}}
+        prefix = '{{inputs.prefix}}'
+
+        # From metadata namespace
+        workflow_name = '{{metadata.workflow_name}}'
+
+        # From blocks namespace (standard outputs)
+        producer_exit = {{blocks.producer.outputs.exit_code}}
+
+        # From blocks namespace (custom outputs)
+        number = {{blocks.producer.outputs.number}}
+        text = '{{blocks.producer.outputs.text}}'
+
+        # Complex calculations using all namespaces
+        arithmetic = base + number  # 10 + 42 = 52
+        assert arithmetic == 52, f'Expected 52, got {arithmetic}'
+
+        # String operations
+        full_text = f'{prefix}_{text}'
+        assert full_text == 'TEST_suffix', f'Expected TEST_suffix'
+
+        # Metadata validation
+        assert 'cross-namespace' in workflow_name
+        assert producer_exit == 0
+
+        print(f'All namespaces: base={base}, prefix={prefix}, workflow={workflow_name}, '
+              f'exit={producer_exit}, number={number}, text={text}, '
+              f'arithmetic={arithmetic}, full_text={full_text}')
+        "
+    depends_on: [producer]
+
+  # Test nested access patterns
+  - id: test_nested_access
+    type: Shell
+    inputs:
+      command: |
+        python3 -c "
+        # Only explicit outputs path works for custom outputs
+        number_explicit = {{blocks.producer.outputs.number}}
+        # Standard outputs work with explicit path
+        stdout_explicit = '{{blocks.producer.outputs.stdout}}'
+
+        assert number_explicit == 42, f'Expected number 42, got {number_explicit}'
+        assert len(stdout_explicit) > 0, f'Expected stdout content'
+
+        print(f'Nested access valid: number={number_explicit}, stdout={len(stdout_explicit)} chars')
+        "
+    depends_on: [producer]
+
+outputs:
+  inputs_metadata_valid:
+    value: "{{blocks.test_inputs_metadata.succeeded}}"
+    type: bool
+  inputs_blocks_valid:
+    value: "{{blocks.test_inputs_blocks.succeeded}}"
+    type: bool
+  metadata_blocks_valid:
+    value: "{{blocks.test_metadata_blocks.succeeded}}"
+    type: bool
+  all_namespaces_valid:
+    value: "{{blocks.test_all_namespaces.succeeded}}"
+    type: bool
+  nested_access_valid:
+    value: "{{blocks.test_nested_access.succeeded}}"
+    type: bool
+  all_passed:
+    value: >
+      {{blocks.test_inputs_metadata.succeeded}} and
+      {{blocks.test_inputs_blocks.succeeded}} and
+      {{blocks.test_metadata_blocks.succeeded}} and
+      {{blocks.test_all_namespaces.succeeded}} and
+      {{blocks.test_nested_access.succeeded}}
+    type: bool
+    description: "All cross-namespace tests passed"
+  # Demo: output using all three namespaces
+  summary:
+    value: "Workflow {{metadata.workflow_name}} with base={{inputs.base_value}} produced number={{blocks.producer.outputs.number}}"
+    type: str
+    description: "Summary combining all namespaces"

@@ -1,20 +1,113 @@
 name: variable-resolution-block-outputs
-description: Test variable resolution from block outputs namespace
+description: Test variable resolution from block outputs namespace with validation
 tags: [test, core, variables, blocks]
 blocks:
+  # Producer block with various outputs
   - id: producer
     type: Shell
     inputs:
-      command: echo "produced_value"
-  - id: consumer
+      command: |
+        printf "stdout_value"
+        printf "stderr_value" >&2
+        exit 0
+
+  # Validate stdout output
+  - id: validate_stdout
     type: Shell
     inputs:
-      command: 'echo "Consumed: {{blocks.producer.outputs.stdout}}"'
+      command: |
+        python3 -c "
+        value = '{{blocks.producer.outputs.stdout}}'
+        assert isinstance(value, str), f'Expected str, got {type(value).__name__}'
+        assert 'stdout_value' in value, f'Expected stdout_value in output, got {value}'
+        print(f'Stdout valid: {value.strip()}')
+        "
     depends_on: [producer]
+
+  # Validate stderr output
+  - id: validate_stderr
+    type: Shell
+    inputs:
+      command: |
+        python3 -c "
+        value = '{{blocks.producer.outputs.stderr}}'
+        assert isinstance(value, str), f'Expected str, got {type(value).__name__}'
+        assert 'stderr_value' in value, f'Expected stderr_value in output, got {value}'
+        print(f'Stderr valid: {value.strip()}')
+        "
+    depends_on: [producer]
+
+  # Validate exit code
+  - id: validate_exit_code
+    type: Shell
+    inputs:
+      command: |
+        python3 -c "
+        value = {{blocks.producer.outputs.exit_code}}
+        assert isinstance(value, int), f'Expected int, got {type(value).__name__}'
+        assert value == 0, f'Expected exit code 0, got {value}'
+        print(f'Exit code valid: {value}')
+        "
+    depends_on: [producer]
+
+  # Test chained variable resolution
+  - id: chained_consumer
+    type: Shell
+    inputs:
+      command: |
+        python3 -c "
+        # Access stdout from producer via variable
+        stdout = '{{blocks.producer.outputs.stdout}}'
+        # Access stderr from producer via variable
+        stderr = '{{blocks.producer.outputs.stderr}}'
+        # Access exit_code from producer via variable
+        exit_code = {{blocks.producer.outputs.exit_code}}
+
+        print(f'Chained access: stdout={stdout.strip()}, stderr={stderr.strip()}, exit_code={exit_code}')
+        assert 'stdout_value' in stdout
+        assert 'stderr_value' in stderr
+        assert exit_code == 0
+        "
+    depends_on: [producer]
+
+  # Test status shortcuts (only status-related shortcuts work)
+  - id: validate_shortcuts
+    type: Shell
+    inputs:
+      command: |
+        python3 -c "
+        # Status shortcut (this DOES work)
+        status_short = '{{blocks.producer.status}}'
+        # Status full path
+        status_full = '{{blocks.producer.metadata.status}}'
+
+        assert status_short == status_full, f'Status shortcut mismatch: {status_short} != {status_full}'
+        assert status_short == 'completed', f'Expected completed, got {status_short}'
+        print(f'Status shortcuts valid: both resolve to {status_short}')
+        "
+    depends_on: [producer]
+
 outputs:
-  producer_output:
-    value: "{{blocks.producer.outputs.stdout}}"
-    type: str
-  consumer_output:
-    value: "{{blocks.consumer.outputs.stdout}}"
-    type: str
+  stdout_valid:
+    value: "{{blocks.validate_stdout.succeeded}}"
+    type: bool
+  stderr_valid:
+    value: "{{blocks.validate_stderr.succeeded}}"
+    type: bool
+  exit_code_valid:
+    value: "{{blocks.validate_exit_code.succeeded}}"
+    type: bool
+  chained_valid:
+    value: "{{blocks.chained_consumer.succeeded}}"
+    type: bool
+  shortcuts_valid:
+    value: "{{blocks.validate_shortcuts.succeeded}}"
+    type: bool
+  all_passed:
+    value: >
+      {{blocks.validate_stdout.succeeded}} and
+      {{blocks.validate_stderr.succeeded}} and
+      {{blocks.validate_exit_code.succeeded}} and
+      {{blocks.chained_consumer.succeeded}} and
+      {{blocks.validate_shortcuts.succeeded}}
+    type: bool

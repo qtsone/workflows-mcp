@@ -1,0 +1,12 @@
+{
+  "outputs": {
+    "all_passed": true,
+    "bool_output_valid": true,
+    "complex_expr_valid": true,
+    "explicit_path_valid": true,
+    "json_output_valid": true,
+    "number_output_valid": true,
+    "string_output_valid": true
+  },
+  "status": "success"
+}

@@ -353,6 +353,40 @@ class ExecutorRegistry(BaseModel):
                     "type": "string",
                     "description": "Conditional execution expression",
                 },
+                "outputs": {
+                    "type": "object",
+                    "description": "Custom file-based outputs (Shell blocks only)",
+                    "patternProperties": {
+                        ".*": {
+                            "type": "object",
+                            "required": ["type", "path"],
+                            "properties": {
+                                "type": {
+                                    "$ref": "#/$defs/ValueType",
+                                    "description": "Output value type",
+                                },
+                                "path": {
+                                    "type": "string",
+                                    "description": "File path to read (supports $SCRATCH)",
+                                },
+                                "description": {
+                                    "type": "string",
+                                    "description": "Output description",
+                                },
+                                "required": {
+                                    "type": "boolean",
+                                    "default": True,
+                                    "description": "Whether this output is required",
+                                },
+                                "unsafe": {
+                                    "type": "boolean",
+                                    "default": False,
+                                    "description": "Allow absolute paths (default: false)",
+                                },
+                            },
+                        }
+                    },
+                },
             },
             # Add all the type-specific conditionals
             "allOf": type_conditionals,

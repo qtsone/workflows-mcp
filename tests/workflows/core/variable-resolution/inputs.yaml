@@ -1,5 +1,5 @@
 name: variable-resolution-inputs
-description: Test variable resolution from workflow inputs namespace
+description: Test variable resolution from workflow inputs namespace with type validation
 tags: [test, core, variables, inputs]
 inputs:
   string_input:
@@ -10,19 +10,106 @@ inputs:
     type: num
     default: 42
     description: "Numeric input for testing"
+  bool_input:
+    type: bool
+    default: true
+    description: "Boolean input for testing"
 blocks:
-  - id: use_string
+  # Validate string input
+  - id: validate_string
     type: Shell
     inputs:
-      command: echo "{{inputs.string_input}}"
-  - id: use_number
+      command: |
+        python3 -c "
+        value = '{{inputs.string_input}}'
+        assert isinstance(value, str), f'Expected str, got {type(value).__name__}'
+        assert value == 'test_value', f'Expected test_value, got {value}'
+        print(f'String valid: {value}')
+        "
+
+  # Validate number input (should be numeric)
+  - id: validate_number
     type: Shell
     inputs:
-      command: echo "{{inputs.number_input}}"
+      command: |
+        python3 -c "
+        value = {{inputs.number_input}}
+        assert isinstance(value, (int, float)), f'Expected number, got {type(value).__name__}'
+        assert value == 42, f'Expected 42, got {value}'
+        result = value + 8
+        assert result == 50, f'Arithmetic failed: 42 + 8 = {result}'
+        print(f'Number valid: {value}, arithmetic result: {result}')
+        "
+
+  # Validate boolean input
+  - id: validate_bool
+    type: Shell
+    inputs:
+      command: |
+        python3 -c "
+        value = '{{inputs.bool_input}}' == 'true'
+        assert isinstance(value, bool), f'Expected bool, got {type(value).__name__}'
+        assert value is True, f'Expected True, got {value}'
+        print(f'Boolean valid: {value}')
+        "
+
+  # Test multiple inputs in single expression
+  - id: validate_multiple
+    type: Shell
+    inputs:
+      command: |
+        python3 -c "
+        s = '{{inputs.string_input}}'
+        n = {{inputs.number_input}}
+        b = '{{inputs.bool_input}}' == 'true'
+
+        assert s == 'test_value', f'String mismatch'
+        assert n == 42, f'Number mismatch'
+        assert b is True, f'Boolean mismatch'
+        print(f'All inputs valid: str={s}, num={n}, bool={b}')
+        "
+
+  # Test inputs in environment variables
+  - id: validate_env_vars
+    type: Shell
+    inputs:
+      command: |
+        python3 -c "
+        import os
+        test_var = os.environ.get('TEST_VAR')
+        assert test_var == 'test_value', f'Expected test_value, got {test_var}'
+        print(f'Env var valid: TEST_VAR={test_var}')
+        "
+      env:
+        TEST_VAR: "{{inputs.string_input}}"
+
 outputs:
-  string_result:
-    value: "{{blocks.use_string.outputs.stdout}}"
-    type: str
-  number_result:
-    value: "{{blocks.use_number.outputs.stdout}}"
-    type: str
+  string_valid:
+    value: "{{blocks.validate_string.outputs.exit_code}} == 0"
+    type: bool
+    description: "String input validation passed"
+  number_valid:
+    value: "{{blocks.validate_number.outputs.exit_code}} == 0"
+    type: bool
+    description: "Number input validation passed"
+  bool_valid:
+    value: "{{blocks.validate_bool.outputs.exit_code}} == 0"
+    type: bool
+    description: "Boolean input validation passed"
+  multiple_valid:
+    value: "{{blocks.validate_multiple.outputs.exit_code}} == 0"
+    type: bool
+    description: "Multiple input validation passed"
+  env_var_valid:
+    value: "{{blocks.validate_env_vars.outputs.exit_code}} == 0"
+    type: bool
+    description: "Environment variable validation passed"
+  all_passed:
+    value: >
+      {{blocks.validate_string.succeeded}} and
+      {{blocks.validate_number.succeeded}} and
+      {{blocks.validate_bool.succeeded}} and
+      {{blocks.validate_multiple.succeeded}} and
+      {{blocks.validate_env_vars.succeeded}}
+    type: bool
+    description: "All validations passed"

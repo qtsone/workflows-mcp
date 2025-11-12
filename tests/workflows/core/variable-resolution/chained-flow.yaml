@@ -1,0 +1,226 @@
+name: variable-resolution-chained-flow
+description: Test variable resolution through chained data transformation pipeline
+tags: [test, core, variables, pipeline, chaining]
+inputs:
+  initial_value:
+    type: num
+    default: 5
+    description: "Starting value for pipeline"
+blocks:
+  # Stage 1: Input transformation
+  - id: stage1_transform
+    type: Shell
+    inputs:
+      command: |
+        python3 -c "
+        value = {{inputs.initial_value}}
+        result = value * 2  # 5 * 2 = 10
+        print(result)
+        " > "$SCRATCH/stage1.txt"
+
+        cat "$SCRATCH/stage1.txt"
+    outputs:
+      transformed:
+        type: num
+        path: "$SCRATCH/stage1.txt"
+
+  # Stage 2: Use previous stage output
+  - id: stage2_add
+    type: Shell
+    inputs:
+      command: |
+        python3 -c "
+        prev = {{blocks.stage1_transform.outputs.transformed}}
+        result = prev + 15  # 10 + 15 = 25
+        print(result)
+        " > "$SCRATCH/stage2.txt"
+
+        cat "$SCRATCH/stage2.txt"
+    outputs:
+      sum:
+        type: num
+        path: "$SCRATCH/stage2.txt"
+    depends_on: [stage1_transform]
+
+  # Stage 3: Use outputs from multiple previous stages
+  - id: stage3_combine
+    type: Shell
+    inputs:
+      command: |
+        python3 -c "
+        stage1 = {{blocks.stage1_transform.outputs.transformed}}
+        stage2 = {{blocks.stage2_add.outputs.sum}}
+        result = stage1 + stage2  # 10 + 25 = 35
+        print(result)
+        " > "$SCRATCH/stage3.txt"
+
+        cat "$SCRATCH/stage3.txt"
+    outputs:
+      combined:
+        type: num
+        path: "$SCRATCH/stage3.txt"
+    depends_on: [stage1_transform, stage2_add]
+
+  # Stage 4: Access the entire chain
+  - id: stage4_validate_chain
+    type: Shell
+    inputs:
+      command: |
+        python3 -c "
+        # Access original input
+        initial = {{inputs.initial_value}}
+
+        # Access each stage
+        stage1 = {{blocks.stage1_transform.outputs.transformed}}
+        stage2 = {{blocks.stage2_add.outputs.sum}}
+        stage3 = {{blocks.stage3_combine.outputs.combined}}
+
+        # Validate the pipeline
+        assert initial == 5, f'Initial value mismatch'
+        assert stage1 == 10, f'Stage 1: Expected 5*2=10, got {stage1}'
+        assert stage2 == 25, f'Stage 2: Expected 10+15=25, got {stage2}'
+        assert stage3 == 35, f'Stage 3: Expected 10+25=35, got {stage3}'
+
+        # Calculate final result
+        final = stage3 * 2  # 35 * 2 = 70
+        print(final)
+        " > "$SCRATCH/stage4.txt"
+
+        cat "$SCRATCH/stage4.txt"
+    outputs:
+      final:
+        type: num
+        path: "$SCRATCH/stage4.txt"
+    depends_on: [stage1_transform, stage2_add, stage3_combine]
+
+  # Stage 5: String transformation pipeline
+  - id: stage5_string_start
+    type: Shell
+    inputs:
+      command: |
+        python3 -c "
+        value = {{blocks.stage4_validate_chain.outputs.final}}
+        result = f'value_{value}'
+        print(result)
+        " > "$SCRATCH/stage5.txt"
+
+        cat "$SCRATCH/stage5.txt"
+    outputs:
+      formatted:
+        type: str
+        path: "$SCRATCH/stage5.txt"
+    depends_on: [stage4_validate_chain]
+
+  # Stage 6: JSON transformation
+  - id: stage6_to_json
+    type: Shell
+    inputs:
+      command: |
+        python3 -c "
+        import json
+        # Pull data from multiple stages
+        numeric = {{blocks.stage4_validate_chain.outputs.final}}
+        text = '{{blocks.stage5_string_start.outputs.formatted}}'
+
+        result = {
+            'pipeline_result': numeric,
+            'formatted_text': text,
+            'stages': {
+                'stage1': {{blocks.stage1_transform.outputs.transformed}},
+                'stage2': {{blocks.stage2_add.outputs.sum}},
+                'stage3': {{blocks.stage3_combine.outputs.combined}},
+                'stage4': {{blocks.stage4_validate_chain.outputs.final}}
+            }
+        }
+        print(json.dumps(result))
+        " > "$SCRATCH/stage6.json"
+
+        cat "$SCRATCH/stage6.json"
+    outputs:
+      result:
+        type: json
+        path: "$SCRATCH/stage6.json"
+    depends_on: [stage4_validate_chain, stage5_string_start]
+
+  # Final validation: Verify the entire pipeline
+  - id: final_validation
+    type: Shell
+    inputs:
+      command: |
+        python3 -c "
+        import json
+
+        # Original input
+        initial = {{inputs.initial_value}}
+
+        # All intermediate stages
+        stage1 = {{blocks.stage1_transform.outputs.transformed}}
+        stage2 = {{blocks.stage2_add.outputs.sum}}
+        stage3 = {{blocks.stage3_combine.outputs.combined}}
+        stage4 = {{blocks.stage4_validate_chain.outputs.final}}
+        stage5 = '{{blocks.stage5_string_start.outputs.formatted}}'
+        stage6 = {{blocks.stage6_to_json.outputs.result}}
+
+        # Comprehensive validation
+        assert initial == 5
+        assert stage1 == 10  # 5 * 2
+        assert stage2 == 25  # 10 + 15
+        assert stage3 == 35  # 10 + 25
+        assert stage4 == 70  # 35 * 2
+        assert stage5 == 'value_70'
+        assert stage6['pipeline_result'] == 70
+        assert stage6['formatted_text'] == 'value_70'
+        assert stage6['stages']['stage1'] == 10
+        assert stage6['stages']['stage2'] == 25
+        assert stage6['stages']['stage3'] == 35
+        assert stage6['stages']['stage4'] == 70
+
+        print('Pipeline validation passed!')
+        print(f'Initial: {initial} -> Stage1: {stage1} -> Stage2: {stage2} -> Stage3: {stage3} -> Stage4: {stage4}')
+        print(f'String: {stage5}')
+        print(f'JSON: {json.dumps(stage6, indent=2)}')
+        "
+    depends_on:
+      [
+        stage1_transform,
+        stage2_add,
+        stage3_combine,
+        stage4_validate_chain,
+        stage5_string_start,
+        stage6_to_json,
+      ]
+
+outputs:
+  stage1_result:
+    value: "{{blocks.stage1_transform.outputs.transformed}}"
+    type: num
+    description: "Stage 1 transformation result (5 * 2 = 10)"
+  stage2_result:
+    value: "{{blocks.stage2_add.outputs.sum}}"
+    type: num
+    description: "Stage 2 addition result (10 + 15 = 25)"
+  stage3_result:
+    value: "{{blocks.stage3_combine.outputs.combined}}"
+    type: num
+    description: "Stage 3 combination result (10 + 25 = 35)"
+  stage4_result:
+    value: "{{blocks.stage4_validate_chain.outputs.final}}"
+    type: num
+    description: "Stage 4 final numeric result (35 * 2 = 70)"
+  stage5_result:
+    value: "{{blocks.stage5_string_start.outputs.formatted}}"
+    type: str
+    description: "Stage 5 string format result (value_70)"
+  stage6_result:
+    value: "{{blocks.stage6_to_json.outputs.result}}"
+    type: json
+    description: "Stage 6 JSON aggregation result"
+  pipeline_valid:
+    value: "{{blocks.final_validation.succeeded}}"
+    type: bool
+    description: "Full pipeline validation passed"
+  # Demonstrate accessing nested JSON from earlier stage
+  nested_json_access:
+    value: "{{blocks.stage6_to_json.outputs.result.pipeline_result}}"
+    type: num
+    description: "Access nested JSON field (should be 70)"

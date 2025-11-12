@@ -270,6 +270,47 @@ Claude: "¡Hola, Alice!"
 
 ## Key Features
 
+### 📝 Boolean Formatting in Variables
+
+The workflow system formats boolean values intelligently based on context:
+
+**String Interpolation** (Shell commands, file content, HTTP bodies):
+- Booleans format as lowercase `true`/`false` (unquoted)
+- This works correctly for bash, JavaScript, JSON, Ruby, Java, C, Go, Rust, TypeScript, and most other languages
+
+```yaml
+blocks:
+  - id: create_config
+    type: CreateFile
+    inputs:
+      path: "config.json"
+      content: |
+        {"enabled": {{inputs.enabled}}, "debug": {{inputs.debug}}}
+# Results in: {"enabled": true, "debug": false}
+```
+
+**Condition Expressions**:
+- Booleans format as capitalized `True`/`False` for Python evaluation
+
+```yaml
+condition: "{{inputs.enabled}} and {{blocks.test.succeeded}}"
+# Results in: True and True
+```
+
+**Python Exception** (for Shell blocks executing Python code):
+- Use string interpolation with quotes as a workaround:
+
+```yaml
+- id: python_script
+  type: Shell
+  inputs:
+    command: |
+      python3 -c "
+      bool_val = '{{inputs.bool_flag}}' == 'true'
+      print(f'Boolean is: {bool_val}')
+      "
+```
+
 ### 🚀 Smart Parallel Execution
 
 The server automatically detects which tasks can run in parallel:
