@@ -125,8 +125,7 @@ blocks:
           fi
 
           if [ -n "$LLM_BODY" ]; then
-            # Use printf %b to interpret escape sequences (\n, \t) but keep other content safe
-            printf '%s\n\n%b' "$HEADER" "$LLM_BODY" > "$SCRATCH/message.txt"
+            printf '%s\n\n%s' "$HEADER" "$LLM_BODY" > "$SCRATCH/message.txt"
           else
             printf '%s' "$HEADER" > "$SCRATCH/message.txt"
           fi
