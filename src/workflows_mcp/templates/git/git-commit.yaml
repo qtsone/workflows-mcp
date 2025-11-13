@@ -114,9 +114,7 @@ blocks:
         # Use environment variables to safely pass content (GitHub Actions pattern)
         # This prevents shell expansion of special chars (backticks, $, quotes)
         if [ -n "$MANUAL_MESSAGE" ]; then
-          cat <<-EOF > "$SCRATCH/message.txt"
-        	$MANUAL_MESSAGE
-        	EOF
+          printf '%s' "$MANUAL_MESSAGE" > "$SCRATCH/message.txt"
         else
           # Format structured commit message from LLM response
           # Format: <type>(<scope>): <summary>\n\n<body>
@@ -127,15 +125,10 @@ blocks:
           fi
 
           if [ -n "$LLM_BODY" ]; then
-            cat <<-EOF > "$SCRATCH/message.txt"
-        	$HEADER
-
-        	$LLM_BODY
-        	EOF
+            # Use printf %b to interpret escape sequences (\n, \t) but keep other content safe
+            printf '%s\n\n%b' "$HEADER" "$LLM_BODY" > "$SCRATCH/message.txt"
           else
-            cat <<-EOF > "$SCRATCH/message.txt"
-        	$HEADER
-        	EOF
+            printf '%s' "$HEADER" > "$SCRATCH/message.txt"
           fi
         fi
     condition: "{{blocks.analyze_changes.outputs.has_changes}}"
