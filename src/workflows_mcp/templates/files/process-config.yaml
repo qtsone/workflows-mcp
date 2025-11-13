@@ -31,14 +31,15 @@ inputs:
 blocks:
   # Read input configuration (validates file existence automatically)
   - id: read_config
-    type: ReadFile
+    type: ReadFiles
     inputs:
-      path: "{{inputs.config_path}}"
+      patterns: ["{{inputs.config_path}}"]
+      mode: full
   # Validate configuration format
   - id: validate_format
     type: Shell
     inputs:
-      command: 'printf "Validating config format: {{inputs.config_path}} ({{blocks.read_config.outputs.size_bytes}} bytes)"'
+      command: 'printf "Validating config format: {{inputs.config_path}} ({{blocks.read_config.outputs.total_size_kb}} KB)"'
     depends_on:
       - read_config
   # Backup original file if requested
@@ -59,7 +60,7 @@ blocks:
           "source_file": "{{inputs.config_path}}",
           "environment": "{{inputs.environment}}",
           "processed_at": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
-          "original_size": {{blocks.read_config.outputs.size_bytes}},
+          "original_size_kb": {{blocks.read_config.outputs.total_size_kb}},
           "validation_passed": true,
           "metadata": {
             "processor": "process-config workflow",
@@ -89,9 +90,10 @@ blocks:
     condition: "not {{inputs.validate_only}}"
   # Verify output file
   - id: verify_output
-    type: ReadFile
+    type: ReadFiles
     inputs:
-      path: "{{inputs.output_path}}"
+      patterns: ["{{inputs.output_path}}"]
+      mode: full
     depends_on:
       - write_output
     condition: "not {{inputs.validate_only}}"
@@ -130,7 +132,7 @@ blocks:
         if [ "{{inputs.validate_only}}" = "true" ]; then
           echo ''
         else
-          echo "Output: {{inputs.output_path}} ({{blocks.verify_output.outputs.size_bytes}} bytes)"
+          echo "Output: {{inputs.output_path}} ({{blocks.verify_output.outputs.total_size_kb}} KB)"
         fi
       timeout: 5
     depends_on:
@@ -142,7 +144,7 @@ blocks:
       command: |
         printf "Configuration Processing Report:\n"
         printf "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
-        printf "Input: {{inputs.config_path}} ({{blocks.read_config.outputs.size_bytes}} bytes)\n"
+        printf "Input: {{inputs.config_path}} ({{blocks.read_config.outputs.total_size_kb}} KB)\n"
         printf "{{blocks.get_mode_display.outputs.stdout}}\n"
         printf "Environment: {{inputs.environment}}\n"
         printf "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
@@ -162,8 +164,9 @@ outputs:
     value: "{{blocks.read_config.succeeded}}"
   config_path:
     value: "{{inputs.config_path}}"
-  input_size:
-    value: "{{blocks.read_config.outputs.size_bytes}}"
+  input_size_kb:
+    value: "{{blocks.read_config.outputs.total_size_kb}}"
+    type: num
   validation_passed:
     value: "true"
   validate_only_mode:
@@ -176,8 +179,9 @@ outputs:
     value: "not {{inputs.validate_only}}"
   output_path:
     value: "{{inputs.output_path}}"
-  output_size:
-    value: "{{blocks.verify_output.outputs.size_bytes}}"
+  output_size_kb:
+    value: "{{blocks.verify_output.outputs.total_size_kb}}"
+    type: num
   environment:
     value: "{{inputs.environment}}"
   report:

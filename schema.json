@@ -107,7 +107,7 @@
               "Workflow",
               "CreateFile",
               "EditFile",
-              "ReadFile",
+              "ReadFiles",
               "RenderTemplate",
               "HttpCall",
               "LLMCall",
@@ -498,7 +498,7 @@
             "if": {
               "properties": {
                 "type": {
-                  "const": "ReadFile"
+                  "const": "ReadFiles"
                 }
               }
             },
@@ -506,20 +506,77 @@
               "properties": {
                 "inputs": {
                   "additionalProperties": false,
-                  "description": "Inputs for ReadFile block",
+                  "description": "Inputs for ReadFiles block",
                   "properties": {
-                    "path": {
-                      "description": "File path to read (absolute or relative)",
-                      "title": "Path",
+                    "patterns": {
+                      "description": "Glob patterns for files to read (e.g., ['*.py', '**/*.ts', 'docs/**/*.md'])",
+                      "items": {
+                        "type": "string"
+                      },
+                      "maxItems": 50,
+                      "minItems": 1,
+                      "title": "Patterns",
+                      "type": "array"
+                    },
+                    "base_path": {
+                      "default": ".",
+                      "description": "Base directory to search from (relative or absolute)",
+                      "title": "Base Path",
                       "type": "string"
                     },
-                    "encoding": {
-                      "default": "utf-8",
-                      "description": "Text encoding",
-                      "title": "Encoding",
-                      "type": "string"
+                    "mode": {
+                      "anyOf": [
+                        {
+                          "enum": [
+                            "full",
+                            "outline",
+                            "summary"
+                          ],
+                          "type": "string"
+                        },
+                        {
+                          "type": "string"
+                        }
+                      ],
+                      "default": "full",
+                      "description": "Output mode: 'full' (complete content), 'outline' (symbol tree with line ranges), 'summary' (outline + docstrings)",
+                      "title": "Mode"
                     },
-                    "required": {
+                    "exclude_patterns": {
+                      "description": "Additional patterns to exclude beyond defaults (e.g., ['*test*', '*.min.js'])",
+                      "items": {
+                        "type": "string"
+                      },
+                      "title": "Exclude Patterns",
+                      "type": "array"
+                    },
+                    "max_files": {
+                      "anyOf": [
+                        {
+                          "type": "integer"
+                        },
+                        {
+                          "type": "string"
+                        }
+                      ],
+                      "default": 20,
+                      "description": "Maximum number of files to read (1-100, supports interpolation)",
+                      "title": "Max Files"
+                    },
+                    "max_file_size_kb": {
+                      "anyOf": [
+                        {
+                          "type": "integer"
+                        },
+                        {
+                          "type": "string"
+                        }
+                      ],
+                      "default": 100,
+                      "description": "Maximum individual file size in KB (supports interpolation)",
+                      "title": "Max File Size Kb"
+                    },
+                    "respect_gitignore": {
                       "anyOf": [
                         {
                           "type": "boolean"
@@ -529,14 +586,20 @@
                         }
                       ],
                       "default": true,
-                      "description": "If False, missing file returns empty content instead of error (or interpolation string)",
-                      "title": "Required"
+                      "description": "Whether to respect .gitignore patterns (supports interpolation)",
+                      "title": "Respect Gitignore"
+                    },
+                    "encoding": {
+                      "default": "utf-8",
+                      "description": "Text encoding for reading files",
+                      "title": "Encoding",
+                      "type": "string"
                     }
                   },
                   "required": [
-                    "path"
+                    "patterns"
                   ],
-                  "title": "ReadFileInput",
+                  "title": "ReadFilesInput",
                   "type": "object"
                 }
               }
@@ -1541,22 +1604,79 @@
       "title": "EditFileInput",
       "type": "object"
     },
-    "ReadFileInput": {
+    "ReadFilesInput": {
       "additionalProperties": false,
-      "description": "Input model for ReadFile executor.",
+      "description": "Input model for ReadFiles executor with full interpolation support.",
       "properties": {
-        "path": {
-          "description": "File path to read (absolute or relative)",
-          "title": "Path",
+        "patterns": {
+          "description": "Glob patterns for files to read (e.g., ['*.py', '**/*.ts', 'docs/**/*.md'])",
+          "items": {
+            "type": "string"
+          },
+          "maxItems": 50,
+          "minItems": 1,
+          "title": "Patterns",
+          "type": "array"
+        },
+        "base_path": {
+          "default": ".",
+          "description": "Base directory to search from (relative or absolute)",
+          "title": "Base Path",
           "type": "string"
         },
-        "encoding": {
-          "default": "utf-8",
-          "description": "Text encoding",
-          "title": "Encoding",
-          "type": "string"
+        "mode": {
+          "anyOf": [
+            {
+              "enum": [
+                "full",
+                "outline",
+                "summary"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "string"
+            }
+          ],
+          "default": "full",
+          "description": "Output mode: 'full' (complete content), 'outline' (symbol tree with line ranges), 'summary' (outline + docstrings)",
+          "title": "Mode"
         },
-        "required": {
+        "exclude_patterns": {
+          "description": "Additional patterns to exclude beyond defaults (e.g., ['*test*', '*.min.js'])",
+          "items": {
+            "type": "string"
+          },
+          "title": "Exclude Patterns",
+          "type": "array"
+        },
+        "max_files": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "string"
+            }
+          ],
+          "default": 20,
+          "description": "Maximum number of files to read (1-100, supports interpolation)",
+          "title": "Max Files"
+        },
+        "max_file_size_kb": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "string"
+            }
+          ],
+          "default": 100,
+          "description": "Maximum individual file size in KB (supports interpolation)",
+          "title": "Max File Size Kb"
+        },
+        "respect_gitignore": {
           "anyOf": [
             {
               "type": "boolean"
@@ -1566,14 +1686,20 @@
             }
           ],
           "default": true,
-          "description": "If False, missing file returns empty content instead of error (or interpolation string)",
-          "title": "Required"
+          "description": "Whether to respect .gitignore patterns (supports interpolation)",
+          "title": "Respect Gitignore"
+        },
+        "encoding": {
+          "default": "utf-8",
+          "description": "Text encoding for reading files",
+          "title": "Encoding",
+          "type": "string"
         }
       },
       "required": [
-        "path"
+        "patterns"
       ],
-      "title": "ReadFileInput",
+      "title": "ReadFilesInput",
       "type": "object"
     },
     "RenderTemplateInput": {

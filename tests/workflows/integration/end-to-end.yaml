@@ -117,9 +117,11 @@ blocks:
       path: "{{inputs.working_dir}}/state.json"
     depends_on: [final_state]
   - id: read_report
-    type: ReadFile
+    type: ReadFiles
     inputs:
-      path: "{{inputs.working_dir}}/report.md"
+      patterns: ["report.md"]
+      base_path: "{{inputs.working_dir}}"
+      mode: full
     depends_on: [final_state]
   - id: cleanup
     description: "Cleanup test directory"

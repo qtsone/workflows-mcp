@@ -1,0 +1,75 @@
+name: python-quick-check
+description: Quick Python quality checks (ruff check, mypy, ruff format) with optional auto-fix
+tags: [python, linting, formatting, quality, quick]
+
+inputs:
+  project_path:
+    type: str
+    default: "."
+    description: Project path to check
+  fix:
+    type: bool
+    default: false
+    description: Auto-fix issues (ruff check --fix, ruff format without --check)
+
+blocks:
+  - id: ruff
+    type: Shell
+    inputs:
+      command: |
+        if {{inputs.fix}}; then
+          ruff check --fix {{inputs.project_path}}
+        else
+          ruff check {{inputs.project_path}}
+        fi
+
+  - id: mypy
+    type: Shell
+    inputs:
+      command: "mypy {{inputs.project_path}}"
+
+  - id: ruff_format
+    type: Shell
+    inputs:
+      command: |
+        if {{inputs.fix}}; then
+          ruff format {{inputs.project_path}}
+        else
+          ruff format --check {{inputs.project_path}}
+        fi
+
+  - id: summary
+    type: Shell
+    depends_on:
+      - block: ruff
+        required: false
+      - block: mypy
+        required: false
+      - block: ruff_format
+        required: false
+    inputs:
+      command: |
+        echo "Linting Results:"
+        if {{blocks.ruff.failed}}; then
+          echo "========= ruff check ========="
+          echo "{{blocks.ruff.outputs.stdout}}"
+          echo "{{blocks.ruff.outputs.stderr}}"
+        fi
+        if {{blocks.mypy.failed}}; then
+          echo "========= mypy ========="
+          echo "{{blocks.mypy.outputs.stdout}}"
+          echo "{{blocks.mypy.outputs.stderr}}"
+        fi
+        if {{blocks.ruff_format.failed}}; then
+          echo "========= ruff format ========="
+          echo "{{blocks.ruff_format.outputs.stdout}}"
+          echo "{{blocks.ruff_format.outputs.stderr}}"
+        fi
+
+outputs:
+  summary:
+    value: "{{blocks.summary.outputs.stdout}}"
+    type: str
+  passed:
+    value: "{{blocks.ruff.succeeded}} and {{blocks.mypy.succeeded}} and {{blocks.ruff_format.succeeded}}"
+    type: bool
