@@ -393,7 +393,7 @@ def extract_python_outline(file_path: Path, include_docstrings: bool) -> str:
 
         if include_docstrings and ast.get_docstring(node):
             docstring = ast.get_docstring(node).split("\n")[0][:60]  # type: ignore
-            result += f"\n{indent}│   └── \"{docstring}...\""
+            result += f'\n{indent}│   └── "{docstring}..."'
 
         return result
 
@@ -416,7 +416,7 @@ def extract_python_outline(file_path: Path, include_docstrings: bool) -> str:
 
         if include_docstrings and ast.get_docstring(node):
             docstring = ast.get_docstring(node).split("\n")[0][:60]  # type: ignore
-            result.append(f"{indent}│   └── \"{docstring}...\"")
+            result.append(f'{indent}│   └── "{docstring}..."')
 
         # Extract methods
         methods = []
@@ -657,8 +657,10 @@ def extract_xml_outline(file_path: Path) -> str:
         # Element with attributes
         attrs = ""
         if elem.attrib:
-            attr_list = [f'{k}="{v[:20]}..."' if len(v) > 20 else f'{k}="{v}"'
-                        for k, v in list(elem.attrib.items())[:3]]
+            attr_list = [
+                f'{k}="{v[:20]}..."' if len(v) > 20 else f'{k}="{v}"'
+                for k, v in list(elem.attrib.items())[:3]
+            ]
             attrs = f" [{', '.join(attr_list)}]"
             if len(elem.attrib) > 3:
                 attrs += f" +{len(elem.attrib) - 3} more"
@@ -876,9 +878,7 @@ def extract_generic_outline(file_path: Path) -> str:
         return extract_adaptive_preview(file_path)
 
 
-def generate_file_outline(
-    file_path: Path, mode: Literal["outline", "summary"]
-) -> str:
+def generate_file_outline(file_path: Path, mode: Literal["outline", "summary"]) -> str:
     """Generate outline for a file based on its type and mode.
 
     Extracts structure/symbols with context reduction (90-97%).
