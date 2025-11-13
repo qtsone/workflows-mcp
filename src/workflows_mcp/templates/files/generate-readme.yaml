@@ -96,9 +96,11 @@ blocks:
     condition: "{{inputs.create_template_if_missing}} and 'missing' in {{blocks.check_template.outputs.stdout}}"
   # Read template
   - id: read_template
-    type: ReadFile
+    type: ReadFiles
     inputs:
-      path: "{{inputs.workspace}}/{{inputs.template_path}}"
+      patterns: ["{{inputs.template_path}}"]
+      base_path: "{{inputs.workspace}}"
+      mode: full
     depends_on:
       - check_template
       - create_default_template
@@ -127,9 +129,11 @@ blocks:
       - populate_template
   # Verify README was created
   - id: verify_readme
-    type: ReadFile
+    type: ReadFiles
     inputs:
-      path: "{{inputs.workspace}}/{{inputs.output_path}}"
+      patterns: ["{{inputs.output_path}}"]
+      base_path: "{{inputs.workspace}}"
+      mode: full
     depends_on:
       - write_readme
   # Generate summary
@@ -159,7 +163,8 @@ outputs:
     value: "{{inputs.create_template_if_missing}} and 'missing' in {{blocks.check_template.outputs.stdout}}"
   readme_content:
     value: "{{blocks.verify_readme.outputs.content}}"
-  readme_size:
-    value: "{{blocks.verify_readme.outputs.size_bytes}}"
+  readme_size_kb:
+    value: "{{blocks.verify_readme.outputs.total_size_kb}}"
+    type: num
   summary:
     value: "{{blocks.summary.outputs.stdout}}"

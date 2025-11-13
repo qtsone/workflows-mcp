@@ -1,8 +1,7 @@
 {
   "outputs": {
-    "cleanup_done": true,
-    "file_content": "# TestProject\n\nGenerated: TIMESTAMP\nShell Output: data_from_shell\n\n\n## Features\n\n- Feature 1\n\n- Feature 2\n\n- Feature 3",
-    "template_rendered": true
+    "_error": "Output evaluation failed: Variable '{{blocks.verify_file_created.outputs.content}}' not found. At segment 'content', available keys: []",
+    "_note": "Check debug log for partial execution details"
   },
   "status": "success"
 }

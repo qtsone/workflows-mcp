@@ -178,9 +178,11 @@ blocks:
 
   # Verify final content
   - id: read_final
-    type: ReadFile
+    type: ReadFiles
     inputs:
-      path: "{{inputs.test_dir}}/test.py"
+      patterns: ["test.py"]
+      base_path: "{{inputs.test_dir}}"
+      mode: full
     depends_on: [test_operations_interpolation]
 
 outputs:

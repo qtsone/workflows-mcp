@@ -1,0 +1,26 @@
+{
+  "outputs": {
+    "exclusion_file_count": 2,
+    "files_processed_json": [
+      {
+        "content": "# Test Project\n\n## Overview\nThis is a test project for ReadFiles.\n\n### Features\n- Feature 1\n- Feature 2\n\n## Usage\nSee examples below.\n",
+        "path": "README.md",
+        "size_bytes": 134
+      },
+      {
+        "content": "\"\"\"Example Python module for testing.\"\"\"\n\ndef calculate_sum(a: int, b: int) -> int:\n    '''Add two numbers together.'''\n    return a + b\n\ndef calculate_product(a: int, b: int) -> int:\n    '''Multiply two numbers.'''\n    return a * b\n\nclass Calculator:\n    '''A simple calculator class.'''\n\n    def divide(self, a: float, b: float) -> float:\n        '''Divide a by b.'''\n        if b == 0:\n            raise ValueError(\"Cannot divide by zero\")\n        return a / b\n",
+        "path": "example.py",
+        "size_bytes": 464
+      }
+    ],
+    "md_outline_content": "files:\n- path: README.md\n  content: |-\n    --- README.md (11 lines) ---\n      \u251c\u2500\u2500 Test Project [1]\n        \u251c\u2500\u2500 Overview [3]\n          \u251c\u2500\u2500 Features [6]\n        \u251c\u2500\u2500 Usage [10]\n  size_bytes: 134",
+    "multi_full_content": "files:\n- path: README.md\n  content: |\n    # Test Project\n\n    ## Overview\n    This is a test project for ReadFiles.\n\n    ### Features\n    - Feature 1\n    - Feature 2\n\n    ## Usage\n    See examples below.\n  size_bytes: 134\n- path: example.py\n  content: |\n    \"\"\"Example Python module for testing.\"\"\"\n\n    def calculate_sum(a: int, b: int) -> int:\n        '''Add two numbers together.'''\n        return a + b\n\n    def calculate_product(a: int, b: int) -> int:\n        '''Multiply two numbers.'''\n        return a * b\n\n    class Calculator:\n        '''A simple calculator class.'''\n\n        def divide(self, a: float, b: float) -> float:\n            '''Divide a by b.'''\n            if b == 0:\n                raise ValueError(\"Cannot divide by zero\")\n            return a / b\n  size_bytes: 464\n",
+    "multi_full_count": 2,
+    "multi_full_size": 0,
+    "py_outline_content": "files:\n- path: example.py\n  content: |-\n    --- example.py (18 lines) ---\n      \u251c\u2500\u2500 def calculate_sum(a: int, b: int) -> int [3-5]\n      \u251c\u2500\u2500 def calculate_product(a: int, b: int) -> int [7-9]\n      \u251c\u2500\u2500 class Calculator [11-18]\n      \u2502   \u251c\u2500\u2500 def divide(self, a: float, b: float) -> float [14-18]\n  size_bytes: 464",
+    "py_outline_count": 1,
+    "py_summary_content": "files:\n- path: example.py\n  content: |-\n    --- example.py (18 lines) ---\n      \u251c\u2500\u2500 def calculate_sum(a: int, b: int) -> int [3-5]\n      \u2502   \u2514\u2500\u2500 \"Add two numbers together....\"\n      \u251c\u2500\u2500 def calculate_product(a: int, b: int) -> int [7-9]\n      \u2502   \u2514\u2500\u2500 \"Multiply two numbers....\"\n      \u251c\u2500\u2500 class Calculator [11-18]\n      \u2502   \u2514\u2500\u2500 \"A simple calculator class....\"\n      \u2502   \u251c\u2500\u2500 def divide(self, a: float, b: float) -> float [14-18]\n      \u2502   \u2502   \u2514\u2500\u2500 \"Divide a by b....\"\n  size_bytes: 464",
+    "single_full_content": "files:\n- path: example.py\n  content: |\n    \"\"\"Example Python module for testing.\"\"\"\n\n    def calculate_sum(a: int, b: int) -> int:\n        '''Add two numbers together.'''\n        return a + b\n\n    def calculate_product(a: int, b: int) -> int:\n        '''Multiply two numbers.'''\n        return a * b\n\n    class Calculator:\n        '''A simple calculator class.'''\n\n        def divide(self, a: float, b: float) -> float:\n            '''Divide a by b.'''\n            if b == 0:\n                raise ValueError(\"Cannot divide by zero\")\n            return a / b\n  size_bytes: 464"
+  },
+  "status": "success"
+}

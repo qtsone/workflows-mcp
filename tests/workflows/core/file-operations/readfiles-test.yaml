@@ -1,0 +1,184 @@
+# ReadFiles Test Workflow
+#
+# Tests ReadFiles executor features:
+# 1. Single file reading (full mode)
+# 2. Multiple files with glob patterns
+# 3. Outline mode (Python symbol extraction)
+# 4. Summary mode (outline + docstrings)
+# 5. File size limits and skipping
+# 6. Exclusion patterns
+
+name: readfiles-test
+description: Test ReadFiles executor with various modes and patterns
+tags: [test, readfiles, files]
+
+inputs:
+  test_dir:
+    type: str
+    description: Test directory path
+    default: "/tmp/readfiles-test"
+
+blocks:
+  # Setup: Create test files
+  - id: create_py_file
+    type: CreateFile
+    inputs:
+      path: "{{inputs.test_dir}}/example.py"
+      create_parents: true
+      content: |
+        """Example Python module for testing."""
+
+        def calculate_sum(a: int, b: int) -> int:
+            '''Add two numbers together.'''
+            return a + b
+
+        def calculate_product(a: int, b: int) -> int:
+            '''Multiply two numbers.'''
+            return a * b
+
+        class Calculator:
+            '''A simple calculator class.'''
+
+            def divide(self, a: float, b: float) -> float:
+                '''Divide a by b.'''
+                if b == 0:
+                    raise ValueError("Cannot divide by zero")
+                return a / b
+
+  - id: create_markdown_file
+    type: CreateFile
+    inputs:
+      path: "{{inputs.test_dir}}/README.md"
+      create_parents: true
+      content: |
+        # Test Project
+
+        ## Overview
+        This is a test project for ReadFiles.
+
+        ### Features
+        - Feature 1
+        - Feature 2
+
+        ## Usage
+        See examples below.
+
+  - id: create_txt_file
+    type: CreateFile
+    inputs:
+      path: "{{inputs.test_dir}}/notes.txt"
+      create_parents: true
+      content: |
+        Line 1: First note
+        Line 2: Second note
+        Line 3: Third note
+        Line 4: Fourth note
+        Line 5: Fifth note
+
+  # Test 1: Read single file (full mode)
+  - id: test_python_full
+    type: ReadFiles
+    inputs:
+      patterns: ["example.py"]
+      base_path: "{{inputs.test_dir}}"
+      mode: full
+    depends_on: [create_py_file]
+
+  # Test 2: Read Python file with outline mode
+  - id: test_py_outline
+    type: ReadFiles
+    inputs:
+      patterns: ["*.py"]
+      base_path: "{{inputs.test_dir}}"
+      mode: outline
+    depends_on: [create_py_file]
+
+  # Test 3: Read Python file with summary mode
+  - id: test_py_summary
+    type: ReadFiles
+    inputs:
+      patterns: ["example.py"]
+      base_path: "{{inputs.test_dir}}"
+      mode: summary
+    depends_on: [create_py_file]
+
+  # Test 4: Read multiple files with glob patterns
+  - id: test_multi_full
+    type: ReadFiles
+    inputs:
+      patterns: ["*.py", "*.md"]
+      base_path: "{{inputs.test_dir}}"
+      mode: full
+      max_files: 10
+    depends_on: [create_markdown_file, create_py_file]
+
+  # Test 5: Read with exclusion patterns
+  - id: test_exclusion
+    type: ReadFiles
+    inputs:
+      patterns: ["*"]
+      base_path: "{{inputs.test_dir}}"
+      mode: full
+      exclude_patterns: ["*.md"]  # Exclude markdown files
+      max_files: 10
+    depends_on: [create_py_file, create_markdown_file, create_txt_file]
+
+  # Test 6: Read markdown file (tests header extraction)
+  - id: test_md_outline
+    type: ReadFiles
+    inputs:
+      patterns: ["*.md"]
+      base_path: "{{inputs.test_dir}}"
+      mode: outline
+    depends_on: [create_markdown_file]
+
+outputs:
+  single_full_content:
+    value: "{{blocks.test_python_full.outputs.content}}"
+    type: str
+    description: Content from single file read (full mode)
+
+  py_outline_content:
+    value: "{{blocks.test_py_outline.outputs.content}}"
+    type: str
+    description: Outline extracted from Python file
+  
+  py_outline_count:
+    value: "{{blocks.test_py_outline.outputs.total_files}}"
+    type: num
+    description: Number of files processed in outline mode
+  
+  py_summary_content:
+    value: "{{blocks.test_py_summary.outputs.content}}"
+    type: str
+    description: Summary (outline + docstrings) from Python file
+  
+  md_outline_content:
+    value: "{{blocks.test_md_outline.outputs.content}}"
+    type: str
+    description: Markdown file outline (header extraction)
+
+  multi_full_content:
+    value: "{{blocks.test_multi_full.outputs.content}}"
+    type: num
+    description: Number of files read with multiple patterns
+
+  multi_full_count:
+    value: "{{blocks.test_multi_full.outputs.total_files}}"
+    type: num
+    description: Number of files read with multiple patterns
+
+  multi_full_size:
+    value: "{{blocks.test_multi_full.outputs.total_size_kb}}"
+    type: num
+    description: Total size of files read
+
+  exclusion_file_count:
+    value: "{{blocks.test_exclusion.outputs.total_files}}"
+    type: num
+    description: Number of files read after exclusion
+
+  files_processed_json:
+    value: "{{blocks.test_multi_full.outputs.files}}"
+    type: json
+    description: List of files processed with metadata

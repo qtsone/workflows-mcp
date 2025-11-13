@@ -629,7 +629,7 @@ def create_default_registry() -> ExecutorRegistry:
     from .executors_file import (
         CreateFileExecutor,
         EditFileExecutor,
-        ReadFileExecutor,
+        ReadFilesExecutor,
         RenderTemplateExecutor,
     )
     from .executors_http import HttpCallExecutor
@@ -651,7 +651,7 @@ def create_default_registry() -> ExecutorRegistry:
     # Register file executors
     registry.register(CreateFileExecutor())
     registry.register(EditFileExecutor())
-    registry.register(ReadFileExecutor())
+    registry.register(ReadFilesExecutor())
     registry.register(RenderTemplateExecutor())
 
     # Register HTTP executor

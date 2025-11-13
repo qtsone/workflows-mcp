@@ -150,7 +150,7 @@ Individual tasks within a workflow. Available block types:
 - `Shell` - Run shell commands
 - `LLMCall` - Call AI/LLM APIs
 - `HttpCall` - Make HTTP requests
-- `CreateFile`, `ReadFile`, `EditFile`, `RenderTemplate` - File operations
+- `CreateFile`, `ReadFiles`, `EditFile`, `RenderTemplate` - File operations
 - `Workflow` - Call other workflows (composition)
 - `Prompt` - Interactive user prompts
 - `ReadJSONState`, `WriteJSONState`, `MergeJSONState` - State management
@@ -920,44 +920,80 @@ outputs:
 ### Example 2: Parallel Processing
 
 ```yaml
-name: multi-lint
-description: Run multiple linters in parallel
-tags: [python, linting]
+name: python-quick-check
+description: Quick Python quality checks (ruff check, mypy, ruff format) with optional auto-fix
+tags: [python, linting, formatting, quality, quick]
 
 inputs:
   project_path:
     type: str
     default: "."
+    description: Project path to check
+  fix:
+    type: bool
+    default: false
+    description: Auto-fix issues (ruff check --fix, ruff format without --check)
 
 blocks:
   - id: ruff
     type: Shell
     inputs:
-      command: "ruff check {{inputs.project_path}}"
+      command: |
+        if {{inputs.fix}}; then
+          ruff check --fix {{inputs.project_path}}
+        else
+          ruff check {{inputs.project_path}}
+        fi
 
   - id: mypy
     type: Shell
     inputs:
       command: "mypy {{inputs.project_path}}"
 
-  - id: black
+  - id: ruff_format
     type: Shell
     inputs:
-      command: "black --check {{inputs.project_path}}"
+      command: |
+        if {{inputs.fix}}; then
+          ruff format {{inputs.project_path}}
+        else
+          ruff format --check {{inputs.project_path}}
+        fi
 
   - id: summary
     type: Shell
-    depends_on: [ruff, mypy, black]
+    depends_on:
+      - block: ruff
+        required: false
+      - block: mypy
+        required: false
+      - block: ruff_format
+        required: false
     inputs:
       command: |
         echo "Linting Results:"
-        echo "  Ruff: {{blocks.ruff.succeeded}}"
-        echo "  Mypy: {{blocks.mypy.succeeded}}"
-        echo "  Black: {{blocks.black.succeeded}}"
+        if {{blocks.ruff.failed}}; then
+          echo "========= ruff check ========="
+          echo "{{blocks.ruff.outputs.stdout}}"
+          echo "{{blocks.ruff.outputs.stderr}}"
+        fi
+        if {{blocks.mypy.failed}}; then
+          echo "========= mypy ========="
+          echo "{{blocks.mypy.outputs.stdout}}"
+          echo "{{blocks.mypy.outputs.stderr}}"
+        fi
+        if {{blocks.ruff_format.failed}}; then
+          echo "========= ruff format ========="
+          echo "{{blocks.ruff_format.outputs.stdout}}"
+          echo "{{blocks.ruff_format.outputs.stderr}}"
+        fi
 
 outputs:
-  all_passed:
-    value: "{{blocks.ruff.succeeded}} and {{blocks.mypy.succeeded}} and {{blocks.black.succeeded}}"
+  summary:
+    value: "{{blocks.summary.outputs.stdout}}"
+    type: str
+  passed:
+    value: "{{blocks.ruff.succeeded}} and {{blocks.mypy.succeeded}} and {{blocks.ruff_format.succeeded}}"
     type: bool
 ```
 
@@ -1054,73 +1090,92 @@ description: Automatically bump version in multiple files
 tags: [versioning, automation]
 
 inputs:
+  path:
+    type: str
+    default: "."
+    description: Project path
+
   bump_type:
     type: str
     description: Type of version bump (major, minor, patch)
     default: "patch"
 
 blocks:
-  - id: get_current_version
+  - id: get_info
     type: Shell
     inputs:
-      command: "grep -oP 'version = \"\\K[^\"]+' pyproject.toml"
+      working_dir: "{{inputs.path}}"
+      command: |
+        sed -n 's/^version = "\(.*\)"/\1/p' pyproject.toml > $SCRATCH/version.txt
+        date +%Y-%m-%d > $SCRATCH/date.txt
+    outputs:
+      version:
+        type: str
+        path: "$SCRATCH/version.txt"
+      date:
+        type: str
+        path: "$SCRATCH/date.txt"
 
-  - id: calculate_new_version
+  - id: new_version
     type: Shell
-    depends_on: [get_current_version]
+    depends_on: [get_info]
     inputs:
       command: |
-        VERSION="{{blocks.get_current_version.outputs.stdout}}"
+        VERSION="{{blocks.get_info.outputs.version}}"
         IFS='.' read -r major minor patch <<< "$VERSION"
         case "{{inputs.bump_type}}" in
-          major) echo "$((major + 1)).0.0" ;;
-          minor) echo "$major.$((minor + 1)).0" ;;
-          patch) echo "$major.$minor.$((patch + 1))" ;;
+          major) printf "%s" "$((major + 1)).0.0" > $SCRATCH/version.txt;;
+          minor) printf "%s" "$major.$((minor + 1)).0" > $SCRATCH/version.txt;;
+          patch) printf "%s" "$major.$minor.$((patch + 1))" > $SCRATCH/version.txt;;
         esac
+    outputs:
+      version:
+        type: str
+        path: "$SCRATCH/version.txt"
 
   - id: update_pyproject
     type: EditFile
-    depends_on: [calculate_new_version]
+    depends_on: [new_version]
     inputs:
-      path: "pyproject.toml"
-      backup: true
+      path: "{{inputs.path}}/pyproject.toml"
+      backup: false
       operations:
         - type: regex_replace
           pattern: 'version = "\d+\.\d+\.\d+"'
-          replacement: 'version = "{{blocks.calculate_new_version.outputs.stdout}}"'
+          replacement: 'version = "{{blocks.new_version.outputs.version}}"'
 
   - id: update_init
     type: EditFile
-    depends_on: [calculate_new_version]
+    depends_on: [new_version]
     inputs:
-      path: "src/__init__.py"
-      backup: true
+      path: "{{inputs.path}}/src/__init__.py"
+      backup: false
       operations:
         - type: regex_replace
           pattern: '__version__ = "\d+\.\d+\.\d+"'
-          replacement: '__version__ = "{{blocks.calculate_new_version.outputs.stdout}}"'
+          replacement: '__version__ = "{{blocks.new_version.outputs.version}}"'
 
   - id: update_changelog
     type: EditFile
-    depends_on: [calculate_new_version]
+    depends_on: [new_version]
     inputs:
-      path: "CHANGELOG.md"
-      backup: true
+      path: "{{inputs.path}}/CHANGELOG.md"
+      backup: false
       operations:
         - type: insert_lines
-          line: 3
+          line_start: 3
           content: |
-            ## [{{blocks.calculate_new_version.outputs.stdout}}] - $(date +%Y-%m-%d)
+            ## [{{blocks.new_version.outputs.version}}] - {{blocks.get_info.outputs.date}}
 
             ### Changed
-            - Version bump to {{blocks.calculate_new_version.outputs.stdout}}
+            - Version bump to {{blocks.new_version.outputs.version}}
 
 outputs:
   old_version:
-    value: "{{blocks.get_current_version.outputs.stdout}}"
+    value: "{{blocks.get_info.outputs.version}}"
     type: str
   new_version:
-    value: "{{blocks.calculate_new_version.outputs.stdout}}"
+    value: "{{blocks.new_version.outputs.version}}"
     type: str
   files_updated:
     value: "{{blocks.update_pyproject.succeeded}} and {{blocks.update_init.succeeded}} and {{blocks.update_changelog.succeeded}}"
@@ -1198,7 +1253,8 @@ workflows-mcp/
 │   ├── engine/                  # Workflow execution engine
 │   │   ├── executor_base.py     # Base executor class
 │   │   ├── executors_core.py    # Shell, Workflow executors
-│   │   ├── executors_file.py    # File operation executors (CreateFile, ReadFile, EditFile, RenderTemplate)
+│   │   ├── executors_file.py    # File operation executors (CreateFile, ReadFiles, EditFile, RenderTemplate)
+│   │   ├── file_outline.py      # File outline extraction utilities
 │   │   ├── executors_http.py    # HTTP call executor
 │   │   ├── executors_llm.py     # LLM call executor
 │   │   ├── executors_state.py   # State management executors

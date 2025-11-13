@@ -1,6 +1,6 @@
-"""File operation executors for ADR-006 - CreateFile, ReadFile, RenderTemplate, EditFile.
+"""File operation executors - CreateFile, ReadFiles, RenderTemplate, EditFile.
 
-Architecture (ADR-006):
+Architecture:
 - Execute returns output directly (no Result wrapper)
 - Raises exceptions for failures
 - Uses Execution context (not dict)
@@ -11,10 +11,12 @@ from __future__ import annotations
 
 import difflib
 import re
+from pathlib import Path
 from typing import Any, ClassVar, Literal
 
+import yaml
 from jinja2 import Environment, StrictUndefined
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, computed_field, field_validator
 
 from .block import BlockInput, BlockOutput
 from .block_utils import FileOperations, PathResolver
@@ -26,8 +28,10 @@ from .executor_base import (
 )
 from .interpolation import (
     interpolatable_boolean_validator,
+    interpolatable_literal_validator,
     interpolatable_numeric_validator,
     resolve_interpolatable_boolean,
+    resolve_interpolatable_literal,
     resolve_interpolatable_numeric,
 )
 
@@ -177,125 +181,378 @@ class CreateFileExecutor(BlockExecutor):
 
 
 # ============================================================================
-# ReadFile Executor
+# ReadFiles Executor
 # ============================================================================
 
 
-class ReadFileInput(BlockInput):
-    """Input model for ReadFile executor."""
+class FileInfo(BaseModel):
+    """File content and metadata."""
 
-    path: str = Field(description="File path to read (absolute or relative)")
-    encoding: str = Field(default="utf-8", description="Text encoding")
-    required: bool | str = Field(
-        default=True,
+    path: str = Field(description="Relative path from base_path")
+    content: str = Field(description="File content (full/outline/summary)")
+    size_bytes: int = Field(description="File size in bytes")
+
+
+class SkippedFileInfo(BaseModel):
+    """Information about skipped files."""
+
+    path: str = Field(description="Relative path from base_path")
+    reason: str = Field(
+        description="Reason for skipping (e.g., 'too_large', 'binary', 'excluded')"
+    )
+    details: str | None = Field(
+        default=None,
+        description="Additional details (e.g., 'size: 500KB > 100KB limit')",
+    )
+
+
+class ReadFilesInput(BlockInput):
+    """Input model for ReadFiles executor with full interpolation support."""
+
+    patterns: list[str] = Field(
+        description="Glob patterns for files to read (e.g., ['*.py', '**/*.ts', 'docs/**/*.md'])",
+        min_length=1,
+        max_length=50,
+    )
+
+    base_path: str = Field(
+        default=".",
+        description="Base directory to search from (relative or absolute)",
+    )
+
+    mode: Literal["full", "outline", "summary"] | str = Field(
+        default="full",
         description=(
-            "If False, missing file returns empty content instead of error "
-            "(or interpolation string)"
+            "Output mode: 'full' (complete content), "
+            "'outline' (symbol tree with line ranges), "
+            "'summary' (outline + docstrings)"
         ),
     )
 
-    # Validator for boolean field with interpolation support
-    _validate_required = field_validator("required", mode="before")(
+    exclude_patterns: list[str] = Field(
+        default_factory=list,
+        description="Additional patterns to exclude beyond defaults (e.g., ['*test*', '*.min.js'])",
+    )
+
+    max_files: int | str = Field(
+        default=20,
+        description="Maximum number of files to read (1-100, supports interpolation)",
+    )
+
+    max_file_size_kb: int | str = Field(
+        default=100,
+        description="Maximum individual file size in KB (supports interpolation)",
+    )
+
+    respect_gitignore: bool | str = Field(
+        default=True,
+        description="Whether to respect .gitignore patterns (supports interpolation)",
+    )
+
+    encoding: str = Field(default="utf-8", description="Text encoding for reading files")
+
+    # Validators for interpolatable fields
+    _validate_mode = field_validator("mode", mode="before")(
+        interpolatable_literal_validator("full", "outline", "summary")
+    )
+
+    _validate_max_files = field_validator("max_files", mode="before")(
+        interpolatable_numeric_validator(int, ge=1, le=100)
+    )
+
+    _validate_max_file_size_kb = field_validator("max_file_size_kb", mode="before")(
+        interpolatable_numeric_validator(int, ge=1, le=10240)  # Max 10MB
+    )
+
+    _validate_respect_gitignore = field_validator("respect_gitignore", mode="before")(
         interpolatable_boolean_validator()
     )
 
 
-class ReadFileOutput(BlockOutput):
-    """Output model for ReadFile executor.
+class ReadFilesOutput(BlockOutput):
+    """Output model for ReadFiles executor with YAML-formatted content."""
 
-    All fields have defaults to support graceful degradation when file reading fails.
-    A default-constructed instance represents a failed/crashed file read operation.
-    """
+    files: list[FileInfo] = Field(
+        default_factory=list,
+        description="List of successfully processed files with content",
+    )
 
-    content: str = Field(
-        default="",
-        description="File content (empty string if failed)",
-    )
-    path: str = Field(
-        default="",
-        description="Absolute path to file (empty string if failed)",
-    )
-    size_bytes: int = Field(
+    total_files: int = Field(
         default=0,
-        description="File size in bytes (0 if failed or not found)",
-    )
-    found: bool = Field(
-        default=False,
-        description="True if file was found, False if missing (required=False) or failed",
+        description="Number of files successfully processed",
     )
 
+    total_size_kb: int = Field(
+        default=0,
+        description="Total size in KB of all processed files",
+    )
 
-class ReadFileExecutor(BlockExecutor):
-    """
-    File reading executor.
+    skipped_files: list[SkippedFileInfo] = Field(
+        default_factory=list,
+        description="Files that were skipped (too large, binary, excluded, etc.)",
+    )
+
+    patterns_matched: int = Field(
+        default=0,
+        description="Total number of files matching patterns before filtering",
+    )
+
+    @computed_field  # type: ignore[prop-decorator]
+    @property
+    def content(self) -> str:
+        """YAML-formatted output (backward compatible).
+
+        Returns structured YAML with literal block scalars for file content.
+        Single source of truth: files list.
+        """
+        return self._format_as_yaml()
+
+    def _format_as_yaml(self) -> str:
+        """Format files as YAML with literal block scalars.
+
+        Uses PyYAML safe_dump with custom representer for '|' style.
+        Industry standard approach from PyYAML documentation.
+        """
+        if not self.files:
+            return "files: []"
+
+        # Custom representer for literal block scalars
+        def str_representer(dumper: Any, data: str) -> Any:
+            if '\n' in data:  # Multi-line: use literal style
+                return dumper.represent_scalar(
+                    'tag:yaml.org,2002:str',
+                    data,
+                    style='|'
+                )
+            return dumper.represent_scalar('tag:yaml.org,2002:str', data)
+
+        yaml.add_representer(str, str_representer, Dumper=yaml.SafeDumper)
+
+        # Convert to plain dicts (Pydantic → dict)
+        files_data = [
+            {
+                "path": f.path,
+                "content": f.content,
+                "size_bytes": f.size_bytes,
+            }
+            for f in self.files
+        ]
+
+        return yaml.safe_dump(
+            {"files": files_data},
+            default_flow_style=False,
+            allow_unicode=True,
+            sort_keys=False,  # Preserve order
+        )
+
+
+class ReadFilesExecutor(BlockExecutor):
+    """File reading executor with multi-file and outline support.
 
     Architecture (ADR-006):
-    - Returns ReadFileOutput directly
-    - Raises FileNotFoundError if required=True and file missing
-    - Returns empty content if required=False and file missing
+    - Returns ReadFilesOutput directly
+    - Raises exceptions for failures (ValueError, FileNotFoundError, etc.)
+    - Uses Execution context
+
+    Features:
+    - Read single or multiple files via glob patterns
+    - Three modes: full, outline (90-97% reduction), summary
+    - Gitignore respect, size limits, exclusion patterns
+    - Base64 encoding for binary files
+    - AST-based Python outline extraction
     """
 
-    type_name: ClassVar[str] = "ReadFile"
-    input_type: ClassVar[type[BlockInput]] = ReadFileInput
-    output_type: ClassVar[type[BlockOutput]] = ReadFileOutput
+    type_name: ClassVar[str] = "ReadFiles"
+    input_type: ClassVar[type[BlockInput]] = ReadFilesInput
+    output_type: ClassVar[type[BlockOutput]] = ReadFilesOutput
 
     security_level: ClassVar[ExecutorSecurityLevel] = ExecutorSecurityLevel.TRUSTED
     capabilities: ClassVar[ExecutorCapabilities] = ExecutorCapabilities(can_read_files=True)
 
     async def execute(  # type: ignore[override]
-        self, inputs: ReadFileInput, context: Execution
-    ) -> ReadFileOutput:
-        """Read file content.
+        self, inputs: ReadFilesInput, context: Execution
+    ) -> ReadFilesOutput:
+        """Execute file reading operations.
 
         Returns:
-            ReadFileOutput with content, path, size, found flag
+            ReadFilesOutput with concatenated content and metadata
 
         Raises:
-            ValueError: Invalid path
-            FileNotFoundError: File not found and required=True
+            ValueError: Invalid patterns or parameters
+            FileNotFoundError: No files match patterns
             Exception: Other I/O errors
         """
-        # Resolve interpolatable fields to their actual types
-        required = resolve_interpolatable_boolean(inputs.required, "required")
-
-        # Resolve path
-        path_result = PathResolver.resolve_and_validate(inputs.path, allow_traversal=True)
-        if not path_result.is_success:
-            raise ValueError(f"Invalid path: {path_result.error}")
-
-        # Type narrowing: is_success guarantees value is not None
-        assert path_result.value is not None
-        file_path = path_result.value
-
-        # Check if file exists
-        if not file_path.exists():
-            if required:
-                raise FileNotFoundError(f"File not found: {file_path}")
-            else:
-                # Graceful: return empty content
-                return ReadFileOutput(
-                    content="",
-                    path=str(file_path),
-                    size_bytes=0,
-                    found=False,
-                )
-
-        # Read file using utility
-        read_result = FileOperations.read_text(
-            path=file_path,
-            encoding=inputs.encoding,
+        # Import file_outline utilities
+        from .file_outline import (
+            BASE64_ENCODE_EXTENSIONS,
+            DEFAULT_EXCLUDE_PATTERNS,
+            create_gitignore_spec,
+            generate_file_outline,
+            is_binary,
+            load_gitignore_patterns,
+            matches_gitignore,
+            matches_pattern,
         )
 
-        if not read_result.is_success:
-            raise OSError(read_result.error)
+        # 1. Resolve interpolatable fields
+        mode = resolve_interpolatable_literal(
+            inputs.mode, ("full", "outline", "summary"), "mode"
+        )
+        max_files = resolve_interpolatable_numeric(inputs.max_files, int, "max_files", ge=1, le=100)
+        max_file_size_kb = resolve_interpolatable_numeric(
+            inputs.max_file_size_kb, int, "max_file_size_kb", ge=1, le=10240
+        )
+        respect_gitignore = resolve_interpolatable_boolean(
+            inputs.respect_gitignore, "respect_gitignore"
+        )
 
-        # Build output
-        assert read_result.value is not None
-        return ReadFileOutput(
-            content=read_result.value,
-            path=str(file_path),
-            size_bytes=file_path.stat().st_size,
-            found=True,
+        # 2. Resolve and validate base_path
+        base_path_result = PathResolver.resolve_and_validate(
+            inputs.base_path, allow_traversal=True
+        )
+        if not base_path_result.is_success:
+            raise ValueError(f"Invalid base_path: {base_path_result.error}")
+
+        assert base_path_result.value is not None
+        base_path = base_path_result.value
+
+        if not base_path.is_dir():
+            raise ValueError(f"base_path is not a directory: {base_path}")
+
+        # 3. Build exclusion patterns
+        exclude_patterns = list(DEFAULT_EXCLUDE_PATTERNS)
+        exclude_patterns.extend(inputs.exclude_patterns)
+
+        gitignore_spec = None
+        if respect_gitignore:
+            gitignore_patterns = load_gitignore_patterns(base_path)
+            if gitignore_patterns:
+                # Try to use pathspec if available
+                gitignore_spec = create_gitignore_spec(gitignore_patterns)
+                if gitignore_spec is None:
+                    # Fallback: add to exclude_patterns
+                    exclude_patterns.extend(gitignore_patterns)
+
+        # 4. Find files matching patterns
+        found_files: set[Path] = set()
+        for pattern in inputs.patterns:
+            try:
+                for file_path in base_path.glob(pattern):
+                    if file_path.is_file():
+                        found_files.add(file_path)
+            except ValueError as e:
+                raise ValueError(f"Invalid glob pattern '{pattern}': {e}") from e
+
+        patterns_matched = len(found_files)
+
+        # 5. Apply exclusion filters
+        filtered_files: set[Path] = set()
+        for file_path in found_files:
+            # Check gitignore first (if pathspec available)
+            if gitignore_spec and matches_gitignore(file_path, base_path, gitignore_spec):
+                continue
+
+            # Check other exclusion patterns
+            is_excluded = any(
+                matches_pattern(file_path, base_path, pattern) for pattern in exclude_patterns
+            )
+            if not is_excluded:
+                filtered_files.add(file_path)
+
+        # 6. Sort and limit files
+        sorted_files = sorted(list(filtered_files))[:max_files]
+
+        if not sorted_files:
+            raise FileNotFoundError(
+                f"No files matched patterns {inputs.patterns} in {base_path} after filtering"
+            )
+
+        # 7. Process files
+        file_count = 0
+        total_size_kb = 0
+        processed_files: list[FileInfo] = []
+        skipped_files: list[SkippedFileInfo] = []
+
+        for file_path in sorted_files:
+            try:
+                # Check file size
+                file_size_kb = file_path.stat().st_size // 1024
+
+                if file_size_kb > max_file_size_kb:
+                    skipped_files.append(
+                        SkippedFileInfo(
+                            path=str(file_path.relative_to(base_path)),
+                            reason="too_large",
+                            details=f"size: {file_size_kb}KB > {max_file_size_kb}KB",
+                        )
+                    )
+                    continue
+
+                total_size_kb += file_size_kb
+                relative_path = file_path.relative_to(base_path)
+                file_ext = file_path.suffix.lower()
+
+                # Determine how to read file based on mode
+                file_content: str
+                if mode in ("outline", "summary"):
+                    # Generate outline instead of full content
+                    file_content = generate_file_outline(file_path, mode)
+
+                elif file_ext in BASE64_ENCODE_EXTENSIONS:
+                    # Base64 encode binary files
+                    import base64
+
+                    with open(file_path, "rb") as f:
+                        file_content = base64.b64encode(f.read()).decode("ascii")
+
+                elif is_binary(file_path):
+                    skipped_files.append(
+                        SkippedFileInfo(
+                            path=str(relative_path),
+                            reason="binary",
+                            details="Binary file detected (contains null bytes)",
+                        )
+                    )
+                    continue
+
+                else:
+                    # Read as text
+                    read_result = FileOperations.read_text(
+                        path=file_path,
+                        encoding=inputs.encoding,
+                    )
+                    if not read_result.is_success:
+                        raise OSError(read_result.error)
+
+                    assert read_result.value is not None
+                    file_content = read_result.value
+
+                file_count += 1
+                processed_files.append(
+                    FileInfo(
+                        path=str(relative_path),
+                        content=file_content,
+                        size_bytes=file_path.stat().st_size,
+                    )
+                )
+
+            except Exception as e:
+                skipped_files.append(
+                    SkippedFileInfo(
+                        path=str(file_path.relative_to(base_path)),
+                        reason="error",
+                        details=f"{type(e).__name__}: {e}",
+                    )
+                )
+                continue
+
+        # 8. Return output (content computed via property)
+        return ReadFilesOutput(
+            files=processed_files,
+            total_files=file_count,
+            total_size_kb=total_size_kb,
+            skipped_files=skipped_files,
+            patterns_matched=patterns_matched,
         )
 
 
