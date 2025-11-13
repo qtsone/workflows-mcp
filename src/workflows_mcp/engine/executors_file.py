@@ -197,9 +197,7 @@ class SkippedFileInfo(BaseModel):
     """Information about skipped files."""
 
     path: str = Field(description="Relative path from base_path")
-    reason: str = Field(
-        description="Reason for skipping (e.g., 'too_large', 'binary', 'excluded')"
-    )
+    reason: str = Field(description="Reason for skipping (e.g., 'too_large', 'binary', 'excluded')")
     details: str | None = Field(
         default=None,
         description="Additional details (e.g., 'size: 500KB > 100KB limit')",
@@ -318,13 +316,9 @@ class ReadFilesOutput(BlockOutput):
 
         # Custom representer for literal block scalars
         def str_representer(dumper: Any, data: str) -> Any:
-            if '\n' in data:  # Multi-line: use literal style
-                return dumper.represent_scalar(
-                    'tag:yaml.org,2002:str',
-                    data,
-                    style='|'
-                )
-            return dumper.represent_scalar('tag:yaml.org,2002:str', data)
+            if "\n" in data:  # Multi-line: use literal style
+                return dumper.represent_scalar("tag:yaml.org,2002:str", data, style="|")
+            return dumper.represent_scalar("tag:yaml.org,2002:str", data)
 
         yaml.add_representer(str, str_representer, Dumper=yaml.SafeDumper)
 
@@ -395,9 +389,7 @@ class ReadFilesExecutor(BlockExecutor):
         )
 
         # 1. Resolve interpolatable fields
-        mode = resolve_interpolatable_literal(
-            inputs.mode, ("full", "outline", "summary"), "mode"
-        )
+        mode = resolve_interpolatable_literal(inputs.mode, ("full", "outline", "summary"), "mode")
         max_files = resolve_interpolatable_numeric(inputs.max_files, int, "max_files", ge=1, le=100)
         max_file_size_kb = resolve_interpolatable_numeric(
             inputs.max_file_size_kb, int, "max_file_size_kb", ge=1, le=10240
@@ -407,9 +399,7 @@ class ReadFilesExecutor(BlockExecutor):
         )
 
         # 2. Resolve and validate base_path
-        base_path_result = PathResolver.resolve_and_validate(
-            inputs.base_path, allow_traversal=True
-        )
+        base_path_result = PathResolver.resolve_and_validate(inputs.base_path, allow_traversal=True)
         if not base_path_result.is_success:
             raise ValueError(f"Invalid base_path: {base_path_result.error}")
 
