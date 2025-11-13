@@ -60,32 +60,30 @@ blocks:
     depends_on:
       - analyze_changes
   - id: llm_generate_message
-    type: Prompt
+    type: LLMCall
     description: "Generate semantic commit message using LLM"
     inputs:
+      profile: default
+      response_schema:
+        type: object
+        required: [type, summary, body]
+        properties:
+          type:
+            type: string
+            enum: [feat, fix, docs, style, refactor, perf, test, chore, ci]
+            description: "Commit type following Conventional Commits"
+          scope:
+            type: string
+            description: "Component/module affected (optional)"
+          summary:
+            type: string
+            maxLength: 72
+            description: "Brief summary in imperative mood, lowercase, no period"
+          body:
+            type: string
+            description: "Detailed explanation of what and why (optional, can be empty string)"
       prompt: |
-        Generate a semantic commit message following the Conventional Commits specification.
-
-        ## Format
-        <type>(<scope>): <summary>
-
-        <body>
-
-        ## Types
-        - feat: New feature
-        - fix: Bug fix
-        - docs: Documentation changes
-        - style: Code formatting (no logic change)
-        - refactor: Code restructuring
-        - perf: Performance improvement
-        - test: Test additions/changes
-        - chore: Maintenance (deps, config)
-        - ci: CI/CD changes
-
-        ## Guidelines
-        - Summary: imperative mood, lowercase, no period, max 72 chars
-        - Body: explain what and why (optional)
-        - Scope: component/module affected (optional)
+        Analyze the following git changes and generate a semantic commit message following the Conventional Commits specification.
 
         ## Summary
         {{blocks.analyze_changes.outputs.summary}}
@@ -93,24 +91,52 @@ blocks:
         ## Detailed Changes
         {{blocks.analyze_changes.outputs.diff}}
 
-        Generate ONLY the commit message (no quotes, no explanations):
+        Generate a structured commit message with the following components:
+        - type: Choose the most appropriate type (feat, fix, docs, style, refactor, perf, test, chore, ci)
+        - scope: Identify the component/module affected (leave empty if not applicable)
+        - summary: Write a concise summary in imperative mood, lowercase, no period, max 72 characters
+        - body: Provide detailed explanation of what changed and why (leave empty if summary is self-explanatory). Write as a single paragraph without line breaks. Do NOT use escape sequences like \n or \t.
     condition: "{{blocks.analyze_changes.outputs.has_changes}} and {{inputs.commit_message}} == ''"
     depends_on:
       - analyze_changes
+
   - id: select_message
     type: Shell
     description: "Select final commit message: manual override or LLM-generated"
     inputs:
       env:
         MANUAL_MESSAGE: "{{inputs.commit_message}}"
-        LLM_MESSAGE: "{{blocks.llm_generate_message.outputs.response}}"
+        LLM_TYPE: "{{blocks.llm_generate_message.outputs.response.type}}"
+        LLM_SCOPE: "{{blocks.llm_generate_message.outputs.response.scope}}"
+        LLM_SUMMARY: "{{blocks.llm_generate_message.outputs.response.summary}}"
+        LLM_BODY: "{{blocks.llm_generate_message.outputs.response.body}}"
       command: |
         # Use environment variables to safely pass content (GitHub Actions pattern)
         # This prevents shell expansion of special chars (backticks, $, quotes)
         if [ -n "$MANUAL_MESSAGE" ]; then
-          printf '%s' "$MANUAL_MESSAGE" > "$SCRATCH/message.txt"
+          cat <<-EOF > "$SCRATCH/message.txt"
+        	$MANUAL_MESSAGE
+        	EOF
         else
-          printf '%s' "$LLM_MESSAGE" > "$SCRATCH/message.txt"
+          # Format structured commit message from LLM response
+          # Format: <type>(<scope>): <summary>\n\n<body>
+          if [ -n "$LLM_SCOPE" ]; then
+            HEADER="${LLM_TYPE}(${LLM_SCOPE}): ${LLM_SUMMARY}"
+          else
+            HEADER="${LLM_TYPE}: ${LLM_SUMMARY}"
+          fi
+
+          if [ -n "$LLM_BODY" ]; then
+            cat <<-EOF > "$SCRATCH/message.txt"
+        	$HEADER
+
+        	$LLM_BODY
+        	EOF
+          else
+            cat <<-EOF > "$SCRATCH/message.txt"
+        	$HEADER
+        	EOF
+          fi
         fi
     condition: "{{blocks.analyze_changes.outputs.has_changes}}"
     depends_on:
@@ -120,6 +146,7 @@ blocks:
       message:
         type: str
         path: "$SCRATCH/message.txt"
+
   - id: confirm_commit
     type: Prompt
     description: "Prompt user for commit confirmation"
