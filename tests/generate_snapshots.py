@@ -225,9 +225,13 @@ async def main() -> None:
                     inputs = {"base_url": base_url} if workflow_name in HTTP_WORKFLOWS else {}
 
                     if workflow_name == "secrets-redaction":
-                        inputs["expected_hash"] = (
-                            "996103efa65509daba85003e79ce2330c32a8839244a2d2b3d7faf0d2d080a5f"
-                        )
+                        import hashlib
+
+                        from test_secrets import TEST_SECRETS
+
+                        # Calculate expected hash from actual test secret (single source of truth)
+                        secret_value = TEST_SECRETS["WORKFLOW_SECRET_REDACTION_TEST"]
+                        inputs["expected_hash"] = hashlib.sha256(secret_value.encode()).hexdigest()
 
                     # Execute workflow
                     response = await generate_snapshot(workflow_name, client, inputs)
