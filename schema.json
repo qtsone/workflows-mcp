@@ -108,7 +108,6 @@
               "CreateFile",
               "EditFile",
               "ReadFiles",
-              "RenderTemplate",
               "HttpCall",
               "LLMCall",
               "Prompt",
@@ -600,86 +599,6 @@
                     "patterns"
                   ],
                   "title": "ReadFilesInput",
-                  "type": "object"
-                }
-              }
-            }
-          },
-          {
-            "if": {
-              "properties": {
-                "type": {
-                  "const": "RenderTemplate"
-                }
-              }
-            },
-            "then": {
-              "properties": {
-                "inputs": {
-                  "additionalProperties": false,
-                  "description": "Inputs for RenderTemplate block",
-                  "properties": {
-                    "template": {
-                      "description": "Jinja2 template string",
-                      "title": "Template",
-                      "type": "string"
-                    },
-                    "variables": {
-                      "additionalProperties": true,
-                      "description": "Variables to substitute in template",
-                      "title": "Variables",
-                      "type": "object"
-                    },
-                    "output_path": {
-                      "anyOf": [
-                        {
-                          "type": "string"
-                        },
-                        {
-                          "type": "null"
-                        }
-                      ],
-                      "default": null,
-                      "description": "Optional file path to write rendered content",
-                      "title": "Output Path"
-                    },
-                    "encoding": {
-                      "default": "utf-8",
-                      "description": "Text encoding for output file",
-                      "title": "Encoding",
-                      "type": "string"
-                    },
-                    "overwrite": {
-                      "anyOf": [
-                        {
-                          "type": "boolean"
-                        },
-                        {
-                          "type": "string"
-                        }
-                      ],
-                      "default": true,
-                      "description": "Whether to overwrite existing output file (or interpolation string)",
-                      "title": "Overwrite"
-                    },
-                    "create_parents": {
-                      "anyOf": [
-                        {
-                          "type": "boolean"
-                        },
-                        {
-                          "type": "string"
-                        }
-                      ],
-                      "default": true,
-                      "description": "Create parent directories for output file (or interpolation string)",
-                      "title": "Create Parents"
-                    }
-                  },
-                  "required": [
-                    "template"
-                  ],
-                  "title": "RenderTemplateInput",
                   "type": "object"
                 }
               }
@@ -1700,73 +1619,6 @@
         "patterns"
       ],
       "title": "ReadFilesInput",
-      "type": "object"
-    },
-    "RenderTemplateInput": {
-      "additionalProperties": false,
-      "description": "Input model for RenderTemplate executor.",
-      "properties": {
-        "template": {
-          "description": "Jinja2 template string",
-          "title": "Template",
-          "type": "string"
-        },
-        "variables": {
-          "additionalProperties": true,
-          "description": "Variables to substitute in template",
-          "title": "Variables",
-          "type": "object"
-        },
-        "output_path": {
-          "anyOf": [
-            {
-              "type": "string"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null,
-          "description": "Optional file path to write rendered content",
-          "title": "Output Path"
-        },
-        "encoding": {
-          "default": "utf-8",
-          "description": "Text encoding for output file",
-          "title": "Encoding",
-          "type": "string"
-        },
-        "overwrite": {
-          "anyOf": [
-            {
-              "type": "boolean"
-            },
-            {
-              "type": "string"
-            }
-          ],
-          "default": true,
-          "description": "Whether to overwrite existing output file (or interpolation string)",
-          "title": "Overwrite"
-        },
-        "create_parents": {
-          "anyOf": [
-            {
-              "type": "boolean"
-            },
-            {
-              "type": "string"
-            }
-          ],
-          "default": true,
-          "description": "Create parent directories for output file (or interpolation string)",
-          "title": "Create Parents"
-        }
-      },
-      "required": [
-        "template"
-      ],
-      "title": "RenderTemplateInput",
       "type": "object"
     },
     "HttpCallInput": {

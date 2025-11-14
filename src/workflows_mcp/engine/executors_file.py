@@ -1,4 +1,4 @@
-"""File operation executors - CreateFile, ReadFiles, RenderTemplate, EditFile.
+"""File operation executors - CreateFile, ReadFiles, EditFile.
 
 Architecture:
 - Execute returns output directly (no Result wrapper)
@@ -15,8 +15,6 @@ from pathlib import Path
 from typing import Any, ClassVar, Literal
 
 import yaml
-from jinja2 import StrictUndefined
-from jinja2.sandbox import SandboxedEnvironment
 from pydantic import BaseModel, Field, computed_field, field_validator
 
 from .block import BlockInput, BlockOutput
@@ -544,150 +542,6 @@ class ReadFilesExecutor(BlockExecutor):
             total_size_kb=total_size_kb,
             skipped_files=skipped_files,
             patterns_matched=patterns_matched,
-        )
-
-
-# ============================================================================
-# RenderTemplate Executor
-# ============================================================================
-
-
-class RenderTemplateInput(BlockInput):
-    """Input model for RenderTemplate executor."""
-
-    template: str = Field(description="Jinja2 template string")
-    variables: dict[str, Any] = Field(
-        default_factory=dict,
-        description="Variables to substitute in template",
-    )
-    output_path: str | None = Field(
-        default=None,
-        description="Optional file path to write rendered content",
-    )
-    encoding: str = Field(default="utf-8", description="Text encoding for output file")
-    overwrite: bool | str = Field(
-        default=True,
-        description="Whether to overwrite existing output file (or interpolation string)",
-    )
-    create_parents: bool | str = Field(
-        default=True,
-        description="Create parent directories for output file (or interpolation string)",
-    )
-
-    # Validators for boolean fields with interpolation support
-    _validate_overwrite = field_validator("overwrite", mode="before")(
-        interpolatable_boolean_validator()
-    )
-    _validate_create_parents = field_validator("create_parents", mode="before")(
-        interpolatable_boolean_validator()
-    )
-
-
-class RenderTemplateOutput(BlockOutput):
-    """Output model for RenderTemplate executor.
-
-    All fields have defaults to support graceful degradation when template rendering fails.
-    A default-constructed instance represents a failed/crashed rendering operation.
-    """
-
-    content: str = Field(
-        default="",
-        description="Rendered template content (empty string if failed)",
-    )
-    output_path: str | None = Field(
-        default=None,
-        description="Absolute path to output file (None if not specified or failed)",
-    )
-    size_bytes: int | None = Field(
-        default=None,
-        description="Output file size in bytes (None if not written or failed)",
-    )
-
-
-class RenderTemplateExecutor(BlockExecutor):
-    """
-    Jinja2 template rendering executor.
-
-    Architecture (ADR-006):
-    - Returns RenderTemplateOutput directly
-    - Raises TemplateSyntaxError, UndefinedError for template issues
-    - Raises exceptions for file write failures
-    """
-
-    type_name: ClassVar[str] = "RenderTemplate"
-    input_type: ClassVar[type[BlockInput]] = RenderTemplateInput
-    output_type: ClassVar[type[BlockOutput]] = RenderTemplateOutput
-
-    security_level: ClassVar[ExecutorSecurityLevel] = ExecutorSecurityLevel.TRUSTED
-    capabilities: ClassVar[ExecutorCapabilities] = ExecutorCapabilities(
-        can_read_files=True,
-        can_write_files=True,
-    )
-
-    async def execute(  # type: ignore[override]
-        self, inputs: RenderTemplateInput, context: Execution
-    ) -> RenderTemplateOutput:
-        """RenderTemplate Jinja2 template.
-
-        Returns:
-            RenderTemplateOutput with rendered content and optional file path
-
-        Raises:
-            TemplateSyntaxError: Invalid template syntax
-            UndefinedError: Undefined variable in template
-            ValueError: Invalid output path
-            FileExistsError: Output file exists and overwrite=False
-            Exception: Other errors
-        """
-        # Resolve interpolatable fields to their actual types
-        overwrite = resolve_interpolatable_boolean(inputs.overwrite, "overwrite")
-        create_parents = resolve_interpolatable_boolean(inputs.create_parents, "create_parents")
-
-        # RenderTemplate template (exceptions bubble up)
-        env = SandboxedEnvironment(undefined=StrictUndefined, autoescape=False)
-        template = env.from_string(inputs.template)
-        rendered = template.render(**inputs.variables)
-
-        # Write to file if output_path specified
-        output_path_str: str | None = None
-        size_bytes: int | None = None
-
-        if inputs.output_path:
-            # Resolve path
-            path_result = PathResolver.resolve_and_validate(
-                inputs.output_path, allow_traversal=True
-            )
-            if not path_result.is_success:
-                raise ValueError(f"Invalid output_path: {path_result.error}")
-
-            # Type narrowing: is_success guarantees value is not None
-            assert path_result.value is not None
-            file_path = path_result.value
-
-            # Check overwrite protection
-            if file_path.exists() and not overwrite:
-                raise FileExistsError(f"Output file exists and overwrite=False: {file_path}")
-
-            # Write file using utility
-            write_result = FileOperations.write_text(
-                path=file_path,
-                content=rendered,
-                encoding=inputs.encoding,
-                mode=None,
-                create_parents=create_parents,
-            )
-
-            if not write_result.is_success:
-                raise OSError(write_result.error)
-
-            output_path_str = str(file_path)
-            size_bytes = write_result.value
-
-        # Build output
-        return RenderTemplateOutput(
-            content=rendered,
-            output_path=output_path_str,
-            size_bytes=size_bytes,
         )
 
 

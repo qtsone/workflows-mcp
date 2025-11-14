@@ -82,19 +82,14 @@ blocks:
       working_dir: "{{inputs.working_dir}}"
       timeout: 60
   - id: summary
-    type: RenderTemplate
+    type: Shell
     inputs:
-      template: |
-        Feature Branch Created:
-        - Branch: {{ branch_name }}
-        - Base: {{ base_branch }}
-        - Current branch: {{ current_branch }}
-        - Pushed to remote: {{ push_status }}
-      variables:
-        branch_name: "{{inputs.branch_name}}"
-        base_branch: "{{inputs.base_branch}}"
-        current_branch: "{{blocks.current_branch.outputs.name}}"
-        pushed: "{{blocks.push_branch.succeeded}}"
+      command: |
+        printf "Feature Branch Created:\n"
+        printf "- Branch: {{inputs.branch_name}}\n"
+        printf "- Base: {{inputs.base_branch}}\n"
+        printf "- Current branch: {{blocks.current_branch.outputs.name}}\n"
+        printf "- Pushed to remote: {{blocks.push_branch.succeeded}}\n"
     depends_on:
       - block: create_branch
         required: true
@@ -102,4 +97,4 @@ blocks:
         required: false
 outputs:
   summary:
-    value: "{{blocks.summary.outputs.content}}"
+    value: "{{blocks.summary.outputs.stdout}}"
