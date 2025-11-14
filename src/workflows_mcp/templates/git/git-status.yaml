@@ -39,24 +39,15 @@ blocks:
       - analyze_changes
       - git_branch
   - id: summary
-    type: RenderTemplate
+    type: Shell
     inputs:
-      template: |
-        Git Repository Summary:
-        - Branch: {{ branch_name }}
-        - Has Changes: {{ has_changes }}
-        - File Status:
-        {{ summary }}
-        - Diff Statistics:
-        {{ diff }}
-        - Recent Commits:
-        {{ recent_commits }}
-      variables:
-        branch_name: "{{blocks.git_branch.outputs.name}}"
-        has_changes: "{{blocks.analyze_changes.outputs.has_changes}}"
-        summary: "{{blocks.analyze_changes.outputs.summary}}"
-        diff: "{{blocks.analyze_changes.outputs.diff}}"
-        recent_commits: "{{blocks.check_recent_commits.outputs.stdout}}"
+      command: |
+        printf "Git Repository Summary:\n"
+        printf "- Branch: {{blocks.git_branch.outputs.name}}\n"
+        printf "- Has Changes: {{blocks.analyze_changes.outputs.has_changes}}\n"
+        printf "- File Status:\n{{blocks.analyze_changes.outputs.summary}}\n"
+        printf "- Diff Statistics:\n{{blocks.analyze_changes.outputs.diff}}\n"
+        printf "- Recent Commits:\n{{blocks.check_recent_commits.outputs.stdout}}\n"
     depends_on:
       - analyze_changes
       - git_branch
@@ -65,4 +56,4 @@ outputs:
   current_branch:
     value: "{{blocks.git_branch.outputs.name}}"
   summary:
-    value: "{{blocks.summary.outputs.content}}"
+    value: "{{blocks.summary.outputs.stdout}}"

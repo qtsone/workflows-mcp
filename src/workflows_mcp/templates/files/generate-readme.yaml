@@ -105,28 +105,14 @@ blocks:
       - check_template
       - create_default_template
     condition: "'exists' in {{blocks.check_template.outputs.stdout}} or {{inputs.create_template_if_missing}}"
-  # Populate template with variables
-  - id: populate_template
-    type: RenderTemplate
-    inputs:
-      template: "{{blocks.read_template.outputs.content}}"
-      variables:
-        project_name: "{{inputs.project_name}}"
-        description: "{{inputs.description}}"
-        author: "{{inputs.author}}"
-        version: "{{inputs.version}}"
-        license: "{{inputs.license}}"
-    depends_on:
-      - read_template
-  # Write README file
+  # Write README file (using render() for nested template rendering)
   - id: write_readme
     type: CreateFile
     inputs:
       path: "{{inputs.workspace}}/{{inputs.output_path}}"
-      content: "{{blocks.populate_template.outputs.content}}"
-      mode: "644"
+      content: "{{render(get(blocks.read_template.outputs.files, 0, {}).content, {'project_name': inputs.project_name, 'description': inputs.description, 'author': inputs.author, 'version': inputs.version, 'license': inputs.license})}}"
     depends_on:
-      - populate_template
+      - read_template
   # Verify README was created
   - id: verify_readme
     type: ReadFiles

@@ -832,12 +832,6 @@ class WorkflowSchema(BaseModel):
 
         def check_dict_values(obj: Any, path: str, allow_each: bool = False) -> None:
             """Recursively check all string values in nested structures."""
-            # Skip validation for Jinja2 template fields (contain template syntax)
-            # These fields use {{...}} for Jinja2, not workflow variable substitution
-            jinja2_template_fields = [".template"]  # RenderTemplate.template field
-            if any(path.endswith(field) for field in jinja2_template_fields):
-                return  # Skip validation for this field
-
             if isinstance(obj, str):
                 validate_string_value(obj, path, allow_each=allow_each)
             elif isinstance(obj, dict):

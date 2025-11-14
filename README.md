@@ -150,7 +150,7 @@ Individual tasks within a workflow. Available block types:
 - `Shell` - Run shell commands
 - `LLMCall` - Call AI/LLM APIs
 - `HttpCall` - Make HTTP requests
-- `CreateFile`, `ReadFiles`, `EditFile`, `RenderTemplate` - File operations
+- `CreateFile`, `ReadFiles`, `EditFile` - File operations
 - `Workflow` - Call other workflows (composition)
 - `Prompt` - Interactive user prompts
 - `ReadJSONState`, `WriteJSONState`, `MergeJSONState` - State management
@@ -1253,7 +1253,7 @@ workflows-mcp/
 │   ├── engine/                  # Workflow execution engine
 │   │   ├── executor_base.py     # Base executor class
 │   │   ├── executors_core.py    # Shell, Workflow executors
-│   │   ├── executors_file.py    # File operation executors (CreateFile, ReadFiles, EditFile, RenderTemplate)
+│   │   ├── executors_file.py    # File operation executors (CreateFile, ReadFiles, EditFile)
 │   │   ├── file_outline.py      # File outline extraction utilities
 │   │   ├── executors_http.py    # HTTP call executor
 │   │   ├── executors_llm.py     # LLM call executor

@@ -53,9 +53,10 @@ blocks:
     condition: "{{inputs.backup_original}} and not {{inputs.validate_only}}"
   # Transform configuration for environment
   - id: transform_config
-    type: RenderTemplate
+    type: CreateFile
     inputs:
-      template: |
+      path: "{{inputs.output_path}}"
+      content: |
         {
           "source_file": "{{inputs.config_path}}",
           "environment": "{{inputs.environment}}",
@@ -69,24 +70,9 @@ blocks:
           },
           "original_content": {{blocks.read_config.outputs.content}}
         }
-      variables:
-        config_path: "{{inputs.config_path}}"
-        environment: "{{inputs.environment}}"
-        read_config_size: "{{blocks.read_config.outputs.size_bytes}}"
-        backup_original: "{{inputs.backup_original}}"
     depends_on:
       - validate_format
       - backup_config
-    condition: "not {{inputs.validate_only}}"
-  # Write processed configuration
-  - id: write_output
-    type: CreateFile
-    inputs:
-      path: "{{inputs.output_path}}"
-      content: "{{blocks.transform_config.outputs.content}}"
-      mode: "644"
-    depends_on:
-      - transform_config
     condition: "not {{inputs.validate_only}}"
   # Verify output file
   - id: verify_output
@@ -95,7 +81,7 @@ blocks:
       patterns: ["{{inputs.output_path}}"]
       mode: full
     depends_on:
-      - write_output
+      - transform_config
     condition: "not {{inputs.validate_only}}"
   # Generate status displays
   - id: get_mode_display
