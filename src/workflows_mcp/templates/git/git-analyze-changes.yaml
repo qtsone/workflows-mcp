@@ -2,17 +2,20 @@ name: git-analyze-changes
 description: Analyze git repository for uncommitted changes and extract diff information
 version: 1.0.0
 tags: [git, diff, analysis, agent, layer1]
+
 inputs:
   working_dir:
     type: str
     description: (Optional) Working directory for git operations
     default: "."
     required: false
+
   staged_only:
     type: bool
     description: If true, only analyze staged changes (default). Set false to include unstaged/untracked.
     default: true
     required: false
+
 blocks:
   - id: get_staged_summary
     type: Shell
@@ -21,6 +24,7 @@ blocks:
       command: git diff --cached --stat --compact-summary > $SCRATCH/summary.txt
       working_dir: "{{inputs.working_dir}}"
     condition: "{{inputs.staged_only}}"
+
   - id: get_staged_diff
     type: Shell
     description: "Generate compact diff of staged changes"
@@ -28,13 +32,15 @@ blocks:
       command: git diff --cached -U0 --inter-hunk-context=0 --no-color --no-prefix > $SCRATCH/raw_diff.txt
       working_dir: "{{inputs.working_dir}}"
     condition: "{{inputs.staged_only}}"
+
   - id: get_all_summary
     type: Shell
     description: "Get diff statistics for all changes (staged + unstaged)"
     inputs:
       command: git diff HEAD --stat --compact-summary > $SCRATCH/summary.txt
       working_dir: "{{inputs.working_dir}}"
-    condition: "not {{inputs.staged_only}}"
+    condition: "{{not inputs.staged_only}}"
+
   - id: get_all_diff
     type: Shell
     description: "Generate compact diff of all changes (staged + unstaged)"
@@ -42,7 +48,8 @@ blocks:
       command: |
         git diff HEAD -U0 --inter-hunk-context=0 --no-color --no-prefix > $SCRATCH/raw_diff.txt
       working_dir: "{{inputs.working_dir}}"
-    condition: "not {{inputs.staged_only}}"
+    condition: "{{not inputs.staged_only}}"
+
   - id: processing
     type: Shell
     description: "Process and consolidate analysis results"
@@ -97,9 +104,10 @@ blocks:
       diff:
         type: str
         path: "$SCRATCH/processed_diff.txt"
+
 outputs:
   has_changes:
-    value: "{{blocks.get_staged_diff.succeeded}} or {{blocks.get_all_diff.succeeded}}"
+    value: "{{blocks.get_staged_diff.succeeded or blocks.get_all_diff.succeeded}}"
     type: bool
   summary:
     value: "{{blocks.processing.outputs.summary}}"

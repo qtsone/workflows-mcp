@@ -10,7 +10,7 @@ outputs:
     description: "Exit code preserved as int"
   # Test: Logical expression evaluates to bool
   command_succeeded:
-    value: "{{blocks.run_command.outputs.exit_code}} == 0"
+    value: "{{blocks.run_command.outputs.exit_code == 0}}"
     type: bool
     description: "Success check as bool"
 blocks:

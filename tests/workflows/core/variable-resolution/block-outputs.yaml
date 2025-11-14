@@ -105,9 +105,9 @@ outputs:
     type: bool
   all_passed:
     value: >
-      {{blocks.validate_stdout.succeeded}} and
-      {{blocks.validate_stderr.succeeded}} and
-      {{blocks.validate_exit_code.succeeded}} and
-      {{blocks.chained_consumer.succeeded}} and
-      {{blocks.validate_shortcuts.succeeded}}
+      {{blocks.validate_stdout.succeeded and
+      blocks.validate_stderr.succeeded and
+      blocks.validate_exit_code.succeeded and
+      blocks.chained_consumer.succeeded and
+      blocks.validate_shortcuts.succeeded}}
     type: bool

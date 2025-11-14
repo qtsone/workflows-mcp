@@ -22,16 +22,19 @@ inputs:
     default: false
     description: "(Optional) Stage all modified files before analyzing (default: use already staged files)"
     required: false
+
   working_dir:
     type: str
     default: "."
     description: "(Optional) Path to the git repository"
     required: false
+
   auto_commit:
     type: bool
     default: true
     description: "(Optional) Skip interactive confirmation and commit immediately with generated message"
     required: false
+
   commit_message:
     type: str
     default: ""
@@ -60,7 +63,7 @@ blocks:
     description: "No changes to commit"
     inputs:
       command: printf "No changes to commit"
-    condition: "not {{blocks.analyze_changes.outputs.has_changes}}"
+    condition: "{{not blocks.analyze_changes.outputs.has_changes}}"
     depends_on:
       - analyze_changes
 
@@ -101,7 +104,7 @@ blocks:
         - scope: Identify the component/module affected (leave empty if not applicable)
         - summary: Write a concise summary in imperative mood, lowercase, no period, max 72 characters
         - body: Provide detailed explanation of what changed and why (leave empty if summary is self-explanatory).
-    condition: "{{blocks.analyze_changes.outputs.has_changes}} and {{inputs.commit_message}} == ''"
+    condition: "{{blocks.analyze_changes.outputs.has_changes and inputs.commit_message == ''}}"
     depends_on:
       - analyze_changes
 
@@ -155,7 +158,7 @@ blocks:
         {{blocks.select_message.outputs.message}}
 
         Proceed with commit? Respond with 'yes' or 'no'
-    condition: "{{blocks.analyze_changes.outputs.has_changes}} and not {{inputs.auto_commit}}"
+    condition: "{{blocks.analyze_changes.outputs.has_changes and not inputs.auto_commit}}"
     depends_on:
       - select_message
 

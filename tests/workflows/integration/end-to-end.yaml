@@ -157,7 +157,7 @@ outputs:
     value: "{{blocks.gen_data2.outputs.stdout}}"
     type: str
   report_content:
-    value: "{{get(blocks.read_report.outputs.files, 0, {}).content | default('Error: file not found')}}"
+    value: "{{get(blocks.read_report.outputs.files, 0, {}).content | default('Error: failed to read file content')}}"
     type: str
   final_phase:
     value: "{{blocks.read_final_state.outputs.data.phase}}"
