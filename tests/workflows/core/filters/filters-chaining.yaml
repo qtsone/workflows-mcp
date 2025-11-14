@@ -89,7 +89,8 @@ blocks:
         JSON="{{blocks.create_test_data.outputs | tojson}}"
         LENGTH={{blocks.create_test_data.outputs | tojson | length}}
         echo "Output chain - JSON length: $LENGTH"
-        echo "JSON preview: ${JSON:0:50}..."
+        # JSON preview using portable POSIX syntax (printf with %.50s)
+        printf "JSON preview: %.50s...\n" "$JSON"
         # JSON should be a reasonable length (at least has "path" field)
         if [ "$LENGTH" -gt 20 ]; then
           echo "SUCCESS: outputs -> tojson -> length chain worked"
