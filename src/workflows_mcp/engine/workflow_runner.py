@@ -30,9 +30,9 @@ from .execution_context import ExecutionContext
 from .execution_result import ExecutionResult, ExecutionState
 from .metadata import Metadata
 from .orchestrator import BlockOrchestrator
+from .resolver import UnifiedVariableResolver
 from .schema import BlockDefinition, DependencySpec, WorkflowSchema
 from .secrets import EnvVarSecretProvider, SecretAuditLog, SecretRedactor
-from .variables import ConditionEvaluator, InvalidConditionError, VariableResolver
 
 logger = logging.getLogger(__name__)
 
@@ -296,10 +296,10 @@ class WorkflowRunner:
 
             # Create variable resolver to resolve block inputs
             context_dict = self._execution_to_dict(exec_context)
-            resolver = VariableResolver(
+            resolver = UnifiedVariableResolver(
                 context_dict,
                 secret_provider=self.secret_provider,
-                secret_audit_log=self.secret_audit_log,
+                audit_log=self.secret_audit_log,
             )
 
             # Resolve block inputs (from execution state context)
@@ -577,7 +577,7 @@ class WorkflowRunner:
 
             # Check condition
             if block_def.condition:
-                should_execute = self._evaluate_condition(block_def.condition, exec_context)
+                should_execute = await self._evaluate_condition(block_def.condition, exec_context)
                 if not should_execute:
                     self._mark_block_skipped(
                         block_id=block_id,
@@ -674,10 +674,10 @@ class WorkflowRunner:
         if block_def.outputs:
             # Create variable resolver from execution context
             context_dict = self._execution_to_dict(exec_context)
-            resolver = VariableResolver(
+            resolver = UnifiedVariableResolver(
                 context_dict,
                 secret_provider=self.secret_provider,
-                secret_audit_log=self.secret_audit_log,
+                audit_log=self.secret_audit_log,
             )
 
             # Resolve variables in output paths (async for secrets support)
@@ -775,10 +775,10 @@ class WorkflowRunner:
         workflow_metadata = exec_context.workflow_metadata
         workflow_name = workflow_metadata.get("workflow_name", "")
 
-        resolver = VariableResolver(
+        resolver = UnifiedVariableResolver(
             context_dict,
             secret_provider=self.secret_provider,
-            secret_audit_log=self.secret_audit_log,
+            audit_log=self.secret_audit_log,
             workflow_name=workflow_name,
             block_id=block_id,
         )
@@ -1041,24 +1041,32 @@ class WorkflowRunner:
             "blocks": blocks,
         }
 
-    def _evaluate_condition(self, condition: str, exec_context: Execution) -> bool:
-        """Evaluate block condition."""
+    async def _evaluate_condition(self, condition: str, exec_context: Execution) -> bool:
+        """Evaluate block condition using Jinja2 expression evaluation."""
         try:
             context_dict = self._execution_to_dict(exec_context)
-            evaluator = ConditionEvaluator()
-            return evaluator.evaluate(condition, context_dict)
-        except InvalidConditionError as e:
-            raise ValueError(f"Condition evaluation failed: {e}")
+            resolver = UnifiedVariableResolver(
+                context_dict,
+                secret_provider=self.secret_provider,
+                audit_log=self.secret_audit_log,
+            )
+            # Resolve the condition expression - Jinja2 evaluates boolean expressions
+            result = await resolver.resolve_async(condition)
+            if not isinstance(result, bool):
+                raise ValueError(f"Condition must evaluate to boolean, got {type(result).__name__}")
+            return result
+        except Exception as e:
+            raise ValueError(f"Condition evaluation failed: {e}") from e
 
     async def _resolve_block_inputs(
         self, inputs: dict[str, Any], exec_context: Execution
     ) -> dict[str, Any]:
         """Resolve variables in block inputs (async for secrets support)."""
         context_dict = self._execution_to_dict(exec_context)
-        resolver = VariableResolver(
+        resolver = UnifiedVariableResolver(
             context_dict,
             secret_provider=self.secret_provider,
-            secret_audit_log=self.secret_audit_log,
+            audit_log=self.secret_audit_log,
         )
         resolved: dict[str, Any] = await resolver.resolve_async(inputs)
         return resolved
@@ -1125,14 +1133,11 @@ class WorkflowRunner:
 
         outputs = {}
         context_dict = self._execution_to_dict(exec_context)
-        resolver = VariableResolver(
+        resolver = UnifiedVariableResolver(
             context_dict,
             secret_provider=self.secret_provider,
-            secret_audit_log=self.secret_audit_log,
+            audit_log=self.secret_audit_log,
         )
-        evaluator = ConditionEvaluator()
-
-        comparison_ops = ["==", "!=", ">=", "<=", ">", "<", " and ", " or ", " not "]
 
         for output_name, output_schema in workflow.outputs.items():
             # Extract expression and type from WorkflowOutputSchema
@@ -1143,19 +1148,9 @@ class WorkflowRunner:
                 else output_schema.type
             )
 
-            # Resolve variables (async for secrets support)
+            # Resolve variables and expressions (async for secrets support)
+            # UnifiedVariableResolver handles boolean expressions automatically via Jinja2
             resolved_value = await resolver.resolve_async(output_expr)
-
-            # Evaluate boolean expressions if present (before type coercion)
-            is_string = isinstance(resolved_value, str)
-            has_operator = (
-                any(op in resolved_value for op in comparison_ops) if is_string else False
-            )
-            if is_string and has_operator:
-                try:
-                    resolved_value = evaluator.evaluate(resolved_value, context_dict)
-                except InvalidConditionError:
-                    pass
 
             # Apply type coercion
             from .executors_core import coerce_value_type

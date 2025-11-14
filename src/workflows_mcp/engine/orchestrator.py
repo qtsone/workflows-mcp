@@ -403,7 +403,7 @@ class BlockOrchestrator:
               Metadata.create_for_each_parent()
             - Handles continue_on_error: false (fail-fast) and true (resilient)
         """
-        from .variables import VariableResolver
+        from .resolver import UnifiedVariableResolver
 
         # Validate iteration keys (ADR-009: security & stability)
         validate_iteration_keys(iterations)
@@ -430,7 +430,7 @@ class BlockOrchestrator:
             iteration_context_dict["each"] = each_context
 
             # Resolve iteration inputs (replace {{each.*}} variables)
-            resolver = VariableResolver(
+            resolver = UnifiedVariableResolver(
                 iteration_context_dict, secret_provider=self.secret_provider
             )
             resolved_inputs = await resolver.resolve_async(inputs_template)

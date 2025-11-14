@@ -15,7 +15,8 @@ from pathlib import Path
 from typing import Any, ClassVar, Literal
 
 import yaml
-from jinja2 import Environment, StrictUndefined
+from jinja2 import StrictUndefined
+from jinja2.sandbox import SandboxedEnvironment
 from pydantic import BaseModel, Field, computed_field, field_validator
 
 from .block import BlockInput, BlockOutput
@@ -643,7 +644,7 @@ class RenderTemplateExecutor(BlockExecutor):
         create_parents = resolve_interpolatable_boolean(inputs.create_parents, "create_parents")
 
         # RenderTemplate template (exceptions bubble up)
-        env = Environment(undefined=StrictUndefined, autoescape=False)
+        env = SandboxedEnvironment(undefined=StrictUndefined, autoescape=False)
         template = env.from_string(inputs.template)
         rendered = template.render(**inputs.variables)
 

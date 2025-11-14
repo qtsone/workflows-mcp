@@ -331,7 +331,7 @@ blocks:
           echo "❌ Failed to create issue"
           exit 1
         fi
-    condition: "{{inputs.auto_confirm}} or {{blocks.preview_and_confirm.outputs.response}} == 'yes'"
+    condition: "{{inputs.auto_confirm or (blocks.preview_and_confirm.outputs.response == 'yes')}}"
     depends_on:
       - generate_title
       - generate_body

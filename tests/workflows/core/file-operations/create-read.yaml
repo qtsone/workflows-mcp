@@ -1,0 +1,103 @@
+name: file-operations-create-read
+description: Test CreateFile with Jinja2 templates and variables
+tags: [test, core, files, create, read]
+inputs:
+  path:
+    type: str
+    description: "Temporary workspace"
+    default: "/tmp/test-create-read"
+
+  features:
+    description: Feature list
+    type: list
+    default:
+      - Feature 1
+      - Feature 2
+      - Feature 3
+
+blocks:
+  - id: shell_data
+    type: Shell
+    inputs:
+      command: echo "data_from_shell"
+  
+  - id: create_executable
+    type: CreateFile
+    inputs:
+      path: "{{inputs.path}}/script.sh"
+      create_parents: true
+      mode: "755"
+      content: |
+        #!/bin/bash
+        echo 'executable'
+
+  - id: verify_executable
+    type: Shell
+    inputs:
+      working_dir: "{{inputs.path}}"
+      command: test -x "script.sh" && echo "yes"
+    depends_on: [create_executable]
+
+  - id: create_file
+    type: CreateFile
+    inputs:
+      path: "{{inputs.path}}/README.md"
+      create_parents: true
+      overwrite: true
+      encoding: "utf-8"
+      content: |
+        # Testing file OPS
+
+        Generated: {{metadata.started_at}}
+        Shell Output: {{blocks.shell_data.outputs.stdout | trim}}
+        UTF8 Content: 你好世界
+
+        ## Features
+        {%- for feature in inputs.features %}
+        - {{ feature }}
+        {%- endfor %}
+    depends_on: [shell_data]
+
+  - id: read_file
+    type: ReadFiles
+    inputs:
+      patterns: ["README.md"]
+      base_path: "{{inputs.path}}"
+    depends_on: [create_file]
+  
+  - id: read_nonexistent
+    type: ReadFiles
+    inputs:
+      patterns: ["nonexistent.txt"]
+      base_path: "{{inputs.path}}"
+    depends_on: [shell_data]
+
+  - id: cleanup
+    type: Shell
+    inputs:
+      command: |
+        # Safe cleanup with validation
+        DIR="{{inputs.path}}"
+        if [[ "$DIR" == /tmp/* ]] && [ -d "$DIR" ]; then
+          rm -rf "$DIR"
+        fi
+    depends_on:
+      - block: read_file
+        required: false
+
+outputs:
+  file_created:
+    value: "{{blocks.create_file.succeeded}}"
+    type: bool
+  file_content:
+    value: "{{get(blocks.read_file.outputs.files, 0, {}).content | default('Error: Failed to read file content')}}"
+    type: str
+  nonexistent_file_found:
+    value: "{{blocks.read_nonexistent.succeeded}}"
+    type: bool
+  executable_file_created:
+    value: "{{blocks.verify_executable.succeeded}}"
+    type: bool
+  cleanup_done:
+    value: "{{blocks.cleanup.succeeded}}"
+    type: bool

@@ -1,6 +1,9 @@
 name: git-commit
+version: "5.0.0"
+author: "workflows-mcp"
+tags: [git, commit, semantic, conventional-commits, interactive, composed]
 description: |
-  Create a semantic commit with an AI-generated message based on staged changes.
+  Create a semantic commit with an LLM-generated message based on staged changes.
 
   Uses LLM to analyze diffs and determine commit type (feat, fix, docs, refactor, test, chore,
   perf, style), extract scope, and generate a meaningful description following Conventional
@@ -12,9 +15,7 @@ description: |
   3. Generate semantic commit message using LLM (or use manual override)
   4. Optional interactive confirmation
   5. Create the commit
-version: "4.0.0"
-author: "workflows-mcp"
-tags: [git, commit, semantic, conventional-commits, interactive, composed]
+
 inputs:
   stage_all:
     type: bool
@@ -36,6 +37,7 @@ inputs:
     default: ""
     description: "(Optional) Manually provide commit message (bypasses LLM generation)"
     required: false
+
 blocks:
   - id: stage_files
     type: Shell
@@ -44,6 +46,7 @@ blocks:
       command: git add -A
       working_dir: "{{inputs.working_dir}}"
     condition: "{{inputs.stage_all}}"
+
   - id: analyze_changes
     type: Workflow
     description: "Analyze staged changes in git repository"
@@ -51,14 +54,16 @@ blocks:
       workflow: "git-analyze-changes"
       inputs:
         working_dir: "{{inputs.working_dir}}"
+
   - id: no_changes_message
     type: Shell
     description: "No changes to commit"
     inputs:
-      command: echo "No changes to commit"
+      command: printf "No changes to commit"
     condition: "not {{blocks.analyze_changes.outputs.has_changes}}"
     depends_on:
       - analyze_changes
+
   - id: llm_generate_message
     type: LLMCall
     description: "Generate semantic commit message using LLM"
@@ -66,7 +71,7 @@ blocks:
       profile: default
       response_schema:
         type: object
-        required: [type, summary, body]
+        required: [type, summary]
         properties:
           type:
             type: string
@@ -83,7 +88,7 @@ blocks:
             type: string
             description: "Detailed explanation of what and why (optional, can be empty string)"
       prompt: |
-        Analyze the following git changes and generate a semantic commit message following the Conventional Commits specification.
+        Analyze the following git changes:
 
         ## Summary
         {{blocks.analyze_changes.outputs.summary}}
@@ -91,11 +96,11 @@ blocks:
         ## Detailed Changes
         {{blocks.analyze_changes.outputs.diff}}
 
-        Generate a structured commit message with the following components:
+        Generate a semantic commit message following the Conventional Commits specification with the following components:
         - type: Choose the most appropriate type (feat, fix, docs, style, refactor, perf, test, chore, ci)
         - scope: Identify the component/module affected (leave empty if not applicable)
         - summary: Write a concise summary in imperative mood, lowercase, no period, max 72 characters
-        - body: Provide detailed explanation of what changed and why (leave empty if summary is self-explanatory). Write as a single paragraph without line breaks. Do NOT use escape sequences like \n or \t.
+        - body: Provide detailed explanation of what changed and why (leave empty if summary is self-explanatory).
     condition: "{{blocks.analyze_changes.outputs.has_changes}} and {{inputs.commit_message}} == ''"
     depends_on:
       - analyze_changes
@@ -106,26 +111,27 @@ blocks:
     inputs:
       env:
         MANUAL_MESSAGE: "{{inputs.commit_message}}"
-        LLM_TYPE: "{{blocks.llm_generate_message.outputs.response.type}}"
-        LLM_SCOPE: "{{blocks.llm_generate_message.outputs.response.scope}}"
-        LLM_SUMMARY: "{{blocks.llm_generate_message.outputs.response.summary}}"
-        LLM_BODY: "{{blocks.llm_generate_message.outputs.response.body}}"
+        # Extract LLM response fields using default filter for optional fields
+        COMMIT_TYPE: "{{blocks.llm_generate_message.response.type | default('')}}"
+        COMMIT_SCOPE: "{{blocks.llm_generate_message.response.scope | default('')}}"
+        COMMIT_SUMMARY: "{{blocks.llm_generate_message.response.summary | default('')}}"
+        COMMIT_BODY: "{{blocks.llm_generate_message.response.body | default('')}}"
       command: |
         # Use environment variables to safely pass content (GitHub Actions pattern)
         # This prevents shell expansion of special chars (backticks, $, quotes)
         if [ -n "$MANUAL_MESSAGE" ]; then
           printf '%s' "$MANUAL_MESSAGE" > "$SCRATCH/message.txt"
         else
-          # Format structured commit message from LLM response
+          # Format structured commit message from LLM response (fields extracted via filters)
           # Format: <type>(<scope>): <summary>\n\n<body>
-          if [ -n "$LLM_SCOPE" ]; then
-            HEADER="${LLM_TYPE}(${LLM_SCOPE}): ${LLM_SUMMARY}"
+          if [ -n "$COMMIT_SCOPE" ]; then
+            HEADER="${COMMIT_TYPE}(${COMMIT_SCOPE}): ${COMMIT_SUMMARY}"
           else
-            HEADER="${LLM_TYPE}: ${LLM_SUMMARY}"
+            HEADER="${COMMIT_TYPE}: ${COMMIT_SUMMARY}"
           fi
 
-          if [ -n "$LLM_BODY" ]; then
-            printf '%s\n\n%s' "$HEADER" "$LLM_BODY" > "$SCRATCH/message.txt"
+          if [ -n "$COMMIT_BODY" ]; then
+            printf '%s\n\n%s' "$HEADER" "$COMMIT_BODY" > "$SCRATCH/message.txt"
           else
             printf '%s' "$HEADER" > "$SCRATCH/message.txt"
           fi
@@ -152,6 +158,7 @@ blocks:
     condition: "{{blocks.analyze_changes.outputs.has_changes}} and not {{inputs.auto_commit}}"
     depends_on:
       - select_message
+
   - id: create_commit
     type: Shell
     description: "Create git commit with semantic message"
@@ -162,19 +169,19 @@ blocks:
         git commit -F "$SCRATCH/message.txt"
         git rev-parse HEAD
       working_dir: "{{inputs.working_dir}}"
-    condition: "{{blocks.analyze_changes.outputs.has_changes}} and ({{inputs.auto_commit}} or {{blocks.confirm_commit.outputs.response}} == 'yes')"
+    condition: "{{blocks.analyze_changes.outputs.has_changes and (inputs.auto_commit or blocks.confirm_commit.outputs.response == 'yes')}}"
     depends_on:
-      - select_message
+      - block: select_message
+        required: true
       - block: confirm_commit
         required: false
 outputs:
   has_changes:
     value: "{{blocks.analyze_changes.outputs.has_changes}}"
+    type: bool
   commit_succeeded:
     value: "{{blocks.create_commit.succeeded}}"
-  commit_failed:
-    value: "{{blocks.create_commit.failed}}"
-  commit_skipped:
-    value: "{{blocks.create_commit.skipped}}"
+    type: bool
   commit_hash:
     value: "{{blocks.create_commit.outputs.stdout}}"
+    type: str

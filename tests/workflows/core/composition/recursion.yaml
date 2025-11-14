@@ -23,7 +23,7 @@ blocks:
       data:
         current: 0
         max: "{{inputs.count}}"
-    condition: "not {{blocks.check_state_exists.outputs.found}}"
+    condition: "{{not blocks.check_state_exists.outputs.found}}"
     depends_on: [check_state_exists]
   - id: read_current_state
     type: ReadJSONState

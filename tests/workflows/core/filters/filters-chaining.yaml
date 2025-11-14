@@ -1,0 +1,168 @@
+name: filters-chaining
+description: Test Jinja2 filter chaining (multiple filters applied in sequence)
+version: "1.0"
+tags: [test, filters, jinja2]
+
+inputs:
+  path:
+    type: str
+    description: "Temporary workspace"
+    default: "/tmp/test-filters-chaining"
+
+  test_string:
+    type: str
+    description: "String for testing transformations"
+    default: "  HELLO WORLD  "
+
+  test_number:
+    type: num
+    description: "Number for testing transformations"
+    default: -42
+
+blocks:
+  # Test 1: String transformation chain (trim -> lower -> length)
+  - id: test_string_chain
+    type: Shell
+    inputs:
+      command: |
+        # Chain: "  HELLO WORLD  " | trim | lower -> "hello world"
+        RESULT="{{inputs.test_string | trim | lower}}"
+        echo "String chain result: '$RESULT'"
+        if [ "$RESULT" = "hello world" ]; then
+          echo "SUCCESS: trim -> lower chain worked"
+          exit 0
+        else
+          echo "FAILURE: expected 'hello world', got '$RESULT'"
+          exit 1
+        fi
+
+  # Test 2: Safe access chain (get -> default -> tojson)
+  - id: test_safe_access_chain
+    type: Shell
+    inputs:
+      command: |
+        # Chain: missing key -> get() returns {} -> tojson -> "{}"
+        JSON="{{get(inputs, 'nonexistent', {}) | tojson}}"
+        echo "Safe access chain: $JSON"
+        if [ "$JSON" = "{}" ]; then
+          echo "SUCCESS: get -> tojson chain worked"
+          exit 0
+        else
+          echo "FAILURE: expected '{}', got '$JSON'"
+          exit 1
+        fi
+    depends_on: [test_string_chain]
+
+  # Test 3: Number transformation chain (abs -> string -> length)
+  - id: test_number_chain
+    type: Shell
+    inputs:
+      command: |
+        # Chain: -42 | abs -> 42 | string -> "42" | length -> 2
+        NUM_STR="{{inputs.test_number | abs | string}}"
+        LENGTH={{inputs.test_number | abs | string | length}}
+        echo "Number chain: '$NUM_STR' (length: $LENGTH)"
+        if [ "$NUM_STR" = "42" ] && [ "$LENGTH" = "2" ]; then
+          echo "SUCCESS: abs -> string -> length chain worked"
+          exit 0
+        else
+          echo "FAILURE: expected '42' with length 2"
+          exit 1
+        fi
+    depends_on: [test_safe_access_chain]
+
+  # Test 4: Create data for next test
+  - id: create_test_data
+    type: CreateFile
+    inputs:
+      path: "{{inputs.path}}/data.txt"
+      content: "test content"
+      create_parents: true
+    depends_on: [test_number_chain]
+
+  # Test 5: Block output chain (outputs -> tojson -> length)
+  - id: test_output_chain
+    type: Shell
+    inputs:
+      command: |
+        # Chain: dict -> tojson -> get string length
+        JSON="{{blocks.create_test_data.outputs | tojson}}"
+        LENGTH={{blocks.create_test_data.outputs | tojson | length}}
+        echo "Output chain - JSON length: $LENGTH"
+        echo "JSON preview: ${JSON:0:50}..."
+        # JSON should be a reasonable length (at least has "path" field)
+        if [ "$LENGTH" -gt 20 ]; then
+          echo "SUCCESS: outputs -> tojson -> length chain worked"
+          exit 0
+        else
+          echo "FAILURE: JSON length too short ($LENGTH <= 20)"
+          exit 1
+        fi
+    depends_on: [create_test_data]
+
+  # Test 6: Complex chain with multiple string operations
+  - id: test_complex_chain
+    type: Shell
+    inputs:
+      command: |
+        # Chain: string -> trim -> lower -> replace -> length
+        # "  HELLO WORLD  " -> "hello world" -> "hello_world" -> length 11
+        RESULT="{{inputs.test_string | trim | lower | replace(' ', '_')}}"
+        LENGTH={{inputs.test_string | trim | lower | replace(' ', '_') | length}}
+        echo "Complex chain: '$RESULT' (length: $LENGTH)"
+        if [ "$RESULT" = "hello_world" ] && [ "$LENGTH" = "11" ]; then
+          echo "SUCCESS: trim -> lower -> replace -> length chain worked"
+          exit 0
+        else
+          echo "FAILURE: expected 'hello_world' with length 11"
+          exit 1
+        fi
+    depends_on: [test_output_chain]
+
+  - id: cleanup
+    type: Shell
+    inputs:
+      command: |
+        # Safe cleanup with validation
+        DIR="{{inputs.path}}"
+        if [[ "$DIR" == /tmp/* ]] && [ -d "$DIR" ]; then
+          rm -rf "$DIR"
+        fi
+    depends_on:
+      - block: test_complex_chain
+        required: false
+
+outputs:
+  all_tests_passed:
+    value: >
+      {{blocks.test_string_chain.succeeded and
+        blocks.test_safe_access_chain.succeeded and
+        blocks.test_number_chain.succeeded and
+        blocks.test_output_chain.succeeded and
+        blocks.test_complex_chain.succeeded}}
+    type: bool
+    description: "All filter chaining tests passed"
+
+  test_string_chain_output:
+    value: "{{blocks.test_string_chain.outputs.stdout}}"
+    type: str
+
+  test_safe_access_chain_output:
+    value: "{{blocks.test_safe_access_chain.outputs.stdout}}"
+    type: str
+
+  test_number_chain_output:
+    value: "{{blocks.test_number_chain.outputs.stdout}}"
+    type: str
+
+  test_output_chain_output:
+    value: "{{blocks.test_output_chain.outputs.stdout}}"
+    type: str
+
+  test_complex_chain_output:
+    value: "{{blocks.test_complex_chain.outputs.stdout}}"
+    type: str
+
+  cleanup_done:
+    value: "{{blocks.cleanup.succeeded}}"
+    type: bool

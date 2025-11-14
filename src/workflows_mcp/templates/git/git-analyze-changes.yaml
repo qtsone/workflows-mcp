@@ -100,7 +100,10 @@ blocks:
 outputs:
   has_changes:
     value: "{{blocks.get_staged_diff.succeeded}} or {{blocks.get_all_diff.succeeded}}"
+    type: bool
   summary:
     value: "{{blocks.processing.outputs.summary}}"
+    type: str
   diff:
     value: "{{blocks.processing.outputs.diff}}"
+    type: str

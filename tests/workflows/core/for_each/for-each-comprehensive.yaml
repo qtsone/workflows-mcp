@@ -1,0 +1,227 @@
+name: for-each-comprehensive
+description: |
+  Comprehensive test of all for_each features (ADR-009).
+
+  Tests:
+  - List iteration (parallel with max_parallel)
+  - Dict iteration (sequential)
+  - Dynamic key interpolation in bracket notation
+  - continue_on_error: true/false
+  - each.key, each.value, each.index access
+  - Bracket notation (static and dynamic)
+  - Parent metadata (count, count_failed, count_skipped, succeeded, mode)
+  - Individual iteration metadata
+  - Mixed success/failure scenarios
+
+tags:
+  - test
+  - for_each
+  - comprehensive
+
+inputs:
+  # List input for parallel processing
+  files:
+    type: list
+    default: ["file1.txt", "file2.txt", "missing.txt"]
+    description: List of files (one will fail)
+
+  # Dict input for sequential processing
+  services:
+    type: dict
+    default:
+      api:
+        port: 8000
+        enabled: true
+      worker:
+        port: 8001
+        enabled: true
+      admin:
+        port: 8002
+        enabled: false
+    description: Dictionary of services
+
+  # Dynamic key for testing bracket interpolation
+  target_service:
+    type: str
+    default: "api"
+    description: Service name for dynamic access
+
+  target_file_index:
+    type: str
+    default: "0"
+    description: File index for dynamic access
+
+blocks:
+  # Test 1: List iteration with parallel mode, max_parallel, continue_on_error
+  - id: process_files
+    type: Shell
+    for_each: "{{inputs.files}}"
+    for_each_mode: parallel
+    max_parallel: 2
+    continue_on_error: true
+    inputs:
+      command: |
+        echo "=== Processing File ==="
+        echo "Index: {{each.index}}"
+        echo "Key: {{each.key}}"
+        echo "Value: {{each.value}}"
+
+        # Simulate failure for missing.txt
+        if [ "{{each.value}}" = "missing.txt" ]; then
+          echo "ERROR: File not found!"
+          exit 1
+        fi
+
+        echo "File {{each.value}} processed successfully"
+
+  # Test 2: Dict iteration with sequential mode
+  - id: configure_services
+    type: Shell
+    for_each: "{{inputs.services}}"
+    for_each_mode: sequential
+    continue_on_error: false
+    depends_on:
+      - block: process_files
+        required: false
+    inputs:
+      command: |
+        echo "=== Configuring Service: {{each.key}} ==="
+        echo "Index: {{each.index}}"
+        echo "Port: {{each.value.port}}"
+        echo "Enabled: {{each.value.enabled}}"
+
+        if [ "{{each.value.enabled}}" = "true" ]; then
+          echo "Service {{each.key}} configured on port {{each.value.port}}"
+        else
+          echo "Service {{each.key}} is disabled, skipping configuration"
+        fi
+
+  # Test 3: Static bracket notation access
+  - id: verify_static_access
+    type: Shell
+    depends_on: [process_files, configure_services]
+    inputs:
+      command: |
+        echo "=== Static Bracket Access ==="
+        echo ""
+        echo "File 0 exit code: {{blocks.process_files['0'].outputs.exit_code}}"
+        echo "File 0 succeeded: {{blocks.process_files['0'].metadata.succeeded}}"
+        echo ""
+        echo "File 2 exit code: {{blocks.process_files['2'].outputs.exit_code}}"
+        echo "File 2 succeeded: {{blocks.process_files['2'].metadata.succeeded}}"
+        echo ""
+        echo "API service exit code: {{blocks.configure_services['api'].outputs.exit_code}}"
+        echo "API service succeeded: {{blocks.configure_services['api'].metadata.succeeded}}"
+
+  # Test 4: Dynamic bracket notation with variable reference (no nested {{...}})
+  - id: verify_dynamic_access
+    type: Shell
+    depends_on: [process_files, configure_services]
+    inputs:
+      command: |
+        echo "=== Dynamic Bracket Access ==="
+        echo ""
+        echo "Target service: {{inputs.target_service}}"
+        echo "Target service exit code: {{blocks.configure_services[inputs.target_service].outputs.exit_code}}"
+        echo "Target service succeeded: {{blocks.configure_services[inputs.target_service].metadata.succeeded}}"
+        echo ""
+        echo "Target file index: {{inputs.target_file_index}}"
+        echo "Target file exit code: {{blocks.process_files[inputs.target_file_index].outputs.exit_code}}"
+        echo "Target file succeeded: {{blocks.process_files[inputs.target_file_index].metadata.succeeded}}"
+
+  # Test 5: Parent metadata access
+  - id: verify_metadata
+    type: Shell
+    depends_on: [process_files, configure_services]
+    inputs:
+      command: |
+        echo "=== Parent Metadata Access ==="
+        echo ""
+        echo "Files (parallel, continue_on_error: true):"
+        echo "  Total: {{blocks.process_files.metadata.count}}"
+        echo "  Failed: {{blocks.process_files.metadata.count_failed}}"
+        echo "  Skipped: {{blocks.process_files.metadata.count_skipped}}"
+        echo "  All succeeded: {{blocks.process_files.metadata.succeeded}}"
+        echo "  Mode: {{blocks.process_files.metadata.mode}}"
+        echo ""
+        echo "Services (sequential, continue_on_error: false):"
+        echo "  Total: {{blocks.configure_services.metadata.count}}"
+        echo "  Failed: {{blocks.configure_services.metadata.count_failed}}"
+        echo "  All succeeded: {{blocks.configure_services.metadata.succeeded}}"
+        echo "  Mode: {{blocks.configure_services.metadata.mode}}"
+
+outputs:
+  # List iteration outputs
+  files_total:
+    value: "{{blocks.process_files.metadata.count}}"
+    type: num
+    description: Total files processed
+
+  files_failed:
+    value: "{{blocks.process_files.metadata.count_failed}}"
+    type: num
+    description: Failed file processing
+
+  files_all_succeeded:
+    value: "{{blocks.process_files.metadata.succeeded}}"
+    type: bool
+    description: All files processed successfully (should be false)
+
+  file_0_exit_code:
+    value: "{{blocks.process_files['0'].outputs.exit_code}}"
+    type: num
+    description: First file exit code (static access)
+
+  file_2_exit_code:
+    value: "{{blocks.process_files['2'].outputs.exit_code}}"
+    type: num
+    description: Third file exit code (should be 1 - failure)
+
+  # Dict iteration outputs
+  services_total:
+    value: "{{blocks.configure_services.metadata.count}}"
+    type: num
+    description: Total services configured
+
+  services_all_succeeded:
+    value: "{{blocks.configure_services.metadata.succeeded}}"
+    type: bool
+    description: All services configured successfully
+
+  api_exit_code:
+    value: "{{blocks.configure_services['api'].outputs.exit_code}}"
+    type: num
+    description: API service exit code (static access)
+
+  # Dynamic bracket access outputs (no nested {{...}})
+  target_service_exit_code:
+    value: "{{blocks.configure_services[inputs.target_service].outputs.exit_code}}"
+    type: num
+    description: Target service exit code (dynamic access)
+
+  target_file_exit_code:
+    value: "{{blocks.process_files[inputs.target_file_index].outputs.exit_code}}"
+    type: num
+    description: Target file exit code (dynamic access)
+
+  # Validation: dynamic matches static
+  dynamic_service_matches_static:
+    value: "{{ blocks.configure_services[inputs.target_service].outputs.exit_code == blocks.configure_services['api'].outputs.exit_code }}"
+    type: bool
+    description: Dynamic service access matches static (should be true)
+
+  dynamic_file_matches_static:
+    value: "{{ blocks.process_files[inputs.target_file_index].outputs.exit_code == blocks.process_files['0'].outputs.exit_code }}"
+    type: bool
+    description: Dynamic file access matches static (should be true)
+
+  # Execution modes
+  files_mode:
+    value: "{{blocks.process_files.metadata.mode}}"
+    type: str
+    description: Files execution mode (parallel)
+
+  services_mode:
+    value: "{{blocks.configure_services.metadata.mode}}"
+    type: str
+    description: Services execution mode (sequential)

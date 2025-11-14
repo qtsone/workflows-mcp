@@ -11,7 +11,7 @@ blocks:
     type: Shell
     inputs:
       command: echo "ran"
-    condition: "not {{inputs.should_skip}}"
+    condition: "{{not inputs.should_skip}}"
   - id: check_skipped
     type: Shell
     inputs:
