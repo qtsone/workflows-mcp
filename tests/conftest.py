@@ -139,4 +139,15 @@ def workflow_inputs(workflow_name: str, request: pytest.FixtureRequest) -> dict[
         base_url = httpbin_mock.url_for("/").rstrip("/")
         return {"base_url": base_url}
 
+    # Secrets redaction workflow needs expected hash of the secret value
+    if workflow_name == "secrets-redaction":
+        import hashlib
+
+        from test_secrets import TEST_SECRETS
+
+        # Calculate expected hash from actual test secret (single source of truth)
+        secret_value = TEST_SECRETS["WORKFLOW_SECRET_REDACTION_TEST"]
+        expected_hash = hashlib.sha256(secret_value.encode()).hexdigest()
+        return {"expected_hash": expected_hash}
+
     return {}
