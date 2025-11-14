@@ -19,19 +19,19 @@ blocks:
     type: Shell
     inputs:
       command: echo "AND passed"
-    condition: "{{inputs.flag_a}} and {{blocks.success_block.succeeded}}"
+    condition: "{{inputs.flag_a and blocks.success_block.succeeded}}"
     depends_on: [success_block]
   - id: or_condition
     type: Shell
     inputs:
       command: echo "OR passed"
-    condition: "{{inputs.flag_b}} or {{blocks.success_block.succeeded}}"
+    condition: "{{inputs.flag_b or blocks.success_block.succeeded}}"
     depends_on: [success_block]
   - id: not_condition
     type: Shell
     inputs:
       command: echo "NOT passed"
-    condition: "not {{inputs.flag_b}}"
+    condition: "{{not inputs.flag_b}}"
 outputs:
   and_passed:
     value: "{{blocks.and_condition.succeeded}}"

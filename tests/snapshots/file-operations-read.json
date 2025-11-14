@@ -1,7 +1,0 @@
-{
-  "outputs": {
-    "_error": "Output evaluation failed: Variable '{{blocks.read_existing.outputs.content}}' not found. At segment 'content', available keys: []",
-    "_note": "Check debug log for partial execution details"
-  },
-  "status": "success"
-}

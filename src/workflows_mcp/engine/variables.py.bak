@@ -4,6 +4,7 @@ Variable resolution and conditional evaluation for workflow execution.
 This module provides:
 1. VariableResolver: Resolves {{var}} syntax in workflow inputs
 2. ConditionEvaluator: Safely evaluates boolean expressions
+3. Filter System: Jinja2-style filters for variable transformation
 
 Variable Resolution:
 - {{inputs.param_name}} - References workflow inputs
@@ -13,6 +14,12 @@ Variable Resolution:
 - {{metadata.field}} - References workflow metadata
 - {{secrets.SECRET_KEY}} - References secrets from SecretProvider (async)
 - Recursive resolution in strings, dicts, lists
+
+Filter System (NEW):
+- {{variable | filter}} - Apply filter to variable
+- {{variable | filter(arg1, arg2)}} - Filter with arguments
+- {{variable | filter1 | filter2}} - Chain multiple filters
+- Core filters: default, tojson, required, quote/shellquote
 
 Conditional Evaluation:
 - Safe AST-based evaluation (no arbitrary code execution)
@@ -25,6 +32,8 @@ import operator
 import re
 from enum import Enum
 from typing import TYPE_CHECKING, Any
+
+from jinja2 import Environment
 
 if TYPE_CHECKING:
     from .secrets import SecretAuditLog, SecretProvider
@@ -40,6 +49,17 @@ class InvalidConditionError(Exception):
     """Raised when a condition expression is invalid or unsafe."""
 
     pass
+
+
+class FilterError(Exception):
+    """Raised when a filter application fails."""
+
+    def __init__(
+        self, message: str, filter_name: str = "", original_error: Exception | None = None
+    ):
+        super().__init__(message)
+        self.filter_name = filter_name
+        self.original_error = original_error
 
 
 class VariableResolver:
@@ -78,6 +98,11 @@ class VariableResolver:
         - {{each.index}} - Current iteration index (within for_each) (ADR-009)
         - {{each.count}} - Total iteration count (within for_each) (ADR-009)
 
+    Filter Syntax (NEW):
+        - {{variable | default('')}} - Provide fallback for missing/None values
+        - {{variable | tojson}} - Serialize dict/list to JSON string
+        - {{variable | filter1 | filter2}} - Chain multiple filters
+
     Block Status References (ADR-007 - Industry-Aligned Three-Tier Model):
 
         Tier 1: Boolean Shortcuts (GitHub Actions style)
@@ -109,25 +134,34 @@ class VariableResolver:
         resolver = VariableResolver(context)
         result = resolver.resolve("Path: {{blocks.create_worktree.outputs.worktree_path}}")
         # Returns: "Path: /tmp/worktree"
+
+        # With filters (null-safe)
+        result = resolver.resolve("Scope: {{blocks.llm.outputs.response.scope | default('')}}")
+        # Returns: "Scope: " (if scope is missing)
     """
 
-    # Pattern: Supports dot notation and bracket notation (ADR-009)
+    # Pattern: Supports dot notation, bracket notation, and filter syntax
     # Examples:
-    #   {{identifier.field}}                  - dot notation
-    #   {{blocks.id["key"].outputs.field}}    - bracket notation with double quotes
-    #   {{blocks.id['key'].field}}            - bracket notation with single quotes
-    #   {{blocks.id[0].field}}                - bracket notation with numeric index
-    #   {{blocks.id[{{var}}].field}}          - bracket notation with nested variable
-    #   {{each.value.nested.field}}           - each namespace
+    #   {{identifier.field}}                      - dot notation
+    #   {{blocks.id["key"].outputs.field}}        - bracket notation
+    #   {{variable | default('')}}                - filter with args
+    #   {{variable | tojson}}                     - filter without args
+    #   {{variable | default('') | tojson}}       - filter chaining
+    #   {{blocks.id[{{var}}].field | default({})}} - combined features
     VAR_PATTERN = re.compile(
         r"\{\{([a-zA-Z_][a-zA-Z0-9_]*(?:"
         r"(?:\.[a-zA-Z_][a-zA-Z0-9_]*)|"  # Dot notation: .identifier
         r'(?:\["[^"]+"\])|'  # Bracket notation (double quotes): ["key"]
         r"(?:\['[^']+'\])|"  # Bracket notation (single quotes): ['key']
         r"(?:\[\d+\])|"  # Bracket notation (numeric index): [0], [123]
-        r"(?:\[\{\{.+?\}\}\])"  # Bracket notation with nested variable: [{{var.path}}] (non-greedy)
-        r")*)\}\}"
+        r"(?:\[\{\{.+?\}\}\])"  # Bracket notation with nested variable (non-greedy)
+        r")*)"  # Variable path (capture group 1)
+        r"(\s*\|(?:[^}]|\}(?!\}))+)?"  # Filter chain: allow } but not }} (negative lookahead)
+        r"\}\}"
     )
+
+    # Shared Jinja2 environment for filter application (initialized at class definition)
+    _jinja_env = Environment(autoescape=False)
 
     def __init__(
         self,
@@ -152,6 +186,59 @@ class VariableResolver:
         self.secret_audit_log = secret_audit_log
         self.workflow_name = workflow_name
         self.block_id = block_id
+
+    def _apply_filters(self, value: Any, filter_chain: str) -> str:
+        """
+        Apply Jinja2 filters to a value using filter chain syntax.
+
+        Uses Jinja2's built-in filters (default, tojson, etc.) for standardized behavior.
+        Passes full workflow context to Jinja2 to enable filter arguments that reference
+        variables (e.g., default(inputs.fallback_value)).
+
+        Args:
+            value: Value to transform (can be None for graceful failure with default filter)
+            filter_chain: Filter chain string (e.g., " | default('') | tojson")
+
+        Returns:
+            Transformed value as string
+
+        Raises:
+            FilterError: If filter application fails
+
+        Examples:
+            _apply_filters(None, " | default('')") → ""
+            _apply_filters({"a": 1}, " | tojson") → '{"a": 1}'
+            _apply_filters(None, " | default({}) | tojson") → "{}"
+            _apply_filters(None, " | default(inputs.fallback)") → value of inputs.fallback
+
+        Note:
+            All callers MUST check `if filter_chain:` before calling this method.
+            Whitespace-only filter chains will cause Jinja2 TemplateSyntaxError.
+        """
+        # Build Jinja2 template: {{ value | filter1 | filter2 }}
+        template_str = "{{ value" + filter_chain + " }}"
+
+        try:
+            template = VariableResolver._jinja_env.from_string(template_str)
+
+            # Build Jinja2 context with workflow namespaces (exclude __internal__ for security)
+            jinja_context = {k: v for k, v in self.context.items() if k != "__internal__"}
+
+            # If value is None, don't add 'value' key so Jinja2 treats it as undefined
+            # This allows default filter to work: default(x) triggers for undefined, not None
+            if value is not None:
+                jinja_context["value"] = value
+
+            result: str = template.render(**jinja_context)
+            return result
+        except Exception as e:
+            # Extract filter names from chain for error message
+            filters = [f.strip().split("(")[0] for f in filter_chain.split("|") if f.strip()]
+            raise FilterError(
+                f"Filter application failed: {e}",
+                filter_name=" | ".join(filters),
+                original_error=e,
+            ) from e
 
     @staticmethod
     def parse_variable_path(var_path: str) -> list[str]:
@@ -307,7 +394,9 @@ class VariableResolver:
             if match:
                 # Pure variable reference - return actual object (preserves type)
                 # This is critical for for_each expressions that need dict/list objects
+                # BUT: if filters present, apply them and return string
                 var_path = match.group(1)
+                filter_chain = match.group(2) or ""  # Extract filter chain (may be None)
 
                 # Security: Block access to internal namespace
                 if var_path.startswith("__internal__") or ".__internal__" in var_path:
@@ -337,6 +426,10 @@ class VariableResolver:
                                 success=True,
                             )
 
+                        # Apply filters if present (converts to string)
+                        if filter_chain:
+                            return self._apply_filters(secret_value, filter_chain)
+
                         return secret_value  # Return actual object, not string
 
                     except SecretNotFoundError as e:
@@ -350,8 +443,15 @@ class VariableResolver:
                             )
                         raise
                 else:
-                    # Regular variable - resolve and return actual object
-                    return self._get_variable_value(var_path)
+                    # Regular variable - resolve and return actual object (or filtered string)
+                    raw_value = self._get_variable_value(var_path)
+
+                    # Apply filters if present (converts to string)
+                    if filter_chain:
+                        return self._apply_filters(raw_value, filter_chain)
+
+                    # No filters - return actual object (preserves type for for_each)
+                    return raw_value
             else:
                 # String with surrounding text or multiple variables
                 # Use string interpolation
@@ -459,9 +559,11 @@ class VariableResolver:
 
         return value  # Return raw value without formatting
 
-    def _resolve_variable(self, var_path: str, for_eval: bool = False) -> str:
+    def _resolve_variable(
+        self, var_path: str, for_eval: bool = False, filter_chain: str = ""
+    ) -> str:
         """
-        Resolve a single variable path to its value (DRY helper for both sync/async).
+        Resolve a single variable path to its value with optional filter application.
 
         Handles:
         - Security checks (__internal__ blocking)
@@ -469,16 +571,20 @@ class VariableResolver:
         - 'each' namespace (ADR-009)
         - Status shortcuts (ADR-007)
         - Dictionary navigation
+        - Filter application (NEW)
+        - Graceful failure when filters present (passes None to filters)
 
         Args:
             var_path: Variable path (e.g., "blocks.id['key'].outputs.field")
             for_eval: If True, format for Python eval
+            filter_chain: Optional filter chain (e.g., " | default('')")
 
         Returns:
-            Formatted string value
+            Formatted string value (after filter application if specified)
 
         Raises:
-            VariableNotFoundError: If variable not found or inaccessible
+            VariableNotFoundError: If variable not found and no filters specified
+            FilterError: If filter application fails
         """
         # Security: Block access to internal namespace
         if var_path.startswith("__internal__") or ".__internal__" in var_path:
@@ -486,72 +592,88 @@ class VariableResolver:
                 f"Access to internal namespace is not allowed: {{{{{var_path}}}}}"
             )
 
-        # Parse path with bracket notation support (ADR-009)
-        segments = self.parse_variable_path(var_path)
+        # Try to resolve variable value (may fail if missing)
+        value: Any = None
 
-        # ADR-009: Handle 'each' namespace (for_each iteration context)
-        if segments[0] == "each":
-            if "each" not in self.context:
-                raise VariableNotFoundError(
-                    f"Variable '{{{{{var_path}}}}}' not found. "
-                    f"'each' namespace only available within for_each iterations."
-                )
-            # Navigate from 'each' namespace
-            value = self.context["each"]
-            for i, segment in enumerate(segments[1:], start=1):
-                if not isinstance(value, dict):
-                    partial_path = ".".join(segments[:i])
-                    raise VariableNotFoundError(
-                        f"Cannot access '{segment}' on non-dict value at '{{{{{partial_path}}}}}'"
-                    )
-                if segment not in value:
-                    available = list(value.keys()) if isinstance(value, dict) else []
+        try:
+            # Parse path with bracket notation support (ADR-009)
+            segments = self.parse_variable_path(var_path)
+
+            # ADR-009: Handle 'each' namespace (for_each iteration context)
+            if segments[0] == "each":
+                if "each" not in self.context:
                     raise VariableNotFoundError(
                         f"Variable '{{{{{var_path}}}}}' not found. "
-                        f"At segment '{segment}', available keys: {available}"
+                        f"'each' namespace only available within for_each iterations."
                     )
-                value = value[segment]
+                # Navigate from 'each' namespace
+                value = self.context["each"]
+                for i, segment in enumerate(segments[1:], start=1):
+                    if not isinstance(value, dict):
+                        partial_path = ".".join(segments[:i])
+                        raise VariableNotFoundError(
+                            f"Cannot access '{segment}' on non-dict value at "
+                            f"'{{{{{partial_path}}}}}'"
+                        )
+                    if segment not in value:
+                        available = list(value.keys()) if isinstance(value, dict) else []
+                        raise VariableNotFoundError(
+                            f"Variable '{{{{{var_path}}}}}' not found. "
+                            f"At segment '{segment}', available keys: {available}"
+                        )
+                    value = value[segment]
+            else:
+                # ADR-007: Three-tier status reference model
+                # Transform shortcuts to metadata namespace
+                if (
+                    len(segments) == 3
+                    and segments[0] == "blocks"
+                    and segments[2] in ("succeeded", "failed", "skipped")
+                ):
+                    segments = segments[:2] + ["metadata"] + segments[2:]
+                elif len(segments) == 3 and segments[0] == "blocks" and segments[2] == "status":
+                    segments = segments[:2] + ["metadata"] + segments[2:]
+                elif len(segments) == 3 and segments[0] == "blocks" and segments[2] == "outcome":
+                    segments = segments[:2] + ["metadata"] + segments[2:]
 
-            return self._format_for_eval(value) if for_eval else self._format_for_string(value)
+                # Dictionary navigation with bracket notation support
+                value = self.context
+                for i, segment in enumerate(segments):
+                    # Check if segment contains nested variable interpolation
+                    if "{{" in segment and "}}" in segment:
+                        # Resolve the nested variable first
+                        resolved_segment = self._resolve_string(segment, for_eval=False)
+                        segment = resolved_segment
 
-        # ADR-007: Three-tier status reference model
-        # Transform shortcuts to metadata namespace
-        if (
-            len(segments) == 3
-            and segments[0] == "blocks"
-            and segments[2] in ("succeeded", "failed", "skipped")
-        ):
-            segments = segments[:2] + ["metadata"] + segments[2:]
-        elif len(segments) == 3 and segments[0] == "blocks" and segments[2] == "status":
-            segments = segments[:2] + ["metadata"] + segments[2:]
-        elif len(segments) == 3 and segments[0] == "blocks" and segments[2] == "outcome":
-            segments = segments[:2] + ["metadata"] + segments[2:]
+                    if not isinstance(value, dict):
+                        partial_path = ".".join(segments[:i])
+                        raise VariableNotFoundError(
+                            f"Cannot access '{segment}' on non-dict value at "
+                            f"'{{{{{partial_path}}}}}'"
+                        )
 
-        # Dictionary navigation with bracket notation support
-        value = self.context
-        for i, segment in enumerate(segments):
-            # Check if segment contains nested variable interpolation (e.g., {{inputs.key}})
-            if "{{" in segment and "}}" in segment:
-                # Resolve the nested variable first
-                resolved_segment = self._resolve_string(segment, for_eval=False)
-                segment = resolved_segment
+                    if segment not in value:
+                        available = list(value.keys()) if isinstance(value, dict) else []
+                        raise VariableNotFoundError(
+                            f"Variable '{{{{{var_path}}}}}' not found. "
+                            f"At segment '{segment}', available keys: {available}"
+                        )
 
-            if not isinstance(value, dict):
-                partial_path = ".".join(segments[:i])
-                raise VariableNotFoundError(
-                    f"Cannot access '{segment}' on non-dict value at '{{{{{partial_path}}}}}'"
-                )
+                    value = value[segment]
 
-            if segment not in value:
-                available = list(value.keys()) if isinstance(value, dict) else []
-                raise VariableNotFoundError(
-                    f"Variable '{{{{{var_path}}}}}' not found. "
-                    f"At segment '{segment}', available keys: {available}"
-                )
+        except VariableNotFoundError:
+            # If filters present, use None as value (filters like 'default' can handle it)
+            if filter_chain:
+                value = None
+            else:
+                # No filters - re-raise the error
+                raise
 
-            value = value[segment]
+        # Apply filters if specified
+        if filter_chain:
+            return self._apply_filters(value, filter_chain)
 
-        # Format value for return
+        # No filters - format value normally (resolution must have succeeded)
         return self._format_for_eval(value) if for_eval else self._format_for_string(value)
 
     def _resolve_string(self, text: str, for_eval: bool = False) -> str:
@@ -562,20 +684,22 @@ class VariableResolver:
         Use _resolve_string_async() for secret support.
 
         Args:
-            text: String containing variable references
+            text: String containing variable references (with optional filters)
             for_eval: If True, format values for Python eval (quote strings, etc.)
 
         Returns:
-            String with variables substituted
+            String with variables substituted (filters applied)
 
         Raises:
-            VariableNotFoundError: If variable not found in context
+            VariableNotFoundError: If variable not found in context (and no filters)
             VariableNotFoundError: If {{secrets.*}} reference is found (use resolve_async)
+            FilterError: If filter application fails
         """
 
         def replace_var(match: re.Match[str]) -> str:
-            """Replace a single variable match using shared resolution logic."""
+            """Replace a single variable match with filter support."""
             var_path = match.group(1)
+            filter_chain = match.group(2) or ""  # Extract filter chain (may be None)
 
             # Block {{secrets.*}} in synchronous resolution
             if var_path.startswith("secrets."):
@@ -584,8 +708,8 @@ class VariableResolver:
                     f"Use resolve_async() instead of resolve() for: {{{{{var_path}}}}}"
                 )
 
-            # Use shared resolution logic (DRY)
-            return self._resolve_variable(var_path, for_eval=for_eval)
+            # Resolve with filter support
+            return self._resolve_variable(var_path, for_eval=for_eval, filter_chain=filter_chain)
 
         return self.VAR_PATTERN.sub(replace_var, text)
 
@@ -593,18 +717,19 @@ class VariableResolver:
         """
         Replace {{var}} patterns with context values (async version with secrets).
 
-        This method supports {{secrets.*}} references via SecretProvider.
+        This method supports {{secrets.*}} references via SecretProvider and filter syntax.
 
         Args:
-            text: String containing variable references
+            text: String containing variable references (with optional filters)
             for_eval: If True, format values for Python eval (quote strings, etc.)
 
         Returns:
-            String with variables and secrets substituted
+            String with variables, secrets, and filters applied
 
         Raises:
-            VariableNotFoundError: If variable not found in context
+            VariableNotFoundError: If variable not found in context (and no filters)
             SecretNotFoundError: If secret not found in provider (from secrets module)
+            FilterError: If filter application fails
         """
         # Find all variable references
         matches = list(self.VAR_PATTERN.finditer(text))
@@ -616,6 +741,7 @@ class VariableResolver:
         result = text
         for match in reversed(matches):
             var_path = match.group(1)
+            filter_chain = match.group(2) or ""  # Extract filter chain (may be None)
 
             # Security: Block access to internal namespace
             if var_path.startswith("__internal__") or ".__internal__" in var_path:
@@ -649,15 +775,32 @@ class VariableResolver:
                             success=True,
                         )
 
-                    # Format and replace
-                    formatted_value = (
-                        self._format_for_eval(secret_value)
-                        if for_eval
-                        else self._format_for_string(secret_value)
-                    )
+                    # Apply filters if specified
+                    if filter_chain:
+                        formatted_value = self._apply_filters(secret_value, filter_chain)
+                    else:
+                        # Format and replace
+                        formatted_value = (
+                            self._format_for_eval(secret_value)
+                            if for_eval
+                            else self._format_for_string(secret_value)
+                        )
                     result = result[: match.start()] + formatted_value + result[match.end() :]
 
                 except SecretNotFoundError as e:
+                    # If filters present, try applying them to None
+                    if filter_chain:
+                        try:
+                            formatted_value = self._apply_filters(None, filter_chain)
+                            result = (
+                                result[: match.start()] + formatted_value + result[match.end() :]
+                            )
+                            # Don't log as error - filter handled the missing secret
+                            continue
+                        except FilterError:
+                            # Filter also failed - log and re-raise original error
+                            pass
+
                     # Log failed access
                     if self.secret_audit_log:
                         await self.secret_audit_log.log_access(
@@ -671,8 +814,10 @@ class VariableResolver:
                     raise
 
             else:
-                # Handle regular variable using shared resolution logic (DRY)
-                formatted_value = self._resolve_variable(var_path, for_eval=for_eval)
+                # Handle regular variable with filter support
+                formatted_value = self._resolve_variable(
+                    var_path, for_eval=for_eval, filter_chain=filter_chain
+                )
                 result = result[: match.start()] + formatted_value + result[match.end() :]
 
         return result

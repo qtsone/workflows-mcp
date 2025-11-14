@@ -8,53 +8,63 @@ description: |
   5. Parallel execution where possible
   6. Block status detection
 tags: [test, integration, end-to-end]
+
 inputs:
   project_name:
     type: str
     default: "TestProject"
     description: "Project name for the workflow"
-  working_dir:
+
+  path:
     type: str
     default: "/tmp/integration-test"
     description: "Directory for test outputs"
+
 blocks:
   - id: init_state
     description: "Initialize workflow state"
     type: WriteJSONState
     inputs:
-      path: "{{inputs.working_dir}}/state.json"
+      path: "{{inputs.path}}/state.json"
+      create_parents: true
       data:
         project: "{{inputs.project_name}}"
         phase: "init"
         workflow: "{{metadata.workflow_name}}"
-      create_parents: true
+
   - id: gen_data1
     description: "Generate data in parallel"
     type: Shell
     inputs:
       command: printf "data1"
     depends_on: [init_state]
+
   - id: gen_data2
     description: "Generate data in parallel"
     type: Shell
     inputs:
       command: printf "data2"
     depends_on: [init_state]
+
   - id: update_state
     description: "Update state after parallel generation"
     type: MergeJSONState
     inputs:
-      path: "{{inputs.working_dir}}/state.json"
+      path: "{{inputs.path}}/state.json"
       updates:
         phase: "generation_complete"
-        data1: "{{blocks.gen_data1.outputs.stdout}}"
-        data2: "{{blocks.gen_data2.outputs.stdout}}"
+        data1: "{{blocks.gen_data1.outputs.stdout | trim}}"
+        data2: "{{blocks.gen_data2.outputs.stdout | trim}}"
     depends_on: [gen_data1, gen_data2]
+
   - id: render_report
     description: "Render report (depends on both data sources)"
-    type: RenderTemplate
+    type: CreateFile
     inputs:
-      template: |
+      path: "{{inputs.path}}/report.md"
+      create_parents: true
+      content: |
+        {{render('
         # {{ project }}
 
         Workflow: {{ workflow }}
@@ -66,42 +76,41 @@ blocks:
 
         ## Status
         Phase: {{ phase }}
-      variables:
-        project: "{{inputs.project_name}}"
-        workflow: "{{metadata.workflow_name}}"
-        timestamp: "{{metadata.started_at}}"
-        data1: "{{blocks.gen_data1.outputs.stdout}}"
-        data2: "{{blocks.gen_data2.outputs.stdout}}"
-        phase: "report_generation"
-      output_path: "{{inputs.working_dir}}/report.md"
+        ', {
+          'project': inputs.project_name,
+          'workflow': metadata.workflow_name,
+          'timestamp': metadata.started_at,
+          'data1': blocks.gen_data1.outputs.stdout | trim,
+          'data2': blocks.gen_data2.outputs.stdout | trim,
+          'phase': 'report_generation'
+        })}}
     depends_on: [update_state]
+
   - id: validate_success
     description: "Validate successful completion"
     type: Shell
     inputs:
       command: echo "validation_passed"
-    condition: >
-      {{blocks.gen_data1.succeeded}} and {{blocks.gen_data2.succeeded}} and {{blocks.render_report.succeeded}}
-
+    condition: "{{blocks.gen_data1.succeeded and blocks.gen_data2.succeeded and blocks.render_report.succeeded}}"
     depends_on:
       - block: render_report
-        required: false
+        required: true
+
   - id: validate_failure
     description: "Validate failure scenario"
     type: Shell
     inputs:
       command: echo "validation_failed"
-    condition: >
-      {{blocks.gen_data1.failed}} or {{blocks.gen_data2.failed}} or {{blocks.render_report.failed}}
-
+    condition: "{{blocks.gen_data1.failed or blocks.gen_data2.failed or blocks.render_report.failed}}"
     depends_on:
       - block: render_report
         required: false
+
   - id: final_state
     description: "Finalize workflow state"
     type: MergeJSONState
     inputs:
-      path: "{{inputs.working_dir}}/state.json"
+      path: "{{inputs.path}}/state.json"
       updates:
         phase: "complete"
         validation_passed: "{{blocks.validate_success.succeeded}}"
@@ -110,26 +119,30 @@ blocks:
         required: false
       - block: validate_failure
         required: false
+
   - id: read_final_state
     description: "Read final state"
     type: ReadJSONState
     inputs:
-      path: "{{inputs.working_dir}}/state.json"
+      path: "{{inputs.path}}/state.json"
     depends_on: [final_state]
+
   - id: read_report
     type: ReadFiles
     inputs:
       patterns: ["report.md"]
-      base_path: "{{inputs.working_dir}}"
+      base_path: "{{inputs.path}}"
       mode: full
-    depends_on: [final_state]
+    depends_on: [render_report]
+
   - id: cleanup
     description: "Cleanup test directory"
     type: Shell
     inputs:
       command: |
-        [ -d "{{inputs.working_dir}}" ] && rm -rf "{{inputs.working_dir}}" || echo "Error: Test directory does not exist"
+        [ -d "{{inputs.path}}" ] && rm -rf "{{inputs.path}}" || echo "Error: Test directory does not exist"
     depends_on: [read_final_state, read_report]
+
 outputs:
   project_name:
     value: "{{inputs.project_name}}"
@@ -144,7 +157,7 @@ outputs:
     value: "{{blocks.gen_data2.outputs.stdout}}"
     type: str
   report_content:
-    value: "{{blocks.read_report.outputs.content}}"
+    value: "{{get(blocks.read_report.outputs.files, 0, {}).content | default('Error: file not found')}}"
     type: str
   final_phase:
     value: "{{blocks.read_final_state.outputs.data.phase}}"
@@ -153,6 +166,5 @@ outputs:
     value: "{{blocks.validate_success.succeeded}}"
     type: bool
   all_blocks_succeeded:
-    value: >
-      {{blocks.gen_data1.succeeded}} and {{blocks.gen_data2.succeeded}} and {{blocks.render_report.succeeded}} and {{blocks.validate_success.succeeded}} and {{blocks.cleanup.succeeded}}
+    value: "{{ blocks.gen_data1.succeeded and blocks.gen_data2.succeeded and blocks.render_report.succeeded and blocks.validate_success.succeeded and blocks.cleanup.succeeded }}"
     type: bool

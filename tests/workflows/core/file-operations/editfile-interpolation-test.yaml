@@ -141,7 +141,7 @@ blocks:
         - type: insert_lines
           line_start: 1
           content: |
-            # Test completed successfully: {{blocks.test_replace_text_interpolation.succeeded}}
+            # Test completed successfully: {{blocks.test_replace_text_interpolation.succeeded | lower}}
             # Lines added: {{blocks.test_insert_lines_interpolation.outputs.lines_added}}
       backup: false
     depends_on: [test_multiple_operations_interpolation]
@@ -192,13 +192,13 @@ outputs:
     description: "Final file content with all interpolated edits"
   all_operations_succeeded:
     value: >
-      {{blocks.test_replace_text_interpolation.succeeded}} and
-      {{blocks.test_insert_lines_interpolation.succeeded}} and
-      {{blocks.test_regex_replace_interpolation.succeeded}} and
-      {{blocks.test_delete_lines_interpolation.succeeded}} and
-      {{blocks.test_multiple_operations_interpolation.succeeded}} and
-      {{blocks.test_nested_interpolation.succeeded}} and
-      {{blocks.test_operations_interpolation.succeeded}}
+      {{blocks.test_replace_text_interpolation.succeeded and
+      blocks.test_insert_lines_interpolation.succeeded and
+      blocks.test_regex_replace_interpolation.succeeded and
+      blocks.test_delete_lines_interpolation.succeeded and
+      blocks.test_multiple_operations_interpolation.succeeded and
+      blocks.test_nested_interpolation.succeeded and
+      blocks.test_operations_interpolation.succeeded}}
     type: bool
     description: "Whether all interpolation tests succeeded (including operations field)"
   replace_text_lines_modified:

@@ -32,7 +32,5 @@ outputs:
     value: "{{blocks.add.outputs.result}}"
     type: num
   both_succeeded:
-    value: >
-      {{blocks.multiply.succeeded}} and {{blocks.add.succeeded}}
+    value: "{{blocks.multiply.succeeded and blocks.add.succeeded}}"
     type: bool
-

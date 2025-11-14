@@ -31,7 +31,7 @@ blocks:
       command: |
         echo "Action approved! Response was: {{blocks.approval.outputs.response}}"
     depends_on: [approval]
-    condition: "{{blocks.approval.outputs.response}} == 'yes'"
+    condition: "{{blocks.approval.outputs.response == 'yes'}}"
   # Step 4: Execute if denied
   - id: denied_action
     type: Shell
@@ -39,7 +39,7 @@ blocks:
       command: |
         echo "Action denied! Response was: {{blocks.approval.outputs.response}}"
     depends_on: [approval]
-    condition: "{{blocks.approval.outputs.response}} == 'no'"
+    condition: "{{blocks.approval.outputs.response == 'no'}}"
 outputs:
   started:
     value: "{{blocks.start.succeeded}}"

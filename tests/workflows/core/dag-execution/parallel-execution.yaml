@@ -19,7 +19,8 @@ blocks:
   - id: after_parallel
     type: Shell
     inputs:
-      command: 'printf "after: {{blocks.parallel_1.outputs.stdout}}, {{blocks.parallel_2.outputs.stdout}}, {{blocks.parallel_3.outputs.stdout}}"'
+      command: |
+        printf "after: {{blocks.parallel_1.outputs.stdout}}, {{blocks.parallel_2.outputs.stdout}}, {{blocks.parallel_3.outputs.stdout}}"
     depends_on:
       - parallel_1
       - parallel_2
@@ -42,6 +43,5 @@ outputs:
     value: "{{blocks.parallel_3.outputs.stdout}}"
     type: str
   all_succeeded:
-    value: >
-      {{blocks.parallel_1.succeeded}} and {{blocks.parallel_2.succeeded}} and {{blocks.parallel_3.succeeded}} and {{blocks.final.succeeded}}
+    value: "{{blocks.parallel_1.succeeded and blocks.parallel_2.succeeded and blocks.parallel_3.succeeded and blocks.final.succeeded}}"
     type: bool

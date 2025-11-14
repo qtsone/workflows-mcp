@@ -27,7 +27,8 @@ from pydantic import BaseModel, Field, field_validator, model_validator
 # Schema validation only checks structural validity (YAML structure, dependencies, etc.)
 from .dag import DAGResolver
 from .load_result import LoadResult
-from .variables import VariableResolver
+
+# Variable resolution is now handled by UnifiedVariableResolver
 
 
 class ValueType(str, Enum):
@@ -707,11 +708,39 @@ class WorkflowSchema(BaseModel):
             """Validate variable references in a string value."""
             matches = var_pattern.findall(value)
             for var_path in matches:
-                # Use VariableResolver.parse_variable_path for consistent parsing
-                # Handles both dot notation and bracket notation (ADR-009)
+                # Parse variable path (simple dot notation split for validation)
+                # Full resolution is handled by UnifiedVariableResolver at runtime
                 try:
-                    parts = VariableResolver.parse_variable_path(var_path)
-                except ValueError as e:
+                    # Simple parsing: split by dots and extract bracket notation
+                    # This is sufficient for validation (we don't need full resolution)
+                    parts = []
+                    current = ""
+                    i = 0
+                    while i < len(var_path):
+                        if var_path[i] == ".":
+                            if current:
+                                parts.append(current)
+                                current = ""
+                            i += 1
+                        elif var_path[i] == "[":
+                            if current:
+                                parts.append(current)
+                                current = ""
+                            # Skip bracket notation for validation
+                            depth = 1
+                            i += 1
+                            while i < len(var_path) and depth > 0:
+                                if var_path[i] == "[":
+                                    depth += 1
+                                elif var_path[i] == "]":
+                                    depth -= 1
+                                i += 1
+                        else:
+                            current += var_path[i]
+                            i += 1
+                    if current:
+                        parts.append(current)
+                except Exception as e:
                     raise ValueError(
                         f"{context}: Invalid variable reference '{{{{{var_path}}}}}'. {e}"
                     )
