@@ -122,9 +122,7 @@ class UnifiedVariableResolver:
         # Prepare enhanced context
         self.jinja_context = self._enhance_context(context)
 
-    def _initialize_rules(
-        self, custom_rules: list[TransformRule] | None
-    ) -> list[TransformRule]:
+    def _initialize_rules(self, custom_rules: list[TransformRule] | None) -> list[TransformRule]:
         """
         Initialize transformation rules in priority order.
 
@@ -324,9 +322,7 @@ class UnifiedVariableResolver:
             # Make a copy to avoid modifying original
             wrapped = dict(block_data)
             # Recursively wrap nested blocks
-            wrapped["blocks"] = {
-                k: self._wrap_block(v) for k, v in block_data["blocks"].items()
-            }
+            wrapped["blocks"] = {k: self._wrap_block(v) for k, v in block_data["blocks"].items()}
             return BlockProxy(wrapped)
         else:
             return BlockProxy(block_data)
@@ -341,9 +337,7 @@ class UnifiedVariableResolver:
         Returns:
             Tuple of (transformed_expression, metadata)
         """
-        context = RuleContext(
-            expression=expression, context=self.raw_context, metadata={}
-        )
+        context = RuleContext(expression=expression, context=self.raw_context, metadata={})
 
         for rule in self.rules:
             if rule.applies_to(context):
@@ -433,9 +427,7 @@ class UnifiedVariableResolver:
             # Fallback to template evaluation
             return await self._evaluate_template(transformed, metadata)
 
-    async def _evaluate_expression(
-        self, expression: str, metadata: dict[str, Any]
-    ) -> Any:
+    async def _evaluate_expression(self, expression: str, metadata: dict[str, Any]) -> Any:
         """
         Evaluate pure expression with type preservation.
 
@@ -473,9 +465,7 @@ class UnifiedVariableResolver:
                 f"Available variables: {available_keys}"
             ) from e
 
-    async def _evaluate_template(
-        self, template_str: str, metadata: dict[str, Any]
-    ) -> str:
+    async def _evaluate_template(self, template_str: str, metadata: dict[str, Any]) -> str:
         """
         Evaluate template string (always returns string).
 
@@ -498,9 +488,7 @@ class UnifiedVariableResolver:
             return result
 
         except Exception as e:
-            raise ValueError(
-                f"Failed to evaluate template: {template_str}\n" f"Error: {str(e)}"
-            ) from e
+            raise ValueError(f"Failed to evaluate template: {template_str}\nError: {str(e)}") from e
 
     async def _prepare_secrets(self, secret_keys: list[str]) -> None:
         """
@@ -557,8 +545,7 @@ class UnifiedVariableResolver:
         # Check if value contains secrets
         if isinstance(value, str) and "secrets." in value:
             raise ValueError(
-                "Secret resolution requires async context. "
-                "Use resolve_async() instead of resolve()"
+                "Secret resolution requires async context. Use resolve_async() instead of resolve()"
             )
 
         # Create event loop if needed
