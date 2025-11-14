@@ -225,7 +225,9 @@ async def main() -> None:
                     inputs = {"base_url": base_url} if workflow_name in HTTP_WORKFLOWS else {}
 
                     if workflow_name == "secrets-redaction":
-                        inputs["expected_hash"] = "996103efa65509daba85003e79ce2330c32a8839244a2d2b3d7faf0d2d080a5f"
+                        inputs["expected_hash"] = (
+                            "996103efa65509daba85003e79ce2330c32a8839244a2d2b3d7faf0d2d080a5f"
+                        )
 
                     # Execute workflow
                     response = await generate_snapshot(workflow_name, client, inputs)
