@@ -86,7 +86,7 @@ class SecretRedactionRule(TransformRule):
     def _extract_secret_keys(self, expression: str) -> list[str]:
         """Extract secret key names for audit logging."""
         # Match secrets.KEY_NAME patterns
-        pattern = r"secrets\.([a-zA-Z_][a-zA-Z0-9_]*)"
+        pattern = r"\bsecrets\.([a-zA-Z_][a-zA-Z0-9_]*)"
         return re.findall(pattern, expression)
 
     @property

@@ -197,7 +197,12 @@ class SecretProxy(ProxyBase):
             # Audit log
             audit_log = object.__getattribute__(self, "_audit_log")
             if audit_log:
-                await audit_log.log_access(secret_key=key, success=True)
+                await audit_log.log_access(
+                    workflow_name="",  # TODO: Thread context through resolver
+                    block_id="",  # TODO: Thread context through resolver
+                    secret_key=key,
+                    success=True,
+                )
 
             # Cache for future access
             cache[key] = value
@@ -206,7 +211,13 @@ class SecretProxy(ProxyBase):
         except Exception as e:
             audit_log = object.__getattribute__(self, "_audit_log")
             if audit_log:
-                await audit_log.log_access(secret_key=key, success=False, error=str(e))
+                await audit_log.log_access(
+                    workflow_name="",  # TODO: Thread context through resolver
+                    block_id="",  # TODO: Thread context through resolver
+                    secret_key=key,
+                    success=False,
+                    error_message=str(e),
+                )
             raise
         finally:
             pending.pop(key, None)
