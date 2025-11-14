@@ -84,7 +84,7 @@ blocks:
         # From blocks namespace (standard outputs)
         producer_exit = {{blocks.producer.outputs.exit_code}}
         # Status shortcut (this DOES work)
-        producer_succeeded = '{{blocks.producer.succeeded}}' == 'true'
+        producer_succeeded = {{blocks.producer.succeeded}}
 
         assert producer_exit == 0, f'Expected exit 0, got {producer_exit}'
         assert producer_succeeded is True, f'Expected succeeded True'
@@ -168,11 +168,11 @@ outputs:
     type: bool
   all_passed:
     value: >
-      {{blocks.test_inputs_metadata.succeeded}} and
-      {{blocks.test_inputs_blocks.succeeded}} and
-      {{blocks.test_metadata_blocks.succeeded}} and
-      {{blocks.test_all_namespaces.succeeded}} and
-      {{blocks.test_nested_access.succeeded}}
+      {{blocks.test_inputs_metadata.succeeded and
+      blocks.test_inputs_blocks.succeeded and
+      blocks.test_metadata_blocks.succeeded and
+      blocks.test_all_namespaces.succeeded and
+      blocks.test_nested_access.succeeded}}
     type: bool
     description: "All cross-namespace tests passed"
   # Demo: output using all three namespaces

@@ -153,7 +153,7 @@ class UnifiedVariableResolver:
         # Filters
         self.env.filters.update(
             {
-                "shellquote": shlex.quote,
+                "quote": shlex.quote,
                 "prettyjson": lambda x: json.dumps(x, indent=2),
                 "tojson": json.dumps,
                 "b64encode": lambda x: base64.b64encode(x.encode()).decode(),

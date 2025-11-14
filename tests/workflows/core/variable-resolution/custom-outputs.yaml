@@ -64,7 +64,7 @@ blocks:
     inputs:
       command: |
         python3 -c "
-        value = '{{blocks.producer.outputs.bool_output}}' == 'true'
+        value = {{blocks.producer.outputs.bool_output}}
         assert isinstance(value, bool), f'Expected bool, got {type(value).__name__}'
         assert value is True, f'Expected True, got {value}'
         print(f'Boolean output valid: {value}')
@@ -143,11 +143,11 @@ outputs:
     type: bool
   all_passed:
     value: >
-      {{blocks.validate_string_output.succeeded}} and
-      {{blocks.validate_number_output.succeeded}} and
-      {{blocks.validate_bool_output.succeeded}} and
-      {{blocks.validate_json_output.succeeded}} and
-      {{blocks.validate_explicit_path.succeeded}} and
-      {{blocks.validate_complex_expression.succeeded}}
+      {{blocks.validate_string_output.succeeded and
+      blocks.validate_number_output.succeeded and
+      blocks.validate_bool_output.succeeded and
+      blocks.validate_json_output.succeeded and
+      blocks.validate_explicit_path.succeeded and
+      blocks.validate_complex_expression.succeeded}}
     type: bool
     description: "All custom output validations passed"

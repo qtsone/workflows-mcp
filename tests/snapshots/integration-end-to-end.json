@@ -5,7 +5,7 @@
     "data2": "data2",
     "final_phase": "complete",
     "project_name": "TestProject",
-    "report_content": "files:\n- path: report.md\n  content: |-\n    # TestProject\n\n    Workflow: integration-end-to-end\n    Timestamp: TIMESTAMP\n\n    ## Data Streams\n    - Stream 1: data1\n    - Stream 2: data2\n\n    ## Status\n    Phase: report_generation\n  size_bytes: 180",
+    "report_content": "# TestProject\n\nWorkflow: integration-end-to-end\nTimestamp: TIMESTAMP\n\n## Data Streams\n- Stream 1: data1\n- Stream 2: data2\n\n## Status\nPhase: report_generation",
     "validation_passed": true,
     "workflow_name": "integration-end-to-end"
   },

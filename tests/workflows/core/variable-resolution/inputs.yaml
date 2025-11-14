@@ -47,7 +47,7 @@ blocks:
     inputs:
       command: |
         python3 -c "
-        value = '{{inputs.bool_input}}' == 'true'
+        value = {{inputs.bool_input}}
         assert isinstance(value, bool), f'Expected bool, got {type(value).__name__}'
         assert value is True, f'Expected True, got {value}'
         print(f'Boolean valid: {value}')
@@ -61,7 +61,7 @@ blocks:
         python3 -c "
         s = '{{inputs.string_input}}'
         n = {{inputs.number_input}}
-        b = '{{inputs.bool_input}}' == 'true'
+        b = {{inputs.bool_input}}
 
         assert s == 'test_value', f'String mismatch'
         assert n == 42, f'Number mismatch'
@@ -85,31 +85,31 @@ blocks:
 
 outputs:
   string_valid:
-    value: "{{blocks.validate_string.outputs.exit_code}} == 0"
+    value: "{{blocks.validate_string.outputs.exit_code == 0}}"
     type: bool
     description: "String input validation passed"
   number_valid:
-    value: "{{blocks.validate_number.outputs.exit_code}} == 0"
+    value: "{{blocks.validate_number.outputs.exit_code == 0}}"
     type: bool
     description: "Number input validation passed"
   bool_valid:
-    value: "{{blocks.validate_bool.outputs.exit_code}} == 0"
+    value: "{{blocks.validate_bool.outputs.exit_code == 0}}"
     type: bool
     description: "Boolean input validation passed"
   multiple_valid:
-    value: "{{blocks.validate_multiple.outputs.exit_code}} == 0"
+    value: "{{blocks.validate_multiple.outputs.exit_code == 0}}"
     type: bool
     description: "Multiple input validation passed"
   env_var_valid:
-    value: "{{blocks.validate_env_vars.outputs.exit_code}} == 0"
+    value: "{{blocks.validate_env_vars.outputs.exit_code == 0}}"
     type: bool
     description: "Environment variable validation passed"
   all_passed:
     value: >
-      {{blocks.validate_string.succeeded}} and
-      {{blocks.validate_number.succeeded}} and
-      {{blocks.validate_bool.succeeded}} and
-      {{blocks.validate_multiple.succeeded}} and
-      {{blocks.validate_env_vars.succeeded}}
+      {{blocks.validate_string.succeeded and
+      blocks.validate_number.succeeded and
+      blocks.validate_bool.succeeded and
+      blocks.validate_multiple.succeeded and
+      blocks.validate_env_vars.succeeded}}
     type: bool
     description: "All validations passed"
