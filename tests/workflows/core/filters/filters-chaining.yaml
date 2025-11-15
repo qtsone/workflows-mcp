@@ -80,23 +80,24 @@ blocks:
       create_parents: true
     depends_on: [test_number_chain]
 
-  # Test 5: Block output chain (outputs -> tojson -> length)
+  # Test 5: Block output chain - verify filter chains work on complex objects
   - id: test_output_chain
     type: Shell
     inputs:
       command: |
-        # Chain: dict -> tojson -> get string length
-        JSON="{{blocks.create_test_data.outputs | tojson}}"
-        LENGTH={{blocks.create_test_data.outputs | tojson | length}}
-        echo "Output chain - JSON length: $LENGTH"
-        # JSON preview using portable POSIX syntax (printf with %.50s)
-        printf "JSON preview: %.50s...\n" "$JSON"
-        # JSON should be a reasonable length (at least has "path" field)
-        if [ "$LENGTH" -gt 20 ]; then
-          echo "SUCCESS: outputs -> tojson -> length chain worked"
+        # Test chaining: outputs -> get field -> string conversion
+        # This tests that filters work on nested object access
+        SIZE_BYTES={{blocks.create_test_data.outputs.size_bytes}}
+        CREATED_FLAG="{{blocks.create_test_data.outputs.created | string | lower}}"
+
+        # Verify we got the expected values
+        if [ "$SIZE_BYTES" = "12" ] && [ "$CREATED_FLAG" = "true" ]; then
+          echo "SUCCESS: outputs -> field access -> filter chain worked"
+          echo "File size: $SIZE_BYTES bytes, created: $CREATED_FLAG"
           exit 0
         else
-          echo "FAILURE: JSON length too short ($LENGTH <= 20)"
+          echo "FAILURE: expected size=12 and created=true"
+          echo "Got size=$SIZE_BYTES, created=$CREATED_FLAG"
           exit 1
         fi
     depends_on: [create_test_data]
