@@ -270,82 +270,15 @@ Claude: "¡Hola, Alice!"
 
 ## Key Features
 
-### 📝 Boolean Formatting in Variables
-
-The workflow system formats boolean values intelligently based on context:
-
-**String Interpolation** (Shell commands, file content, HTTP bodies):
-- Booleans format as lowercase `true`/`false` (unquoted)
-- This works correctly for bash, JavaScript, JSON, Ruby, Java, C, Go, Rust, TypeScript, and most other languages
-
-```yaml
-blocks:
-  - id: create_config
-    type: CreateFile
-    inputs:
-      path: "config.json"
-      content: |
-        {"enabled": {{inputs.enabled}}, "debug": {{inputs.debug}}}
-# Results in: {"enabled": true, "debug": false}
-```
-
-**Condition Expressions**:
-- Booleans format as capitalized `True`/`False` for Python evaluation
-
-```yaml
-condition: "{{inputs.enabled}} and {{blocks.test.succeeded}}"
-# Results in: True and True
-```
-
-**Python Exception** (for Shell blocks executing Python code):
-- Use string interpolation with quotes as a workaround:
-
-```yaml
-- id: python_script
-  type: Shell
-  inputs:
-    command: |
-      python3 -c "
-      bool_val = '{{inputs.bool_flag}}' == 'true'
-      print(f'Boolean is: {bool_val}')
-      "
-```
-
 ### 🚀 Smart Parallel Execution
 
-The server automatically detects which tasks can run in parallel:
+The server automatically detects which tasks can run in parallel. Use `depends_on` to specify dependencies—independent tasks run concurrently for maximum efficiency.
 
-```yaml
-blocks:
-  - id: setup
-    type: Shell
-    inputs:
-      command: "npm install"
-
-  # These run in PARALLEL after setup
-  - id: lint
-    type: Shell
-    depends_on: [setup]
-    inputs:
-      command: "npm run lint"
-
-  - id: test
-    type: Shell
-    depends_on: [setup]
-    inputs:
-      command: "npm test"
-
-  # This waits for both
-  - id: report
-    type: Shell
-    depends_on: [lint, test]
-    inputs:
-      command: "echo 'All checks passed!'"
-```
+**See examples:** `tests/workflows/core/dag-execution/parallel-execution.yaml`
 
 ### 🔐 Secure Secrets Management
 
-Store sensitive data like API keys securely:
+Store sensitive data like API keys securely using environment variables. Secrets are resolved server-side and never exposed to the LLM context.
 
 ```json
 {
@@ -360,17 +293,7 @@ Store sensitive data like API keys securely:
 }
 ```
 
-Use in workflows:
-
-```yaml
-blocks:
-  - id: call_api
-    type: HttpCall
-    inputs:
-      url: "https://api.github.com/user"
-      headers:
-        Authorization: "Bearer {{secrets.GITHUB_TOKEN}}"
-```
+Use in workflows: `{{secrets.GITHUB_TOKEN}}`
 
 **Security features:**
 - ✅ Secrets never appear in LLM context
@@ -378,319 +301,107 @@ blocks:
 - ✅ Server-side resolution only
 - ✅ Fail-fast on missing secrets
 
-### 🤖 LLM Integration
+**See examples:** `tests/workflows/core/secrets/`
 
-Call AI models directly from workflows with automatic retry and validation:
+### 🎨 Full Jinja2 Template Support
 
-**Profile-based (Recommended):**
+All workflow fields are Jinja2 templates with support for:
+- **Variable expressions**: `{{inputs.name}}`, `{{blocks.test.outputs.result}}`
+- **Control structures**: `{% if condition %}...{% endif %}`, `{% for item in list %}...{% endfor %}`
+- **Custom filters**: `quote`, `prettyjson`, `b64encode`, `hash`, `trim`, `upper`, `lower`, `replace`
+- **Global functions**: `now()`, `render()`, `get()`, `len()`, `range()`
+- **Filter chaining**: `{{inputs.text | trim | lower | replace(' ', '_')}}`
 
-Optionally create `~/.workflows/llm-config.yml` (you'll need to create the directory first if it doesn't exist):
+**See examples:** `tests/workflows/core/filters/filters-chaining.yaml`
 
-```yaml
-version: "1.0"
+### 📂 ReadFiles Block with Outline Extraction
 
-providers:
-  openai:
-    type: openai
-    api_key_secret: "OPENAI_API_KEY"  # References WORKFLOW_SECRET_OPENAI_API_KEY env var
+Read files with glob patterns, multiple output modes, and automatic outline extraction:
 
-  local:
-    type: openai
-    api_url: "http://localhost:1234/v1/chat/completions"
+**Features:**
+- Glob pattern support (`*.py`, `**/*.ts`)
+- Three output modes:
+  - `full` - Complete file content
+  - `outline` - Structural outline (90-97% context reduction for Python/Markdown)
+  - `summary` - Outline + docstrings/comments
+- Gitignore integration and file filtering
+- Size limits and file count limits
+- Multi-file reading in single block
+- YAML-formatted output
 
-profiles:
-  default:
-    provider: openai
-    model: gpt-4o-mini
-    temperature: 0.7
-    max_tokens: 4000
-
-default_profile: default
-```
-
-**Important:** The `api_key_secret` value (e.g., `"OPENAI_API_KEY"`) is **not** your actual API key. It's the name that references your environment variable `WORKFLOW_SECRET_OPENAI_API_KEY` in your MCP server configuration. The actual key value should be set as an environment variable (see [Secure Secrets Management](#secure-secrets-management)).
-
-Use in workflows:
-
-```yaml
-blocks:
-  - id: analyze_code
-    type: LLMCall
-    inputs:
-      profile: default
-      prompt: "Analyze this code and suggest improvements: {{inputs.code}}"
-      response_schema:
-        type: object
-        required: [summary, suggestions]
-        properties:
-          summary: {type: string}
-          suggestions: {type: array, items: {type: string}}
-```
-
-**Supported providers:** OpenAI, Anthropic, Gemini, Ollama, OpenAI-compatible (LM Studio, vLLM)
-
-### 🔁 Universal Iteration (for_each)
-
-Iterate over collections with ANY block type:
-
-```yaml
-blocks:
-  - id: process_files
-    type: Shell
-    for_each:
-      file1: {path: "src/main.py", lines: 150}
-      file2: {path: "src/utils.py", lines: 80}
-    for_each_mode: parallel  # or sequential
-    max_parallel: 3
-    continue_on_error: true
-    inputs:
-      command: "echo Processing {{each.key}}: {{each.value.path}}"
-```
-
-**Iteration variables:**
-- `{{each.key}}` - Current key ("file1", "file2")
-- `{{each.value}}` - Current value
-- `{{each.index}}` - Zero-based position (0, 1, 2...)
-- `{{each.count}}` - Total iterations
-
-**Access results:**
-```yaml
-# Use bracket notation
-{{blocks.process_files["file1"].outputs.stdout}}
-
-# Block-level aggregations
-{{blocks.process_files.succeeded}}  # All succeeded?
-{{blocks.process_files.metadata.count}}  # Total count
-```
+**See examples:** `tests/workflows/core/file-operations/readfiles-test.yaml`
 
 ### ✏️ Deterministic File Editing
 
-The `EditFile` block provides powerful deterministic file editing with multiple operation strategies. Unlike simple find-replace, EditFile supports atomic transactions, backup creation, and comprehensive diff generation.
+The `EditFile` block provides powerful deterministic file editing with multiple operation strategies:
 
-**Key Features:**
-- ✅ 6 operation types (replace_text, replace_lines, insert_lines, delete_lines, patch, regex_replace)
-- ✅ Atomic transactions (all-or-nothing by default)
-- ✅ Automatic backup creation before editing
-- ✅ Dry-run mode for previewing changes
-- ✅ Comprehensive diff generation
-- ✅ Path traversal protection
+**Features:**
+- 6 operation types (replace_text, replace_lines, insert_lines, delete_lines, patch, regex_replace)
+- Atomic transactions (all-or-nothing by default)
+- Automatic backup creation before editing
+- Dry-run mode for previewing changes
+- Comprehensive diff generation
+- Path traversal protection
 
-**Simple Text Replacement:**
+**See examples:** `tests/workflows/core/file-operations/editfile-operations-test.yaml`
+
+### 🤖 LLM Integration
+
+Call AI models directly from workflows with automatic retry and validation. Configure providers using `~/.workflows/llm-config.yml` (optional).
+
+**Supported providers:** OpenAI, Anthropic, Gemini, Ollama, OpenAI-compatible (LM Studio, vLLM)
+
+**Example:**
 ```yaml
-- id: update_config
-  type: EditFile
+- id: analyze
+  type: LLMCall
   inputs:
-    path: "config.yaml"
-    operations:
-      - type: replace_text
-        old_text: "debug: false"
-        new_text: "debug: true"
+    profile: default  # Existing profile from ~/.workflows/llm-config.yml
+    prompt: "Analyze this text: {{inputs.text}}"
+    response_schema:
+      type: object
+      required: [sentiment, summary]
+      properties:
+        sentiment:
+          type: string
+          enum: [positive, negative, neutral]
+        summary:
+          type: string
 ```
 
-**Line-Based Operations:**
-```yaml
-- id: update_imports
-  type: EditFile
-  inputs:
-    path: "main.py"
-    operations:
-      # Replace specific lines
-      - type: replace_lines
-        start_line: 5
-        end_line: 7
-        content: |
-          import os
-          import sys
-          from pathlib import Path
+### 🔁 Universal Iteration (for_each)
 
-      # Insert new lines
-      - type: insert_lines
-        line: 10
-        content: |
-          # New feature initialization
-          initialize_feature()
+Iterate over collections with ANY block type using `for_each`. Supports parallel and sequential execution modes with error handling.
 
-      # Delete lines
-      - type: delete_lines
-        start_line: 20
-        end_line: 25
-```
+**Iteration variables:**
+- `{{each.key}}` - Current key
+- `{{each.value}}` - Current value
+- `{{each.index}}` - Zero-based position
+- `{{each.count}}` - Total iterations
 
-**Regex Patterns:**
-```yaml
-- id: update_version
-  type: EditFile
-  inputs:
-    path: "pyproject.toml"
-    operations:
-      - type: regex_replace
-        pattern: 'version = "(\d+\.\d+)\.\d+"'
-        replacement: 'version = "\1.99"'
-        flags: [MULTILINE]
-```
-
-**Patch Application:**
-```yaml
-- id: apply_patch
-  type: EditFile
-  inputs:
-    path: "source.py"
-    operations:
-      - type: patch
-        patch: |
-          --- a/source.py
-          +++ b/source.py
-          @@ -1,3 +1,3 @@
-          -def old_function():
-          +def new_function():
-               pass
-```
-
-**Advanced Options:**
-```yaml
-- id: safe_edit
-  type: EditFile
-  inputs:
-    path: "important.txt"
-    operations: [...]
-    create_if_missing: true    # Create file if doesn't exist
-    backup: true               # Create .bak backup (default: true)
-    dry_run: false             # Preview without applying (default: false)
-    atomic: true               # All-or-nothing (default: true)
-    encoding: "utf-8"          # File encoding
-```
-
-**Outputs:**
-```yaml
-# Access edit statistics
-{{blocks.update_file.outputs.operations_applied}}  # Number of operations
-{{blocks.update_file.outputs.lines_added}}        # Lines added
-{{blocks.update_file.outputs.lines_removed}}      # Lines removed
-{{blocks.update_file.outputs.lines_modified}}     # Lines modified
-{{blocks.update_file.outputs.diff}}               # Unified diff
-{{blocks.update_file.outputs.backup_path}}        # Backup file path
-{{blocks.update_file.succeeded}}                  # Success status
-{{blocks.update_file.outputs.errors}}             # Error messages (if any)
-```
-
-**Use Cases:**
-- Configuration file updates
-- Code refactoring and renaming
-- Version number bumps
-- Import statement management
-- Automated code fixes
-- Multi-file synchronized updates
+**See examples:** `tests/workflows/core/for_each/for-each-comprehensive.yaml`
 
 ### 🔄 Workflow Composition
 
-Build complex workflows from simple reusable pieces:
+Build complex workflows from simple reusable pieces using the `Workflow` block type. Supports recursion with configurable depth limits.
 
-```yaml
-name: full-ci-pipeline
-blocks:
-  - id: setup
-    type: Workflow
-    inputs:
-      workflow: setup-python-env
-      inputs:
-        python_version: "3.12"
-
-  - id: lint
-    type: Workflow
-    depends_on: [setup]
-    inputs:
-      workflow: lint-python
-
-  - id: test
-    type: Workflow
-    depends_on: [setup]
-    inputs:
-      workflow: run-pytest
-```
-
-**Supports recursion** with configurable depth limits!
+**See examples:** `tests/workflows/core/composition/`
 
 ### 📝 Conditional Execution
 
-Run blocks only when conditions are met:
+Run blocks only when conditions are met using the `condition` field. Conditions are evaluated as Jinja2 expressions.
 
-```yaml
-blocks:
-  - id: check_env
-    type: Shell
-    inputs:
-      command: "echo $ENVIRONMENT"
-
-  - id: deploy_prod
-    type: Shell
-    condition: "{{blocks.check_env.outputs.stdout}} == 'production'"
-    depends_on: [check_env]
-    inputs:
-      command: "./deploy.sh production"
-
-  - id: deploy_staging
-    type: Shell
-    condition: "{{blocks.check_env.outputs.stdout}} != 'production'"
-    depends_on: [check_env]
-    inputs:
-      command: "./deploy.sh staging"
-```
+**See examples:** `tests/workflows/core/conditionals/`
 
 ### 💬 Interactive Workflows
 
-Pause workflows to get user input:
+Pause workflows to get user input using the `Prompt` block. Use `resume_workflow(job_id, response)` to continue execution with the user's input.
 
-```yaml
-blocks:
-  - id: ask_confirmation
-    type: Prompt
-    inputs:
-      prompt: "Deploy to production? (yes/no)"
-
-  - id: deploy
-    type: Shell
-    condition: "{{blocks.ask_confirmation.outputs.response}} == 'yes'"
-    depends_on: [ask_confirmation]
-    inputs:
-      command: "./deploy.sh"
-```
-
-Workflows pause when they reach a `Prompt` block. Use `resume_workflow(job_id, response)` to continue execution with the user's input.
-
-**Example:**
-```text
-1. Execute workflow → Pauses at Prompt block, returns job_id
-2. Check status: get_job_status(job_id="job_abc123")
-3. Resume: resume_workflow(job_id="job_abc123", response="yes")
-```
+**See examples:** `tests/workflows/interactive-simple-approval.yaml`
 
 ### ⚡ Async Execution
 
-Execute long-running workflows without blocking:
-
-```yaml
-# Start async workflow (returns immediately)
-execute_workflow(
-    workflow="long-running-deployment",
-    inputs={...},
-    mode="async",
-    timeout=3600  # 1 hour timeout (optional)
-)
-# Returns: {"job_id": "job_abc123", "status": "queued"}
-
-# Check progress
-get_job_status(job_id="job_abc123")
-# Returns: {"status": "running", ...}
-
-# Cancel if needed
-cancel_job(job_id="job_abc123")
-
-# List all jobs
-list_jobs(status="running")
-
-# Monitor queue health
-get_queue_stats()
-```
+Execute long-running workflows without blocking using `mode="async"`. Track progress with `get_job_status(job_id)` and cancel with `cancel_job(job_id)`.
 
 **Use cases:**
 - Long CI/CD pipelines
@@ -702,42 +413,27 @@ get_queue_stats()
 
 ## Built-in Workflows
 
-The server includes many ready-to-use workflows:
+The server includes many ready-to-use workflows for common tasks.
 
-### 📋 A Note on Quality & Testing
+### 📋 Quality & Testing
 
-**Core workflows** (like `python-ci-pipeline`, `lint-python`, `run-pytest`, `git-checkout-branch`) are actively used and maintained. However, not all built-in workflows have comprehensive automated tests yet.
+**Core workflows** (Python CI, Git operations, file operations) are actively used and thoroughly tested. Some advanced workflows are still being refined.
 
-**Why?** Some workflows interact with external systems (GitHub API, package managers, deployment services) which makes them difficult to test in CI without real credentials and infrastructure. We're actively working on expanding test coverage and will be refining the workflow library over time.
+**Best practice:** Always inspect a workflow before using it (`get_workflow_info` tool) and test on non-production systems first.
 
-**Our commitment:** The workflow library is evolving. We're focusing on testing and validating each workflow thoroughly before recommending them for production use.
-
-**How to stay safe:**
-- ✅ **Inspect before running** - Use `get_workflow_info` to see exactly what a workflow does
-- ✅ **Start with simple workflows** - Try core Python/Git workflows first
-- ✅ **Test in safe environments** - Run workflows on test projects before production
-- ✅ **Create your own** - The safest workflows are ones you write and understand yourself
-- ✅ **Check the source** - Workflows are just YAML files in `src/workflows_mcp/templates/`
-
-**Looking for battle-tested examples?** Check out the workflows in `tests/workflows/` - these are thoroughly tested in CI on every PR and demonstrate all the core features reliably.
+**Battle-tested examples:** The workflows in `tests/workflows/core/` are comprehensively tested in CI and demonstrate all core features reliably.
 
 ### Discovering Workflows
-
-The best way to see what workflows are available is to ask your AI assistant:
 
 **List all workflows:**
 ```text
 You: "List all available workflows"
 ```
 
-Your AI will show you all currently available workflows with their descriptions.
-
 **Get detailed information:**
 ```text
 You: "Show me details about the python-ci-pipeline workflow"
 ```
-
-This shows inputs, outputs, and what the workflow does - inspect before running!
 
 **Filter by category:**
 ```text
@@ -745,7 +441,7 @@ You: "List workflows tagged with 'python'"
 You: "Show me all git workflows"
 ```
 
-**Popular workflows include:** Python CI pipelines, Git operations (checkout, commit, status), linting tools, test runners, and file operations. The library evolves over time, so use the discovery tools above for the current list.
+**Popular workflows include:** Python CI pipelines, Git operations (checkout, commit, status), linting tools, test runners, and file operations.
 
 ---
 
@@ -756,80 +452,28 @@ When you configure workflows-mcp, your AI assistant gets these tools:
 ### Workflow Execution
 
 - **execute_workflow** - Run a registered workflow by name
-  ```bash
-  Usage: "Run the python-ci-pipeline workflow on ./my-project"
-  Parameters:
-    - mode: "sync" (default) or "async"
-    - timeout: Optional timeout in seconds for async mode (default: 3600, max: 86400)
-
-  Sync mode: Returns results immediately
-  Async mode: Returns job_id for tracking via get_job_status
-  ```
+  - `mode`: "sync" (default) or "async"
+  - `timeout`: Optional timeout in seconds for async mode (default: 3600, max: 86400)
 
 - **execute_inline_workflow** - Execute YAML directly without registration
-  ```text
-  Usage: "Execute this workflow: [YAML content]"
-  ```
 
 ### Workflow Discovery
 
 - **list_workflows** - List all available workflows (optional tag filtering)
-  ```text
-  Usage: "List workflows tagged with 'python'"
-  ```
-
 - **get_workflow_info** - Get detailed information about a workflow
-  ```text
-  Usage: "Show me the python-ci-pipeline workflow details"
-  ```
 
 ### Workflow Validation
 
 - **validate_workflow_yaml** - Validate YAML before execution
-  ```text
-  Usage: "Validate this workflow YAML: [content]"
-  ```
-
 - **get_workflow_schema** - Get the complete JSON schema
-  ```text
-  Usage: "Show me the workflow schema"
-  ```
 
 ### Job Management
 
 - **get_job_status** - Get status and outputs of a workflow job
-  ```bash
-  Usage: "Get status of job_abc123"
-  Parameters: job_id (from execute_workflow in async mode or paused workflows)
-  ```
-
 - **cancel_job** - Cancel a pending or running job
-  ```text
-  Usage: "Cancel job_abc123"
-  Parameters: job_id
-  ```
-
 - **list_jobs** - List workflow jobs with optional filtering
-  ```text
-  Usage: "List all running jobs" or "List completed jobs"
-  Parameters:
-    - status: Optional filter (queued, running, completed, failed, cancelled, paused)
-    - limit: Maximum results (default: 100)
-  ```
-
 - **get_queue_stats** - Get queue statistics for monitoring
-  ```text
-  Usage: "Show queue statistics"
-  Returns: IO queue and job queue metrics
-  ```
-
 - **resume_workflow** - Resume a paused workflow
-  ```text
-  Usage: "Resume job_abc123 with response 'yes'"
-  Parameters:
-    - job_id: ID of paused workflow job
-    - response: User's response to the pause prompt
-  ```
 
 ---
 
@@ -884,21 +528,21 @@ The server loads workflows from:
 
 **Load order priority:** Later directories override earlier ones by workflow name.
 
-**Example:**
-```bash
-WORKFLOWS_TEMPLATE_PATHS="~/.workflows,./project-workflows"
-
-# Load order:
-# 1. Built-in templates
-# 2. ~/.workflows (overrides built-in by name)
-# 3. ./project-workflows (overrides both by name)
-```
-
 ---
 
 ## Examples
 
-### Example 1: Simple Shell Command
+For comprehensive examples demonstrating all features, see the test workflows in `tests/workflows/core/`:
+
+- **File operations**: `tests/workflows/core/file-operations/`
+- **Parallel execution**: `tests/workflows/core/dag-execution/`
+- **Conditionals**: `tests/workflows/core/conditionals/`
+- **Composition**: `tests/workflows/core/composition/`
+- **Secrets**: `tests/workflows/core/secrets/`
+- **Filters**: `tests/workflows/core/filters/`
+- **Iteration**: `tests/workflows/core/for_each/`
+
+### Quick Example: Simple Shell Command
 
 ```yaml
 name: disk-usage
@@ -915,274 +559,6 @@ outputs:
   disk_info:
     value: "{{blocks.check_disk.outputs.stdout}}"
     type: str
-```
-
-### Example 2: Parallel Processing
-
-```yaml
-name: python-quick-check
-description: Quick Python quality checks (ruff check, mypy, ruff format) with optional auto-fix
-tags: [python, linting, formatting, quality, quick]
-
-inputs:
-  project_path:
-    type: str
-    default: "."
-    description: Project path to check
-  fix:
-    type: bool
-    default: false
-    description: Auto-fix issues (ruff check --fix, ruff format without --check)
-
-blocks:
-  - id: ruff
-    type: Shell
-    inputs:
-      command: |
-        if {{inputs.fix}}; then
-          ruff check --fix {{inputs.project_path}}
-        else
-          ruff check {{inputs.project_path}}
-        fi
-
-  - id: mypy
-    type: Shell
-    inputs:
-      command: "mypy {{inputs.project_path}}"
-
-  - id: ruff_format
-    type: Shell
-    inputs:
-      command: |
-        if {{inputs.fix}}; then
-          ruff format {{inputs.project_path}}
-        else
-          ruff format --check {{inputs.project_path}}
-        fi
-
-  - id: summary
-    type: Shell
-    depends_on:
-      - block: ruff
-        required: false
-      - block: mypy
-        required: false
-      - block: ruff_format
-        required: false
-    inputs:
-      command: |
-        echo "Linting Results:"
-        if {{blocks.ruff.failed}}; then
-          echo "========= ruff check ========="
-          echo "{{blocks.ruff.outputs.stdout}}"
-          echo "{{blocks.ruff.outputs.stderr}}"
-        fi
-        if {{blocks.mypy.failed}}; then
-          echo "========= mypy ========="
-          echo "{{blocks.mypy.outputs.stdout}}"
-          echo "{{blocks.mypy.outputs.stderr}}"
-        fi
-        if {{blocks.ruff_format.failed}}; then
-          echo "========= ruff format ========="
-          echo "{{blocks.ruff_format.outputs.stdout}}"
-          echo "{{blocks.ruff_format.outputs.stderr}}"
-        fi
-
-outputs:
-  summary:
-    value: "{{blocks.summary.outputs.stdout}}"
-    type: str
-  passed:
-    value: "{{blocks.ruff.succeeded}} and {{blocks.mypy.succeeded}} and {{blocks.ruff_format.succeeded}}"
-    type: bool
-```
-
-### Example 3: API Integration with LLM
-
-```yaml
-name: analyze-github-repo
-description: Analyze a GitHub repository using AI
-tags: [github, ai, analysis]
-
-inputs:
-  repo_url:
-    type: str
-    description: GitHub repository URL
-    required: true
-
-blocks:
-  - id: fetch_readme
-    type: HttpCall
-    inputs:
-      url: "{{inputs.repo_url}}/raw/main/README.md"
-      method: GET
-
-  - id: analyze
-    type: LLMCall
-    depends_on: [fetch_readme]
-    inputs:
-      profile: default
-      prompt: |
-        Analyze this GitHub repository README and provide:
-        1. Main purpose
-        2. Key technologies used
-        3. Installation complexity (1-10)
-
-        README:
-        {{blocks.fetch_readme.outputs.response_body}}
-      response_schema:
-        type: object
-        required: [purpose, technologies, complexity]
-        properties:
-          purpose: {type: string}
-          technologies: {type: array, items: {type: string}}
-          complexity: {type: number, minimum: 1, maximum: 10}
-
-outputs:
-  analysis:
-    value: "{{blocks.analyze.outputs.response}}"
-    type: dict
-```
-
-### Example 4: Conditional Deployment
-
-```yaml
-name: smart-deploy
-description: Deploy to staging or production based on branch
-tags: [deployment, git]
-
-blocks:
-  - id: get_branch
-    type: Shell
-    inputs:
-      command: "git branch --show-current"
-
-  - id: run_tests
-    type: Shell
-    inputs:
-      command: "npm test"
-
-  - id: deploy_production
-    type: Shell
-    condition: "{{blocks.get_branch.outputs.stdout}} == 'main' and {{blocks.run_tests.succeeded}}"
-    depends_on: [get_branch, run_tests]
-    inputs:
-      command: "./deploy.sh production"
-
-  - id: deploy_staging
-    type: Shell
-    condition: "{{blocks.get_branch.outputs.stdout}} != 'main' and {{blocks.run_tests.succeeded}}"
-    depends_on: [get_branch, run_tests]
-    inputs:
-      command: "./deploy.sh staging"
-
-outputs:
-  deployed_to:
-    value: "{{blocks.deploy_production.succeeded}} ? 'production' : 'staging'"
-    type: str
-```
-
-### Example 5: Automated Version Bump
-
-```yaml
-name: version-bump
-description: Automatically bump version in multiple files
-tags: [versioning, automation]
-
-inputs:
-  path:
-    type: str
-    default: "."
-    description: Project path
-
-  bump_type:
-    type: str
-    description: Type of version bump (major, minor, patch)
-    default: "patch"
-
-blocks:
-  - id: get_info
-    type: Shell
-    inputs:
-      working_dir: "{{inputs.path}}"
-      command: |
-        sed -n 's/^version = "\(.*\)"/\1/p' pyproject.toml > $SCRATCH/version.txt
-        date +%Y-%m-%d > $SCRATCH/date.txt
-    outputs:
-      version:
-        type: str
-        path: "$SCRATCH/version.txt"
-      date:
-        type: str
-        path: "$SCRATCH/date.txt"
-
-  - id: new_version
-    type: Shell
-    depends_on: [get_info]
-    inputs:
-      command: |
-        VERSION="{{blocks.get_info.outputs.version}}"
-        IFS='.' read -r major minor patch <<< "$VERSION"
-        case "{{inputs.bump_type}}" in
-          major) printf "%s" "$((major + 1)).0.0" > $SCRATCH/version.txt;;
-          minor) printf "%s" "$major.$((minor + 1)).0" > $SCRATCH/version.txt;;
-          patch) printf "%s" "$major.$minor.$((patch + 1))" > $SCRATCH/version.txt;;
-        esac
-    outputs:
-      version:
-        type: str
-        path: "$SCRATCH/version.txt"
-
-  - id: update_pyproject
-    type: EditFile
-    depends_on: [new_version]
-    inputs:
-      path: "{{inputs.path}}/pyproject.toml"
-      backup: false
-      operations:
-        - type: regex_replace
-          pattern: 'version = "\d+\.\d+\.\d+"'
-          replacement: 'version = "{{blocks.new_version.outputs.version}}"'
-
-  - id: update_init
-    type: EditFile
-    depends_on: [new_version]
-    inputs:
-      path: "{{inputs.path}}/src/__init__.py"
-      backup: false
-      operations:
-        - type: regex_replace
-          pattern: '__version__ = "\d+\.\d+\.\d+"'
-          replacement: '__version__ = "{{blocks.new_version.outputs.version}}"'
-
-  - id: update_changelog
-    type: EditFile
-    depends_on: [new_version]
-    inputs:
-      path: "{{inputs.path}}/CHANGELOG.md"
-      backup: false
-      operations:
-        - type: insert_lines
-          line_start: 3
-          content: |
-            ## [{{blocks.new_version.outputs.version}}] - {{blocks.get_info.outputs.date}}
-
-            ### Changed
-            - Version bump to {{blocks.new_version.outputs.version}}
-
-outputs:
-  old_version:
-    value: "{{blocks.get_info.outputs.version}}"
-    type: str
-  new_version:
-    value: "{{blocks.new_version.outputs.version}}"
-    type: str
-  files_updated:
-    value: "{{blocks.update_pyproject.succeeded}} and {{blocks.update_init.succeeded}} and {{blocks.update_changelog.succeeded}}"
-    type: bool
-  total_changes:
-    value: "{{blocks.update_pyproject.outputs.lines_modified}} + {{blocks.update_init.outputs.lines_modified}} + {{blocks.update_changelog.outputs.lines_added}}"
-    type: num
 ```
 
 ---
@@ -1260,6 +636,7 @@ workflows-mcp/
 │   │   ├── executors_state.py   # State management executors
 │   │   ├── workflow_runner.py   # Main workflow orchestrator
 │   │   ├── dag.py               # DAG resolution
+│   │   ├── resolver/            # Unified variable resolver (Jinja2)
 │   │   └── secrets/             # Secrets management
 │   ├── templates/               # Built-in workflow templates
 │   │   ├── python/              # Python workflows
@@ -1428,12 +805,11 @@ Workflows MCP uses a **fractal execution model** where workflows and blocks shar
 - **WorkflowRunner** - Orchestrates workflow execution
 - **BlockOrchestrator** - Executes individual blocks with error handling
 - **DAGResolver** - Resolves dependencies and computes parallel execution waves
-- **Variable Resolution** - Five-namespace variable system:
+- **UnifiedVariableResolver** - Jinja2-based variable resolution with four namespaces:
   - `inputs` - Workflow runtime inputs
   - `blocks` - Block outputs and metadata
   - `metadata` - Workflow metadata
   - `secrets` - Server-side secrets (never exposed to LLM)
-  - `__internal__` - Internal execution state
 
 ### Execution Model
 
@@ -1515,11 +891,9 @@ Yes! The server includes:
 
 ### Are all built-in workflows production-ready?
 
-The core workflows (Python CI, Git operations, basic file operations) are actively used and reliable. Some advanced workflows (GitHub integration, TDD orchestration) are still being refined and tested.
+The core workflows (Python CI, Git operations, basic file operations) are actively used and reliable. Some advanced workflows are still being refined and tested.
 
 **Best practice:** Always inspect a workflow before using it (`get_workflow_info` tool) and test on non-production systems first. The workflows in `tests/workflows/` are thoroughly tested in CI and are great examples to learn from.
-
-We're actively expanding test coverage and refining the workflow library. Think of it as an evolving collection - contributions welcome!
 
 ### Can I share workflows with my team?
 

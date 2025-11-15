@@ -608,16 +608,28 @@ class LLMCallExecutor(BlockExecutor):
                 base_url = base_url.rsplit("/chat/completions", 1)[0]
             client_kwargs["base_url"] = base_url
 
-        # Prepare completion parameters
+        # Prepare completion parameters (required parameters only)
         completion_kwargs: dict[str, Any] = {
             "model": inputs.model or "",
             "messages": messages,
         }
 
-        if temperature is not None:
+        # Detect reasoning models (o1, o3, o4, gpt-5 series)
+        # These models don't support temperature and other sampling parameters
+        model_name = (inputs.model or "").lower()
+        is_reasoning_model = any(
+            pattern in model_name
+            for pattern in ["o1-", "o1_", "o3-", "o3_", "o4-", "o4_", "gpt-5", "gpt5"]
+        )
+
+        # Add temperature only if user specified it AND model supports it
+        if temperature is not None and not is_reasoning_model:
             completion_kwargs["temperature"] = temperature
+
+        # Add max_tokens only if user specified it
+        # Use max_completion_tokens (new standard for modern models)
         if max_tokens is not None:
-            completion_kwargs["max_tokens"] = max_tokens
+            completion_kwargs["max_completion_tokens"] = max_tokens
 
         # Native schema validation (OpenAI Structured Outputs)
         if inputs.response_schema:
@@ -636,8 +648,24 @@ class LLMCallExecutor(BlockExecutor):
 
         # Create client and make request
         async with AsyncOpenAI(**client_kwargs) as client:
-            # Let OpenAI SDK exceptions propagate - they'll be caught by retry logic
-            response = await client.chat.completions.create(**completion_kwargs)
+            # Try with max_completion_tokens (new standard), fallback to max_tokens for older models
+            try:
+                response = await client.chat.completions.create(**completion_kwargs)
+            except openai.BadRequestError as e:
+                # Check if error is about max_completion_tokens not being supported
+                error_msg = str(e)
+                if (
+                    max_tokens is not None
+                    and "max_completion_tokens" in error_msg
+                    and "not supported" in error_msg.lower()
+                ):
+                    # Retry with max_tokens for older models
+                    completion_kwargs.pop("max_completion_tokens", None)
+                    completion_kwargs["max_tokens"] = max_tokens
+                    response = await client.chat.completions.create(**completion_kwargs)
+                else:
+                    # Re-raise for other errors
+                    raise
 
             # Extract content with null safety
             message = response.choices[0].message
