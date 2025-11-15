@@ -1,18 +1,32 @@
 name: git-commit
-version: "5.0.0"
+version: "6.0.0"
 author: "workflows-mcp"
-tags: [git, commit, semantic, conventional-commits, interactive, composed]
+tags: [git, commit, semantic, conventional-commits, interactive, composed, breaking-changes]
 description: |
   Create a semantic commit with an LLM-generated message based on staged changes.
 
-  Uses LLM to analyze diffs and determine commit type (feat, fix, docs, refactor, test, chore,
-  perf, style), extract scope, and generate a meaningful description following Conventional
-  Commits specification.
+  Uses LLM to analyze diffs, detect breaking changes, and generate Conventional Commits v1.0.0
+  compliant messages with proper type, scope, body, and footers.
+
+  Breaking change detection analyzes diffs for:
+  - API signature changes (parameters, return types)
+  - Public function/class/endpoint removals
+  - Behavior changes (defaults, validation, error handling)
+  - Configuration changes (required fields, schema changes)
+  - Dependency version requirements
+
+  Generates commit messages with:
+  - Proper type (feat, fix, refactor, docs, test, chore, perf, ci, build, revert)
+  - Optional scope (component/module affected)
+  - Concise summary (imperative mood, ≤72 chars)
+  - Detailed body for complex changes (multi-paragraph support)
+  - Breaking change notation (!) and BREAKING CHANGE footer
+  - Additional footers (issue refs, co-authors)
 
   Workflow steps:
   1. Optional staging of all modified files
   2. Analyze staged changes (via git-analyze-changes)
-  3. Generate semantic commit message using LLM (or use manual override)
+  3. Generate semantic commit message with breaking change detection (or use manual override)
   4. Optional interactive confirmation
   5. Create the commit
 
@@ -40,6 +54,11 @@ inputs:
     default: ""
     description: "(Optional) Manually provide commit message (bypasses LLM generation)"
     required: false
+
+  workspace:
+    type: str
+    description: "Temporary workspace"
+    default: "/tmp/git-commit-workspace"
 
 blocks:
   - id: stage_files
@@ -74,22 +93,31 @@ blocks:
       profile: default
       response_schema:
         type: object
-        required: [type, summary]
+        required: [type, scope, summary, body, is_breaking, breaking_description]
         properties:
           type:
             type: string
-            enum: [feat, fix, docs, style, refactor, perf, test, chore, ci]
+            enum: [feat, fix, docs, style, refactor, perf, test, chore, ci, build, revert]
             description: "Commit type following Conventional Commits"
           scope:
             type: string
-            description: "Component/module affected (optional)"
+            default: ""
+            description: "Component/module affected (optional, e.g., 'api', 'auth', 'config')"
           summary:
             type: string
             maxLength: 72
             description: "Brief summary in imperative mood, lowercase, no period"
           body:
             type: string
-            description: "Detailed explanation of what and why (optional, can be empty string)"
+            default: ""
+            description: "Detailed explanation of what changed and why (use for complex changes, multiple paragraphs allowed)"
+          is_breaking:
+            type: boolean
+            description: "Whether this commit introduces breaking changes"
+          breaking_description:
+            type: string
+            default: ""
+            description: "Description of breaking change and migration steps (required if is_breaking=true, empty string if false)"
       prompt: |
         Analyze the following git changes:
 
@@ -99,54 +127,85 @@ blocks:
         ## Detailed Changes
         {{blocks.analyze_changes.outputs.diff}}
 
-        Generate a semantic commit message following the Conventional Commits specification with the following components:
-        - type: Choose the most appropriate type (feat, fix, docs, style, refactor, perf, test, chore, ci)
-        - scope: Identify the component/module affected (leave empty if not applicable)
-        - summary: Write a concise summary in imperative mood, lowercase, no period, max 72 characters
-        - body: Provide detailed explanation of what changed and why (leave empty if summary is self-explanatory).
+        Generate a semantic commit message following Conventional Commits specification.
+
+        **BREAKING CHANGE DETECTION - CRITICAL:**
+        Carefully analyze the diff for breaking changes:
+        - Public API changes: function/method signature changes, parameter additions/removals/reorderings
+        - Removals: deleted public functions, classes, endpoints, config options
+        - Behavior changes: modified defaults, changed error handling, altered validation rules
+        - Dependencies: major version bumps, increased minimum version requirements
+        - Configuration: new required fields, renamed/removed fields, schema changes
+        - Database/migrations: schema changes requiring data migration
+
+        If ANY breaking change detected, set is_breaking=true and provide breaking_description with:
+        1. What breaks and why
+        2. Migration steps for users
+        3. Alternative approaches if available
+
+        **COMMIT MESSAGE COMPONENTS:**
+
+        type: Choose most appropriate type:
+        - feat: new feature or capability
+        - fix: bug fix
+        - refactor: code restructuring without behavior change
+        - perf: performance improvement
+        - docs: documentation only
+        - test: test additions or modifications
+        - chore: tooling, dependencies, config (no production code change)
+        - ci: CI/CD pipeline changes
+        - build: build system or external dependency changes
+        - revert: revert a previous commit
+
+        scope: Component/module/area affected (e.g., 'api', 'auth', 'parser', 'cli'). Leave empty if change spans multiple areas.
+
+        summary: Imperative mood, lowercase, no period, max 70 chars. Focus on WHAT changed.
+
+        body: Explain WHAT changed and WHY (not HOW - code shows that). Use body when:
+        - Multiple files/components changed
+        - Non-obvious design decisions made
+        - Performance/security implications exist
+        - Complex refactoring requiring context
+        Multiple paragraphs allowed. Use actual newlines (not \n).
+        IMPORTANT: Do NOT include "BREAKING CHANGE" text in body - use is_breaking and breaking_description fields instead.
     condition: "{{blocks.analyze_changes.outputs.has_changes and inputs.commit_message == ''}}"
     depends_on:
       - analyze_changes
 
   - id: select_message
-    type: Shell
-    description: "Select final commit message: manual override or LLM-generated"
+    type: CreateFile
+    description: "Format conventional commit message with breaking change support"
     inputs:
-      env:
-        MANUAL_MESSAGE: "{{inputs.commit_message}}"
-        # Extract LLM response fields using default filter for optional fields
-        COMMIT_TYPE: "{{blocks.llm_generate_message.response.type | default('')}}"
-        COMMIT_SCOPE: "{{blocks.llm_generate_message.response.scope | default('')}}"
-        COMMIT_SUMMARY: "{{blocks.llm_generate_message.response.summary | default('')}}"
-        COMMIT_BODY: "{{blocks.llm_generate_message.response.body | default('')}}"
-      command: |
-        # Use environment variables to safely pass content (GitHub Actions pattern)
-        # This prevents shell expansion of special chars (backticks, $, quotes)
-        if [ -n "$MANUAL_MESSAGE" ]; then
-          printf '%s' "$MANUAL_MESSAGE" > "$SCRATCH/message.txt"
-        else
-          # Format structured commit message from LLM response (fields extracted via filters)
-          # Format: <type>(<scope>): <summary>\n\n<body>
-          if [ -n "$COMMIT_SCOPE" ]; then
-            HEADER="${COMMIT_TYPE}(${COMMIT_SCOPE}): ${COMMIT_SUMMARY}"
-          else
-            HEADER="${COMMIT_TYPE}: ${COMMIT_SUMMARY}"
-          fi
+      path: "{{inputs.workspace}}/message.txt"
+      overwrite: true
+      content: |
+        {%- if inputs.commit_message -%}
+        {{ inputs.commit_message }}
+        {%- else -%}
+        {%- set type = blocks.llm_generate_message.response.type -%}
+        {%- set scope = blocks.llm_generate_message.response.scope -%}
+        {%- set summary = blocks.llm_generate_message.response.summary -%}
+        {%- set is_breaking = blocks.llm_generate_message.response.is_breaking -%}
+        {%- set body = blocks.llm_generate_message.response.body -%}
+        {%- set breaking_desc = blocks.llm_generate_message.response.breaking_description -%}
+        {%- if scope -%}
+        {{ type }}({{ scope }}){% if is_breaking %}!{% endif %}: {{ summary }}
+        {%- else -%}
+        {{ type }}{% if is_breaking %}!{% endif %}: {{ summary }}
+        {%- endif %}
+        {%- if is_breaking and breaking_desc %}
 
-          if [ -n "$COMMIT_BODY" ]; then
-            printf '%s\n\n%s' "$HEADER" "$COMMIT_BODY" > "$SCRATCH/message.txt"
-          else
-            printf '%s' "$HEADER" > "$SCRATCH/message.txt"
-          fi
-        fi
+        BREAKING CHANGE: {{ breaking_desc | replace('\\n', '\n') }}
+        {%- endif %}
+        {%- if body %}
+
+        {{ body | replace('\\n', '\n') }}
+        {%- endif %}
+        {%- endif %}
     condition: "{{blocks.analyze_changes.outputs.has_changes}}"
     depends_on:
       - block: llm_generate_message
         required: false
-    outputs:
-      message:
-        type: str
-        path: "$SCRATCH/message.txt"
 
   - id: confirm_commit
     type: Prompt
@@ -155,7 +214,7 @@ blocks:
       prompt: |
         About to create commit with message:
 
-        {{blocks.select_message.outputs.message}}
+        {{blocks.select_message.outputs.content}}
 
         Proceed with commit? Respond with 'yes' or 'no'
     condition: "{{blocks.analyze_changes.outputs.has_changes and not inputs.auto_commit}}"
@@ -169,7 +228,7 @@ blocks:
       command: |
         set -e  # Exit immediately if any command fails
         # Create commit from message file and get hash
-        git commit -F "$SCRATCH/message.txt"
+        git commit -F "{{inputs.workspace}}/message.txt"
         git rev-parse HEAD
       working_dir: "{{inputs.working_dir}}"
     condition: "{{blocks.analyze_changes.outputs.has_changes and (inputs.auto_commit or blocks.confirm_commit.outputs.response == 'yes')}}"

@@ -4,7 +4,7 @@
     "cleanup_done": true,
     "test_complex_chain_output": "Complex chain: 'hello_world' (length: 11)\nSUCCESS: trim -> lower -> replace -> length chain worked",
     "test_number_chain_output": "Number chain: '42' (length: 2)\nSUCCESS: abs -> string -> length chain worked",
-    "test_output_chain_output": "Output chain - JSON length: 90\nJSON preview: {path: /tmp/test-filters-chaining/data.txt...\nSUCCESS: outputs -> tojson -> length chain worked",
+    "test_output_chain_output": "Output chain - JSON length: 117\nJSON preview: ...\nSUCCESS: outputs -> tojson -> length chain worked",
     "test_safe_access_chain_output": "Safe access chain: {}\nSUCCESS: get -> tojson chain worked",
     "test_string_chain_output": "String chain result: 'hello world'\nSUCCESS: trim -> lower chain worked"
   },
