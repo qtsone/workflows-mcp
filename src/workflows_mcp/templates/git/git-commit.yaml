@@ -18,7 +18,7 @@ description: |
   Generates commit messages with:
   - Proper type (feat, fix, refactor, docs, test, chore, perf, ci, build, revert)
   - Optional scope (component/module affected)
-  - Concise summary (imperative mood, ≤72 chars)
+  - Concise summary (imperative mood, ≤70 chars)
   - Detailed body for complex changes (multi-paragraph support)
   - Breaking change notation (!) and BREAKING CHANGE footer
   - Additional footers (issue refs, co-authors)
@@ -98,26 +98,27 @@ blocks:
           type:
             type: string
             enum: [feat, fix, docs, style, refactor, perf, test, chore, ci, build, revert]
-            description: "Commit type following Conventional Commits"
+            description: "(Required) Commit type following Conventional Commits"
           scope:
             type: string
             default: ""
-            description: "Component/module affected (optional, e.g., 'api', 'auth', 'config')"
+            description: "(Optional) Component/module affected (optional, e.g., 'api', 'auth', 'config')"
           summary:
             type: string
-            maxLength: 72
-            description: "Brief summary in imperative mood, lowercase, no period"
+            maxLength: 70
+            description: "(Required) Brief summary in imperative mood, lowercase, no period"
           body:
             type: string
             default: ""
-            description: "Detailed explanation of what changed and why (use for complex changes, multiple paragraphs allowed)"
+            description: "(Optional) Concise explanation of what changed and why"
           is_breaking:
             type: boolean
-            description: "Whether this commit introduces breaking changes"
+            default: false
+            description: "(Optional) Does this commit introduce breaking changes?(true/false)"
           breaking_description:
             type: string
             default: ""
-            description: "Description of breaking change and migration steps (required if is_breaking=true, empty string if false)"
+            description: "(Optional) In case of breaking changes write the details here"
       prompt: |
         Analyze the following git changes:
 
@@ -138,7 +139,7 @@ blocks:
         - Configuration: new required fields, renamed/removed fields, schema changes
         - Database/migrations: schema changes requiring data migration
 
-        If ANY breaking change detected, set is_breaking=true and provide breaking_description with:
+        If ANY breaking change detected, set is_breaking=true and only include breaking_description with:
         1. What breaks and why
         2. Migration steps for users
         3. Alternative approaches if available
@@ -161,12 +162,12 @@ blocks:
 
         summary: Imperative mood, lowercase, no period, max 70 chars. Focus on WHAT changed.
 
-        body: Explain WHAT changed and WHY (not HOW - code shows that). Use body when:
+        body: Explain concisely WHAT changed and WHY (not HOW - code shows that).
+        Use body when:
         - Multiple files/components changed
         - Non-obvious design decisions made
         - Performance/security implications exist
         - Complex refactoring requiring context
-        Multiple paragraphs allowed. Use actual newlines (not \n).
         IMPORTANT: Do NOT include "BREAKING CHANGE" text in body - use is_breaking and breaking_description fields instead.
     condition: "{{blocks.analyze_changes.outputs.has_changes and inputs.commit_message == ''}}"
     depends_on:
