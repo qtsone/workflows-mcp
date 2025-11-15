@@ -85,6 +85,10 @@ class CreateFileOutput(BlockOutput):
         default=False,
         description="True if file was created, False if overwritten or failed",
     )
+    content: str = Field(
+        default="",
+        description="Content written to the file (empty string if failed)",
+    )
 
 
 class CreateFileExecutor(BlockExecutor):
@@ -176,6 +180,7 @@ class CreateFileExecutor(BlockExecutor):
             path=str(file_path),
             size_bytes=write_result.value,
             created=(not file_existed),
+            content=inputs.content,
         )
 
 

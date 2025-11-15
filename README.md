@@ -369,6 +369,21 @@ Call AI models directly from workflows with automatic retry and validation. Conf
           type: string
 ```
 
+**Profile Fallback for Portable Workflows:**
+
+When a workflow requests a profile that doesn't exist in your config, the system automatically falls back to `default_profile` with a warning. This enables **workflow portability** - authors can write workflows with semantic profile names (like `cloud-mini`, `cloud-thinking`, `local`) without requiring specific user configurations.
+
+```yaml
+# ~/.workflows/llm-config.yml
+profiles:
+  my-model:
+    provider: openai-cloud
+    model: gpt-4o
+    max_tokens: 4000
+
+default_profile: my-model
+```
+
 ### 🔁 Universal Iteration (for_each)
 
 Iterate over collections with ANY block type using `for_each`. Supports parallel and sequential execution modes with error handling.

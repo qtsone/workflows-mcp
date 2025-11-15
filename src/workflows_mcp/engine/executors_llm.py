@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 from enum import Enum
 from typing import Any, ClassVar, cast
 
@@ -31,6 +32,9 @@ from .interpolation import (
     resolve_interpolatable_enum,
     resolve_interpolatable_numeric,
 )
+from .llm_config import LLMConfigLoader
+
+logger = logging.getLogger(__name__)
 
 # ===========================================================================
 # Type Definitions
@@ -192,23 +196,30 @@ class LLMCallInput(BlockInput):
 
     @model_validator(mode="after")
     def validate_profile_or_provider_model(self) -> LLMCallInput:
-        """Ensure either profile OR (provider + model) is specified.
+        """Validate LLM configuration - profile and provider are mutually exclusive.
+
+        Valid configurations:
+        1. profile specified (resolved from config, may fallback to default_profile)
+        2. provider specified (model is optional, can be empty string)
+        3. neither specified (will error at execution with better context)
+
+        Invalid:
+        - Both profile and provider specified (ambiguous)
 
         Raises:
-            ValueError: Missing required configuration
+            ValueError: Invalid configuration
         """
-        if self.profile is None:
-            # No profile - provider and model are required
-            if self.provider is None:
-                raise ValueError(
-                    "Either 'profile' OR 'provider' must be specified. "
-                    "Use profile for config-based setup, or direct provider+model."
-                )
-            if self.model is None:
-                raise ValueError(
-                    "When 'provider' is specified without 'profile', 'model' is required."
-                )
+        # Error: Both profile and provider specified
+        if self.profile is not None and self.provider is not None:
+            raise ValueError(
+                "Cannot specify both 'profile' and 'provider'. Choose one:\n"
+                "  - Use 'profile' for config-based setup, OR\n"
+                "  - Use 'provider' (+ optional 'model') for direct specification"
+            )
 
+        # OK: Profile specified (validated at execution)
+        # OK: Provider specified (model is optional)
+        # OK: Neither specified (error at execution with better context)
         return self
 
 
@@ -305,21 +316,41 @@ class LLMCallExecutor(BlockExecutor):
     async def execute(  # type: ignore[override]
         self, inputs: LLMCallInput, context: Execution
     ) -> LLMCallOutput:
-        """Execute LLM call with retry logic and client-side schema validation.
+        """Execute LLM call with retry logic and profile fallback.
 
-        Resolves profile configuration, calls provider API with exponential backoff
-        retry, and validates responses client-side for maximum compatibility.
+        Resolves profile configuration with fallback to default_profile, calls provider
+        API with exponential backoff retry, and validates responses client-side for
+        maximum compatibility.
 
         Raises:
             ValueError: Invalid configuration
             httpx.*: Network errors after retry exhaustion
         """
-        # Step 1: Profile Resolution (if profile specified)
-        effective_inputs = inputs
-        if inputs.profile is not None:
-            effective_inputs = await self._resolve_profile_to_inputs(inputs, context)
+        # Get execution context for config access
+        execution_context = context.execution_context
+        if execution_context is None:
+            raise ValueError("ExecutionContext not available. Cannot resolve LLM configuration.")
 
-        # Step 2: Resolve interpolatable numeric fields to their actual types
+        llm_config_loader = execution_context.llm_config_loader
+
+        # Step 1: Resolve profile (with fallback logic)
+        effective_profile = self._resolve_profile_with_fallback(inputs, llm_config_loader)
+
+        # Step 2: Profile resolution (if profile determined)
+        effective_inputs = inputs
+        profile_fallback_occurred = False
+
+        if effective_profile is not None:
+            # Track if fallback occurred (profile requested but different one used)
+            profile_fallback_occurred = (
+                inputs.profile is not None and inputs.profile != effective_profile
+            )
+
+            # Create new input with resolved profile
+            inputs_with_profile = inputs.model_copy(update={"profile": effective_profile})
+            effective_inputs = await self._resolve_profile_to_inputs(inputs_with_profile, context)
+
+        # Step 3: Resolve interpolatable numeric fields to their actual types
         max_retries = resolve_interpolatable_numeric(
             effective_inputs.max_retries, int, "max_retries", ge=1, le=10
         )
@@ -382,13 +413,21 @@ class LLMCallExecutor(BlockExecutor):
                         )
 
                         # Success - return validated JSON structure directly
+                        metadata = {
+                            "attempts": attempts,
+                            **provider_metadata,
+                        }
+                        # Add fallback info if applicable
+                        if profile_fallback_occurred:
+                            metadata["profile_fallback"] = {
+                                "requested": inputs.profile,
+                                "resolved": effective_profile,
+                            }
+
                         return LLMCallOutput(
                             response=validated_response,
                             success=True,
-                            metadata={
-                                "attempts": attempts,
-                                **provider_metadata,
-                            },
+                            metadata=metadata,
                         )
                     except ValueError as e:
                         # Validation failed
@@ -397,15 +436,23 @@ class LLMCallExecutor(BlockExecutor):
 
                         # If this is the last attempt, return with validation failure
                         if attempt == max_retries - 1:
+                            metadata = {
+                                "attempts": attempts,
+                                "validation_failed": True,
+                                "validation_error": validation_error,
+                                **provider_metadata,
+                            }
+                            # Add fallback info if applicable
+                            if profile_fallback_occurred:
+                                metadata["profile_fallback"] = {
+                                    "requested": inputs.profile,
+                                    "resolved": effective_profile,
+                                }
+
                             return LLMCallOutput(
                                 response={"content": response_text},
                                 success=True,  # API call succeeded, validation failed
-                                metadata={
-                                    "attempts": attempts,
-                                    "validation_failed": True,
-                                    "validation_error": validation_error,
-                                    **provider_metadata,
-                                },
+                                metadata=metadata,
                             )
 
                         # Otherwise, wait and retry with feedback
@@ -414,13 +461,21 @@ class LLMCallExecutor(BlockExecutor):
                         continue
                 else:
                     # No schema provided - return raw text in content key
+                    metadata = {
+                        "attempts": attempts,
+                        **provider_metadata,
+                    }
+                    # Add fallback info if applicable
+                    if profile_fallback_occurred:
+                        metadata["profile_fallback"] = {
+                            "requested": inputs.profile,
+                            "resolved": effective_profile,
+                        }
+
                     return LLMCallOutput(
                         response={"content": response_text},
                         success=True,
-                        metadata={
-                            "attempts": attempts,
-                            **provider_metadata,
-                        },
+                        metadata=metadata,
                     )
 
             except (
@@ -526,6 +581,68 @@ class LLMCallExecutor(BlockExecutor):
             temperature=resolved_config.temperature,
             max_tokens=resolved_config.max_tokens,
             validation_prompt_template=inputs.validation_prompt_template,
+        )
+
+    def _resolve_profile_with_fallback(
+        self,
+        inputs: LLMCallInput,
+        llm_config_loader: LLMConfigLoader,
+    ) -> str | None:
+        """Resolve profile with fallback to default_profile.
+
+        Resolution logic:
+        1. Direct provider/model specified → None (bypass profiles)
+        2. Profile exists in config → use it
+        3. Profile missing + default_profile exists → WARN and use default_profile
+        4. Profile missing + no default_profile → ERROR
+        5. No profile and no provider → ERROR (explicit required)
+
+        Args:
+            inputs: LLMCall inputs with profile/provider configuration
+            llm_config_loader: Config loader with profile definitions
+
+        Returns:
+            Profile name to use, or None for direct provider config
+
+        Raises:
+            ValueError: Missing or invalid configuration
+        """
+        config = llm_config_loader.load_config()
+
+        # Case 1: Direct provider/model bypasses profiles
+        if inputs.provider is not None:
+            return None
+
+        # Case 2: Profile specified
+        if inputs.profile is not None:
+            # Profile exists - use it
+            if inputs.profile in config.profiles:
+                return inputs.profile
+
+            # Profile missing - try fallback to default_profile
+            if config.default_profile is not None:
+                logger.warning(
+                    f"Profile '{inputs.profile}' not found in config. "
+                    f"Falling back to default_profile '{config.default_profile}'. "
+                    f"Available profiles: {', '.join(config.profiles.keys())}"
+                )
+                return config.default_profile
+
+            # No fallback available - error
+            available = ", ".join(config.profiles.keys()) if config.profiles else "none"
+            raise ValueError(
+                f"Profile '{inputs.profile}' not found and no default_profile set.\n"
+                f"Available profiles: {available}\n"
+                f"Either:\n"
+                f"  1. Add '{inputs.profile}' profile to ~/.workflows/llm-config.yml, OR\n"
+                f"  2. Set 'default_profile' in ~/.workflows/llm-config.yml"
+            )
+
+        # Case 3: Neither profile nor provider - error (explicit required)
+        raise ValueError(
+            "LLM configuration required. Either:\n"
+            "  1. Specify 'profile' in LLMCall block, OR\n"
+            "  2. Specify 'provider' and 'model' directly"
         )
 
     async def _call_provider(

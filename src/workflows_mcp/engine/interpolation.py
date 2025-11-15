@@ -269,14 +269,15 @@ def interpolatable_numeric_validator(
     le: int | float | None = None,
     gt: int | float | None = None,
     lt: int | float | None = None,
-) -> Callable[[type[Any], int | float | str], int | float | str]:
+) -> Callable[[type[Any], int | float | str | None], int | float | str | None]:
     """
     Create a Pydantic field validator for numeric fields that support interpolation.
 
     This validator allows:
-    1. Numeric values (already validated) - pass through with constraint checks
-    2. Interpolation strings like "{{inputs.timeout}}" - pass through for later resolution
-    3. Numeric strings - convert to numeric type with constraint checks
+    1. None for optional fields - pass through without validation
+    2. Numeric values (already validated) - pass through with constraint checks
+    3. Interpolation strings like "{{inputs.timeout}}" - pass through for later resolution
+    4. Numeric strings - convert to numeric type with constraint checks
 
     Args:
         numeric_type: The numeric type (int or float)
@@ -302,7 +303,11 @@ def interpolatable_numeric_validator(
         ValueError: If value violates constraints or is invalid type
     """
 
-    def validator(cls: type[Any], v: int | float | str) -> int | float | str:
+    def validator(cls: type[Any], v: int | float | str | None) -> int | float | str | None:
+        # None for optional fields - pass through
+        if v is None:
+            return None
+
         # Interpolation string - pass through for later resolution
         if isinstance(v, str) and has_interpolation(v):
             return v
