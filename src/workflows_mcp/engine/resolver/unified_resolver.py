@@ -508,16 +508,27 @@ class UnifiedVariableResolver:
         if not self.secret_provider or not secret_keys:
             return
 
-        secret_proxy = self.jinja_context.get("secrets")
-        if not isinstance(secret_proxy, SecretProxy):
+        secrets_value = self.jinja_context.get("secrets")
+
+        # If already materialized (plain dict), fetch from original proxy
+        if isinstance(secrets_value, dict) and not isinstance(secrets_value, SecretProxy):
+            # Already materialized - need to fetch new secrets using the provider directly
+            secret_proxy = SecretProxy(self.secret_provider, self.audit_log)
+            existing_secrets = secrets_value
+        elif isinstance(secrets_value, SecretProxy):
+            # First time - use the proxy
+            secret_proxy = secrets_value
+            existing_secrets = {}
+        else:
+            # No secrets configured
             return
 
         # Pre-fetch all referenced secrets (async - supports network calls)
         tasks = [secret_proxy.get(key) for key in secret_keys]
         results = await asyncio.gather(*tasks, return_exceptions=True)
 
-        # Materialize: replace SecretProxy with plain dict
-        secret_values = {}
+        # Materialize: merge new secrets with existing ones
+        secret_values = dict(existing_secrets)  # Copy existing secrets
         for key, result in zip(secret_keys, results):
             if isinstance(result, Exception):
                 # Re-raise first error (audit logging already done in SecretProxy.get)

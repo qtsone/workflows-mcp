@@ -401,12 +401,12 @@ blocks:
   - id: calculate_compliance
     type: Shell
     inputs:
-      command: "# Parse LLM response to count compliance\nCOMPLIANCE_TEXT=\"{{blocks.request_prd_compliance.response}}\"\n\n# Count status indicators\nIMPLEMENTED=$(echo \"$COMPLIANCE_TEXT\" | grep -c \"✅ IMPLEMENTED\" || echo \"0\")\nPARTIAL=$(echo \"$COMPLIANCE_TEXT\" | grep -c \"⚠️  PARTIAL\" || echo \"0\")\nMISSING=$(echo \"$COMPLIANCE_TEXT\" | grep -c \"❌ MISSING\" || echo \"0\")\n\nTOTAL=$((IMPLEMENTED + PARTIAL + MISSING))\n\nif [ \"$TOTAL\" -eq 0 ]; then\n  echo \"⚠️  Unable to parse compliance report\"\n  echo \"compliance_percent=0\"\n  exit 0\nfi\n\n# Calculate percentage (full credit for implemented, half credit for partial)\nWEIGHTED=$((IMPLEMENTED * 100 + PARTIAL * 50))\nCOMPLIANCE_PERCENT=$((WEIGHTED / TOTAL))\n\necho \"PRD Compliance Summary:\"\necho \"  ✅ Implemented: $IMPLEMENTED\"\necho \"  ⚠️  Partial: $PARTIAL\"\necho \"  ❌ Missing: $MISSING\"\necho \"  \U0001F4CA Compliance: ${COMPLIANCE_PERCENT}%\"\necho \"\"\necho \"$COMPLIANCE_PERCENT\" > \"$SCRATCH/compliance_percent.txt\"\n"
+      command: "# Parse LLM response to count compliance\nCOMPLIANCE_TEXT=\"{{blocks.request_prd_compliance.response}}\"\n\n# Count status indicators\nIMPLEMENTED=$(echo \"$COMPLIANCE_TEXT\" | grep -c \"✅ IMPLEMENTED\" || echo \"0\")\nPARTIAL=$(echo \"$COMPLIANCE_TEXT\" | grep -c \"⚠️  PARTIAL\" || echo \"0\")\nMISSING=$(echo \"$COMPLIANCE_TEXT\" | grep -c \"❌ MISSING\" || echo \"0\")\n\nTOTAL=$((IMPLEMENTED + PARTIAL + MISSING))\n\nif [ \"$TOTAL\" -eq 0 ]; then\n  echo \"⚠️  Unable to parse compliance report\"\n  echo \"compliance_percent=0\"\n  exit 0\nfi\n\n# Calculate percentage (full credit for implemented, half credit for partial)\nWEIGHTED=$((IMPLEMENTED * 100 + PARTIAL * 50))\nCOMPLIANCE_PERCENT=$((WEIGHTED / TOTAL))\n\necho \"PRD Compliance Summary:\"\necho \"  ✅ Implemented: $IMPLEMENTED\"\necho \"  ⚠️  Partial: $PARTIAL\"\necho \"  ❌ Missing: $MISSING\"\necho \"  \U0001F4CA Compliance: ${COMPLIANCE_PERCENT}%\"\necho \"\"\necho \"$COMPLIANCE_PERCENT\" > \"{{tmp}}/compliance_percent.txt\"\n"
       timeout: 10
     outputs:
       compliance_percent:
         type: num
-        path: "$SCRATCH/compliance_percent.txt"
+        path: "{{tmp}}/compliance_percent.txt"
         description: "PRD compliance percentage (0-100)"
     depends_on:
       - request_prd_compliance

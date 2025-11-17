@@ -1039,6 +1039,7 @@ class WorkflowRunner:
             "inputs": exec_context.inputs,
             "metadata": metadata,
             "blocks": blocks,
+            "tmp": str(exec_context.scratch_dir) if exec_context.scratch_dir else "",
         }
 
     async def _evaluate_condition(self, condition: str, exec_context: Execution) -> bool:

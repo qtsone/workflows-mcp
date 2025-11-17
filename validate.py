@@ -58,7 +58,7 @@ def validate_directory(dir_path: Path) -> dict[str, tuple[bool, str]]:
         return {"error": (False, f"Not a directory: {dir_path}")}
 
     # Find all YAML files
-    yaml_files = list(dir_path.glob("*.yaml")) + list(dir_path.glob("*.yml"))
+    yaml_files = list(dir_path.glob("**/*.yaml")) + list(dir_path.glob("**/*.yml"))
 
     if not yaml_files:
         return {"error": (False, f"No YAML files found in: {dir_path}")}

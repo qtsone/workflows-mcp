@@ -38,10 +38,10 @@ blocks:
       command: |
         CURRENT={{blocks.read_current_state.outputs.data.current}}
         NEXT=$((CURRENT + 1))
-        echo $NEXT > "$SCRATCH/next.txt"
+        echo $NEXT > "{{tmp}}/next.txt"
     outputs:
       number:
-        path: "$SCRATCH/next.txt"
+        path: "{{tmp}}/next.txt"
         type: num
     depends_on: [read_current_state]
   - id: update_state

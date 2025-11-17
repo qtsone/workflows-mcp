@@ -398,8 +398,8 @@ blocks:
         ARCH_FILE="{{inputs.project_path}}/{{inputs.architecture_output_path}}"
 
         if [ ! -f "$ARCH_FILE" ]; then
-          echo "0" > "$SCRATCH/module_count.txt"
-          echo "" > "$SCRATCH/modules_list.txt"
+          echo "0" > "{{tmp}}/module_count.txt"
+          echo "" > "{{tmp}}/modules_list.txt"
           exit 1
         fi
 
@@ -409,18 +409,18 @@ blocks:
         # Extract module names
         MODULES=$(grep "^Module:" "$ARCH_FILE" | sed 's/Module: //' | tr '\n' ',' | sed 's/,$//')
 
-        echo "$MODULE_COUNT" > "$SCRATCH/module_count.txt"
-        echo "$MODULES" > "$SCRATCH/modules_list.txt"
+        echo "$MODULE_COUNT" > "{{tmp}}/module_count.txt"
+        echo "$MODULES" > "{{tmp}}/modules_list.txt"
         echo "✅ Identified $MODULE_COUNT modules"
       timeout: 30
     outputs:
       module_count:
         type: num
-        path: "$SCRATCH/module_count.txt"
+        path: "{{tmp}}/module_count.txt"
         description: "Number of modules identified in architecture"
       modules_list:
         type: str
-        path: "$SCRATCH/modules_list.txt"
+        path: "{{tmp}}/modules_list.txt"
         description: "Comma-separated list of module names"
     depends_on:
       - create_architecture_file

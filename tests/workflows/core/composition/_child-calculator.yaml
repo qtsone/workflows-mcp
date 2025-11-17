@@ -22,10 +22,10 @@ blocks:
     type: Shell
     inputs:
       command: |
-        python3 -c "print({{inputs.number_a}} {{inputs.operation}} {{inputs.number_b}})" > $SCRATCH/result.txt
+        python3 -c "print({{inputs.number_a}} {{inputs.operation}} {{inputs.number_b}})" > {{tmp}}/result.txt
     outputs:
       result:
-        path: $SCRATCH/result.txt
+        path: "{{tmp}}/result.txt"
         type: num
 outputs:
   success:

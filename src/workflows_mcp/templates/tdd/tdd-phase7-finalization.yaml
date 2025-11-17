@@ -111,8 +111,8 @@ blocks:
           TOTAL_TESTS=$(echo "$STATE" | grep -o '"total_tests"[[:space:]]*:[[:space:]]*[0-9]\+' | grep -o '[0-9]\+' | head -1)
           COVERAGE=$(echo "$STATE" | grep -o '"overall_coverage"[[:space:]]*:[[:space:]]*[0-9.]\+' | grep -o '[0-9.]\+' | head -1)
 
-          echo "$TOTAL_TESTS" > "$SCRATCH/test_count.txt"
-          echo "$COVERAGE" > "$SCRATCH/coverage.txt"
+          echo "$TOTAL_TESTS" > "{{tmp}}/test_count.txt"
+          echo "$COVERAGE" > "{{tmp}}/coverage.txt"
           exit 0
         else
           echo "❌ ERROR: Phase 6 not complete. Complete validation testing first."
@@ -123,12 +123,12 @@ blocks:
     outputs:
       test_count:
         type: num
-        path: "$SCRATCH/test_count.txt"
+        path: "{{tmp}}/test_count.txt"
         description: "Total number of tests from Phase 6"
         required: false
       coverage:
         type: num
-        path: "$SCRATCH/coverage.txt"
+        path: "{{tmp}}/coverage.txt"
         description: "Test coverage percentage from Phase 6"
         required: false
     depends_on:
@@ -540,12 +540,12 @@ blocks:
 
         # Extract module count from Phase 4
         MODULE_COUNT=$(echo "$STATE" | grep -o '"modules"[[:space:]]*:[[:space:]]*\[[^]]*\]' | grep -o '\[' | wc -l)
-        echo "$MODULE_COUNT" > "$SCRATCH/module_count.txt"
+        echo "$MODULE_COUNT" > "{{tmp}}/module_count.txt"
       timeout: 10
     outputs:
       module_count:
         type: num
-        path: "$SCRATCH/module_count.txt"
+        path: "{{tmp}}/module_count.txt"
         description: "Number of modules from Phase 4"
     depends_on:
       - validate_phase6_complete
@@ -625,12 +625,12 @@ blocks:
           echo "ℹ️  setup.py found (legacy)"
         fi
 
-        echo "true" > "$SCRATCH/config_verified.txt"
+        echo "true" > "{{tmp}}/config_verified.txt"
       timeout: 30
     outputs:
       config_verified:
         type: bool
-        path: "$SCRATCH/config_verified.txt"
+        path: "{{tmp}}/config_verified.txt"
         description: "Whether project configuration is verified"
     depends_on:
       - create_changelog
@@ -663,16 +663,16 @@ blocks:
 
         if [ -f requirements.txt ]; then
           echo "✅ requirements.txt generated for deployment"
-          echo "true" > "$SCRATCH/requirements_generated.txt"
+          echo "true" > "{{tmp}}/requirements_generated.txt"
         else
           echo "⚠️  requirements.txt not generated"
-          echo "false" > "$SCRATCH/requirements_generated.txt"
+          echo "false" > "{{tmp}}/requirements_generated.txt"
         fi
       timeout: 60
     outputs:
       requirements_generated:
         type: bool
-        path: "$SCRATCH/requirements_generated.txt"
+        path: "{{tmp}}/requirements_generated.txt"
         description: "Whether requirements.txt was successfully generated"
     depends_on:
       - verify_project_config

@@ -110,13 +110,13 @@ blocks:
         # Sanitize name (lowercase, replace spaces/special chars with hyphens)
         PROJECT_NAME=$(echo "$PROJECT_NAME" | tr '[:upper:]' '[:lower:]' | sed 's/[^a-z0-9_-]/-/g')
 
-        echo "$PROJECT_NAME" > "$SCRATCH/project_name.txt"
+        echo "$PROJECT_NAME" > "{{tmp}}/project_name.txt"
         echo "✅ Project name: $PROJECT_NAME"
       timeout: 10
     outputs:
       project_name:
         type: str
-        path: "$SCRATCH/project_name.txt"
+        path: "{{tmp}}/project_name.txt"
         description: "Detected or provided project name"
     depends_on:
       - validate_phase2_complete
@@ -216,12 +216,12 @@ blocks:
         EOF
 
         echo "✅ Created pyproject.toml with Python {{inputs.python_version}}"
-        echo "$USE_UV" > "$SCRATCH/use_uv.txt"
+        echo "$USE_UV" > "{{tmp}}/use_uv.txt"
       timeout: 60
     outputs:
       use_uv:
         type: bool
-        path: "$SCRATCH/use_uv.txt"
+        path: "{{tmp}}/use_uv.txt"
         description: "Whether uv is available and will be used"
     depends_on:
       - create_directory_structure
@@ -244,12 +244,12 @@ blocks:
         fi
 
         echo "✅ Dependencies installed via $INSTALL_METHOD"
-        echo "$INSTALL_METHOD" > "$SCRATCH/install_method.txt"
+        echo "$INSTALL_METHOD" > "{{tmp}}/install_method.txt"
       timeout: 300
     outputs:
       install_method:
         type: str
-        path: "$SCRATCH/install_method.txt"
+        path: "{{tmp}}/install_method.txt"
         description: "Method used to install dependencies (uv or pip)"
     depends_on:
       - initialize_uv_project
@@ -366,22 +366,22 @@ blocks:
         # Check if pytest ran successfully (even with 0 tests)
         if echo "$PYTEST_OUTPUT" | grep -q "no tests ran\|collected 0"; then
           echo "✅ Pytest setup verified (0 tests collected - expected at this stage)"
-          echo "true" > "$SCRATCH/pytest_working.txt"
+          echo "true" > "{{tmp}}/pytest_working.txt"
           exit 0
         elif echo "$PYTEST_OUTPUT" | grep -q "error\|ERROR\|failed to collect"; then
           echo "⚠️  Pytest encountered errors"
-          echo "false" > "$SCRATCH/pytest_working.txt"
+          echo "false" > "{{tmp}}/pytest_working.txt"
           exit 1
         else
           echo "✅ Pytest appears to be working"
-          echo "true" > "$SCRATCH/pytest_working.txt"
+          echo "true" > "{{tmp}}/pytest_working.txt"
           exit 0
         fi
       timeout: 60
     outputs:
       pytest_working:
         type: bool
-        path: "$SCRATCH/pytest_working.txt"
+        path: "{{tmp}}/pytest_working.txt"
         description: "Whether pytest is properly configured and working"
     depends_on:
       - create_readme

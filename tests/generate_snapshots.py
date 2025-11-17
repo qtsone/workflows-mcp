@@ -48,6 +48,12 @@ HTTP_WORKFLOWS = {
     "http-basic-get",
     "secrets-http-auth",
     "secrets-multiple-blocks",
+    "core-secrets-management-test",
+}
+
+# LLM workflows that need api_url injected
+LLM_WORKFLOWS = {
+    "executor-llm-operations-test",
 }
 
 
@@ -98,6 +104,67 @@ def create_httpbin_mock() -> HTTPServer:
     httpserver.expect_request("/headers").respond_with_handler(headers_handler)
 
     return httpserver
+
+
+def create_llm_mock() -> HTTPServer:
+    """Create LLM mock server that mimics OpenAI-compatible chat completion API."""
+    llmserver = HTTPServer(host="127.0.0.1", port=0)
+    llmserver.start()
+
+    def chat_completion_handler(request):
+        """Return OpenAI-compatible chat completion response."""
+        # Parse request body
+        if request.is_json and request.json is not None:
+            request_data = dict(request.json)
+        else:
+            request_data = {}
+
+        # Extract prompt from messages
+        messages = request_data.get("messages", [])
+        user_message = next((msg["content"] for msg in messages if msg.get("role") == "user"), "")
+
+        # Generate response based on prompt
+        if "capital" in user_message.lower() and "france" in user_message.lower():
+            response_text = "Paris"
+        elif "test" in user_message.lower():
+            response_text = "This is a test response from the mock LLM server."
+        else:
+            response_text = f"Mock response to: {user_message[:50]}"
+
+        # Return OpenAI-compatible response
+        response_data = {
+            "id": "chatcmpl-mock123",
+            "object": "chat.completion",
+            "created": 1234567890,
+            "model": request_data.get("model", "gpt-5-mini"),
+            "choices": [
+                {
+                    "index": 0,
+                    "message": {
+                        "role": "assistant",
+                        "content": response_text,
+                    },
+                    "finish_reason": "stop",
+                }
+            ],
+            "usage": {
+                "prompt_tokens": 10,
+                "completion_tokens": 5,
+                "total_tokens": 15,
+            },
+        }
+
+        return Response(json.dumps(response_data), content_type="application/json")
+
+    # OpenAI SDK uses /v1/chat/completions or /chat/completions
+    llmserver.expect_request("/v1/chat/completions", method="POST").respond_with_handler(
+        chat_completion_handler
+    )
+    llmserver.expect_request("/chat/completions", method="POST").respond_with_handler(
+        chat_completion_handler
+    )
+
+    return llmserver
 
 
 @asynccontextmanager
@@ -164,12 +231,17 @@ async def main() -> None:
     print("=" * 80)
     print("WORKFLOW SNAPSHOT GENERATOR")
     print("=" * 80)
-    print("\n🚀 Starting HTTP mock server...", flush=True)
+    print("\n🚀 Starting mock servers...", flush=True)
 
     # Create HTTP mock server for reliable testing (no external dependencies)
     httpserver = create_httpbin_mock()
     base_url = httpserver.url_for("/").rstrip("/")
-    print(f"✅ HTTP mock server started at {base_url}\n")
+    print(f"✅ HTTP mock server started at {base_url}")
+
+    # Create LLM mock server for LLM workflow testing
+    llmserver = create_llm_mock()
+    llm_api_url = llmserver.url_for("/").rstrip("/")
+    print(f"✅ LLM mock server started at {llm_api_url}\n")
 
     try:
         print("🚀 Starting MCP server...", flush=True)
@@ -222,7 +294,11 @@ async def main() -> None:
                 print(f"[{i}/{len(workflows)}] {workflow_name}", flush=True)
                 try:
                     # Prepare inputs for HTTP workflows
-                    inputs = {"base_url": base_url} if workflow_name in HTTP_WORKFLOWS else {}
+                    inputs: dict[str, Any] = {}
+                    if workflow_name in HTTP_WORKFLOWS:
+                        inputs["base_url"] = base_url
+                    elif workflow_name in LLM_WORKFLOWS:
+                        inputs["api_url"] = llm_api_url
 
                     if workflow_name == "secrets-redaction":
                         import hashlib
@@ -267,9 +343,10 @@ async def main() -> None:
             print("=" * 80 + "\n")
 
     finally:
-        # Clean up HTTP mock server
+        # Clean up mock servers
         httpserver.stop()
-        print("🛑 HTTP mock server stopped")
+        llmserver.stop()
+        print("🛑 Mock servers stopped")
 
 
 if __name__ == "__main__":

@@ -142,7 +142,7 @@ class OutputSchema(BaseModel):
         outputs:
           test_results:
             type: json
-            path: "$SCRATCH/test-results.json"
+            path: "{{tmp}}/test-results.json"
             description: "Test execution results"
             required: true
           coverage_percent:
@@ -312,11 +312,11 @@ class BlockDefinition(BaseModel):
             type: Shell
             description: "Run test suite and capture results as JSON"
             inputs:
-              command: "pytest --json-report --json-report-file=$SCRATCH/results.json"
+              command: "pytest --json-report --json-report-file={{tmp}}/results.json"
             outputs:
               test_results:
                 type: json
-                path: "$SCRATCH/results.json"
+                path: "{{tmp}}/results.json"
                 description: "Test execution results"
 
           - id: deploy
@@ -791,6 +791,12 @@ class WorkflowSchema(BaseModel):
                 # {{metadata.field}} - workflow metadata
                 elif parts[0] == "metadata":
                     # Metadata references are valid (read-only workflow metadata)
+                    pass
+
+                # {{tmp}} - workflow-scoped temp directory
+                elif parts[0] == "tmp":
+                    # tmp is a simple string value (path to temp directory)
+                    # No additional validation needed
                     pass
 
                 # {{secrets.KEY}} - secret references (ADR-008)

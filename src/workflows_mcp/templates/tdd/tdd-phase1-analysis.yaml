@@ -128,17 +128,17 @@ blocks:
         RESPONSE="{{blocks.identify_ambiguities.outputs.response}}"
 
         if echo "$RESPONSE" | grep -q "NO_AMBIGUITIES"; then
-          echo "false" > "$SCRATCH/clarifications_needed.txt"
+          echo "false" > "{{tmp}}/clarifications_needed.txt"
           echo "✅ No ambiguities identified - PRD is clear"
         else
-          echo "true" > "$SCRATCH/clarifications_needed.txt"
+          echo "true" > "{{tmp}}/clarifications_needed.txt"
           echo "⚠️  Ambiguities identified - clarifications required"
         fi
       timeout: 10
     outputs:
       clarifications_needed:
         type: bool
-        path: "$SCRATCH/clarifications_needed.txt"
+        path: "{{tmp}}/clarifications_needed.txt"
         description: "Whether clarifications are needed for PRD ambiguities"
     depends_on:
       - identify_ambiguities
@@ -292,20 +292,20 @@ blocks:
         SPEC_FILE="{{inputs.project_path}}/{{inputs.spec_output_path}}"
 
         if [ ! -f "$SPEC_FILE" ]; then
-          echo "0" > "$SCRATCH/requirements_count.txt"
+          echo "0" > "{{tmp}}/requirements_count.txt"
           exit 1
         fi
 
         # Count unique REQ-XXX identifiers
         COUNT=$(grep -o 'REQ-[0-9]\+' "$SPEC_FILE" | sort -u | wc -l | tr -d ' ')
 
-        echo "$COUNT" > "$SCRATCH/requirements_count.txt"
+        echo "$COUNT" > "{{tmp}}/requirements_count.txt"
         echo "✅ Identified $COUNT unique requirements"
       timeout: 30
     outputs:
       requirements_count:
         type: num
-        path: "$SCRATCH/requirements_count.txt"
+        path: "{{tmp}}/requirements_count.txt"
         description: "Number of unique requirements identified in technical specification"
     depends_on:
       - create_spec_file
@@ -318,12 +318,12 @@ blocks:
         # Extract all REQ-XXX identifiers
         REQUIREMENTS=$(grep -o 'REQ-[0-9]\+' "$SPEC_FILE" | sort -u | tr '\n' ',' | sed 's/,$//')
 
-        echo "$REQUIREMENTS" > "$SCRATCH/requirements_list.txt"
+        echo "$REQUIREMENTS" > "{{tmp}}/requirements_list.txt"
       timeout: 30
     outputs:
       requirements_list:
         type: str
-        path: "$SCRATCH/requirements_list.txt"
+        path: "{{tmp}}/requirements_list.txt"
         description: "Comma-separated list of requirement identifiers"
     depends_on:
       - count_requirements

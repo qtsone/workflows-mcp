@@ -1,0 +1,26 @@
+name: executor-llm-operations-test
+description: Tests the LLM operation executors using local mock server.
+tags: [test, llm]
+
+inputs:
+  api_url:
+    type: str
+    default: "http://localhost:11434"
+    description: "API URL for LLM calls (tests inject mock server URL)"
+
+blocks:
+  - id: llm_call
+    type: LLMCall
+    inputs:
+      provider: openai
+      model: gpt-5-mini
+      api_url: "{{inputs.api_url}}"
+      prompt: "What is the capital of France?"
+
+outputs:
+  llm_response:
+    value: "{{blocks.llm_call.outputs.response.content}}"
+    type: str
+  llm_success:
+    value: "{{blocks.llm_call.succeeded}}"
+    type: bool

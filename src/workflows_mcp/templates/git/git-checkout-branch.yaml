@@ -30,25 +30,27 @@ inputs:
     required: false
 blocks:
   - id: fetch_remote
+    condition: "{{inputs.fetch_first}}"
     type: Shell
     description: "Fetch latest changes from remote"
     inputs:
       command: "git fetch origin"
       working_dir: "{{inputs.working_dir}}"
       timeout: 5
-    condition: "{{inputs.fetch_first}}"
+
   - id: current_branch
     type: Shell
     inputs:
-      command: |
-        git branch --show-current > $SCRATCH/current_branch.txt
       working_dir: "{{inputs.working_dir}}"
+      command: |
+        git branch --show-current > {{tmp}}/current_branch.txt
       timeout: 5
     outputs:
       name:
         type: str
-        path: "$SCRATCH/current_branch.txt"
         description: "Current branch name"
+        path: "{{tmp}}/current_branch.txt"
+
   - id: checkout_base
     type: Shell
     description: "Checkout base branch"
@@ -56,12 +58,13 @@ blocks:
       command: "git checkout {{inputs.base_branch}}"
       working_dir: "{{inputs.working_dir}}"
       timeout: 30
-    condition: "{{inputs.base_branch}} != '' and {{inputs.base_branch}} != {{blocks.current_branch.outputs.name}}"
+    condition: "{{inputs.base_branch != '' and inputs.base_branch != blocks.current_branch.outputs.name}}"
     depends_on:
       - block: fetch_remote
         required: false
       - block: current_branch
         required: true
+
   - id: create_branch
     type: Shell
     inputs:
@@ -71,16 +74,18 @@ blocks:
     depends_on:
       - block: checkout_base
         required: false
+
   - id: push_branch
-    depends_on:
-      - block: current_branch
-        required: true
     condition: "{{inputs.push_to_remote}}"
     type: Shell
     inputs:
       command: "git push -u origin {{inputs.branch_name}}"
       working_dir: "{{inputs.working_dir}}"
       timeout: 60
+    depends_on:
+      - block: current_branch
+        required: true
+
   - id: summary
     type: Shell
     inputs:

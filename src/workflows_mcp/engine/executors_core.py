@@ -387,7 +387,6 @@ class ShellExecutor(BlockExecutor):
         env = dict(os.environ)
         if inputs.env:
             env.update(inputs.env)
-        env["SCRATCH"] = str(scratch_dir)
 
         # Execute command
         if inputs.shell:
@@ -440,17 +439,23 @@ class ShellExecutor(BlockExecutor):
                 try:
                     raw_path = output_schema["path"]
 
-                    # Replace $SCRATCH with absolute scratch directory
-                    output_path = raw_path.replace("$SCRATCH", str(scratch_dir))
+                    # The variable {{tmp}} is resolved before this executor is called,
+                    # so raw_path can be an absolute path.
+                    # We need to check if the path is inside the scratch directory.
+                    is_in_scratch = False
+                    if Path(raw_path).is_absolute():
+                        try:
+                            Path(raw_path).relative_to(scratch_dir)
+                            is_in_scratch = True
+                        except ValueError:
+                            is_in_scratch = False
 
-                    # Scratch paths need unsafe=True to allow absolute paths
-                    is_scratch_path = "$SCRATCH" in raw_path
-                    allow_absolute = output_schema.get("unsafe", False) or is_scratch_path
+                    allow_absolute = output_schema.get("unsafe", False) or is_in_scratch
 
                     # Validate path
                     file_path = validate_output_path(
                         output_name,
-                        output_path,
+                        raw_path,
                         cwd,
                         allow_absolute,
                     )

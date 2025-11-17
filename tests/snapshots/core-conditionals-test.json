@@ -1,0 +1,12 @@
+{
+  "outputs": {
+    "and_condition_executed": true,
+    "failure_block_failed": true,
+    "failure_condition_executed": true,
+    "input_condition_executed": true,
+    "not_condition_executed": true,
+    "or_condition_executed": true,
+    "success_condition_executed": true
+  },
+  "status": "success"
+}
