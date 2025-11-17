@@ -80,7 +80,7 @@ class TestEndToEndScenarios:
             result = await client.call_tool(
                 "execute_workflow",
                 arguments={
-                    "workflow": "conditionals-block-status",
+                    "workflow": "core-conditionals-test",
                     "inputs": {},
                     "debug": False,
                 },
@@ -92,8 +92,8 @@ class TestEndToEndScenarios:
 
             # Validate correct branch executed
             assert_workflow_succeeded(response)
-            assert response["outputs"]["runs_on_success_executed"] is True
-            assert response["outputs"]["runs_on_failure_executed"] is True
+            assert response["outputs"]["success_condition_executed"] is True
+            assert response["outputs"]["failure_condition_executed"] is True
 
     @pytest.mark.asyncio
     async def test_workflow_composition_chain(self):
@@ -106,8 +106,8 @@ class TestEndToEndScenarios:
             result = await client.call_tool(
                 "execute_workflow",
                 arguments={
-                    "workflow": "composition-workflow-call",
-                    "inputs": {},
+                    "workflow": "composition-output-passing",
+                    "inputs": {"value": 10},
                     "debug": False,
                 },
             )
@@ -119,9 +119,9 @@ class TestEndToEndScenarios:
             # Validate composition worked
             assert_workflow_succeeded(response)
             # Child workflow outputs should be accessible
-            assert response["outputs"]["child_succeeded"] is True
-            assert response["outputs"]["parent_verified"] is True
-            assert response["outputs"]["result"] == 15
+            assert response["outputs"]["both_succeeded"] is True
+            assert response["outputs"]["multiply_result"] == 50  # 10 * 5
+            assert response["outputs"]["add_result"] == 55  # 50 + 5
 
     @pytest.mark.asyncio
     async def test_parallel_execution_performance(self):
@@ -309,7 +309,7 @@ class TestErrorScenarios:
             result = await client.call_tool(
                 "execute_workflow",
                 arguments={
-                    "workflow": "secrets-missing-error",
+                    "workflow": "core-secrets-management-test",
                     "inputs": {},
                     "debug": False,
                 },
@@ -323,8 +323,9 @@ class TestErrorScenarios:
             assert_workflow_succeeded(response)
             # Block with missing secret should have failed
             assert response["outputs"]["missing_secret_failed"] is True
-            # Dependent block should have been skipped
-            assert response["outputs"]["dependent_skipped"] is True
+            # Other secrets operations should succeed
+            assert response["outputs"]["shell_basic_succeeded"] is True
+            assert response["outputs"]["multiple_secrets_succeeded"] is True
 
 
 # =============================================================================

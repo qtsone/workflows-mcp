@@ -1,19 +1,18 @@
 {
   "outputs": {
-    "api_exit_code": 0,
-    "dynamic_file_matches_static": true,
-    "dynamic_service_matches_static": true,
-    "file_0_exit_code": 0,
-    "file_2_exit_code": 1,
+    "file_0_succeeded": true,
+    "file_1_succeeded": true,
+    "file_2_failed": true,
     "files_all_succeeded": false,
+    "files_count_skipped": 0,
     "files_failed": 1,
     "files_mode": "parallel",
     "files_total": 3,
     "services_all_succeeded": true,
     "services_mode": "sequential",
     "services_total": 3,
-    "target_file_exit_code": 0,
-    "target_service_exit_code": 0
+    "verify_dynamic_access_succeeded": true,
+    "verify_static_access_succeeded": true
   },
   "status": "success"
 }

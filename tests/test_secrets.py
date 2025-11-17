@@ -13,6 +13,7 @@ TEST_SECRETS = {
     "WORKFLOW_SECRET_TEST_SECRET": "test-value-123",
     "WORKFLOW_SECRET_API_KEY": "sk-test-key-456",
     "WORKFLOW_SECRET_API_TOKEN": "valid-bearer-token",
+    "WORKFLOW_SECRET_HTTP_TOKEN": "bearer-token-xyz",
     # Database tests
     "WORKFLOW_SECRET_DB_PASSWORD": "db-secure-password",
     "WORKFLOW_SECRET_DB_CONNECTION_STRING": "postgresql://user:pass@localhost/db",

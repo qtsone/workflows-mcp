@@ -15,17 +15,12 @@ inputs:
     default: "TestProject"
     description: "Project name for the workflow"
 
-  path:
-    type: str
-    default: "/tmp/integration-test"
-    description: "Directory for test outputs"
-
 blocks:
   - id: init_state
     description: "Initialize workflow state"
     type: WriteJSONState
     inputs:
-      path: "{{inputs.path}}/state.json"
+      path: "{{tmp}}/state.json"
       create_parents: true
       data:
         project: "{{inputs.project_name}}"
@@ -50,7 +45,7 @@ blocks:
     description: "Update state after parallel generation"
     type: MergeJSONState
     inputs:
-      path: "{{inputs.path}}/state.json"
+      path: "{{tmp}}/state.json"
       updates:
         phase: "generation_complete"
         data1: "{{blocks.gen_data1.outputs.stdout | trim}}"
@@ -61,7 +56,7 @@ blocks:
     description: "Render report (depends on both data sources)"
     type: CreateFile
     inputs:
-      path: "{{inputs.path}}/report.md"
+      path: "{{tmp}}/report.md"
       create_parents: true
       content: |
         {{render('
@@ -110,7 +105,7 @@ blocks:
     description: "Finalize workflow state"
     type: MergeJSONState
     inputs:
-      path: "{{inputs.path}}/state.json"
+      path: "{{tmp}}/state.json"
       updates:
         phase: "complete"
         validation_passed: "{{blocks.validate_success.succeeded}}"
@@ -124,14 +119,14 @@ blocks:
     description: "Read final state"
     type: ReadJSONState
     inputs:
-      path: "{{inputs.path}}/state.json"
+      path: "{{tmp}}/state.json"
     depends_on: [final_state]
 
   - id: read_report
     type: ReadFiles
     inputs:
       patterns: ["report.md"]
-      base_path: "{{inputs.path}}"
+      base_path: "{{tmp}}"
       mode: full
     depends_on: [render_report]
 
@@ -140,7 +135,7 @@ blocks:
     type: Shell
     inputs:
       command: |
-        [ -d "{{inputs.path}}" ] && rm -rf "{{inputs.path}}" || echo "Error: Test directory does not exist"
+        [ -d "{{tmp}}" ] && rm -rf "{{tmp}}" || echo "Error: Test directory does not exist"
     depends_on: [read_final_state, read_report]
 
 outputs:

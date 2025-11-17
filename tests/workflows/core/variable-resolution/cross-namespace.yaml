@@ -16,15 +16,15 @@ blocks:
     type: Shell
     inputs:
       command: |
-        printf "42" > "$SCRATCH/number.txt"
-        printf "suffix" > "$SCRATCH/text.txt"
+        printf "42" > "{{tmp}}/number.txt"
+        printf "suffix" > "{{tmp}}/text.txt"
     outputs:
       number:
         type: num
-        path: "$SCRATCH/number.txt"
+        path: "{{tmp}}/number.txt"
       text:
         type: str
-        path: "$SCRATCH/text.txt"
+        path: "{{tmp}}/text.txt"
 
   # Test mixing inputs + metadata
   - id: test_inputs_metadata

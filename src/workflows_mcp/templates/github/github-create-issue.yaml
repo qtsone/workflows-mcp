@@ -21,6 +21,16 @@ inputs:
     default: "."
     description: Path to git repository
     required: false
+  title:
+    type: str
+    default: ""
+    description: Pre-defined issue title (skips LLM generation if provided)
+    required: false
+  body:
+    type: str
+    default: ""
+    description: Pre-defined issue body (skips LLM generation if provided)
+    required: false
   auto_confirm:
     type: bool
     default: false
@@ -72,90 +82,105 @@ blocks:
   - id: get_repo_info
     type: Shell
     inputs:
+      working_dir: "{{inputs.repo_path}}"
       command: |
-        gh repo view --json name,description,url > $SCRATCH/repo_info.json
+        gh repo view --json name,description,url > {{tmp}}/repo_info.json
 
         # Extract fields for easy reference
-        cat $SCRATCH/repo_info.json | jq -r '.name' > $SCRATCH/repo_name.txt
-        cat $SCRATCH/repo_info.json | jq -r '.description // "No description"' > $SCRATCH/repo_desc.txt
-        cat $SCRATCH/repo_info.json | jq -r '.url' > $SCRATCH/repo_url.txt
+        cat {{tmp}}/repo_info.json | jq -r '.name' > {{tmp}}/repo_name.txt
+        cat {{tmp}}/repo_info.json | jq -r '.description // "No description"' > {{tmp}}/repo_desc.txt
+        cat {{tmp}}/repo_info.json | jq -r '.url' > {{tmp}}/repo_url.txt
 
         # Display summary
-        echo "Repository: $(cat $SCRATCH/repo_name.txt)"
-        echo "Description: $(cat $SCRATCH/repo_desc.txt)"
-      working_dir: "{{inputs.repo_path}}"
+        echo "Repository: $(cat {{tmp}}/repo_name.txt)"
+        echo "Description: $(cat {{tmp}}/repo_desc.txt)"
     depends_on:
       - check_gh_auth
     outputs:
       repo_name:
         type: str
-        path: "$SCRATCH/repo_name.txt"
+        path: "{{tmp}}/repo_name.txt"
       repo_desc:
         type: str
-        path: "$SCRATCH/repo_desc.txt"
+        path: "{{tmp}}/repo_desc.txt"
       repo_url:
         type: str
-        path: "$SCRATCH/repo_url.txt"
+        path: "{{tmp}}/repo_url.txt"
   - id: get_repo_labels
     type: Shell
     inputs:
       command: |
         # Fetch available labels
-        gh label list --json name,description --limit 50 > $SCRATCH/labels.json
+        gh label list --json name,description --limit 50 > {{tmp}}/labels.json
 
         # Format for LLM context
-        echo "Available labels:" > $SCRATCH/labels_formatted.txt
-        cat $SCRATCH/labels.json | jq -r '.[] | "- \(.name): \(.description // "No description")"' >> $SCRATCH/labels_formatted.txt
+        echo "Available labels:" > {{tmp}}/labels_formatted.txt
+        cat {{tmp}}/labels.json | jq -r '.[] | "- \(.name): \(.description // "No description")"' >> {{tmp}}/labels_formatted.txt
 
         # Also save just names for easier parsing
-        cat $SCRATCH/labels.json | jq -r '.[].name' | paste -sd "," - > $SCRATCH/label_names.txt
+        cat {{tmp}}/labels.json | jq -r '.[].name' | paste -sd "," - > {{tmp}}/label_names.txt
 
-        cat $SCRATCH/labels_formatted.txt
+        cat {{tmp}}/labels_formatted.txt
       working_dir: "{{inputs.repo_path}}"
     depends_on:
       - check_gh_auth
     outputs:
       labels_formatted:
         type: str
-        path: "$SCRATCH/labels_formatted.txt"
+        path: "{{tmp}}/labels_formatted.txt"
       label_names:
         type: str
-        path: "$SCRATCH/label_names.txt"
+        path: "{{tmp}}/label_names.txt"
   - id: get_recent_issues
     type: Shell
     inputs:
+      working_dir: "{{inputs.repo_path}}"
       command: |
         ISSUE_COUNT=$(gh issue list --state all --json number 2>/dev/null | jq 'length')
 
         if [ "$ISSUE_COUNT" -gt 10 ]; then
-          echo "Recent issues:" > $SCRATCH/recent_issues_formatted.txt
+          echo "Recent issues:" > {{tmp}}/recent_issues_formatted.txt
           gh issue list --limit 3 --json number,title 2>/dev/null \
-            | jq -r '.[] | "#\(.number): \(.title)"' >> $SCRATCH/recent_issues_formatted.txt
+            | jq -r '.[] | "#\(.number): \(.title)"' >> {{tmp}}/recent_issues_formatted.txt
         else
-          echo "No established pattern (repository has <10 issues)" > $SCRATCH/recent_issues_formatted.txt
+          echo "No established pattern (repository has <10 issues)" > {{tmp}}/recent_issues_formatted.txt
         fi
 
-        cat $SCRATCH/recent_issues_formatted.txt
-      working_dir: "{{inputs.repo_path}}"
+        cat {{tmp}}/recent_issues_formatted.txt
     depends_on:
       - check_gh_auth
     outputs:
       recent_issues:
         type: str
-        path: "$SCRATCH/recent_issues_formatted.txt"
+        path: "{{tmp}}/recent_issues_formatted.txt"
   # ============================================================================
-  # Phase 3: Interactive Issue Description
+  # Phase 3: Interactive Issue Description (skip if title/body provided)
   # ============================================================================
   - id: get_issue_description
     type: Prompt
     inputs:
-      prompt: "# \U0001F41B GitHub Issue Creator\n\n**Repository**: {{blocks.get_repo_info.outputs.repo_name}}\n**Description**: {{blocks.get_repo_info.outputs.repo_desc}}\n\n## Describe the issue you want to create\n\nPlease provide a comprehensive description including:\n- **Problem or feature request**: What is the issue about?\n- **Context**: When does this occur? What triggers it?\n- **Expected behavior**: What should happen?\n- **Actual behavior** (for bugs): What actually happens?\n- **Additional context**: Any relevant details, logs, or examples\n\nThe more detail you provide, the better the generated issue will be.\n\n---\n\n**Your description**:\n"
+      prompt: |
+        # \U0001F41B GitHub Issue Creator
+        **Repository**: {{blocks.get_repo_info.outputs.repo_name}}
+        **Description**: {{blocks.get_repo_info.outputs.repo_desc}}
+        ## Describe the issue you want to create
+        Please provide a comprehensive description including:
+        - **Problem or feature request**: What is the issue about?
+        - **Context**: When does this occur? What triggers it?
+        - **Expected behavior**: What should happen?
+        - **Actual behavior** (for bugs): What actually happens?
+        - **Additional context**: Any relevant details, logs, or examples
+        The more detail you provide, the better the generated issue will be.
+        ---
+        **Your description**:
+        "
+    condition: "{{not inputs.auto_confirm}}"
     depends_on:
       - get_repo_info
       - get_repo_labels
       - get_recent_issues
   # ============================================================================
-  # Phase 4: LLM Content Generation
+  # Phase 4: LLM Content Generation (skip if inputs provided)
   # ============================================================================
   - id: generate_title
     type: Prompt
@@ -183,8 +208,10 @@ blocks:
         - Provide ONLY the title text (no quotes, no explanations, no markdown formatting)
 
         **Generated title**:
+    condition: "{{not inputs.auto_confirm}}"
     depends_on:
-      - get_issue_description
+      - block: get_issue_description
+        required: false
   - id: generate_body
     type: Prompt
     inputs:
@@ -206,20 +233,59 @@ blocks:
         - All relevant information from your description
 
         Provide ONLY the Markdown body (no explanatory text, no quotes):
+    condition: "{{not inputs.auto_confirm}}"
     depends_on:
-      - generate_title
+      - block: generate_title
+        required: false
+  # ============================================================================
+  # Phase 4.5: Normalize Title and Body (use input or generated)
+  # ============================================================================
+  - id: normalize_content
+    type: Shell
+    inputs:
+      command: |
+        # Use provided input or generated title
+        if [ -n "{{inputs.title}}" ] && [ "{{inputs.title}}" != "" ]; then
+          printf '%s' "{{inputs.title}}" > {{tmp}}/final_title.txt
+        else
+          printf '%s' "{{blocks.generate_title.outputs.response}}" > {{tmp}}/final_title.txt
+        fi
+
+        # Use provided input or generated body
+        if [ -n "{{inputs.body}}" ] && [ "{{inputs.body}}" != "" ]; then
+          printf '%s' "{{inputs.body}}" > {{tmp}}/final_body.txt
+        else
+          printf '%s' "{{blocks.generate_body.outputs.response}}" > {{tmp}}/final_body.txt
+        fi
+
+        echo "Title: $(cat {{tmp}}/final_title.txt)"
+        echo "Body length: $(wc -c < {{tmp}}/final_body.txt) chars"
+    outputs:
+      final_title:
+        type: str
+        path: "{{tmp}}/final_title.txt"
+      final_body:
+        type: str
+        path: "{{tmp}}/final_body.txt"
+    depends_on:
+      - block: generate_title
+        required: false
+      - block: generate_body
+        required: false
+
   - id: filter_relevant_labels
     type: Shell
     inputs:
+      working_dir: "{{inputs.repo_path}}"
       env:
-        TITLE: "{{blocks.generate_title.outputs.response}}"
+        TITLE: "{{blocks.normalize_content.outputs.final_title}}"
         DESCRIPTION: "{{blocks.get_issue_description.outputs.response}}"
         ALL_LABELS: "{{blocks.get_repo_labels.outputs.labels_formatted}}"
       command: |
         {
           echo "$TITLE"
           echo "$DESCRIPTION"
-        } | tr '[:upper:]' '[:lower:]' | tr -cs '[:alnum:]' '\n' > $SCRATCH/keywords.txt
+        } | tr '[:upper:]' '[:lower:]' | tr -cs '[:alnum:]' '\n' > {{tmp}}/keywords.txt
 
         echo "$ALL_LABELS" | while IFS= read -r line; do
           label_lower=$(echo "$line" | tr '[:upper:]' '[:lower:]')
@@ -228,11 +294,11 @@ blocks:
               echo "$line"
               break
             fi
-          done < $SCRATCH/keywords.txt
-        done | head -15 > $SCRATCH/filtered_labels.txt
+          done < {{tmp}}/keywords.txt
+        done | head -15 > {{tmp}}/filtered_labels.txt
 
-        if [ ! -s $SCRATCH/filtered_labels.txt ]; then
-          cat > $SCRATCH/filtered_labels.txt <<EOF
+        if [ ! -s {{tmp}}/filtered_labels.txt ]; then
+          cat > {{tmp}}/filtered_labels.txt <<EOF
         Available labels:
         - bug: Something isn't working
         - enhancement: New feature or request
@@ -241,15 +307,16 @@ blocks:
         EOF
         fi
 
-        cat $SCRATCH/filtered_labels.txt
-      working_dir: "{{inputs.repo_path}}"
+        cat {{tmp}}/filtered_labels.txt
     depends_on:
-      - generate_title
+      - normalize_content
       - get_repo_labels
+      - block: get_issue_description
+        required: false
     outputs:
       filtered_labels:
         type: str
-        path: "$SCRATCH/filtered_labels.txt"
+        path: "{{tmp}}/filtered_labels.txt"
   - id: select_labels
     type: Prompt
     inputs:
@@ -257,7 +324,7 @@ blocks:
         Select appropriate labels for this GitHub issue from the available labels.
 
         ## Issue Title
-        {{blocks.generate_title.outputs.response}}
+        {{blocks.normalize_content.outputs.final_title}}
 
         ## Available Labels
         {{blocks.filter_relevant_labels.outputs.filtered_labels}}
@@ -272,21 +339,89 @@ blocks:
         - If no labels are appropriate, respond with empty string
 
         **Selected labels**:
+    condition: "{{not inputs.auto_confirm}}"
     depends_on:
-      - generate_body
+      - normalize_content
       - filter_relevant_labels
+
+  - id: default_labels
+    type: Shell
+    inputs:
+      command: |
+        # Use empty labels for auto-confirm mode
+        printf '' > {{tmp}}/labels.txt
+        echo "No labels (auto-confirm mode)"
+    outputs:
+      response:
+        type: str
+        path: "{{tmp}}/labels.txt"
+    condition: "{{inputs.auto_confirm}}"
+    depends_on:
+      - normalize_content
+
+  # ============================================================================
+  # Phase 4.9: Normalize Labels (after selection)
+  # ============================================================================
+  - id: normalize_labels
+    type: Shell
+    inputs:
+      command: |
+        # Copy labels from whichever source
+        if [ "{{inputs.auto_confirm}}" = "true" ]; then
+          # Auto-confirm: use empty labels
+          printf '' > {{tmp}}/final_labels.txt
+        else
+          # Interactive: use selected labels
+          printf '%s' "{{blocks.select_labels.outputs.response}}" > {{tmp}}/final_labels.txt
+        fi
+        echo "Final labels: $(cat {{tmp}}/final_labels.txt)"
+    outputs:
+      final_labels:
+        type: str
+        path: "{{tmp}}/final_labels.txt"
+    depends_on:
+      - block: select_labels
+        required: false
+      - block: default_labels
+        required: false
+
   # ============================================================================
   # Phase 5: Preview and Confirmation
   # ============================================================================
   - id: preview_and_confirm
     type: Prompt
     inputs:
-      prompt: "# \U0001F4DD GitHub Issue Preview\n\nReady to create the following issue in **{{blocks.get_repo_info.outputs.repo_name}}**:\n\n---\n\n## Title\n{{blocks.generate_title.outputs.response}}\n\n## Labels\n{{blocks.select_labels.outputs.response}}\n\n## Body\n```markdown\n{{blocks.generate_body.outputs.response}}\n```\n\n---\n\n**Create this issue?**\n\nRespond:\n- **'yes'** to create the issue\n- **'no'** to cancel\n- **'edit'** if you want to modify anything (note: editing not implemented in v1, will cancel)\n"
-    condition: "not {{inputs.auto_confirm}}"
+      prompt: |
+        # \U0001F4DD GitHub Issue Preview
+
+        Ready to create the following issue in **{{blocks.get_repo_info.outputs.repo_name}}**:
+
+        ---
+
+        ## Title
+        {{blocks.normalize_content.outputs.final_title}}
+
+        ## Labels
+        {{blocks.select_labels.outputs.response}}
+
+        ## Body
+        ```markdown
+        {{blocks.normalize_content.outputs.final_body}}
+        ```
+
+        ---
+
+        **Create this issue?**
+
+        Respond:
+        - **'yes'** to create the issue
+        - **'no'** to cancel
+        - **'edit'** if you want to modify anything (note: editing not implemented in v1, will cancel)
+    condition: "{{not inputs.auto_confirm}}"
     depends_on:
-      - generate_title
-      - generate_body
-      - select_labels
+      - normalize_content
+      - block: select_labels
+        required: false
   # ============================================================================
   # Phase 6: Issue Creation
   # ============================================================================
@@ -295,15 +430,15 @@ blocks:
     inputs:
       working_dir: "{{inputs.repo_path}}"
       env:
-        TITLE: "{{blocks.generate_title.outputs.response}}"
-        BODY: "{{blocks.generate_body.outputs.response}}"
-        LABELS: "{{blocks.select_labels.outputs.response}}"
+        TITLE: "{{blocks.normalize_content.outputs.final_title}}"
+        BODY: "{{blocks.normalize_content.outputs.final_body}}"
+        LABELS: "{{blocks.normalize_labels.outputs.final_labels}}"
       command: |
         # Save body to file (safely handles multiline content)
-        printf '%s' "$BODY" > $SCRATCH/issue_body.md
+        printf '%s' "$BODY" > {{tmp}}/issue_body.md
 
         # Build gh issue create command
-        GH_CMD="gh issue create --title \"$TITLE\" --body-file $SCRATCH/issue_body.md"
+        GH_CMD="gh issue create --title \"$TITLE\" --body-file {{tmp}}/issue_body.md"
 
         # Add labels if provided
         if [ -n "$LABELS" ] && [ "$LABELS" != "" ]; then
@@ -320,34 +455,36 @@ blocks:
 
         # Execute command and capture output
         echo "Creating issue..."
-        eval $GH_CMD | tee $SCRATCH/issue_url.txt
+        eval $GH_CMD | tee {{tmp}}/issue_url.txt
 
         # Verify creation
         if [ ${PIPESTATUS[0]} -eq 0 ]; then
           echo ""
           echo "✅ Issue created successfully!"
-          cat $SCRATCH/issue_url.txt
+          cat {{tmp}}/issue_url.txt
         else
           echo "❌ Failed to create issue"
           exit 1
         fi
     condition: "{{inputs.auto_confirm or (blocks.preview_and_confirm.outputs.response == 'yes')}}"
     depends_on:
-      - generate_title
-      - generate_body
-      - select_labels
+      - normalize_content
+      - normalize_labels
       - block: preview_and_confirm
         required: false
     outputs:
       issue_url:
         type: str
-        path: "$SCRATCH/issue_url.txt"
+        path: "{{tmp}}/issue_url.txt"
+
 outputs:
   created:
     value: "{{blocks.create_issue.succeeded}}"
   issue_url:
     value: "{{blocks.create_issue.outputs.issue_url}}"
   title:
-    value: "{{blocks.generate_title.outputs.response}}"
+    value: "{{blocks.normalize_content.outputs.final_title}}"
+  body:
+    value: "{{blocks.normalize_content.outputs.final_body}}"
   labels:
-    value: "{{blocks.select_labels.outputs.response}}"
+    value: "{{blocks.normalize_labels.outputs.final_labels}}"

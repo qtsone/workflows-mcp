@@ -16,13 +16,13 @@ blocks:
         value = {{inputs.initial_value}}
         result = value * 2  # 5 * 2 = 10
         print(result)
-        " > "$SCRATCH/stage1.txt"
+        " > "{{tmp}}/stage1.txt"
 
-        cat "$SCRATCH/stage1.txt"
+        cat "{{tmp}}/stage1.txt"
     outputs:
       transformed:
         type: num
-        path: "$SCRATCH/stage1.txt"
+        path: "{{tmp}}/stage1.txt"
 
   # Stage 2: Use previous stage output
   - id: stage2_add
@@ -33,13 +33,13 @@ blocks:
         prev = {{blocks.stage1_transform.outputs.transformed}}
         result = prev + 15  # 10 + 15 = 25
         print(result)
-        " > "$SCRATCH/stage2.txt"
+        " > "{{tmp}}/stage2.txt"
 
-        cat "$SCRATCH/stage2.txt"
+        cat "{{tmp}}/stage2.txt"
     outputs:
       sum:
         type: num
-        path: "$SCRATCH/stage2.txt"
+        path: "{{tmp}}/stage2.txt"
     depends_on: [stage1_transform]
 
   # Stage 3: Use outputs from multiple previous stages
@@ -52,13 +52,13 @@ blocks:
         stage2 = {{blocks.stage2_add.outputs.sum}}
         result = stage1 + stage2  # 10 + 25 = 35
         print(result)
-        " > "$SCRATCH/stage3.txt"
+        " > "{{tmp}}/stage3.txt"
 
-        cat "$SCRATCH/stage3.txt"
+        cat "{{tmp}}/stage3.txt"
     outputs:
       combined:
         type: num
-        path: "$SCRATCH/stage3.txt"
+        path: "{{tmp}}/stage3.txt"
     depends_on: [stage1_transform, stage2_add]
 
   # Stage 4: Access the entire chain
@@ -84,13 +84,13 @@ blocks:
         # Calculate final result
         final = stage3 * 2  # 35 * 2 = 70
         print(final)
-        " > "$SCRATCH/stage4.txt"
+        " > "{{tmp}}/stage4.txt"
 
-        cat "$SCRATCH/stage4.txt"
+        cat "{{tmp}}/stage4.txt"
     outputs:
       final:
         type: num
-        path: "$SCRATCH/stage4.txt"
+        path: "{{tmp}}/stage4.txt"
     depends_on: [stage1_transform, stage2_add, stage3_combine]
 
   # Stage 5: String transformation pipeline
@@ -102,13 +102,13 @@ blocks:
         value = {{blocks.stage4_validate_chain.outputs.final}}
         result = f'value_{value}'
         print(result)
-        " > "$SCRATCH/stage5.txt"
+        " > "{{tmp}}/stage5.txt"
 
-        cat "$SCRATCH/stage5.txt"
+        cat "{{tmp}}/stage5.txt"
     outputs:
       formatted:
         type: str
-        path: "$SCRATCH/stage5.txt"
+        path: "{{tmp}}/stage5.txt"
     depends_on: [stage4_validate_chain]
 
   # Stage 6: JSON transformation
@@ -133,13 +133,13 @@ blocks:
             }
         }
         print(json.dumps(result))
-        " > "$SCRATCH/stage6.json"
+        " > "{{tmp}}/stage6.json"
 
-        cat "$SCRATCH/stage6.json"
+        cat "{{tmp}}/stage6.json"
     outputs:
       result:
         type: json
-        path: "$SCRATCH/stage6.json"
+        path: "{{tmp}}/stage6.json"
     depends_on: [stage4_validate_chain, stage5_string_start]
 
   # Final validation: Verify the entire pipeline

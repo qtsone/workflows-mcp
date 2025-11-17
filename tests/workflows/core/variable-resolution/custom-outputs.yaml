@@ -7,27 +7,27 @@ blocks:
     type: Shell
     inputs:
       command: |
-        # Write different types to files using $SCRATCH
-        echo "test_string_value" > "$SCRATCH/string_output.txt"
-        echo "42" > "$SCRATCH/number_output.txt"
-        echo "true" > "$SCRATCH/bool_output.txt"
-        echo '{"name": "test", "count": 5}' > "$SCRATCH/json_output.json"
+        # Write different types to files using {{tmp}}
+        echo "test_string_value" > "{{tmp}}/string_output.txt"
+        echo "42" > "{{tmp}}/number_output.txt"
+        echo "true" > "{{tmp}}/bool_output.txt"
+        echo '{"name": "test", "count": 5}' > "{{tmp}}/json_output.json"
     outputs:
       string_output:
         type: str
-        path: "$SCRATCH/string_output.txt"
+        path: "{{tmp}}/string_output.txt"
         description: "Custom string output"
       number_output:
         type: num
-        path: "$SCRATCH/number_output.txt"
+        path: "{{tmp}}/number_output.txt"
         description: "Custom numeric output"
       bool_output:
         type: bool
-        path: "$SCRATCH/bool_output.txt"
+        path: "{{tmp}}/bool_output.txt"
         description: "Custom boolean output"
       json_output:
         type: json
-        path: "$SCRATCH/json_output.json"
+        path: "{{tmp}}/json_output.json"
         description: "Custom JSON output"
 
   # Validate string custom output

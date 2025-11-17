@@ -1,0 +1,105 @@
+name: core-conditionals-test
+description: Comprehensive test for conditional execution features
+tags: [test, core, conditionals]
+
+inputs:
+  run_flag:
+    type: bool
+    default: true
+    description: Flag to control conditional execution
+
+blocks:
+  # Base blocks for status testing
+  - id: success_block
+    type: Shell
+    inputs:
+      command: echo "success"
+
+  - id: failure_block
+    type: Shell
+    continue_on_error: true
+    inputs:
+      command: exit 1
+
+  # Input-based condition
+  - id: run_if_input
+    type: Shell
+    condition: "{{inputs.run_flag}}"
+    inputs:
+      command: echo "input_condition_passed"
+
+  # Block status conditions
+  - id: run_if_succeeded
+    type: Shell
+    depends_on: [success_block]
+    condition: "{{blocks.success_block.succeeded}}"
+    inputs:
+      command: echo "success_condition_passed"
+
+  - id: run_if_failed
+    type: Shell
+    depends_on:
+      - block: failure_block
+        required: false
+    condition: "{{blocks.failure_block.failed}}"
+    inputs:
+      command: echo "failure_condition_passed"
+
+  # Complex expressions
+  - id: complex_and
+    type: Shell
+    depends_on: [success_block]
+    condition: "{{inputs.run_flag and blocks.success_block.succeeded}}"
+    inputs:
+      command: echo "and_condition_passed"
+
+  - id: complex_or
+    type: Shell
+    depends_on:
+      - block: failure_block
+        required: false
+    condition: "{{inputs.run_flag or blocks.failure_block.succeeded}}"
+    inputs:
+      command: echo "or_condition_passed"
+
+  - id: complex_not
+    type: Shell
+    depends_on:
+      - block: failure_block
+        required: false
+    condition: "{{not blocks.failure_block.succeeded}}"
+    inputs:
+      command: echo "not_condition_passed"
+
+outputs:
+  # Input-based
+  input_condition_executed:
+    value: "{{blocks.run_if_input.succeeded}}"
+    type: bool
+
+  # Status-based
+  success_condition_executed:
+    value: "{{blocks.run_if_succeeded.succeeded}}"
+    type: bool
+
+  failure_condition_executed:
+    value: "{{blocks.run_if_failed.succeeded}}"
+    type: bool
+
+  # Complex expressions
+  and_condition_executed:
+    value: "{{blocks.complex_and.succeeded}}"
+    type: bool
+
+  or_condition_executed:
+    value: "{{blocks.complex_or.succeeded}}"
+    type: bool
+
+  not_condition_executed:
+    value: "{{blocks.complex_not.succeeded}}"
+    type: bool
+
+  # Verify base blocks behaved as expected
+  failure_block_failed:
+    value: "{{blocks.failure_block.failed}}"
+    type: bool

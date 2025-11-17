@@ -102,15 +102,15 @@ blocks:
     inputs:
       command: |
         if [ -n "{{inputs.language}}" ]; then
-          echo "{{inputs.language}}" > "$SCRATCH/language.txt"
+          echo "{{inputs.language}}" > "{{tmp}}/language.txt"
         else
-          echo "{{blocks.determine_language.outputs.response}}" > "$SCRATCH/language.txt"
+          echo "{{blocks.determine_language.outputs.response}}" > "{{tmp}}/language.txt"
         fi
       timeout: 5
     outputs:
       language:
         type: str
-        path: "$SCRATCH/language.txt"
+        path: "{{tmp}}/language.txt"
         description: "Determined or provided programming language"
     depends_on:
       - determine_language

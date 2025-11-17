@@ -21,44 +21,48 @@ blocks:
     type: Shell
     description: "Get diff statistics for staged changes"
     inputs:
-      command: git diff --cached --stat --compact-summary > $SCRATCH/summary.txt
       working_dir: "{{inputs.working_dir}}"
+      command: |
+        git diff --cached --stat --compact-summary > {{tmp}}/summary.txt
     condition: "{{inputs.staged_only}}"
 
   - id: get_staged_diff
     type: Shell
     description: "Generate compact diff of staged changes"
     inputs:
-      command: git diff --cached -U0 --inter-hunk-context=0 --no-color --no-prefix > $SCRATCH/raw_diff.txt
       working_dir: "{{inputs.working_dir}}"
+      command: |
+        git diff --cached -U0 --inter-hunk-context=0 --no-color --no-prefix > {{tmp}}/raw_diff.txt
     condition: "{{inputs.staged_only}}"
 
   - id: get_all_summary
     type: Shell
     description: "Get diff statistics for all changes (staged + unstaged)"
     inputs:
-      command: git diff HEAD --stat --compact-summary > $SCRATCH/summary.txt
       working_dir: "{{inputs.working_dir}}"
+      command: |
+        git diff HEAD --stat --compact-summary > {{tmp}}/summary.txt
     condition: "{{not inputs.staged_only}}"
 
   - id: get_all_diff
     type: Shell
     description: "Generate compact diff of all changes (staged + unstaged)"
     inputs:
-      command: |
-        git diff HEAD -U0 --inter-hunk-context=0 --no-color --no-prefix > $SCRATCH/raw_diff.txt
       working_dir: "{{inputs.working_dir}}"
+      command: |
+        git diff HEAD -U0 --inter-hunk-context=0 --no-color --no-prefix > {{tmp}}/raw_diff.txt
     condition: "{{not inputs.staged_only}}"
 
   - id: processing
     type: Shell
     description: "Process and consolidate analysis results"
     inputs:
+      working_dir: "{{tmp}}"
       command: |
         MAX_LINES=40
 
         # Process raw diff with line limiting
-        if [ -f "$SCRATCH/raw_diff.txt" ]; then
+        if [ -f "raw_diff.txt" ]; then
           awk -v max="$MAX_LINES" '
           BEGIN { lines = 0; truncated = 0 }
           /^diff --git/ {
@@ -83,11 +87,10 @@ blocks:
               print "    ... (truncated " truncated " lines)"
             }
           }
-          ' "$SCRATCH/raw_diff.txt" > "$SCRATCH/processed_diff.txt"
+          ' "raw_diff.txt" > "processed_diff.txt"
         else
-          touch "$SCRATCH/processed_diff.txt"
+          touch "processed_diff.txt"
         fi
-      working_dir: "{{inputs.working_dir}}"
     depends_on:
       - block: get_staged_summary
         required: false
@@ -100,10 +103,10 @@ blocks:
     outputs:
       summary:
         type: str
-        path: "$SCRATCH/summary.txt"
+        path: "summary.txt"
       diff:
         type: str
-        path: "$SCRATCH/processed_diff.txt"
+        path: "processed_diff.txt"
 
 outputs:
   has_changes:

@@ -1,11 +1,33 @@
 name: process-todo-create-issues
-description: "Recursively process a todo list and create GitHub issues for each item.\n\nFeatures:\n- Reads todo items from a Markdown file (supports multiple formats)\n- Parses todos and stores them in state file\n- Maintains state file to track progress\n- Calls github-create-issue workflow for each item\n- Automatically resumes after each interactive issue creation\n- Continues until all todo items are processed\n\nRequirements:\n- Todo file format: Markdown with one of these formats:\n  1. Header format:\n     ## Title\n     Description here\n  \n  2. Checkbox format:\n     - [ ] Title\n     Description here\n  \n  3. Simple list:\n     - Title (no description)\n- github-create-issue workflow must be available\n- GitHub CLI authenticated (required by github-create-issue)\n"
+description: |
+  Process a todo list and create GitHub issues for each item.
+
+  Features:
+  - Reads todo items from a Markdown file (supports multiple formats)
+  - Creates a GitHub issue for each todo item using for_each
+  - Provides summary of created issues
+
+  Requirements:
+  - Todo file format: Markdown with one of these formats:
+    1. Header format:
+       ## Title
+       Description here
+
+    2. Checkbox format:
+       - [ ] Title
+       Description here
+
+    3. Simple list:
+       - Title (no description)
+  - github-create-issue workflow must be available
+  - GitHub CLI authenticated (required by github-create-issue)
+
 tags:
   - github
   - issues
-  - recursive
   - batch
   - interactive
+
 inputs:
   todo_path:
     type: str
@@ -16,264 +38,260 @@ inputs:
     default: "."
     required: false
     description: "Path to git repository for creating issues"
-  state_file:
-    type: str
-    default: "/tmp/todo-issue-state.json"
-    required: false
-    description: "State file for tracking progress through todo list"
   auto_confirm:
     type: bool
     default: false
     required: false
     description: "Skip confirmation prompts in github-create-issue (set to true for fully automated mode)"
+
 blocks:
   # ============================================================================
-  # Phase 1: State Management - Check if state exists
+  # Phase 1: Create Parser Script
   # ============================================================================
-  - id: check_state_exists
-    type: ReadJSONState
+  - id: create_parser_script
+    type: CreateFile
     inputs:
-      path: "{{inputs.state_file}}"
-      required: false
+      path: "{{tmp}}/parse_todos.py"
+      content: |
+        #!/usr/bin/env python3
+        """Parse markdown todos from various formats."""
+        import re
+        import json
+        import sys
+        from pathlib import Path
+        from typing import List, Dict, Any
+
+
+        def parse_header_format(content: str) -> List[Dict[str, str]]:
+            """Parse ## Header format with description below."""
+            todos = []
+            # Split on ## headers, keeping the header text
+            sections = re.split(r'^##\s+(.+?)$', content, flags=re.MULTILINE)
+
+            # sections[0] is text before first header (usually empty)
+            # sections[1] is first header, sections[2] is its content
+            # sections[3] is second header, sections[4] is its content, etc.
+            for i in range(1, len(sections), 2):
+                if i + 1 < len(sections):
+                    title = sections[i].strip()
+                    description = sections[i + 1].strip()
+                    if title:  # Skip empty headers
+                        todos.append({
+                            "title": title,
+                            "description": description
+                        })
+            return todos
+
+
+        def parse_checkbox_format(content: str) -> List[Dict[str, str]]:
+            """Parse - [ ] or - [x] checkbox format with optional description."""
+            todos = []
+            lines = content.split('\n')
+            current_item = None
+            description_lines = []
+
+            for line in lines:
+                # Check for checkbox: - [ ] or - [x] or * [ ] etc.
+                checkbox_match = re.match(r'^[-*]\s+\[([ xX])\]\s+(.+)$', line.strip())
+
+                if checkbox_match:
+                    # Save previous item if exists
+                    if current_item:
+                        todos.append({
+                            "title": current_item,
+                            "description": '\n'.join(description_lines).strip()
+                        })
+
+                    # Start new item
+                    current_item = checkbox_match.group(2).strip()
+                    description_lines = []
+
+                elif current_item:
+                    # Continuation line - add to description if not empty and not a new section marker
+                    stripped = line.strip()
+                    if stripped and not stripped.startswith(('#', '-', '*')):
+                        description_lines.append(stripped)
+                    elif not stripped:
+                        # Empty line - might be end of description
+                        pass
+
+            # Save last item
+            if current_item:
+                todos.append({
+                    "title": current_item,
+                    "description": '\n'.join(description_lines).strip()
+                })
+
+            return todos
+
+
+        def parse_simple_list(content: str) -> List[Dict[str, str]]:
+            """Parse simple - or * list format (no checkboxes)."""
+            todos = []
+            lines = content.split('\n')
+
+            for line in lines:
+                stripped = line.strip()
+                # Match - or * at start, but not checkboxes
+                if stripped.startswith(('- ', '* ')) and not re.match(r'^[-*]\s+\[', stripped):
+                    title = stripped[2:].strip()
+                    if title:
+                        todos.append({
+                            "title": title,
+                            "description": ""
+                        })
+
+            return todos
+
+
+        def parse_markdown_todos(file_path: str) -> List[Dict[str, str]]:
+            """
+            Parse markdown file and extract todo items.
+
+            Tries multiple formats in order:
+            1. ## Header format
+            2. - [ ] Checkbox format
+            3. Simple - list format
+
+            Returns list of dicts with 'title' and 'description' keys.
+            """
+            path = Path(file_path)
+            if not path.exists():
+                raise FileNotFoundError(f"Todo file not found: {file_path}")
+
+            content = path.read_text(encoding='utf-8')
+
+            # Try header format first
+            todos = parse_header_format(content)
+            if todos:
+                return todos
+
+            # Try checkbox format
+            todos = parse_checkbox_format(content)
+            if todos:
+                return todos
+
+            # Fall back to simple list
+            todos = parse_simple_list(content)
+            return todos
+
+
+        def main():
+            if len(sys.argv) != 3:
+                print("Usage: parse_todos.py <input_file> <output_json>", file=sys.stderr)
+                sys.exit(1)
+
+            input_file = sys.argv[1]
+            output_file = sys.argv[2]
+
+            try:
+                todos = parse_markdown_todos(input_file)
+
+                if not todos:
+                    print("ERROR: No todo items found in markdown file", file=sys.stderr)
+                    sys.exit(1)
+
+                # Write to JSON
+                with open(output_file, 'w', encoding='utf-8') as f:
+                    json.dump(todos, f, indent=2, ensure_ascii=False)
+
+                # Print summary to stdout
+                print(f"Found {len(todos)} todo items")
+                for i, todo in enumerate(todos, 1):
+                    title_preview = todo['title'][:60]
+                    if len(todo['title']) > 60:
+                        title_preview += "..."
+                    print(f"  {i}. {title_preview}")
+
+            except Exception as e:
+                print(f"ERROR: {e}", file=sys.stderr)
+                sys.exit(1)
+
+
+        if __name__ == "__main__":
+            main()
+
   # ============================================================================
-  # Phase 2: Initialize State on First Run
+  # Phase 2: Parse Markdown File
   # ============================================================================
   - id: parse_markdown_todos
     type: Shell
     inputs:
-      command: "# Validate todo file exists\nif [ ! -f \"{{inputs.todo_path}}\" ]; then\n  echo \"ERROR: Todo file not found: {{inputs.todo_path}}\"\n  exit 1\nfi\n\n# Parse markdown file and extract todo items\n# Supports two formats:\n# 1. ## Header format with description below\n# 2. - [ ] checkbox format\n\ncat > \"$SCRATCH/parse_todos.py\" << PYTHON_SCRIPT\nimport re\nimport json\nimport sys\n\ndef parse_markdown_todos(content):\n    todos = []\n    \n    # Try parsing ## header format first\n    # Pattern: ## Title followed by description until next ## or end\n    header_pattern = r'^##\\s+(.+?)$'\n    sections = re.split(r'^##\\s+', content, flags=re.MULTILINE)\n    \n    if len(sections) > 1:\n        # Header format detected\n        for section in sections[1:]:  # Skip first empty section\n            lines = section.strip().split('\\n')\n            if not lines:\n                continue\n            title = lines[0].strip()\n            description = '\\n'.join(lines[1:]).strip() if len(lines) > 1 else \"\"\n            todos.append({\n                \"title\": title,\n                \"description\": description\n            })\n    else:\n        # Try checkbox format: - [ ] or - [x] followed by title and optional description\n        lines = content.split('\\n')\n        current_title = None\n        current_desc_lines = []\n        \n        for line in lines:\n            # Check for checkbox item\n            checkbox_match = re.match(r'^[-*]\\s+\\[([ xX])\\]\\s+(.+)$', line.strip())\n            if checkbox_match:\n                # Save previous item if exists\n                if current_title:\n                    todos.append({\n                        \"title\": current_title,\n                        \"description\": '\\n'.join(current_desc_lines).strip()\n                    })\n                # Start new item\n                current_title = checkbox_match.group(2).strip()\n                current_desc_lines = []\n            elif current_title and line.strip():\n                # Add to description if we're in an item and line is not empty\n                current_desc_lines.append(line.strip())\n        \n        # Don't forget the last item\n        if current_title:\n            todos.append({\n                \"title\": current_title,\n                \"description\": '\\n'.join(current_desc_lines).strip()\n            })\n    \n    # If still no todos found, try simple list format (- or * at start)\n    if not todos:\n        lines = content.split('\\n')\n        for line in lines:\n            if line.strip().startswith(('- ', '* ')) and not re.match(r'^[-*]\\s+\\[', line.strip()):\n                title = line.strip()[2:].strip()\n                if title:\n                    todos.append({\n                        \"title\": title,\n                        \"description\": \"\"\n                    })\n    \n    return todos\n\n# Read markdown file\nwith open(\"{{inputs.todo_path}}\", 'r') as f:\n    content = f.read()\n\ntodos = parse_markdown_todos(content)\n\n# Write to JSON\nwith open('$SCRATCH/parsed_todos.json', 'w') as f:\n    json.dump(todos, f, indent=2)\n\nprint(f\"Found {len(todos)} todo items\")\nfor i, todo in enumerate(todos):\n    print(f\"  {i+1}. {todo['title'][:60]}...\")\nPYTHON_SCRIPT\n\n# Run the parser\npython3 \"$SCRATCH/parse_todos.py\"\n\n# Get total count\nTOTAL=$(jq 'length' \"$SCRATCH/parsed_todos.json\")\nprintf '%s' \"$TOTAL\" > \"$SCRATCH/total_items.txt\"\n\nif [ \"$TOTAL\" -eq 0 ]; then\n  echo \"ERROR: No todo items found in markdown file\"\n  exit 1\nfi\n\necho \"Successfully parsed $TOTAL todo items\"\n"
-    outputs:
-      total_items:
-        type: num
-        path: "$SCRATCH/total_items.txt"
-      parsed_todos:
-        type: json
-        path: "$SCRATCH/parsed_todos.json"
-    condition: "not {{blocks.check_state_exists.outputs.found}}"
-    depends_on: [check_state_exists]
-  - id: initialize_state
-    type: WriteJSONState
-    inputs:
-      path: "{{inputs.state_file}}"
-      data:
-        current_index: 0
-        total_items: "{{blocks.parse_markdown_todos.outputs.total_items}}"
-        todos: "{{blocks.parse_markdown_todos.outputs.parsed_todos}}"
-        completed_issues: []
-    condition: "not {{blocks.check_state_exists.outputs.found}}"
-    depends_on: [parse_markdown_todos]
-  # ============================================================================
-  # Phase 3: Read Current State
-  # ============================================================================
-  - id: read_current_state
-    type: ReadJSONState
-    inputs:
-      path: "{{inputs.state_file}}"
-    depends_on:
-      - block: initialize_state
-        required: false
-  # ============================================================================
-  # Phase 4: Get Current Todo Item
-  # ============================================================================
-  - id: get_current_item
-    type: Shell
-    inputs:
       command: |
-        CURRENT_INDEX={{blocks.read_current_state.outputs.data.current_index}}
-        TOTAL={{blocks.read_current_state.outputs.data.total_items}}
-
-        # Extract the current todo item
-        ITEM=$(echo '{{blocks.read_current_state.outputs.data.todos}}' | jq ".[$CURRENT_INDEX]")
-
-        # Check if item exists
-        if [ "$ITEM" = "null" ]; then
-          echo "ERROR: Item at index $CURRENT_INDEX not found in state"
+        # Validate todo file exists
+        if [ ! -f "{{inputs.todo_path}}" ]; then
+          echo "ERROR: Todo file not found: {{inputs.todo_path}}"
           exit 1
         fi
 
-        # Extract title and description
-        TITLE=$(echo "$ITEM" | jq -r '.title')
-        DESCRIPTION=$(echo "$ITEM" | jq -r '.description')
+        # Run the parser
+        python3 "{{tmp}}/parse_todos.py" "{{inputs.todo_path}}" "{{tmp}}/parsed_todos.json"
 
-        printf '%s' "$TITLE" > "$SCRATCH/current_title.txt"
-        printf '%s' "$DESCRIPTION" > "$SCRATCH/current_description.txt"
-
-        echo "Processing item $((CURRENT_INDEX + 1))/$TOTAL: $TITLE"
+        echo "Successfully parsed todos"
     outputs:
-      current_title:
-        type: str
-        path: "$SCRATCH/current_title.txt"
-      current_description:
-        type: str
-        path: "$SCRATCH/current_description.txt"
-    depends_on: [read_current_state]
+      parsed_todos:
+        type: json
+        path: "{{tmp}}/parsed_todos.json"
+    depends_on: [create_parser_script]
+
   # ============================================================================
-  # Phase 5: Create GitHub Issue (calls interactive workflow)
+  # Phase 3: Create GitHub Issues (for_each iteration)
   # ============================================================================
-  - id: create_github_issue
+  - id: create_github_issues
     type: Workflow
+    for_each: "{{blocks.parse_markdown_todos.outputs.parsed_todos}}"
+    for_each_mode: sequential
+    continue_on_error: true
     inputs:
       workflow: "github-create-issue"
       inputs:
         repo_path: "{{inputs.repo_path}}"
+        title: "{{each.value.title}}"
+        body: "{{each.value.description}}"
         auto_confirm: "{{inputs.auto_confirm}}"
-    depends_on: [get_current_item]
-  # ============================================================================
-  # Phase 6: Update State After Issue Creation
-  # ============================================================================
-  - id: append_completed_issue
-    type: Shell
-    inputs:
-      command: |
-        # Read current completed_issues array and append new issue
-        CURRENT_INDEX={{blocks.read_current_state.outputs.data.current_index}}
-        TITLE="{{blocks.get_current_item.outputs.current_title}}"
-        ISSUE_URL="{{blocks.create_github_issue.outputs.issue_url}}"
-        CREATED="{{blocks.create_github_issue.outputs.created}}"
+    depends_on: [parse_markdown_todos]
 
-        # Read existing completed issues
-        EXISTING=$(cat "{{inputs.state_file}}" | jq '.completed_issues')
-
-        # Append new issue to array
-        echo "$EXISTING" | jq \
-          --argjson idx "$CURRENT_INDEX" \
-          --arg title "$TITLE" \
-          --arg url "$ISSUE_URL" \
-          --argjson created "$([ "$CREATED" = "true" ] && echo "true" || echo "false")" \
-          '. += [{
-            index: $idx,
-            title: $title,
-            issue_url: $url,
-            created: $created
-          }]' > "$SCRATCH/new_completed_issues.json"
-
-        cat "$SCRATCH/new_completed_issues.json"
-    outputs:
-      new_completed_issues_json:
-        type: str
-        path: "$SCRATCH/new_completed_issues.json"
-    depends_on: [create_github_issue]
-  - id: read_new_completed_issues
-    type: ReadJSONState
-    inputs:
-      path: "$SCRATCH/new_completed_issues.json"
-    depends_on: [append_completed_issue]
-  - id: increment_index
-    type: Shell
-    inputs:
-      command: |
-        CURRENT={{blocks.read_current_state.outputs.data.current_index}}
-        NEXT=$((CURRENT + 1))
-        printf '%s' "$NEXT" > "$SCRATCH/next_index.txt"
-        echo "Incremented index from $CURRENT to $NEXT"
-    outputs:
-      next_index:
-        type: num
-        path: "$SCRATCH/next_index.txt"
-    depends_on: [read_new_completed_issues]
-  - id: update_state
-    type: MergeJSONState
-    inputs:
-      path: "{{inputs.state_file}}"
-      updates:
-        current_index: "{{blocks.increment_index.outputs.next_index}}"
-        completed_issues: "{{blocks.read_new_completed_issues.outputs.data}}"
-    depends_on: [increment_index]
-  - id: log_progress
-    type: Shell
-    inputs:
-      command: |
-        CURRENT={{blocks.update_state.outputs.merged_data.current_index}}
-        TOTAL={{blocks.update_state.outputs.merged_data.total_items}}
-        echo "Progress: $CURRENT/$TOTAL items processed"
-    depends_on: [update_state]
   # ============================================================================
-  # Phase 7: Check if More Items to Process
+  # Phase 4: Generate Summary
   # ============================================================================
-  - id: check_continue
-    type: Shell
-    inputs:
-      command: |
-        CURRENT={{blocks.update_state.outputs.merged_data.current_index}}
-        TOTAL={{blocks.update_state.outputs.merged_data.total_items}}
-
-        echo "Current: $CURRENT, Total: $TOTAL"
-
-        if [ $CURRENT -lt $TOTAL ]; then
-          echo "More items to process"
-          exit 0  # Continue recursion
-        else
-          echo "All items processed"
-          exit 1  # Stop recursion
-        fi
-    depends_on: [log_progress]
-  # ============================================================================
-  # Phase 8: Recursive Call
-  # ============================================================================
-  - id: recurse
-    type: Workflow
-    inputs:
-      workflow: "process-todo-create-issues"
-      inputs:
-        todo_path: "{{inputs.todo_path}}"
-        repo_path: "{{inputs.repo_path}}"
-        state_file: "{{inputs.state_file}}"
-        auto_confirm: "{{inputs.auto_confirm}}"
-    depends_on: [check_continue]
-  # ============================================================================
-  # Phase 9: Read Final State and Summary
-  # ============================================================================
-  - id: read_final_state
-    type: ReadJSONState
-    inputs:
-      path: "{{inputs.state_file}}"
-    depends_on:
-      - block: recurse
-        required: false
   - id: generate_summary
     type: Shell
     inputs:
       command: |
-        TOTAL={{blocks.read_final_state.outputs.data.total_items}}
-        COMPLETED=$(echo '{{blocks.read_final_state.outputs.data.completed_issues}}' | jq 'length')
-        SUCCESSFUL=$(echo '{{blocks.read_final_state.outputs.data.completed_issues}}' | jq '[.[] | select(.created == true)] | length')
+        # Get counts from for_each metadata
+        TOTAL={{blocks.create_github_issues.metadata.count}}
+        FAILED={{blocks.create_github_issues.metadata.count_failed}}
+        SKIPPED={{blocks.create_github_issues.metadata.count_skipped}}
+        ALL_SUCCEEDED={{blocks.create_github_issues.metadata.succeeded}}
+        SUCCESSFUL=$((TOTAL - FAILED - SKIPPED))
 
         echo "================================"
         echo "Todo List Processing Complete"
         echo "================================"
         echo "Total items: $TOTAL"
-        echo "Completed: $COMPLETED"
         echo "Successful: $SUCCESSFUL"
-        echo ""
-        echo "Created Issues:"
-        echo '{{blocks.read_final_state.outputs.data.completed_issues}}' | jq -r '.[] | select(.created == true) | "  - \(.title): \(.issue_url)"'
+        echo "Failed: $FAILED"
+        echo "Skipped: $SKIPPED"
+        echo "All succeeded: $ALL_SUCCEEDED"
 
         # Save summary
-        cat > "$SCRATCH/summary.txt" <<EOF
+        cat > "{{tmp}}/summary.txt" <<EOF
         Total: $TOTAL
-        Completed: $COMPLETED
         Successful: $SUCCESSFUL
+        Failed: $FAILED
+        Skipped: $SKIPPED
+        All Succeeded: $ALL_SUCCEEDED
         EOF
     outputs:
       summary:
         type: str
-        path: "$SCRATCH/summary.txt"
-    depends_on:
-      - block: read_final_state
-        required: false
-  # ============================================================================
-  # Phase 10: Cleanup State File
-  # ============================================================================
-  - id: cleanup
-    type: Shell
-    inputs:
-      command: |
-        echo "Cleaning up state file: {{inputs.state_file}}"
-        rm -f "{{inputs.state_file}}"
-        echo "Cleanup complete"
-    depends_on: [generate_summary]
+        path: "{{tmp}}/summary.txt"
+    depends_on: [create_github_issues]
+
 outputs:
-  completed:
-    value: "{{blocks.cleanup.succeeded}}"
+  total_items:
+    value: "{{blocks.create_github_issues.metadata.count}}"
+  all_succeeded:
+    value: "{{blocks.create_github_issues.metadata.succeeded}}"
   summary:
     value: "{{blocks.generate_summary.outputs.stdout}}"

@@ -367,7 +367,7 @@ class ExecutorRegistry(BaseModel):
                                 },
                                 "path": {
                                     "type": "string",
-                                    "description": "File path to read (supports $SCRATCH)",
+                                    "description": "File path to read",
                                 },
                                 "description": {
                                     "type": "string",

@@ -55,18 +55,13 @@ inputs:
     description: "(Optional) Manually provide commit message (bypasses LLM generation)"
     required: false
 
-  workspace:
-    type: str
-    description: "Temporary workspace"
-    default: "/tmp/git-commit-workspace"
-
 blocks:
   - id: stage_files
     type: Shell
     description: "Stage all modified files in git repository"
     inputs:
-      command: git add -A
       working_dir: "{{inputs.working_dir}}"
+      command: git add -A
     condition: "{{inputs.stage_all}}"
 
   - id: analyze_changes
@@ -91,6 +86,7 @@ blocks:
     description: "Generate semantic commit message using LLM"
     inputs:
       profile: default
+      timeout: 600
       response_schema:
         type: object
         required: [type, scope, summary, body, is_breaking, breaking_description]
@@ -127,22 +123,9 @@ blocks:
 
         ## Detailed Changes
         {{blocks.analyze_changes.outputs.diff}}
+        ---
 
         Generate a semantic commit message following Conventional Commits specification.
-
-        **BREAKING CHANGE DETECTION - CRITICAL:**
-        Carefully analyze the diff for breaking changes:
-        - Public API changes: function/method signature changes, parameter additions/removals/reorderings
-        - Removals: deleted public functions, classes, endpoints, config options
-        - Behavior changes: modified defaults, changed error handling, altered validation rules
-        - Dependencies: major version bumps, increased minimum version requirements
-        - Configuration: new required fields, renamed/removed fields, schema changes
-        - Database/migrations: schema changes requiring data migration
-
-        If ANY breaking change detected, set is_breaking=true and only include breaking_description with:
-        1. What breaks and why
-        2. Migration steps for users
-        3. Alternative approaches if available
 
         **COMMIT MESSAGE COMPONENTS:**
 
@@ -162,6 +145,20 @@ blocks:
 
         summary: Imperative mood, lowercase, no period, max 70 chars. Focus on WHAT changed.
 
+        **BREAKING CHANGE DETECTION - CRITICAL:**
+        Carefully analyze the diff for breaking changes:
+        - Public API changes: function/method signature changes, parameter additions/removals/reorderings
+        - Removals: deleted public functions, classes, endpoints, config options
+        - Behavior changes: modified defaults, changed error handling, altered validation rules
+        - Dependencies: major version bumps, increased minimum version requirements
+        - Configuration: new required fields, renamed/removed fields, schema changes
+        - Database/migrations: schema changes requiring data migration
+
+        If ANY breaking change detected, set is_breaking: true and include breaking_description with:
+        1. What breaks and why
+        2. Migration steps for users
+        3. Alternative approaches if available
+
         body: Explain concisely WHAT changed and WHY (not HOW - code shows that).
         Use body when:
         - Multiple files/components changed
@@ -177,7 +174,7 @@ blocks:
     type: CreateFile
     description: "Format conventional commit message with breaking change support"
     inputs:
-      path: "{{inputs.workspace}}/message.txt"
+      path: "{{tmp}}/message.txt"
       overwrite: true
       content: |
         {%- if inputs.commit_message -%}
@@ -196,11 +193,11 @@ blocks:
         {%- endif %}
         {%- if is_breaking and breaking_desc %}
 
-        BREAKING CHANGE: {{ breaking_desc | replace('\\n', '\n') }}
+        BREAKING CHANGE: {{ breaking_desc }}
         {%- endif %}
         {%- if body %}
 
-        {{ body | replace('\\n', '\n') }}
+        {{ body }}
         {%- endif %}
         {%- endif %}
     condition: "{{blocks.analyze_changes.outputs.has_changes}}"
@@ -226,12 +223,12 @@ blocks:
     type: Shell
     description: "Create git commit with semantic message"
     inputs:
+      working_dir: "{{inputs.working_dir}}"
       command: |
         set -e  # Exit immediately if any command fails
         # Create commit from message file and get hash
-        git commit -F "{{inputs.workspace}}/message.txt"
+        git commit -F "{{tmp}}/message.txt"
         git rev-parse HEAD
-      working_dir: "{{inputs.working_dir}}"
     condition: "{{blocks.analyze_changes.outputs.has_changes and (inputs.auto_commit or blocks.confirm_commit.outputs.response == 'yes')}}"
     depends_on:
       - block: select_message

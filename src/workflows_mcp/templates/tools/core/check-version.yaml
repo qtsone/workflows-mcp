@@ -25,7 +25,7 @@ blocks:
     inputs:
       command: |
         if command -v {{inputs.tool_name}} >/dev/null 2>&1; then
-          command -v {{inputs.tool_name}} > "$SCRATCH/path.txt"
+          command -v {{inputs.tool_name}} > "{{tmp}}/path.txt"
           exit 0
         else
           echo "Command not found: {{inputs.tool_name}}"
@@ -36,7 +36,7 @@ blocks:
       path:
         type: str
         description: Full path to the command if found
-        path: "$SCRATCH/path.txt"
+        path: "{{tmp}}/path.txt"
   # Try multiple common version flags to get version
   - id: get_version
     type: Shell
@@ -47,18 +47,18 @@ blocks:
           if output=$({{inputs.tool_name}} $flag 2>&1); then
             version=$(echo "$output" | grep -oE "{{inputs.pattern}}" | head -n1)
             if [ -n "$version" ]; then
-              echo "$version" > "$SCRATCH/version.txt"
+              echo "$version" > "{{tmp}}/version.txt"
               exit 0
             fi
           fi
         done
-        echo "unknown" > "$SCRATCH/version.txt"
+        echo "unknown" > "{{tmp}}/version.txt"
       timeout: 10
     outputs:
       version:
         type: str
         description: Extracted version of the command
-        path: "$SCRATCH/version.txt"
+        path: "{{tmp}}/version.txt"
     depends_on:
       - block: check_command
         required: false
