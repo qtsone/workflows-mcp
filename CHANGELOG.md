@@ -2,6 +2,90 @@
 
 All notable changes to this project will be documented in this file.
 
+# [7.0.0](https://github.com/qtsone/workflows-mcp/compare/v6.5.0...v7.0.0) (2025-11-17)
+
+
+* feat(engine)!: introduce workflow-scoped tmp path and migrate templates ([4422538](https://github.com/qtsone/workflows-mcp/commit/4422538c271b725e2f2d4719b2fefda607cfa565))
+
+
+### Bug Fixes
+
+* **git-commit:** replace escape sequence handling in commit message template ([9b57b1a](https://github.com/qtsone/workflows-mcp/commit/9b57b1ac08da0e01d5cb0b5112d8a500dbd45fb7))
+* **tests:** replace bash-specific substring syntax with POSIX-compatible printf ([edd966c](https://github.com/qtsone/workflows-mcp/commit/edd966c703b642ed767caaeafffccd09ed8514dc))
+
+
+### Code Refactoring
+
+* remove render template executor and related functionality ([3f7cd09](https://github.com/qtsone/workflows-mcp/commit/3f7cd0952ccda9f4cb34f41edc9f71bfc9166b92))
+
+
+### Features
+
+* **engine:** add comprehensive interpolation support for EditFile operations ([a29f325](https://github.com/qtsone/workflows-mcp/commit/a29f325a285d8510bb5af11ceee67b41aa9a3f28))
+* **engine:** implement unified variable resolver with rule-based transformation pipeline ([befea5f](https://github.com/qtsone/workflows-mcp/commit/befea5f3587048e162cd67c5fd1dc8887e29ccff))
+* **file operations:** add readfiles support with glob patterns and base path ([aad24e7](https://github.com/qtsone/workflows-mcp/commit/aad24e7f17204a2ac04678d29ae8f7f667762adb))
+* **workflows-mcp:** Add profile fallback for portable LLM workflows ([85df48f](https://github.com/qtsone/workflows-mcp/commit/85df48f94fb2b6ec63712ed84e17566f17b331f7))
+
+
+### Performance Improvements
+
+* **ci:** improve ci pipeline efficiency ([67bd33c](https://github.com/qtsone/workflows-mcp/commit/67bd33c6212c407d6a53f3984ebc4dedbd2a62da))
+
+
+### BREAKING CHANGES
+
+* This changes runtime behavior that may break existing workflows:
+
+What breaks and why:
+- $SCRATCH usage removed/deprecated: templates and workflows that relied on the literal $SCRATCH path or shell environment substitution will no longer write/read to that path. The code now expects workflow templates to use the jinja variable {{tmp}} which is resolved to the execution scratch dir.
+- Absolute path allowance tightened: previously some $SCRATCH-based handling allowed absolute output paths; executors now only permit absolute paths if the path is inside the configured scratch directory or the output schema explicitly sets unsafe=true. Absolute paths outside the scratch directory will be disallowed, which can change behavior for blocks that wrote to arbitrary absolute locations.
+- Secrets materialization semantics changed: if secrets were pre-materialized as a plain dict in the jinja context, the resolver now merges existing values with newly fetched secrets instead of treating them the same as a SecretProxy. This can alter how secret values are looked up/overwritten.
+- validate.py now recursively scans YAML (*.yaml, *.yml) which may surface additional validation errors for files that were previously ignored.
+
+Migration steps for users:
+1. Update all workflows and templates to replace any occurrences of $SCRATCH with {{tmp}} in commands, file paths, and CreateFile/ReadFiles inputs.
+2. For scripts that relied on absolute paths previously allowed via $SCRATCH, either:
+   - change to use paths under {{tmp}} (recommended), or
+   - explicitly mark outputs as unsafe in the output schema (not recommended unless necessary).
+3. Ensure any code that injected secrets into the jinja context provides a SecretProxy where possible; if an existing dict is used intentionally, verify merge semantics meet expectations.
+4. Re-run validation (validate.py) and tests to catch any additional YAML files that now get scanned.
+
+Alternative approaches if migration is not immediately possible:
+- As a stopgap, workflows can set an environment variable SCRATCH inside block inputs to mimic prior behavior, or modify blocks to write to a path referenced by {{tmp}} by injecting the same value into the jinja context. However, migrating to {{tmp}} is the supported path forward.
+
+Add a workflow-scoped jinja variable `{{tmp}}` (mapped to the execution scratch dir) and migrate templates/tests to use it; tighten Shell executor path handling; improve secret materialization; add a local LLM mock for tests and update snapshots. Key changes:
+- expose "tmp" in workflow jinja context (workflow_runner)
+- replace $SCRATCH usages in templates and tests with {{tmp}} and update schema examples
+- ShellExecutor: treat raw paths as already-resolved values, allow absolute paths only when they reside inside the scratch dir or when output schema marks unsafe
+- UnifiedVariableResolver: handle already-materialized secrets (dict) by merging with newly fetched secrets instead of overwriting
+- add a local LLM mock and tests for LLM executor; add/update snapshots
+- broaden validate.py to scan YAML recursively
+- remove/replace several README/template docs and update many test workflows
+
+These changes unify temporary-path handling, improve security around absolute paths, fix secret materialization issues, and make LLM-related tests hermetic.
+* removes the RenderTemplate executor and all associated code, including schema validation, template rendering logic, and test workflows that depended on it. this change simplifies the file operation executors by removing the template rendering capability and updates existing workflows to use alternative approaches like Shell commands or CreateFile blocks. the RenderTemplate functionality was replaced with direct shell command execution and content rendering in templates, reducing complexity and removing the dependency on jinja2 templating for these use cases.
+* **engine:** Replace legacy VariableResolver with new architecture that provides:
+- Expression classification for optimal Jinja2 routing
+- Rule-based transformation pipeline (security, syntax, namespace)
+- Enhanced context with BlockProxy and SecretProxy
+- SandboxedEnvironment for template rendering security
+- Clean separation of concerns between rules and evaluation
+
+Key components:
+- UnifiedVariableResolver: Main resolver orchestrating transformation pipeline
+- ExpressionClassifier: Routes expressions to appropriate evaluation methods
+- TransformRule system: Modular, priority-based transformation rules
+- BlockProxy: ADR-007 shortcuts and nested block access
+- SecretProxy: Lazy secret loading with audit logging
+- Security rules: Forbidden namespace blocking, secret tracking
+- Syntax rules: Bracket notation normalization, special character handling
+
+Updates:
+- RenderTemplateExecutor uses SandboxedEnvironment instead of Environment
+- BlockOrchestrator switches to UnifiedVariableResolver
+- Legacy variables.py preserved as variables.py.bak
+- Test workflows and snapshots reorganized for new resolver
+
 # [6.5.0](https://github.com/qtsone/workflows-mcp/compare/v6.4.0...v6.5.0) (2025-11-12)
 
 
