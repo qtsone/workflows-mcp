@@ -31,7 +31,7 @@ from .execution_result import ExecutionResult, ExecutionState
 from .metadata import Metadata
 from .orchestrator import BlockOrchestrator
 from .resolver import UnifiedVariableResolver
-from .schema import BlockDefinition, DependencySpec, WorkflowSchema
+from .schema import BlockDefinition, DependencySpec, InputType, WorkflowSchema
 from .secrets import EnvVarSecretProvider, SecretAuditLog, SecretRedactor
 
 logger = logging.getLogger(__name__)
@@ -955,7 +955,7 @@ class WorkflowRunner:
         # Create execution context (workflow-level has no metadata - only blocks have metadata)
         workflow_start_time = datetime.now(UTC).isoformat()
         exec_context = Execution(
-            inputs=self._merge_workflow_inputs(workflow, runtime_inputs),
+            inputs=self._merge_workflow_inputs(workflow, runtime_inputs, scratch_dir),
             metadata=None,  # Workflow-level Execution has no block metadata
             blocks={},
             depth=len(context.workflow_stack) if context else 0,
@@ -1076,37 +1076,41 @@ class WorkflowRunner:
         self,
         workflow: WorkflowSchema,
         runtime_inputs: dict[str, Any] | None,
+        scratch_dir: Path,
     ) -> dict[str, Any]:
-        """Merge default and runtime inputs."""
+        """Merge default and runtime inputs with {{tmp}} resolution and validation."""
         merged = {}
 
-        # Apply defaults
+        # Apply defaults with {{tmp}} resolution
         for input_name, input_decl in workflow.inputs.items():
             if input_decl.default is not None:
-                merged[input_name] = input_decl.default
+                value = input_decl.default
+                if isinstance(value, str):
+                    value = value.replace("{{tmp}}", str(scratch_dir))
+                merged[input_name] = value
 
         # Override with runtime inputs
         if runtime_inputs:
             merged.update(runtime_inputs)
 
         # Validate required inputs
-        missing_inputs = []
-        empty_string_inputs = []
-        for input_name, input_decl in workflow.inputs.items():
-            is_required = getattr(input_decl, "required", False)
-            if is_required:
-                if input_name not in merged:
-                    missing_inputs.append(input_name)
-                elif input_decl.type.value == "str" and merged[input_name] == "":
-                    empty_string_inputs.append(input_name)
+        missing = [
+            name for name, decl in workflow.inputs.items() if decl.required and name not in merged
+        ]
+        empty = [
+            name
+            for name, decl in workflow.inputs.items()
+            if decl.required
+            and name in merged
+            and decl.type == InputType.STR
+            and merged[name] == ""
+        ]
 
         errors = []
-        if missing_inputs:
-            errors.append(f"Missing required inputs: {', '.join(missing_inputs)}")
-        if empty_string_inputs:
-            errors.append(
-                f"Required string inputs cannot be empty: {', '.join(empty_string_inputs)}"
-            )
+        if missing:
+            errors.append(f"Missing required inputs: {', '.join(missing)}")
+        if empty:
+            errors.append(f"Required string inputs cannot be empty: {', '.join(empty)}")
 
         if errors:
             raise ValueError("; ".join(errors))
