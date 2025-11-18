@@ -12,18 +12,12 @@ name: editfile-operations-test
 description: Test EditFile executor with all operation types
 tags: [test, editfile, files]
 
-inputs:
-  test_dir:
-    type: str
-    description: Test directory path
-    default: "/tmp/editfile-test"
-
 blocks:
   # Setup: Create test file
   - id: create_test_file
     type: CreateFile
     inputs:
-      path: "{{inputs.test_dir}}/test.py"
+      path: "{{tmp}}/test.py"
       content: |
         def hello():
             print("Hello, World!")
@@ -38,7 +32,7 @@ blocks:
   - id: test_replace_text
     type: EditFile
     inputs:
-      path: "{{inputs.test_dir}}/test.py"
+      path: "{{tmp}}/test.py"
       operations:
         - type: replace_text
           old_text: "Hello, World!"
@@ -51,7 +45,7 @@ blocks:
   - id: test_insert_lines
     type: EditFile
     inputs:
-      path: "{{inputs.test_dir}}/test.py"
+      path: "{{tmp}}/test.py"
       operations:
         - type: insert_lines
           line_start: 1
@@ -64,7 +58,7 @@ blocks:
   - id: test_delete_lines
     type: EditFile
     inputs:
-      path: "{{inputs.test_dir}}/test.py"
+      path: "{{tmp}}/test.py"
       operations:
         - type: delete_lines
           line_start: 7
@@ -76,7 +70,7 @@ blocks:
   - id: test_regex_replace
     type: EditFile
     inputs:
-      path: "{{inputs.test_dir}}/test.py"
+      path: "{{tmp}}/test.py"
       operations:
         - type: regex_replace
           pattern: 'print\("([^"]+)"\)'
@@ -89,7 +83,7 @@ blocks:
   - id: test_dry_run
     type: EditFile
     inputs:
-      path: "{{inputs.test_dir}}/test.py"
+      path: "{{tmp}}/test.py"
       operations:
         - type: replace_text
           old_text: "logger.info"
@@ -103,7 +97,7 @@ blocks:
     type: ReadFiles
     inputs:
       patterns: ["test.py"]
-      base_path: "{{inputs.test_dir}}"
+      base_path: "{{tmp}}"
       mode: full
     depends_on: [test_dry_run]
 

@@ -1,7 +1,6 @@
 {
   "outputs": {
     "all_tests_passed": true,
-    "cleanup_done": true,
     "test_complex_chain_output": "Complex chain: 'hello_world' (length: 11)\nSUCCESS: trim -> lower -> replace -> length chain worked",
     "test_number_chain_output": "Number chain: '42' (length: 2)\nSUCCESS: abs -> string -> length chain worked",
     "test_output_chain_output": "SUCCESS: outputs -> field access -> filter chain worked\nFile size: 12 bytes, created: true",

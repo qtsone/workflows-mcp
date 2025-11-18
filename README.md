@@ -327,7 +327,10 @@ Read files with glob patterns, multiple output modes, and automatic outline extr
 - Gitignore integration and file filtering
 - Size limits and file count limits
 - Multi-file reading in single block
-- YAML-formatted output
+- Smart output format:
+  - Single file: Direct content (string)
+  - Multiple files: YAML-formatted structure
+  - No files: Empty string
 
 **See examples:** `tests/workflows/core/file-operations/readfiles-test.yaml`
 

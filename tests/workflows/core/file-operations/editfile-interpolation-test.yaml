@@ -13,10 +13,6 @@ description: Test EditFile operation field interpolation support
 tags: [test, editfile, interpolation]
 
 inputs:
-  test_dir:
-    type: str
-    description: Test directory path
-    default: "/tmp/editfile-interpolation-test"
   # String inputs for operation field interpolation
   search_text:
     type: str
@@ -53,7 +49,7 @@ blocks:
   - id: create_test_file
     type: CreateFile
     inputs:
-      path: "{{inputs.test_dir}}/test.py"
+      path: "{{tmp}}/test.py"
       content: |
         def test():
             value = "PLACEHOLDER"
@@ -68,7 +64,7 @@ blocks:
   - id: test_replace_text_interpolation
     type: EditFile
     inputs:
-      path: "{{inputs.test_dir}}/test.py"
+      path: "{{tmp}}/test.py"
       operations:
         - type: replace_text
           old_text: "{{inputs.search_text}}"
@@ -81,7 +77,7 @@ blocks:
   - id: test_insert_lines_interpolation
     type: EditFile
     inputs:
-      path: "{{inputs.test_dir}}/test.py"
+      path: "{{tmp}}/test.py"
       operations:
         - type: insert_lines
           line_start: 1
@@ -93,7 +89,7 @@ blocks:
   - id: test_regex_replace_interpolation
     type: EditFile
     inputs:
-      path: "{{inputs.test_dir}}/test.py"
+      path: "{{tmp}}/test.py"
       operations:
         - type: regex_replace
           pattern: "{{inputs.regex_pattern}}"
@@ -106,7 +102,7 @@ blocks:
   - id: test_delete_lines_interpolation
     type: EditFile
     inputs:
-      path: "{{inputs.test_dir}}/test.py"
+      path: "{{tmp}}/test.py"
       operations:
         - type: delete_lines
           line_start: "{{inputs.delete_start}}"
@@ -118,7 +114,7 @@ blocks:
   - id: test_multiple_operations_interpolation
     type: EditFile
     inputs:
-      path: "{{inputs.test_dir}}/test.py"
+      path: "{{tmp}}/test.py"
       operations:
         # Operation 1: Use variable for old_text
         - type: replace_text
@@ -128,7 +124,7 @@ blocks:
         # Operation 2: Use variable for content
         - type: insert_lines
           line_start: 1
-          content: "# Modified by {{inputs.test_dir}}"
+          content: "# Modified by test_multiple_operations_interpolation"
       backup: false
     depends_on: [test_delete_lines_interpolation]
 
@@ -136,7 +132,7 @@ blocks:
   - id: test_nested_interpolation
     type: EditFile
     inputs:
-      path: "{{inputs.test_dir}}/test.py"
+      path: "{{tmp}}/test.py"
       operations:
         - type: insert_lines
           line_start: 1
@@ -150,7 +146,7 @@ blocks:
   - id: store_operations
     type: WriteJSONState
     inputs:
-      path: "{{inputs.test_dir}}/operations.json"
+      path: "{{tmp}}/operations.json"
       data:
         operations:
           - type: "replace_text"
@@ -163,7 +159,7 @@ blocks:
   - id: read_operations
     type: ReadJSONState
     inputs:
-      path: "{{inputs.test_dir}}/operations.json"
+      path: "{{tmp}}/operations.json"
       required: true
     depends_on: [store_operations]
 
@@ -171,7 +167,7 @@ blocks:
   - id: test_operations_interpolation
     type: EditFile
     inputs:
-      path: "{{inputs.test_dir}}/test.py"
+      path: "{{tmp}}/test.py"
       operations: "{{blocks.read_operations.outputs.data.operations}}"
       backup: false
     depends_on: [read_operations]
@@ -181,7 +177,7 @@ blocks:
     type: ReadFiles
     inputs:
       patterns: ["test.py"]
-      base_path: "{{inputs.test_dir}}"
+      base_path: "{{tmp}}"
       mode: full
     depends_on: [test_operations_interpolation]
 
