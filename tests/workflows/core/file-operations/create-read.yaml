@@ -72,7 +72,7 @@ outputs:
     value: "{{blocks.create_file.succeeded}}"
     type: bool
   file_content:
-    value: "{{get(blocks.read_file.outputs.files, 0, {}).content | default('Error: Failed to read file content')}}"
+    value: "{{blocks.read_file.content}}"
     type: str
   nonexistent_file_found:
     value: "{{blocks.read_nonexistent.succeeded}}"

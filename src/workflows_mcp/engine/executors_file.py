@@ -304,15 +304,20 @@ class ReadFilesOutput(BlockOutput):
     def content(self) -> str:
         """Content output - simplified for single file, YAML for multiple files.
 
+        No files: Returns empty string.
         Single file: Returns the file content directly (string).
         Multiple files: Returns YAML-formatted output with file list.
         Single source of truth: files list.
         """
-        # Simplify output for single file - just return the content directly
+        # No files: return empty string
+        if not self.files:
+            return ""
+
+        # Single file: return content directly
         if len(self.files) == 1:
             return self.files[0].content
 
-        # Multiple files or no files: use YAML format
+        # Multiple files: use YAML format
         return self._format_as_yaml()
 
     def _format_as_yaml(self) -> str:
