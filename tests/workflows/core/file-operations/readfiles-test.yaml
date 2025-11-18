@@ -12,18 +12,12 @@ name: readfiles-test
 description: Test ReadFiles executor with various modes and patterns
 tags: [test, readfiles, files]
 
-inputs:
-  test_dir:
-    type: str
-    description: Test directory path
-    default: "/tmp/readfiles-test"
-
 blocks:
   # Setup: Create test files
   - id: create_py_file
     type: CreateFile
     inputs:
-      path: "{{inputs.test_dir}}/example.py"
+      path: "{{tmp}}/example.py"
       create_parents: true
       content: |
         """Example Python module for testing."""
@@ -48,7 +42,7 @@ blocks:
   - id: create_markdown_file
     type: CreateFile
     inputs:
-      path: "{{inputs.test_dir}}/README.md"
+      path: "{{tmp}}/README.md"
       create_parents: true
       content: |
         # Test Project
@@ -66,7 +60,7 @@ blocks:
   - id: create_txt_file
     type: CreateFile
     inputs:
-      path: "{{inputs.test_dir}}/notes.txt"
+      path: "{{tmp}}/notes.txt"
       create_parents: true
       content: |
         Line 1: First note
@@ -80,7 +74,7 @@ blocks:
     type: ReadFiles
     inputs:
       patterns: ["example.py"]
-      base_path: "{{inputs.test_dir}}"
+      base_path: "{{tmp}}"
       mode: full
     depends_on: [create_py_file]
 
@@ -89,7 +83,7 @@ blocks:
     type: ReadFiles
     inputs:
       patterns: ["*.py"]
-      base_path: "{{inputs.test_dir}}"
+      base_path: "{{tmp}}"
       mode: outline
     depends_on: [create_py_file]
 
@@ -98,7 +92,7 @@ blocks:
     type: ReadFiles
     inputs:
       patterns: ["example.py"]
-      base_path: "{{inputs.test_dir}}"
+      base_path: "{{tmp}}"
       mode: summary
     depends_on: [create_py_file]
 
@@ -107,7 +101,7 @@ blocks:
     type: ReadFiles
     inputs:
       patterns: ["*.py", "*.md"]
-      base_path: "{{inputs.test_dir}}"
+      base_path: "{{tmp}}"
       mode: full
       max_files: 10
     depends_on: [create_markdown_file, create_py_file]
@@ -117,7 +111,7 @@ blocks:
     type: ReadFiles
     inputs:
       patterns: ["*"]
-      base_path: "{{inputs.test_dir}}"
+      base_path: "{{tmp}}"
       mode: full
       exclude_patterns: ["*.md"]  # Exclude markdown files
       max_files: 10
@@ -128,7 +122,7 @@ blocks:
     type: ReadFiles
     inputs:
       patterns: ["*.md"]
-      base_path: "{{inputs.test_dir}}"
+      base_path: "{{tmp}}"
       mode: outline
     depends_on: [create_markdown_file]
 

@@ -4,11 +4,6 @@ version: "1.0"
 tags: [test, filters, jinja2]
 
 inputs:
-  path:
-    type: str
-    description: "Temporary workspace"
-    default: "/tmp/test-filters-chaining"
-
   test_string:
     type: str
     description: "String for testing transformations"
@@ -75,7 +70,7 @@ blocks:
   - id: create_test_data
     type: CreateFile
     inputs:
-      path: "{{inputs.path}}/data.txt"
+      path: "{{tmp}}/data.txt"
       content: "test content"
       create_parents: true
     depends_on: [test_number_chain]
@@ -121,19 +116,6 @@ blocks:
         fi
     depends_on: [test_output_chain]
 
-  - id: cleanup
-    type: Shell
-    inputs:
-      command: |
-        # Safe cleanup with validation
-        DIR="{{inputs.path}}"
-        if [[ "$DIR" == /tmp/* ]] && [ -d "$DIR" ]; then
-          rm -rf "$DIR"
-        fi
-    depends_on:
-      - block: test_complex_chain
-        required: false
-
 outputs:
   all_tests_passed:
     value: >
@@ -164,7 +146,3 @@ outputs:
   test_complex_chain_output:
     value: "{{blocks.test_complex_chain.outputs.stdout}}"
     type: str
-
-  cleanup_done:
-    value: "{{blocks.cleanup.succeeded}}"
-    type: bool
