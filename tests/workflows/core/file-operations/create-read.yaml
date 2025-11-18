@@ -2,11 +2,6 @@ name: file-operations-create-read
 description: Test CreateFile with Jinja2 templates and variables
 tags: [test, core, files, create, read]
 inputs:
-  path:
-    type: str
-    description: "Temporary workspace"
-    default: "/tmp/test-create-read"
-
   features:
     description: Feature list
     type: list
@@ -24,7 +19,7 @@ blocks:
   - id: create_executable
     type: CreateFile
     inputs:
-      path: "{{inputs.path}}/script.sh"
+      path: "{{tmp}}/script.sh"
       create_parents: true
       mode: "755"
       content: |
@@ -34,14 +29,14 @@ blocks:
   - id: verify_executable
     type: Shell
     inputs:
-      working_dir: "{{inputs.path}}"
+      working_dir: "{{tmp}}"
       command: test -x "script.sh" && echo "yes"
     depends_on: [create_executable]
 
   - id: create_file
     type: CreateFile
     inputs:
-      path: "{{inputs.path}}/README.md"
+      path: "{{tmp}}/README.md"
       create_parents: true
       overwrite: true
       encoding: "utf-8"
@@ -62,28 +57,15 @@ blocks:
     type: ReadFiles
     inputs:
       patterns: ["README.md"]
-      base_path: "{{inputs.path}}"
+      base_path: "{{tmp}}"
     depends_on: [create_file]
   
   - id: read_nonexistent
     type: ReadFiles
     inputs:
       patterns: ["nonexistent.txt"]
-      base_path: "{{inputs.path}}"
+      base_path: "{{tmp}}"
     depends_on: [shell_data]
-
-  - id: cleanup
-    type: Shell
-    inputs:
-      command: |
-        # Safe cleanup with validation
-        DIR="{{inputs.path}}"
-        if [[ "$DIR" == /tmp/* ]] && [ -d "$DIR" ]; then
-          rm -rf "$DIR"
-        fi
-    depends_on:
-      - block: read_file
-        required: false
 
 outputs:
   file_created:
@@ -97,7 +79,4 @@ outputs:
     type: bool
   executable_file_created:
     value: "{{blocks.verify_executable.succeeded}}"
-    type: bool
-  cleanup_done:
-    value: "{{blocks.cleanup.succeeded}}"
     type: bool

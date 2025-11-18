@@ -1,6 +1,5 @@
 {
   "outputs": {
-    "cleanup_done": true,
     "executable_file_created": true,
     "file_content": "# Testing file OPS\n\nGenerated: TIMESTAMP\nShell Output: data_from_shell\nUTF8 Content: \u4f60\u597d\u4e16\u754c\n\n## Features\n- Feature 1\n- Feature 2\n- Feature 3",
     "file_created": true,

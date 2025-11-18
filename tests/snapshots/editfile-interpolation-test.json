@@ -2,7 +2,7 @@
   "outputs": {
     "all_operations_succeeded": true,
     "delete_lines_count": 2,
-    "final_content": "files:\n- path: test.py\n  content: |\n    # Test completed successfully: true\n    # Lines added: 1\n    # Modified by /tmp/editfile-interpolation-test\n    # Interpolated header\n    def test():\n        value = \"OPERATIONS_INTERPOLATED\"\n        logger.info(\"Hello, World!\")\n    # Extra line 1\n    # Extra line 2\n  size_bytes: 235",
+    "final_content": "# Test completed successfully: true\n# Lines added: 1\n# Modified by test_multiple_operations_interpolation\n# Interpolated header\ndef test():\n    value = \"OPERATIONS_INTERPOLATED\"\n    logger.info(\"Hello, World!\")\n# Extra line 1\n# Extra line 2",
     "insert_lines_count": 1,
     "operations_field_interpolation_success": true,
     "replace_text_lines_modified": 1
