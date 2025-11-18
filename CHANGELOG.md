@@ -2,6 +2,14 @@
 
 All notable changes to this project will be documented in this file.
 
+# [7.1.0](https://github.com/qtsone/workflows-mcp/compare/v7.0.0...v7.1.0) (2025-11-18)
+
+
+### Features
+
+* **ReadFiles:** simplify content output for single file reads ([25aa538](https://github.com/qtsone/workflows-mcp/commit/25aa538ffcdc7b22ec422e3f1b7dc887763c932c))
+* **ReadFiles:** simplify content output for single file reads ([#33](https://github.com/qtsone/workflows-mcp/issues/33)) ([7430945](https://github.com/qtsone/workflows-mcp/commit/743094517b2e72505a21c445eae2aafe0381a44e))
+
 # [7.0.0](https://github.com/qtsone/workflows-mcp/compare/v6.5.0...v7.0.0) (2025-11-17)
 
 
