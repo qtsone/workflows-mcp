@@ -254,7 +254,8 @@ async def execute_workflow(
         response = result.to_response(debug)
         response["job_id"] = job_id
         response["message"] = (
-            f"Workflow paused. Use resume_workflow(job_id='{job_id}') to continue."
+            f"Workflow paused waiting for input. "
+            f"Use resume_workflow(job_id='{job_id}', response='your_answer') to continue."
         )
         return response
 
