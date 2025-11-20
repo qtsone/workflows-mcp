@@ -392,10 +392,11 @@ class BlockDefinition(BaseModel):
     )
 
     # ADR-009: For_Each Abstraction (fractal design)
-    for_each: str | None = Field(
+    for_each: str | list[Any] | dict[str, Any] | None = Field(
         default=None,
         description=(
-            "Variable expression evaluating to dict/list for iteration (e.g., '{{inputs.files}}')"
+            "Variable expression or literal collection for iteration. "
+            "Supports: string expression (e.g., '{{inputs.files}}'), literal list, or literal dict"
         ),
     )
     for_each_mode: str = Field(

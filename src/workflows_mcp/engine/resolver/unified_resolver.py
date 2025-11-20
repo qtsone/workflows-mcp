@@ -35,6 +35,7 @@ import shlex
 from datetime import datetime
 from typing import TYPE_CHECKING, Any
 
+import yaml
 from jinja2 import Environment, StrictUndefined
 from jinja2.sandbox import SandboxedEnvironment
 
@@ -158,6 +159,8 @@ class UnifiedVariableResolver:
                 "quote": shlex.quote,
                 "prettyjson": lambda x: json.dumps(x, indent=2),
                 "tojson": json.dumps,
+                "fromjson": json.loads,
+                "toyaml": lambda x: yaml.dump(x, default_flow_style=False, sort_keys=False),
                 "b64encode": lambda x: base64.b64encode(x.encode()).decode(),
                 "b64decode": lambda x: base64.b64decode(x).decode(),
                 "hash": lambda x, algo="sha256": hashlib.new(algo, x.encode()).hexdigest(),
