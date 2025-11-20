@@ -490,11 +490,10 @@ blocks:
         export GIT_SSH_COMMAND="{{blocks.build_git_ssh_command.outputs.content | trim}}"
         {% endif %}
 
-        # Execute clone
+        # Execute clone (without --branch to avoid failure when branch doesn't exist)
         echo "Cloning repository..."
         git clone \
-          {% if inputs.fetch_depth > 0 %}--depth {{inputs.fetch_depth}} --single-branch {% endif %}\
-          {% if inputs.ref %}--branch {{inputs.ref}} {% endif %}\
+          {% if inputs.fetch_depth > 0 %}--depth {{inputs.fetch_depth}} {% endif %}\
           {% if inputs.show_progress %}--progress{% else %}--quiet{% endif %}\
           "$REPO_URL" "$TARGET_PATH"
 
@@ -544,19 +543,24 @@ blocks:
     inputs:
       working_dir: "{{inputs.path}}"
       command: |
-        # Checkout the specified ref
+        # Try to checkout existing ref, or create new branch if it doesn't exist
         echo "Checking out ref: {{inputs.ref}}"
-        git checkout {{inputs.ref}}
 
-        # If it's a branch and we're in existing repo, pull latest
-        {% if blocks.prepare_target_directory.outputs.state == 'existing_repo' %}
-        if git show-ref --verify --quiet "refs/heads/{{inputs.ref}}"; then
-          echo "Pulling latest changes for branch {{inputs.ref}}..."
-          git pull origin {{inputs.ref}} || true
+        if git checkout {{inputs.ref}} 2>/dev/null; then
+          echo "✓ Checked out existing ref: {{inputs.ref}}"
+
+          # If it's a branch and we're in existing repo, pull latest
+          {% if blocks.prepare_target_directory.outputs.state == 'existing_repo' %}
+          if git show-ref --verify --quiet "refs/heads/{{inputs.ref}}"; then
+            echo "Pulling latest changes for branch {{inputs.ref}}..."
+            git pull origin {{inputs.ref}} || true
+          fi
+          {% endif %}
+        else
+          echo "Branch/ref '{{inputs.ref}}' not found, creating new branch..."
+          git checkout -b {{inputs.ref}}
+          echo "✓ Created and checked out new branch: {{inputs.ref}}"
         fi
-        {% endif %}
-
-        echo "✓ Checked out {{inputs.ref}}"
       timeout: 60
     depends_on:
       - block: clone_repository
