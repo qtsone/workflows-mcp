@@ -92,11 +92,6 @@ inputs:
     default: true
     required: false
 
-  show_progress:
-    type: bool
-    description: "Show progress output during fetch operations"
-    default: true
-    required: false
 
 blocks:
   # ============================================================================
@@ -494,7 +489,7 @@ blocks:
         echo "Cloning repository..."
         git clone \
           {% if inputs.fetch_depth > 0 %}--depth {{inputs.fetch_depth}} {% endif %}\
-          {% if inputs.show_progress %}--progress{% else %}--quiet{% endif %}\
+          --quiet \
           "$REPO_URL" "$TARGET_PATH"
 
         echo "✓ Repository cloned successfully"
@@ -521,7 +516,7 @@ blocks:
         echo "Fetching updates..."
         git fetch origin \
           {% if inputs.fetch_depth > 0 %}--depth={{inputs.fetch_depth}} {% endif %}\
-          {% if inputs.show_progress %}--progress{% else %}--quiet{% endif %}
+          --quiet
 
         echo "✓ Updates fetched successfully"
       timeout: 300
@@ -655,8 +650,7 @@ blocks:
 
         git submodule update \
           {% if inputs.submodules == 'recursive' %}--recursive {% endif %}\
-          {% if inputs.fetch_depth > 0 %}--depth={{inputs.fetch_depth}} {% endif %}\
-          {% if inputs.show_progress %}--progress{% endif %}
+          {% if inputs.fetch_depth > 0 %}--depth={{inputs.fetch_depth}} {% endif %}
 
         echo "✓ Submodules checked out successfully"
       timeout: 300
