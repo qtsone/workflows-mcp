@@ -1,0 +1,162 @@
+{
+  "type": "object",
+  "properties": {
+    "name": {
+      "type": "string",
+      "description": "Workflow name"
+    },
+    "description": {
+      "type": "string",
+      "description": "Workflow description"
+    },
+    "tags": {
+      "type": "array",
+      "description": "Workflow tags (can be empty array)",
+      "items": {
+        "type": "string"
+      }
+    },
+    "inputs": {
+      "type": "object",
+      "description": "Workflow input parameters (can be empty object)",
+      "additionalProperties": {
+        "type": "object",
+        "properties": {
+          "type": {
+            "type": "string",
+            "enum": [
+              "str",
+              "num",
+              "bool",
+              "list",
+              "dict"
+            ],
+            "description": "Input type"
+          },
+          "description": {
+            "type": "string",
+            "description": "Input description"
+          },
+          "required": {
+            "type": "boolean",
+            "description": "Whether input is required"
+          }
+        },
+        "required": [
+          "type",
+          "description",
+          "required"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "outputs": {
+      "type": "object",
+      "description": "Workflow output definitions (optional)",
+      "additionalProperties": {
+        "type": "object",
+        "properties": {
+          "value": {
+            "type": "string",
+            "description": "Output value expression"
+          },
+          "type": {
+            "type": "string",
+            "enum": [
+              "str",
+              "int",
+              "float",
+              "bool",
+              "json",
+              "list",
+              "dict"
+            ],
+            "description": "Output type"
+          },
+          "description": {
+            "type": "string",
+            "description": "Output description"
+          }
+        },
+        "required": [
+          "value",
+          "type",
+          "description"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "blocks": {
+      "type": "array",
+      "description": "Workflow execution blocks",
+      "items": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "description": "Unique block identifier"
+          },
+          "type": {
+            "type": "string",
+            "description": "Block type (e.g., Shell, LLMCall, CreateFile)"
+          },
+          "condition": {
+            "type": "string",
+            "description": "Optional condition for conditional execution"
+          },
+          "depends_on": {
+            "type": "array",
+            "description": "Block dependencies",
+            "items": {
+              "type": "object",
+              "properties": {
+                "block": {
+                  "type": "string",
+                  "description": "ID of the block this depends on"
+                },
+                "required": {
+                  "type": "boolean",
+                  "description": "Whether dependency must succeed"
+                }
+              },
+              "required": [
+                "block",
+                "required"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "inputs": {
+            "type": "object",
+            "description": "Block-specific inputs",
+            "properties": {
+              "command": {
+                "type": "string",
+                "description": "Command or primary input for the block"
+              }
+            },
+            "required": [
+              "command"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "required": [
+          "id",
+          "type",
+          "condition",
+          "depends_on",
+          "inputs"
+        ],
+        "additionalProperties": false
+      }
+    }
+  },
+  "required": [
+    "name",
+    "description",
+    "tags",
+    "blocks"
+  ],
+  "additionalProperties": false
+}
