@@ -88,8 +88,8 @@ inputs:
 
   sparse_checkout_cone_mode:
     type: bool
-    description: "Use cone mode for sparse checkout (more efficient)"
-    default: true
+    description: "Use cone mode for sparse checkout (directories only, more efficient)"
+    default: false
     required: false
 
 
@@ -459,14 +459,15 @@ blocks:
   # PHASE 3: CLONE OR FETCH REPOSITORY
   # ============================================================================
 
-  - id: clone_repository
+  # Clone with ref - uses --branch to set up tracking automatically
+  # May fail if ref doesn't exist remotely (handled by clone_fallback)
+  - id: clone_with_ref
     type: Shell
-    condition: "{{blocks.prepare_target_directory.outputs.state != 'existing_repo'}}"
+    condition: "{{inputs.ref != '' and blocks.prepare_target_directory.outputs.state != 'existing_repo'}}"
     inputs:
       command: |
         {% set base_url = blocks.resolve_repository_url.outputs.url %}
 
-        # Build authenticated URL (Jinja2 for logic, bash for token values)
         {% if blocks.auth_determine_method.outputs.method == 'token' and base_url.startswith('https://') %}
         AUTH_TOKEN=$(cat {{tmp}}/auth_token 2>/dev/null || echo "")
         if [ -n "$AUTH_TOKEN" ]; then
@@ -478,19 +479,96 @@ blocks:
         REPO_URL="{{ base_url }}"
         {% endif %}
 
-        TARGET_PATH="{{inputs.path}}"
-
-        # Load Git SSH command from isolated SSH setup
         {% if blocks.build_git_ssh_command.succeeded %}
         export GIT_SSH_COMMAND="{{blocks.build_git_ssh_command.outputs.content | trim}}"
         {% endif %}
 
-        # Execute clone (without --branch to avoid failure when branch doesn't exist)
+        set -e
+        echo "Cloning repository (branch: {{inputs.ref}})..."
+        git clone \
+          {% if inputs.sparse_checkout != '' %}--filter=blob:none --no-checkout \
+          {% elif inputs.fetch_depth > 0 %}--depth {{inputs.fetch_depth}} {% endif %}\
+          --branch {{inputs.ref}} --single-branch \
+          --quiet \
+          "$REPO_URL" "{{inputs.path}}"
+
+        echo "✓ Cloned with branch {{inputs.ref}}"
+      timeout: 300
+    depends_on:
+      - block: handle_uncommitted_changes
+        required: false
+      - block: build_git_ssh_command
+        required: false
+      - block: auth_determine_method
+        required: false
+
+  # Fallback: clone default branch when ref doesn't exist remotely
+  - id: clone_fallback
+    type: Shell
+    condition: "{{inputs.ref != '' and blocks.clone_with_ref.failed}}"
+    inputs:
+      command: |
+        {% set base_url = blocks.resolve_repository_url.outputs.url %}
+
+        {% if blocks.auth_determine_method.outputs.method == 'token' and base_url.startswith('https://') %}
+        AUTH_TOKEN=$(cat {{tmp}}/auth_token 2>/dev/null || echo "")
+        if [ -n "$AUTH_TOKEN" ]; then
+          REPO_URL="{{ base_url | replace('https://', 'https://x-access-token:${AUTH_TOKEN}@') }}"
+        else
+          REPO_URL="{{ base_url }}"
+        fi
+        {% else %}
+        REPO_URL="{{ base_url }}"
+        {% endif %}
+
+        {% if blocks.build_git_ssh_command.succeeded %}
+        export GIT_SSH_COMMAND="{{blocks.build_git_ssh_command.outputs.content | trim}}"
+        {% endif %}
+
+        set -e
+        echo "Branch '{{inputs.ref}}' not found remotely, cloning default branch..."
+        git clone \
+          {% if inputs.sparse_checkout != '' %}--filter=blob:none --no-checkout \
+          {% elif inputs.fetch_depth > 0 %}--depth {{inputs.fetch_depth}} {% endif %}\
+          --quiet \
+          "$REPO_URL" "{{inputs.path}}"
+
+        echo "✓ Cloned (will create '{{inputs.ref}}' as new branch)"
+      timeout: 300
+    depends_on:
+      - block: clone_with_ref
+        required: false
+
+  # Clone without ref - default branch
+  - id: clone_default
+    type: Shell
+    condition: "{{inputs.ref == '' and blocks.prepare_target_directory.outputs.state != 'existing_repo'}}"
+    inputs:
+      command: |
+        {% set base_url = blocks.resolve_repository_url.outputs.url %}
+
+        {% if blocks.auth_determine_method.outputs.method == 'token' and base_url.startswith('https://') %}
+        AUTH_TOKEN=$(cat {{tmp}}/auth_token 2>/dev/null || echo "")
+        if [ -n "$AUTH_TOKEN" ]; then
+          REPO_URL="{{ base_url | replace('https://', 'https://x-access-token:${AUTH_TOKEN}@') }}"
+        else
+          REPO_URL="{{ base_url }}"
+        fi
+        {% else %}
+        REPO_URL="{{ base_url }}"
+        {% endif %}
+
+        {% if blocks.build_git_ssh_command.succeeded %}
+        export GIT_SSH_COMMAND="{{blocks.build_git_ssh_command.outputs.content | trim}}"
+        {% endif %}
+
+        set -e
         echo "Cloning repository..."
         git clone \
-          {% if inputs.fetch_depth > 0 %}--depth {{inputs.fetch_depth}} {% endif %}\
+          {% if inputs.sparse_checkout != '' %}--filter=blob:none --no-checkout \
+          {% elif inputs.fetch_depth > 0 %}--depth {{inputs.fetch_depth}} {% endif %}\
           --quiet \
-          "$REPO_URL" "$TARGET_PATH"
+          "$REPO_URL" "{{inputs.path}}"
 
         echo "✓ Repository cloned successfully"
       timeout: 300
@@ -510,7 +588,7 @@ blocks:
       command: |
         # Load Git SSH command from isolated SSH setup
         {% if blocks.build_git_ssh_command.succeeded %}
-        export GIT_SSH_COMMAND="{{blocks.build_git_ssh_command.content | trim}}"
+        export GIT_SSH_COMMAND="{{blocks.build_git_ssh_command.outputs.content | trim}}"
         {% endif %}
 
         echo "Fetching updates..."
@@ -529,42 +607,135 @@ blocks:
         required: false
 
   # ============================================================================
-  # PHASE 4: CHECKOUT SPECIFIC REF
+  # PHASE 4: SPARSE CHECKOUT CONFIGURATION (before checkout!)
   # ============================================================================
 
-  - id: checkout_ref
+  - id: configure_sparse_checkout
     type: Shell
-    condition: "{{inputs.ref != ''}}"
+    condition: "{{inputs.sparse_checkout != ''}}"
     inputs:
       working_dir: "{{inputs.path}}"
       command: |
-        # Try to checkout existing ref, or create new branch if it doesn't exist
-        echo "Checking out ref: {{inputs.ref}}"
+        echo "Configuring sparse checkout..."
 
-        if git checkout {{inputs.ref}} 2>/dev/null; then
-          echo "✓ Checked out existing ref: {{inputs.ref}}"
+        # Use modern git sparse-checkout command (Git 2.25+)
+        {% if inputs.sparse_checkout_cone_mode %}
+        git sparse-checkout init --cone
+        {% else %}
+        git sparse-checkout init --no-cone
+        {% endif %}
 
-          # If it's a branch and we're in existing repo, pull latest
-          {% if blocks.prepare_target_directory.outputs.state == 'existing_repo' %}
-          if git show-ref --verify --quiet "refs/heads/{{inputs.ref}}"; then
-            echo "Pulling latest changes for branch {{inputs.ref}}..."
-            git pull origin {{inputs.ref}} || true
-          fi
-          {% endif %}
-        else
-          echo "Branch/ref '{{inputs.ref}}' not found, creating new branch..."
-          git checkout -b {{inputs.ref}}
-          echo "✓ Created and checked out new branch: {{inputs.ref}}"
-        fi
+        # Set sparse checkout patterns (comma-separated → space-separated)
+        PATTERNS=$(echo "{{inputs.sparse_checkout}}" | tr ',' ' ')
+        git sparse-checkout set $PATTERNS
+
+        echo "✓ Sparse checkout configured with patterns:"
+        git sparse-checkout list
       timeout: 60
     depends_on:
-      - block: clone_repository
+      - block: clone_with_ref
+        required: false
+      - block: clone_fallback
+        required: false
+      - block: clone_default
         required: false
       - block: fetch_updates
         required: false
 
   # ============================================================================
-  # PHASE 5: FETCH TAGS (if requested)
+  # PHASE 5: CHECKOUT
+  # ============================================================================
+
+  # Checkout for sparse (materialize files after sparse config)
+  # Only needed when clone_with_ref succeeded (already on right branch, but no files yet)
+  - id: checkout_sparse
+    type: Shell
+    condition: "{{inputs.sparse_checkout != '' and blocks.clone_with_ref.succeeded}}"
+    inputs:
+      working_dir: "{{inputs.path}}"
+      command: |
+        echo "Checking out files (sparse)..."
+        git checkout
+        echo "✓ Checked out sparse files on branch {{inputs.ref}}"
+      timeout: 60
+    depends_on: [configure_sparse_checkout]
+
+  # Create new branch (when clone_fallback ran - ref doesn't exist remotely)
+  - id: checkout_new_branch
+    type: Shell
+    condition: "{{blocks.clone_fallback.succeeded}}"
+    inputs:
+      working_dir: "{{inputs.path}}"
+      command: |
+        echo "Creating new branch: {{inputs.ref}}"
+        {% if inputs.sparse_checkout != '' %}
+        # For sparse: create branch then checkout
+        git branch {{inputs.ref}}
+        git checkout {{inputs.ref}}
+        {% else %}
+        git checkout -b {{inputs.ref}}
+        {% endif %}
+        echo "✓ Created and checked out new branch: {{inputs.ref}}"
+      timeout: 60
+    depends_on:
+      - block: configure_sparse_checkout
+        required: false
+
+  # Checkout default (for sparse without ref)
+  - id: checkout_sparse_default
+    type: Shell
+    condition: "{{inputs.ref == '' and inputs.sparse_checkout != '' and blocks.clone_default.succeeded}}"
+    inputs:
+      working_dir: "{{inputs.path}}"
+      command: |
+        echo "Checking out default branch (sparse)..."
+        git checkout
+        echo "✓ Checked out default branch"
+      timeout: 60
+    depends_on: [configure_sparse_checkout]
+
+  # For existing repos: fetch and checkout the ref
+  - id: checkout_existing_repo
+    type: Shell
+    condition: "{{inputs.ref != '' and blocks.prepare_target_directory.outputs.state == 'existing_repo'}}"
+    inputs:
+      working_dir: "{{inputs.path}}"
+      command: |
+        REF="{{inputs.ref}}"
+
+        {% if blocks.build_git_ssh_command.succeeded %}
+        export GIT_SSH_COMMAND="{{blocks.build_git_ssh_command.outputs.content | trim}}"
+        {% endif %}
+
+        # Check if ref exists locally, remotely, or needs fetch
+        if git rev-parse --verify "$REF" &>/dev/null; then
+          echo "Checking out local ref: $REF"
+          git checkout "$REF"
+          # Pull latest if it's a branch
+          if git show-ref --verify --quiet "refs/heads/$REF"; then
+            git pull origin "$REF" || true
+          fi
+        elif git rev-parse --verify "origin/$REF" &>/dev/null; then
+          echo "Checking out remote ref: $REF"
+          git checkout -B "$REF" "origin/$REF"
+        else
+          # Try to fetch with refspec to create proper remote tracking branch
+          echo "Fetching ref: $REF"
+          if git fetch origin "$REF:refs/remotes/origin/$REF"; then
+            git checkout -B "$REF" "origin/$REF"
+          else
+            echo "Creating new branch: $REF"
+            git checkout -b "$REF"
+          fi
+        fi
+        echo "✓ Checked out: $REF"
+      timeout: 120
+    depends_on:
+      - block: configure_sparse_checkout
+        required: false
+
+  # ============================================================================
+  # PHASE 6: FETCH TAGS (if requested)
   # ============================================================================
 
   - id: fetch_tags
@@ -577,7 +748,7 @@ blocks:
 
         # Load Git SSH command from isolated SSH setup
         {% if blocks.build_git_ssh_command.succeeded %}
-        export GIT_SSH_COMMAND="{{blocks.build_git_ssh_command.content | trim}}"
+        export GIT_SSH_COMMAND="{{blocks.build_git_ssh_command.outputs.content | trim}}"
         {% endif %}
 
         git fetch --tags origin
@@ -585,47 +756,17 @@ blocks:
         echo "✓ Tags fetched successfully"
       timeout: 60
     depends_on:
-      - block: checkout_ref
+      - block: checkout_sparse
         required: false
-      - block: clone_repository
+      - block: checkout_new_branch
         required: false
-      - block: fetch_updates
+      - block: checkout_sparse_default
         required: false
-
-  # ============================================================================
-  # PHASE 6: SPARSE CHECKOUT CONFIGURATION
-  # ============================================================================
-
-  - id: configure_sparse_checkout
-    type: Shell
-    condition: "{{inputs.sparse_checkout != ''}}"
-    inputs:
-      working_dir: "{{inputs.path}}"
-      command: |
-        echo "Configuring sparse checkout..."
-
-        # Enable sparse checkout
-        git config core.sparseCheckout true
-
-        # Set cone mode
-        {% if inputs.sparse_checkout_cone_mode %}
-        git config core.sparseCheckoutCone true
-        {% else %}
-        git config core.sparseCheckoutCone false
-        {% endif %}
-
-        # Write sparse checkout patterns
-        SPARSE_FILE=".git/info/sparse-checkout"
-        echo "{{inputs.sparse_checkout}}" | tr ',' '\n' > "$SPARSE_FILE"
-
-        # Apply sparse checkout
-        git read-tree -mu HEAD
-
-        echo "✓ Sparse checkout configured with patterns:"
-        cat "$SPARSE_FILE"
-      timeout: 60
-    depends_on:
-      - block: fetch_tags
+      - block: checkout_existing_repo
+        required: false
+      - block: clone_with_ref
+        required: false
+      - block: clone_default
         required: false
 
   # ============================================================================
@@ -642,7 +783,7 @@ blocks:
 
         # Load Git SSH command from isolated SSH setup
         {% if blocks.build_git_ssh_command.succeeded %}
-        export GIT_SSH_COMMAND="{{blocks.build_git_ssh_command.content | trim}}"
+        export GIT_SSH_COMMAND="{{blocks.build_git_ssh_command.outputs.content | trim}}"
         {% endif %}
 
         # Initialize and update submodules
@@ -655,7 +796,7 @@ blocks:
         echo "✓ Submodules checked out successfully"
       timeout: 300
     depends_on:
-      - block: configure_sparse_checkout
+      - block: fetch_tags
         required: false
 
   # ============================================================================

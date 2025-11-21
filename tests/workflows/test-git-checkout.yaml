@@ -1,0 +1,472 @@
+name: test-git-checkout
+description: Integration tests for git-checkout workflow covering clone, sparse checkout, and branch scenarios
+version: "1.0"
+tags: [test, git]
+
+inputs:
+  test_repo:
+    type: str
+    default: "https://github.com/qtsone/marketplace"
+    description: "Repository to use for testing"
+  test_branch:
+    type: str
+    default: "chore/for-testing"
+    description: "Branch that exists on remote"
+  sparse_file:
+    type: str
+    default: "README.md"
+    description: "File to sparse checkout (exists on all branches)"
+  excluded_file:
+    type: str
+    default: "CHANGELOG.md"
+    description: "File that should NOT exist after sparse checkout"
+  sparse_dir:
+    type: str
+    default: "scripts"
+    description: "Directory to checkout in cone mode"
+  excluded_dir:
+    type: str
+    default: "plugins"
+    description: "Directory that should NOT exist after cone sparse checkout"
+  test_base_dir:
+    type: str
+    default: "{{tmp}}/git-checkout-tests"
+    description: "Base directory for test checkouts"
+
+blocks:
+  # ==========================================================================
+  # SETUP: Clean test directory
+  # ==========================================================================
+  - id: setup_clean
+    type: Shell
+    inputs:
+      command: |
+        rm -rf "{{inputs.test_base_dir}}"
+        mkdir -p "{{inputs.test_base_dir}}"
+        echo "Test directory ready: {{inputs.test_base_dir}}"
+
+  # ==========================================================================
+  # TEST 1: Fresh clone - no ref, no sparse
+  # ==========================================================================
+  - id: test1_clone
+    type: Workflow
+    inputs:
+      workflow: git-checkout
+      inputs:
+        repo: "{{inputs.test_repo}}"
+        path: "{{inputs.test_base_dir}}/test1-basic"
+        fetch_depth: 1
+    depends_on: [setup_clean]
+
+  - id: test1_verify
+    type: Shell
+    inputs:
+      working_dir: "{{inputs.test_base_dir}}/test1-basic"
+      command: |
+        set -e
+        # Verify repo exists and has files
+        test -d .git || { echo "FAIL: .git not found"; exit 1; }
+        test -f "{{inputs.sparse_file}}" || { echo "FAIL: {{inputs.sparse_file}} not found"; exit 1; }
+
+        # Verify on default branch (main)
+        BRANCH=$(git rev-parse --abbrev-ref HEAD)
+        test "$BRANCH" = "main" || { echo "FAIL: Expected main, got $BRANCH"; exit 1; }
+
+        echo "PASS: Test 1 - Fresh clone (no ref, no sparse)"
+    depends_on: [test1_clone]
+
+  # ==========================================================================
+  # TEST 2: Fresh clone - with ref that exists
+  # ==========================================================================
+  - id: test2_clone
+    type: Workflow
+    inputs:
+      workflow: git-checkout
+      inputs:
+        repo: "{{inputs.test_repo}}"
+        path: "{{inputs.test_base_dir}}/test2-with-ref"
+        ref: "{{inputs.test_branch}}"
+        fetch_depth: 1
+    depends_on: [setup_clean]
+
+  - id: test2_verify
+    type: Shell
+    inputs:
+      working_dir: "{{inputs.test_base_dir}}/test2-with-ref"
+      command: |
+        set -e
+        test -d .git || { echo "FAIL: .git not found"; exit 1; }
+
+        BRANCH=$(git rev-parse --abbrev-ref HEAD)
+        test "$BRANCH" = "{{inputs.test_branch}}" || { echo "FAIL: Expected {{inputs.test_branch}}, got $BRANCH"; exit 1; }
+
+        echo "PASS: Test 2 - Fresh clone with existing ref"
+    depends_on: [test2_clone]
+
+  # ==========================================================================
+  # TEST 3: Fresh clone - sparse checkout (no ref)
+  # ==========================================================================
+  - id: test3_clone
+    type: Workflow
+    inputs:
+      workflow: git-checkout
+      inputs:
+        repo: "{{inputs.test_repo}}"
+        path: "{{inputs.test_base_dir}}/test3-sparse"
+        sparse_checkout: "{{inputs.sparse_file}}"
+    depends_on: [setup_clean]
+
+  - id: test3_verify
+    type: Shell
+    inputs:
+      working_dir: "{{inputs.test_base_dir}}/test3-sparse"
+      command: |
+        set -e
+        test -d .git || { echo "FAIL: .git not found"; exit 1; }
+
+        # Sparse file should exist
+        test -f "{{inputs.sparse_file}}" || { echo "FAIL: {{inputs.sparse_file}} not found"; exit 1; }
+
+        # Other files should NOT exist (sparse checkout)
+        test ! -f "{{inputs.excluded_file}}" || { echo "FAIL: {{inputs.excluded_file}} should not exist in sparse checkout"; exit 1; }
+
+        echo "PASS: Test 3 - Sparse checkout (no ref)"
+    depends_on: [test3_clone]
+
+  # ==========================================================================
+  # TEST 4: Fresh clone - ref + sparse (original bug scenario)
+  # ==========================================================================
+  - id: test4_clone
+    type: Workflow
+    inputs:
+      workflow: git-checkout
+      inputs:
+        repo: "{{inputs.test_repo}}"
+        path: "{{inputs.test_base_dir}}/test4-ref-sparse"
+        ref: "{{inputs.test_branch}}"
+        sparse_checkout: "{{inputs.sparse_file}}"
+    depends_on: [setup_clean]
+
+  - id: test4_verify
+    type: Shell
+    inputs:
+      working_dir: "{{inputs.test_base_dir}}/test4-ref-sparse"
+      command: |
+        set -e
+        test -d .git || { echo "FAIL: .git not found"; exit 1; }
+
+        # Verify correct branch
+        BRANCH=$(git rev-parse --abbrev-ref HEAD)
+        test "$BRANCH" = "{{inputs.test_branch}}" || { echo "FAIL: Expected {{inputs.test_branch}}, got $BRANCH"; exit 1; }
+
+        # Sparse file should exist
+        test -f "{{inputs.sparse_file}}" || { echo "FAIL: {{inputs.sparse_file}} not found"; exit 1; }
+
+        # Other files should NOT exist
+        test ! -f "{{inputs.excluded_file}}" || { echo "FAIL: {{inputs.excluded_file}} should not exist"; exit 1; }
+
+        echo "PASS: Test 4 - Ref + sparse checkout"
+    depends_on: [test4_clone]
+
+  # ==========================================================================
+  # TEST 5: Fresh clone - ref doesn't exist (creates new branch)
+  # ==========================================================================
+  - id: test5_clone
+    type: Workflow
+    inputs:
+      workflow: git-checkout
+      inputs:
+        repo: "{{inputs.test_repo}}"
+        path: "{{inputs.test_base_dir}}/test5-new-branch"
+        ref: "test-nonexistent-branch-12345"
+        fetch_depth: 1
+    depends_on: [setup_clean]
+
+  - id: test5_verify
+    type: Shell
+    inputs:
+      working_dir: "{{inputs.test_base_dir}}/test5-new-branch"
+      command: |
+        set -e
+        test -d .git || { echo "FAIL: .git not found"; exit 1; }
+
+        # Should be on new branch
+        BRANCH=$(git rev-parse --abbrev-ref HEAD)
+        test "$BRANCH" = "test-nonexistent-branch-12345" || { echo "FAIL: Expected new branch, got $BRANCH"; exit 1; }
+
+        echo "PASS: Test 5 - New branch creation"
+    depends_on: [test5_clone]
+
+  # ==========================================================================
+  # TEST 6: Fresh clone - ref doesn't exist + sparse
+  # ==========================================================================
+  - id: test6_clone
+    type: Workflow
+    inputs:
+      workflow: git-checkout
+      inputs:
+        repo: "{{inputs.test_repo}}"
+        path: "{{inputs.test_base_dir}}/test6-new-branch-sparse"
+        ref: "test-nonexistent-sparse-12345"
+        sparse_checkout: "{{inputs.sparse_file}}"
+    depends_on: [setup_clean]
+
+  - id: test6_verify
+    type: Shell
+    inputs:
+      working_dir: "{{inputs.test_base_dir}}/test6-new-branch-sparse"
+      command: |
+        set -e
+        test -d .git || { echo "FAIL: .git not found"; exit 1; }
+
+        BRANCH=$(git rev-parse --abbrev-ref HEAD)
+        test "$BRANCH" = "test-nonexistent-sparse-12345" || { echo "FAIL: Expected new branch, got $BRANCH"; exit 1; }
+
+        test -f "{{inputs.sparse_file}}" || { echo "FAIL: {{inputs.sparse_file}} not found"; exit 1; }
+        test ! -f "{{inputs.excluded_file}}" || { echo "FAIL: {{inputs.excluded_file}} should not exist"; exit 1; }
+
+        echo "PASS: Test 6 - New branch + sparse checkout"
+    depends_on: [test6_clone]
+
+  # ==========================================================================
+  # TEST 7: Existing repo - no ref (stay on current branch)
+  # ==========================================================================
+  - id: test7_setup
+    type: Shell
+    inputs:
+      command: |
+        set -e
+        git clone --depth 1 "{{inputs.test_repo}}" "{{inputs.test_base_dir}}/test7-existing-no-ref"
+    depends_on: [setup_clean]
+
+  - id: test7_checkout
+    type: Workflow
+    inputs:
+      workflow: git-checkout
+      inputs:
+        repo: "{{inputs.test_repo}}"
+        path: "{{inputs.test_base_dir}}/test7-existing-no-ref"
+    depends_on: [test7_setup]
+
+  - id: test7_verify
+    type: Shell
+    inputs:
+      working_dir: "{{inputs.test_base_dir}}/test7-existing-no-ref"
+      command: |
+        set -e
+        BRANCH=$(git rev-parse --abbrev-ref HEAD)
+        test "$BRANCH" = "main" || { echo "FAIL: Expected main, got $BRANCH"; exit 1; }
+        echo "PASS: Test 7 - Existing repo, no ref (stay on current)"
+    depends_on: [test7_checkout]
+
+  # ==========================================================================
+  # TEST 8: Existing repo - checkout ref (remote only, not local)
+  # ==========================================================================
+  - id: test8_setup
+    type: Shell
+    inputs:
+      command: |
+        set -e
+        git clone --depth 1 "{{inputs.test_repo}}" "{{inputs.test_base_dir}}/test8-existing-remote-ref"
+    depends_on: [setup_clean]
+
+  - id: test8_checkout
+    type: Workflow
+    inputs:
+      workflow: git-checkout
+      inputs:
+        repo: "{{inputs.test_repo}}"
+        path: "{{inputs.test_base_dir}}/test8-existing-remote-ref"
+        ref: "{{inputs.test_branch}}"
+    depends_on: [test8_setup]
+
+  - id: test8_verify
+    type: Shell
+    inputs:
+      working_dir: "{{inputs.test_base_dir}}/test8-existing-remote-ref"
+      command: |
+        set -e
+        BRANCH=$(git rev-parse --abbrev-ref HEAD)
+        test "$BRANCH" = "{{inputs.test_branch}}" || { echo "FAIL: Expected {{inputs.test_branch}}, got $BRANCH"; exit 1; }
+        echo "PASS: Test 8 - Existing repo, checkout remote ref"
+    depends_on: [test8_checkout]
+
+  # ==========================================================================
+  # TEST 9: Existing repo - ref exists locally (already checked out before)
+  # ==========================================================================
+  - id: test9_setup
+    type: Shell
+    inputs:
+      command: |
+        set -e
+        git clone "{{inputs.test_repo}}" "{{inputs.test_base_dir}}/test9-existing-local-ref"
+        cd "{{inputs.test_base_dir}}/test9-existing-local-ref"
+        git checkout "{{inputs.test_branch}}"
+        git checkout main
+    depends_on: [setup_clean]
+
+  - id: test9_checkout
+    type: Workflow
+    inputs:
+      workflow: git-checkout
+      inputs:
+        repo: "{{inputs.test_repo}}"
+        path: "{{inputs.test_base_dir}}/test9-existing-local-ref"
+        ref: "{{inputs.test_branch}}"
+    depends_on: [test9_setup]
+
+  - id: test9_verify
+    type: Shell
+    inputs:
+      working_dir: "{{inputs.test_base_dir}}/test9-existing-local-ref"
+      command: |
+        set -e
+        BRANCH=$(git rev-parse --abbrev-ref HEAD)
+        test "$BRANCH" = "{{inputs.test_branch}}" || { echo "FAIL: Expected {{inputs.test_branch}}, got $BRANCH"; exit 1; }
+        echo "PASS: Test 9 - Existing repo, checkout local ref"
+    depends_on: [test9_checkout]
+
+  # ==========================================================================
+  # TEST 10: Existing repo - ref doesn't exist (create new branch)
+  # ==========================================================================
+  - id: test10_setup
+    type: Shell
+    inputs:
+      command: |
+        set -e
+        git clone --depth 1 "{{inputs.test_repo}}" "{{inputs.test_base_dir}}/test10-existing-new-branch"
+    depends_on: [setup_clean]
+
+  - id: test10_checkout
+    type: Workflow
+    inputs:
+      workflow: git-checkout
+      inputs:
+        repo: "{{inputs.test_repo}}"
+        path: "{{inputs.test_base_dir}}/test10-existing-new-branch"
+        ref: "test-new-branch-existing-12345"
+    depends_on: [test10_setup]
+
+  - id: test10_verify
+    type: Shell
+    inputs:
+      working_dir: "{{inputs.test_base_dir}}/test10-existing-new-branch"
+      command: |
+        set -e
+        BRANCH=$(git rev-parse --abbrev-ref HEAD)
+        test "$BRANCH" = "test-new-branch-existing-12345" || { echo "FAIL: Expected new branch, got $BRANCH"; exit 1; }
+        echo "PASS: Test 10 - Existing repo, create new branch"
+    depends_on: [test10_checkout]
+
+  # ==========================================================================
+  # TEST 11: Existing repo - apply sparse checkout (no ref)
+  # ==========================================================================
+  - id: test11_setup
+    type: Shell
+    inputs:
+      command: |
+        set -e
+        git clone "{{inputs.test_repo}}" "{{inputs.test_base_dir}}/test11-existing-sparse"
+    depends_on: [setup_clean]
+
+  - id: test11_checkout
+    type: Workflow
+    inputs:
+      workflow: git-checkout
+      inputs:
+        repo: "{{inputs.test_repo}}"
+        path: "{{inputs.test_base_dir}}/test11-existing-sparse"
+        sparse_checkout: "{{inputs.sparse_file}}"
+    depends_on: [test11_setup]
+
+  - id: test11_verify
+    type: Shell
+    inputs:
+      working_dir: "{{inputs.test_base_dir}}/test11-existing-sparse"
+      command: |
+        set -e
+        BRANCH=$(git rev-parse --abbrev-ref HEAD)
+        test "$BRANCH" = "main" || { echo "FAIL: Expected main, got $BRANCH"; exit 1; }
+
+        test -f "{{inputs.sparse_file}}" || { echo "FAIL: {{inputs.sparse_file}} not found"; exit 1; }
+        test ! -f "{{inputs.excluded_file}}" || { echo "FAIL: {{inputs.excluded_file}} should not exist after sparse"; exit 1; }
+
+        echo "PASS: Test 11 - Existing repo, apply sparse checkout"
+    depends_on: [test11_checkout]
+
+  # ==========================================================================
+  # TEST 12: Sparse checkout with cone mode (directory)
+  # ==========================================================================
+  - id: test12_clone
+    type: Workflow
+    inputs:
+      workflow: git-checkout
+      inputs:
+        repo: "{{inputs.test_repo}}"
+        path: "{{inputs.test_base_dir}}/test12-cone"
+        sparse_checkout: "{{inputs.sparse_dir}}"
+        sparse_checkout_cone_mode: true
+    depends_on: [setup_clean]
+
+  - id: test12_verify
+    type: Shell
+    inputs:
+      working_dir: "{{inputs.test_base_dir}}/test12-cone"
+      command: |
+        set -e
+        test -d .git || { echo "FAIL: .git not found"; exit 1; }
+        test -d "{{inputs.sparse_dir}}" || { echo "FAIL: {{inputs.sparse_dir}}/ directory not found"; exit 1; }
+        test ! -d "{{inputs.excluded_dir}}" || { echo "FAIL: {{inputs.excluded_dir}}/ should not exist in cone sparse checkout"; exit 1; }
+        echo "PASS: Test 12 - Sparse checkout cone mode"
+    depends_on: [test12_clone]
+
+  # ==========================================================================
+  # SUMMARY
+  # ==========================================================================
+  - id: summary
+    type: Shell
+    inputs:
+      command: |
+        echo ""
+        echo "=========================================="
+        echo "  All git-checkout tests completed!"
+        echo "=========================================="
+        echo ""
+        echo "Tests run:"
+        echo "  FRESH CLONE:"
+        echo "    1. No ref, no sparse"
+        echo "    2. With existing ref"
+        echo "    3. Sparse checkout (no ref)"
+        echo "    4. Ref + sparse checkout"
+        echo "    5. New branch creation (ref doesn't exist)"
+        echo "    6. New branch + sparse"
+        echo ""
+        echo "  EXISTING REPO:"
+        echo "    7. No ref (stay on current branch)"
+        echo "    8. Checkout remote ref"
+        echo "    9. Checkout local ref"
+        echo "   10. Create new branch"
+        echo "   11. Apply sparse checkout"
+        echo ""
+        echo "  SPARSE MODES:"
+        echo "   12. Cone mode (directory)"
+        echo ""
+    depends_on:
+      - test1_verify
+      - test2_verify
+      - test3_verify
+      - test4_verify
+      - test5_verify
+      - test6_verify
+      - test7_verify
+      - test8_verify
+      - test9_verify
+      - test10_verify
+      - test11_verify
+      - test12_verify
+
+outputs:
+  summary:
+    value: "{{blocks.summary.outputs.stdout}}"
+    type: str
+    description: "Result summary of all tests"
