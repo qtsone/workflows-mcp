@@ -354,9 +354,7 @@ class ShellExecutor(BlockExecutor):
         can_network=True,
     )
 
-    async def execute(  # type: ignore[override]
-        self, inputs: ShellInput, context: Execution
-    ) -> ShellOutput:
+    async def execute(self, inputs: ShellInput, context: Execution) -> ShellOutput:
         """Execute shell command.
 
         Returns:
@@ -373,7 +371,7 @@ class ShellExecutor(BlockExecutor):
         # Prepare working directory
         cwd = Path(inputs.working_dir) if inputs.working_dir else Path.cwd()
         if not cwd.exists():
-            raise FileNotFoundError(f"Working directory does not exist: {cwd}")
+            cwd.mkdir(parents=True, exist_ok=True)
 
         # Get workflow-scoped scratch directory from execution context
         scratch_dir = context.scratch_dir
@@ -475,4 +473,4 @@ class ShellExecutor(BlockExecutor):
                     # Optional output, continue without it
 
         # Create output with merged fields (extra="allow" handles custom fields)
-        return ShellOutput(**output_dict)  # type: ignore[arg-type]
+        return ShellOutput(**output_dict)

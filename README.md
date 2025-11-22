@@ -153,6 +153,7 @@ Individual tasks within a workflow. Available block types:
 - `CreateFile`, `ReadFiles`, `EditFile` - File operations
 - `Workflow` - Call other workflows (composition)
 - `Prompt` - Interactive user prompts
+- `ImageGen` - Generate and edit images (DALL-E, Stable Diffusion)
 - `ReadJSONState`, `WriteJSONState`, `MergeJSONState` - State management
 
 ### 3. **Execution** (The Magic)
@@ -385,6 +386,84 @@ profiles:
     max_tokens: 4000
 
 default_profile: my-model
+```
+
+### 🎨 Image Generation
+
+Generate, edit, and create variations of images using OpenAI DALL-E or compatible providers (like local Stable Diffusion via OpenAI-compatible API).
+
+**Key Features:**
+- **Model Capability System**: Automatic validation of operations and parameters based on model support
+- **Profile Support**: Use `~/.workflows/llm-config.yml` to manage providers and models (same as LLMCall)
+- **Direct File Saving**: Save generated images directly to disk with `output_file`
+- **Pluggable Providers**: Support for OpenAI (DALL-E 2/3) and any OpenAI-compatible image API
+
+**Model Compatibility:**
+
+The executor validates operations and parameters based on model capabilities:
+
+| Model | Generate | Edit | Variation | Optional Parameters |
+|-------|----------|------|-----------|---------------------|
+| `dall-e-3` | ✓ | ✗ | ✗ | `response_format`, `quality`, `style` |
+| `dall-e-2` | ✓ | ✓ | ✓ | `response_format` |
+| `gpt-image-1` | ✓ | ✓ | ✗ | None |
+| `gpt-image-*` | ✓ | ✓ | ✗ | None |
+
+The executor automatically filters parameters and provides clear error messages when operations are not supported.
+
+**Configuration:**
+
+| Input | Description | Default |
+|-------|-------------|---------|
+| `prompt` | Text description (required for generate/edit) | - |
+| `profile` | Profile name from config (recommended) | `default` |
+| `operation` | `generate`, `edit`, or `variation` | `generate` |
+| `model` | Model name (e.g., `dall-e-3`) | `dall-e-3` |
+| `size` | Image dimensions (e.g., `1024x1024`) | `1024x1024` |
+| `quality` | `standard` or `hd` (dall-e-3 only) | `standard` |
+| `style` | `vivid` or `natural` (dall-e-3 only) | `vivid` |
+| `response_format` | `url` or `b64_json` | `url` |
+| `n` | Number of images to generate | `1` |
+| `output_file` | Path to save image (e.g., `{{tmp}}/img.png`) | - |
+| `image` | Path to base image (for edit/variation) | - |
+| `mask` | Path to mask image (transparent areas define where to edit) | - |
+
+**Examples:**
+
+**1. Basic Generation (using profile):**
+```yaml
+- id: generate_art
+  type: ImageGen
+  inputs:
+    prompt: "A cyberpunk city at night"
+    profile: default
+    size: "1024x1024"
+    output_file: "{{tmp}}/city.png"
+```
+
+**2. Image Editing with DALL-E 2:**
+```yaml
+- id: edit_photo
+  type: ImageGen
+  inputs:
+    operation: edit
+    model: dall-e-2  # DALL-E 3 does not support edit
+    prompt: "Add a red hat to the person"
+    image: "/path/to/photo.png"
+    mask: "/path/to/mask.png"
+    output_file: "{{tmp}}/edited.png"
+```
+
+**3. Using Custom Provider (e.g., Local SD):**
+```yaml
+- id: local_gen
+  type: ImageGen
+  inputs:
+    prompt: "A medieval castle"
+    provider: openai_compatible
+    api_url: "http://localhost:8000/v1"
+    model: "sd-xl"
+    output_file: "{{tmp}}/castle.png"
 ```
 
 ### 🔁 Universal Iteration (for_each)

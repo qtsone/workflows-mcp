@@ -639,6 +639,7 @@ def create_default_registry() -> ExecutorRegistry:
         ReadJSONStateExecutor,
         WriteJSONStateExecutor,
     )
+    from .executors_image import ImageGenExecutor
     from .executors_workflow import WorkflowExecutor
 
     registry = ExecutorRegistry()
@@ -657,6 +658,9 @@ def create_default_registry() -> ExecutorRegistry:
 
     # Register LLM executor
     registry.register(LLMCallExecutor())
+
+    # Register Image executor
+    registry.register(ImageGenExecutor())
 
     # Register interactive executor
     registry.register(PromptExecutor())
