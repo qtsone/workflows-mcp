@@ -363,6 +363,285 @@ class BlockOrchestrator:
                 paused=False,
             )
 
+    async def resume_for_each(
+        self,
+        pause_metadata: dict[str, Any],
+        response: str,
+        context: Execution,
+        wave: int = 0,
+        depth: int = 0,
+    ) -> tuple[dict[str, BlockExecution], Metadata]:
+        """
+        Resume a paused for_each block from iteration checkpoint (ADR-010).
+
+        Args:
+            pause_metadata: for_each checkpoint from ExecutionState.pause_metadata
+            response: User's response to the paused iteration's prompt
+            context: Current execution context
+            wave: Wave number
+            depth: Nesting depth
+
+        Returns:
+            Tuple of (iteration_results, parent_metadata)
+
+        Raises:
+            ExecutionPaused: If another iteration pauses during resume
+        """
+        from .resolver import UnifiedVariableResolver
+
+        # Extract for_each state from pause_metadata
+        block_id = pause_metadata["for_each_block_id"]
+        current_key = pause_metadata["current_iteration_key"]
+        current_idx = pause_metadata["current_iteration_index"]
+        completed_keys = pause_metadata["completed_iterations"]
+        remaining_keys = pause_metadata["remaining_iteration_keys"]
+        all_iterations = pause_metadata["all_iterations"]
+        executor_type = pause_metadata["executor_type"]
+        inputs_template = pause_metadata["inputs_template"]
+        mode = pause_metadata["mode"]
+        max_parallel = pause_metadata["max_parallel"]
+        continue_on_error = pause_metadata["continue_on_error"]
+        iteration_count = pause_metadata["iteration_count"]
+        paused_iter_checkpoint = pause_metadata["paused_iteration_checkpoint"]
+
+        # Get executor
+        if not context.execution_context:
+            raise RuntimeError("Execution context not available for resume_for_each")
+        executor = context.execution_context.executor_registry.get(executor_type)
+        if not executor:
+            raise ValueError(f"Executor not found: {executor_type}")
+
+        # Reconstruct completed iterations from checkpoint (ADR-010)
+        iteration_results: dict[str, BlockExecution] = {}
+
+        # First try to deserialize from checkpoint metadata (new approach)
+        completed_iteration_results = pause_metadata.get("completed_iteration_results", {})
+
+        for key in completed_keys:
+            if key in completed_iteration_results:
+                # Deserialize from checkpoint
+                serialized = completed_iteration_results[key]
+                metadata = Metadata(**serialized["metadata"])
+
+                # Reconstruct output from serialized data
+                output = None
+                if serialized["output"] is not None:
+                    output = executor.output_type(**serialized["output"])
+
+                iteration_results[key] = BlockExecution(
+                    inputs=serialized["inputs"],
+                    output=output,
+                    metadata=metadata,
+                    paused=serialized["paused"],
+                )
+            else:
+                # Fallback: try to retrieve from execution context (backward compatibility)
+                parent_block = context.blocks.get(block_id)
+                if parent_block:
+                    iter_exec = (
+                        parent_block.blocks.get(key) if hasattr(parent_block, "blocks") else None
+                    )
+                    if iter_exec:
+                        # Get metadata from iter_exec or create default
+                        if hasattr(iter_exec, "metadata") and iter_exec.metadata is not None:
+                            metadata = iter_exec.metadata
+                        else:
+                            metadata = Metadata.create_leaf_success(
+                                type=executor_type,
+                                id=key,
+                                duration_ms=0,
+                                started_at=datetime.now(UTC).isoformat(),
+                                wave=wave,
+                                execution_order=completed_keys.index(key),
+                                index=completed_keys.index(key),
+                                depth=depth + 1,
+                            )
+                        iteration_results[key] = BlockExecution(
+                            inputs=iter_exec.inputs if hasattr(iter_exec, "inputs") else {},
+                            output=self._reconstruct_output(iter_exec, executor),
+                            metadata=metadata,
+                            paused=False,
+                        )
+
+        # Resume the paused iteration with user response
+        # Re-resolve iteration inputs (needed for resume_block)
+        each_context = {
+            "key": current_key,
+            "value": all_iterations[current_key],
+            "index": current_idx,
+            "count": iteration_count,
+        }
+        iteration_context_dict = context.model_dump()
+        iteration_context_dict["each"] = each_context
+
+        resolver = UnifiedVariableResolver(
+            iteration_context_dict, secret_provider=self.secret_provider
+        )
+        resolved_inputs = await resolver.resolve_async(inputs_template)
+        input_model = executor.input_type(**resolved_inputs)
+
+        # Resume the paused iteration
+        resumed_result = await self.resume_block(
+            id=current_key,
+            executor=executor,
+            inputs=input_model,
+            context=context,
+            response=response,
+            pause_metadata=paused_iter_checkpoint,
+            wave=wave,
+            execution_order=current_idx,
+            depth=depth + 1,
+        )
+        iteration_results[current_key] = resumed_result
+
+        # Execute remaining iterations (sequential execution)
+        for idx_offset, key in enumerate(remaining_keys):
+            idx = current_idx + 1 + idx_offset
+
+            # Execute remaining iteration
+            each_context = {
+                "key": key,
+                "value": all_iterations[key],
+                "index": idx,
+                "count": iteration_count,
+            }
+            iteration_context_dict = context.model_dump()
+            iteration_context_dict["each"] = each_context
+
+            resolver = UnifiedVariableResolver(
+                iteration_context_dict, secret_provider=self.secret_provider
+            )
+            resolved_inputs = await resolver.resolve_async(inputs_template)
+            input_model = executor.input_type(**resolved_inputs)
+
+            result = await self.execute_block(
+                id=key,
+                executor=executor,
+                inputs=input_model,
+                context=context,
+                wave=wave,
+                execution_order=idx,
+                depth=depth + 1,
+            )
+
+            iteration_results[key] = result
+
+            # Check for pause (may pause again)
+            if result.paused:
+                # Validate pause_prompt is present
+                if not result.pause_prompt:
+                    raise RuntimeError(f"Block {key} marked as paused but pause_prompt is None")
+
+                # Create new for_each checkpoint for this iteration
+                # Track ALL completed iterations: previous + just-resumed + newly completed
+                all_completed_keys = list(completed_keys)  # From checkpoint
+
+                # Add the iteration we just resumed (now complete)
+                if current_key not in all_completed_keys:
+                    all_completed_keys.append(current_key)
+
+                # Add any newly completed iterations from remaining_keys
+                for k in remaining_keys[:idx_offset]:
+                    if k not in all_completed_keys:
+                        all_completed_keys.append(k)
+
+                # Serialize completed iteration results for checkpoint (ADR-010)
+                completed_iteration_results = {}
+                for comp_key in all_completed_keys:
+                    if comp_key in iteration_results:
+                        exec_result = iteration_results[comp_key]
+                        completed_iteration_results[comp_key] = {
+                            "inputs": exec_result.inputs if hasattr(exec_result, "inputs") else {},
+                            "output": (
+                                exec_result.output.model_dump() if exec_result.output else None
+                            ),
+                            "metadata": exec_result.metadata.model_dump(),
+                            "paused": exec_result.paused,
+                        }
+
+                for_each_checkpoint = {
+                    "type": "for_each_iteration",
+                    "for_each_block_id": block_id,
+                    "current_iteration_key": key,
+                    "current_iteration_index": idx,
+                    "completed_iterations": all_completed_keys,
+                    "completed_iteration_results": completed_iteration_results,
+                    "remaining_iteration_keys": remaining_keys[idx_offset + 1 :],
+                    "all_iterations": all_iterations,
+                    "executor_type": executor_type,
+                    "inputs_template": inputs_template,
+                    "mode": mode,
+                    "max_parallel": max_parallel,
+                    "continue_on_error": continue_on_error,
+                    "iteration_count": iteration_count,
+                    "wave": wave,
+                    "depth": depth,
+                    "paused_iteration_checkpoint": result.pause_checkpoint_data,
+                }
+                raise ExecutionPaused(
+                    prompt=result.pause_prompt,
+                    checkpoint_data=for_each_checkpoint,
+                    execution=context,
+                )
+
+            # Check for failure (fail-fast)
+            if not continue_on_error and result.metadata.failed:
+                # Mark remaining iterations as skipped
+                for remaining_idx_offset in range(idx_offset + 1, len(remaining_keys)):
+                    remaining_key = remaining_keys[remaining_idx_offset]
+                    remaining_idx = current_idx + 1 + remaining_idx_offset
+                    skipped_metadata = Metadata.create_leaf_skipped(
+                        type=executor_type,
+                        id=remaining_key,
+                        started_at=datetime.now(UTC).isoformat(),
+                        wave=wave,
+                        execution_order=remaining_idx,
+                        index=remaining_idx,
+                        value=all_iterations[remaining_key],
+                        depth=depth + 1,
+                        message="Skipped due to previous iteration failure",
+                    )
+                    iteration_results[remaining_key] = BlockExecution(
+                        output=None,
+                        metadata=skipped_metadata,
+                        paused=False,
+                    )
+                break
+
+        # Aggregate results
+        child_metas = [r.metadata for r in iteration_results.values()]
+        parent_metadata = Metadata.create_for_each_parent(
+            type=executor_type,
+            id=block_id,
+            iterations=all_iterations,
+            child_metas=child_metas,
+            mode=mode,
+            depth=depth,
+            index=0,
+            value={},
+        )
+
+        return iteration_results, parent_metadata
+
+    def _reconstruct_output(self, iter_exec: Any, executor: BlockExecutor) -> Any:
+        """Reconstruct BlockOutput from stored Execution (ADR-010 helper)."""
+        # Check if it's an Execution object (Workflow blocks use fractal pattern)
+        if isinstance(iter_exec, Execution):
+            # Return the full Execution (for Workflow blocks)
+            return iter_exec
+
+        # Check if iter_exec has outputs attribute (standard block execution)
+        if hasattr(iter_exec, "outputs") and iter_exec.outputs:
+            # Regular block - reconstruct output model
+            try:
+                return executor.output_type(**iter_exec.outputs)
+            except Exception:
+                # If output_type doesn't match, return None
+                return None
+
+        # No outputs available
+        return None
+
     async def execute_for_each(
         self,
         id: str,
@@ -467,58 +746,134 @@ class BlockOrchestrator:
                 for idx, key in enumerate(iteration_keys)
             ]
 
-            if continue_on_error:
-                # Resilient: run all iterations even if some fail
-                results = await asyncio.gather(*tasks, return_exceptions=False)
-                for key, result in results:
-                    iteration_results[key] = result
-            else:
-                # Fail-fast: cancel remaining on first failure
-                completed_keys = set()
-
-                for coro in asyncio.as_completed(tasks):
-                    try:
-                        key, result = await coro
+            # Catch ExecutionPaused in parallel mode (ADR-010: not supported)
+            try:
+                if continue_on_error:
+                    # Resilient: run all iterations even if some fail
+                    results = await asyncio.gather(*tasks, return_exceptions=False)
+                    for key, result in results:
                         iteration_results[key] = result
-                        completed_keys.add(key)
+                else:
+                    # Fail-fast: cancel remaining on first failure
+                    completed_keys = set()
 
-                        # If iteration failed, cancel remaining
-                        if result.metadata.failed:
-                            # Cancel all pending tasks
-                            for task in tasks:
-                                if not task.done():
-                                    task.cancel()
+                    for coro in asyncio.as_completed(tasks):
+                        try:
+                            key, result = await coro
+                            iteration_results[key] = result
+                            completed_keys.add(key)
 
-                            # Mark remaining iterations as skipped
-                            for remaining_key in iteration_keys:
-                                if remaining_key not in completed_keys:
-                                    skipped_metadata = Metadata.create_leaf_skipped(
-                                        type=executor.type_name,
-                                        id=remaining_key,
-                                        started_at=datetime.now(UTC).isoformat(),
-                                        wave=wave,
-                                        execution_order=iteration_keys.index(remaining_key),
-                                        index=iteration_keys.index(remaining_key),
-                                        value=iterations[remaining_key],
-                                        depth=depth + 1,
-                                        message="Skipped due to previous iteration failure",
-                                    )
-                                    iteration_results[remaining_key] = BlockExecution(
-                                        output=None,
-                                        metadata=skipped_metadata,
-                                        paused=False,
-                                    )
-                            break
+                            # If iteration failed, cancel remaining
+                            if result.metadata.failed:
+                                # Cancel all pending tasks
+                                for task in tasks:
+                                    if not task.done():
+                                        task.cancel()
 
-                    except asyncio.CancelledError:
-                        # Task was cancelled, skip
-                        continue
+                                # Mark remaining iterations as skipped
+                                for remaining_key in iteration_keys:
+                                    if remaining_key not in completed_keys:
+                                        skipped_metadata = Metadata.create_leaf_skipped(
+                                            type=executor.type_name,
+                                            id=remaining_key,
+                                            started_at=datetime.now(UTC).isoformat(),
+                                            wave=wave,
+                                            execution_order=iteration_keys.index(remaining_key),
+                                            index=iteration_keys.index(remaining_key),
+                                            value=iterations[remaining_key],
+                                            depth=depth + 1,
+                                            message="Skipped due to previous iteration failure",
+                                        )
+                                        iteration_results[remaining_key] = BlockExecution(
+                                            output=None,
+                                            metadata=skipped_metadata,
+                                            paused=False,
+                                        )
+                                break
+
+                        except asyncio.CancelledError:
+                            # Task was cancelled, skip
+                            continue
+            except ExecutionPaused as e:
+                # Parallel mode doesn't support pause/resume (ADR-010)
+                raise NotImplementedError(
+                    f"for_each block '{id}' paused in parallel mode. "
+                    f"Pause/resume is only supported with for_each_mode: sequential. "
+                    f"To use Prompt blocks in iterations, set for_each_mode: sequential."
+                ) from e
+
+            # Check for pauses in parallel mode (ADR-010: not supported)
+            for key, result in iteration_results.items():
+                if result.paused:
+                    raise NotImplementedError(
+                        f"for_each block '{id}' iteration '{key}' paused in parallel mode. "
+                        f"Pause/resume is only supported with for_each_mode: sequential. "
+                        f"To use Prompt blocks in iterations, set for_each_mode: sequential."
+                    )
 
         # Sequential mode: execute in order
         else:
             for idx, key in enumerate(iteration_keys):
                 result_key, result = await execute_iteration(key, idx, iterations[key])
                 iteration_results[result_key] = result
+
+                # Detect pause and bubble up with for_each context (ADR-010)
+                if result.paused:
+                    # Validate pause_prompt is present (should always be set when paused=True)
+                    if not result.pause_prompt:
+                        raise RuntimeError(
+                            f"Block {result_key} marked as paused but pause_prompt is None"
+                        )
+
+                    # Create for_each checkpoint state
+                    # completed_iterations should NOT include the currently paused iteration
+                    completed_iteration_keys: list[str] = [
+                        k for k in iteration_results.keys() if k != result_key
+                    ]
+
+                    # Serialize completed iteration results for checkpoint (ADR-010)
+                    completed_iteration_results = {}
+                    for key in completed_iteration_keys:
+                        if key in iteration_results:
+                            exec_result = iteration_results[key]
+                            completed_iteration_results[key] = {
+                                "inputs": exec_result.inputs
+                                if hasattr(exec_result, "inputs")
+                                else {},
+                                "output": (
+                                    exec_result.output.model_dump() if exec_result.output else None
+                                ),
+                                "metadata": exec_result.metadata.model_dump(),
+                                "paused": exec_result.paused,
+                            }
+
+                    for_each_checkpoint = {
+                        "type": "for_each_iteration",
+                        "for_each_block_id": id,
+                        "current_iteration_key": result_key,
+                        "current_iteration_index": idx,
+                        "completed_iterations": completed_iteration_keys,
+                        "completed_iteration_results": completed_iteration_results,  # Store results
+                        "remaining_iteration_keys": iteration_keys[idx + 1 :],
+                        "all_iterations": iterations,
+                        "executor_type": executor.type_name,
+                        "inputs_template": inputs_template,
+                        "mode": mode,
+                        "max_parallel": max_parallel,
+                        "continue_on_error": continue_on_error,
+                        "iteration_count": iteration_count,
+                        "wave": wave,
+                        "depth": depth,
+                        # Nested checkpoint from paused iteration
+                        "paused_iteration_checkpoint": result.pause_checkpoint_data,
+                    }
+
+                    # Bubble up ExecutionPaused with for_each context
+                    raise ExecutionPaused(
+                        prompt=result.pause_prompt,
+                        checkpoint_data=for_each_checkpoint,
+                        execution=context,
+                    )
 
                 # Fail-fast: stop on first failure
                 if not continue_on_error and result.metadata.failed:

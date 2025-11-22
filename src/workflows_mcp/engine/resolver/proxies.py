@@ -128,6 +128,24 @@ class BlockProxy(ProxyBase):
         data = object.__getattribute__(self, "_data")
         return key in data
 
+    def __len__(self) -> int:
+        """Return length for Jinja2 length filter.
+
+        For for_each blocks: returns number of iterations
+        For regular blocks: returns number of keys in data
+        """
+        data = object.__getattribute__(self, "_data")
+        # For for_each blocks, return iteration count
+        metadata = data.get("metadata", {})
+        iterations = metadata.get("iterations", {})
+        if iterations:
+            return len(iterations)
+        # For nested blocks structure
+        if "blocks" in data:
+            return len(data["blocks"])
+        # Fallback to data keys
+        return len(data)
+
     def __setattr__(self, name: str, value: Any) -> None:
         """Prevent attribute modification"""
         raise AttributeError("BlockProxy is read-only")

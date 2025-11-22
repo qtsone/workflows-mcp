@@ -681,6 +681,59 @@ class LLMCallExecutor(BlockExecutor):
             # This case should be unreachable due to the Enum validation
             raise ValueError(f"Unsupported provider: {provider}")
 
+    # Whitelist of supported JSON schema keywords for OpenAI's format
+    SUPPORTED_KEYWORDS: ClassVar[set[str]] = {
+        "type",
+        "properties",
+        "items",
+        "required",
+        "enum",
+        "description",
+        "additionalProperties",
+    }
+
+    def _prepare_schema_for_openai(self, schema: Any) -> Any:
+        """Recursively simplifies and strictifies a JSON schema for OpenAI.
+
+        This function processes a JSON schema to make it compliant with
+        OpenAI's strict requirements for 'response_format'. It does this by:
+        1.  Stripping unsupported keywords to reduce complexity.
+        2.  Enforcing 'additionalProperties: false' on objects that are not
+            explicitly defined as maps (i.e., don't have a schema in
+            'additionalProperties' already).
+        """
+        if not isinstance(schema, dict):
+            return schema
+
+        # Prune unsupported keywords
+        simplified_schema = {
+            key: value for key, value in schema.items() if key in self.SUPPORTED_KEYWORDS
+        }
+
+        # Enforce strictness for objects
+        if simplified_schema.get("type") == "object":
+            # If 'properties' are defined, recurse into them
+            if "properties" in simplified_schema:
+                simplified_schema["properties"] = {
+                    k: self._prepare_schema_for_openai(v)
+                    for k, v in simplified_schema["properties"].items()
+                }
+
+            # If 'additionalProperties' is a schema, recurse into it
+            if isinstance(simplified_schema.get("additionalProperties"), dict):
+                simplified_schema["additionalProperties"] = self._prepare_schema_for_openai(
+                    simplified_schema["additionalProperties"]
+                )
+            # If it's an object that is not explicitly a map, forbid extra properties
+            elif "additionalProperties" not in simplified_schema:
+                simplified_schema["additionalProperties"] = False
+
+        # Recurse into array items
+        elif simplified_schema.get("type") == "array" and "items" in simplified_schema:
+            simplified_schema["items"] = self._prepare_schema_for_openai(simplified_schema["items"])
+
+        return simplified_schema
+
     async def _call_openai(
         self,
         inputs: LLMCallInput,
@@ -750,16 +803,15 @@ class LLMCallExecutor(BlockExecutor):
 
         # Native schema validation (OpenAI Structured Outputs)
         if inputs.response_schema:
-            schema = cast(dict[str, Any], inputs.response_schema).copy()
-            if "additionalProperties" not in schema:
-                schema["additionalProperties"] = False
+            # Prepare the schema to be OpenAI-compliant
+            prepared_schema = self._prepare_schema_for_openai(inputs.response_schema)
 
             completion_kwargs["response_format"] = {
                 "type": "json_schema",
                 "json_schema": {
                     "name": "response_schema",
                     "strict": True,
-                    "schema": schema,
+                    "schema": prepared_schema,
                 },
             }
 

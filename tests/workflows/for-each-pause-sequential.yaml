@@ -1,0 +1,43 @@
+name: for-each-pause-sequential
+description: Test pause/resume in sequential for_each loop (ADR-010)
+tags: [test, interactive, for_each, pause]
+
+inputs:
+  questions:
+    type: dict
+    description: Dictionary of questions to ask
+    default:
+      name: "What is your name?"
+      email: "What is your email?"
+      role: "What is your role?"
+
+blocks:
+  - id: gather_answers
+    type: Prompt
+    for_each: "{{inputs.questions}}"
+    for_each_mode: sequential
+    inputs:
+      prompt: "{{each.value}}"
+
+  - id: summarize
+    type: Shell
+    depends_on: [gather_answers]
+    inputs:
+      command: |
+        echo "Name: {{blocks.gather_answers['name'].outputs.response}}"
+        echo "Email: {{blocks.gather_answers['email'].outputs.response}}"
+        echo "Role: {{blocks.gather_answers['role'].outputs.response}}"
+
+outputs:
+  summary:
+    value: "{{blocks.summarize.outputs.stdout}}"
+    type: str
+  name_answer:
+    value: "{{blocks.gather_answers['name'].outputs.response}}"
+    type: str
+  email_answer:
+    value: "{{blocks.gather_answers['email'].outputs.response}}"
+    type: str
+  role_answer:
+    value: "{{blocks.gather_answers['role'].outputs.response}}"
+    type: str

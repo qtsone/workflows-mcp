@@ -1,0 +1,24 @@
+name: for-each-pause-parallel-error
+description: Test that parallel mode with Prompt raises NotImplementedError (ADR-010)
+tags: [test, interactive, for_each, error]
+
+inputs:
+  questions:
+    type: dict
+    description: Dictionary of questions
+    default:
+      q1: "Question 1?"
+      q2: "Question 2?"
+
+blocks:
+  - id: parallel_prompts
+    type: Prompt
+    for_each: "{{inputs.questions}}"
+    for_each_mode: parallel  # Should fail
+    inputs:
+      prompt: "{{each.value}}"
+
+outputs:
+  result:
+    value: "{{blocks.parallel_prompts.succeeded}}"
+    type: bool

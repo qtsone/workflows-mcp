@@ -282,6 +282,7 @@ class ExecutionResult:
             "paused_block_id": self.execution_state.paused_block_id,
             "workflow_name": self.execution_state.workflow_name,
             "runtime_inputs": self.execution_state.runtime_inputs,
+            "pause_metadata": self.execution_state.pause_metadata,
         }
 
     def _build_debug_data(self) -> dict[str, Any]:

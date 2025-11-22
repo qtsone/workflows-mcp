@@ -278,58 +278,88 @@ class WorkflowRunner:
         # Inject ExecutionContext (not serialized - runtime dependency)
         exec_context.set_execution_context(context)
 
+        # Get pause metadata from execution state
+        pause_metadata = execution_state.pause_metadata or {}
+        checkpoint_type = pause_metadata.get("type")
+
         # Resume paused block with response
         try:
-            block_id = paused_block_id
-            block_definition_dict = execution_state.block_definitions.get(block_id)
-            if not block_definition_dict:
-                raise ValueError(f"Block definition not found for paused block: {block_id}")
+            # Check if this is a for_each iteration pause (ADR-010)
+            if checkpoint_type == "for_each_iteration":
+                # Resume for_each block
+                for_each_block_id = pause_metadata["for_each_block_id"]
 
-            from .schema import BlockDefinition
+                # Call orchestrator.resume_for_each()
+                iteration_results, parent_meta = await self.orchestrator.resume_for_each(
+                    pause_metadata=pause_metadata,
+                    response=response,
+                    context=exec_context,
+                    wave=pause_metadata.get("wave", 0),
+                    depth=pause_metadata.get("depth", 0),
+                )
 
-            block_definition = BlockDefinition.model_validate(block_definition_dict)
+                # Store results in execution context (fractal structure)
+                exec_context.set_for_each_result(
+                    block_id=for_each_block_id,
+                    parent_meta=parent_meta,
+                    iteration_results=iteration_results,
+                )
 
-            # Get executor for this block type
-            executor = context.executor_registry.get(block_definition.type)
-            if not executor:
-                raise ValueError(f"Executor not found for block type: {block_definition.type}")
+                # Mark block as completed
+                if for_each_block_id not in completed_blocks:
+                    completed_blocks.append(for_each_block_id)
 
-            # Create variable resolver to resolve block inputs
-            context_dict = self._execution_to_dict(exec_context)
-            resolver = UnifiedVariableResolver(
-                context_dict,
-                secret_provider=self.secret_provider,
-                audit_log=self.secret_audit_log,
-            )
+            else:
+                # Regular block resume (existing logic)
+                block_id = paused_block_id
+                block_definition_dict = execution_state.block_definitions.get(block_id)
+                if not block_definition_dict:
+                    raise ValueError(f"Block definition not found for paused block: {block_id}")
 
-            # Resolve block inputs (from execution state context)
-            resolved_inputs: dict[str, Any] = await resolver.resolve_async(block_definition.inputs)
-            block_inputs = executor.input_type(**resolved_inputs)
+                from .schema import BlockDefinition
 
-            # Get pause metadata from execution state
-            pause_metadata = execution_state.pause_metadata or {}
+                block_definition = BlockDefinition.model_validate(block_definition_dict)
 
-            # Execute resume on block
-            block_execution = await self.orchestrator.resume_block(
-                id=block_id,
-                executor=executor,
-                inputs=block_inputs,
-                context=exec_context,
-                response=response,
-                pause_metadata=pause_metadata,
-            )
+                # Get executor for this block type
+                executor = context.executor_registry.get(block_definition.type)
+                if not executor:
+                    raise ValueError(f"Executor not found for block type: {block_definition.type}")
 
-            # Store result using set_block_result (like regular block execution)
-            exec_context.set_block_result(
-                block_id=block_id,
-                inputs=resolved_inputs,
-                outputs=block_execution.output.model_dump() if block_execution.output else {},
-                metadata=block_execution.metadata,
-            )
+                # Create variable resolver to resolve block inputs
+                context_dict = self._execution_to_dict(exec_context)
+                resolver = UnifiedVariableResolver(
+                    context_dict,
+                    secret_provider=self.secret_provider,
+                    audit_log=self.secret_audit_log,
+                )
 
-            # Mark block as completed
-            if block_id not in completed_blocks:
-                completed_blocks.append(block_id)
+                # Resolve block inputs (from execution state context)
+                resolved_inputs: dict[str, Any] = await resolver.resolve_async(
+                    block_definition.inputs
+                )
+                block_inputs = executor.input_type(**resolved_inputs)
+
+                # Resume the block
+                block_execution = await self.orchestrator.resume_block(
+                    id=block_id,
+                    executor=executor,
+                    inputs=block_inputs,
+                    context=exec_context,
+                    response=response,
+                    pause_metadata=pause_metadata,
+                )
+
+                # Store result using set_block_result (like regular block execution)
+                exec_context.set_block_result(
+                    block_id=block_id,
+                    inputs=resolved_inputs,
+                    outputs=block_execution.output.model_dump() if block_execution.output else {},
+                    metadata=block_execution.metadata,
+                )
+
+                # Mark block as completed
+                if block_id not in completed_blocks:
+                    completed_blocks.append(block_id)
 
         except ExecutionPaused as e:
             # Block paused again - create execution state and re-raise
@@ -606,6 +636,9 @@ class WorkflowRunner:
                     raise result
                 elif isinstance(result, RecursionDepthExceededError):
                     # Recursion depth exceeded - critical error, bubble up immediately
+                    raise result
+                elif isinstance(result, NotImplementedError):
+                    # Not implemented (e.g., parallel for_each with pause) - bubble up
                     raise result
                 elif isinstance(result, Exception):
                     # Execution error - mark as failed but continue
@@ -1275,6 +1308,7 @@ class WorkflowRunner:
             paused_block_id=execution_state_dict.get("paused_block_id", ""),
             workflow_name=execution_state_dict.get("workflow_name", ""),
             runtime_inputs=execution_state_dict.get("runtime_inputs", {}),
+            pause_metadata=execution_state_dict.get("pause_metadata"),
         )
 
 
