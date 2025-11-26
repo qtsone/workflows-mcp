@@ -16,6 +16,7 @@ from pydantic import Field
 from .block import BlockInput
 from .exceptions import ExecutionPaused
 from .execution import Execution
+from .execution_result import ExecutionState
 from .executor_base import BlockExecutor, ExecutorCapabilities, ExecutorSecurityLevel
 
 
@@ -271,33 +272,57 @@ class WorkflowExecutor(BlockExecutor):
         assert isinstance(inputs, WorkflowInput)
 
         # 1. Extract child execution state from pause metadata (unified Job architecture)
-        child_execution_state = pause_metadata.get("child_execution_state")
-        if not child_execution_state:
+        child_execution_state_raw = pause_metadata.get("child_execution_state")
+        if not child_execution_state_raw:
             raise ValueError(
                 "Missing child_execution_state in pause_metadata - cannot resume nested workflow"
             )
 
-        # 2. Get ExecutionContext from parent context (typed accessor)
+        # 2. Deserialize ExecutionState if needed (after loading from JSON storage)
+        # When workflows pause, ExecutionState is serialized to JSON for storage.
+        # When resuming, we need to reconstruct the ExecutionState object from dict.
+        if isinstance(child_execution_state_raw, dict):
+            # Deserialize from storage format
+            try:
+                child_execution_state = ExecutionState(
+                    context=Execution.model_validate(child_execution_state_raw["context"]),
+                    completed_blocks=child_execution_state_raw["completed_blocks"],
+                    current_wave_index=child_execution_state_raw["current_wave_index"],
+                    execution_waves=child_execution_state_raw["execution_waves"],
+                    block_definitions=child_execution_state_raw["block_definitions"],
+                    workflow_stack=child_execution_state_raw["workflow_stack"],
+                    paused_block_id=child_execution_state_raw["paused_block_id"],
+                    workflow_name=child_execution_state_raw["workflow_name"],
+                    runtime_inputs=child_execution_state_raw["runtime_inputs"],
+                    pause_metadata=child_execution_state_raw.get("pause_metadata"),
+                )
+            except KeyError as e:
+                raise ValueError(
+                    f"Invalid ExecutionState format in pause_metadata: missing field {e}"
+                ) from e
+            except Exception as e:
+                raise ValueError(f"Failed to deserialize child execution state: {e}") from e
+        elif isinstance(child_execution_state_raw, ExecutionState):
+            # Already deserialized (in-memory execution)
+            child_execution_state = child_execution_state_raw
+        else:
+            raise ValueError(
+                f"Invalid child_execution_state type: {type(child_execution_state_raw)}. "
+                f"Expected ExecutionState or dict, got {type(child_execution_state_raw).__name__}"
+            )
+
+        # 3. Get ExecutionContext from parent context (typed accessor)
         exec_context = context.execution_context
         if exec_context is None:
             raise RuntimeError(
                 "ExecutionContext not found - workflow composition not supported in this context"
             )
 
-        # 3. Create WorkflowRunner and resume child workflow
+        # 4. Create WorkflowRunner and resume child workflow
         from .workflow_runner import WorkflowRunner
 
         # No checkpointing for nested workflows - parent handles all checkpointing
         runner = WorkflowRunner()
-
-        # Resume child workflow using unified Job architecture (ExecutionState)
-        from .execution_result import ExecutionState
-
-        if not isinstance(child_execution_state, ExecutionState):
-            raise ValueError(
-                f"Invalid child execution state type: {type(child_execution_state)}. "
-                "Expected ExecutionState."
-            )
 
         try:
             # Resume child workflow from ExecutionState

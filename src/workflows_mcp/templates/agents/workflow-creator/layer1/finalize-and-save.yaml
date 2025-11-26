@@ -1,0 +1,209 @@
+name: finalize-and-save
+description: Finalize workflow creation - save, validate, report, and cleanup
+version: "1.0"
+tags: [agents, finalization, internal]
+
+inputs:
+  workflow_name:
+    type: str
+    description: "Name of the workflow (for file naming)"
+    required: true
+
+  yaml_content:
+    type: str
+    description: "Final validated workflow YAML content"
+    required: true
+
+  output_path:
+    type: str
+    description: "Desired output path for the workflow file"
+    required: true
+
+  tmp_dir:
+    type: str
+    description: "Temporary directory to cleanup (from bootstrap)"
+    required: true
+
+  workflows_mcp_path:
+    type: str
+    description: "Directory path where validation script is located"
+    required: true
+
+  validation_attempts:
+    type: num
+    description: "Number of validation attempts made"
+    default: 1
+
+  design_iterations:
+    type: num
+    description: "Number of design iterations used"
+    default: 1
+
+blocks:
+  # Phase 1: Ensure output directory exists
+  - id: create_output_dir
+    type: Shell
+    inputs:
+      command: |
+        OUTPUT_DIR=$(dirname "{{inputs.output_path}}")
+        if [ ! -d "$OUTPUT_DIR" ]; then
+          echo "Creating output directory: $OUTPUT_DIR"
+          mkdir -p "$OUTPUT_DIR"
+        else
+          echo "Output directory exists: $OUTPUT_DIR"
+        fi
+
+  # Phase 2: Save final workflow to desired location
+  - id: save_final_workflow
+    type: CreateFile
+    inputs:
+      path: "{{inputs.output_path}}"
+      content: "{{inputs.yaml_content}}"
+      overwrite: true
+      create_parents: true
+    depends_on: [create_output_dir]
+
+  # Phase 3: Final validation check
+  - id: final_validation
+    type: Shell
+    inputs:
+      working_dir: "{{inputs.workflows_mcp_path}}"
+      command: |
+        python validate.py "{{blocks.save_final_workflow.outputs.path}}"
+
+        if [ $? -eq 0 ]; then
+          echo "✓ Final validation PASSED"
+        else
+          echo "✗ Final validation FAILED"
+          echo "Warning: The workflow was saved but may have validation issues"
+        fi
+    continue_on_error: true
+    depends_on: [save_final_workflow]
+
+  # Phase 4: Generate summary report
+  - id: generate_summary
+    type: Shell
+    inputs:
+      command: |
+        cat <<'EOF'
+
+        ═══════════════════════════════════════════════════════════════
+        WORKFLOW CREATION SUMMARY
+        ═══════════════════════════════════════════════════════════════
+
+        Workflow Name:       {{inputs.workflow_name}}
+        Output Path:         {{blocks.save_final_workflow.outputs.path}}
+        File Size:           {{blocks.save_final_workflow.outputs.size_bytes}} bytes
+
+        Design Iterations:   {{inputs.design_iterations}}
+        Validation Attempts: {{inputs.validation_attempts}}
+        Final Validation:    {% if blocks.final_validation.outputs.exit_code == 0 %}✓ PASSED{% else %}✗ FAILED{% endif %}
+
+        ═══════════════════════════════════════════════════════════════
+        IMPORTANT: TESTING LIMITATION
+        ═══════════════════════════════════════════════════════════════
+
+        ⚠️  The workflow has been saved but CANNOT be tested now.
+        ⚠️  The MCP server MUST be restarted to load new workflows.
+
+        This is a known limitation of the MCP server architecture.
+        Workflows are loaded at server startup, not dynamically.
+
+        ═══════════════════════════════════════════════════════════════
+        NEXT STEPS
+        ═══════════════════════════════════════════════════════════════
+
+        1. RESTART MCP Server
+           • Stop the current MCP server process
+           • Start it again to reload workflow templates
+
+        2. Test Your Workflow
+           Use the execute_workflow tool:
+
+           execute_workflow(
+             workflow="{{inputs.workflow_name}}",
+             inputs={
+               # Add your workflow inputs here
+             }
+           )
+
+        3. Iterate and Improve
+           • Review the generated workflow YAML
+           • Make manual adjustments if needed
+           • Test with different inputs
+           • Add error handling and edge cases
+
+        4. Share and Document
+           • Add workflow documentation (description, usage examples)
+           • Consider adding the workflow to the templates library
+           • Share with your team if applicable
+
+        ═══════════════════════════════════════════════════════════════
+
+        Workflow creation completed successfully! 🎉
+
+        EOF
+    depends_on: [final_validation]
+
+  # Phase 5: Cleanup temporary files
+  - id: cleanup_temp_files
+    type: Shell
+    inputs:
+      command: |
+        echo "Cleaning up temporary files..."
+
+        # Remove cloned repository
+        if [ -d "{{inputs.tmp_dir}}" ]; then
+          rm -rf "{{inputs.tmp_dir}}"
+          echo "✓ Removed temporary repository: {{inputs.tmp_dir}}"
+        fi
+
+        # Remove draft workflow files
+        DRAFT_PATTERN="{{tmp}}/draft-workflow-attempt-*.yaml"
+        if ls $DRAFT_PATTERN 1> /dev/null 2>&1; then
+          rm -f $DRAFT_PATTERN
+          echo "✓ Removed draft workflow files"
+        fi
+
+        echo "Cleanup completed"
+    continue_on_error: true
+    depends_on: [generate_summary]
+
+outputs:
+  workflow_path:
+    value: "{{blocks.save_final_workflow.outputs.path}}"
+    type: str
+    description: "Path to the saved workflow file"
+
+  workflow_name:
+    value: "{{inputs.workflow_name}}"
+    type: str
+    description: "Name of the created workflow"
+
+  file_size:
+    value: "{{blocks.save_final_workflow.outputs.size_bytes}}"
+    type: num
+    description: "Size of the workflow file in bytes"
+
+  validation_passed:
+    value: "{{blocks.final_validation.outputs.exit_code == 0}}"
+    type: bool
+    description: "Whether final validation passed"
+
+  summary:
+    value: "{{blocks.generate_summary.outputs.stdout}}"
+    type: str
+    description: "Complete summary report"
+
+  cleanup_completed:
+    value: "{{blocks.cleanup_temp_files.succeeded}}"
+    type: bool
+    description: "Whether cleanup completed successfully"
+
+  next_steps:
+    value: |
+      1. Restart the MCP server to load the new workflow
+      2. Test with: execute_workflow(workflow="{{inputs.workflow_name}}", inputs={...})
+      3. Review and refine the generated YAML as needed
+    type: str
+    description: "Next steps for the user"

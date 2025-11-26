@@ -1,0 +1,276 @@
+name: design-approval-loop
+description: Recursive workflow for iterative design approval with user feedback
+version: "1.0"
+tags: [agents, recursive, interactive, internal]
+
+inputs:
+  requirements:
+    type: dict
+    description: "Structured workflow requirements from requirements gathering"
+    required: true
+
+  executor_docs:
+    type: str
+    description: "Compressed executor reference documentation"
+    required: true
+
+  examples:
+    type: str
+    description: "Example workflows for reference"
+    required: true
+
+  iteration:
+    type: num
+    description: "Current iteration number (for recursion)"
+    default: 1
+
+  max_iterations:
+    type: num
+    description: "Maximum number of refinement iterations"
+    default: 5
+
+  previous_diagram:
+    type: str
+    description: "Previous diagram (for refinement iterations)"
+    default: ""
+
+  feedback:
+    type: str
+    description: "User feedback from previous iteration"
+    default: ""
+
+blocks:
+  # Phase 1: Generate or refine workflow diagram
+  - id: generate_diagram
+    type: LLMCall
+    inputs:
+      profile: default
+      prompt: |
+        # Task: Design Workflow Architecture Diagram
+
+        You are designing a workflow for a user. Create a clear, logical architecture diagram.
+
+        ## User Requirements
+        {{inputs.requirements | tojson}}
+
+        ## Available Block Types Reference
+        {{inputs.executor_docs}}
+
+        ## Example Workflows
+        {{inputs.examples}}
+
+        {% if inputs.iteration == 1 %}
+        ## Instructions (First Iteration)
+
+        Create a workflow architecture diagram showing:
+        1. **Inputs**: What parameters the workflow accepts
+        2. **Blocks**: Each processing step with:
+           - Block ID and type
+           - Purpose (one sentence)
+           - Key inputs
+           - Dependencies (depends_on)
+        3. **Outputs**: What the workflow returns
+        4. **Flow**: Visual representation of execution order
+
+        Focus on logical structure, not implementation details.
+        Use clear block IDs that reflect their purpose.
+        Show parallel execution opportunities where applicable.
+
+        {% else %}
+        ## Instructions (Refinement Iteration {{inputs.iteration}})
+
+        ### Previous Diagram
+        {{inputs.previous_diagram}}
+
+        ### User Feedback
+        {{inputs.feedback}}
+
+        Refine the workflow diagram based on the user's feedback.
+        Address all concerns while maintaining workflow best practices.
+        Explain what changes you made and why.
+
+        {% endif %}
+
+        ## Output Requirements
+
+        Provide:
+        1. Clear workflow diagram (ASCII art or markdown)
+        2. Brief explanation of the design choices
+        3. Any assumptions or clarifications needed
+
+        Generate the workflow diagram now.
+      response_schema:
+        type: object
+        properties:
+          diagram:
+            type: string
+            description: "Workflow architecture diagram"
+          explanation:
+            type: string
+            description: "Design choices and rationale"
+          clarifications:
+            type: array
+            items:
+              type: string
+            description: "Questions or assumptions to validate"
+        required:
+          - diagram
+          - explanation
+          - clarifications
+        additionalProperties: false
+
+  # Phase 2: Present diagram to user for approval
+  - id: request_approval
+    type: Prompt
+    inputs:
+      prompt: |
+        ═══════════════════════════════════════════════════════════════
+        WORKFLOW DESIGN - ITERATION {{inputs.iteration}}/{{inputs.max_iterations}}
+        ═══════════════════════════════════════════════════════════════
+
+        {{blocks.generate_diagram.outputs.response.diagram}}
+
+        ───────────────────────────────────────────────────────────────
+        DESIGN EXPLANATION
+        ───────────────────────────────────────────────────────────────
+
+        {{blocks.generate_diagram.outputs.response.explanation}}
+
+        {% if blocks.generate_diagram.outputs.response.clarifications %}
+        ───────────────────────────────────────────────────────────────
+        CLARIFICATIONS NEEDED
+        ───────────────────────────────────────────────────────────────
+
+        {% for clarification in blocks.generate_diagram.outputs.response.clarifications %}
+        • {{ clarification }}
+        {% endfor %}
+        {% endif %}
+
+        ═══════════════════════════════════════════════════════════════
+
+        Please review the workflow design above.
+
+        Your options:
+        • Type "approve" - Proceed with workflow generation
+        • Type "refine" - Provide feedback for improvements
+        • Type "cancel" - Stop workflow creation
+
+        IMPORTANT: Respond with ONLY one word: "approve", "refine", or "cancel"
+        (You will be prompted for detailed feedback if you choose "refine")
+
+        Your response:
+    depends_on: [generate_diagram]
+
+  # Phase 3: Handle user decision
+  - id: check_response
+    type: Shell
+    inputs:
+      command: |
+        RESPONSE="{{blocks.request_approval.outputs.response | lower | trim}}"
+        echo "User response: $RESPONSE"
+
+        if [ "$RESPONSE" = "approve" ]; then
+          echo "STATUS=approved"
+        elif [ "$RESPONSE" = "refine" ]; then
+          echo "STATUS=refine"
+        elif [ "$RESPONSE" = "cancel" ]; then
+          echo "STATUS=cancelled"
+        else
+          echo "STATUS=invalid"
+          echo "ERROR: Invalid response. Must be exactly 'approve', 'refine', or 'cancel'"
+          echo "Received: $RESPONSE"
+          exit 1
+        fi
+    depends_on: [request_approval]
+
+  # Phase 4: Gather refinement feedback (only if user chose "refine")
+  - id: gather_refinement_feedback
+    type: Prompt
+    condition: >-
+      {{blocks.request_approval.outputs.response | lower | trim == 'refine' and
+       inputs.iteration < inputs.max_iterations}}
+    inputs:
+      prompt: |
+        Please describe what you'd like to change or improve in the workflow design:
+
+        (Be specific about which blocks, flow, or logic needs adjustment)
+    depends_on: [check_response]
+
+  # Phase 5: Check if max iterations reached
+  - id: check_max_iterations
+    type: Shell
+    condition: >-
+      {{blocks.request_approval.outputs.response | lower | trim == 'refine' and
+       inputs.iteration >= inputs.max_iterations}}
+    inputs:
+      command: |
+        echo "⚠️  Maximum iterations ({{inputs.max_iterations}}) reached."
+        echo "The current design will be used for workflow generation."
+        echo "You can cancel now and restart if major changes are needed."
+    depends_on: [check_response]
+
+  # Phase 6: Recursive call for refinement (only if under max iterations)
+  - id: recurse_refinement
+    type: Workflow
+    condition: >-
+      {{blocks.request_approval.outputs.response | lower | trim == 'refine' and
+       inputs.iteration < inputs.max_iterations}}
+    inputs:
+      workflow: design-approval-loop
+      inputs:
+        requirements: "{{inputs.requirements}}"
+        executor_docs: "{{inputs.executor_docs}}"
+        examples: "{{inputs.examples}}"
+        iteration: "{{inputs.iteration + 1}}"
+        max_iterations: "{{inputs.max_iterations}}"
+        previous_diagram: "{{blocks.generate_diagram.outputs.response.diagram}}"
+        feedback: "{{blocks.gather_refinement_feedback.outputs.response}}"
+    depends_on: [gather_refinement_feedback]
+
+outputs:
+  final_diagram:
+    value: |
+      {% if blocks.recurse_refinement.succeeded %}
+      {{blocks.recurse_refinement.outputs.final_diagram}}
+      {% else %}
+      {{blocks.generate_diagram.outputs.response.diagram}}
+      {% endif %}
+    type: str
+    description: "Final approved workflow diagram"
+
+  final_explanation:
+    value: |
+      {% if blocks.recurse_refinement.succeeded %}
+      {{blocks.recurse_refinement.outputs.final_explanation}}
+      {% else %}
+      {{blocks.generate_diagram.outputs.response.explanation}}
+      {% endif %}
+    type: str
+    description: "Final design explanation"
+
+  user_decision:
+    value: "{{blocks.request_approval.outputs.response | lower | trim}}"
+    type: str
+    description: "User's final decision (approve/refine/cancel)"
+
+  iterations_used:
+    value: |
+      {% if blocks.recurse_refinement.succeeded %}
+      {{blocks.recurse_refinement.outputs.iterations_used}}
+      {% else %}
+      {{inputs.iteration}}
+      {% endif %}
+    type: num
+    description: "Total number of iterations used"
+
+  approved:
+    value: |
+      {% if blocks.recurse_refinement.succeeded %}
+      {{blocks.recurse_refinement.outputs.approved}}
+      {% else %}
+      {{blocks.request_approval.outputs.response | lower | trim == 'approve' or
+        (blocks.request_approval.outputs.response | lower | trim == 'refine' and
+         inputs.iteration >= inputs.max_iterations)}}
+      {% endif %}
+    type: bool
+    description: "Whether design was approved (explicitly or by reaching max iterations)"

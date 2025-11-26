@@ -1,0 +1,347 @@
+name: workflow-creator
+description: Interactive workflow creator using LLM-guided design and validation
+version: "2.3"
+tags: [agents, interactive, llm, workflow-generation]
+
+inputs:
+  name:
+    type: str
+    description: "Name for the new workflow (optional - will prompt if not provided)"
+    default: ""
+    required: false
+
+  description:
+    type: str
+    description: "Brief description of what the workflow should do (optional - will prompt if not provided)"
+    default: ""
+    required: false
+
+  output_path:
+    type: str
+    description: "Path where the workflow file should be saved"
+    default: "/tmp/workflow-creator"
+    required: false
+
+  max_design_iterations:
+    type: num
+    description: "Maximum number of design refinement iterations"
+    default: 5
+
+  max_validation_attempts:
+    type: num
+    description: "Maximum number of validation fix attempts"
+    default: 5
+  
+  questions:
+    type: dict
+    description: "Questions to ask user. Key matches input name - if input provided, question is skipped"
+    default:
+      name: "What should this workflow be named? (lowercase, hyphens, e.g., 'data-pipeline')"
+      description: "What does this workflow do? (brief description)"
+      inputs: "What inputs does the workflow need? (describe parameters and their purposes)"
+      outputs: "What should the workflow return? (describe expected outputs)"
+      steps: "What are the main steps or phases? (describe the logical flow)"
+
+blocks:
+  - id: filter_questions
+    type: WriteJSONState
+    inputs:
+      path: "{{tmp}}/questions.json"
+      data:
+        questions: >-
+          {%- set result = {} -%}
+          {%- for key, question in inputs.questions.items() -%}
+            {%- set skip = inputs.get(key, '') | trim != '' -%}
+            {%- if not skip -%}
+              {%- set _ = result.update({key: question}) -%}
+            {%- endif -%}
+          {%- endfor -%}
+          {{ result | tojson }}
+
+  - id: gather_requirements
+    depends_on: [filter_questions]
+    type: Prompt
+    for_each: "{{blocks.filter_questions.inputs.data.questions | fromjson}}"
+    for_each_mode: sequential
+    inputs:
+      prompt: |
+        # WORKFLOW CREATOR - REQUIREMENTS GATHERING
+
+        [{{each.key}}] {{each.value}}
+
+        Your answer:
+
+  - id: structure_requirements
+    depends_on: [gather_requirements]
+    type: LLMCall
+    inputs:
+      profile: default
+      prompt: |
+        # Task: Structure Workflow Requirements
+
+        Extract and structure workflow requirements from user responses.
+
+        ## User Provided Inputs
+        {% if inputs.name | trim != '' %}
+        Workflow Name: {{inputs.name}}
+        {% endif %}
+
+        {% if inputs.description | trim != '' %}
+        Workflow Description: {{inputs.description}}
+        {% endif %}
+
+        ## User Responses to Questions
+
+        {% for key, question in (blocks.filter_questions.inputs.data.questions | fromjson).items() %}
+        [{{ key }}] {{ question }}
+        Answer: {{blocks.gather_requirements[key].outputs.response}}
+        {% endfor %}
+
+        ## Instructions
+
+        Create a structured requirements document with:
+
+        1. **workflow_name**: Clean, lowercase, hyphenated name
+        2. **description**: Clear, concise description
+        3. **inputs**: List of {name, type, description, required, default}
+           - IMPORTANT: 'default' must be a STRING. If the default is a number (e.g. 10), use "10".
+           - If no default exists, use the string "None".
+        4. **steps**: Ordered list of workflow phases/steps
+        5. **outputs**: List of {name, type, description}
+        6. **tags**: Relevant tags for categorization
+
+        Be specific and detailed. Infer reasonable defaults where appropriate.
+
+        Generate structured requirements now.
+      response_schema:
+        type: object
+        properties:
+          workflow_name:
+            type: string
+            description: "Clean workflow name"
+          description:
+            type: string
+            description: "Workflow description"
+          inputs:
+            type: array
+            items:
+              type: object
+              properties:
+                name:
+                  type: string
+                type:
+                  type: string
+                  enum: ["str", "string", "num", "number", "int", "integer", "bool", "boolean", "list", "array", "dict", "object"]
+                description:
+                  type: string
+                required:
+                  type: boolean
+                default:
+                  type: string
+                  description: "Default value as a string (e.g. '10', 'true')"
+              required:
+                - name
+                - type
+                - description
+                - required
+                - default
+              additionalProperties: false
+            description: "Workflow input parameters"
+          steps:
+            type: array
+            items:
+              type: string
+            description: "Main workflow steps/phases"
+          outputs:
+            type: array
+            items:
+              type: object
+              properties:
+                name:
+                  type: string
+                type:
+                  type: string
+                  enum: ["str", "string", "num", "number", "int", "integer", "bool", "boolean", "list", "array", "dict", "object"]
+                description:
+                  type: string
+              required:
+                - name
+                - type
+                - description
+              additionalProperties: false
+            description: "Workflow outputs"
+          tags:
+            type: array
+            items:
+              type: string
+            description: "Workflow tags"
+        required:
+          - workflow_name
+          - description
+          - inputs
+          - steps
+          - outputs
+          - tags
+        additionalProperties: false
+
+  - id: store_requirements
+    depends_on: [structure_requirements]
+    type: WriteJSONState
+    inputs:
+      path: "{{tmp}}/workflow-requirements.json"
+      data: "{{blocks.structure_requirements.outputs.response}}"
+
+  - id: bootstrap_context
+    depends_on: [store_requirements]
+    type: Workflow
+    inputs:
+      workflow: workflow-creator-bootstrap
+      inputs:
+        repo: "https://github.com/qtsone/workflows-mcp.git"
+        ref: "feat/workflow-companion"
+        workspace: "{{tmp}}/workflows-mcp-bootstrap"
+
+  - id: design_approval
+    depends_on: [store_requirements, bootstrap_context]
+    type: Workflow
+    inputs:
+      workflow: design-approval-loop
+      inputs:
+        requirements: "{{blocks.structure_requirements.outputs.response}}"
+        executor_docs: "{{blocks.bootstrap_context.outputs.executor_docs}}"
+        examples: "{{blocks.bootstrap_context.outputs.examples}}"
+        iteration: 1
+        max_iterations: "{{inputs.max_design_iterations}}"
+  
+  - id: check_design_approval
+    depends_on: [design_approval]
+    type: Shell
+    inputs:
+      command: |
+        if [ "{{blocks.design_approval.outputs.approved}}" = "true" ]; then
+          echo "✓ Design approved, proceeding with generation"
+          exit 0
+        else
+          echo "✗ Design was cancelled by user"
+          exit 1
+        fi
+
+  - id: generate_workflow
+    depends_on: [check_design_approval]
+    type: LLMCall
+    inputs:
+      profile: default
+      prompt: |
+        # Task: Generate Complete Workflow YAML
+
+        Create a production-ready workflow based on the approved design.
+
+        ## Approved Design Diagram
+        {{blocks.design_approval.outputs.final_diagram}}
+
+        ## Design Explanation
+        {{blocks.design_approval.outputs.final_explanation}}
+
+        ## Requirements
+        {{blocks.structure_requirements.outputs.response | tojson}}
+
+        ## Executor Documentation
+        {{blocks.bootstrap_context.outputs.executor_docs}}
+
+        ## Example Workflows
+        {{blocks.bootstrap_context.outputs.examples}}
+
+        ## Instructions
+
+        Generate complete, valid workflow structure with:
+
+        1. **Metadata**: name, description, version, tags
+        2. **Inputs**: All required and optional parameters with types and defaults
+        3. **Blocks**: Complete implementation of all workflow steps
+           - Use appropriate block types (Shell, LLMCall, Prompt, CreateFile, etc.)
+           - Set correct dependencies (depends_on)
+           - Add conditions where needed
+           - Include error handling (continue_on_error where appropriate)
+        4. **Outputs**: All specified workflow outputs with proper value expressions
+
+        ## Critical Requirements
+
+        - Follow the approved design exactly
+        - Use proper Jinja2 template syntax for variables
+        - Reference block outputs correctly: blocks.id.outputs.field
+        - Ensure all depends_on references are valid
+        - Add helpful comments for complex logic
+
+        Generate the workflow structure now.
+      response_schema: "{{read_file(blocks.bootstrap_context.outputs.schema_path) | fromjson}}"
+
+  - id: save_draft_workflow
+    depends_on: [generate_workflow]
+    type: CreateFile
+    inputs:
+      path: "{{tmp}}/draft-workflow.yaml"
+      content: "{{blocks.generate_workflow.outputs.response | toyaml}}"
+      overwrite: true
+      create_parents: true
+
+  - id: recursive_validation
+    depends_on: [save_draft_workflow]
+    type: Workflow
+    inputs:
+      workflow: recursive-validation
+      inputs:
+        workflow_path: "{{blocks.save_draft_workflow.outputs.path}}"
+        schema_path: "{{blocks.bootstrap_context.outputs.schema_path}}"
+        executor_docs: "{{blocks.bootstrap_context.outputs.executor_docs}}"
+        workflows_mcp_path: "{{blocks.bootstrap_context.outputs.workspace}}"
+        max_iterations: "{{inputs.max_validation_attempts}}"
+
+  - id: finalize_and_save
+    depends_on: [recursive_validation]
+    type: Workflow
+    inputs:
+      workflow: finalize-and-save
+      inputs:
+        workflow_name: "{{blocks.structure_requirements.outputs.response.workflow_name}}"
+        yaml_content: "{{read_file(blocks.recursive_validation.outputs.final_workflow_path)}}"
+        output_path: "{{inputs.output_path}}/{{blocks.structure_requirements.outputs.response.workflow_name}}.yaml"
+        tmp_dir: "{{blocks.bootstrap_context.outputs.workspace}}"
+        workflows_mcp_path: "{{blocks.bootstrap_context.outputs.workspace}}"
+        validation_attempts: "{{blocks.recursive_validation.outputs.iterations_used}}"
+        design_iterations: "{{blocks.design_approval.outputs.iterations_used}}"
+
+outputs:
+  workflow_name:
+    value: "{{blocks.finalize_and_save.outputs.workflow_name}}"
+    type: str
+    description: "Name of the created workflow"
+
+  workflow_path:
+    value: "{{blocks.finalize_and_save.outputs.workflow_path}}"
+    type: str
+    description: "Path to the saved workflow file"
+
+  validation_passed:
+    value: "{{blocks.finalize_and_save.outputs.validation_passed}}"
+    type: bool
+    description: "Whether final validation passed"
+
+  summary:
+    value: "{{blocks.finalize_and_save.outputs.summary}}"
+    type: str
+    description: "Complete creation summary with next steps"
+
+  requirements:
+    value: "{{blocks.structure_requirements.outputs.response}}"
+    type: dict
+    description: "Structured workflow requirements"
+
+  design_iterations:
+    value: "{{blocks.design_approval.outputs.iterations_used}}"
+    type: num
+    description: "Number of design iterations used"
+
+  success:
+    value: "{{blocks.finalize_and_save.succeeded}}"
+    type: bool
+    description: "Whether workflow creation completed successfully"

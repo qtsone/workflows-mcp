@@ -90,30 +90,51 @@ class BlockProxy(ProxyBase):
         if "blocks" in data:
             blocks = data["blocks"]
             if isinstance(blocks, dict) and name in blocks:
-                # Recursively wrap nested blocks
-                return BlockProxy(blocks[name])
+                # Return already-wrapped BlockProxy (don't double-wrap)
+                value = blocks[name]
+                if isinstance(value, BlockProxy):
+                    return value
+                return BlockProxy(value)
 
         # Return None for missing attributes (Jinja2 handles gracefully)
         return None
 
     def __getitem__(self, key: str) -> Any:
-        """Support bracket notation: blocks['foo-bar'] and for_each iteration access"""
+        """
+        Support bracket notation: blocks['foo-bar'] and for_each iteration access.
+
+        Priority order optimized to handle for_each iteration keys that conflict
+        with block field names (e.g., iteration keys named "inputs"/"outputs"):
+
+        1. Nested block access (for_each iterations) - checked FIRST
+        2. Direct attributes (block fields) - fallback if no iteration found
+        3. Output shortcuts - for output field access
+
+        This ensures blocks.foo["outputs"] returns the "outputs" iteration (if exists)
+        rather than the block's own outputs field, which is the expected behavior
+        for for_each blocks.
+        """
         data = object.__getattribute__(self, "_data")
 
-        # Priority 1: Direct attributes (top-level keys)
+        # Priority 1: Nested block access (for for_each iterations or composed workflows)
+        # Check this FIRST to prioritize iteration access over block field access
+        if "blocks" in data:
+            blocks = data["blocks"]
+            if isinstance(blocks, dict) and key in blocks:
+                # Return already-wrapped BlockProxy (don't double-wrap)
+                value = blocks[key]
+                if isinstance(value, BlockProxy):
+                    return value
+                return BlockProxy(value)
+
+        # Priority 2: Direct attributes (top-level keys)
+        # Fallback to block fields if no matching iteration found
         if key in data:
             value = data[key]
             # Wrap nested blocks in proxy
             if key == "blocks" and isinstance(value, dict):
                 return {k: BlockProxy(v) if isinstance(v, dict) else v for k, v in value.items()}
             return value
-
-        # Priority 2: Nested block access (for for_each iterations or composed workflows)
-        if "blocks" in data:
-            blocks = data["blocks"]
-            if isinstance(blocks, dict) and key in blocks:
-                # Recursively wrap nested blocks
-                return BlockProxy(blocks[key])
 
         # Priority 3: Output shortcuts (for array/dict outputs)
         if "outputs" in data:

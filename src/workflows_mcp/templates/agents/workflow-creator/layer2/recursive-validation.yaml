@@ -1,0 +1,94 @@
+name: recursive-validation
+description: Recursively validate and fix a workflow until it passes or max attempts reached
+version: "1.0"
+tags: [agents, recursive, validation, internal]
+
+inputs:
+  workflow_path:
+    type: str
+    description: "Path to workflow YAML file to validate"
+    required: true
+
+  schema_path:
+    type: str
+    description: "Path to LLM-compatible schema JSON file"
+    required: true
+
+  executor_docs:
+    type: str
+    description: "Executor documentation for fix context"
+    required: true
+
+  workflows_mcp_path:
+    type: str
+    description: "Directory path where validation is located"
+    required: true
+
+  iteration:
+    type: num
+    description: "Current attempt number"
+    default: 1
+
+  max_iterations:
+    type: num
+    description: "Maximum number of validation attempts"
+    default: 5
+
+blocks:
+  - id: attempt_fix
+    type: Workflow
+    inputs:
+      workflow: validation-fix-attempt
+      inputs:
+        workflow_path: "{{inputs.workflow_path}}"
+        schema_path: "{{inputs.schema_path}}"
+        executor_docs: "{{inputs.executor_docs}}"
+        iteration: "{{inputs.iteration}}"
+        workflows_mcp_path: "{{inputs.workflows_mcp_path}}"
+
+  - id: check_recursion
+    type: Workflow
+    condition: >-
+      {{blocks.attempt_fix.outputs.was_fixed and
+       inputs.iteration < inputs.max_iterations}}
+    inputs:
+      workflow: recursive-validation
+      inputs:
+        workflow_path: "{{blocks.attempt_fix.outputs.workflow_path}}"
+        schema_path: "{{inputs.schema_path}}"
+        executor_docs: "{{inputs.executor_docs}}"
+        workflows_mcp_path: "{{inputs.workflows_mcp_path}}"
+        iteration: "{{inputs.iteration + 1}}"
+        max_iterations: "{{inputs.max_iterations}}"
+    depends_on: [attempt_fix]
+
+outputs:
+  final_workflow_path:
+    value: |
+      {% if blocks.check_recursion.succeeded %}
+      {{blocks.check_recursion.outputs.final_workflow_path}}
+      {% else %}
+      {{blocks.attempt_fix.outputs.workflow_path}}
+      {% endif %}
+    type: str
+    description: "Path to the final (potentially fixed) workflow file"
+
+  is_valid:
+    value: |
+      {% if blocks.check_recursion.succeeded %}
+      {{blocks.check_recursion.outputs.is_valid}}
+      {% else %}
+      {{blocks.attempt_fix.outputs.is_valid}}
+      {% endif %}
+    type: bool
+    description: "Whether the final workflow is valid"
+
+  iterations_used:
+    value: |
+      {% if blocks.check_recursion.succeeded %}
+      {{blocks.check_recursion.outputs.iterations_used}}
+      {% else %}
+      {{inputs.iteration}}
+      {% endif %}
+    type: num
+    description: "Total iterations used"

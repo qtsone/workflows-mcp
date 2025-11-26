@@ -1,0 +1,146 @@
+name: validation-fix-attempt
+description: Single validation attempt with automatic error fixing via LLM
+version: "1.0"
+tags: [agents, validation, internal]
+
+inputs:
+  workflow_path:
+    type: str
+    description: "Path to workflow YAML file to validate"
+    required: true
+  
+  schema_path:
+    type: str
+    description: "Path to LLM-compatible schema JSON file for structured outputs"
+    required: true
+  
+  executor_docs:
+    type: str
+    description: "Executor documentation for fix context"
+    required: true
+
+  iteration:
+    type: num
+    description: "Current attempt number (for logging)"
+    default: 1
+
+  workflows_mcp_path:
+    type: str
+    description: "Directory path where validation is located"
+    required: true
+
+blocks:
+  - id: validate_workflow
+    description: "Validate the YAML file"
+    type: Shell
+    inputs:
+      working_dir: "{{inputs.workflows_mcp_path}}"
+      command: |
+        python validate.py "{{inputs.workflow_path}}"
+
+  - id: read_yaml_content
+    description: "Read YAML file content"
+    type: Shell
+    condition: "{{blocks.validate_workflow.failed}}"
+    inputs:
+      command: |
+        cat "{{inputs.workflow_path}}"
+    depends_on:
+      - block: validate_workflow
+        required: false
+
+  - id: read_schema
+    type: Shell
+    condition: "{{blocks.validate_workflow.failed}}"
+    inputs:
+      command: |
+        cat "{{inputs.schema_path}}"
+    depends_on:
+      - block: validate_workflow
+        required: false
+
+  - id: fix_validation_errors
+    description: "Fix validation errors"
+    type: LLMCall
+    condition: "{{blocks.validate_workflow.failed}}"
+    inputs:
+      profile: default
+      prompt: |
+        # Task: Fix Workflow Validation Errors
+
+        A workflow YAML file failed validation. Your task is to analyze the errors and return a corrected workflow structure.
+
+        ## Original YAML
+        ```yaml
+        {{blocks.read_yaml_content.outputs.stdout}}
+        ```
+
+        ## Validation Errors
+        ```
+        STDERR:
+        {{blocks.validate_workflow.outputs.stderr}}
+
+        STDOUT:
+        {{blocks.validate_workflow.outputs.stdout}}
+        ```
+
+        ## Executor Documentation
+        {{inputs.executor_docs}}
+
+        ## Instructions
+
+        1. **Analyze the errors**: Understand what validation rules were violated
+        2. **Fix the issues**: Correct syntax, structure, or logic errors
+        3. **Preserve intent**: Keep the workflow's purpose and logic intact
+        4. **Return valid structure**: Your response will be validated against the workflow schema
+
+        ## Common Issues to Check
+
+        - Missing required fields (name, description, blocks)
+        - Invalid block types or executor names
+        - Incorrect input field names or types
+        - Malformed Jinja2 template syntax
+        - Invalid depends_on references
+
+        Fix the workflow and return only the complete corrected structure.
+      response_schema: "{{blocks.read_schema.outputs.stdout | fromjson}}"
+    depends_on:
+      - block: read_yaml_content
+        required: true
+      - block: read_schema
+        required: true
+
+  - id: save_fixed_yaml
+    description: "Save fixed YAML to file"
+    type: CreateFile
+    condition: "{{blocks.validate_workflow.failed}}"
+    inputs:
+      path: "{{tmp}}/fixed-workflow-attempt-{{inputs.iteration}}.yaml"
+      content: |
+        {{blocks.fix_validation_errors.outputs.response | toyaml}}
+      overwrite: true
+      create_parents: true
+    depends_on:
+      - block: fix_validation_errors
+        required: false
+
+outputs:
+  workflow_path:
+    value: |
+      {% if blocks.validate_workflow.succeeded %}
+      {{inputs.workflow_path}}
+      {% else %}
+      {{blocks.save_fixed_yaml.outputs.path}}
+      {% endif %}
+    type: str
+    description: "Path to final YAML file (original or fixed)"
+
+  is_valid:
+    value: "{{blocks.validate_workflow.succeeded}}"
+    type: bool
+    description: "Whether validation passed"
+
+  was_fixed:
+    value: "{{blocks.validate_workflow.failed}}"
+    type: bool
+    description: "Whether LLM fix was applied"

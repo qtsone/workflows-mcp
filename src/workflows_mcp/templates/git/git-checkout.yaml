@@ -27,7 +27,7 @@ inputs:
     default: ""
     required: false
 
-  path:
+  workspace:
     type: str
     description: "Path where to place the repository"
     default: "{{tmp}}/repo"
@@ -311,7 +311,7 @@ blocks:
     inputs:
       working_dir: "{{tmp}}"
       command: |
-        TARGET_PATH="{{inputs.path}}"
+        TARGET_PATH="{{inputs.workspace}}"
 
         # Create parent directory if it doesn't exist
         mkdir -p "$(dirname "$TARGET_PATH")"
@@ -348,7 +348,7 @@ blocks:
     condition: "{{blocks.prepare_target_directory.outputs.state == 'existing_repo'}}"
     continue_on_error: true
     inputs:
-      working_dir: "{{inputs.path}}"
+      working_dir: "{{inputs.workspace}}"
       command: |
         # Check for both uncommitted changes and untracked files
         if [ -z "$(git status --porcelain 2>/dev/null)" ]; then
@@ -392,7 +392,7 @@ blocks:
     type: Shell
     condition: "{{blocks.check_clean_state.failed and inputs.clean_mode != 'skip'}}"
     inputs:
-      working_dir: "{{inputs.path}}"
+      working_dir: "{{inputs.workspace}}"
       command: |
         # Determine action (from prompt or input)
         {% if inputs.clean_mode == 'prompt' %}
@@ -417,7 +417,7 @@ blocks:
               echo "✓ Changes stashed successfully"
               echo ""
               echo "To restore your changes later:"
-              echo "  cd {{inputs.path}}"
+              echo "  cd {{inputs.workspace}}"
               echo "  git stash list    # Find your stash"
               echo "  git stash pop     # Restore most recent stash"
             else
@@ -490,7 +490,7 @@ blocks:
           {% elif inputs.fetch_depth > 0 %}--depth {{inputs.fetch_depth}} {% endif %}\
           --branch {{inputs.ref}} --single-branch \
           --quiet \
-          "$REPO_URL" "{{inputs.path}}"
+          "$REPO_URL" "{{inputs.workspace}}"
 
         echo "✓ Cloned with branch {{inputs.ref}}"
       timeout: 300
@@ -531,7 +531,7 @@ blocks:
           {% if inputs.sparse_checkout != '' %}--filter=blob:none --no-checkout \
           {% elif inputs.fetch_depth > 0 %}--depth {{inputs.fetch_depth}} {% endif %}\
           --quiet \
-          "$REPO_URL" "{{inputs.path}}"
+          "$REPO_URL" "{{inputs.workspace}}"
 
         echo "✓ Cloned (will create '{{inputs.ref}}' as new branch)"
       timeout: 300
@@ -568,7 +568,7 @@ blocks:
           {% if inputs.sparse_checkout != '' %}--filter=blob:none --no-checkout \
           {% elif inputs.fetch_depth > 0 %}--depth {{inputs.fetch_depth}} {% endif %}\
           --quiet \
-          "$REPO_URL" "{{inputs.path}}"
+          "$REPO_URL" "{{inputs.workspace}}"
 
         echo "✓ Repository cloned successfully"
       timeout: 300
@@ -584,7 +584,7 @@ blocks:
     type: Shell
     condition: "{{blocks.prepare_target_directory.outputs.state == 'existing_repo'}}"
     inputs:
-      working_dir: "{{inputs.path}}"
+      working_dir: "{{inputs.workspace}}"
       command: |
         # Load Git SSH command from isolated SSH setup
         {% if blocks.build_git_ssh_command.succeeded %}
@@ -614,7 +614,7 @@ blocks:
     type: Shell
     condition: "{{inputs.sparse_checkout != ''}}"
     inputs:
-      working_dir: "{{inputs.path}}"
+      working_dir: "{{inputs.workspace}}"
       command: |
         echo "Configuring sparse checkout..."
 
@@ -652,7 +652,7 @@ blocks:
     type: Shell
     condition: "{{inputs.sparse_checkout != '' and blocks.clone_with_ref.succeeded}}"
     inputs:
-      working_dir: "{{inputs.path}}"
+      working_dir: "{{inputs.workspace}}"
       command: |
         echo "Checking out files (sparse)..."
         git checkout
@@ -665,7 +665,7 @@ blocks:
     type: Shell
     condition: "{{blocks.clone_fallback.succeeded}}"
     inputs:
-      working_dir: "{{inputs.path}}"
+      working_dir: "{{inputs.workspace}}"
       command: |
         echo "Creating new branch: {{inputs.ref}}"
         {% if inputs.sparse_checkout != '' %}
@@ -686,7 +686,7 @@ blocks:
     type: Shell
     condition: "{{inputs.ref == '' and inputs.sparse_checkout != '' and blocks.clone_default.succeeded}}"
     inputs:
-      working_dir: "{{inputs.path}}"
+      working_dir: "{{inputs.workspace}}"
       command: |
         echo "Checking out default branch (sparse)..."
         git checkout
@@ -699,7 +699,7 @@ blocks:
     type: Shell
     condition: "{{inputs.ref != '' and blocks.prepare_target_directory.outputs.state == 'existing_repo'}}"
     inputs:
-      working_dir: "{{inputs.path}}"
+      working_dir: "{{inputs.workspace}}"
       command: |
         REF="{{inputs.ref}}"
 
@@ -742,7 +742,7 @@ blocks:
     type: Shell
     condition: "{{inputs.fetch_tags}}"
     inputs:
-      working_dir: "{{inputs.path}}"
+      working_dir: "{{inputs.workspace}}"
       command: |
         echo "Fetching tags..."
 
@@ -777,7 +777,7 @@ blocks:
     type: Shell
     condition: "{{inputs.submodules != 'false'}}"
     inputs:
-      working_dir: "{{inputs.path}}"
+      working_dir: "{{inputs.workspace}}"
       command: |
         echo "Initializing submodules..."
 
@@ -823,7 +823,7 @@ blocks:
     type: Shell
     condition: "{{inputs.lfs and blocks.check_lfs_installed.succeeded}}"
     inputs:
-      working_dir: "{{inputs.path}}"
+      working_dir: "{{inputs.workspace}}"
       command: |
         echo "Fetching Git LFS files..."
 
@@ -845,7 +845,7 @@ blocks:
   - id: get_commit_sha
     type: Shell
     inputs:
-      working_dir: "{{inputs.path}}"
+      working_dir: "{{inputs.workspace}}"
       command: |
         git rev-parse HEAD
     depends_on:
@@ -855,7 +855,7 @@ blocks:
   - id: get_branch
     type: Shell
     inputs:
-      working_dir: "{{inputs.path}}"
+      working_dir: "{{inputs.workspace}}"
       command: |
         git branch --show-current || printf "(detached)"
     depends_on:
@@ -902,6 +902,6 @@ outputs:
     description: "Current branch name (or '(detached)' if detached HEAD)"
 
   repository_path:
-    value: "{{inputs.path}}"
+    value: "{{inputs.workspace}}"
     type: str
     description: "Full path where the repository was checked out"

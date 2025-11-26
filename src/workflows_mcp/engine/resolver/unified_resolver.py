@@ -182,8 +182,31 @@ class UnifiedVariableResolver:
                 "bool": bool,
                 "get": self._get,
                 "render": self._render,
+                "read_file": self._read_file,
             }
         )
+
+    @staticmethod
+    def _read_file(path: str) -> str:
+        """
+        Read file content for Jinja2 templates.
+        
+        Args:
+            path: Path to file to read
+            
+        Returns:
+            File content as string
+            
+        Raises:
+            ValueError: If file cannot be read
+        """
+        from pathlib import Path
+        from ..block_utils import FileOperations
+        
+        result = FileOperations.read_text(Path(path))
+        if not result.is_success:
+            raise ValueError(f"read_file failed for '{path}': {result.error}")
+        return result.value
 
     @staticmethod
     def _get(obj: Any, key: int | str, default: Any = None) -> Any:

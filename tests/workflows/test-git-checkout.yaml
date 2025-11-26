@@ -54,7 +54,7 @@ blocks:
       workflow: git-checkout
       inputs:
         repo: "{{inputs.test_repo}}"
-        path: "{{inputs.test_base_dir}}/test1-basic"
+        workspace: "{{inputs.test_base_dir}}/test1-basic"
         fetch_depth: 1
     depends_on: [setup_clean]
 
@@ -84,7 +84,7 @@ blocks:
       workflow: git-checkout
       inputs:
         repo: "{{inputs.test_repo}}"
-        path: "{{inputs.test_base_dir}}/test2-with-ref"
+        workspace: "{{inputs.test_base_dir}}/test2-with-ref"
         ref: "{{inputs.test_branch}}"
         fetch_depth: 1
     depends_on: [setup_clean]
@@ -112,7 +112,7 @@ blocks:
       workflow: git-checkout
       inputs:
         repo: "{{inputs.test_repo}}"
-        path: "{{inputs.test_base_dir}}/test3-sparse"
+        workspace: "{{inputs.test_base_dir}}/test3-sparse"
         sparse_checkout: "{{inputs.sparse_file}}"
     depends_on: [setup_clean]
 
@@ -142,7 +142,7 @@ blocks:
       workflow: git-checkout
       inputs:
         repo: "{{inputs.test_repo}}"
-        path: "{{inputs.test_base_dir}}/test4-ref-sparse"
+        workspace: "{{inputs.test_base_dir}}/test4-ref-sparse"
         ref: "{{inputs.test_branch}}"
         sparse_checkout: "{{inputs.sparse_file}}"
     depends_on: [setup_clean]
@@ -177,7 +177,7 @@ blocks:
       workflow: git-checkout
       inputs:
         repo: "{{inputs.test_repo}}"
-        path: "{{inputs.test_base_dir}}/test5-new-branch"
+        workspace: "{{inputs.test_base_dir}}/test5-new-branch"
         ref: "test-nonexistent-branch-12345"
         fetch_depth: 1
     depends_on: [setup_clean]
@@ -206,7 +206,7 @@ blocks:
       workflow: git-checkout
       inputs:
         repo: "{{inputs.test_repo}}"
-        path: "{{inputs.test_base_dir}}/test6-new-branch-sparse"
+        workspace: "{{inputs.test_base_dir}}/test6-new-branch-sparse"
         ref: "test-nonexistent-sparse-12345"
         sparse_checkout: "{{inputs.sparse_file}}"
     depends_on: [setup_clean]
@@ -245,7 +245,7 @@ blocks:
       workflow: git-checkout
       inputs:
         repo: "{{inputs.test_repo}}"
-        path: "{{inputs.test_base_dir}}/test7-existing-no-ref"
+        workspace: "{{inputs.test_base_dir}}/test7-existing-no-ref"
     depends_on: [test7_setup]
 
   - id: test7_verify
@@ -276,7 +276,7 @@ blocks:
       workflow: git-checkout
       inputs:
         repo: "{{inputs.test_repo}}"
-        path: "{{inputs.test_base_dir}}/test8-existing-remote-ref"
+        workspace: "{{inputs.test_base_dir}}/test8-existing-remote-ref"
         ref: "{{inputs.test_branch}}"
     depends_on: [test8_setup]
 
@@ -311,7 +311,7 @@ blocks:
       workflow: git-checkout
       inputs:
         repo: "{{inputs.test_repo}}"
-        path: "{{inputs.test_base_dir}}/test9-existing-local-ref"
+        workspace: "{{inputs.test_base_dir}}/test9-existing-local-ref"
         ref: "{{inputs.test_branch}}"
     depends_on: [test9_setup]
 
@@ -343,7 +343,7 @@ blocks:
       workflow: git-checkout
       inputs:
         repo: "{{inputs.test_repo}}"
-        path: "{{inputs.test_base_dir}}/test10-existing-new-branch"
+        workspace: "{{inputs.test_base_dir}}/test10-existing-new-branch"
         ref: "test-new-branch-existing-12345"
     depends_on: [test10_setup]
 
@@ -375,7 +375,7 @@ blocks:
       workflow: git-checkout
       inputs:
         repo: "{{inputs.test_repo}}"
-        path: "{{inputs.test_base_dir}}/test11-existing-sparse"
+        workspace: "{{inputs.test_base_dir}}/test11-existing-sparse"
         sparse_checkout: "{{inputs.sparse_file}}"
     depends_on: [test11_setup]
 
@@ -403,7 +403,7 @@ blocks:
       workflow: git-checkout
       inputs:
         repo: "{{inputs.test_repo}}"
-        path: "{{inputs.test_base_dir}}/test12-cone"
+        workspace: "{{inputs.test_base_dir}}/test12-cone"
         sparse_checkout: "{{inputs.sparse_dir}}"
         sparse_checkout_cone_mode: true
     depends_on: [setup_clean]
