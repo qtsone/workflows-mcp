@@ -267,6 +267,55 @@ class ExecutionResult:
         # Get workflow metadata from typed accessor
         return self.execution.workflow_metadata
 
+    def _serialize_pause_metadata(self, metadata: dict[str, Any] | None) -> dict[str, Any] | None:
+        """
+        Recursively serialize any nested ExecutionState objects in pause_metadata.
+
+        Required for nested workflow pause/resume where child ExecutionState is stored
+        in parent's pause_metadata. Without this, ExecutionState objects are converted
+        to strings by json.dump(default=str), corrupting the data structure.
+
+        Args:
+            metadata: Pause metadata that may contain nested ExecutionState objects
+
+        Returns:
+            Serialized metadata with all ExecutionState objects converted to dicts
+        """
+        if metadata is None:
+            return None
+
+        if not isinstance(metadata, dict):
+            return metadata
+
+        result: dict[str, Any] = {}
+        for key, value in metadata.items():
+            if isinstance(value, ExecutionState):
+                # Convert ExecutionState to dict (recursive for nested pause_metadata)
+                result[key] = {
+                    "context": value.context.model_dump(),
+                    "completed_blocks": value.completed_blocks,
+                    "current_wave_index": value.current_wave_index,
+                    "execution_waves": value.execution_waves,
+                    "block_definitions": value.block_definitions,
+                    "workflow_stack": value.workflow_stack,
+                    "paused_block_id": value.paused_block_id,
+                    "workflow_name": value.workflow_name,
+                    "runtime_inputs": value.runtime_inputs,
+                    "pause_metadata": self._serialize_pause_metadata(value.pause_metadata),
+                }
+            elif isinstance(value, dict):
+                # Recursively process nested dicts
+                result[key] = self._serialize_pause_metadata(value)
+            elif isinstance(value, list):
+                # Process lists (may contain dicts with ExecutionState)
+                result[key] = [
+                    self._serialize_pause_metadata(item) if isinstance(item, dict) else item
+                    for item in value
+                ]
+            else:
+                result[key] = value
+        return result
+
     def _execution_state_to_dict(self) -> dict[str, Any] | None:
         """Convert ExecutionState to dict format for JSON serialization."""
         if not self.execution_state:
@@ -282,7 +331,7 @@ class ExecutionResult:
             "paused_block_id": self.execution_state.paused_block_id,
             "workflow_name": self.execution_state.workflow_name,
             "runtime_inputs": self.execution_state.runtime_inputs,
-            "pause_metadata": self.execution_state.pause_metadata,
+            "pause_metadata": self._serialize_pause_metadata(self.execution_state.pause_metadata),
         }
 
     def _build_debug_data(self) -> dict[str, Any]:

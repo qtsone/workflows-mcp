@@ -318,7 +318,13 @@ class WorkflowExecutor(BlockExecutor):
                 "ExecutionContext not found - workflow composition not supported in this context"
             )
 
-        # 4. Create WorkflowRunner and resume child workflow
+        # 4. Inject ExecutionContext into deserialized child state
+        # Required because _execution_context is a PrivateAttr that isn't serialized.
+        # After deserialization, child_execution_state.context._execution_context is None.
+        # This must be set before resume_from_state() to ensure proper context propagation.
+        child_execution_state.context.set_execution_context(exec_context)
+
+        # 5. Create WorkflowRunner and resume child workflow
         from .workflow_runner import WorkflowRunner
 
         # No checkpointing for nested workflows - parent handles all checkpointing
