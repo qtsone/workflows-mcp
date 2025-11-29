@@ -1,6 +1,6 @@
 name: workflow-creator-bootstrap
-description: Bootstrap workflow creator context by fetching canonical sources from workflows-mcp repository
-version: "1.0"
+description: Bootstrap workflow creator context by fetching static reference docs from workflows-mcp repository
+version: "2.0"
 tags: [agents, bootstrap, internal]
 
 inputs:
@@ -20,26 +20,28 @@ inputs:
     type: str
     description: "(Optional) Workspace directory"
     default: "/tmp/workflow-creator-bootstrap"
-  
+
   sparse_checkout:
     type: str
     description: "(Optional) Sparse checkout patterns (comma-separated)"
-    default: "llm_schema.json,src/workflows_mcp/engine,tests/workflows,src/workflows_mcp/templates"
+    default: "llm_schema.json,validate.py,docs/llm/block-reference.md,docs/llm/block-schemas.json,tests/workflows,src/workflows_mcp/templates"
     required: false
 
 blocks:
+  # Check if workspace already has required files (cache hit)
+  # Validates each sparse_checkout pattern exists
   - id: check_cache
-    description: "Check if generated files already exist"
+    description: "Check if required files already exist"
     type: Shell
     inputs:
+      working_dir: "{{inputs.workspace}}"
       command: |
-        test -s "{{inputs.workspace}}/executor_reference.md" && \
-        test -s "{{inputs.workspace}}/block_types.md" && \
-        test -s "{{inputs.workspace}}/key_patterns.md" && \
-        test -s "{{inputs.workspace}}/llm_schema.json" && \
-        test -d "{{inputs.workspace}}/tests/workflows/core" && \
-        test -d "{{inputs.workspace}}/src/workflows_mcp/templates"
+        {% for pattern in inputs.sparse_checkout.split(',') -%}
+        test -e "{{ pattern | trim }}" || { echo "Missing: {{ pattern | trim }}"; exit 1; }
+        {% endfor -%}
+        echo "Cache valid: all patterns exist"
 
+  # Clone repository with sparse checkout (only if cache miss)
   - id: checkout
     description: "Clone workflows-mcp repository"
     type: Workflow
@@ -55,34 +57,44 @@ blocks:
         workspace: "{{inputs.workspace}}"
         sparse_checkout: "{{inputs.sparse_checkout}}"
 
-  - id: read_schema
-    description: "Read LLM simplified schema"
+  # Read the static block reference (authoritative, CI-verified)
+  - id: read_block_reference
+    description: "Read static block executor reference"
     type: ReadFiles
     inputs:
-      base_path: "{{inputs.workspace}}"
+      base_path: "{{inputs.workspace}}/docs/llm"
       patterns:
-        - "llm_schema.json"
+        - "block-reference.md"
       mode: "full"
-    depends_on: [checkout]
+    depends_on:
+      - block: check_cache
+        required: false
+      - block: checkout
+        required: false
 
-  - id: read_executors
-    description: "Read executor source code"
+  # Read the JSON schemas for structured output
+  - id: read_block_schemas
+    description: "Read block schemas JSON"
     type: ReadFiles
     inputs:
-      base_path: "{{inputs.workspace}}/src/workflows_mcp/engine"
+      base_path: "{{inputs.workspace}}/docs/llm"
       patterns:
-        - "executor*_*.py"
-      mode: "outline"
-    depends_on: [checkout]
-    condition: "{{ not blocks.check_cache.succeeded }}"
+        - "block-schemas.json"
+      mode: "full"
+    depends_on:
+      - block: check_cache
+        required: false
+      - block: checkout
+        required: false
 
+  # Read example workflows for reference
   - id: read_examples
     description: "Read example workflows"
     type: ReadFiles
     inputs:
-      base_path: "{{inputs.workspace}}/tests/workflows/core"
+      base_path: "{{inputs.workspace}}/tests/workflows"
       patterns:
-        - "*.yaml"
+        - "**/*.yaml"
       mode: "outline"
     depends_on:
       - block: check_cache
@@ -90,6 +102,7 @@ blocks:
       - block: checkout
         required: false
 
+  # Read built-in templates for reference
   - id: read_templates
     description: "Read built-in workflow templates"
     type: ReadFiles
@@ -104,120 +117,26 @@ blocks:
       - block: checkout
         required: false
 
-  - id: generate_executor_docs
-    description: "Generate compressed executor reference documentation"
-    type: LLMCall
-    inputs:
-      profile: default
-      max_tokens: 10000
-      timeout: 600
-      prompt: |
-        # Task: Create Compressed Executor Reference
-
-        You are creating a concise reference guide for workflows-mcp block executors.
-        This guide will be used by an LLM to generate new workflows.
-
-        ## Source Materials
-
-        ### Schema Definition
-        {{blocks.read_schema.outputs.content}}
-
-        ### Executor Implementations
-        {{blocks.read_executors.outputs.content}}
-
-        ## Requirements
-
-        For each block type (ex: Shell, LLMCall, ImageGen, Prompt, CreateFile, EditFile, ReadFiles, HttpCall, Workflow, WriteJSONState, ReadJSONState, MergeJSONState), provide:
-
-        1. **Purpose**: One-sentence description
-        2. **Required Inputs**: List with types and descriptions
-        3. **Optional Inputs**: List with types, defaults, and descriptions
-        4. **Outputs**: List with types and descriptions
-        5. **Example**: Minimal YAML block demonstrating usage
-
-        ## Output Format
-
-        Use markdown with clear sections. Be concise but complete.
-        Focus on practical usage patterns, not implementation details.
-        Include common pitfalls and best practices.
-
-        ## Special Attention
-
-        - Variable access patterns: inputs.x, blocks.id.outputs.y, secrets.Z
-        - Control flow: depends_on, condition, continue_on_error, for_each
-        - Block status references: blocks.id.succeeded, blocks.id.failed, blocks.id.skipped
-        - Jinja2 filters: trim, lower, upper, replace, length, tojson, etc.
-
-        Generate the compressed executor reference guide now.
-      response_schema:
-        type: object
-        properties:
-          executor_reference:
-            type: string
-            description: "Compressed markdown reference for all block executors"
-          block_types:
-            type: array
-            items:
-              type: string
-            description: "List of all available block types"
-          key_patterns:
-            type: object
-            description: "Key patterns and best practices, as a map of pattern names to descriptions."
-            additionalProperties:
-              type: string
-        required:
-          - executor_reference
-          - block_types
-    depends_on:
-      - block: read_schema
-        required: true
-      - block: read_executors
-        required: true
-    condition: "{{ not blocks.check_cache.succeeded }}"
-
-
-  - id: store_analysis
-    type: CreateFile
-    for_each:
-      executor_reference: "{{inputs.workspace}}/executor_reference.md"
-      block_types: "{{inputs.workspace}}/block_types.md"
-      key_patterns: "{{inputs.workspace}}/key_patterns.md"
-    continue_on_error: true
-    inputs:
-      path: "{{each.value}}"
-      content: |
-        {% set val = get(blocks.generate_executor_docs.outputs.response, each.key, "") %}
-        {% if val is string %}{{ val }}{% else %}{{ val | tojson(indent=2) }}{% endif %}
-      overwrite: true
-      create_parents: true
-    depends_on: [generate_executor_docs]
-    condition: "{{ not blocks.check_cache.succeeded }}"
-
 outputs:
   workspace:
     value: "{{inputs.workspace}}"
     type: str
-    description: "Workspace directory containing the repo and generated docs"
+    description: "Workspace directory containing the repo"
 
   schema_path:
     value: "{{inputs.workspace}}/llm_schema.json"
     type: str
-    description: "Path to simplified LLM-compatible schema (for structured outputs)"
+    description: "Path to LLM-compatible workflow schema (for structured outputs)"
 
   executor_docs:
-    value: "{{inputs.workspace}}/executor_reference.md"
+    value: "{{inputs.workspace}}/docs/llm/block-reference.md"
     type: str
-    description: "Compressed executor reference documentation"
+    description: "Path to static block executor reference (CI-verified)"
 
-  block_types:
-    value: "{{inputs.workspace}}/block_types.md"
-    type: list
-    description: "List of all available block types"
-  
-  key_patterns:
-    value: "{{inputs.workspace}}/key_patterns.md"
-    type: list
-    description: "List of all available block types"
+  executor_schemas_json:
+    value: "{{inputs.workspace}}/docs/llm/block-schemas.json"
+    type: str
+    description: "Path to block schemas JSON"
 
   examples:
     value: "{{blocks.read_examples.outputs.content}}"
@@ -230,6 +149,6 @@ outputs:
     description: "Production workflow templates"
 
   bootstrap_success:
-    value: "{{blocks.store_analysis.succeeded or blocks.check_cache.succeeded}}"
+    value: "{{blocks.read_block_reference.succeeded}}"
     type: bool
     description: "Bootstrap completed successfully"

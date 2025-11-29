@@ -65,10 +65,45 @@ blocks:
     condition: "{{blocks.validate_workflow.failed}}"
     inputs:
       profile: default
+      system_instructions: |
+        You are fixing workflow validation errors. Use EXACT field names.
+
+        # CRITICAL: Required Input Field Names
+
+        | Block Type     | Required Field(s)                    |
+        |----------------|--------------------------------------|
+        | Shell          | command                              |
+        | LLMCall        | prompt (NOT 'command' or 'message')  |
+        | Prompt         | prompt (NOT 'command' or 'message')  |
+        | ImageGen       | prompt, profile OR provider          |
+        | CreateFile     | path, content                        |
+        | EditFile       | path, operations                     |
+        | ReadFiles      | patterns                             |
+        | HttpCall       | url                                  |
+        | Workflow       | workflow                             |
+        | ReadJSONState  | path                                 |
+        | WriteJSONState | path, data                           |
+        | MergeJSONState | path, updates                        |
+
+        # Common Field Name Mistakes to Fix
+
+        ❌ WRONG: LLMCall with 'command' → ✅ CORRECT: LLMCall with 'prompt'
+        ❌ WRONG: Prompt with 'message' → ✅ CORRECT: Prompt with 'prompt'
+        ❌ WRONG: Prompt with 'command' → ✅ CORRECT: Prompt with 'prompt'
+        ❌ WRONG: CreateFile with 'command' → ✅ CORRECT: CreateFile with 'path' and 'content'
+
+        # Valid Workflow Structure
+
+        - name: required string
+        - description: required string
+        - tags: optional array
+        - inputs: optional object
+        - blocks: required array of {id, type, inputs, ...}
+        - outputs: optional object
       prompt: |
         # Task: Fix Workflow Validation Errors
 
-        A workflow YAML file failed validation. Your task is to analyze the errors and return a corrected workflow structure.
+        A workflow YAML file failed validation. Analyze errors and fix them.
 
         ## Original YAML
         ```yaml
@@ -85,24 +120,21 @@ blocks:
         ```
 
         ## Executor Documentation
-        {{inputs.executor_docs}}
+        {{read_file(inputs.executor_docs)}}
 
         ## Instructions
 
-        1. **Analyze the errors**: Understand what validation rules were violated
-        2. **Fix the issues**: Correct syntax, structure, or logic errors
-        3. **Preserve intent**: Keep the workflow's purpose and logic intact
-        4. **Return valid structure**: Your response will be validated against the workflow schema
+        1. **Analyze the errors**: Look for "Field required" or "Extra inputs not permitted" messages
+        2. **Check field names**: If a block uses 'command' but should use 'prompt', fix it
+        3. **Fix the issues**: Correct field names, syntax, structure errors
+        4. **Preserve intent**: Keep the workflow's purpose and logic intact
 
-        ## Common Issues to Check
+        ## Common Fixes
 
-        - Missing required fields (name, description, blocks)
-        - Invalid block types or executor names
-        - Incorrect input field names or types
-        - Malformed Jinja2 template syntax
-        - Invalid depends_on references
+        - "prompt: Field required" + "command: Extra inputs not permitted" → rename 'command' to 'prompt'
+        - "path: Field required" + "command: Extra inputs not permitted" → use 'path' and 'content'
 
-        Fix the workflow and return only the complete corrected structure.
+        Return the complete corrected workflow structure.
       response_schema: "{{blocks.read_schema.outputs.stdout | fromjson}}"
     depends_on:
       - block: read_yaml_content

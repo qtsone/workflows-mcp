@@ -190,19 +190,20 @@ class UnifiedVariableResolver:
     def _read_file(path: str) -> str:
         """
         Read file content for Jinja2 templates.
-        
+
         Args:
             path: Path to file to read
-            
+
         Returns:
             File content as string
-            
+
         Raises:
             ValueError: If file cannot be read
         """
         from pathlib import Path
+
         from ..block_utils import FileOperations
-        
+
         result = FileOperations.read_text(Path(path))
         if not result.is_success:
             raise ValueError(f"read_file failed for '{path}': {result.error}")

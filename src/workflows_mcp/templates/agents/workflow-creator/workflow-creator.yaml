@@ -76,6 +76,7 @@ blocks:
     type: LLMCall
     inputs:
       profile: default
+      timeout: 600
       prompt: |
         # Task: Structure Workflow Requirements
 
@@ -199,7 +200,7 @@ blocks:
       inputs:
         repo: "https://github.com/qtsone/workflows-mcp.git"
         ref: "feat/workflow-companion"
-        workspace: "{{tmp}}/workflows-mcp-bootstrap"
+        workspace: "/tmp/workflows-mcp-bootstrap"
 
   - id: design_approval
     depends_on: [store_requirements, bootstrap_context]
@@ -218,11 +219,13 @@ blocks:
     type: Shell
     inputs:
       command: |
-        if [ "{{blocks.design_approval.outputs.approved}}" = "true" ]; then
+        # Convert to lowercase and strip whitespace (Jinja2 templates may include newlines)
+        APPROVED=$(echo "{{blocks.design_approval.outputs.approved}}" | tr '[:upper:]' '[:lower:]' | tr -d '[:space:]')
+        if [ "$APPROVED" = "true" ]; then
           echo "✓ Design approved, proceeding with generation"
           exit 0
         else
-          echo "✗ Design was cancelled by user"
+          echo "✗ Design was cancelled by user (approved=$APPROVED)"
           exit 1
         fi
 
@@ -231,46 +234,108 @@ blocks:
     type: LLMCall
     inputs:
       profile: default
+      timeout: 600
+      system_instructions: |
+        You are an expert workflow generator for the workflows-mcp system.
+        You generate valid YAML workflow definitions following strict schemas.
+
+        # CRITICAL: Block Input Field Names
+
+        These are the EXACT required field names for each block type. USE THESE EXACTLY:
+
+        | Block Type     | Required Field(s)                    |
+        |----------------|--------------------------------------|
+        | Shell          | command                              |
+        | LLMCall        | prompt (NOT 'command' or 'message')  |
+        | Prompt         | prompt (NOT 'command' or 'message')  |
+        | ImageGen       | prompt, profile OR provider          |
+        | CreateFile     | path, content                        |
+        | EditFile       | path, operations                     |
+        | ReadFiles      | patterns                             |
+        | HttpCall       | url                                  |
+        | Workflow       | workflow                             |
+        | ReadJSONState  | path                                 |
+        | WriteJSONState | path, data                           |
+        | MergeJSONState | path, updates                        |
+
+        ⚠️  NEVER use 'command' for LLMCall or Prompt blocks - use 'prompt'
+        ⚠️  NEVER use 'message' for Prompt blocks - use 'prompt'
+
+        # Block Structure Rules
+
+        Each block MUST have:
+        - id: unique lowercase-hyphenated identifier
+        - type: one of the block types above
+        - inputs: object with the required fields for that block type
+
+        Optional block fields:
+        - depends_on: array of {block: "id", required: bool}
+        - condition: Jinja2 expression for conditional execution
+        - continue_on_error: boolean
+        - for_each: expression for iteration
+
+        # Variable Syntax (use double braces in YAML)
+
+        - Input access: inputs.param_name
+        - Block output: blocks.block_id.outputs.field
+        - Block status: blocks.block_id.succeeded, blocks.block_id.failed
+        - Secrets: secrets.SECRET_NAME
+        - Temp dir: tmp (special variable)
+
+        # Valid Input Types (for workflow inputs)
+
+        Use: str, num, bool, list, dict (lowercase)
+
+        # LLMCall Specifics
+
+        For LLMCall blocks:
+        - REQUIRED: prompt (the user prompt text)
+        - OPTIONAL: profile (e.g., "default"), system_instructions, response_schema
+        - Use system_instructions for persistent context
+        - Use prompt for the specific request
+
+        # Prompt Block Specifics
+
+        For Prompt blocks (interactive user input):
+        - REQUIRED: prompt (the question to ask)
+        - The block pauses execution and waits for user response
+        - Access response via: blocks.block_id.outputs.response
       prompt: |
         # Task: Generate Complete Workflow YAML
 
         Create a production-ready workflow based on the approved design.
 
-        ## Approved Design Diagram
+        ## Approved Design
+
+        ### Diagram
         {{blocks.design_approval.outputs.final_diagram}}
 
-        ## Design Explanation
+        ### Design Explanation
         {{blocks.design_approval.outputs.final_explanation}}
 
-        ## Requirements
+        ### Block Summary
+        {{blocks.design_approval.outputs.final_block_summary}}
+
+        ## Structured Requirements
         {{blocks.structure_requirements.outputs.response | tojson}}
 
-        ## Executor Documentation
-        {{blocks.bootstrap_context.outputs.executor_docs}}
-
-        ## Example Workflows
-        {{blocks.bootstrap_context.outputs.examples}}
+        ## Block Executor Reference (Authoritative)
+        {{read_file(blocks.bootstrap_context.outputs.executor_docs)}}
 
         ## Instructions
 
-        Generate complete, valid workflow structure with:
+        Generate a complete, valid workflow structure following the approved design.
 
-        1. **Metadata**: name, description, version, tags
-        2. **Inputs**: All required and optional parameters with types and defaults
-        3. **Blocks**: Complete implementation of all workflow steps
-           - Use appropriate block types (Shell, LLMCall, Prompt, CreateFile, etc.)
-           - Set correct dependencies (depends_on)
-           - Add conditions where needed
-           - Include error handling (continue_on_error where appropriate)
-        4. **Outputs**: All specified workflow outputs with proper value expressions
+        For EACH block in the design:
+        1. Use the EXACT block type from the design
+        2. Use the CORRECT required input fields (see system instructions)
+        3. Set proper depends_on relationships
+        4. Add conditions where the design specifies conditional paths
 
-        ## Critical Requirements
-
-        - Follow the approved design exactly
-        - Use proper Jinja2 template syntax for variables
-        - Reference block outputs correctly: blocks.id.outputs.field
-        - Ensure all depends_on references are valid
-        - Add helpful comments for complex logic
+        REMEMBER:
+        - LLMCall blocks use 'prompt', NOT 'command'
+        - Prompt blocks use 'prompt', NOT 'message' or 'command'
+        - Shell blocks use 'command'
 
         Generate the workflow structure now.
       response_schema: "{{read_file(blocks.bootstrap_context.outputs.schema_path) | fromjson}}"

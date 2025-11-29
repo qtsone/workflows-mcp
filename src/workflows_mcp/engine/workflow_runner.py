@@ -349,13 +349,48 @@ class WorkflowRunner:
                     pause_metadata=pause_metadata,
                 )
 
-                # Store result using set_block_result (like regular block execution)
-                exec_context.set_block_result(
-                    block_id=block_id,
-                    inputs=resolved_inputs,
-                    outputs=block_execution.output.model_dump() if block_execution.output else {},
-                    metadata=block_execution.metadata,
-                )
+                # Handle pause (block paused again during resume - e.g., nested workflow)
+                if block_execution.paused:
+                    pause_data = block_execution.pause_checkpoint_data or {}
+                    pause_data["paused_block_id"] = block_id
+
+                    raise ExecutionPaused(
+                        prompt=block_execution.pause_prompt or "Execution paused",
+                        checkpoint_data=pause_data,
+                        execution=exec_context,
+                    )
+
+                # Store result - special handling for Workflow blocks (same as _execute_block)
+                if block_definition.type == "Workflow":
+                    # Workflow block returns child Execution - extract outputs correctly
+                    if block_execution.output is None:
+                        exec_context.blocks[block_id] = Execution(
+                            inputs=resolved_inputs,
+                            outputs={},
+                            metadata=block_execution.metadata,
+                            blocks={},
+                        )
+                    else:
+                        # Wrap child execution with block-level metadata
+                        assert isinstance(block_execution.output, Execution)
+                        child_exec = block_execution.output
+                        exec_context.blocks[block_id] = Execution(
+                            inputs=resolved_inputs,
+                            outputs=child_exec.outputs,  # Extract child's actual outputs
+                            metadata=block_execution.metadata,
+                            blocks=child_exec.blocks,
+                            depth=child_exec.depth,
+                        )
+                else:
+                    # Regular block
+                    exec_context.set_block_result(
+                        block_id=block_id,
+                        inputs=resolved_inputs,
+                        outputs=block_execution.output.model_dump()
+                        if block_execution.output
+                        else {},
+                        metadata=block_execution.metadata,
+                    )
 
                 # Mark block as completed
                 if block_id not in completed_blocks:

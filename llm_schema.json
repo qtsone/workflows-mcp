@@ -128,24 +128,13 @@
           },
           "inputs": {
             "type": "object",
-            "description": "Block-specific inputs",
-            "properties": {
-              "command": {
-                "type": "string",
-                "description": "Command or primary input for the block"
-              }
-            },
-            "required": [
-              "command"
-            ],
-            "additionalProperties": false
+            "description": "Block-specific inputs. Each block type has different required fields: Shell needs 'command', CreateFile needs 'path' and 'content', LLMCall needs 'profile' and 'prompt', Prompt needs 'prompt', HttpCall needs 'url' and 'method', ReadFiles needs 'base_path' and 'patterns', EditFile needs 'path' and 'edits', Workflow needs 'workflow' and 'inputs', WriteJSONState needs 'path' and 'data', ReadJSONState needs 'path', MergeJSONState needs 'base' and 'merge', ImageGen needs 'provider', 'operation', and operation-specific fields.",
+            "additionalProperties": true
           }
         },
         "required": [
           "id",
           "type",
-          "condition",
-          "depends_on",
           "inputs"
         ],
         "additionalProperties": false

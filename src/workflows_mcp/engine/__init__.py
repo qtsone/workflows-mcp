@@ -36,9 +36,9 @@ from . import (  # noqa: F401
     executors_core,  # Shell executor
     executors_file,  # File operation executors
     executors_http,  # HTTP/REST API executor
+    executors_image,  # Image generation executor
     executors_interactive,  # Interactive executors
     executors_llm,  # LLM call executor
-    executors_image,  # Image generation executor
     executors_state,  # JSON state executors
     executors_workflow,  # Workflow executor (ADR-008)
 )
@@ -70,15 +70,15 @@ from .executors_http import (
     HttpCallInput,
     HttpCallOutput,
 )
-from .executors_interactive import (
-    PromptExecutor,
-    PromptInput,
-    PromptOutput,
-)
 from .executors_image import (
     ImageGenExecutor,
     ImageGenInput,
     ImageGenOutput,
+)
+from .executors_interactive import (
+    PromptExecutor,
+    PromptInput,
+    PromptOutput,
 )
 from .executors_state import (
     MergeJSONStateExecutor,

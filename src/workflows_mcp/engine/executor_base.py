@@ -632,6 +632,7 @@ def create_default_registry() -> ExecutorRegistry:
         ReadFilesExecutor,
     )
     from .executors_http import HttpCallExecutor
+    from .executors_image import ImageGenExecutor
     from .executors_interactive import PromptExecutor
     from .executors_llm import LLMCallExecutor
     from .executors_state import (
@@ -639,7 +640,6 @@ def create_default_registry() -> ExecutorRegistry:
         ReadJSONStateExecutor,
         WriteJSONStateExecutor,
     )
-    from .executors_image import ImageGenExecutor
     from .executors_workflow import WorkflowExecutor
 
     registry = ExecutorRegistry()

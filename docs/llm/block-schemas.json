@@ -1,0 +1,787 @@
+{
+  "Shell": {
+    "required": [
+      {
+        "name": "command",
+        "type": "string",
+        "description": "Shell command to execute"
+      }
+    ],
+    "optional": [
+      {
+        "name": "working_dir",
+        "type": "string",
+        "description": "Working directory (empty = current dir)",
+        "default": ""
+      },
+      {
+        "name": "timeout",
+        "type": "any",
+        "description": "Timeout in seconds (or interpolation string)",
+        "default": 120
+      },
+      {
+        "name": "env",
+        "type": "object",
+        "description": "Environment variables"
+      },
+      {
+        "name": "capture_output",
+        "type": "boolean",
+        "description": "Capture stdout/stderr",
+        "default": true
+      },
+      {
+        "name": "shell",
+        "type": "boolean",
+        "description": "Execute via shell",
+        "default": true
+      }
+    ],
+    "outputs": [
+      {
+        "name": "meta",
+        "type": "object",
+        "description": "Executor-specific metadata fields (exit_code, tokens_used, etc.)"
+      },
+      {
+        "name": "exit_code",
+        "type": "integer",
+        "description": "Process exit code (0 if command crashed before execution)"
+      },
+      {
+        "name": "stdout",
+        "type": "string",
+        "description": "Standard output (empty if command crashed)"
+      },
+      {
+        "name": "stderr",
+        "type": "string",
+        "description": "Standard error (empty if command crashed)"
+      }
+    ]
+  },
+  "Workflow": {
+    "required": [
+      {
+        "name": "workflow",
+        "type": "string",
+        "description": "Workflow name to execute"
+      }
+    ],
+    "optional": [
+      {
+        "name": "inputs",
+        "type": "object",
+        "description": "Inputs to pass to child workflow (variables resolved in parent context)"
+      },
+      {
+        "name": "timeout_ms",
+        "type": "any",
+        "description": "Optional timeout for child execution in milliseconds"
+      }
+    ],
+    "outputs": []
+  },
+  "CreateFile": {
+    "required": [
+      {
+        "name": "path",
+        "type": "string",
+        "description": "File path (absolute or relative)"
+      },
+      {
+        "name": "content",
+        "type": "string",
+        "description": "File content to write"
+      }
+    ],
+    "optional": [
+      {
+        "name": "encoding",
+        "type": "string",
+        "description": "Text encoding",
+        "default": "utf-8"
+      },
+      {
+        "name": "mode",
+        "type": "any",
+        "description": "File permissions (Unix only, e.g., 0o644, 644, or '644')"
+      },
+      {
+        "name": "overwrite",
+        "type": "any",
+        "description": "Whether to overwrite existing file (or interpolation string)",
+        "default": true
+      },
+      {
+        "name": "create_parents",
+        "type": "any",
+        "description": "Create parent directories if missing (or interpolation string)",
+        "default": true
+      }
+    ],
+    "outputs": [
+      {
+        "name": "meta",
+        "type": "object",
+        "description": "Executor-specific metadata fields (exit_code, tokens_used, etc.)"
+      },
+      {
+        "name": "path",
+        "type": "string",
+        "description": "Absolute path to created file (empty string if failed)"
+      },
+      {
+        "name": "size_bytes",
+        "type": "integer",
+        "description": "File size in bytes (0 if failed)"
+      },
+      {
+        "name": "created",
+        "type": "boolean",
+        "description": "True if file was created, False if overwritten or failed"
+      },
+      {
+        "name": "content",
+        "type": "string",
+        "description": "Content written to the file (empty string if failed)"
+      }
+    ]
+  },
+  "EditFile": {
+    "required": [
+      {
+        "name": "path",
+        "type": "string",
+        "description": "Path to file to edit (relative or absolute)"
+      },
+      {
+        "name": "operations",
+        "type": "array",
+        "description": "List of edit operations to apply sequentially"
+      }
+    ],
+    "optional": [
+      {
+        "name": "encoding",
+        "type": "string",
+        "description": "File encoding",
+        "default": "utf-8"
+      },
+      {
+        "name": "create_if_missing",
+        "type": "any",
+        "description": "Create file if it doesn't exist (or interpolation string)",
+        "default": false
+      },
+      {
+        "name": "backup",
+        "type": "any",
+        "description": "Create .bak backup before editing (or interpolation string)",
+        "default": true
+      },
+      {
+        "name": "dry_run",
+        "type": "any",
+        "description": "Preview changes without applying (returns diff) (or interpolation string)",
+        "default": false
+      },
+      {
+        "name": "atomic",
+        "type": "any",
+        "description": "All operations succeed or none applied (or interpolation string)",
+        "default": true
+      }
+    ],
+    "outputs": [
+      {
+        "name": "meta",
+        "type": "object",
+        "description": "Executor-specific metadata fields (exit_code, tokens_used, etc.)"
+      },
+      {
+        "name": "operations_applied",
+        "type": "integer",
+        "description": "Number of operations successfully applied"
+      },
+      {
+        "name": "lines_added",
+        "type": "integer",
+        "description": "Number of lines added"
+      },
+      {
+        "name": "lines_removed",
+        "type": "integer",
+        "description": "Number of lines removed"
+      },
+      {
+        "name": "lines_modified",
+        "type": "integer",
+        "description": "Number of lines modified"
+      },
+      {
+        "name": "diff",
+        "type": "any",
+        "description": "Unified diff of changes (always provided)"
+      },
+      {
+        "name": "backup_path",
+        "type": "any",
+        "description": "Path to backup file (if backup=true)"
+      },
+      {
+        "name": "success",
+        "type": "boolean",
+        "description": "True if all operations succeeded"
+      },
+      {
+        "name": "errors",
+        "type": "array",
+        "description": "Error messages if atomic=false and some operations failed"
+      }
+    ]
+  },
+  "ReadFiles": {
+    "required": [
+      {
+        "name": "patterns",
+        "type": "array",
+        "description": "Glob patterns for files to read (e.g., ['*.py', '**/*.ts', 'docs/**/*.md'])"
+      }
+    ],
+    "optional": [
+      {
+        "name": "base_path",
+        "type": "string",
+        "description": "Base directory to search from (relative or absolute)",
+        "default": "."
+      },
+      {
+        "name": "mode",
+        "type": "any",
+        "description": "Output mode: 'full' (complete content), 'outline' (symbol tree with line ranges), 'summary' (outline + docstrings)",
+        "default": "full"
+      },
+      {
+        "name": "exclude_patterns",
+        "type": "array",
+        "description": "Additional patterns to exclude beyond defaults (e.g., ['*test*', '*.min.js'])"
+      },
+      {
+        "name": "max_files",
+        "type": "any",
+        "description": "Maximum number of files to read (1-100, supports interpolation)",
+        "default": 20
+      },
+      {
+        "name": "max_file_size_kb",
+        "type": "any",
+        "description": "Maximum individual file size in KB (supports interpolation)",
+        "default": 100
+      },
+      {
+        "name": "respect_gitignore",
+        "type": "any",
+        "description": "Whether to respect .gitignore patterns (supports interpolation)",
+        "default": true
+      },
+      {
+        "name": "encoding",
+        "type": "string",
+        "description": "Text encoding for reading files",
+        "default": "utf-8"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "meta",
+        "type": "object",
+        "description": "Executor-specific metadata fields (exit_code, tokens_used, etc.)"
+      },
+      {
+        "name": "files",
+        "type": "array",
+        "description": "List of successfully processed files with content"
+      },
+      {
+        "name": "total_files",
+        "type": "integer",
+        "description": "Number of files successfully processed"
+      },
+      {
+        "name": "total_size_kb",
+        "type": "integer",
+        "description": "Total size in KB of all processed files"
+      },
+      {
+        "name": "skipped_files",
+        "type": "array",
+        "description": "Files that were skipped (too large, binary, excluded, etc.)"
+      },
+      {
+        "name": "patterns_matched",
+        "type": "integer",
+        "description": "Total number of files matching patterns before filtering"
+      }
+    ]
+  },
+  "HttpCall": {
+    "required": [
+      {
+        "name": "url",
+        "type": "string",
+        "description": "Request URL (supports ${ENV_VAR} substitution)"
+      }
+    ],
+    "optional": [
+      {
+        "name": "method",
+        "type": "string",
+        "description": "HTTP method (GET, POST, PUT, DELETE, PATCH, etc.)",
+        "default": "POST"
+      },
+      {
+        "name": "headers",
+        "type": "object",
+        "description": "HTTP headers (supports ${ENV_VAR} substitution in values)"
+      },
+      {
+        "name": "json",
+        "type": "any",
+        "description": "JSON request body (mutually exclusive with content). Matches httpx parameter name."
+      },
+      {
+        "name": "content",
+        "type": "any",
+        "description": "Text or binary request body (mutually exclusive with json). Matches httpx parameter name."
+      },
+      {
+        "name": "timeout",
+        "type": "any",
+        "description": "Request timeout in seconds (or interpolation string)",
+        "default": 30
+      },
+      {
+        "name": "follow_redirects",
+        "type": "any",
+        "description": "Whether to follow HTTP redirects (or interpolation string)",
+        "default": true
+      },
+      {
+        "name": "verify_ssl",
+        "type": "any",
+        "description": "Whether to verify SSL certificates (or interpolation string)",
+        "default": true
+      }
+    ],
+    "outputs": [
+      {
+        "name": "meta",
+        "type": "object",
+        "description": "Executor-specific metadata fields (exit_code, tokens_used, etc.)"
+      },
+      {
+        "name": "status_code",
+        "type": "integer",
+        "description": "HTTP response status code (0 if request failed before receiving response)"
+      },
+      {
+        "name": "response_body",
+        "type": "string",
+        "description": "Response body as text (empty string if request failed)"
+      },
+      {
+        "name": "response_json",
+        "type": "any",
+        "description": "Parsed JSON response (None if not valid JSON or request failed)"
+      },
+      {
+        "name": "headers",
+        "type": "object",
+        "description": "Response headers (empty dict if request failed)"
+      },
+      {
+        "name": "success",
+        "type": "boolean",
+        "description": "True if status code is 2xx, False otherwise or if request failed"
+      }
+    ]
+  },
+  "LLMCall": {
+    "required": [
+      {
+        "name": "prompt",
+        "type": "string",
+        "description": "User prompt to send to the LLM"
+      }
+    ],
+    "optional": [
+      {
+        "name": "profile",
+        "type": "any",
+        "description": "Profile name from ~/.workflows/llm-config.yml (e.g., 'cloud', 'local', 'default'). If specified, provider/model are loaded from config. Mutually exclusive with direct provider/model specification."
+      },
+      {
+        "name": "provider",
+        "type": "any",
+        "description": "LLM provider (enum or interpolation string). Required if profile not specified. Ignored if profile specified."
+      },
+      {
+        "name": "model",
+        "type": "any",
+        "description": "Model name (e.g., gpt-4o, claude-3-5-sonnet-20241022, gemini-2.0-flash-exp). Required if profile not specified. Can override profile model if both specified."
+      },
+      {
+        "name": "system_instructions",
+        "type": "any",
+        "description": "System instructions (optional)"
+      },
+      {
+        "name": "api_key",
+        "type": "any",
+        "description": "API key (pre-resolved from {{secrets.PROVIDER_API_KEY}})"
+      },
+      {
+        "name": "api_url",
+        "type": "any",
+        "description": "Custom API endpoint URL (optional, for custom deployments)"
+      },
+      {
+        "name": "response_schema",
+        "type": "any",
+        "description": "JSON Schema for expected response structure (dict or JSON string, enables validation and retry)"
+      },
+      {
+        "name": "max_retries",
+        "type": "any",
+        "description": "Maximum number of retry attempts (or interpolation string)",
+        "default": 3
+      },
+      {
+        "name": "retry_delay",
+        "type": "any",
+        "description": "Initial retry delay in seconds (exponential backoff, or interpolation string)",
+        "default": 2.0
+      },
+      {
+        "name": "timeout",
+        "type": "any",
+        "description": "Request timeout in seconds (or interpolation string)",
+        "default": 60
+      },
+      {
+        "name": "temperature",
+        "type": "any",
+        "description": "Sampling temperature 0.0-2.0 (or interpolation string)"
+      },
+      {
+        "name": "max_tokens",
+        "type": "any",
+        "description": "Maximum tokens to generate (or interpolation string)"
+      },
+      {
+        "name": "validation_prompt_template",
+        "type": "string",
+        "description": "Template for validation retry prompt",
+        "default": "Your previous response failed JSON schema validation.\n\nError: {validation_error}\n\nExpected schema:\n{schema}\n\nPlease provide a valid response that conforms to the schema."
+      }
+    ],
+    "outputs": [
+      {
+        "name": "meta",
+        "type": "object",
+        "description": "Executor-specific metadata fields (exit_code, tokens_used, etc.)"
+      },
+      {
+        "name": "response",
+        "type": "object",
+        "description": "Response dictionary. Contains validated JSON structure if schema provided and validation succeeded. Contains {'content': 'raw text'} if no schema or validation failed. Empty dict {} if request failed completely."
+      },
+      {
+        "name": "success",
+        "type": "boolean",
+        "description": "True if LLM API call succeeded (response received from provider). False if request failed (network error, timeout, API error, etc.). Independent of schema validation - check metadata.validation_failed for validation status."
+      },
+      {
+        "name": "metadata",
+        "type": "object",
+        "description": "Execution metadata including: attempts (int), validation_failed (bool, if schema validation failed), validation_error (str, error message if validation_failed=true), model (str), usage (dict), finish_reason (str), etc. Empty dict if request failed before execution."
+      }
+    ]
+  },
+  "ImageGen": {
+    "required": [],
+    "optional": [
+      {
+        "name": "prompt",
+        "type": "any",
+        "description": "Text prompt (required for generate/edit, not used for variation)"
+      },
+      {
+        "name": "profile",
+        "type": "any",
+        "description": "Profile name from ~/.workflows/llm-config.yml. If specified, provider/model are loaded from config. Mutually exclusive with direct provider/model specification."
+      },
+      {
+        "name": "provider",
+        "type": "any",
+        "description": "Image provider (openai, openai_compatible). Required if profile not specified."
+      },
+      {
+        "name": "model",
+        "type": "any",
+        "description": "Model to use (dall-e-3, dall-e-2, or custom model name)",
+        "default": "dall-e-3"
+      },
+      {
+        "name": "api_url",
+        "type": "any",
+        "description": "Custom API endpoint URL (required for openai_compatible)"
+      },
+      {
+        "name": "api_key",
+        "type": "any",
+        "description": "API key (pre-resolved from {{secrets.OPENAI_API_KEY}})"
+      },
+      {
+        "name": "operation",
+        "type": "string",
+        "description": "Operation to perform",
+        "default": "generate"
+      },
+      {
+        "name": "size",
+        "type": "string",
+        "description": "Image size (e.g., 1024x1024, 256x256, 512x512)",
+        "default": "1024x1024"
+      },
+      {
+        "name": "quality",
+        "type": "any",
+        "description": "Image quality (dall-e-3 only)",
+        "default": "standard"
+      },
+      {
+        "name": "style",
+        "type": "any",
+        "description": "Image style (dall-e-3 only)",
+        "default": "vivid"
+      },
+      {
+        "name": "response_format",
+        "type": "string",
+        "description": "Format of the response",
+        "default": "url"
+      },
+      {
+        "name": "n",
+        "type": "any",
+        "description": "Number of images to generate (supports interpolation)",
+        "default": 1
+      },
+      {
+        "name": "image",
+        "type": "any",
+        "description": "Path to base image (required for edit/variation)"
+      },
+      {
+        "name": "mask",
+        "type": "any",
+        "description": "Path to mask image (optional for edit)"
+      },
+      {
+        "name": "output_file",
+        "type": "any",
+        "description": "Path to save the generated image(s). If n>1, appends index."
+      }
+    ],
+    "outputs": [
+      {
+        "name": "meta",
+        "type": "object",
+        "description": "Executor-specific metadata fields (exit_code, tokens_used, etc.)"
+      },
+      {
+        "name": "urls",
+        "type": "array",
+        "description": "List of image URLs"
+      },
+      {
+        "name": "b64_json",
+        "type": "array",
+        "description": "List of base64 encoded image data"
+      },
+      {
+        "name": "revised_prompts",
+        "type": "array",
+        "description": "List of revised prompts (dall-e-3)"
+      },
+      {
+        "name": "saved_files",
+        "type": "array",
+        "description": "List of paths where images were saved"
+      },
+      {
+        "name": "success",
+        "type": "boolean",
+        "description": "Whether the operation succeeded"
+      },
+      {
+        "name": "provider_metadata",
+        "type": "object",
+        "description": "Metadata from the provider response"
+      }
+    ]
+  },
+  "Prompt": {
+    "required": [
+      {
+        "name": "prompt",
+        "type": "string",
+        "description": "Prompt/question to display to LLM. The LLM will provide a response."
+      }
+    ],
+    "optional": [],
+    "outputs": [
+      {
+        "name": "meta",
+        "type": "object",
+        "description": "Executor-specific metadata fields (exit_code, tokens_used, etc.)"
+      },
+      {
+        "name": "response",
+        "type": "string",
+        "description": "Raw LLM response to the prompt (empty string if failed or crashed)"
+      }
+    ]
+  },
+  "ReadJSONState": {
+    "required": [
+      {
+        "name": "path",
+        "type": "string",
+        "description": "Path to JSON file"
+      }
+    ],
+    "optional": [
+      {
+        "name": "required",
+        "type": "any",
+        "description": "Whether file must exist (False returns empty dict, or interpolation string)",
+        "default": false
+      }
+    ],
+    "outputs": [
+      {
+        "name": "meta",
+        "type": "object",
+        "description": "Executor-specific metadata fields (exit_code, tokens_used, etc.)"
+      },
+      {
+        "name": "data",
+        "type": "object",
+        "description": "JSON data from file (empty dict if failed or not found)"
+      },
+      {
+        "name": "found",
+        "type": "boolean",
+        "description": "Whether file was found (False if failed or not found)"
+      },
+      {
+        "name": "path",
+        "type": "string",
+        "description": "Absolute path to file (empty string if failed)"
+      }
+    ]
+  },
+  "WriteJSONState": {
+    "required": [
+      {
+        "name": "path",
+        "type": "string",
+        "description": "Path to JSON file"
+      },
+      {
+        "name": "data",
+        "type": "object",
+        "description": "JSON data to write"
+      }
+    ],
+    "optional": [
+      {
+        "name": "create_parents",
+        "type": "any",
+        "description": "Create parent directories if missing (or interpolation string)",
+        "default": true
+      }
+    ],
+    "outputs": [
+      {
+        "name": "meta",
+        "type": "object",
+        "description": "Executor-specific metadata fields (exit_code, tokens_used, etc.)"
+      },
+      {
+        "name": "path",
+        "type": "string",
+        "description": "Absolute path to file (empty string if failed)"
+      },
+      {
+        "name": "size_bytes",
+        "type": "integer",
+        "description": "Size of written file in bytes (0 if failed)"
+      }
+    ]
+  },
+  "MergeJSONState": {
+    "required": [
+      {
+        "name": "path",
+        "type": "string",
+        "description": "Path to JSON file"
+      },
+      {
+        "name": "updates",
+        "type": "object",
+        "description": "Updates to merge"
+      }
+    ],
+    "optional": [
+      {
+        "name": "create_if_missing",
+        "type": "any",
+        "description": "Create file if it doesn't exist (or interpolation string)",
+        "default": true
+      },
+      {
+        "name": "create_parents",
+        "type": "any",
+        "description": "Create parent directories if missing (or interpolation string)",
+        "default": true
+      }
+    ],
+    "outputs": [
+      {
+        "name": "meta",
+        "type": "object",
+        "description": "Executor-specific metadata fields (exit_code, tokens_used, etc.)"
+      },
+      {
+        "name": "path",
+        "type": "string",
+        "description": "Absolute path to file (empty string if failed)"
+      },
+      {
+        "name": "created",
+        "type": "boolean",
+        "description": "Whether file was created (vs updated), False if failed"
+      },
+      {
+        "name": "merged_data",
+        "type": "object",
+        "description": "Result after merge (empty dict if failed)"
+      }
+    ]
+  }
+}

@@ -45,66 +45,191 @@ blocks:
     type: LLMCall
     inputs:
       profile: default
-      prompt: |
-        # Task: Design Workflow Architecture Diagram
+      timeout: 600
+      system_instructions: |
+        You are an expert workflow architect specializing in DAG-based automation workflows.
 
-        You are designing a workflow for a user. Create a clear, logical architecture diagram.
+        # CRITICAL: Block Type Required Fields
 
-        ## User Requirements
-        {{inputs.requirements | tojson}}
+        When designing workflows, each block type has specific REQUIRED input fields:
 
-        ## Available Block Types Reference
+        | Block Type     | Required Field(s)                    |
+        |----------------|--------------------------------------|
+        | Shell          | command                              |
+        | LLMCall        | prompt (NOT 'command' or 'message')  |
+        | Prompt         | prompt (NOT 'command' or 'message')  |
+        | ImageGen       | prompt, profile OR provider          |
+        | CreateFile     | path, content                        |
+        | EditFile       | path, operations                     |
+        | ReadFiles      | patterns                             |
+        | HttpCall       | url                                  |
+        | Workflow       | workflow                             |
+        | ReadJSONState  | path                                 |
+        | WriteJSONState | path, data                           |
+        | MergeJSONState | path, updates                        |
+
+        ⚠️ IMPORTANT FIELD NAMING:
+        - LLMCall uses 'prompt' (NOT 'command')
+        - Prompt uses 'prompt' (NOT 'message' or 'command')
+        - Only Shell uses 'command'
+
+        # Design Principles
+
+        - **Single responsibility**: Each block has one clear purpose
+        - **Appropriate block types**: Shell for commands, LLMCall for AI, Prompt for user input, CreateFile for output
+        - **Parallelism**: Run independent operations concurrently using depends_on
+        - **User involvement**: Use Prompt blocks for approvals and feedback loops
+        - **Error handling**: Use conditions and continue_on_error where appropriate
+
+        # Available Block Types
+
         {{inputs.executor_docs}}
 
-        ## Example Workflows
+        # Example Workflows
+
+        Study these patterns for reference:
+
         {{inputs.examples}}
 
+        # Mermaid Diagram Syntax
+
+        ```
+        flowchart TD
+          subgraph inputs[Workflow Inputs]
+            I1[param_name: type]
+            I2[another_param: type]
+          end
+
+          subgraph blocks[Workflow Blocks]
+            B1[Shell: setup-step]
+            B2[LLMCall: process-data]
+            B3[Prompt: user-confirmation]
+            B4[CreateFile: save-output]
+          end
+
+          subgraph outputs[Workflow Outputs]
+            O1[result: type]
+          end
+
+          I1 & I2 --> B1
+          B1 --> B2
+          B2 --> B3
+          B3 -->|approved| B4
+          B3 -->|rejected| END[Cancel]
+          B4 --> O1
+        ```
+
+        Key syntax:
+        - `A & B --> C` = parallel inputs
+        - `A -->|condition| B` = conditional edge
+        - `subgraph name[Label]` = grouping
+
+        # Required Output Format
+
+        Return a JSON object with these fields:
+
+        1. **mermaid_diagram**: Raw Mermaid flowchart syntax
+           - Start directly with "flowchart TD" (NO markdown code fences)
+           - Use newlines (\n) to separate lines
+
+        2. **block_summary**: Array of block objects:
+           - "id": block ID (lowercase, hyphenated)
+           - "type": block type (Shell, LLMCall, Prompt, etc.)
+           - "purpose": one-sentence description
+           - "depends_on": array of block IDs this depends on
+
+        3. **explanation**: Design rationale string
+
+        4. **clarifications**: Array of questions/assumptions to validate
+
+        Example:
+        ```json
+        {
+          "mermaid_diagram": "flowchart TD\n  subgraph inputs[Workflow Inputs]\n    I1[code_path: str]\n  end\n  subgraph blocks[Workflow Blocks]\n    B1[Shell: run-linter]\n    B2[LLMCall: analyze]\n  end\n  I1 --> B1\n  B1 --> B2",
+          "block_summary": [
+            {"id": "run-linter", "type": "Shell", "purpose": "Run linting checks", "depends_on": []},
+            {"id": "analyze", "type": "LLMCall", "purpose": "AI code analysis", "depends_on": ["run-linter"]}
+          ],
+          "explanation": "Sequential flow: lint first, then AI analysis",
+          "clarifications": ["Should linting failures stop the workflow?"]
+        }
+        ```
+      prompt: |
         {% if inputs.iteration == 1 %}
-        ## Instructions (First Iteration)
+        # Design New Workflow
 
-        Create a workflow architecture diagram showing:
-        1. **Inputs**: What parameters the workflow accepts
-        2. **Blocks**: Each processing step with:
-           - Block ID and type
-           - Purpose (one sentence)
-           - Key inputs
-           - Dependencies (depends_on)
-        3. **Outputs**: What the workflow returns
-        4. **Flow**: Visual representation of execution order
+        Create a Mermaid flowchart diagram for this workflow:
 
-        Focus on logical structure, not implementation details.
-        Use clear block IDs that reflect their purpose.
-        Show parallel execution opportunities where applicable.
+        ## Requirements
 
+        {{inputs.requirements | tojson}}
+
+        ## Instructions
+
+        Design the architecture with:
+        1. **Inputs subgraph**: All workflow input parameters
+        2. **Blocks**: Processing steps as `[BlockType: block-id]` nodes
+        3. **Dependencies**: Arrows showing execution flow
+        4. **Parallel paths**: Use `&` syntax for concurrent operations
+        5. **Conditions**: Use `-->|condition|` for conditional flows
+        6. **Outputs subgraph**: Workflow outputs
+
+        Generate the initial design now.
         {% else %}
-        ## Instructions (Refinement Iteration {{inputs.iteration}})
+        # Refine Workflow Design (Iteration {{inputs.iteration}})
 
-        ### Previous Diagram
+        ## Requirements (unchanged)
+
+        {{inputs.requirements | tojson}}
+
+        ## Current Design
+
         {{inputs.previous_diagram}}
 
-        ### User Feedback
+        ## User Feedback
+
         {{inputs.feedback}}
 
-        Refine the workflow diagram based on the user's feedback.
-        Address all concerns while maintaining workflow best practices.
-        Explain what changes you made and why.
+        ## Instructions
 
+        Refine the diagram based on the feedback above.
+        - Address all user concerns
+        - Maintain valid Mermaid syntax
+        - Explain what you changed and why
+
+        Generate the refined design now.
         {% endif %}
-
-        ## Output Requirements
-
-        Provide:
-        1. Clear workflow diagram (ASCII art or markdown)
-        2. Brief explanation of the design choices
-        3. Any assumptions or clarifications needed
-
-        Generate the workflow diagram now.
       response_schema:
         type: object
         properties:
-          diagram:
+          mermaid_diagram:
             type: string
-            description: "Workflow architecture diagram"
+            description: "Raw Mermaid flowchart syntax starting with 'flowchart TD' - NO markdown code fences or backticks"
+          block_summary:
+            type: array
+            items:
+              type: object
+              properties:
+                id:
+                  type: string
+                  description: "Block ID (lowercase, hyphenated)"
+                type:
+                  type: string
+                  description: "Block type (Shell, LLMCall, Prompt, etc.)"
+                purpose:
+                  type: string
+                  description: "What this block does (one sentence)"
+                depends_on:
+                  type: array
+                  items:
+                    type: string
+                  description: "Block IDs this depends on"
+              required:
+                - id
+                - type
+                - purpose
+                - depends_on
+            description: "Summary of each block in the workflow"
           explanation:
             type: string
             description: "Design choices and rationale"
@@ -114,39 +239,78 @@ blocks:
               type: string
             description: "Questions or assumptions to validate"
         required:
-          - diagram
+          - mermaid_diagram
+          - block_summary
           - explanation
           - clarifications
         additionalProperties: false
+
+  # Phase 1b: Create HTML viewer for the diagram
+  - id: create_diagram_viewer
+    type: CreateFile
+    inputs:
+      path: "{{tmp}}/workflow-diagram-{{inputs.iteration}}.html"
+      content: |
+        <!DOCTYPE html>
+        <html>
+        <head>
+          <title>Workflow Design - Iteration {{inputs.iteration}}</title>
+          <script type="module">
+            import mermaid from 'https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs';
+            mermaid.initialize({ startOnLoad: true, theme: 'default' });
+          </script>
+          <style>
+            body { font-family: system-ui, -apple-system, sans-serif; padding: 2rem; max-width: 1200px; margin: 0 auto; background: #f5f5f5; }
+            h1 { color: #333; margin-bottom: 0.5rem; }
+            .subtitle { color: #666; margin-bottom: 2rem; }
+            .mermaid { background: white; padding: 2rem; border-radius: 12px; box-shadow: 0 2px 8px rgba(0,0,0,0.1); }
+          </style>
+        </head>
+        <body>
+          <h1>Workflow Design</h1>
+          <p class="subtitle">Iteration {{inputs.iteration}} of {{inputs.max_iterations}}</p>
+          <div class="mermaid">
+        {{blocks.generate_diagram.outputs.response.mermaid_diagram}}
+          </div>
+        </body>
+        </html>
+      overwrite: true
+      create_parents: true
+    depends_on: [generate_diagram]
 
   # Phase 2: Present diagram to user for approval
   - id: request_approval
     type: Prompt
     inputs:
       prompt: |
-        ═══════════════════════════════════════════════════════════════
-        WORKFLOW DESIGN - ITERATION {{inputs.iteration}}/{{inputs.max_iterations}}
-        ═══════════════════════════════════════════════════════════════
+        # WORKFLOW DESIGN - ITERATION {{inputs.iteration}}/{{inputs.max_iterations}}
 
-        {{blocks.generate_diagram.outputs.response.diagram}}
+        ## 📊 View Diagram
 
-        ───────────────────────────────────────────────────────────────
-        DESIGN EXPLANATION
-        ───────────────────────────────────────────────────────────────
+        Open this file in your browser to see the visual workflow diagram:
+        **{{blocks.create_diagram_viewer.outputs.path}}**
+
+        ## Block Summary
+
+        | Block ID | Type | Purpose |
+        |----------|------|---------|
+        {% for item in blocks.generate_diagram.outputs.response.block_summary %}
+        | `{{ item.id }}` | {{ item.type }} | {{ item.purpose }} |
+        {% endfor %}
+
+        ## Design Explanation
 
         {{blocks.generate_diagram.outputs.response.explanation}}
 
         {% if blocks.generate_diagram.outputs.response.clarifications %}
-        ───────────────────────────────────────────────────────────────
-        CLARIFICATIONS NEEDED
-        ───────────────────────────────────────────────────────────────
+        ## Clarifications Needed
 
         {% for clarification in blocks.generate_diagram.outputs.response.clarifications %}
         • {{ clarification }}
         {% endfor %}
         {% endif %}
 
-        ═══════════════════════════════════════════════════════════════
+        ---
 
         Please review the workflow design above.
 
@@ -156,10 +320,9 @@ blocks:
         • Type "cancel" - Stop workflow creation
 
         IMPORTANT: Respond with ONLY one word: "approve", "refine", or "cancel"
-        (You will be prompted for detailed feedback if you choose "refine")
 
         Your response:
-    depends_on: [generate_diagram]
+    depends_on: [generate_diagram, create_diagram_viewer]
 
   # Phase 3: Handle user decision
   - id: check_response
@@ -223,7 +386,7 @@ blocks:
         examples: "{{inputs.examples}}"
         iteration: "{{inputs.iteration + 1}}"
         max_iterations: "{{inputs.max_iterations}}"
-        previous_diagram: "{{blocks.generate_diagram.outputs.response.diagram}}"
+        previous_diagram: "{{blocks.generate_diagram.outputs.response.mermaid_diagram}}"
         feedback: "{{blocks.gather_refinement_feedback.outputs.response}}"
     depends_on: [gather_refinement_feedback]
 
@@ -233,10 +396,20 @@ outputs:
       {% if blocks.recurse_refinement.succeeded %}
       {{blocks.recurse_refinement.outputs.final_diagram}}
       {% else %}
-      {{blocks.generate_diagram.outputs.response.diagram}}
+      {{blocks.generate_diagram.outputs.response.mermaid_diagram}}
       {% endif %}
     type: str
-    description: "Final approved workflow diagram"
+    description: "Final approved Mermaid workflow diagram"
+
+  final_block_summary:
+    value: |
+      {% if blocks.recurse_refinement.succeeded %}
+      {{blocks.recurse_refinement.outputs.final_block_summary}}
+      {% else %}
+      {{blocks.generate_diagram.outputs.response.block_summary | tojson}}
+      {% endif %}
+    type: str
+    description: "Final block summary as JSON"
 
   final_explanation:
     value: |
@@ -247,6 +420,16 @@ outputs:
       {% endif %}
     type: str
     description: "Final design explanation"
+
+  diagram_viewer_path:
+    value: |
+      {% if blocks.recurse_refinement.succeeded %}
+      {{blocks.recurse_refinement.outputs.diagram_viewer_path}}
+      {% else %}
+      {{blocks.create_diagram_viewer.outputs.path}}
+      {% endif %}
+    type: str
+    description: "Path to HTML file for viewing the diagram"
 
   user_decision:
     value: "{{blocks.request_approval.outputs.response | lower | trim}}"
