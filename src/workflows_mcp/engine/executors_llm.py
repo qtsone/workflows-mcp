@@ -701,6 +701,9 @@ class LLMCallExecutor(BlockExecutor):
         2.  Enforcing 'additionalProperties: false' on objects that are not
             explicitly defined as maps (i.e., don't have a schema in
             'additionalProperties' already).
+        3.  Converting 'additionalProperties: true' to a string-typed schema
+            (OpenAI strict mode doesn't allow 'true').
+        4.  Converting empty 'items: {}' to a string-typed schema for arrays.
         """
         if not isinstance(schema, dict):
             return schema
@@ -719,18 +722,31 @@ class LLMCallExecutor(BlockExecutor):
                     for k, v in simplified_schema["properties"].items()
                 }
 
-            # If 'additionalProperties' is a schema, recurse into it
-            if isinstance(simplified_schema.get("additionalProperties"), dict):
+            # Handle additionalProperties
+            addl_props = simplified_schema.get("additionalProperties")
+            if isinstance(addl_props, dict) and addl_props:
+                # If it's a non-empty schema dict, recurse into it
                 simplified_schema["additionalProperties"] = self._prepare_schema_for_openai(
-                    simplified_schema["additionalProperties"]
+                    addl_props
                 )
-            # If it's an object that is not explicitly a map, forbid extra properties
+            elif addl_props is True or (isinstance(addl_props, dict) and not addl_props):
+                # Convert 'true' or empty dict {} to a string-typed schema
+                # This allows arbitrary string-valued properties (best we can do
+                # while remaining OpenAI strict-mode compliant)
+                simplified_schema["additionalProperties"] = {"type": "string"}
             elif "additionalProperties" not in simplified_schema:
+                # If not set at all, forbid extra properties
                 simplified_schema["additionalProperties"] = False
 
         # Recurse into array items
-        elif simplified_schema.get("type") == "array" and "items" in simplified_schema:
-            simplified_schema["items"] = self._prepare_schema_for_openai(simplified_schema["items"])
+        elif simplified_schema.get("type") == "array":
+            items = simplified_schema.get("items")
+            if isinstance(items, dict) and items:
+                # Non-empty items schema - recurse
+                simplified_schema["items"] = self._prepare_schema_for_openai(items)
+            elif items == {} or items is None or "items" not in simplified_schema:
+                # Empty items {} or missing items - use string type as fallback
+                simplified_schema["items"] = {"type": "string"}
 
         return simplified_schema
 

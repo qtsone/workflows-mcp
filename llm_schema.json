@@ -100,36 +100,301 @@
             "type": "string",
             "description": "Block type (e.g., Shell, LLMCall, CreateFile)"
           },
+          "description": {
+            "type": "string",
+            "description": "Optional block description"
+          },
           "condition": {
             "type": "string",
             "description": "Optional condition for conditional execution"
           },
+          "continue_on_error": {
+            "type": "boolean",
+            "description": "Whether to continue workflow if this block fails"
+          },
+          "for_each": {
+            "type": "string",
+            "description": "Expression for iterating over a list"
+          },
+          "for_each_mode": {
+            "type": "string",
+            "description": "Iteration mode: parallel or sequential"
+          },
           "depends_on": {
             "type": "array",
-            "description": "Block dependencies",
+            "description": "Block dependencies as block ID strings",
             "items": {
-              "type": "object",
-              "properties": {
-                "block": {
-                  "type": "string",
-                  "description": "ID of the block this depends on"
-                },
-                "required": {
-                  "type": "boolean",
-                  "description": "Whether dependency must succeed"
-                }
-              },
-              "required": [
-                "block",
-                "required"
-              ],
-              "additionalProperties": false
+              "type": "string"
             }
           },
           "inputs": {
             "type": "object",
-            "description": "Block-specific inputs. Each block type has different required fields: Shell needs 'command', CreateFile needs 'path' and 'content', LLMCall needs 'profile' and 'prompt', Prompt needs 'prompt', HttpCall needs 'url' and 'method', ReadFiles needs 'base_path' and 'patterns', EditFile needs 'path' and 'edits', Workflow needs 'workflow' and 'inputs', WriteJSONState needs 'path' and 'data', ReadJSONState needs 'path', MergeJSONState needs 'base' and 'merge', ImageGen needs 'provider', 'operation', and operation-specific fields.",
-            "additionalProperties": true
+            "description": "Block-specific inputs. Fields vary by block type: Shell uses 'command', LLMCall/Prompt use 'prompt', CreateFile uses 'path'+'content', etc.",
+            "properties": {
+              "command": {
+                "type": "string",
+                "description": "Shell command to execute"
+              },
+              "working_dir": {
+                "type": "string",
+                "description": "Working directory (empty = current dir)"
+              },
+              "timeout": {
+                "type": "string",
+                "description": "Timeout in seconds (or interpolation string)"
+              },
+              "env": {
+                "type": "object",
+                "description": "Environment variables",
+                "additionalProperties": {
+                  "type": "string"
+                }
+              },
+              "capture_output": {
+                "type": "string",
+                "description": "Capture stdout/stderr"
+              },
+              "shell": {
+                "type": "string",
+                "description": "Execute via shell"
+              },
+              "workflow": {
+                "type": "string",
+                "description": "Workflow name to execute"
+              },
+              "inputs": {
+                "type": "object",
+                "description": "Inputs to pass to child workflow (variables resolved in parent context)",
+                "additionalProperties": {
+                  "type": "string"
+                }
+              },
+              "timeout_ms": {
+                "type": "string",
+                "description": "Optional timeout for child execution in milliseconds"
+              },
+              "path": {
+                "type": "string",
+                "description": "File path (absolute or relative)"
+              },
+              "content": {
+                "type": "string",
+                "description": "File content to write"
+              },
+              "encoding": {
+                "type": "string",
+                "description": "Text encoding"
+              },
+              "mode": {
+                "type": "string",
+                "description": "File permissions (Unix only, e.g., 0o644, 644, or '644')"
+              },
+              "overwrite": {
+                "type": "string",
+                "description": "Whether to overwrite existing file (or interpolation string)"
+              },
+              "create_parents": {
+                "type": "string",
+                "description": "Create parent directories if missing (or interpolation string)"
+              },
+              "operations": {
+                "type": "array",
+                "description": "List of edit operations to apply sequentially",
+                "items": {
+                  "type": "object",
+                  "additionalProperties": {
+                    "type": "string"
+                  }
+                }
+              },
+              "create_if_missing": {
+                "type": "string",
+                "description": "Create file if it doesn't exist (or interpolation string)"
+              },
+              "backup": {
+                "type": "string",
+                "description": "Create .bak backup before editing (or interpolation string)"
+              },
+              "dry_run": {
+                "type": "string",
+                "description": "Preview changes without applying (returns diff) (or interpolation string)"
+              },
+              "atomic": {
+                "type": "string",
+                "description": "All operations succeed or none applied (or interpolation string)"
+              },
+              "patterns": {
+                "type": "array",
+                "description": "Glob patterns for files to read (e.g., ['*.py', '**/*.ts', 'docs/**/*.md'])",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "base_path": {
+                "type": "string",
+                "description": "Base directory to search from (relative or absolute)"
+              },
+              "exclude_patterns": {
+                "type": "array",
+                "description": "Additional patterns to exclude beyond defaults (e.g., ['*test*', '*.min.js'])",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "max_files": {
+                "type": "string",
+                "description": "Maximum number of files to read (1-100, supports interpolation)"
+              },
+              "max_file_size_kb": {
+                "type": "string",
+                "description": "Maximum individual file size in KB (supports interpolation)"
+              },
+              "respect_gitignore": {
+                "type": "string",
+                "description": "Whether to respect .gitignore patterns (supports interpolation)"
+              },
+              "url": {
+                "type": "string",
+                "description": "Request URL (supports ${ENV_VAR} substitution)"
+              },
+              "method": {
+                "type": "string",
+                "description": "HTTP method (GET, POST, PUT, DELETE, PATCH, etc.)"
+              },
+              "headers": {
+                "type": "object",
+                "description": "HTTP headers (supports ${ENV_VAR} substitution in values)",
+                "additionalProperties": {
+                  "type": "string"
+                }
+              },
+              "json": {
+                "type": "object",
+                "description": "JSON request body (mutually exclusive with content). Matches httpx parameter name.",
+                "additionalProperties": {
+                  "type": "string"
+                }
+              },
+              "follow_redirects": {
+                "type": "string",
+                "description": "Whether to follow HTTP redirects (or interpolation string)"
+              },
+              "verify_ssl": {
+                "type": "string",
+                "description": "Whether to verify SSL certificates (or interpolation string)"
+              },
+              "profile": {
+                "type": "string",
+                "description": "Profile name from ~/.workflows/llm-config.yml (e.g., 'cloud', 'local', 'default'). If specified, provider/model are loaded from config. Mutually exclusive with direct provider/model specification."
+              },
+              "provider": {
+                "type": "string",
+                "description": "LLM provider (enum or interpolation string). Required if profile not specified. Ignored if profile specified."
+              },
+              "model": {
+                "type": "string",
+                "description": "Model name (e.g., gpt-4o, claude-3-5-sonnet-20241022, gemini-2.0-flash-exp). Required if profile not specified. Can override profile model if both specified."
+              },
+              "prompt": {
+                "type": "string",
+                "description": "User prompt to send to the LLM"
+              },
+              "system_instructions": {
+                "type": "string",
+                "description": "System instructions (optional)"
+              },
+              "api_key": {
+                "type": "string",
+                "description": "API key (pre-resolved from {{secrets.PROVIDER_API_KEY}})"
+              },
+              "api_url": {
+                "type": "string",
+                "description": "Custom API endpoint URL (optional, for custom deployments)"
+              },
+              "response_schema": {
+                "type": "object",
+                "description": "JSON Schema for expected response structure (dict or JSON string, enables validation and retry)",
+                "additionalProperties": {
+                  "type": "string"
+                }
+              },
+              "max_retries": {
+                "type": "string",
+                "description": "Maximum number of retry attempts (or interpolation string)"
+              },
+              "retry_delay": {
+                "type": "string",
+                "description": "Initial retry delay in seconds (exponential backoff, or interpolation string)"
+              },
+              "temperature": {
+                "type": "string",
+                "description": "Sampling temperature 0.0-2.0 (or interpolation string)"
+              },
+              "max_tokens": {
+                "type": "string",
+                "description": "Maximum tokens to generate (or interpolation string)"
+              },
+              "validation_prompt_template": {
+                "type": "string",
+                "description": "Template for validation retry prompt"
+              },
+              "operation": {
+                "type": "string",
+                "description": "Operation to perform"
+              },
+              "size": {
+                "type": "string",
+                "description": "Image size (e.g., 1024x1024, 256x256, 512x512)"
+              },
+              "quality": {
+                "type": "string",
+                "description": "Image quality (dall-e-3 only)"
+              },
+              "style": {
+                "type": "string",
+                "description": "Image style (dall-e-3 only)"
+              },
+              "response_format": {
+                "type": "string",
+                "description": "Format of the response"
+              },
+              "n": {
+                "type": "string",
+                "description": "Number of images to generate (supports interpolation)"
+              },
+              "image": {
+                "type": "string",
+                "description": "Path to base image (required for edit/variation)"
+              },
+              "mask": {
+                "type": "string",
+                "description": "Path to mask image (optional for edit)"
+              },
+              "output_file": {
+                "type": "string",
+                "description": "Path to save the generated image(s). If n>1, appends index."
+              },
+              "required": {
+                "type": "string",
+                "description": "Whether file must exist (False returns empty dict, or interpolation string)"
+              },
+              "data": {
+                "type": "object",
+                "description": "JSON data to write",
+                "additionalProperties": {
+                  "type": "string"
+                }
+              },
+              "updates": {
+                "type": "object",
+                "description": "Updates to merge",
+                "additionalProperties": {
+                  "type": "string"
+                }
+              }
+            },
+            "required": [],
+            "additionalProperties": false
           }
         },
         "required": [

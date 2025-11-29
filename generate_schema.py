@@ -16,16 +16,103 @@ from typing import Any
 from workflows_mcp.engine.executor_base import create_default_registry
 
 
+def collect_all_input_fields() -> dict[str, dict[str, Any]]:
+    """
+    Collect all unique input field names from all block executors.
+
+    Returns a dict mapping field names to their schema definitions.
+    Fields that appear in multiple block types are merged (using string type
+    since most fields support interpolation).
+
+    All schemas are OpenAI strict mode compliant:
+    - Objects use additionalProperties: {"type": "string"} (not true)
+    - Arrays use items: {"type": "string"} (not empty {})
+    """
+    registry = create_default_registry()
+    all_fields: dict[str, dict[str, Any]] = {}
+
+    # Fields that are objects with string-valued properties (key-value maps)
+    # These use additionalProperties: {"type": "string"} for OpenAI compliance
+    string_map_fields = {"env", "headers"}
+
+    # Fields that are objects with potentially complex nested structures
+    # We use additionalProperties: {"type": "string"} as a compromise
+    # (LLM can generate JSON strings for complex values)
+    complex_object_fields = {"json", "inputs", "data", "updates", "response_schema"}
+
+    # Fields that are arrays of strings
+    string_array_fields = {"patterns", "exclude_patterns"}
+
+    # Fields that are arrays of objects (edit operations)
+    # Use items with string additionalProperties for flexibility
+    object_array_fields = {"operations"}
+
+    for type_name in registry.list_types():
+        executor = registry.get(type_name)
+        input_schema = executor.input_type.model_json_schema()
+        properties = input_schema.get("properties", {})
+
+        for field_name, field_info in properties.items():
+            if field_name in all_fields:
+                # Already have this field, skip
+                continue
+
+            desc = field_info.get("description", f"Input field for {type_name}")
+
+            # Determine the appropriate schema for OpenAI strict mode compliance
+            if field_name in string_map_fields:
+                # Simple string-valued key-value maps
+                all_fields[field_name] = {
+                    "type": "object",
+                    "description": desc,
+                    "additionalProperties": {"type": "string"},
+                }
+            elif field_name in complex_object_fields:
+                # Complex objects - use string additionalProperties as compromise
+                all_fields[field_name] = {
+                    "type": "object",
+                    "description": desc,
+                    "additionalProperties": {"type": "string"},
+                }
+            elif field_name in string_array_fields:
+                # Arrays of strings (glob patterns, etc.)
+                all_fields[field_name] = {
+                    "type": "array",
+                    "description": desc,
+                    "items": {"type": "string"},
+                }
+            elif field_name in object_array_fields:
+                # Arrays of objects (edit operations)
+                all_fields[field_name] = {
+                    "type": "array",
+                    "description": desc,
+                    "items": {
+                        "type": "object",
+                        "additionalProperties": {"type": "string"},
+                    },
+                }
+            else:
+                # Default to string (supports interpolation like "{{inputs.value}}")
+                all_fields[field_name] = {
+                    "type": "string",
+                    "description": desc,
+                }
+
+    return all_fields
+
+
 def generate_llm_schema() -> dict[str, Any]:
     """
     Generate simplified workflow schema for LLM structured outputs.
 
     This schema is compatible with OpenAI's strict mode requirements:
-    - All properties are required
-    - additionalProperties: false everywhere
+    - additionalProperties: false everywhere (except where nested objects need flexibility)
+    - All possible block input fields listed as optional properties
     - No patternProperties or complex constraints
-    - Simplified block structure with generic inputs
     """
+    # Collect all possible input fields from all block types
+    all_input_fields = collect_all_input_fields()
+
     return {
         "type": "object",
         "properties": {
@@ -106,43 +193,45 @@ def generate_llm_schema() -> dict[str, Any]:
                             "type": "string",
                             "description": "Block type (e.g., Shell, LLMCall, CreateFile)",
                         },
+                        "description": {
+                            "type": "string",
+                            "description": "Optional block description",
+                        },
                         "condition": {
                             "type": "string",
                             "description": "Optional condition for conditional execution",
                         },
+                        "continue_on_error": {
+                            "type": "boolean",
+                            "description": "Whether to continue workflow if this block fails",
+                        },
+                        "for_each": {
+                            "type": "string",
+                            "description": "Expression for iterating over a list",
+                        },
+                        "for_each_mode": {
+                            "type": "string",
+                            "description": "Iteration mode: parallel or sequential",
+                        },
                         "depends_on": {
                             "type": "array",
-                            "description": "Block dependencies",
-                            "items": {
-                                "type": "object",
-                                "properties": {
-                                    "block": {
-                                        "type": "string",
-                                        "description": "ID of the block this depends on",
-                                    },
-                                    "required": {
-                                        "type": "boolean",
-                                        "description": "Whether dependency must succeed",
-                                    },
-                                },
-                                "required": ["block", "required"],
-                                "additionalProperties": False,
-                            },
+                            "description": "Block dependencies as block ID strings",
+                            "items": {"type": "string"},
                         },
                         "inputs": {
                             "type": "object",
-                            "description": "Block-specific inputs",
-                            "properties": {
-                                "command": {
-                                    "type": "string",
-                                    "description": "Command or primary input for the block",
-                                }
-                            },
-                            "required": ["command"],
+                            "description": (
+                                "Block-specific inputs. Fields vary by block type: "
+                                "Shell uses 'command', LLMCall/Prompt use 'prompt', "
+                                "CreateFile uses 'path'+'content', etc."
+                            ),
+                            "properties": all_input_fields,
+                            # All fields optional - different blocks need different fields
+                            "required": [],
                             "additionalProperties": False,
                         },
                     },
-                    "required": ["id", "type", "condition", "depends_on", "inputs"],
+                    "required": ["id", "type", "inputs"],
                     "additionalProperties": False,
                 },
             },
