@@ -221,5 +221,5 @@ docs/*
 .agent/
 .workflows-state/
 templates/agents/layer*/
-src/workflows_mcp/templates/agents/
-!src/workflows_mcp/templates/agents/workflow-creator
+src/workflows_mcp/templates/agents/*
+!src/workflows_mcp/templates/agents/workflow-creator/
