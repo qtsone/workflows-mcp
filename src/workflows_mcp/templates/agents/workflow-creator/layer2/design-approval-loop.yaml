@@ -119,10 +119,33 @@ blocks:
           B4 --> O1
         ```
 
-        Key syntax:
-        - `A & B --> C` = parallel inputs
-        - `A -->|condition| B` = conditional edge
-        - `subgraph name[Label]` = grouping
+        ## Mermaid Syntax Reference
+
+        **Edge types (use ONLY these):**
+        ```
+        A --> B                  %% simple arrow
+        A -->|label| B           %% labeled/conditional arrow
+        A & B --> C              %% parallel merge (max 4 items)
+        ```
+
+        **Node definitions:**
+        ```
+        B1[Shell: block-id]                      %% standard node
+        B2["Shell: label with special chars"]   %% quoted for special chars
+        B3[LLMCall: process - per item]          %% use hyphen, not parentheses
+        ```
+
+        **Subgraphs:**
+        ```
+        subgraph name[Display Label]
+          N1[node]
+        end
+        ```
+
+        **Rules:**
+        1. Labeled edges: `A -->|label| B` (arrow required before pipe)
+        2. Node labels: use hyphens or quotes, avoid parentheses
+        3. Parallel merge: max 4 items per `&` chain, split larger groups
 
         # Required Output Format
 

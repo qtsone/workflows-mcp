@@ -214,3 +214,12 @@ __marimo__/
 .workflows/
 ARCHITECTURE.md
 CLAUDE.md
+
+# Docs configuration
+docs/*
+!docs/llm/
+.agent/
+.workflows-state/
+templates/agents/layer*/
+src/workflows_mcp/templates/agents/
+!src/workflows_mcp/templates/agents/workflow-creator

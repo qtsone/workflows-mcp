@@ -93,6 +93,14 @@ class WorkflowExecutor(BlockExecutor):
     type_name: ClassVar[str] = "Workflow"
     input_type: ClassVar[type[BlockInput]] = WorkflowInput
     output_type: ClassVar[type] = type(None)  # Special: returns Execution, not BlockOutput
+    examples: ClassVar[str] = """```yaml
+- id: run-child
+  type: Workflow
+  inputs:
+    workflow: child-workflow-name
+    inputs:
+      param1: "{{inputs.value}}"
+```"""
 
     security_level: ClassVar[ExecutorSecurityLevel] = ExecutorSecurityLevel.TRUSTED
     capabilities: ClassVar[ExecutorCapabilities] = ExecutorCapabilities(

@@ -163,6 +163,15 @@ class HttpCallExecutor(BlockExecutor):
     type_name: ClassVar[str] = "HttpCall"
     input_type: ClassVar[type[BlockInput]] = HttpCallInput
     output_type: ClassVar[type[BlockOutput]] = HttpCallOutput
+    examples: ClassVar[str] = """```yaml
+- id: call-api
+  type: HttpCall
+  inputs:
+    url: "https://api.example.com/data"
+    method: GET
+    headers:
+      Authorization: "Bearer {{secrets.API_KEY}}"
+```"""
 
     security_level: ClassVar[ExecutorSecurityLevel] = ExecutorSecurityLevel.TRUSTED
     capabilities: ClassVar[ExecutorCapabilities] = ExecutorCapabilities(can_network=True)

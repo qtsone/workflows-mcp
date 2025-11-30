@@ -144,6 +144,12 @@ class PromptExecutor(BlockExecutor):
     type_name: ClassVar[str] = "Prompt"
     input_type: ClassVar[type[BlockInput]] = PromptInput
     output_type: ClassVar[type[BlockOutput]] = PromptOutput
+    examples: ClassVar[str] = """```yaml
+- id: ask-user
+  type: Prompt
+  inputs:
+    prompt: "Do you approve this change? (yes/no)"
+```"""
 
     security_level: ClassVar[ExecutorSecurityLevel] = ExecutorSecurityLevel.SAFE
     capabilities: ClassVar[ExecutorCapabilities] = ExecutorCapabilities()

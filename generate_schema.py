@@ -193,28 +193,30 @@ def generate_llm_schema() -> dict[str, Any]:
                             "type": "string",
                             "description": "Block type (e.g., Shell, LLMCall, CreateFile)",
                         },
+                        # OpenAI strict mode: optional fields use ["type", "null"] union
+                        # All fields must be in required array
                         "description": {
-                            "type": "string",
+                            "type": ["string", "null"],
                             "description": "Optional block description",
                         },
                         "condition": {
-                            "type": "string",
+                            "type": ["string", "null"],
                             "description": "Optional condition for conditional execution",
                         },
                         "continue_on_error": {
-                            "type": "boolean",
+                            "type": ["boolean", "null"],
                             "description": "Whether to continue workflow if this block fails",
                         },
                         "for_each": {
-                            "type": "string",
+                            "type": ["string", "null"],
                             "description": "Expression for iterating over a list",
                         },
                         "for_each_mode": {
-                            "type": "string",
+                            "type": ["string", "null"],
                             "description": "Iteration mode: parallel or sequential",
                         },
                         "depends_on": {
-                            "type": "array",
+                            "type": ["array", "null"],
                             "description": "Block dependencies as block ID strings",
                             "items": {"type": "string"},
                         },
@@ -231,7 +233,18 @@ def generate_llm_schema() -> dict[str, Any]:
                             "additionalProperties": False,
                         },
                     },
-                    "required": ["id", "type", "inputs"],
+                    # OpenAI strict mode requires ALL properties in required array
+                    "required": [
+                        "id",
+                        "type",
+                        "description",
+                        "condition",
+                        "continue_on_error",
+                        "for_each",
+                        "for_each_mode",
+                        "depends_on",
+                        "inputs",
+                    ],
                     "additionalProperties": False,
                 },
             },

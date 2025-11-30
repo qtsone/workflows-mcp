@@ -80,6 +80,12 @@ class ReadJSONStateExecutor(BlockExecutor):
     type_name: ClassVar[str] = "ReadJSONState"
     input_type: ClassVar[type[BlockInput]] = ReadJSONStateInput
     output_type: ClassVar[type[BlockOutput]] = ReadJSONStateOutput
+    examples: ClassVar[str] = """```yaml
+- id: load-state
+  type: ReadJSONState
+  inputs:
+    path: "{{tmp}}/state.json"
+```"""
 
     security_level: ClassVar[ExecutorSecurityLevel] = ExecutorSecurityLevel.SAFE
     capabilities: ClassVar[ExecutorCapabilities] = ExecutorCapabilities(can_read_files=True)
@@ -179,6 +185,15 @@ class WriteJSONStateExecutor(BlockExecutor):
     type_name: ClassVar[str] = "WriteJSONState"
     input_type: ClassVar[type[BlockInput]] = WriteJSONStateInput
     output_type: ClassVar[type[BlockOutput]] = WriteJSONStateOutput
+    examples: ClassVar[str] = """```yaml
+- id: save-state
+  type: WriteJSONState
+  inputs:
+    path: "{{tmp}}/state.json"
+    data:
+      status: completed
+      result: "{{blocks.process.outputs.value}}"
+```"""
 
     security_level: ClassVar[ExecutorSecurityLevel] = ExecutorSecurityLevel.TRUSTED
     capabilities: ClassVar[ExecutorCapabilities] = ExecutorCapabilities(can_write_files=True)
@@ -302,6 +317,14 @@ class MergeJSONStateExecutor(BlockExecutor):
     type_name: ClassVar[str] = "MergeJSONState"
     input_type: ClassVar[type[BlockInput]] = MergeJSONStateInput
     output_type: ClassVar[type[BlockOutput]] = MergeJSONStateOutput
+    examples: ClassVar[str] = """```yaml
+- id: update-state
+  type: MergeJSONState
+  inputs:
+    path: "{{tmp}}/state.json"
+    updates:
+      last_updated: "{{now()}}"
+```"""
 
     security_level: ClassVar[ExecutorSecurityLevel] = ExecutorSecurityLevel.TRUSTED
     capabilities: ClassVar[ExecutorCapabilities] = ExecutorCapabilities(

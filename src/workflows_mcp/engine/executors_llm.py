@@ -309,6 +309,13 @@ class LLMCallExecutor(BlockExecutor):
     type_name: ClassVar[str] = "LLMCall"
     input_type: ClassVar[type[BlockInput]] = LLMCallInput
     output_type: ClassVar[type[BlockOutput]] = LLMCallOutput
+    examples: ClassVar[str] = """```yaml
+- id: summarize
+  type: LLMCall
+  inputs:
+    profile: default
+    prompt: "Summarize this text: {{inputs.text}}"
+```"""
 
     security_level: ClassVar[ExecutorSecurityLevel] = ExecutorSecurityLevel.TRUSTED
     capabilities: ClassVar[ExecutorCapabilities] = ExecutorCapabilities(can_network=True)
@@ -704,6 +711,8 @@ class LLMCallExecutor(BlockExecutor):
         3.  Converting 'additionalProperties: true' to a string-typed schema
             (OpenAI strict mode doesn't allow 'true').
         4.  Converting empty 'items: {}' to a string-typed schema for arrays.
+        5.  Ensuring ALL properties are in the 'required' array (OpenAI strict mode
+            requirement). Properties not originally required are made nullable.
         """
         if not isinstance(schema, dict):
             return schema
@@ -717,10 +726,23 @@ class LLMCallExecutor(BlockExecutor):
         if simplified_schema.get("type") == "object":
             # If 'properties' are defined, recurse into them
             if "properties" in simplified_schema:
-                simplified_schema["properties"] = {
-                    k: self._prepare_schema_for_openai(v)
-                    for k, v in simplified_schema["properties"].items()
-                }
+                original_required = set(simplified_schema.get("required", []))
+                all_property_keys = list(simplified_schema["properties"].keys())
+
+                new_properties = {}
+                for k, v in simplified_schema["properties"].items():
+                    processed = self._prepare_schema_for_openai(v)
+
+                    # If property was not originally required, make it nullable
+                    if k not in original_required:
+                        processed = self._make_nullable(processed)
+
+                    new_properties[k] = processed
+
+                simplified_schema["properties"] = new_properties
+
+                # OpenAI strict mode: ALL properties must be in required array
+                simplified_schema["required"] = all_property_keys
 
             # Handle additionalProperties
             addl_props = simplified_schema.get("additionalProperties")
@@ -749,6 +771,31 @@ class LLMCallExecutor(BlockExecutor):
                 simplified_schema["items"] = {"type": "string"}
 
         return simplified_schema
+
+    def _make_nullable(self, schema: dict[str, Any]) -> dict[str, Any]:
+        """Make a schema nullable by converting type to a union with null.
+
+        OpenAI strict mode requires all properties in the required array.
+        To make a property optional, we use type: ["original_type", "null"].
+        """
+        if not isinstance(schema, dict):
+            return schema
+
+        schema = schema.copy()
+        current_type = schema.get("type")
+
+        if current_type is None:
+            # No type specified, add nullable string as default
+            schema["type"] = ["string", "null"]
+        elif isinstance(current_type, list):
+            # Already a list of types, add null if not present
+            if "null" not in current_type:
+                schema["type"] = current_type + ["null"]
+        else:
+            # Single type, convert to union with null
+            schema["type"] = [current_type, "null"]
+
+        return schema
 
     async def _call_openai(
         self,

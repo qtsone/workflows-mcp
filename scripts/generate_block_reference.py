@@ -21,119 +21,12 @@ sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 from workflows_mcp.engine import create_default_registry  # type: ignore[import-untyped]
 
 # Block type descriptions (canonical)
-BLOCK_DESCRIPTIONS = {
-    "Shell": "Execute shell commands and capture stdout/stderr",
-    "LLMCall": "Call an LLM with a prompt and optional structured output schema",
-    "Prompt": "Pause workflow and prompt user/LLM for input (interactive)",
-    "ImageGen": "Generate or edit images using AI image providers",
-    "CreateFile": "Create or overwrite a file with specified content",
-    "EditFile": "Apply programmatic edits to an existing file",
-    "ReadFiles": "Read files matching glob patterns",
-    "HttpCall": "Make HTTP requests to external APIs",
-    "Workflow": "Execute a nested/child workflow",
-    "ReadJSONState": "Read JSON state from a file",
-    "WriteJSONState": "Write JSON state to a file",
-    "MergeJSONState": "Merge updates into existing JSON state file",
-}
-
-# Minimal YAML examples for each block type
-BLOCK_EXAMPLES = {
-    "Shell": """```yaml
-- id: run-command
-  type: Shell
-  inputs:
-    command: echo "Hello World"
-```""",
-    "LLMCall": """```yaml
-- id: summarize
-  type: LLMCall
-  inputs:
-    profile: default
-    prompt: "Summarize this text: {{inputs.text}}"
-```""",
-    "Prompt": """```yaml
-- id: ask-user
-  type: Prompt
-  inputs:
-    prompt: "Do you approve this change? (yes/no)"
-```""",
-    "ImageGen": """```yaml
-- id: generate-image
-  type: ImageGen
-  inputs:
-    profile: default
-    operation: generate
-    prompt: "A beautiful sunset over mountains"
-```""",
-    "CreateFile": """```yaml
-- id: write-output
-  type: CreateFile
-  inputs:
-    path: "{{tmp}}/output.txt"
-    content: "{{blocks.previous.outputs.result}}"
-```""",
-    "EditFile": """```yaml
-- id: update-config
-  type: EditFile
-  inputs:
-    path: "./config.json"
-    operations:
-      - op: replace
-        match: '"version": ".*"'
-        replace: '"version": "2.0.0"'
-```""",
-    "ReadFiles": """```yaml
-- id: read-sources
-  type: ReadFiles
-  inputs:
-    patterns: ["src/**/*.py"]
-    mode: outline
-```""",
-    "HttpCall": """```yaml
-- id: call-api
-  type: HttpCall
-  inputs:
-    url: "https://api.example.com/data"
-    method: GET
-    headers:
-      Authorization: "Bearer {{secrets.API_KEY}}"
-```""",
-    "Workflow": """```yaml
-- id: run-child
-  type: Workflow
-  inputs:
-    workflow: child-workflow-name
-    inputs:
-      param1: "{{inputs.value}}"
-```""",
-    "ReadJSONState": """```yaml
-- id: load-state
-  type: ReadJSONState
-  inputs:
-    path: "{{tmp}}/state.json"
-```""",
-    "WriteJSONState": """```yaml
-- id: save-state
-  type: WriteJSONState
-  inputs:
-    path: "{{tmp}}/state.json"
-    data:
-      status: completed
-      result: "{{blocks.process.outputs.value}}"
-```""",
-    "MergeJSONState": """```yaml
-- id: update-state
-  type: MergeJSONState
-  inputs:
-    path: "{{tmp}}/state.json"
-    updates:
-      last_updated: "{{now()}}"
-```""",
-}
+# Block type descriptions (canonical)
+# REMOVED: BLOCK_DESCRIPTIONS and BLOCK_EXAMPLES are now extracted dynamically from executors.
 
 
-def extract_schemas() -> dict[str, dict[str, list[dict[str, str]]]]:
-    """Extract schemas from all registered executors."""
+def extract_schemas() -> dict[str, dict[str, Any]]:
+    """Extract schemas and metadata from all registered executors."""
     registry = create_default_registry()
     result = {}
 
@@ -183,7 +76,17 @@ def extract_schemas() -> dict[str, dict[str, list[dict[str, str]]]]:
             for k, v in out_props.items()
         ]
 
+        # Extract description from docstring (first line)
+        description = "Execute block operations"
+        if executor.__doc__:
+            description = executor.__doc__.strip().split("\n")[0]
+
+        # Extract example from ClassVar
+        example = getattr(executor, "examples", "")
+
         result[type_name] = {
+            "description": description,
+            "example": example,
             "required": required_fields,
             "optional": optional_fields,
             "outputs": output_fields,
@@ -192,7 +95,7 @@ def extract_schemas() -> dict[str, dict[str, list[dict[str, str]]]]:
     return result
 
 
-def generate_markdown(schemas: dict[str, dict[str, list[dict[str, str]]]]) -> str:
+def generate_markdown(schemas: dict[str, dict[str, Any]]) -> str:
     """Generate markdown documentation from schemas."""
     lines = []
 
@@ -234,9 +137,7 @@ def generate_markdown(schemas: dict[str, dict[str, list[dict[str, str]]]]) -> st
     for block_type, schema in schemas.items():
         lines.append(f"## {block_type}")
         lines.append("")
-        lines.append(
-            f"**Purpose**: {BLOCK_DESCRIPTIONS.get(block_type, 'Execute block operations')}"
-        )
+        lines.append(f"**Description**: {schema['description']}")
         lines.append("")
 
         if schema["required"]:
@@ -264,10 +165,10 @@ def generate_markdown(schemas: dict[str, dict[str, list[dict[str, str]]]]) -> st
                 lines.append(f"- **`{field['name']}`** ({field['type']}): {field['description']}")
             lines.append("")
 
-        if block_type in BLOCK_EXAMPLES:
+        if schema["example"]:
             lines.append("### Example")
             lines.append("")
-            lines.append(BLOCK_EXAMPLES[block_type])
+            lines.append(schema["example"])
             lines.append("")
 
         lines.append("---")
@@ -295,9 +196,9 @@ def generate_markdown(schemas: dict[str, dict[str, list[dict[str, str]]]]) -> st
     lines.append("")
     lines.append("| Field | Description |")
     lines.append("|-------|-------------|")
-    lines.append("| `depends_on: [block_id]` | Block execution order |")
+    lines.append("| `depends_on: [block_id]` | Generate DAG. Expects parent blocks to succeed |")
     lines.append('| `condition: "{{expression}}"` | Conditional execution |')
-    lines.append("| `continue_on_error: true` | Continue even if block fails |")
+    lines.append("| `continue_on_error: true` | Only used in sequential for_each |")
     lines.append('| `for_each: "{{list}}"` | Iterate over list items |')
     lines.append("| `for_each_mode: parallel` | Run iterations in parallel (default) |")
     lines.append("| `for_each_mode: sequential` | Run iterations sequentially |")
@@ -323,9 +224,14 @@ def generate_markdown(schemas: dict[str, dict[str, list[dict[str, str]]]]) -> st
     return "\n".join(lines)
 
 
-def generate_json(schemas: dict[str, dict[str, list[dict[str, str]]]]) -> str:
-    """Generate JSON schema for programmatic use."""
-    return json.dumps(schemas, indent=2, default=str)
+def generate_json(schemas: dict[str, dict[str, Any]]) -> str:
+    """Generate JSON schema for programmatic use (excludes description and examples)."""
+    # Filter out description and examples from JSON output
+    filtered_schemas = {}
+    for block_type, schema in schemas.items():
+        filtered_schema = {k: v for k, v in schema.items() if k not in ("example", "description")}
+        filtered_schemas[block_type] = filtered_schema
+    return json.dumps(filtered_schemas, indent=2, default=str)
 
 
 def main() -> None:

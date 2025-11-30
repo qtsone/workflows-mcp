@@ -36,7 +36,7 @@ Field names are **exact** - use them precisely in your workflows.
 
 ## Shell
 
-**Purpose**: Execute shell commands and capture stdout/stderr
+**Description**: Shell command executor.
 
 ### Required Inputs
 
@@ -70,7 +70,7 @@ Field names are **exact** - use them precisely in your workflows.
 
 ## Workflow
 
-**Purpose**: Execute a nested/child workflow
+**Description**: Workflow composition executor (fractal pattern).
 
 ### Required Inputs
 
@@ -96,7 +96,7 @@ Field names are **exact** - use them precisely in your workflows.
 
 ## CreateFile
 
-**Purpose**: Create or overwrite a file with specified content
+**Description**: File creation executor.
 
 ### Required Inputs
 
@@ -132,7 +132,7 @@ Field names are **exact** - use them precisely in your workflows.
 
 ## EditFile
 
-**Purpose**: Apply programmatic edits to an existing file
+**Description**: File editing executor with multiple strategies.
 
 ### Required Inputs
 
@@ -167,16 +167,16 @@ Field names are **exact** - use them precisely in your workflows.
   inputs:
     path: "./config.json"
     operations:
-      - op: replace
-        match: '"version": ".*"'
-        replace: '"version": "2.0.0"'
+      - type: regex_replace
+        pattern: '"version": ".*"'
+        replacement: '"version": "2.0.0"'
 ```
 
 ---
 
 ## ReadFiles
 
-**Purpose**: Read files matching glob patterns
+**Description**: File reading executor with multi-file and outline support.
 
 ### Required Inputs
 
@@ -215,7 +215,7 @@ Field names are **exact** - use them precisely in your workflows.
 
 ## HttpCall
 
-**Purpose**: Make HTTP requests to external APIs
+**Description**: HTTP/REST API call executor.
 
 ### Required Inputs
 
@@ -256,7 +256,7 @@ Field names are **exact** - use them precisely in your workflows.
 
 ## LLMCall
 
-**Purpose**: Call an LLM with a prompt and optional structured output schema
+**Description**: Executor for LLMCall blocks.
 
 ### Required Inputs
 
@@ -306,7 +306,7 @@ Please provide a valid response that conforms to the schema.`)*: Template for va
 
 ## ImageGen
 
-**Purpose**: Generate or edit images using AI image providers
+**Description**: Executor for Image Generation.
 
 ### Optional Inputs
 
@@ -351,7 +351,7 @@ Please provide a valid response that conforms to the schema.`)*: Template for va
 
 ## Prompt
 
-**Purpose**: Pause workflow and prompt user/LLM for input (interactive)
+**Description**: Interactive prompt executor - pauses workflow for LLM input.
 
 ### Required Inputs
 
@@ -375,7 +375,7 @@ Please provide a valid response that conforms to the schema.`)*: Template for va
 
 ## ReadJSONState
 
-**Purpose**: Read JSON state from a file
+**Description**: Read JSON state file executor.
 
 ### Required Inputs
 
@@ -405,7 +405,7 @@ Please provide a valid response that conforms to the schema.`)*: Template for va
 
 ## WriteJSONState
 
-**Purpose**: Write JSON state to a file
+**Description**: Write JSON state file executor.
 
 ### Required Inputs
 
@@ -438,7 +438,7 @@ Please provide a valid response that conforms to the schema.`)*: Template for va
 
 ## MergeJSONState
 
-**Purpose**: Merge updates into existing JSON state file
+**Description**: Merge JSON state file executor.
 
 ### Required Inputs
 
@@ -489,9 +489,9 @@ Use double braces `{{ }}` for variable interpolation in YAML:
 
 | Field | Description |
 |-------|-------------|
-| `depends_on: [block_id]` | Block execution order |
+| `depends_on: [block_id]` | Generate DAG. Expects parent blocks to succeed |
 | `condition: "{{expression}}"` | Conditional execution |
-| `continue_on_error: true` | Continue even if block fails |
+| `continue_on_error: true` | Only used in sequential for_each |
 | `for_each: "{{list}}"` | Iterate over list items |
 | `for_each_mode: parallel` | Run iterations in parallel (default) |
 | `for_each_mode: sequential` | Run iterations sequentially |

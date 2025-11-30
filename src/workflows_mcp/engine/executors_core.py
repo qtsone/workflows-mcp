@@ -345,6 +345,12 @@ class ShellExecutor(BlockExecutor):
     type_name: ClassVar[str] = "Shell"
     input_type: ClassVar[type[BlockInput]] = ShellInput
     output_type: ClassVar[type[BlockOutput]] = ShellOutput
+    examples: ClassVar[str] = """```yaml
+- id: run-command
+  type: Shell
+  inputs:
+    command: echo "Hello World"
+```"""
 
     security_level: ClassVar[ExecutorSecurityLevel] = ExecutorSecurityLevel.PRIVILEGED
     capabilities: ClassVar[ExecutorCapabilities] = ExecutorCapabilities(

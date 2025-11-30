@@ -252,6 +252,14 @@ class ImageGenExecutor(BlockExecutor):
     type_name: ClassVar[str] = "ImageGen"
     input_type: ClassVar[type[BlockInput]] = ImageGenInput
     output_type: ClassVar[type[BlockOutput]] = ImageGenOutput
+    examples: ClassVar[str] = """```yaml
+- id: generate-image
+  type: ImageGen
+  inputs:
+    profile: default
+    operation: generate
+    prompt: "A beautiful sunset over mountains"
+```"""
 
     security_level: ClassVar[ExecutorSecurityLevel] = ExecutorSecurityLevel.TRUSTED
     capabilities: ClassVar[ExecutorCapabilities] = ExecutorCapabilities(
