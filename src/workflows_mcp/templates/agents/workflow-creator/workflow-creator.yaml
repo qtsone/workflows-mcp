@@ -214,6 +214,7 @@ blocks:
         requirements: "{{inputs.workspace}}/requirements.json"
         executor_docs: "{{blocks.bootstrap_context.outputs.executor_docs}}"
         examples: "{{blocks.bootstrap_context.outputs.examples}}"
+        workspace: "{{inputs.workspace}}/design-approval"
   
   - id: check_design_approval
     depends_on: [design_approval]

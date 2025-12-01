@@ -834,7 +834,7 @@ class WorkflowSchema(BaseModel):
                         f"{context}: Invalid variable reference '{{{{{var_path}}}}}'. "
                         f"Unknown namespace '{parts[0]}'. "
                         f"Valid namespaces: 'inputs', 'blocks', 'metadata', 'secrets', "
-                        f"'each' (for_each blocks only)"
+                        f"'tmp', 'each' (for_each blocks only)"
                     )
 
         def check_dict_values(obj: Any, path: str, allow_each: bool = False) -> None:
