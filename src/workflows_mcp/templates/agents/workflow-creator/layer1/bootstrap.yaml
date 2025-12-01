@@ -58,7 +58,7 @@ blocks:
     description: "Read example workflows"
     type: ReadFiles
     inputs:
-      base_path: "{{inputs.workspace}}/tests/workflows"
+      base_path: "{{inputs.workspace}}/tests/workflows/integration"
       patterns:
         - "**/*.yaml"
       mode: "outline"
