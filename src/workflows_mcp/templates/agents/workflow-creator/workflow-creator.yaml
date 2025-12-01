@@ -297,7 +297,7 @@ blocks:
         {{blocks.design_approval.outputs.final_block_summary}}
 
         ## Structured Requirements
-        {{blocks.structure_requirements.outputs.response | fromjson}}
+        {{blocks.structure_requirements.outputs.response}}
 
         ## Block Executor Reference (Authoritative)
         {{read_file(blocks.bootstrap_context.outputs.executor_docs)}}

@@ -80,8 +80,17 @@ blocks:
         ❌ `-->|revise (<= max)|` — parentheses and <= break parsing
         ❌ `-->|text(s)|` — parentheses break parsing
 
-        ## Nodes & Structure
-        - Node format: `id[Type: id]` with lowercase-hyphenated IDs
+        ## Node ID Rules (CRITICAL - prevents parsing errors)
+        Node IDs MUST use underscores, NOT hyphens:
+        ✅ CORRECT: `my_node[Type: my-label]`    — underscore in ID, hyphen in label OK
+        ✅ CORRECT: `overview_llm[LLMCall: overview-gen]`
+        ❌ WRONG: `my-node[Type: my-label]`      — hyphens in IDs break Mermaid parsing
+        ❌ WRONG: `input-name[Input: name]`      — will cause syntax error
+
+        Labels inside brackets [...] can contain hyphens, but the ID before the bracket MUST use underscores.
+
+        ## Structure
+        - Node format: `node_id[Type: label]` with lowercase_underscored IDs
         - Start diagram with `flowchart TD`
         - Use subgraphs: `inputs`, `blocks`, `outputs`
         - One edge per line (no `&` syntax for parallel)
@@ -99,7 +108,7 @@ blocks:
 
         ## Block Executor Reference
         <executor_docs>
-        {{ read_file(inputs.executor_docs) }}
+        {{ read_file(inputs.executor_docs) | replace('# ', '## ') }}
         </executor_docs>
 
         ## Example Workflows
@@ -114,7 +123,7 @@ blocks:
 
         ## Requirements
         <requirements>
-        {{ read_file(inputs.requirements) | tojson }}
+        {{ read_file(inputs.requirements) }}
         </requirements>
 
         ## Instructions
@@ -173,7 +182,7 @@ blocks:
               properties:
                 id:
                   type: string
-                  description: "Block ID (lowercase, hyphenated)"
+                  description: "Block ID (lowercase, underscored - e.g., overview_llm)"
                 type:
                   type: string
                   description: "Block type (Shell, LLMCall, Prompt, etc.)"
