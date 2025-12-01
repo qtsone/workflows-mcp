@@ -1,220 +1,122 @@
 name: design-approval-loop
 description: Recursive workflow for iterative design approval with user feedback
-version: "1.0"
+version: "1.1"
 tags: [agents, recursive, interactive, internal]
 
 inputs:
   requirements:
-    type: dict
-    description: "Structured workflow requirements from requirements gathering"
+    type: str
+    description: "(Required) Path to structured workflow requirements JSON file"
     required: true
 
   executor_docs:
     type: str
-    description: "Compressed executor reference documentation"
+    description: "(Required) Path to compressed executor reference documentation"
     required: true
 
   examples:
     type: str
-    description: "Example workflows for reference"
+    description: "(Required) Example workflows for reference"
     required: true
-
-  iteration:
-    type: num
-    description: "Current iteration number (for recursion)"
-    default: 1
-
-  max_iterations:
-    type: num
-    description: "Maximum number of refinement iterations"
-    default: 5
 
   previous_diagram:
     type: str
-    description: "Previous diagram (for refinement iterations)"
+    description: "(Optional) Previous diagram (for refinement iterations)"
     default: ""
 
   feedback:
     type: str
-    description: "User feedback from previous iteration"
+    description: "(Optional) User feedback from previous iteration"
     default: ""
 
+  workspace:
+    type: str
+    description: "(Optional) Workspace path for temporary files"
+    default: "{{tmp}}"
+
 blocks:
-  # Phase 1: Generate or refine workflow diagram
+  - id: read_requirements
+    type: ReadJSONState
+    inputs:
+      path: "{{inputs.requirements}}"
+
   - id: generate_diagram
+    description: "Generate or refine workflow diagram"
     type: LLMCall
+    depends_on: [read_requirements]
     inputs:
       profile: default
       timeout: 600
       system_instructions: |
         You are an expert workflow architect specializing in DAG-based automation workflows.
 
-        # CRITICAL: Block Type Required Fields
-
-        When designing workflows, each block type has specific REQUIRED input fields:
-
-        | Block Type     | Required Field(s)                    |
-        |----------------|--------------------------------------|
-        | Shell          | command                              |
-        | LLMCall        | prompt (NOT 'command' or 'message')  |
-        | Prompt         | prompt (NOT 'command' or 'message')  |
-        | ImageGen       | prompt, profile OR provider          |
-        | CreateFile     | path, content                        |
-        | EditFile       | path, operations                     |
-        | ReadFiles      | patterns                             |
-        | HttpCall       | url                                  |
-        | Workflow       | workflow                             |
-        | ReadJSONState  | path                                 |
-        | WriteJSONState | path, data                           |
-        | MergeJSONState | path, updates                        |
-
-        ⚠️ IMPORTANT FIELD NAMING:
-        - LLMCall uses 'prompt' (NOT 'command')
-        - Prompt uses 'prompt' (NOT 'message' or 'command')
-        - Only Shell uses 'command'
-
         # Design Principles
-
         - **Single responsibility**: Each block has one clear purpose
         - **Appropriate block types**: Shell for commands, LLMCall for AI, Prompt for user input, CreateFile for output
         - **Parallelism**: Run independent operations concurrently using depends_on
         - **User involvement**: Use Prompt blocks for approvals and feedback loops
         - **Error handling**: Use conditions and continue_on_error where appropriate
 
-        # Available Block Types
-
-        {{inputs.executor_docs}}
-
-        # Example Workflows
-
-        Study these patterns for reference:
-
-        {{inputs.examples}}
-
-        # Mermaid Diagram Syntax
-
-        ```
-        flowchart TD
-          subgraph inputs[Workflow Inputs]
-            I1[param_name: type]
-            I2[another_param: type]
-          end
-
-          subgraph blocks[Workflow Blocks]
-            B1[Shell: setup-step]
-            B2[LLMCall: process-data]
-            B3[Prompt: user-confirmation]
-            B4[CreateFile: save-output]
-          end
-
-          subgraph outputs[Workflow Outputs]
-            O1[result: type]
-          end
-
-          I1 & I2 --> B1
-          B1 --> B2
-          B2 --> B3
-          B3 -->|approved| B4
-          B3 -->|rejected| END[Cancel]
-          B4 --> O1
-        ```
-
-        ## Mermaid Syntax Reference
-
-        **Edge types (use ONLY these):**
-        ```
-        A --> B                  %% simple arrow
-        A -->|label| B           %% labeled/conditional arrow
-        A & B --> C              %% parallel merge (max 4 items)
-        ```
-
-        **Node definitions:**
-        ```
-        B1[Shell: block-id]                      %% standard node
-        B2["Shell: label with special chars"]   %% quoted for special chars
-        B3[LLMCall: process - per item]          %% use hyphen, not parentheses
-        ```
-
-        **Subgraphs:**
-        ```
-        subgraph name[Display Label]
-          N1[node]
-        end
-        ```
-
-        **Rules:**
-        1. Labeled edges: `A -->|label| B` (arrow required before pipe)
-        2. Node labels: use hyphens or quotes, avoid parentheses
-        3. Parallel merge: max 4 items per `&` chain, split larger groups
+        # Mermaid Diagram Syntax Rules
+        1. **Nodes**: `B1[BlockType: block-id]` (e.g., `[Shell: run-script]`)
+        2. **Edges**: `-->` for flow, `-->|label|` for conditions
+        3. **Parallel edges**: Use separate lines for each edge (NOT `&` syntax)
+        4. **Subgraphs**: Use `subgraph inputs` and `subgraph blocks` and `subgraph outputs`
+        5. **IDs**: Lowercase, hyphenated (e.g., `process-data`)
 
         # Required Output Format
-
-        Return a JSON object with these fields:
-
-        1. **mermaid_diagram**: Raw Mermaid flowchart syntax
-           - Start directly with "flowchart TD" (NO markdown code fences)
-           - Use newlines (\n) to separate lines
-
-        2. **block_summary**: Array of block objects:
-           - "id": block ID (lowercase, hyphenated)
-           - "type": block type (Shell, LLMCall, Prompt, etc.)
-           - "purpose": one-sentence description
-           - "depends_on": array of block IDs this depends on
-
-        3. **explanation**: Design rationale string
-
-        4. **clarifications**: Array of questions/assumptions to validate
-
-        Example:
-        ```json
-        {
-          "mermaid_diagram": "flowchart TD\n  subgraph inputs[Workflow Inputs]\n    I1[code_path: str]\n  end\n  subgraph blocks[Workflow Blocks]\n    B1[Shell: run-linter]\n    B2[LLMCall: analyze]\n  end\n  I1 --> B1\n  B1 --> B2",
-          "block_summary": [
-            {"id": "run-linter", "type": "Shell", "purpose": "Run linting checks", "depends_on": []},
-            {"id": "analyze", "type": "LLMCall", "purpose": "AI code analysis", "depends_on": ["run-linter"]}
-          ],
-          "explanation": "Sequential flow: lint first, then AI analysis",
-          "clarifications": ["Should linting failures stop the workflow?"]
-        }
-        ```
+        Return a JSON object with:
+        1. **mermaid_diagram**: Raw Mermaid flowchart syntax (start with "flowchart TD")
+        2. **block_summary**: Array of {id, type, purpose, depends_on}
+        3. **explanation**: Design rationale
+        4. **clarifications**: Questions/assumptions
       prompt: |
-        {% if inputs.iteration == 1 %}
+        # Reference Material
+
+        ## Block Executor Reference
+        <executor_docs>
+        {{ read_file(inputs.executor_docs) }}
+        </executor_docs>
+
+        ## Example Workflows
+        <examples>
+        {{inputs.examples}}
+        </examples>
+
+        {% if depth == 1 %}
         # Design New Workflow
 
         Create a Mermaid flowchart diagram for this workflow:
 
         ## Requirements
-
-        {{inputs.requirements | tojson}}
+        <requirements>
+        {{ read_file(inputs.requirements) | tojson }}
+        </requirements>
 
         ## Instructions
-
         Design the architecture with:
         1. **Inputs subgraph**: All workflow input parameters
         2. **Blocks**: Processing steps as `[BlockType: block-id]` nodes
         3. **Dependencies**: Arrows showing execution flow
-        4. **Parallel paths**: Use `&` syntax for concurrent operations
+        4. **Parallel paths**: Use separate edge lines for concurrent operations
         5. **Conditions**: Use `-->|condition|` for conditional flows
         6. **Outputs subgraph**: Workflow outputs
 
         Generate the initial design now.
         {% else %}
-        # Refine Workflow Design (Iteration {{inputs.iteration}})
-
-        ## Requirements (unchanged)
-
-        {{inputs.requirements | tojson}}
+        # Refine Workflow Design (Iteration {{depth}})
 
         ## Current Design
-
+        <previous_diagram>
         {{inputs.previous_diagram}}
+        </previous_diagram>
 
         ## User Feedback
-
+        <feedback>
         {{inputs.feedback}}
+        </feedback>
 
         ## Instructions
-
         Refine the diagram based on the feedback above.
         - Address all user concerns
         - Maintain valid Mermaid syntax
@@ -268,16 +170,19 @@ blocks:
           - clarifications
         additionalProperties: false
 
-  # Phase 1b: Create HTML viewer for the diagram
   - id: create_diagram_viewer
+    description: "Create HTML viewer for the diagram"
     type: CreateFile
+    depends_on: [generate_diagram]
     inputs:
-      path: "{{tmp}}/workflow-diagram-{{inputs.iteration}}.html"
+      path: "{{inputs.workspace}}/diagram-{{depth}}.html"
+      create_parents: true
+      overwrite: true
       content: |
         <!DOCTYPE html>
         <html>
         <head>
-          <title>Workflow Design - Iteration {{inputs.iteration}}</title>
+          <title>Workflow Design - Iteration {{depth}}</title>
           <script type="module">
             import mermaid from 'https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs';
             mermaid.initialize({ startOnLoad: true, theme: 'default' });
@@ -291,27 +196,28 @@ blocks:
         </head>
         <body>
           <h1>Workflow Design</h1>
-          <p class="subtitle">Iteration {{inputs.iteration}} of {{inputs.max_iterations}}</p>
+          <p class="subtitle">Iteration {{depth}}</p>
           <div class="mermaid">
         {{blocks.generate_diagram.outputs.response.mermaid_diagram}}
           </div>
         </body>
         </html>
-      overwrite: true
-      create_parents: true
-    depends_on: [generate_diagram]
 
-  # Phase 2: Present diagram to user for approval
   - id: request_approval
+    description: "Present diagram to user for approval"
     type: Prompt
+    depends_on: [create_diagram_viewer]
     inputs:
       prompt: |
-        # WORKFLOW DESIGN - ITERATION {{inputs.iteration}}/{{inputs.max_iterations}}
+        # WORKFLOW DESIGN - ITERATION {{depth}}
+        {% if depth > 10 %}
 
-        ## 📊 View Diagram
+        ⚠️ You've made {{depth}} refinements. This is getting expensive. Max depth is 50.
+        {% endif %}
 
-        Open this file in your browser to see the visual workflow diagram:
-        **{{blocks.create_diagram_viewer.outputs.path}}**
+        ## Diagram
+
+        Open this [diagram]({{blocks.create_diagram_viewer.outputs.path}}) in your browser to see the visual workflow diagram.
 
         ## Block Summary
 
@@ -337,81 +243,24 @@ blocks:
 
         Please review the workflow design above.
 
-        Your options:
-        • Type "approve" - Proceed with workflow generation
-        • Type "refine" - Provide feedback for improvements
-        • Type "cancel" - Stop workflow creation
-
-        IMPORTANT: Respond with ONLY one word: "approve", "refine", or "cancel"
+        To approve: Respond with "approve"
+        To refine: Respond with your feedback directly below describing what needs to change.
 
         Your response:
-    depends_on: [generate_diagram, create_diagram_viewer]
 
-  # Phase 3: Handle user decision
-  - id: check_response
-    type: Shell
-    inputs:
-      command: |
-        RESPONSE="{{blocks.request_approval.outputs.response | lower | trim}}"
-        echo "User response: $RESPONSE"
-
-        if [ "$RESPONSE" = "approve" ]; then
-          echo "STATUS=approved"
-        elif [ "$RESPONSE" = "refine" ]; then
-          echo "STATUS=refine"
-        elif [ "$RESPONSE" = "cancel" ]; then
-          echo "STATUS=cancelled"
-        else
-          echo "STATUS=invalid"
-          echo "ERROR: Invalid response. Must be exactly 'approve', 'refine', or 'cancel'"
-          echo "Received: $RESPONSE"
-          exit 1
-        fi
-    depends_on: [request_approval]
-
-  # Phase 4: Gather refinement feedback (only if user chose "refine")
-  - id: gather_refinement_feedback
-    type: Prompt
-    condition: >-
-      {{blocks.request_approval.outputs.response | lower | trim == 'refine' and
-       inputs.iteration < inputs.max_iterations}}
-    inputs:
-      prompt: |
-        Please describe what you'd like to change or improve in the workflow design:
-
-        (Be specific about which blocks, flow, or logic needs adjustment)
-    depends_on: [check_response]
-
-  # Phase 5: Check if max iterations reached
-  - id: check_max_iterations
-    type: Shell
-    condition: >-
-      {{blocks.request_approval.outputs.response | lower | trim == 'refine' and
-       inputs.iteration >= inputs.max_iterations}}
-    inputs:
-      command: |
-        echo "⚠️  Maximum iterations ({{inputs.max_iterations}}) reached."
-        echo "The current design will be used for workflow generation."
-        echo "You can cancel now and restart if major changes are needed."
-    depends_on: [check_response]
-
-  # Phase 6: Recursive call for refinement (only if under max iterations)
   - id: recurse_refinement
+    description: "Recursive call for refinement"
+    depends_on: [request_approval]
+    condition: "{{blocks.request_approval.outputs.response | lower | trim != 'approve'}}"
     type: Workflow
-    condition: >-
-      {{blocks.request_approval.outputs.response | lower | trim == 'refine' and
-       inputs.iteration < inputs.max_iterations}}
     inputs:
       workflow: design-approval-loop
       inputs:
         requirements: "{{inputs.requirements}}"
         executor_docs: "{{inputs.executor_docs}}"
         examples: "{{inputs.examples}}"
-        iteration: "{{inputs.iteration + 1}}"
-        max_iterations: "{{inputs.max_iterations}}"
         previous_diagram: "{{blocks.generate_diagram.outputs.response.mermaid_diagram}}"
-        feedback: "{{blocks.gather_refinement_feedback.outputs.response}}"
-    depends_on: [gather_refinement_feedback]
+        feedback: "{{blocks.request_approval.outputs.response}}"
 
 outputs:
   final_diagram:
@@ -455,28 +304,16 @@ outputs:
     description: "Path to HTML file for viewing the diagram"
 
   user_decision:
-    value: "{{blocks.request_approval.outputs.response | lower | trim}}"
+    value: "{{ 'approve' if blocks.request_approval.outputs.response | lower | trim == 'approve' else 'refine' }}"
     type: str
-    description: "User's final decision (approve/refine/cancel)"
-
-  iterations_used:
-    value: |
-      {% if blocks.recurse_refinement.succeeded %}
-      {{blocks.recurse_refinement.outputs.iterations_used}}
-      {% else %}
-      {{inputs.iteration}}
-      {% endif %}
-    type: num
-    description: "Total number of iterations used"
+    description: "User's final decision (approve/refine)"
 
   approved:
     value: |
       {% if blocks.recurse_refinement.succeeded %}
       {{blocks.recurse_refinement.outputs.approved}}
       {% else %}
-      {{blocks.request_approval.outputs.response | lower | trim == 'approve' or
-        (blocks.request_approval.outputs.response | lower | trim == 'refine' and
-         inputs.iteration >= inputs.max_iterations)}}
+      {{blocks.request_approval.outputs.response | lower | trim == 'approve'}}
       {% endif %}
     type: bool
-    description: "Whether design was approved (explicitly or by reaching max iterations)"
+    description: "Whether design was approved"

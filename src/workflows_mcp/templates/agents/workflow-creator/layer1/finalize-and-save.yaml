@@ -1,71 +1,52 @@
 name: finalize-and-save
 description: Finalize workflow creation - save, validate, report, and cleanup
-version: "1.0"
+version: "1.1"
 tags: [agents, finalization, internal]
 
 inputs:
   workflow_name:
     type: str
-    description: "Name of the workflow (for file naming)"
+    description: "(Required) Name of the workflow (for file naming)"
     required: true
 
   yaml_content:
     type: str
-    description: "Final validated workflow YAML content"
+    description: "(Required) Final validated workflow YAML content"
     required: true
 
-  output_path:
+  path:
     type: str
-    description: "Desired output path for the workflow file"
+    description: "(Required) Desired output path for the workflow file"
     required: true
 
   tmp_dir:
     type: str
-    description: "Temporary directory to cleanup (from bootstrap)"
+    description: "(Required)Temporary directory to cleanup (from bootstrap)"
     required: true
 
   workflows_mcp_path:
     type: str
-    description: "Directory path where validation script is located"
+    description: "(Required) Directory path where validation script is located"
     required: true
 
   validation_attempts:
     type: num
-    description: "Number of validation attempts made"
-    default: 1
-
-  design_iterations:
-    type: num
-    description: "Number of design iterations used"
+    description: "(Optional) Number of validation attempts made"
     default: 1
 
 blocks:
-  # Phase 1: Ensure output directory exists
-  - id: create_output_dir
-    type: Shell
-    inputs:
-      command: |
-        OUTPUT_DIR=$(dirname "{{inputs.output_path}}")
-        if [ ! -d "$OUTPUT_DIR" ]; then
-          echo "Creating output directory: $OUTPUT_DIR"
-          mkdir -p "$OUTPUT_DIR"
-        else
-          echo "Output directory exists: $OUTPUT_DIR"
-        fi
-
-  # Phase 2: Save final workflow to desired location
   - id: save_final_workflow
     type: CreateFile
+    description: "Save final workflow to desired location"
     inputs:
-      path: "{{inputs.output_path}}"
-      content: "{{inputs.yaml_content}}"
-      overwrite: true
+      path: "{{inputs.path}}"
       create_parents: true
-    depends_on: [create_output_dir]
+      overwrite: true
+      content: "{{inputs.yaml_content}}"
 
-  # Phase 3: Final validation check
   - id: final_validation
     type: Shell
+    description: "Final validation check"
     inputs:
       working_dir: "{{inputs.workflows_mcp_path}}"
       command: |
@@ -80,9 +61,9 @@ blocks:
     continue_on_error: true
     depends_on: [save_final_workflow]
 
-  # Phase 4: Generate summary report
   - id: generate_summary
     type: Shell
+    description: "Generate summary report"
     inputs:
       command: |
         cat <<'EOF'
@@ -95,7 +76,6 @@ blocks:
         Output Path:         {{blocks.save_final_workflow.outputs.path}}
         File Size:           {{blocks.save_final_workflow.outputs.size_bytes}} bytes
 
-        Design Iterations:   {{inputs.design_iterations}}
         Validation Attempts: {{inputs.validation_attempts}}
         Final Validation:    {% if blocks.final_validation.outputs.exit_code == 0 %}✓ PASSED{% else %}✗ FAILED{% endif %}
 
@@ -145,9 +125,9 @@ blocks:
         EOF
     depends_on: [final_validation]
 
-  # Phase 5: Cleanup temporary files
   - id: cleanup_temp_files
     type: Shell
+    description: "Cleanup temporary files"
     inputs:
       command: |
         echo "Cleaning up temporary files..."

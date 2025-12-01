@@ -28,10 +28,8 @@ inputs:
     required: false
 
 blocks:
-  # Check if workspace already has required files (cache hit)
-  # Validates each sparse_checkout pattern exists
   - id: check_cache
-    description: "Check if required files already exist"
+    description: "Check if required files already exist (cache hit)"
     type: Shell
     inputs:
       working_dir: "{{inputs.workspace}}"
@@ -41,7 +39,6 @@ blocks:
         {% endfor -%}
         echo "Cache valid: all patterns exist"
 
-  # Clone repository with sparse checkout (only if cache miss)
   - id: checkout
     description: "Clone workflows-mcp repository"
     type: Workflow
@@ -57,38 +54,7 @@ blocks:
         workspace: "{{inputs.workspace}}"
         sparse_checkout: "{{inputs.sparse_checkout}}"
 
-  # Read the static block reference (authoritative, CI-verified)
-  - id: read_block_reference
-    description: "Read static block executor reference"
-    type: ReadFiles
-    inputs:
-      base_path: "{{inputs.workspace}}/docs/llm"
-      patterns:
-        - "block-reference.md"
-      mode: "full"
-    depends_on:
-      - block: check_cache
-        required: false
-      - block: checkout
-        required: false
-
-  # Read the JSON schemas for structured output
-  - id: read_block_schemas
-    description: "Read block schemas JSON"
-    type: ReadFiles
-    inputs:
-      base_path: "{{inputs.workspace}}/docs/llm"
-      patterns:
-        - "block-schemas.json"
-      mode: "full"
-    depends_on:
-      - block: check_cache
-        required: false
-      - block: checkout
-        required: false
-
-  # Read example workflows for reference
-  - id: read_examples
+  - id: examples
     description: "Read example workflows"
     type: ReadFiles
     inputs:
@@ -97,13 +63,10 @@ blocks:
         - "**/*.yaml"
       mode: "outline"
     depends_on:
-      - block: check_cache
-        required: false
       - block: checkout
         required: false
 
-  # Read built-in templates for reference
-  - id: read_templates
+  - id: templates
     description: "Read built-in workflow templates"
     type: ReadFiles
     inputs:
@@ -112,8 +75,6 @@ blocks:
         - "**/*.yaml"
       mode: "outline"
     depends_on:
-      - block: check_cache
-        required: false
       - block: checkout
         required: false
 
@@ -131,24 +92,19 @@ outputs:
   executor_docs:
     value: "{{inputs.workspace}}/docs/llm/block-reference.md"
     type: str
-    description: "Path to static block executor reference (CI-verified)"
+    description: "Path to static block executor reference"
 
-  executor_schemas_json:
+  executor_schemas:
     value: "{{inputs.workspace}}/docs/llm/block-schemas.json"
     type: str
     description: "Path to block schemas JSON"
 
   examples:
-    value: "{{blocks.read_examples.outputs.content}}"
+    value: "{{blocks.examples.outputs.content}}"
     type: str
     description: "Example workflows for reference"
 
   templates:
-    value: "{{blocks.read_templates.outputs.content}}"
+    value: "{{blocks.templates.outputs.content}}"
     type: str
     description: "Production workflow templates"
-
-  bootstrap_success:
-    value: "{{blocks.read_block_reference.succeeded}}"
-    type: bool
-    description: "Bootstrap completed successfully"
