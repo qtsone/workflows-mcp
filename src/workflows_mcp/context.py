@@ -33,8 +33,13 @@ class AppContext:
     job_queue: JobQueue | None = None  # Optional job queue for async execution
     max_recursion_depth: int = 50  # Default recursion depth limit
 
-    def create_execution_context(self) -> ExecutionContext:
+    def create_execution_context(self, workflow_stack: list[str] | None = None) -> ExecutionContext:
         """Create ExecutionContext for workflow execution.
+
+        Args:
+            workflow_stack: Optional workflow stack for resume (default: empty for new executions).
+                           When resuming paused workflows, pass the saved workflow_stack to ensure
+                           correct depth tracking for recursive workflows.
 
         Returns:
             ExecutionContext with access to all shared resources and configured recursion limit
@@ -45,7 +50,7 @@ class AppContext:
             llm_config_loader=self.llm_config_loader,
             io_queue=self.io_queue,
             parent=None,
-            workflow_stack=[],
+            workflow_stack=workflow_stack or [],
             max_recursion_depth=self.max_recursion_depth,
         )
 

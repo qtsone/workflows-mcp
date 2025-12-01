@@ -26,7 +26,7 @@ inputs:
     type: num
     description: "Maximum number of validation fix attempts"
     default: 10
-  
+
   questions:
     type: dict
     description: "Questions to ask user. Key matches input name - if input provided, question is skipped"
@@ -85,7 +85,7 @@ blocks:
       system_instructions: |
         You are an expert workflow requirements analyst.
         Your goal is to extract clear, structured requirements from user conversations.
-        
+
         # Output Rules
         - workflow_name: lowercase, hyphenated (e.g., "data-pipeline")
         - defaults: MUST be strings (e.g., "10", "true", "None")
@@ -145,7 +145,21 @@ blocks:
                   type: string
                 type:
                   type: string
-                  enum: ["str", "string", "num", "number", "int", "integer", "bool", "boolean", "list", "array", "dict", "object"]
+                  enum:
+                    [
+                      "str",
+                      "string",
+                      "num",
+                      "number",
+                      "int",
+                      "integer",
+                      "bool",
+                      "boolean",
+                      "list",
+                      "array",
+                      "dict",
+                      "object",
+                    ]
                 description:
                   type: string
                 required:
@@ -175,7 +189,21 @@ blocks:
                   type: string
                 type:
                   type: string
-                  enum: ["str", "string", "num", "number", "int", "integer", "bool", "boolean", "list", "array", "dict", "object"]
+                  enum:
+                    [
+                      "str",
+                      "string",
+                      "num",
+                      "number",
+                      "int",
+                      "integer",
+                      "bool",
+                      "boolean",
+                      "list",
+                      "array",
+                      "dict",
+                      "object",
+                    ]
                 description:
                   type: string
               required:
@@ -203,7 +231,7 @@ blocks:
     type: WriteJSONState
     inputs:
       path: "{{inputs.workspace}}/requirements.json"
-      data: "{{blocks.structure_requirements.outputs.response}}"
+      data: "{{ blocks.structure_requirements.outputs.response }}"
 
   - id: design_approval
     depends_on: [store_requirements]
@@ -215,7 +243,7 @@ blocks:
         executor_docs: "{{blocks.bootstrap_context.outputs.executor_docs}}"
         examples: "{{blocks.bootstrap_context.outputs.examples}}"
         workspace: "{{inputs.workspace}}/design-approval"
-  
+
   - id: check_design_approval
     depends_on: [design_approval]
     type: Shell
@@ -245,7 +273,7 @@ blocks:
         1. **Precision**: Use EXACT block types and field names from the Block Reference.
         2. **Structure**: Follow the standard workflow YAML structure (name, description, inputs, blocks, outputs).
         3. **Logic**: Ensure dependencies (depends_on) create a valid DAG matching the design.
-        4. **Variables**: Use double braces {{...}} for variable substitution.
+        4. **Variables**: Use double braces {% raw %}{{...}}{% endraw %} for variable substitution.
 
         # Critical Rules
         - LLMCall blocks: Use 'prompt' (NOT 'command' or 'message')
@@ -269,7 +297,7 @@ blocks:
         {{blocks.design_approval.outputs.final_block_summary}}
 
         ## Structured Requirements
-        {{blocks.structure_requirements.outputs.response | tojson}}
+        {{blocks.structure_requirements.outputs.response | fromjson}}
 
         ## Block Executor Reference (Authoritative)
         {{read_file(blocks.bootstrap_context.outputs.executor_docs)}}

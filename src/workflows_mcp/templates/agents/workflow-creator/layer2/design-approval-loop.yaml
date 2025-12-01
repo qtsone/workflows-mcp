@@ -1,6 +1,6 @@
 name: design-approval-loop
 description: Recursive workflow for iterative design approval with user feedback
-version: "1.1"
+version: "1.2"
 tags: [agents, recursive, interactive, internal]
 
 inputs:
@@ -34,43 +34,67 @@ inputs:
     description: "(Optional) Workspace path for temporary files"
     default: "{{tmp}}"
 
-blocks:
-  - id: read_requirements
-    type: ReadJSONState
-    inputs:
-      path: "{{inputs.requirements}}"
+  index:
+    type: num
+    description: "(Optional) Index of the current iteration"
+    default: 1
+    required: false
 
-  - id: generate_diagram
-    description: "Generate or refine workflow diagram"
-    type: LLMCall
-    depends_on: [read_requirements]
+blocks:
+  - id: log_system_prompt
+    description: "Log the current iteration"
+    type: CreateFile
     inputs:
-      profile: default
-      timeout: 600
-      system_instructions: |
-        You are an expert workflow architect specializing in DAG-based automation workflows.
+      path: "{{inputs.workspace}}/system-{{inputs.index}}.md"
+      content: |
+        You are an expert workflow architect for DAG-based automation workflows.
 
         # Design Principles
-        - **Single responsibility**: Each block has one clear purpose
-        - **Appropriate block types**: Shell for commands, LLMCall for AI, Prompt for user input, CreateFile for output
-        - **Parallelism**: Run independent operations concurrently using depends_on
-        - **User involvement**: Use Prompt blocks for approvals and feedback loops
-        - **Error handling**: Use conditions and continue_on_error where appropriate
+        - Single responsibility per block
+        - Block types: Shell (commands), LLMCall (AI), Prompt (user input), CreateFile (files)
+        - Parallelism via depends_on for concurrent operations
+        - User approval loops: Prompt blocks with conditional edges back to generators
 
-        # Mermaid Diagram Syntax Rules
-        1. **Nodes**: `B1[BlockType: block-id]` (e.g., `[Shell: run-script]`)
-        2. **Edges**: `-->` for flow, `-->|label|` for conditions
-        3. **Parallel edges**: Use separate lines for each edge (NOT `&` syntax)
-        4. **Subgraphs**: Use `subgraph inputs` and `subgraph blocks` and `subgraph outputs`
-        5. **IDs**: Lowercase, hyphenated (e.g., `process-data`)
+        # Mermaid Syntax (CRITICAL - follow exactly)
 
-        # Required Output Format
-        Return a JSON object with:
-        1. **mermaid_diagram**: Raw Mermaid flowchart syntax (start with "flowchart TD")
-        2. **block_summary**: Array of {id, type, purpose, depends_on}
-        3. **explanation**: Design rationale
-        4. **clarifications**: Questions/assumptions
-      prompt: |
+        ## Edge Syntax
+        ✅ CORRECT: `A --> B`           — unlabeled edge
+        ✅ CORRECT: `A -->|label| B`    — labeled edge (pipes wrap label AFTER arrow)
+        ❌ WRONG:   `A --|label|--> B`  — INVALID syntax, never use
+        ❌ WRONG:   `A -- label --> B`  — INVALID syntax, never use
+
+        ## Edge Label Rules (CRITICAL - prevents parsing errors)
+        Edge labels MUST only use simple characters:
+        ✅ ALLOWED: letters, numbers, spaces, hyphens, underscores
+        ❌ FORBIDDEN in labels:
+          - `<` `>` `<=` `>=` (comparison operators break parsing)
+          - `(` `)` parentheses (confuse the parser)
+          - `{` `}` braces
+          - `[` `]` brackets
+          - `&` `|` `"` `'` special chars
+
+        Examples:
+        ✅ `-->|approved|`
+        ✅ `-->|revise - max N loops|`
+        ✅ `-->|more chapters|`
+        ❌ `-->|revise (<= max)|` — parentheses and <= break parsing
+        ❌ `-->|text(s)|` — parentheses break parsing
+
+        ## Nodes & Structure
+        - Node format: `id[Type: id]` with lowercase-hyphenated IDs
+        - Start diagram with `flowchart TD`
+        - Use subgraphs: `inputs`, `blocks`, `outputs`
+        - One edge per line (no `&` syntax for parallel)
+
+        # Output Format
+        JSON: {mermaid_diagram, block_summary: [{id, type, purpose, depends_on}], explanation, clarifications}
+
+  - id: log_prompt
+    description: "Log the LLM prompt"
+    type: CreateFile
+    inputs:
+      path: "{{inputs.workspace}}/prompt-{{inputs.index}}.md"
+      content: |
         # Reference Material
 
         ## Block Executor Reference
@@ -83,7 +107,7 @@ blocks:
         {{inputs.examples}}
         </examples>
 
-        {% if metadata.depth == 1 %}
+        {% if inputs.index == 1 %}
         # Design New Workflow
 
         Create a Mermaid flowchart diagram for this workflow:
@@ -104,7 +128,7 @@ blocks:
 
         Generate the initial design now.
         {% else %}
-        # Refine Workflow Design (Iteration {{metadata.depth}})
+        # Refine Workflow Design (Iteration {{ inputs.index }})
 
         ## Current Design
         <previous_diagram>
@@ -124,6 +148,18 @@ blocks:
 
         Generate the refined design now.
         {% endif %}
+
+  - id: generate_diagram
+    description: "Generate or refine workflow diagram"
+    depends_on: [log_system_prompt, log_prompt]
+    type: LLMCall
+    inputs:
+      profile: default
+      timeout: 600
+      system_instructions: |
+        {{ read_file(inputs.workspace ~ "/system-" ~ inputs.index ~ ".md") }}
+      prompt: |
+        {{ read_file(inputs.workspace ~ "/prompt-" ~ inputs.index ~ ".md") }}
       response_schema:
         type: object
         properties:
@@ -170,19 +206,28 @@ blocks:
           - clarifications
         additionalProperties: false
 
+  - id: log_response
+    description: "Log the diagram"
+    type: CreateFile
+    depends_on: [generate_diagram]
+    inputs:
+      path: "{{inputs.workspace}}/response-{{inputs.index}}.json"
+      content: |
+        {{blocks.generate_diagram.outputs.response | tojson}}
+
   - id: create_diagram_viewer
     description: "Create HTML viewer for the diagram"
     type: CreateFile
     depends_on: [generate_diagram]
     inputs:
-      path: "{{inputs.workspace}}/diagram-{{metadata.depth}}.html"
+      path: "{{inputs.workspace}}/diagram-{{inputs.index}}.html"
       create_parents: true
       overwrite: true
       content: |
         <!DOCTYPE html>
         <html>
         <head>
-          <title>Workflow Design - Iteration {{metadata.depth}}</title>
+          <title>Workflow Design - Iteration {{inputs.index}}</title>
           <script type="module">
             import mermaid from 'https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs';
             mermaid.initialize({ startOnLoad: true, theme: 'default' });
@@ -196,7 +241,7 @@ blocks:
         </head>
         <body>
           <h1>Workflow Design</h1>
-          <p class="subtitle">Iteration {{metadata.depth}}</p>
+          <p class="subtitle">Iteration {{inputs.index}}</p>
           <div class="mermaid">
         {{blocks.generate_diagram.outputs.response.mermaid_diagram}}
           </div>
@@ -209,15 +254,15 @@ blocks:
     depends_on: [create_diagram_viewer]
     inputs:
       prompt: |
-        # WORKFLOW DESIGN - ITERATION {{metadata.depth}}
-        {% if metadata.depth > 10 %}
+        # WORKFLOW DESIGN - ITERATION {{inputs.index}}
+        {% if inputs.index > 10 %}
 
-        ⚠️ You've made {{metadata.depth}} refinements. This is getting expensive. Max depth is 50.
+        ⚠️ You've made {{inputs.index}} refinements. This is getting expensive. Max depth is 50.
         {% endif %}
 
         ## Diagram
 
-        Open this [diagram]({{blocks.create_diagram_viewer.outputs.path}}) in your browser to see the visual workflow diagram.
+        Open this [diagram]({{blocks.create_diagram_viewer.outputs.path}}) in the browser to see the visual workflow diagram.
 
         ## Block Summary
 
@@ -240,11 +285,10 @@ blocks:
         {% endif %}
 
         ---
+        Please review the workflow design and diagram
 
-        Please review the workflow design above.
-
-        To approve: Respond with "approve"
-        To refine: Respond with your feedback directly below describing what needs to change.
+        To approve - respond with "approve"
+        To refine - respond with your feedback directly, describing what needs to change.
 
         Your response:
 
@@ -261,6 +305,8 @@ blocks:
         examples: "{{inputs.examples}}"
         previous_diagram: "{{blocks.generate_diagram.outputs.response.mermaid_diagram}}"
         feedback: "{{blocks.request_approval.outputs.response}}"
+        workspace: "{{inputs.workspace}}"
+        index: "{{inputs.index + 1}}"
 
 outputs:
   final_diagram:

@@ -579,8 +579,13 @@ async def resume_workflow(
             "message": "Failed to extract execution state from paused job.",
         }
 
-    # Create execution context
-    exec_context = app_ctx.create_execution_context()
+    # Extract workflow_stack from execution state for proper depth tracking on resume
+    # workflow_stack is saved as [{"name": "wf1"}, {"name": "wf2"}] format
+    saved_stack = execution_state.workflow_stack or []
+    workflow_stack = [item["name"] if isinstance(item, dict) else item for item in saved_stack]
+
+    # Create execution context with restored workflow_stack
+    exec_context = app_ctx.create_execution_context(workflow_stack=workflow_stack)
 
     # Create WorkflowRunner and resume from state
     runner = WorkflowRunner()
