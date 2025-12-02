@@ -1,4 +1,4 @@
-name: recursive-validation
+name: workflow-creator-recursive-validation
 description: Recursively validate and fix a workflow until it passes or max attempts reached
 version: "1.0"
 tags: [agents, recursive, validation, internal]
@@ -24,71 +24,176 @@ inputs:
     description: "Directory path where validation is located"
     required: true
 
-  iteration:
+  index:
     type: num
     description: "Current attempt number"
     default: 1
 
-  max_iterations:
+  limit:
     type: num
     description: "Maximum number of validation attempts"
     default: 5
 
-blocks:
-  - id: attempt_fix
-    type: Workflow
-    inputs:
-      workflow: validation-fix-attempt
-      inputs:
-        workflow_path: "{{inputs.workflow_path}}"
-        schema_path: "{{inputs.schema_path}}"
-        executor_docs: "{{inputs.executor_docs}}"
-        iteration: "{{inputs.iteration}}"
-        workflows_mcp_path: "{{inputs.workflows_mcp_path}}"
+  workspace:
+    type: str
+    description: "(Optional) Workspace path for temporary files"
+    default: "{{tmp}}"
 
-  - id: check_recursion
-    type: Workflow
-    condition: >-
-      {{blocks.attempt_fix.outputs.was_fixed and
-       inputs.iteration < inputs.max_iterations}}
+blocks:
+  - id: validate_workflow
+    description: "Validate the YAML file"
+    type: Shell
     inputs:
-      workflow: recursive-validation
+      working_dir: "{{inputs.workflows_mcp_path}}"
+      command: |
+        python validate.py "{{inputs.workflow_path}}"
+
+  - id: request_approval
+    description: "Notify user that we hit limit and ask for approval"
+    type: Prompt
+    depends_on:
+      - block: validate_workflow
+        required: false
+    condition: "{{blocks.validate_workflow.failed and (inputs.index >= inputs.limit)}}"
+    inputs:
+      prompt: |
+        # WORKFLOW Validation - ITERATION {{inputs.index}}
+        ⚠️ You've made {{inputs.index}}/{{inputs.limit}} validation attempts. This is getting expensive. Max depth is 50.
+        Continue? [yes/no]
+
+  - id: log_system_prompt
+    description: "Log the system prompt for debugging"
+    depends_on:
+      - block: validate_workflow
+        required: false
+      - block: request_approval
+        required: false
+    condition: >-
+      {{(blocks.validate_workflow.failed and blocks.request_approval.skipped) or
+      (blocks.validate_workflow.failed and blocks.request_approval.succeeded and blocks.request_approval.outputs.response | lower | trim == 'yes')}}
+    type: CreateFile
+    inputs:
+      path: "{{inputs.workspace}}/system_prompt-{{inputs.index}}.md"
+      create_parents: true
+      overwrite: true
+      content: |
+        You are an expert workflow debugger.
+        Your task is to fix validation errors in workflow YAML files.
+
+        # Principles
+        1. **Strict Adherence**: Follow the Block Executor Reference exactly.
+        2. **Minimal Changes**: Fix only what is broken. Preserve intent.
+        3. **Valid YAML**: Ensure the output is valid YAML.
+        4. **Field Names**: Use 'prompt' for LLMCall/Prompt, 'command' for Shell.
+
+  - id: log_user_prompt
+    description: "Log the user prompt for debugging"
+    depends_on: [log_system_prompt]
+    type: CreateFile
+    inputs:
+      path: "{{inputs.workspace}}/user_prompt-{{inputs.index}}.md"
+      create_parents: true
+      overwrite: true
+      content: |
+        # Task: Fix Workflow Validation Errors
+
+        The workflow YAML file failed validation. Analyze errors and fix them.
+
+        ## Original YAML workflow
+        ```yaml
+        {{ read_file(inputs.workflow_path) }}
+        ```
+
+        ## Validation Errors
+        ```sh
+        # STDERR:
+        {{blocks.validate_workflow.outputs.stderr}}
+
+        # STDOUT:
+        {{blocks.validate_workflow.outputs.stdout}}
+        ```
+
+        <executor_docs>
+        {{ read_file(inputs.executor_docs) | replace('# ', '## ') }}
+        </executor_docs>
+
+        ## Instructions
+
+        1. **Analyze the errors**: Look for "Field required" or "Extra inputs not permitted" messages
+        2. **Check field names**: Refer to the Executor Documentation for correct field names
+        3. **Fix the issues**: Correct field names, syntax, structure errors
+        4. **Preserve intent**: Keep the workflow's purpose and logic intact
+
+        ## Common Fixes
+        - "prompt: Field required" + "command: Extra inputs not permitted" → rename 'command' to 'prompt'
+        - "path: Field required" + "command: Extra inputs not permitted" → use 'path' and 'content'
+
+        Return the complete corrected workflow structure.
+
+  - id: fix_validation_errors
+    description: "Fix validation errors"
+    depends_on: [log_system_prompt, log_user_prompt]
+    type: LLMCall
+    inputs:
+      profile: default
+      response_schema: "{{ read_file(inputs.schema_path) | fromjson}}"
+      system_instructions: |
+        {{ blocks.log_system_prompt.outputs.content }}
+      prompt: |
+        {{ blocks.log_user_prompt.outputs.content }}
+
+  - id: store_workflow
+    description: "Save fixed YAML to file"
+    depends_on: [fix_validation_errors]
+    type: CreateFile
+    inputs:
+      path: "{{inputs.workspace}}/fixed-workflow-attempt-{{inputs.index}}.yaml"
+      create_parents: true
+      overwrite: true
+      content: |
+        {{blocks.fix_validation_errors.outputs.response | toyaml}}
+
+  - id: recurse
+    description: "Recurse if a new workflow was created"
+    type: Workflow
+    depends_on: [store_workflow]
+    inputs:
+      workflow: workflow-creator-recursive-validation
       inputs:
-        workflow_path: "{{blocks.attempt_fix.outputs.workflow_path}}"
+        workflow_path: "{{blocks.store_workflow.outputs.path}}"
         schema_path: "{{inputs.schema_path}}"
         executor_docs: "{{inputs.executor_docs}}"
         workflows_mcp_path: "{{inputs.workflows_mcp_path}}"
-        iteration: "{{inputs.iteration + 1}}"
-        max_iterations: "{{inputs.max_iterations}}"
-    depends_on: [attempt_fix]
+        index: "{{inputs.index + 1}}"
+        limit: "{{inputs.limit}}"
 
 outputs:
-  final_workflow_path:
+  workflow_path:
     value: |
-      {% if blocks.check_recursion.succeeded %}
-      {{blocks.check_recursion.outputs.final_workflow_path}}
+      {% if blocks.recurse.succeeded %}
+      {{blocks.recurse.outputs.workflow_path}}
       {% else %}
-      {{blocks.attempt_fix.outputs.workflow_path}}
+      {{inputs.workflow_path}}
       {% endif %}
     type: str
     description: "Path to the final (potentially fixed) workflow file"
 
   is_valid:
     value: |
-      {% if blocks.check_recursion.succeeded %}
-      {{blocks.check_recursion.outputs.is_valid}}
+      {% if blocks.recurse.succeeded %}
+      {{blocks.recurse.outputs.is_valid}}
       {% else %}
-      {{blocks.attempt_fix.outputs.is_valid}}
+      {{blocks.validate_workflow.succeeded}}
       {% endif %}
     type: bool
     description: "Whether the final workflow is valid"
 
-  iterations_used:
-    value: |
-      {% if blocks.check_recursion.succeeded %}
-      {{blocks.check_recursion.outputs.iterations_used}}
-      {% else %}
-      {{inputs.iteration}}
-      {% endif %}
-    type: num
+  iterations:
     description: "Total iterations used"
+    type: num
+    value: |
+      {% if blocks.recurse.succeeded %}
+      {{blocks.recurse.outputs.iterations}}
+      {% else %}
+      {{inputs.index}}
+      {% endif %}

@@ -237,15 +237,46 @@ blocks:
     depends_on: [store_requirements]
     type: Workflow
     inputs:
-      workflow: design-approval-loop
+      workflow: workflow-creator-design-approval-loop
       inputs:
         requirements: "{{inputs.workspace}}/requirements.json"
         executor_docs: "{{blocks.bootstrap_context.outputs.executor_docs}}"
         examples: "{{blocks.bootstrap_context.outputs.examples}}"
         workspace: "{{inputs.workspace}}/design-approval"
 
-  - id: check_design_approval
+  - id: log_design_approval_diagram
+    description: "Log the current iteration"
     depends_on: [design_approval]
+    type: CreateFile
+    inputs:
+      path: "{{inputs.workspace}}/diagram.mermaid"
+      content: |
+        {{blocks.design_approval.outputs.diagram}}
+
+  - id: log_design_approval_summary
+    description: "Log the current iteration"
+    depends_on: [design_approval]
+    type: CreateFile
+    inputs:
+      path: "{{inputs.workspace}}/summary.json"
+      content: |
+        {{blocks.design_approval.outputs.summary | tojson(indent=2)}}
+
+  - id: log_design_approval_explanation
+    description: "Log the current iteration"
+    depends_on: [design_approval]
+    type: CreateFile
+    inputs:
+      path: "{{inputs.workspace}}/explanation.md"
+      content: |
+        {{blocks.design_approval.outputs.explanation}}
+
+  - id: check_design_approval
+    description: "Check if design was approved"
+    depends_on:
+      - log_design_approval_diagram
+      - log_design_approval_summary
+      - log_design_approval_explanation
     type: Shell
     inputs:
       command: |
@@ -259,13 +290,13 @@ blocks:
           exit 1
         fi
 
-  - id: generate_workflow
+  - id: log_system_prompt
+    description: "Log the system prompt"
     depends_on: [check_design_approval]
-    type: LLMCall
+    type: CreateFile
     inputs:
-      profile: default
-      timeout: 600
-      system_instructions: |
+      path: "{{inputs.workspace}}/system_prompt.md"
+      content: |
         You are an expert workflow generator for the workflows-mcp system.
         You generate valid YAML workflow definitions following strict schemas.
 
@@ -280,27 +311,42 @@ blocks:
         - Prompt blocks: Use 'prompt' (NOT 'message')
         - Shell blocks: Use 'command'
         - IDs: Use lowercase-hyphenated identifiers
-      prompt: |
+
+  - id: log_user_prompt
+    description: "Log the user prompt"
+    depends_on: [check_design_approval]
+    type: CreateFile
+    inputs:
+      path: "{{inputs.workspace}}/user_prompt.md"
+      content: |
         # Task: Generate Complete Workflow YAML
 
         Create a production-ready workflow based on the approved design.
 
+        <executor_docs>
+        {{ read_file(blocks.bootstrap_context.outputs.executor_docs) | replace('# ', '## ') }}
+        </executor_docs>
+
+        ```tree
+        {{ blocks.bootstrap_context.outputs.examples }}
+        ```
+        ---
         ## Approved Design
 
         ### Diagram
-        {{blocks.design_approval.outputs.final_diagram}}
-
-        ### Design Explanation
-        {{blocks.design_approval.outputs.final_explanation}}
+        ```mermaid
+        {{ blocks.log_design_approval_diagram.outputs.content }}
+        ```
 
         ### Block Summary
-        {{blocks.design_approval.outputs.final_block_summary}}
+        ```json
+        {{blocks.log_design_approval_summary.outputs.content}}
+        ```
 
         ## Structured Requirements
-        {{blocks.structure_requirements.outputs.response}}
-
-        ## Block Executor Reference (Authoritative)
-        {{read_file(blocks.bootstrap_context.outputs.executor_docs)}}
+        ```json
+        {{blocks.structure_requirements.outputs.response | tojson(indent=2)}}
+        ```
 
         ## Instructions
 
@@ -312,42 +358,54 @@ blocks:
         3. Set proper depends_on relationships
         4. Add conditions where the design specifies conditional paths
 
-        Generate the workflow structure now.
+        Generate the workflow structure now
+
+  - id: generate_workflow
+    description: "Generate the final workflow"
+    depends_on: [log_system_prompt, log_user_prompt]
+    type: LLMCall
+    inputs:
+      profile: default
+      timeout: 600
       response_schema: "{{read_file(blocks.bootstrap_context.outputs.schema_path) | fromjson}}"
+      system_instructions: |
+        {{ blocks.log_system_prompt.outputs.content }}
+      prompt: |
+        {{ blocks.log_user_prompt.outputs.content }}
 
   - id: save_draft_workflow
     depends_on: [generate_workflow]
     type: CreateFile
     inputs:
-      path: "{{tmp}}/draft-workflow.yaml"
-      content: "{{blocks.generate_workflow.outputs.response | toyaml}}"
-      overwrite: true
+      path: "{{inputs.workspace}}/draft-workflow.yaml"
       create_parents: true
+      overwrite: true
+      content: "{{blocks.generate_workflow.outputs.response | toyaml}}"
 
   - id: recursive_validation
     depends_on: [save_draft_workflow]
     type: Workflow
     inputs:
-      workflow: recursive-validation
+      workflow: workflow-creator-recursive-validation
       inputs:
         workflow_path: "{{blocks.save_draft_workflow.outputs.path}}"
         schema_path: "{{blocks.bootstrap_context.outputs.schema_path}}"
         executor_docs: "{{blocks.bootstrap_context.outputs.executor_docs}}"
         workflows_mcp_path: "{{blocks.bootstrap_context.outputs.workspace}}"
-        max_iterations: "{{inputs.max_validation_attempts}}"
+        limit: "{{inputs.max_validation_attempts}}"
+        workspace: "{{inputs.workspace}}/validation"
 
   - id: finalize_and_save
     depends_on: [recursive_validation]
     type: Workflow
     inputs:
-      workflow: finalize-and-save
+      workflow: workflow-creator-finalize-and-save
       inputs:
         workflow_name: "{{blocks.structure_requirements.outputs.response.workflow_name}}"
-        yaml_content: "{{read_file(blocks.recursive_validation.outputs.final_workflow_path)}}"
-        path: "{{inputs.workspace}}/{{blocks.structure_requirements.outputs.response.workflow_name}}.yaml"
-        tmp_dir: "{{blocks.bootstrap_context.outputs.workspace}}"
+        workflow_path: "{{blocks.recursive_validation.outputs.final_workflow_path}}"
+        workspace: "{{inputs.workspace}}"
         workflows_mcp_path: "{{blocks.bootstrap_context.outputs.workspace}}"
-        validation_attempts: "{{blocks.recursive_validation.outputs.iterations_used}}"
+        iterations: "{{blocks.recursive_validation.outputs.iterations}}"
 
 outputs:
   workflow_name:
@@ -359,11 +417,6 @@ outputs:
     value: "{{blocks.finalize_and_save.outputs.workflow_path}}"
     type: str
     description: "Path to the saved workflow file"
-
-  validation_passed:
-    value: "{{blocks.finalize_and_save.outputs.validation_passed}}"
-    type: bool
-    description: "Whether final validation passed"
 
   summary:
     value: "{{blocks.finalize_and_save.outputs.summary}}"

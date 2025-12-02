@@ -1,4 +1,4 @@
-name: design-approval-loop
+name: workflow-creator-design-approval-loop
 description: Recursive workflow for iterative design approval with user feedback
 version: "1.2"
 tags: [agents, recursive, interactive, internal]
@@ -98,7 +98,7 @@ blocks:
         # Output Format
         JSON: {mermaid_diagram, block_summary: [{id, type, purpose, depends_on}], explanation, clarifications}
 
-  - id: log_prompt
+  - id: log_user_prompt
     description: "Log the LLM prompt"
     type: CreateFile
     inputs:
@@ -160,15 +160,15 @@ blocks:
 
   - id: generate_diagram
     description: "Generate or refine workflow diagram"
-    depends_on: [log_system_prompt, log_prompt]
+    depends_on: [log_system_prompt, log_user_prompt]
     type: LLMCall
     inputs:
       profile: default
       timeout: 600
       system_instructions: |
-        {{ read_file(inputs.workspace ~ "/system-" ~ inputs.index ~ ".md") }}
+        {{ blocks.log_system_prompt.outputs.content }}
       prompt: |
-        {{ read_file(inputs.workspace ~ "/prompt-" ~ inputs.index ~ ".md") }}
+        {{ blocks.log_user_prompt.outputs.content }}
       response_schema:
         type: object
         properties:
@@ -307,7 +307,7 @@ blocks:
     condition: "{{blocks.request_approval.outputs.response | lower | trim != 'approve'}}"
     type: Workflow
     inputs:
-      workflow: design-approval-loop
+      workflow: workflow-creator-design-approval-loop
       inputs:
         requirements: "{{inputs.requirements}}"
         executor_docs: "{{inputs.executor_docs}}"
@@ -318,50 +318,45 @@ blocks:
         index: "{{inputs.index + 1}}"
 
 outputs:
-  final_diagram:
+  diagram:
     value: |
       {% if blocks.recurse_refinement.succeeded %}
-      {{blocks.recurse_refinement.outputs.final_diagram}}
+      {{blocks.recurse_refinement.outputs.diagram}}
       {% else %}
       {{blocks.generate_diagram.outputs.response.mermaid_diagram}}
       {% endif %}
     type: str
     description: "Final approved Mermaid workflow diagram"
 
-  final_block_summary:
+  summary:
     value: |
       {% if blocks.recurse_refinement.succeeded %}
-      {{blocks.recurse_refinement.outputs.final_block_summary}}
+      {{blocks.recurse_refinement.outputs.summary}}
       {% else %}
       {{blocks.generate_diagram.outputs.response.block_summary | tojson}}
       {% endif %}
-    type: str
+    type: json
     description: "Final block summary as JSON"
 
-  final_explanation:
+  explanation:
     value: |
       {% if blocks.recurse_refinement.succeeded %}
-      {{blocks.recurse_refinement.outputs.final_explanation}}
+      {{blocks.recurse_refinement.outputs.explanation}}
       {% else %}
       {{blocks.generate_diagram.outputs.response.explanation}}
       {% endif %}
     type: str
     description: "Final design explanation"
 
-  diagram_viewer_path:
+  html_diagram:
     value: |
       {% if blocks.recurse_refinement.succeeded %}
-      {{blocks.recurse_refinement.outputs.diagram_viewer_path}}
+      {{blocks.recurse_refinement.outputs.html_diagram}}
       {% else %}
       {{blocks.create_diagram_viewer.outputs.path}}
       {% endif %}
     type: str
     description: "Path to HTML file for viewing the diagram"
-
-  user_decision:
-    value: "{{ 'approve' if blocks.request_approval.outputs.response | lower | trim == 'approve' else 'refine' }}"
-    type: str
-    description: "User's final decision (approve/refine)"
 
   approved:
     value: |
