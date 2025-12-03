@@ -1,0 +1,198 @@
+name: transform-design
+description: Transform design JSON structure into valid workflow YAML format
+version: "1.0"
+tags: [agents, internal, transform]
+
+inputs:
+  json_path:
+    type: str
+    description: "Path to the design JSON file to transform"
+    required: true
+
+  output_path:
+    type: str
+    description: "Path to write the transformed YAML workflow"
+    required: true
+
+blocks:
+  - id: transform
+    type: Shell
+    inputs:
+      command: |
+        python3 - <<'EOF'
+        import json
+        import sys
+
+        # Map common type names to workflow-mcp types
+        TYPE_MAP = {
+            "string": "str",
+            "integer": "num",
+            "int": "num",
+            "float": "num",
+            "number": "num",
+            "boolean": "bool",
+            "array": "list",
+            "object": "dict",
+        }
+
+        def normalize_type(type_value):
+            """Normalize type values to workflow-mcp types."""
+            if isinstance(type_value, str):
+                return TYPE_MAP.get(type_value.lower(), type_value)
+            return type_value
+
+        def array_to_dict(arr, key_field="name"):
+            """Generic: convert [{name: x, ...}] to {x: {...}}"""
+            if not arr:
+                return {}
+            result = {}
+            for item in arr:
+                if not isinstance(item, dict) or key_field not in item:
+                    continue
+                item_copy = dict(item)
+                key = item_copy.pop(key_field)
+                # Normalize type field if present
+                if "type" in item_copy:
+                    item_copy["type"] = normalize_type(item_copy["type"])
+                result[key] = item_copy
+            return result
+
+        def inputs_array_to_dict(arr):
+            """Convert block inputs with dot notation support.
+
+            [{key: "prompt", value: "Hello"}] -> {prompt: "Hello"}
+            [{key: "inputs.param1", value: "X"}] -> {inputs: {param1: "X"}}
+            """
+            if not arr:
+                return {}
+            result = {}
+            for item in arr:
+                if not isinstance(item, dict):
+                    continue
+                key = item.get("key", "")
+                value = item.get("value", "")
+
+                if "." in key:
+                    parent, child = key.split(".", 1)
+                    if parent not in result:
+                        result[parent] = {}
+                    if isinstance(result[parent], dict):
+                        result[parent][child] = value
+                else:
+                    result[key] = value
+            return result
+
+        def transform_block(block):
+            """Transform a single block."""
+            result = {"id": block.get("id", ""), "type": block.get("type", "")}
+
+            for field in ["description", "depends_on", "condition", "for_each", "for_each_mode"]:
+                if block.get(field):
+                    result[field] = block[field]
+
+            if block.get("inputs"):
+                result["inputs"] = inputs_array_to_dict(block["inputs"])
+
+            return result
+
+        def transform_workflow(design_json):
+            """Transform design JSON to valid workflow structure."""
+            wd = design_json.get("workflow_definition", design_json)
+            return {
+                "name": wd.get("name", "unnamed-workflow"),
+                "description": wd.get("description", ""),
+                "inputs": array_to_dict(wd.get("inputs", []), "name"),
+                "blocks": [transform_block(b) for b in wd.get("blocks", [])],
+                "outputs": array_to_dict(wd.get("outputs", []), "name"),
+            }
+
+        def to_yaml(obj, indent=0):
+            """Simple YAML serializer with multiline string support."""
+            lines = []
+            sp = "  " * indent
+
+            if isinstance(obj, dict):
+                for k, v in obj.items():
+                    if isinstance(v, dict):
+                        lines.append(f"{sp}{k}:" + ("" if v else " {}"))
+                        if v:
+                            lines.append(to_yaml(v, indent + 1))
+                    elif isinstance(v, list):
+                        lines.append(f"{sp}{k}:" + ("" if v else " []"))
+                        for item in v:
+                            if isinstance(item, dict):
+                                first_key = True
+                                for ik, iv in item.items():
+                                    prefix = f"{sp}- " if first_key else f"{sp}  "
+                                    first_key = False
+                                    if isinstance(iv, (dict, list)) and iv:
+                                        lines.append(f"{prefix}{ik}:")
+                                        lines.append(to_yaml(iv, indent + 2))
+                                    else:
+                                        lines.append(f"{prefix}{ik}: {fmt(iv, indent + 2)}")
+                            else:
+                                lines.append(f"{sp}- {fmt(item, indent + 1)}")
+                    else:
+                        lines.append(f"{sp}{k}: {fmt(v, indent + 1)}")
+            return "\n".join(lines)
+
+        def fmt(v, indent=0):
+            """Format a value for YAML."""
+            if v is None:
+                return "null"
+            if isinstance(v, bool):
+                return "true" if v else "false"
+            if isinstance(v, (int, float)):
+                return str(v)
+            if isinstance(v, list):
+                return "[" + ", ".join(fmt(x) for x in v) + "]" if v else "[]"
+            if isinstance(v, dict):
+                return "{}" if not v else "\n" + to_yaml(v, indent)
+            s = str(v)
+            if "\n" in s:
+                sp = "  " * indent
+                return "|\n" + "\n".join(sp + line for line in s.split("\n"))
+            if any(c in s for c in ":#{}[]&*?|>'\",") or s in ("true", "false", "null", "yes", "no", ""):
+                return '"' + s.replace("\\", "\\\\").replace('"', '\\"') + '"'
+            return s
+
+        def main():
+            json_path = "{{inputs.json_path}}"
+            output_path = "{{inputs.output_path}}"
+
+            try:
+                with open(json_path) as f:
+                    design = json.load(f)
+
+                wf = transform_workflow(design)
+                yaml_out = to_yaml(wf)
+
+                with open(output_path, 'w') as f:
+                    f.write(yaml_out + "\n")
+
+                print(f"Transformed: {output_path}")
+                print(f"  Inputs: {len(wf['inputs'])}, Blocks: {len(wf['blocks'])}, Outputs: {len(wf['outputs'])}")
+            except Exception as e:
+                print(f"Error: {e}")
+                import traceback; traceback.print_exc()
+                sys.exit(1)
+
+        if __name__ == "__main__":
+            main()
+        EOF
+
+outputs:
+  approved:
+    value: "{{blocks.transform.succeeded}}"
+    type: bool
+    description: "Whether transformation succeeded"
+
+  message:
+    value: "{{blocks.transform.outputs.stdout}}"
+    type: str
+    description: "Transformation output message"
+
+  workflow_path:
+    value: "{{inputs.output_path}}"
+    type: str
+    description: "Path to the transformed workflow file"

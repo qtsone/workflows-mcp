@@ -41,7 +41,6 @@ class ForbiddenNamespaceRule(TransformRule):
         "exec(",
         "eval(",
         "compile(",
-        "open(",
     ]
 
     def applies_to(self, context: RuleContext) -> bool:

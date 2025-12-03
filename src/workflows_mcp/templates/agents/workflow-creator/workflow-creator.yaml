@@ -4,17 +4,15 @@ version: "2.3"
 tags: [agents, interactive, llm, workflow-generation]
 
 inputs:
-  name:
-    type: str
-    description: "Name for the new workflow (optional - will prompt if not provided)"
-    default: ""
-    required: false
-
-  description:
-    type: str
-    description: "Brief description of what the workflow should do (optional - will prompt if not provided)"
-    default: ""
-    required: false
+  questions:
+    type: dict
+    description: "Questions to ask user. Key matches input name - if input provided, question is skipped"
+    default:
+      name: "What should this workflow be named? (lowercase, hyphens, e.g., 'data-pipeline')"
+      description: "What does this workflow do? (brief description)"
+      inputs: "What inputs does the workflow need? (describe parameters and their purposes)"
+      outputs: "What should the workflow return? (describe expected outputs)"
+      steps: "What are the main steps or phases? (describe the logical flow)"
 
   workspace:
     type: str
@@ -27,382 +25,81 @@ inputs:
     description: "Maximum number of validation fix attempts"
     default: 10
 
-  questions:
-    type: dict
-    description: "Questions to ask user. Key matches input name - if input provided, question is skipped"
-    default:
-      name: "What should this workflow be named? (lowercase, hyphens, e.g., 'data-pipeline')"
-      description: "What does this workflow do? (brief description)"
-      inputs: "What inputs does the workflow need? (describe parameters and their purposes)"
-      outputs: "What should the workflow return? (describe expected outputs)"
-      steps: "What are the main steps or phases? (describe the logical flow)"
-
 blocks:
   - id: bootstrap_context
     type: Workflow
     inputs:
       workflow: workflow-creator-bootstrap
       inputs:
-        repo: "https://github.com/qtsone/workflows-mcp.git"
-        ref: "feat/workflow-companion"
         workspace: "{{inputs.workspace}}/bootstrap"
+        ref: "feat/workflow-companion"
 
-  - id: filter_questions
-    type: WriteJSONState
+  - id: generate_requirements
     depends_on: [bootstrap_context]
-    inputs:
-      path: "{{inputs.workspace}}/questions.json"
-      data:
-        questions: >-
-          {%- set result = {} -%}
-          {%- for key, question in inputs.questions.items() -%}
-            {%- set skip = inputs.get(key, '') | trim != '' -%}
-            {%- if not skip -%}
-              {%- set _ = result.update({key: question}) -%}
-            {%- endif -%}
-          {%- endfor -%}
-          {{ result | tojson }}
-
-  - id: gather_requirements
-    depends_on: [filter_questions]
-    type: Prompt
-    for_each: "{{blocks.filter_questions.inputs.data.questions | fromjson}}"
-    for_each_mode: sequential
-    inputs:
-      prompt: |
-        # WORKFLOW CREATOR - REQUIREMENTS GATHERING
-
-        [{{each.key}}] {{each.value}}
-
-        Your answer:
-
-  - id: structure_requirements
-    depends_on: [gather_requirements]
-    type: LLMCall
-    inputs:
-      profile: default
-      timeout: 600
-      system_instructions: |
-        You are an expert workflow requirements analyst.
-        Your goal is to extract clear, structured requirements from user conversations.
-
-        # Output Rules
-        - workflow_name: lowercase, hyphenated (e.g., "data-pipeline")
-        - defaults: MUST be strings (e.g., "10", "true", "None")
-        - inputs/outputs: explicit types and descriptions
-      prompt: |
-        # Task: Structure Workflow Requirements
-
-        Extract and structure workflow requirements from user responses.
-
-        ## User Provided Inputs
-        {% if inputs.name | trim != '' %}
-        Workflow Name: {{inputs.name}}
-        {% endif %}
-
-        {% if inputs.description | trim != '' %}
-        Workflow Description: {{inputs.description}}
-        {% endif %}
-
-        ## User Responses to Questions
-
-        {% for key, question in (blocks.filter_questions.inputs.data.questions | fromjson).items() %}
-        [{{ key }}] {{ question }}
-        Answer: {{blocks.gather_requirements[key].outputs.response}}
-        {% endfor %}
-
-        ## Instructions
-
-        Create a structured requirements document with:
-
-        1. **workflow_name**: Clean, lowercase, hyphenated name
-        2. **description**: Clear, concise description
-        3. **inputs**: List of {name, type, description, required, default}
-           - IMPORTANT: 'default' must be a STRING. If the default is a number (e.g. 10), use "10".
-           - If no default exists, use the string "None".
-        4. **steps**: Ordered list of workflow phases/steps
-        5. **outputs**: List of {name, type, description}
-        6. **tags**: Relevant tags for categorization
-
-        Be specific and detailed. Infer reasonable defaults where appropriate.
-
-        Generate structured requirements now.
-      response_schema:
-        type: object
-        properties:
-          workflow_name:
-            type: string
-            description: "Clean workflow name"
-          description:
-            type: string
-            description: "Workflow description"
-          inputs:
-            type: array
-            items:
-              type: object
-              properties:
-                name:
-                  type: string
-                type:
-                  type: string
-                  enum:
-                    [
-                      "str",
-                      "string",
-                      "num",
-                      "number",
-                      "int",
-                      "integer",
-                      "bool",
-                      "boolean",
-                      "list",
-                      "array",
-                      "dict",
-                      "object",
-                    ]
-                description:
-                  type: string
-                required:
-                  type: boolean
-                default:
-                  type: string
-                  description: "Default value as a string (e.g. '10', 'true')"
-              required:
-                - name
-                - type
-                - description
-                - required
-                - default
-              additionalProperties: false
-            description: "Workflow input parameters"
-          steps:
-            type: array
-            items:
-              type: string
-            description: "Main workflow steps/phases"
-          outputs:
-            type: array
-            items:
-              type: object
-              properties:
-                name:
-                  type: string
-                type:
-                  type: string
-                  enum:
-                    [
-                      "str",
-                      "string",
-                      "num",
-                      "number",
-                      "int",
-                      "integer",
-                      "bool",
-                      "boolean",
-                      "list",
-                      "array",
-                      "dict",
-                      "object",
-                    ]
-                description:
-                  type: string
-              required:
-                - name
-                - type
-                - description
-              additionalProperties: false
-            description: "Workflow outputs"
-          tags:
-            type: array
-            items:
-              type: string
-            description: "Workflow tags"
-        required:
-          - workflow_name
-          - description
-          - inputs
-          - steps
-          - outputs
-          - tags
-        additionalProperties: false
-
-  - id: store_requirements
-    depends_on: [structure_requirements]
-    type: WriteJSONState
-    inputs:
-      path: "{{inputs.workspace}}/requirements.json"
-      data: "{{ blocks.structure_requirements.outputs.response }}"
-
-  - id: design_approval
-    depends_on: [store_requirements]
     type: Workflow
     inputs:
-      workflow: workflow-creator-design-approval-loop
+      workflow: workflow-creator-requirements
       inputs:
-        requirements: "{{inputs.workspace}}/requirements.json"
-        executor_docs: "{{blocks.bootstrap_context.outputs.executor_docs}}"
-        examples: "{{blocks.bootstrap_context.outputs.examples}}"
-        workspace: "{{inputs.workspace}}/design-approval"
+        questions: "{{inputs.questions}}"
+        workspace: "{{inputs.workspace}}/requirements"
 
-  - id: log_design_approval_diagram
-    description: "Log the current iteration"
-    depends_on: [design_approval]
-    type: CreateFile
+  - id: generate_design
+    depends_on: [generate_requirements]
+    type: Workflow
     inputs:
-      path: "{{inputs.workspace}}/diagram.mermaid"
-      content: |
-        {{blocks.design_approval.outputs.diagram}}
-
-  - id: log_design_approval_summary
-    description: "Log the current iteration"
-    depends_on: [design_approval]
-    type: CreateFile
-    inputs:
-      path: "{{inputs.workspace}}/summary.json"
-      content: |
-        {{blocks.design_approval.outputs.summary | tojson(indent=2)}}
-
-  - id: log_design_approval_explanation
-    description: "Log the current iteration"
-    depends_on: [design_approval]
-    type: CreateFile
-    inputs:
-      path: "{{inputs.workspace}}/explanation.md"
-      content: |
-        {{blocks.design_approval.outputs.explanation}}
-
-  - id: check_design_approval
-    description: "Check if design was approved"
-    depends_on:
-      - log_design_approval_diagram
-      - log_design_approval_summary
-      - log_design_approval_explanation
-    type: Shell
-    inputs:
-      command: |
-        # Convert to lowercase and strip whitespace (Jinja2 templates may include newlines)
-        APPROVED=$(echo "{{blocks.design_approval.outputs.approved}}" | tr '[:upper:]' '[:lower:]' | tr -d '[:space:]')
-        if [ "$APPROVED" = "true" ]; then
-          echo "✓ Design approved, proceeding with generation"
-          exit 0
-        else
-          echo "✗ Design was cancelled by user (approved=$APPROVED)"
-          exit 1
-        fi
-
-  - id: log_system_prompt
-    description: "Log the system prompt"
-    depends_on: [check_design_approval]
-    type: CreateFile
-    inputs:
-      path: "{{inputs.workspace}}/system_prompt.md"
-      content: |
-        You are an expert workflow generator for the workflows-mcp system.
-        You generate valid YAML workflow definitions following strict schemas.
-
-        # Design Principles
-        1. **Precision**: Use EXACT block types and field names from the Block Reference.
-        2. **Structure**: Follow the standard workflow YAML structure (name, description, inputs, blocks, outputs).
-        3. **Logic**: Ensure dependencies (depends_on) create a valid DAG matching the design.
-        4. **Variables**: Use double braces {% raw %}{{...}}{% endraw %} for variable substitution.
-
-        # Critical Rules
-        - LLMCall blocks: Use 'prompt' (NOT 'command' or 'message')
-        - Prompt blocks: Use 'prompt' (NOT 'message')
-        - Shell blocks: Use 'command'
-        - IDs: Use lowercase-hyphenated identifiers
-
-  - id: log_user_prompt
-    description: "Log the user prompt"
-    depends_on: [check_design_approval]
-    type: CreateFile
-    inputs:
-      path: "{{inputs.workspace}}/user_prompt.md"
-      content: |
-        # Task: Generate Complete Workflow YAML
-
-        Create a production-ready workflow based on the approved design.
-
-        <executor_docs>
-        {{ read_file(blocks.bootstrap_context.outputs.executor_docs) | replace('# ', '## ') }}
-        </executor_docs>
-
-        ```tree
-        {{ blocks.bootstrap_context.outputs.examples }}
-        ```
-        ---
-        ## Approved Design
-
-        ### Diagram
-        ```mermaid
-        {{ blocks.log_design_approval_diagram.outputs.content }}
-        ```
-
-        ### Block Summary
-        ```json
-        {{blocks.log_design_approval_summary.outputs.content}}
-        ```
-
-        ## Structured Requirements
-        ```json
-        {{blocks.structure_requirements.outputs.response | tojson(indent=2)}}
-        ```
-
-        ## Instructions
-
-        Generate a complete, valid workflow structure following the approved design.
-
-        For EACH block in the design:
-        1. Use the EXACT block type from the design
-        2. Use the CORRECT required input fields (refer to Block Executor Reference)
-        3. Set proper depends_on relationships
-        4. Add conditions where the design specifies conditional paths
-
-        Generate the workflow structure now
+      workflow: workflow-creator-design
+      inputs:
+        requirements_path: "{{blocks.generate_requirements.outputs.response_path}}"
+        executor_docs_path: "{{blocks.bootstrap_context.outputs.executor_docs_path}}"
+        workspace: "{{inputs.workspace}}/generate-design"
 
   - id: generate_workflow
-    description: "Generate the final workflow"
-    depends_on: [log_system_prompt, log_user_prompt]
-    type: LLMCall
-    inputs:
-      profile: default
-      timeout: 600
-      response_schema: "{{read_file(blocks.bootstrap_context.outputs.schema_path) | fromjson}}"
-      system_instructions: |
-        {{ blocks.log_system_prompt.outputs.content }}
-      prompt: |
-        {{ blocks.log_user_prompt.outputs.content }}
-
-  - id: save_draft_workflow
-    depends_on: [generate_workflow]
-    type: CreateFile
-    inputs:
-      path: "{{inputs.workspace}}/draft-workflow.yaml"
-      create_parents: true
-      overwrite: true
-      content: "{{blocks.generate_workflow.outputs.response | toyaml}}"
-
-  - id: recursive_validation
-    depends_on: [save_draft_workflow]
+    depends_on: [generate_design]
+    condition: "{{blocks.generate_design.outputs.approved}}"
     type: Workflow
     inputs:
-      workflow: workflow-creator-recursive-validation
+      workflow: workflow-creator-generate-workflow
       inputs:
-        workflow_path: "{{blocks.save_draft_workflow.outputs.path}}"
+        diagram_path: "{{blocks.generate_design.outputs.diagram_path}}"
+        user_requests: "{{blocks.generate_requirements.outputs.response_path}}"
+        executor_docs_path: "{{blocks.bootstrap_context.outputs.executor_docs_path}}"
+        examples: "{{blocks.bootstrap_context.outputs.examples}}"
+        workspace: "{{inputs.workspace}}/generate-workflow"
+
+  - id: transform_design
+    description: "Transform design JSON to valid workflow YAML format"
+    depends_on: [generate_workflow]
+    condition: "{{blocks.generate_workflow.outputs.approved}}"
+    type: Workflow
+    inputs:
+      workflow: transform-design
+      inputs:
+        json_path: "{{blocks.generate_workflow.outputs.workflow_path}}"
+        output_path: "{{inputs.workspace}}/draft-workflow.yaml"
+
+  - id: recursive_validation
+    depends_on: [transform_design]
+    condition: "{{blocks.transform_design.outputs.approved}}"
+    type: Workflow
+    inputs:
+      workflow: workflow-creator-validation
+      inputs:
+        workflow_path: "{{blocks.transform_design.outputs.workflow_path}}"
         schema_path: "{{blocks.bootstrap_context.outputs.schema_path}}"
-        executor_docs: "{{blocks.bootstrap_context.outputs.executor_docs}}"
+        executor_docs_path: "{{blocks.bootstrap_context.outputs.executor_docs_path}}"
         workflows_mcp_path: "{{blocks.bootstrap_context.outputs.workspace}}"
         limit: "{{inputs.max_validation_attempts}}"
         workspace: "{{inputs.workspace}}/validation"
 
   - id: finalize_and_save
     depends_on: [recursive_validation]
+    condition: "{{blocks.recursive_validation.outputs.approved}}"
     type: Workflow
     inputs:
-      workflow: workflow-creator-finalize-and-save
+      workflow: workflow-creator-summary
       inputs:
-        workflow_name: "{{blocks.structure_requirements.outputs.response.workflow_name}}"
-        workflow_path: "{{blocks.recursive_validation.outputs.final_workflow_path}}"
+        workflow_name: "{{blocks.generate_requirements.outputs.response.name}}"
+        workflow_path: "{{blocks.recursive_validation.outputs.workflow_path}}"
         workspace: "{{inputs.workspace}}"
         workflows_mcp_path: "{{blocks.bootstrap_context.outputs.workspace}}"
         iterations: "{{blocks.recursive_validation.outputs.iterations}}"
@@ -424,7 +121,7 @@ outputs:
     description: "Complete creation summary with next steps"
 
   requirements:
-    value: "{{blocks.structure_requirements.outputs.response}}"
+    value: "{{blocks.generate_requirements.outputs.response}}"
     type: dict
     description: "Structured workflow requirements"
 

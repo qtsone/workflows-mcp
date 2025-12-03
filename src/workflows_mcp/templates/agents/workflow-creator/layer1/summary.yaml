@@ -1,5 +1,5 @@
-name: workflow-creator-finalize-and-save
-description: Finalize workflow creation - save, validate, report, and cleanup
+name: workflow-creator-summary
+description: Generate summary report for workflow creation
 version: "1.1"
 tags: [agents, finalization, internal]
 
@@ -12,11 +12,6 @@ inputs:
   workflow_path:
     type: str
     description: "(Required) Final validated workflow path"
-    required: true
-
-  workspace:
-    type: str
-    description: "(Required) Workspace path"
     required: true
 
   workflows_mcp_path:
@@ -36,7 +31,7 @@ blocks:
     inputs:
       create_parents: true
       overwrite: true
-      path: "{{inputs.workspace}}/{{inputs.workflow_name}}.yaml"
+      path: "~/.workflows/{{inputs.workflow_name}}.yaml"
       content: "{{ read_file(inputs.workflow_path) }}"
 
   - id: generate_summary

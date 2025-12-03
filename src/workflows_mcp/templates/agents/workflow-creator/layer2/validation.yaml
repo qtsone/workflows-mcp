@@ -1,4 +1,4 @@
-name: workflow-creator-recursive-validation
+name: workflow-creator-validation
 description: Recursively validate and fix a workflow until it passes or max attempts reached
 version: "1.0"
 tags: [agents, recursive, validation, internal]
@@ -14,7 +14,7 @@ inputs:
     description: "Path to LLM-compatible schema JSON file"
     required: true
 
-  executor_docs:
+  executor_docs_path:
     type: str
     description: "Executor documentation for fix context"
     required: true
@@ -59,10 +59,11 @@ blocks:
       prompt: |
         # WORKFLOW Validation - ITERATION {{inputs.index}}
         ⚠️ You've made {{inputs.index}}/{{inputs.limit}} validation attempts. This is getting expensive. Max depth is 50.
-        Continue? [yes/no]
+        Continue?
+        Respond only with "yes" or "no".
 
-  - id: log_system_prompt
-    description: "Log the system prompt for debugging"
+  - id: system_prompt
+    description: "System prompt for validation"
     depends_on:
       - block: validate_workflow
         required: false
@@ -73,9 +74,9 @@ blocks:
       (blocks.validate_workflow.failed and blocks.request_approval.succeeded and blocks.request_approval.outputs.response | lower | trim == 'yes')}}
     type: CreateFile
     inputs:
-      path: "{{inputs.workspace}}/system_prompt-{{inputs.index}}.md"
       create_parents: true
       overwrite: true
+      path: "{{inputs.workspace}}/system_prompt-{{inputs.index}}.md"
       content: |
         You are an expert workflow debugger.
         Your task is to fix validation errors in workflow YAML files.
@@ -86,14 +87,14 @@ blocks:
         3. **Valid YAML**: Ensure the output is valid YAML.
         4. **Field Names**: Use 'prompt' for LLMCall/Prompt, 'command' for Shell.
 
-  - id: log_user_prompt
-    description: "Log the user prompt for debugging"
-    depends_on: [log_system_prompt]
+  - id: user_prompt
+    description: "User prompt for validation"
+    depends_on: [system_prompt]
     type: CreateFile
     inputs:
-      path: "{{inputs.workspace}}/user_prompt-{{inputs.index}}.md"
       create_parents: true
       overwrite: true
+      path: "{{inputs.workspace}}/user_prompt-{{inputs.index}}.md"
       content: |
         # Task: Fix Workflow Validation Errors
 
@@ -114,7 +115,7 @@ blocks:
         ```
 
         <executor_docs>
-        {{ read_file(inputs.executor_docs) | replace('# ', '## ') }}
+        {{ read_file(inputs.executor_docs_path) | replace('# ', '## ') }}
         </executor_docs>
 
         ## Instructions
@@ -132,68 +133,63 @@ blocks:
 
   - id: fix_validation_errors
     description: "Fix validation errors"
-    depends_on: [log_system_prompt, log_user_prompt]
+    depends_on: [system_prompt, user_prompt]
     type: LLMCall
     inputs:
       profile: default
       response_schema: "{{ read_file(inputs.schema_path) | fromjson}}"
       system_instructions: |
-        {{ blocks.log_system_prompt.outputs.content }}
+        {{ blocks.system_prompt.outputs.content }}
       prompt: |
-        {{ blocks.log_user_prompt.outputs.content }}
+        {{ blocks.user_prompt.outputs.content }}
 
   - id: store_workflow
     description: "Save fixed YAML to file"
     depends_on: [fix_validation_errors]
     type: CreateFile
     inputs:
-      path: "{{inputs.workspace}}/fixed-workflow-attempt-{{inputs.index}}.yaml"
       create_parents: true
       overwrite: true
+      path: "{{inputs.workspace}}/workflow-v{{inputs.index}}.yaml"
       content: |
-        {{blocks.fix_validation_errors.outputs.response | toyaml}}
+        {{blocks.fix_validation_errors.outputs.response | fromjson | toyaml}}
 
   - id: recurse
     description: "Recurse if a new workflow was created"
     type: Workflow
     depends_on: [store_workflow]
     inputs:
-      workflow: workflow-creator-recursive-validation
+      workflow: workflow-creator-validation
       inputs:
         workflow_path: "{{blocks.store_workflow.outputs.path}}"
         schema_path: "{{inputs.schema_path}}"
-        executor_docs: "{{inputs.executor_docs}}"
+        executor_docs_path: "{{inputs.executor_docs_path}}"
         workflows_mcp_path: "{{inputs.workflows_mcp_path}}"
         index: "{{inputs.index + 1}}"
         limit: "{{inputs.limit}}"
+        workspace: "{{inputs.workspace}}"
 
 outputs:
   workflow_path:
-    value: |
-      {% if blocks.recurse.succeeded %}
-      {{blocks.recurse.outputs.workflow_path}}
-      {% else %}
-      {{inputs.workflow_path}}
-      {% endif %}
+    value: >-
+      {{blocks.recurse.outputs.workflow_path
+      if blocks.recurse.succeeded
+      else inputs.workflow_path}}
     type: str
     description: "Path to the final (potentially fixed) workflow file"
 
-  is_valid:
-    value: |
-      {% if blocks.recurse.succeeded %}
-      {{blocks.recurse.outputs.is_valid}}
-      {% else %}
-      {{blocks.validate_workflow.succeeded}}
-      {% endif %}
+  approved:
+    value: >-
+      {{blocks.recurse.outputs.approved
+      if blocks.recurse.succeeded
+      else blocks.validate_workflow.succeeded}}
     type: bool
     description: "Whether the final workflow is valid"
 
   iterations:
     description: "Total iterations used"
     type: num
-    value: |
-      {% if blocks.recurse.succeeded %}
-      {{blocks.recurse.outputs.iterations}}
-      {% else %}
-      {{inputs.index}}
-      {% endif %}
+    value: >-
+      {{blocks.recurse.outputs.iterations
+      if blocks.recurse.succeeded
+      else inputs.index}}

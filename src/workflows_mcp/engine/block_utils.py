@@ -59,8 +59,8 @@ class PathResolver:
         if working_dir is None:
             working_dir = Path.cwd()
 
-        # Convert to Path object
-        file_path = Path(path)
+        # Convert to Path object and expand ~ to home directory (cross-platform)
+        file_path = Path(path).expanduser()
 
         # Build absolute path
         if file_path.is_absolute():

@@ -1,25 +1,20 @@
-name: workflow-creator-design-approval-loop
+name: workflow-creator-design
 description: Recursive workflow for iterative design approval with user feedback
 version: "1.2"
 tags: [agents, recursive, interactive, internal]
 
 inputs:
-  requirements:
+  requirements_path:
     type: str
     description: "(Required) Path to structured workflow requirements JSON file"
     required: true
 
-  executor_docs:
+  executor_docs_path:
     type: str
     description: "(Required) Path to compressed executor reference documentation"
     required: true
 
-  examples:
-    type: str
-    description: "(Required) Example workflows for reference"
-    required: true
-
-  previous_diagram:
+  diagram_path:
     type: str
     description: "(Optional) Previous diagram (for refinement iterations)"
     default: ""
@@ -41,11 +36,13 @@ inputs:
     required: false
 
 blocks:
-  - id: log_system_prompt
+  - id: system_prompt
     description: "Log the current iteration"
     type: CreateFile
     inputs:
-      path: "{{inputs.workspace}}/system-{{inputs.index}}.md"
+      create_parents: true
+      overwrite: true
+      path: "{{inputs.workspace}}/system-prompt-{{inputs.index}}.md"
       content: |
         You are an expert workflow architect for DAG-based automation workflows.
 
@@ -89,6 +86,15 @@ blocks:
 
         Labels inside brackets [...] can contain hyphens, but the ID before the bracket MUST use underscores.
 
+        ## Node Label Rules (CRITICAL - prevents parsing errors)
+        Node labels (text inside brackets) MUST NOT contain quotes:
+        ✅ CORRECT: `my_node[Shell: validate inputs]`
+        ✅ CORRECT: `ask_user[Prompt: What is your name]`
+        ❌ WRONG: `my_node[Shell: "validate inputs"]` — double quotes break parsing
+        ❌ WRONG: `ask_user[Prompt: Ask "what next?"]` — quotes cause syntax errors
+
+        Keep labels simple and descriptive without any quotation marks.
+
         ## Structure
         - Node format: `node_id[Type: label]` with lowercase_underscored IDs
         - Start diagram with `flowchart TD`
@@ -96,35 +102,26 @@ blocks:
         - One edge per line (no `&` syntax for parallel)
 
         # Output Format
-        JSON: {mermaid_diagram, block_summary: [{id, type, purpose, depends_on}], explanation, clarifications}
+        JSON: {mermaid_diagram, explanation, clarifications}
+        Note: inputs, blocks, and outputs are arrays (lists), not objects.
 
-  - id: log_user_prompt
+  - id: user_prompt
     description: "Log the LLM prompt"
     type: CreateFile
     inputs:
-      path: "{{inputs.workspace}}/prompt-{{inputs.index}}.md"
+      create_parents: true
+      overwrite: true
+      path: "{{inputs.workspace}}/user-prompt-{{inputs.index}}.md"
       content: |
         # Reference Material
 
-        ## Block Executor Reference
         <executor_docs>
-        {{ read_file(inputs.executor_docs) | replace('# ', '## ') }}
+        {{ read_file(inputs.executor_docs_path) | replace('# ', '## ') }}
         </executor_docs>
 
-        ## Example Workflows
-        <examples>
-        {{inputs.examples}}
-        </examples>
-
-        {% if inputs.index == 1 %}
+        {%- if inputs.index == 1 %}
         # Design New Workflow
-
         Create a Mermaid flowchart diagram for this workflow:
-
-        ## Requirements
-        <requirements>
-        {{ read_file(inputs.requirements) }}
-        </requirements>
 
         ## Instructions
         Design the architecture with:
@@ -140,14 +137,14 @@ blocks:
         # Refine Workflow Design (Iteration {{ inputs.index }})
 
         ## Current Design
-        <previous_diagram>
-        {{inputs.previous_diagram}}
-        </previous_diagram>
+        ```mermaid
+        {{read_file(inputs.diagram_path)}}
+        ```
 
         ## User Feedback
-        <feedback>
+        ```
         {{inputs.feedback}}
-        </feedback>
+        ```
 
         ## Instructions
         Refine the diagram based on the feedback above.
@@ -157,81 +154,73 @@ blocks:
 
         Generate the refined design now.
         {% endif %}
+        ## Requirements
+        Follow the requirements below closely. Beware of overengineering. Do not add extra features, or complexity beyond what is specified.
+        ```json
+        {{ read_file(inputs.requirements_path) | fromjson | prettyjson }}
+        ```
 
-  - id: generate_diagram
+  - id: generate_design
     description: "Generate or refine workflow diagram"
-    depends_on: [log_system_prompt, log_user_prompt]
+    depends_on: [system_prompt, user_prompt]
     type: LLMCall
     inputs:
       profile: default
       timeout: 600
-      system_instructions: |
-        {{ blocks.log_system_prompt.outputs.content }}
-      prompt: |
-        {{ blocks.log_user_prompt.outputs.content }}
       response_schema:
         type: object
         properties:
           mermaid_diagram:
             type: string
             description: "Raw Mermaid flowchart syntax starting with 'flowchart TD' - NO markdown code fences or backticks"
-          block_summary:
-            type: array
-            items:
-              type: object
-              properties:
-                id:
-                  type: string
-                  description: "Block ID (lowercase, underscored - e.g., overview_llm)"
-                type:
-                  type: string
-                  description: "Block type (Shell, LLMCall, Prompt, etc.)"
-                purpose:
-                  type: string
-                  description: "What this block does (one sentence)"
-                depends_on:
-                  type: array
-                  items:
-                    type: string
-                  description: "Block IDs this depends on"
-              required:
-                - id
-                - type
-                - purpose
-                - depends_on
-            description: "Summary of each block in the workflow"
           explanation:
             type: string
-            description: "Design choices and rationale"
+            description: "Design choices and rationale. Use empty string if none."
           clarifications:
             type: array
             items:
               type: string
-            description: "Questions or assumptions to validate"
+            description: "Questions or assumptions to validate. Use empty array [] if none."
         required:
           - mermaid_diagram
-          - block_summary
           - explanation
           - clarifications
         additionalProperties: false
+      system_instructions: |
+        {{ blocks.system_prompt.outputs.content }}
+      prompt: |
+        {{ blocks.user_prompt.outputs.content }}
 
-  - id: log_response
-    description: "Log the diagram"
+  - id: store_response
+    description: "Save design to temp file for validation"
     type: CreateFile
-    depends_on: [generate_diagram]
+    depends_on: [generate_design]
     inputs:
-      path: "{{inputs.workspace}}/response-{{inputs.index}}.json"
-      content: |
-        {{blocks.generate_diagram.outputs.response | tojson}}
-
-  - id: create_diagram_viewer
-    description: "Create HTML viewer for the diagram"
-    type: CreateFile
-    depends_on: [generate_diagram]
-    inputs:
-      path: "{{inputs.workspace}}/diagram-{{inputs.index}}.html"
       create_parents: true
       overwrite: true
+      path: "{{inputs.workspace}}/response-v{{inputs.index}}.json"
+      content: |
+        {{blocks.generate_design.outputs.response | prettyjson}}
+
+  - id: store_diagram
+    description: "Store the design diagram"
+    depends_on: [generate_design]
+    type: CreateFile
+    inputs:
+      create_parents: true
+      overwrite: true
+      path: "{{inputs.workspace}}/diagram-v{{inputs.index}}.mermaid"
+      content: |
+        {{blocks.generate_design.outputs.response.mermaid_diagram}}
+
+  - id: store_html_page
+    description: "Create HTML viewer for the diagram"
+    type: CreateFile
+    depends_on: [store_diagram]
+    inputs:
+      create_parents: true
+      overwrite: true
+      path: "{{inputs.workspace}}/render-v{{inputs.index}}.html"
       content: |
         <!DOCTYPE html>
         <html>
@@ -252,118 +241,84 @@ blocks:
           <h1>Workflow Design</h1>
           <p class="subtitle">Iteration {{inputs.index}}</p>
           <div class="mermaid">
-        {{blocks.generate_diagram.outputs.response.mermaid_diagram}}
+        {{blocks.store_diagram.outputs.content}}
           </div>
         </body>
         </html>
 
-  - id: request_approval
+  - id: request_feedback
     description: "Present diagram to user for approval"
     type: Prompt
-    depends_on: [create_diagram_viewer]
+    depends_on: [store_html_page]
     inputs:
       prompt: |
         # WORKFLOW DESIGN - ITERATION {{inputs.index}}
-        {% if inputs.index > 10 %}
-
+        {%- if inputs.index > 10 %}
         ⚠️ You've made {{inputs.index}} refinements. This is getting expensive. Max depth is 50.
-        {% endif %}
+        {%- endif %}
 
         ## Diagram
-
-        Open this [diagram]({{blocks.create_diagram_viewer.outputs.path}}) in the browser to see the visual workflow diagram.
-
-        ## Block Summary
-
-        | Block ID | Type | Purpose |
-        |----------|------|---------|
-        {% for item in blocks.generate_diagram.outputs.response.block_summary %}
-        | `{{ item.id }}` | {{ item.type }} | {{ item.purpose }} |
-        {% endfor %}
+        Prompt the user to open this HTML page: {{blocks.store_html_page.outputs.path}} in the browser to see the visual workflow diagram.
 
         ## Design Explanation
+        {{blocks.generate_design.outputs.response.explanation}}
 
-        {{blocks.generate_diagram.outputs.response.explanation}}
-
-        {% if blocks.generate_diagram.outputs.response.clarifications %}
+        {%- if blocks.generate_design.outputs.response.clarifications | trim != '' %}
         ## Clarifications Needed
-
-        {% for clarification in blocks.generate_diagram.outputs.response.clarifications %}
-        • {{ clarification }}
-        {% endfor %}
-        {% endif %}
-
+        {%- for clarification in blocks.generate_design.outputs.response.clarifications %}
+        - {{ clarification }}
+        {%- endfor %}
+        {%- endif %}
         ---
         Please review the workflow design and diagram
-
         To approve - respond with "approve"
         To refine - respond with your feedback directly, describing what needs to change.
-
         Your response:
 
   - id: recurse_refinement
     description: "Recursive call for refinement"
-    depends_on: [request_approval]
-    condition: "{{blocks.request_approval.outputs.response | lower | trim != 'approve'}}"
+    depends_on: [request_feedback]
+    condition: "{{blocks.request_feedback.outputs.response | lower | trim != 'approve'}}"
     type: Workflow
     inputs:
-      workflow: workflow-creator-design-approval-loop
+      workflow: workflow-creator-design
       inputs:
-        requirements: "{{inputs.requirements}}"
-        executor_docs: "{{inputs.executor_docs}}"
-        examples: "{{inputs.examples}}"
-        previous_diagram: "{{blocks.generate_diagram.outputs.response.mermaid_diagram}}"
-        feedback: "{{blocks.request_approval.outputs.response}}"
         workspace: "{{inputs.workspace}}"
         index: "{{inputs.index + 1}}"
+        requirements_path: "{{inputs.requirements_path}}"
+        executor_docs_path: "{{inputs.executor_docs_path}}"
+        diagram_path: "{{blocks.store_diagram.outputs.path}}"
+        feedback: "{{blocks.request_feedback.outputs.response}}"
 
 outputs:
-  diagram:
-    value: |
-      {% if blocks.recurse_refinement.succeeded %}
-      {{blocks.recurse_refinement.outputs.diagram}}
-      {% else %}
-      {{blocks.generate_diagram.outputs.response.mermaid_diagram}}
-      {% endif %}
+  diagram_path:
+    value: >-
+      {{blocks.recurse_refinement.outputs.diagram_path
+      if blocks.recurse_refinement.succeeded
+      else blocks.store_diagram.outputs.path}}
     type: str
-    description: "Final approved Mermaid workflow diagram"
-
-  summary:
-    value: |
-      {% if blocks.recurse_refinement.succeeded %}
-      {{blocks.recurse_refinement.outputs.summary}}
-      {% else %}
-      {{blocks.generate_diagram.outputs.response.block_summary | tojson}}
-      {% endif %}
-    type: json
-    description: "Final block summary as JSON"
+    description: "Path to the final approved Mermaid workflow diagram"
 
   explanation:
-    value: |
-      {% if blocks.recurse_refinement.succeeded %}
-      {{blocks.recurse_refinement.outputs.explanation}}
-      {% else %}
-      {{blocks.generate_diagram.outputs.response.explanation}}
-      {% endif %}
+    value: >-
+      {{blocks.recurse_refinement.outputs.explanation
+      if blocks.recurse_refinement.succeeded
+      else blocks.generate_design.outputs.response.explanation}}
     type: str
     description: "Final design explanation"
 
   html_diagram:
-    value: |
-      {% if blocks.recurse_refinement.succeeded %}
-      {{blocks.recurse_refinement.outputs.html_diagram}}
-      {% else %}
-      {{blocks.create_diagram_viewer.outputs.path}}
-      {% endif %}
+    value: >-
+      {{blocks.recurse_refinement.outputs.html_diagram
+      if blocks.recurse_refinement.succeeded
+      else blocks.store_html_page.outputs.path}}
     type: str
     description: "Path to HTML file for viewing the diagram"
 
   approved:
-    value: |
-      {% if blocks.recurse_refinement.succeeded %}
-      {{blocks.recurse_refinement.outputs.approved}}
-      {% else %}
-      {{blocks.request_approval.outputs.response | lower | trim == 'approve'}}
-      {% endif %}
+    value: >-
+      {{blocks.recurse_refinement.outputs.approved
+      if blocks.recurse_refinement.succeeded
+      else (blocks.request_feedback.outputs.response | lower | trim == 'approve')}}
     type: bool
     description: "Whether design was approved"

@@ -40,12 +40,12 @@ blocks:
         echo "Cache valid: all patterns exist"
 
   - id: checkout
-    description: "Clone workflows-mcp repository"
-    type: Workflow
+    description: "Clone repository"
     depends_on:
       - block: check_cache
         required: false
     condition: "{{ not blocks.check_cache.succeeded }}"
+    type: Workflow
     inputs:
       workflow: git-checkout
       inputs:
@@ -56,55 +56,55 @@ blocks:
 
   - id: examples
     description: "Read example workflows"
+    depends_on:
+      - block: checkout
+        required: false
     type: ReadFiles
     inputs:
       base_path: "{{inputs.workspace}}/tests/workflows/integration"
       patterns:
         - "**/*.yaml"
       mode: "outline"
-    depends_on:
-      - block: checkout
-        required: false
 
   - id: templates
     description: "Read built-in workflow templates"
+    depends_on:
+      - block: checkout
+        required: false
     type: ReadFiles
     inputs:
       base_path: "{{inputs.workspace}}/src/workflows_mcp/templates"
       patterns:
         - "**/*.yaml"
       mode: "outline"
-    depends_on:
-      - block: checkout
-        required: false
 
 outputs:
   workspace:
+    description: "Workspace directory containing the repo"
     value: "{{inputs.workspace}}"
     type: str
-    description: "Workspace directory containing the repo"
 
   schema_path:
+    description: "Path to LLM-compatible workflow schema (for structured outputs)"
     value: "{{inputs.workspace}}/llm_schema.json"
     type: str
-    description: "Path to LLM-compatible workflow schema (for structured outputs)"
 
-  executor_docs:
+  executor_docs_path:
+    description: "Path to static block executor reference"
     value: "{{inputs.workspace}}/docs/llm/block-reference.md"
     type: str
-    description: "Path to static block executor reference"
 
-  executor_schemas:
+  executor_schemas_path:
+    description: "Path to block schemas JSON"
     value: "{{inputs.workspace}}/docs/llm/block-schemas.json"
     type: str
-    description: "Path to block schemas JSON"
 
   examples:
+    description: "Example workflows for reference"
     value: "{{blocks.examples.outputs.content}}"
     type: str
-    description: "Example workflows for reference"
 
   templates:
+    description: "Production workflow templates"
     value: "{{blocks.templates.outputs.content}}"
     type: str
-    description: "Production workflow templates"

@@ -1,0 +1,391 @@
+name: workflow-creator-generate-workflow
+description: Generate workflow from design
+version: "1.0"
+tags: [agents, recursive, interactive, internal]
+
+inputs:
+  diagram_path:
+    type: str
+    description: "(Required) Path to approved mermaid diagram"
+    required: true
+
+  user_requests:
+    type: str
+    description: "(Required) Path to structured requests JSON file"
+    required: true
+
+  executor_docs_path:
+    type: str
+    description: "(Required) Path to compressed executor reference documentation"
+    required: true
+
+  examples:
+    type: str
+    description: "(Required) Example workflows for reference"
+    required: true
+
+  workflow_path:
+    type: str
+    description: "(Optional) Path to previous workflow definition (for refinement iterations)"
+    default: ""
+    required: false
+
+  feedback:
+    type: str
+    description: "(Optional) User feedback from previous iteration"
+    default: ""
+    required: false
+
+  workspace:
+    type: str
+    description: "(Optional) Workspace path for temporary files"
+    default: "{{tmp}}"
+    required: false
+
+  index:
+    type: num
+    description: "(Optional) Index of the current iteration"
+    default: 1
+    required: false
+
+blocks:
+  - id: system_prompt
+    description: "Log the current iteration"
+    type: CreateFile
+    inputs:
+      create_parents: true
+      overwrite: true
+      path: "{{inputs.workspace}}/system-prompt-v{{inputs.index}}.md"
+      content: |
+        You are an expert workflow architect for DAG-based automation workflows.
+
+        # Design Principles
+        - Single responsibility per block
+        - Parallelism via depends_on for concurrent operations
+        - User approval loops: Prompt blocks with conditional edges back to generators
+
+        # Output Format
+        JSON: {workflow: {name, description, inputs: [...], blocks: [...], outputs: [...]}, explanation, clarifications}
+        Note: In this representation, inputs, blocks, and outputs are arrays (lists), not objects.
+
+  - id: user_prompt
+    description: "Log the LLM prompt"
+    type: CreateFile
+    inputs:
+      create_parents: true
+      overwrite: true
+      path: "{{inputs.workspace}}/user-prompt-v{{inputs.index}}.md"
+      content: |
+        # Reference Material
+        <executor_docs>
+        {{ read_file(inputs.executor_docs_path) | replace('# ', '## ') }}
+        </executor_docs>
+
+        ## Example Workflow structures
+        ```tree
+        {{inputs.examples}}
+        ```
+
+        ## User's initial requests
+        ```json
+        {{read_file(inputs.user_requests) | fromjson | prettyjson}}
+        ```
+
+        ## Refined and approved Mermaid Diagram
+        ```mermaid
+        {{read_file(inputs.diagram_path)}}
+        ```
+
+        {%- if inputs.index == 1 %}
+        # Design New Workflow
+        Create the workflow based on the approved diagram:
+
+        ## Instructions
+        Design the architecture with:
+        1. **Inputs**: All workflow input parameters
+        2. **Blocks**: Compute/Processing steps
+        3. **Outputs**: Workflow outputs
+
+        Generate the initial workflow design now.
+        {% else %}
+        # Refine Workflow Design (iteration {{ inputs.index }})
+
+        ## Current Workflow
+        ```json
+        {{read_file(inputs.workflow_path) | fromjson | prettyjson}}
+        ```
+
+        ## User Feedback
+        ```
+        {{inputs.feedback}}
+        ```
+
+        ## Instructions
+        Refine the diagram based on the feedback above.
+        - Address all user concerns
+        - Maintain valid output JSON syntax
+        - Explain what you changed and why
+
+        Generate the refined design now.
+        {% endif %}
+
+  - id: generate_workflow
+    description: "Generate or refine workflow diagram"
+    depends_on: [system_prompt, user_prompt]
+    type: LLMCall
+    inputs:
+      profile: default
+      timeout: 600
+      response_schema:
+        type: object
+        properties:
+          workflow:
+            type: object
+            properties:
+              name:
+                type: string
+                description: "Workflow name (lowercase, hyphens)"
+              description:
+                type: string
+                description: "Brief description of what the workflow does"
+              inputs:
+                type: array
+                description: "Workflow inputs with types and descriptions"
+                items:
+                  type: object
+                  properties:
+                    name:
+                      type: string
+                      description: "Input parameter name"
+                    type:
+                      type: string
+                      description: "Parameter type (str, int, bool, etc.)"
+                    description:
+                      type: string
+                      description: "What this input is for"
+                    required:
+                      type: boolean
+                      description: "Whether this input is required"
+                    default:
+                      type: string
+                      description: "Default value if not provided"
+                  required:
+                    - name
+                    - type
+                    - description
+                    - required
+                    - default
+                  additionalProperties: false
+              blocks:
+                type: array
+                items:
+                  type: object
+                  properties:
+                    id:
+                      type: string
+                      description: "Block identifier (lowercase_underscored)"
+                    type:
+                      type: string
+                      description: "Block type (Shell, LLMCall, Prompt, CreateFile, etc.)"
+                    description:
+                      type: string
+                      description: "What this block does"
+                    depends_on:
+                      type: array
+                      items:
+                        type: string
+                      description: "IDs of blocks this depends on"
+                    condition:
+                      type: string
+                      description: "{% raw %}Condition for execution (e.g., '{{blocks.X.succeeded}}'). Use empty string if none.{% endraw %}"
+                    for_each:
+                      type: string
+                      description: "{% raw %}List expression for iteration (e.g., '{{inputs.items}}'). Use empty string if none.{% endraw %}"
+                    for_each_mode:
+                      type: string
+                      description: "Iteration mode: 'parallel' or 'sequential'. Use empty string if none."
+                    inputs:
+                      type: array
+                      description: "Block inputs as key-value pairs. Use dot notation for nesting (e.g., 'inputs.param1' for Workflow blocks)."
+                      items:
+                        type: object
+                        properties:
+                          key:
+                            type: string
+                            description: "Input field name from executor docs (e.g., 'prompt', 'command', 'path'). Use dot notation for nesting: 'inputs.X' becomes inputs: {X: ...}"
+                          value:
+                            type: string
+                            description: "{% raw %}Input value. Use {{inputs.X}} for workflow inputs, {{blocks.Y.outputs.Z}} for block outputs.{% endraw %}"
+                        required:
+                          - key
+                          - value
+                        additionalProperties: false
+                  required:
+                    - id
+                    - type
+                    - description
+                    - depends_on
+                    - inputs
+                  additionalProperties: false
+              outputs:
+                type: array
+                description: "Workflow outputs"
+                items:
+                  type: object
+                  properties:
+                    name:
+                      type: string
+                      description: "Output name"
+                    type:
+                      type: string
+                      description: "Output type"
+                    description:
+                      type: string
+                      description: "What this output contains"
+                    value:
+                      type: string
+                      description: "{% raw %}Value expression (e.g., '{{blocks.block_id.outputs.field}}'){% endraw %}"
+                  required:
+                    - name
+                    - type
+                    - description
+                    - value
+                  additionalProperties: false
+            required:
+              - name
+              - description
+              - inputs
+              - blocks
+              - outputs
+            additionalProperties: false
+            description: "Full structured workflow definition"
+          explanation:
+            type: string
+            description: "Design choices and rationale"
+          clarifications:
+            type: array
+            items:
+              type: string
+            description: "Questions or assumptions to validate. Use empty array [] if none."
+        required:
+          - workflow
+          - explanation
+          - clarifications
+        additionalProperties: false
+      system_instructions: |
+        {{ blocks.system_prompt.outputs.content }}
+      prompt: |
+        {{ blocks.user_prompt.outputs.content }}
+
+  - id: store_response
+    description: "Save design to temp file for validation"
+    type: CreateFile
+    depends_on: [generate_workflow]
+    inputs:
+      create_parents: true
+      overwrite: true
+      path: "{{inputs.workspace}}/response-v{{inputs.index}}.json"
+      content: |
+        {{blocks.generate_workflow.outputs.response | prettyjson}}
+
+  - id: store_workflow
+    description: "Save design to temp file for validation"
+    type: CreateFile
+    depends_on: [generate_workflow]
+    inputs:
+      create_parents: true
+      overwrite: true
+      path: "{{inputs.workspace}}/workflow-v{{inputs.index}}.json"
+      content: |
+        {{blocks.generate_workflow.outputs.response.workflow | prettyjson}}
+
+  - id: validate_design
+    description: "Validate the generated design structure"
+    type: Workflow
+    depends_on: [store_workflow]
+    inputs:
+      workflow: validate-design
+      inputs:
+        json_path: "{{blocks.store_workflow.outputs.path}}"
+
+  - id: request_approval
+    description: "Present diagram to user for approval"
+    depends_on:
+      - block: validate_design
+        required: false
+    type: Prompt
+    inputs:
+      prompt: |
+        # WORKFLOW DESIGN - ITERATION {{inputs.index}}
+        {% if inputs.index > 10 %}
+        ⚠️ You've made {{inputs.index}} refinements. This is getting expensive. Max depth is 50.
+        {% endif %}
+
+        ## Block Summary
+        | Block ID | Type | Description |
+        |----------|------|---------|
+        {% for item in blocks.generate_workflow.outputs.response.workflow.blocks %}
+        | `{{ item.id }}` | {{ item.type }} | {{ item.description }} |
+        {% endfor %}
+
+        ## Design Explanation
+        {{blocks.generate_workflow.outputs.response.explanation}}
+
+        {% if blocks.generate_workflow.outputs.response.clarifications | trim != '' %}
+        ## Clarifications Needed
+        {% for clarification in blocks.generate_workflow.outputs.response.clarifications %}
+        • {{ clarification }}
+        {% endfor %}
+        {% endif %}
+
+        {% if not blocks.validate_design.outputs.success %}
+        ## Workflow Validation Errors
+        {{blocks.validate_design.outputs.message}}
+        {% endif %}
+
+        ## Generated Workflow
+        Prompt the user to open this JSON workflow file: {{blocks.store_workflow.outputs.path}}
+        ---
+        Please review the workflow design
+        To approve - respond with "approve"
+        To refine - respond with your feedback directly, describing what needs to change.
+        Your response:
+
+  - id: recurse_refinement
+    description: "Recursive call for refinement"
+    depends_on: [request_approval]
+    condition: "{{blocks.request_approval.outputs.response | lower | trim != 'approve'}}"
+    type: Workflow
+    inputs:
+      workflow: workflow-creator-generate-workflow
+      inputs:
+        user_requests: "{{inputs.user_requests}}"
+        executor_docs_path: "{{inputs.executor_docs_path}}"
+        examples: "{{inputs.examples}}"
+        diagram_path: "{{inputs.diagram_path}}"
+        workflow_path: "{{blocks.store_workflow.outputs.path}}"
+        feedback: "{{blocks.request_approval.outputs.response}}"
+        workspace: "{{inputs.workspace}}"
+        index: "{{inputs.index + 1}}"
+
+outputs:
+  diagram_path:
+    value: "{{inputs.diagram_path}}"
+    type: str
+    description: "Path to the Mermaid workflow diagram"
+
+  workflow_path:
+    value: >-
+      {{blocks.recurse_refinement.outputs.workflow
+      if blocks.recurse_refinement.succeeded
+      else blocks.store_workflow.outputs.path}}
+    type: str
+    description: "Path to the final JSON workflow definition"
+
+  approved:
+    value: >-
+      {{blocks.recurse_refinement.outputs.approved
+      if blocks.recurse_refinement.succeeded
+      else (blocks.request_approval.outputs.response | lower | trim == 'approve')}}
+    type: bool
+    description: "Whether design was approved"
