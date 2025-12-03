@@ -307,7 +307,9 @@ blocks:
   - id: recurse_refinement
     description: "Recursive call for refinement"
     depends_on: [request_feedback]
-    condition: "{{blocks.request_feedback.outputs.response | lower | trim != 'approve'}}"
+    condition: >-
+      {{blocks.request_feedback.outputs.response | trim != '' and
+        blocks.request_feedback.outputs.response | lower | trim != 'approve'}}
     type: Workflow
     inputs:
       workflow: workflow-creator-design
