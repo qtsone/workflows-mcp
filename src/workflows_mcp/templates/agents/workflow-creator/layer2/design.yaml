@@ -87,19 +87,46 @@ blocks:
         Labels inside brackets [...] can contain hyphens, but the ID before the bracket MUST use underscores.
 
         ## Node Label Rules (CRITICAL - prevents parsing errors)
-        Node labels (text inside brackets) MUST NOT contain quotes:
-        ✅ CORRECT: `my_node[Shell: validate inputs]`
-        ✅ CORRECT: `ask_user[Prompt: What is your name]`
-        ❌ WRONG: `my_node[Shell: "validate inputs"]` — double quotes break parsing
-        ❌ WRONG: `ask_user[Prompt: Ask "what next?"]` — quotes cause syntax errors
+        Two syntaxes depending on content:
 
-        Keep labels simple and descriptive without any quotation marks.
+        **Simple labels (no special chars):** No outer quotes needed
+        ✅ `my_node[Shell: validate inputs]`
+        ✅ `ask_user[Prompt: What is your name]`
+
+        **Labels with special chars ({ } ( ) [ ] ' " # & < >):** MUST wrap entire label in double quotes
+        ✅ `shell_echo["Shell: echo 'Hello, {name}!'"]` — outer double quotes, single quotes inside
+        ✅ `my_node["LLMCall: Generate user's response"]` — apostrophe is fine inside double quotes
+        ✅ `calc["Shell: expr (1 + 2)"]` — parentheses safe inside double quotes
+        ❌ `shell_echo[Shell: echo "Hello"]` — unquoted label with double quotes breaks parsing
+        ❌ `my_node[Shell: {var}]` — unquoted label with braces breaks parsing
+
+        **Rule:** If your label text includes ANY special character, wrap the ENTIRE label in double quotes and use single quotes for any internal quoting.
+
+        ## Parallel Execution (CRITICAL - no special syntax exists)
+        Mermaid has NO `parallel`, `fork`, `join`, or `&` keywords. Parallelism is IMPLICIT.
+        Just write multiple edges - if two nodes have no dependency, they run in parallel.
+        ✅ CORRECT:
+        ```
+        A --> B
+        A --> C
+        B --> D
+        C --> D
+        ```
+        (B and C run in parallel after A, both feed into D)
+
+        ❌ WRONG - these keywords DO NOT EXIST:
+        ```
+        parallel
+          A --> B
+          A --> C
+        end
+        ```
 
         ## Structure
         - Node format: `node_id[Type: label]` with lowercase_underscored IDs
         - Start diagram with `flowchart TD`
-        - Use subgraphs: `inputs`, `blocks`, `outputs`
-        - One edge per line (no `&` syntax for parallel)
+        - Use subgraphs ONLY for: `inputs`, `blocks`, `outputs`
+        - One edge per line
 
         # Output Format
         JSON: {mermaid_diagram, explanation, clarifications}
@@ -126,9 +153,11 @@ blocks:
         ## Instructions
         Design the architecture with:
         1. **Inputs subgraph**: All workflow input parameters
-        2. **Blocks**: Processing steps as `[BlockType: block-id]` nodes
+        2. **Blocks**: Processing steps as `[BlockType: short-descriptive-id]` nodes
+           - Use SHORT descriptive IDs like `echo-greeting`, `validate-input`, `call-api`
+           - Do NOT put actual commands/content in labels (wrong: `echo "Hello"`, right: `echo-greeting`)
         3. **Dependencies**: Arrows showing execution flow
-        4. **Parallel paths**: Use separate edge lines for concurrent operations
+        4. **Parallel paths**: Just write separate edges (NO `parallel` keyword exists!)
         5. **Conditions**: Use `-->|condition|` for conditional flows
         6. **Outputs subgraph**: Workflow outputs
 
@@ -211,7 +240,7 @@ blocks:
       overwrite: true
       path: "{{inputs.workspace}}/diagram-v{{inputs.index}}.mermaid"
       content: |
-        {{blocks.generate_design.outputs.response.mermaid_diagram}}
+        {{blocks.generate_design.outputs.response.mermaid_diagram | replace('\\n', '\n') | replace('\\t', '\t') | replace('\\r', '\r')}}
 
   - id: store_html_page
     description: "Create HTML viewer for the diagram"

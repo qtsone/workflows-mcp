@@ -193,31 +193,44 @@ def generate_llm_schema() -> dict[str, Any]:
                             "type": "string",
                             "description": "Block type (e.g., Shell, LLMCall, CreateFile)",
                         },
-                        # OpenAI strict mode: optional fields use ["type", "null"] union
-                        # All fields must be in required array
+                        # LLM compatibility: use simple types with descriptions
+                        # indicating optionality. Many providers (LMStudio, etc.)
+                        # don't support ["type", "null"] unions.
                         "description": {
-                            "type": ["string", "null"],
-                            "description": "Optional block description",
+                            "type": "string",
+                            "description": (
+                                "Optional block description (empty string if not needed)"
+                            ),
                         },
                         "condition": {
-                            "type": ["string", "null"],
-                            "description": "Optional condition for conditional execution",
+                            "type": "string",
+                            "description": (
+                                "Optional condition for execution (empty string if not needed)"
+                            ),
                         },
                         "continue_on_error": {
-                            "type": ["boolean", "null"],
-                            "description": "Whether to continue workflow if this block fails",
+                            "type": "boolean",
+                            "description": (
+                                "Continue workflow if block fails (false if not needed)"
+                            ),
                         },
                         "for_each": {
-                            "type": ["string", "null"],
-                            "description": "Expression for iterating over a list",
+                            "type": "string",
+                            "description": (
+                                "Expression for iterating over a list (empty string if none)"
+                            ),
                         },
                         "for_each_mode": {
-                            "type": ["string", "null"],
-                            "description": "Iteration mode: parallel or sequential",
+                            "type": "string",
+                            "description": (
+                                "Iteration mode: parallel or sequential (empty string if none)"
+                            ),
                         },
                         "depends_on": {
-                            "type": ["array", "null"],
-                            "description": "Block dependencies as block ID strings",
+                            "type": "array",
+                            "description": (
+                                "Block dependencies as block IDs (empty array [] if none)"
+                            ),
                             "items": {"type": "string"},
                         },
                         "inputs": {
