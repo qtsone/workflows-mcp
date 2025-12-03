@@ -105,7 +105,10 @@ async def execute_workflow(
             "workflow": workflow,
             "status": "queued",
             "timeout": effective_timeout,
-            "message": "Job submitted successfully. Use get_job_status() to check progress.",
+            "message": (
+                f"Job submitted successfully. "
+                f"Use get_job_status(job_id='{job_id}') to check progress."
+            ),
         }
 
     # Synchronous mode - execute workflow and wait for completion
@@ -627,7 +630,8 @@ async def resume_workflow(
         response_dict = result.to_response(debug)
         response_dict["job_id"] = job_id
         response_dict["message"] = (
-            f"Workflow paused again. Use resume_workflow(job_id='{job_id}') to continue."
+            f"Workflow paused again. "
+            f"Use resume_workflow(job_id='{job_id}', response='your_answer') to continue."
         )
         return response_dict
 

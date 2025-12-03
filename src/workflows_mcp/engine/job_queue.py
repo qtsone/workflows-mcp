@@ -313,9 +313,13 @@ class JobQueue:
             "result_file": result_file,
         }
 
-        # Add prompt field when paused (so LLM/user knows what response is expected)
+        # Add prompt and message fields when paused (so LLM/user knows what response is expected)
         if prompt:
             response["prompt"] = prompt
+            response["message"] = (
+                f"Workflow paused waiting for input. "
+                f"Use resume_workflow(job_id='{job_id}', response='your_answer') to continue."
+            )
 
         return response
 
