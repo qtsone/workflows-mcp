@@ -100,6 +100,11 @@ blocks:
       overwrite: true
       path: "{{inputs.workspace}}/user_prompt-{{inputs.index}}.md"
       content: |
+        # Reference Material
+        <executor_docs>
+        {{ read_file(inputs.executor_docs_path) | replace('# ', '## ') }}
+        </executor_docs>
+
         # Task: Fix Workflow Validation Errors
 
         The workflow YAML file failed validation. Analyze errors and fix them.
@@ -111,27 +116,14 @@ blocks:
 
         ## Validation Errors
         ```sh
-        # STDERR:
-        {{blocks.validate_workflow.outputs.stderr}}
-
-        # STDOUT:
         {{blocks.validate_workflow.outputs.stdout}}
         ```
-
-        <executor_docs>
-        {{ read_file(inputs.executor_docs_path) | replace('# ', '## ') }}
-        </executor_docs>
-
         ## Instructions
-
-        1. **Analyze the errors**: Look for "Field required" or "Extra inputs not permitted" messages
+        1. **Analyze the errors**: Read the error messages and understand what is wrong with the current workflow.
         2. **Check field names**: Refer to the Executor Documentation for correct field names
         3. **Fix the issues**: Correct field names, syntax, structure errors
-        4. **Preserve intent**: Keep the workflow's purpose and logic intact
-
-        ## Common Fixes
-        - "prompt: Field required" + "command: Extra inputs not permitted" → rename 'command' to 'prompt'
-        - "path: Field required" + "command: Extra inputs not permitted" → use 'path' and 'content'
+        4. **Preserve intent**: Critical to keep the workflow's purpose and logic intact
+        5. **Make minimal changes**: Only fix what is broken. Preserve intent.
 
         Return the complete corrected workflow structure.
 
@@ -157,7 +149,7 @@ blocks:
       overwrite: true
       path: "{{inputs.workspace}}/workflow-v{{inputs.index}}.yaml"
       content: |
-        {{blocks.fix_validation_errors.outputs.response | fromjson | toyaml}}
+        {{blocks.fix_validation_errors.outputs.response | toyaml}}
 
   - id: recurse
     description: "Recurse if a new workflow was created"
