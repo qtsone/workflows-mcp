@@ -127,13 +127,12 @@ blocks:
                   type: boolean
                 default:
                   type: string
-                  description: "Default value as a string (e.g. '10', 'true')"
+                  description: "Default value as a string (e.g. '10', 'true'). Omit if none."
               required:
                 - name
                 - type
                 - description
                 - required
-                - default
               additionalProperties: false
             description: "Workflow input parameters"
           steps:
@@ -184,7 +183,6 @@ blocks:
           - inputs
           - steps
           - outputs
-          - tags
         additionalProperties: false
       system_instructions: |
         {{blocks.system_prompt.outputs.content}}

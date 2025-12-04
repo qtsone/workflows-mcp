@@ -50,7 +50,12 @@ blocks:
         - Single responsibility per block
         - Block types: Shell (commands), LLMCall (AI), Prompt (user input), CreateFile (files)
         - Parallelism via depends_on for concurrent operations
-        - User approval loops: Prompt blocks with conditional edges back to generators
+
+        # IMPORTANT: DAG Flow (No Cycles)
+        - Workflows are DAGs (Directed Acyclic Graphs) - arrows ONLY point forward
+        - NO circular/back edges - if A --> B exists, B --> A is INVALID
+        - User approval: Use SEQUENTIAL flow with conditions, not cycles
+          Example: generate --> prompt_approval --> next_step (condition: approved)
 
         # Mermaid Syntax (CRITICAL - follow exactly)
 
@@ -204,16 +209,14 @@ blocks:
             description: "Raw Mermaid flowchart syntax starting with 'flowchart TD' - NO markdown code fences or backticks"
           explanation:
             type: string
-            description: "Design choices and rationale. Use empty string if none."
+            description: "Design choices and rationale"
           clarifications:
             type: array
             items:
               type: string
-            description: "Questions or assumptions to validate. Use empty array [] if none."
+            description: "Questions or assumptions to validate"
         required:
           - mermaid_diagram
-          - explanation
-          - clarifications
         additionalProperties: false
       system_instructions: |
         {{ blocks.system_prompt.outputs.content }}
@@ -289,10 +292,12 @@ blocks:
         ## Diagram
         Prompt the user to open this HTML page: {{blocks.store_html_page.outputs.path}} in the browser to see the visual workflow diagram.
 
+        {%- if blocks.generate_design.outputs.response.explanation %}
         ## Design Explanation
         {{blocks.generate_design.outputs.response.explanation}}
+        {%- endif %}
 
-        {%- if blocks.generate_design.outputs.response.clarifications | trim != '' %}
+        {%- if blocks.generate_design.outputs.response.clarifications %}
         ## Clarifications Needed
         {%- for clarification in blocks.generate_design.outputs.response.clarifications %}
         - {{ clarification }}

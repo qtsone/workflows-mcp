@@ -102,27 +102,27 @@
           },
           "description": {
             "type": "string",
-            "description": "Optional block description (empty string if not needed)"
+            "description": "Block description (optional)"
           },
           "condition": {
             "type": "string",
-            "description": "Optional condition for execution (empty string if not needed)"
+            "description": "Condition for execution (optional)"
           },
           "continue_on_error": {
             "type": "boolean",
-            "description": "Continue workflow if block fails (false if not needed)"
+            "description": "Continue workflow if block fails (optional)"
           },
           "for_each": {
             "type": "string",
-            "description": "Expression for iterating over a list (empty string if none)"
+            "description": "Expression for iterating over a list (optional)"
           },
           "for_each_mode": {
             "type": "string",
-            "description": "Iteration mode: parallel or sequential (empty string if none)"
+            "description": "Iteration mode: parallel or sequential (optional)"
           },
           "depends_on": {
             "type": "array",
-            "description": "Block dependencies as block IDs (empty array [] if none)",
+            "description": "Block dependencies as block IDs. Use [] for no deps.",
             "items": {
               "type": "string"
             }
@@ -400,12 +400,6 @@
         "required": [
           "id",
           "type",
-          "description",
-          "condition",
-          "continue_on_error",
-          "for_each",
-          "for_each_mode",
-          "depends_on",
           "inputs"
         ],
         "additionalProperties": false

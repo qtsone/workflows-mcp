@@ -62,7 +62,22 @@ blocks:
         # Design Principles
         - Single responsibility per block
         - Parallelism via depends_on for concurrent operations
-        - User approval loops: Prompt blocks with conditional edges back to generators
+        - Use conditions for control flow, not circular dependencies
+
+        # CRITICAL: DAG Rules (depends_on)
+        - depends_on creates an ACYCLIC dependency graph - NO CYCLES ALLOWED
+        - A block can ONLY depend on blocks that execute BEFORE it
+        - depends_on: [] (empty array) means no dependencies - block can run immediately
+        - NEVER create mutual dependencies (A depends on B, B depends on A) - this is INVALID
+
+        # User Approval Pattern (CORRECT)
+        Use SEQUENTIAL dependencies with CONDITIONS, not cycles:
+        ```
+        1. generate_content (no deps)     -> creates content
+        2. prompt_approval (deps: [generate_content]) -> asks user yes/no
+        3. next_step (deps: [prompt_approval], condition: response == 'yes')
+        ```
+        The workflow engine handles re-execution through resume_workflow, NOT circular deps.
 
         # Output Format
         JSON: {workflow: {name, description, inputs: [...], blocks: [...], outputs: [...]}, explanation, clarifications}
@@ -168,13 +183,12 @@ blocks:
                       description: "Whether this input is required"
                     default:
                       type: string
-                      description: "Default value if not provided"
+                      description: "Default value if not provided (omit if none)"
                   required:
                     - name
                     - type
                     - description
                     - required
-                    - default
                   additionalProperties: false
               blocks:
                 type: array
@@ -194,16 +208,16 @@ blocks:
                       type: array
                       items:
                         type: string
-                      description: "IDs of blocks this depends on"
+                      description: "IDs of blocks this depends on. MUST be empty [] or reference only blocks EARLIER in the list. NO CYCLES - if A depends on B, B cannot depend on A."
                     condition:
                       type: string
-                      description: "{% raw %}Condition for execution (e.g., '{{blocks.X.succeeded}}'). Use empty string if none.{% endraw %}"
+                      description: "{% raw %}Condition for execution (e.g., '{{blocks.X.succeeded}}'){% endraw %}"
                     for_each:
                       type: string
-                      description: "{% raw %}List expression for iteration (e.g., '{{inputs.items}}'). Use empty string if none.{% endraw %}"
+                      description: "{% raw %}List expression for iteration (e.g., '{{inputs.items}}'){% endraw %}"
                     for_each_mode:
                       type: string
-                      description: "Iteration mode: 'parallel' or 'sequential'. Use empty string if none."
+                      description: "Iteration mode: 'parallel' or 'sequential'"
                     inputs:
                       type: array
                       description: "Block inputs as key-value pairs. Use dot notation for nesting (e.g., 'inputs.param1' for Workflow blocks)."
@@ -224,8 +238,6 @@ blocks:
                     - id
                     - type
                     - description
-                    - depends_on
-                    - inputs
                   additionalProperties: false
               outputs:
                 type: array
@@ -266,11 +278,9 @@ blocks:
             type: array
             items:
               type: string
-            description: "Questions or assumptions to validate. Use empty array [] if none."
+            description: "Questions or assumptions to validate"
         required:
           - workflow
-          - explanation
-          - clarifications
         additionalProperties: false
       system_instructions: |
         {{ blocks.system_prompt.outputs.content }}
@@ -328,10 +338,12 @@ blocks:
         | `{{ item.id }}` | {{ item.type }} | {{ item.description }} |
         {% endfor %}
 
+        {% if blocks.generate_workflow.outputs.response.explanation %}
         ## Design Explanation
         {{blocks.generate_workflow.outputs.response.explanation}}
+        {% endif %}
 
-        {% if blocks.generate_workflow.outputs.response.clarifications | trim != '' %}
+        {% if blocks.generate_workflow.outputs.response.clarifications %}
         ## Clarifications Needed
         {% for clarification in blocks.generate_workflow.outputs.response.clarifications %}
         • {{ clarification }}
@@ -378,7 +390,7 @@ outputs:
 
   workflow_path:
     value: >-
-      {{blocks.recurse_refinement.outputs.workflow
+      {{blocks.recurse_refinement.outputs.workflow_path
       if blocks.recurse_refinement.succeeded
       else blocks.store_workflow.outputs.path}}
     type: str

@@ -69,8 +69,12 @@ blocks:
             for item in arr:
                 if not isinstance(item, dict):
                     continue
-                key = item.get("key", "")
-                value = item.get("value", "")
+                key = item.get("key")
+                if not key:  # Skip if key is None (null) or empty string
+                    continue
+                value = item.get("value")
+                if value is None:
+                    value = ""
 
                 if "." in key:
                     parent, child = key.split(".", 1)
@@ -86,9 +90,19 @@ blocks:
             """Transform a single block."""
             result = {"id": block.get("id", ""), "type": block.get("type", "")}
 
-            for field in ["description", "depends_on", "condition", "for_each", "for_each_mode"]:
+            # Handle optional string fields (only include if non-empty/non-null)
+            for field in ["description", "condition", "for_each", "for_each_mode"]:
                 if block.get(field):
                     result[field] = block[field]
+
+            # Handle continue_on_error (boolean) - only include if True
+            if block.get("continue_on_error") is True:
+                result["continue_on_error"] = True
+
+            # Handle depends_on separately - must be a list, include even if empty
+            # to avoid YAML parsing issues (empty value becomes None)
+            if "depends_on" in block:
+                result["depends_on"] = block["depends_on"] if block["depends_on"] else []
 
             if block.get("inputs"):
                 result["inputs"] = inputs_array_to_dict(block["inputs"])

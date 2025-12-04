@@ -86,6 +86,10 @@ blocks:
         2. **Minimal Changes**: Fix only what is broken. Preserve intent.
         3. **Valid YAML**: Ensure the output is valid YAML.
         4. **Field Names**: Use 'prompt' for LLMCall/Prompt, 'command' for Shell.
+        5. **DAG Rules**: depends_on must be ACYCLIC. No circular references.
+           - If error mentions "cycle" or "circular": remove the back-edge
+           - Block A cannot depend on B if B already depends on A
+           - depends_on should only reference blocks defined BEFORE current block
 
   - id: user_prompt
     description: "User prompt for validation"
@@ -137,6 +141,7 @@ blocks:
     type: LLMCall
     inputs:
       profile: default
+      timeout: 600
       response_schema: "{{ read_file(inputs.schema_path) | fromjson}}"
       system_instructions: |
         {{ blocks.system_prompt.outputs.content }}
