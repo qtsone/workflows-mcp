@@ -44,7 +44,7 @@ from .classifier import ExpressionClassifier, ExpressionType
 from .proxies import BlockProxy, SecretProxy
 from .rules import RuleContext, TransformRule
 from .security_rules import ForbiddenNamespaceRule, SecretRedactionRule, SecurityError
-from .syntax_rules import BracketNotationRule, DotNotationNormalizationRule
+from .syntax_rules import DotNotationNormalizationRule
 
 if TYPE_CHECKING:
     from ..secrets import SecretAuditLog, SecretProvider
@@ -141,8 +141,7 @@ class UnifiedVariableResolver:
         default_rules = [
             ForbiddenNamespaceRule(),  # Security first
             SecretRedactionRule(),
-            BracketNotationRule(),  # Syntax transformation
-            DotNotationNormalizationRule(),
+            DotNotationNormalizationRule(),  # Syntax transformation
         ]
 
         # Merge with custom rules

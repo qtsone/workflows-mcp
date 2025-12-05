@@ -19,6 +19,7 @@ blocks:
     type: Shell
     inputs:
       command: |
+        {% raw %}
         python3 - <<'EOF'
         """
         ETL Pipeline: LLM JSON -> Workflow YAML
@@ -642,8 +643,10 @@ blocks:
         # =============================================================================
 
         def main():
+        {% endraw %}
             json_path = "{{inputs.json_path}}"
             output_path = "{{inputs.output_path}}"
+        {% raw %}
 
             try:
                 print("=== ETL Pipeline: LLM JSON -> Workflow YAML ===\n")
@@ -710,6 +713,7 @@ blocks:
         if __name__ == "__main__":
             main()
         EOF
+        {% endraw %}
 
 outputs:
   approved:

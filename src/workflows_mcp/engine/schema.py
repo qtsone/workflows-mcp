@@ -706,7 +706,8 @@ class WorkflowSchema(BaseModel):
         for_each_blocks = {block.id for block in self.blocks if block.for_each}
 
         # Pattern to match and remove {% raw %}...{% endraw %} blocks
-        raw_block_pattern = re.compile(r"\{%\s*raw\s*%\}.*?\{%\s*endraw\s*%\}", re.DOTALL)
+        # Supports Jinja2 whitespace control: {%- raw -%}, {% raw %}, etc.
+        raw_block_pattern = re.compile(r"\{%-?\s*raw\s*-?%\}.*?\{%-?\s*endraw\s*-?%\}", re.DOTALL)
 
         def validate_string_value(value: str, context: str, allow_each: bool = False) -> None:
             """Validate variable references in a string value."""
