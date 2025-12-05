@@ -9,11 +9,6 @@ inputs:
     description: "Path to workflow YAML file to validate"
     required: true
 
-  schema_path:
-    type: str
-    description: "Path to LLM-compatible schema JSON file"
-    required: true
-
   executor_docs_path:
     type: str
     description: "Executor documentation for fix context"
@@ -134,7 +129,82 @@ blocks:
     inputs:
       profile: default
       timeout: 600
-      response_schema: "{{ read_file(inputs.schema_path) | fromjson}}"
+      response_schema:
+        type: object
+        properties:
+          name:
+            type: string
+            description: "Workflow name"
+          description:
+            type: string
+            description: "Workflow description"
+          tags:
+            type: array
+            items:
+              type: string
+          inputs:
+            type: object
+            additionalProperties:
+              type: object
+              properties:
+                type:
+                  type: string
+                description:
+                  type: string
+                required:
+                  type: boolean
+                default: {}
+              required:
+                - type
+                - description
+                - required
+          blocks:
+            type: array
+            items:
+              type: object
+              properties:
+                id:
+                  type: string
+                type:
+                  type: string
+                description:
+                  type: string
+                condition:
+                  type: string
+                continue_on_error:
+                  type: boolean
+                for_each:
+                  type: string
+                for_each_mode:
+                  type: string
+                depends_on:
+                  type: array
+                  items:
+                    type: string
+                inputs:
+                  type: object
+                  additionalProperties: true
+              required:
+                - id
+                - type
+          outputs:
+            type: object
+            additionalProperties:
+              type: object
+              properties:
+                value:
+                  type: string
+                type:
+                  type: string
+                description:
+                  type: string
+              required:
+                - value
+                - type
+        required:
+          - name
+          - blocks
+        additionalProperties: false
       system_instructions: |
         {{ blocks.system_prompt.outputs.content }}
       prompt: |
@@ -159,7 +229,6 @@ blocks:
       workflow: workflow-creator-validation
       inputs:
         workflow_path: "{{blocks.store_workflow.outputs.path}}"
-        schema_path: "{{inputs.schema_path}}"
         executor_docs_path: "{{inputs.executor_docs_path}}"
         workflows_mcp_path: "{{inputs.workflows_mcp_path}}"
         index: "{{inputs.index + 1}}"

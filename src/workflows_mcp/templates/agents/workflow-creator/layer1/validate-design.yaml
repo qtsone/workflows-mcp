@@ -70,7 +70,7 @@ blocks:
                     print(f"Block '{block['id']}' missing type")
                     return False
 
-            # Dependency validation
+            # Dependency validation - check references exist
             for block in blocks:
                 if "depends_on" in block:
                     deps = block["depends_on"]
@@ -86,6 +86,51 @@ blocks:
                         if dep_id not in block_ids:
                             print(f"Block '{block['id']}' depends on unknown block: {dep_id}")
                             return False
+
+            # DAG cycle detection using DFS
+            def get_deps(block):
+                deps = block.get("depends_on", [])
+                if isinstance(deps, str):
+                    deps = [deps]
+                result = []
+                for dep in deps:
+                    if isinstance(dep, dict):
+                        result.append(dep.get("block"))
+                    else:
+                        result.append(dep)
+                return result
+
+            # Build adjacency list
+            graph = {block["id"]: get_deps(block) for block in blocks}
+
+            # DFS cycle detection
+            WHITE, GRAY, BLACK = 0, 1, 2
+            color = {bid: WHITE for bid in block_ids}
+            cycle_path = []
+
+            def dfs(node, path):
+                if color[node] == GRAY:
+                    cycle_start = path.index(node)
+                    cycle_path.extend(path[cycle_start:] + [node])
+                    return True
+                if color[node] == BLACK:
+                    return False
+                color[node] = GRAY
+                path.append(node)
+                for neighbor in graph.get(node, []):
+                    if neighbor and dfs(neighbor, path):
+                        return True
+                path.pop()
+                color[node] = BLACK
+                return False
+
+            for bid in block_ids:
+                if color[bid] == WHITE:
+                    if dfs(bid, []):
+                        cycle_str = " -> ".join(cycle_path)
+                        print(f"DAG cycle detected: {cycle_str}")
+                        print("Workflows must be acyclic. Remove the back-edge to fix.")
+                        return False
 
             print("Workflow JSON structure is valid.")
             return True

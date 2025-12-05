@@ -43,24 +43,12 @@ blocks:
         questions: "{{inputs.questions}}"
         workspace: "{{inputs.workspace}}/requirements"
 
-  - id: generate_design
-    depends_on: [generate_requirements]
-    type: Workflow
-    inputs:
-      workflow: workflow-creator-design
-      inputs:
-        requirements_path: "{{blocks.generate_requirements.outputs.response_path}}"
-        executor_docs_path: "{{blocks.bootstrap_context.outputs.executor_docs_path}}"
-        workspace: "{{inputs.workspace}}/generate-design"
-
   - id: generate_workflow
-    depends_on: [generate_design]
-    condition: "{{blocks.generate_design.outputs.approved}}"
+    depends_on: [generate_requirements]
     type: Workflow
     inputs:
       workflow: workflow-creator-generate-workflow
       inputs:
-        diagram_path: "{{blocks.generate_design.outputs.diagram_path}}"
         user_requests: "{{blocks.generate_requirements.outputs.response_path}}"
         executor_docs_path: "{{blocks.bootstrap_context.outputs.executor_docs_path}}"
         examples: "{{blocks.bootstrap_context.outputs.examples}}"
@@ -85,7 +73,6 @@ blocks:
       workflow: workflow-creator-validation
       inputs:
         workflow_path: "{{blocks.transform_design.outputs.workflow_path}}"
-        schema_path: "{{blocks.bootstrap_context.outputs.schema_path}}"
         executor_docs_path: "{{blocks.bootstrap_context.outputs.executor_docs_path}}"
         workflows_mcp_path: "{{blocks.bootstrap_context.outputs.workspace}}"
         limit: "{{inputs.max_validation_attempts}}"

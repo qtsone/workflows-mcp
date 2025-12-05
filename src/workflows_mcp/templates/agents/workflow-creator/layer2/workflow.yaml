@@ -4,11 +4,6 @@ version: "1.0"
 tags: [agents, recursive, interactive, internal]
 
 inputs:
-  diagram_path:
-    type: str
-    description: "(Required) Path to approved mermaid diagram"
-    required: true
-
   user_requests:
     type: str
     description: "(Required) Path to structured requests JSON file"
@@ -106,19 +101,14 @@ blocks:
         {{read_file(inputs.user_requests) | fromjson | prettyjson}}
         ```
 
-        ## Refined and approved Mermaid Diagram
-        ```mermaid
-        {{read_file(inputs.diagram_path)}}
-        ```
-
         {%- if inputs.index == 1 %}
         # Design New Workflow
-        Create the workflow based on the approved diagram:
+        Create a workflow based on the user's requirements:
 
         ## Instructions
         Design the architecture with:
         1. **Inputs**: All workflow input parameters
-        2. **Blocks**: Compute/Processing steps
+        2. **Blocks**: Compute/Processing steps (following DAG rules - no cycles)
         3. **Outputs**: Workflow outputs
 
         Generate the initial workflow design now.
@@ -318,10 +308,109 @@ blocks:
       inputs:
         json_path: "{{blocks.store_workflow.outputs.path}}"
 
+  - id: render_diagram
+    description: "Render Mermaid diagram from JSON workflow"
+    type: Shell
+    depends_on: [store_workflow]
+    inputs:
+      command: |
+        python3 - <<'EOF'
+        """Render workflow JSON as Mermaid diagram with semantic shapes."""
+        import json
+
+        # Semantic shapes by block type
+        SHAPES = {
+            "Prompt": ("{{", "}}"),
+            "LLMCall": ("([", "])"),
+            "ImageGen": ("([", "])"),
+            "Workflow": ("[[", "]]"),
+            "CreateFile": ("[(", ")]"),
+            "ReadFiles": ("[(", ")]"),
+        }
+        DEFAULT_SHAPE = ("[", "]")
+
+        def render_mermaid(workflow):
+            lines = ["flowchart TD", ""]
+
+            for block in workflow.get("blocks", []):
+                block_id = block.get("id", "unknown")
+                block_type = block.get("type", "Unknown")
+                desc = block.get("description", block_type)
+
+                left, right = SHAPES.get(block_type, DEFAULT_SHAPE)
+                safe_desc = desc.replace('"', "'")[:40]
+                lines.append(f'    {block_id}{left}"{block_type}:\\n{safe_desc}"{right}')
+
+            lines.append("")
+
+            for block in workflow.get("blocks", []):
+                block_id = block.get("id", "unknown")
+                for dep in block.get("depends_on", []):
+                    dep_id = dep if isinstance(dep, str) else dep.get("block", dep)
+                    condition = block.get("condition", "")
+
+                    if condition:
+                        short_cond = condition[:20] + "..." if len(condition) > 20 else condition
+                        short_cond = short_cond.replace('"', "'")
+                        lines.append(f'    {dep_id} -->|"{short_cond}"| {block_id}')
+                    else:
+                        lines.append(f"    {dep_id} --> {block_id}")
+
+            return "\n".join(lines)
+
+        json_path = "{{blocks.store_workflow.outputs.path}}"
+        output_path = "{{inputs.workspace}}/diagram-v{{inputs.index}}.mermaid"
+
+        with open(json_path) as f:
+            workflow = json.load(f)
+
+        diagram = render_mermaid(workflow)
+
+        with open(output_path, "w") as f:
+            f.write(diagram)
+
+        print(output_path)
+        EOF
+
+  - id: store_diagram_html
+    description: "Create HTML viewer for the diagram"
+    type: CreateFile
+    depends_on: [render_diagram]
+    inputs:
+      create_parents: true
+      overwrite: true
+      path: "{{inputs.workspace}}/diagram-v{{inputs.index}}.html"
+      content: |
+        <!DOCTYPE html>
+        <html>
+        <head>
+          <title>Workflow Diagram - Iteration {{inputs.index}}</title>
+          <script type="module">
+            import mermaid from 'https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs';
+            mermaid.initialize({ startOnLoad: true, theme: 'default' });
+          </script>
+          <style>
+            body { font-family: system-ui, -apple-system, sans-serif; padding: 2rem; max-width: 1200px; margin: 0 auto; background: #f5f5f5; }
+            h1 { color: #333; margin-bottom: 0.5rem; }
+            .subtitle { color: #666; margin-bottom: 2rem; }
+            .mermaid { background: white; padding: 2rem; border-radius: 12px; box-shadow: 0 2px 8px rgba(0,0,0,0.1); }
+          </style>
+        </head>
+        <body>
+          <h1>Workflow Diagram</h1>
+          <p class="subtitle">Generated from JSON - Iteration {{inputs.index}}</p>
+          <div class="mermaid">
+        {{ read_file(inputs.workspace ~ '/diagram-v' ~ inputs.index ~ '.mermaid') }}
+          </div>
+        </body>
+        </html>
+
   - id: request_approval
     description: "Present diagram to user for approval"
     depends_on:
       - block: validate_design
+        required: false
+      - block: store_diagram_html
         required: false
     type: Prompt
     inputs:
@@ -330,6 +419,9 @@ blocks:
         {% if inputs.index > 10 %}
         ⚠️ You've made {{inputs.index}} refinements. This is getting expensive. Max depth is 50.
         {% endif %}
+
+        ## Visual Diagram
+        Open this HTML file to see the workflow diagram: {{blocks.store_diagram_html.outputs.path}}
 
         ## Block Summary
         | Block ID | Type | Description |
@@ -355,10 +447,10 @@ blocks:
         {{blocks.validate_design.outputs.message}}
         {% endif %}
 
-        ## Generated Workflow
-        Prompt the user to open this JSON workflow file: {{blocks.store_workflow.outputs.path}}
+        ## Generated Workflow JSON
+        Full workflow definition: {{blocks.store_workflow.outputs.path}}
         ---
-        Please review the workflow design
+        Please review the workflow design and diagram.
         To approve - respond with "approve"
         To refine - respond with your feedback directly, describing what needs to change.
         Your response:
@@ -376,7 +468,6 @@ blocks:
         user_requests: "{{inputs.user_requests}}"
         executor_docs_path: "{{inputs.executor_docs_path}}"
         examples: "{{inputs.examples}}"
-        diagram_path: "{{inputs.diagram_path}}"
         workflow_path: "{{blocks.store_workflow.outputs.path}}"
         feedback: "{{blocks.request_approval.outputs.response}}"
         workspace: "{{inputs.workspace}}"
@@ -384,9 +475,12 @@ blocks:
 
 outputs:
   diagram_path:
-    value: "{{inputs.diagram_path}}"
+    value: >-
+      {{blocks.recurse_refinement.outputs.diagram_path
+      if blocks.recurse_refinement.succeeded
+      else blocks.store_diagram_html.outputs.path}}
     type: str
-    description: "Path to the Mermaid workflow diagram"
+    description: "Path to the rendered Mermaid diagram HTML"
 
   workflow_path:
     value: >-

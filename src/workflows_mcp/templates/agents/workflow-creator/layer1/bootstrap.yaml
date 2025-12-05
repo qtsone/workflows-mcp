@@ -24,7 +24,7 @@ inputs:
   sparse_checkout:
     type: str
     description: "(Optional) Sparse checkout patterns (comma-separated)"
-    default: "llm_schema.json,validate.py,docs/llm/block-reference.md,docs/llm/block-schemas.json,tests/workflows,src/workflows_mcp/templates"
+    default: "validate.py,docs/llm/block-reference.md,tests/workflows,src/workflows_mcp/templates"
     required: false
 
 blocks:
@@ -84,19 +84,9 @@ outputs:
     value: "{{inputs.workspace}}"
     type: str
 
-  schema_path:
-    description: "Path to LLM-compatible workflow schema (for structured outputs)"
-    value: "{{inputs.workspace}}/llm_schema.json"
-    type: str
-
   executor_docs_path:
     description: "Path to static block executor reference"
     value: "{{inputs.workspace}}/docs/llm/block-reference.md"
-    type: str
-
-  executor_schemas_path:
-    description: "Path to block schemas JSON"
-    value: "{{inputs.workspace}}/docs/llm/block-schemas.json"
     type: str
 
   examples:

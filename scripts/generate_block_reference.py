@@ -10,7 +10,6 @@ Usage:
 The output is written to docs/llm/block-reference.md
 """
 
-import json
 import sys
 from pathlib import Path
 from typing import Any
@@ -18,7 +17,7 @@ from typing import Any
 # Add src to path for imports
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
-from workflows_mcp.engine import create_default_registry  # type: ignore[import-untyped]
+from workflows_mcp.engine import create_default_registry
 
 # Block type descriptions (canonical)
 # Block type descriptions (canonical)
@@ -36,7 +35,10 @@ def extract_schemas() -> dict[str, dict[str, Any]]:
 
         # Handle executors without output types (e.g., Workflow uses NoneType)
         output_schema: dict[str, Any]
-        if executor.output_type is None or executor.output_type is type(None):
+        has_no_output = (
+            executor.output_type is None or str(executor.output_type) == "<class 'NoneType'>"
+        )
+        if has_no_output:
             output_schema = {"properties": {}}
         else:
             output_schema = executor.output_type.model_json_schema()
@@ -224,16 +226,6 @@ def generate_markdown(schemas: dict[str, dict[str, Any]]) -> str:
     return "\n".join(lines)
 
 
-def generate_json(schemas: dict[str, dict[str, Any]]) -> str:
-    """Generate JSON schema for programmatic use (excludes description and examples)."""
-    # Filter out description and examples from JSON output
-    filtered_schemas = {}
-    for block_type, schema in schemas.items():
-        filtered_schema = {k: v for k, v in schema.items() if k not in ("example", "description")}
-        filtered_schemas[block_type] = filtered_schema
-    return json.dumps(filtered_schemas, indent=2, default=str)
-
-
 def main() -> None:
     """Main entry point."""
     # Determine output paths
@@ -242,7 +234,6 @@ def main() -> None:
     docs_dir.mkdir(parents=True, exist_ok=True)
 
     md_path = docs_dir / "block-reference.md"
-    json_path = docs_dir / "block-schemas.json"
 
     print("Extracting schemas from executor registry...")
     schemas = extract_schemas()
@@ -256,13 +247,8 @@ def main() -> None:
     md_content = generate_markdown(schemas)
     md_path.write_text(md_content)
 
-    print(f"Writing JSON to {json_path}...")
-    json_content = generate_json(schemas)
-    json_path.write_text(json_content)
-
-    print("\nDone! Generated files:")
+    print("\nDone! Generated file:")
     print(f"  - {md_path}")
-    print(f"  - {json_path}")
 
 
 if __name__ == "__main__":

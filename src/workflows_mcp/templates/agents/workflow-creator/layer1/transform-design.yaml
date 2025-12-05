@@ -1,7 +1,7 @@
 name: transform-design
-description: Transform design JSON structure into valid workflow YAML format
-version: "1.0"
-tags: [agents, internal, transform]
+description: ETL pipeline to transform LLM-generated JSON into valid workflow YAML
+version: "2.0"
+tags: [agents, internal, transform, etl]
 
 inputs:
   json_path:
@@ -20,108 +20,568 @@ blocks:
     inputs:
       command: |
         python3 - <<'EOF'
+        """
+        ETL Pipeline: LLM JSON -> Workflow YAML
+
+        Stages:
+          E1: Extract source JSON
+          T1: Normalize (block types, whitespace)
+          T2: Validate (schema validation, error collection)
+          T3: Coerce (type conversion)
+          T4: Filter (nulls, defaults, unknown fields)
+          T5: Restructure (arrays to objects)
+          L1: Serialize to YAML
+        """
         import json
         import sys
+        from dataclasses import dataclass, field
+        from typing import Any
 
-        # Map common type names to workflow-mcp types
-        TYPE_MAP = {
-            "string": "str",
-            "integer": "num",
-            "int": "num",
-            "float": "num",
-            "number": "num",
-            "boolean": "bool",
-            "array": "list",
-            "object": "dict",
+        # =============================================================================
+        # CONSTANTS
+        # =============================================================================
+
+        BLOCK_TYPE_MAP = {
+            "shell": "Shell",
+            "workflow": "Workflow",
+            "createfile": "CreateFile",
+            "editfile": "EditFile",
+            "readfiles": "ReadFiles",
+            "httpcall": "HttpCall",
+            "llmcall": "LLMCall",
+            "imagegen": "ImageGen",
+            "prompt": "Prompt",
+            "readjsonstate": "ReadJSONState",
+            "writejsonstate": "WriteJSONState",
+            "mergejsonstate": "MergeJSONState",
         }
 
-        def normalize_type(type_value):
-            """Normalize type values to workflow-mcp types."""
+        NULL_VALUES = {"none", "null", "", "n/a", "na", "undefined", "-", "[]", "{}"}
+
+        CONTROL_FLOW_DEFAULTS = {
+            "condition": {"true", ""},
+            "depends_on": set(),
+            "for_each": NULL_VALUES,
+            "for_each_mode": {"parallel", ""},
+            "continue_on_error": {False, "false", ""},
+        }
+
+        TYPE_MAP = {
+            "string": "str", "integer": "num", "int": "num", "float": "num",
+            "number": "num", "boolean": "bool", "array": "list", "object": "dict",
+        }
+
+        # Block schemas (hardcoded - stable, rarely change)
+        BLOCK_SCHEMAS = {
+            "Shell": {
+                "required": [{"name": "command", "type": "string"}],
+                "optional": [
+                    {"name": "working_dir", "type": "string", "default": ""},
+                    {"name": "timeout", "type": "any", "default": 120},
+                    {"name": "env", "type": "object"},
+                    {"name": "capture_output", "type": "boolean", "default": True},
+                    {"name": "shell", "type": "boolean", "default": True},
+                ]
+            },
+            "Workflow": {
+                "required": [{"name": "workflow", "type": "string"}],
+                "optional": [
+                    {"name": "inputs", "type": "object"},
+                    {"name": "timeout_ms", "type": "any"},
+                ]
+            },
+            "CreateFile": {
+                "required": [{"name": "path", "type": "string"}, {"name": "content", "type": "string"}],
+                "optional": [
+                    {"name": "encoding", "type": "string", "default": "utf-8"},
+                    {"name": "mode", "type": "any"},
+                    {"name": "overwrite", "type": "any", "default": True},
+                    {"name": "create_parents", "type": "any", "default": True},
+                ]
+            },
+            "EditFile": {
+                "required": [{"name": "path", "type": "string"}, {"name": "operations", "type": "array"}],
+                "optional": [
+                    {"name": "encoding", "type": "string", "default": "utf-8"},
+                    {"name": "create_if_missing", "type": "any", "default": False},
+                    {"name": "backup", "type": "any", "default": True},
+                    {"name": "dry_run", "type": "any", "default": False},
+                    {"name": "atomic", "type": "any", "default": True},
+                ]
+            },
+            "ReadFiles": {
+                "required": [{"name": "patterns", "type": "array"}],
+                "optional": [
+                    {"name": "base_path", "type": "string", "default": "."},
+                    {"name": "mode", "type": "any", "default": "full"},
+                    {"name": "exclude_patterns", "type": "array"},
+                    {"name": "max_files", "type": "any", "default": 20},
+                    {"name": "max_file_size_kb", "type": "any", "default": 100},
+                    {"name": "respect_gitignore", "type": "any", "default": True},
+                    {"name": "encoding", "type": "string", "default": "utf-8"},
+                ]
+            },
+            "HttpCall": {
+                "required": [{"name": "url", "type": "string"}],
+                "optional": [
+                    {"name": "method", "type": "string", "default": "POST"},
+                    {"name": "headers", "type": "object"},
+                    {"name": "json", "type": "any"},
+                    {"name": "content", "type": "any"},
+                    {"name": "timeout", "type": "any", "default": 30},
+                    {"name": "follow_redirects", "type": "any", "default": True},
+                    {"name": "verify_ssl", "type": "any", "default": True},
+                ]
+            },
+            "LLMCall": {
+                "required": [{"name": "prompt", "type": "string"}],
+                "optional": [
+                    {"name": "profile", "type": "any"},
+                    {"name": "provider", "type": "any"},
+                    {"name": "model", "type": "any"},
+                    {"name": "system_instructions", "type": "any"},
+                    {"name": "api_key", "type": "any"},
+                    {"name": "api_url", "type": "any"},
+                    {"name": "response_schema", "type": "any"},
+                    {"name": "max_retries", "type": "any", "default": 3},
+                    {"name": "retry_delay", "type": "any", "default": 2.0},
+                    {"name": "timeout", "type": "any", "default": 60},
+                    {"name": "temperature", "type": "any"},
+                    {"name": "max_tokens", "type": "any"},
+                    {"name": "validation_prompt_template", "type": "string"},
+                ]
+            },
+            "ImageGen": {
+                "required": [],
+                "optional": [
+                    {"name": "prompt", "type": "any"},
+                    {"name": "profile", "type": "any"},
+                    {"name": "provider", "type": "any"},
+                    {"name": "model", "type": "any", "default": "dall-e-3"},
+                    {"name": "api_url", "type": "any"},
+                    {"name": "api_key", "type": "any"},
+                    {"name": "operation", "type": "string", "default": "generate"},
+                    {"name": "size", "type": "string", "default": "1024x1024"},
+                    {"name": "quality", "type": "any", "default": "standard"},
+                    {"name": "style", "type": "any", "default": "vivid"},
+                    {"name": "response_format", "type": "string", "default": "url"},
+                    {"name": "n", "type": "any", "default": 1},
+                    {"name": "image", "type": "any"},
+                    {"name": "mask", "type": "any"},
+                    {"name": "output_file", "type": "any"},
+                ]
+            },
+            "Prompt": {
+                "required": [{"name": "prompt", "type": "string"}],
+                "optional": []
+            },
+            "ReadJSONState": {
+                "required": [{"name": "path", "type": "string"}],
+                "optional": [{"name": "required", "type": "any", "default": False}]
+            },
+            "WriteJSONState": {
+                "required": [{"name": "path", "type": "string"}, {"name": "data", "type": "object"}],
+                "optional": [{"name": "create_parents", "type": "any", "default": True}]
+            },
+            "MergeJSONState": {
+                "required": [{"name": "path", "type": "string"}, {"name": "updates", "type": "object"}],
+                "optional": [
+                    {"name": "create_if_missing", "type": "any", "default": True},
+                    {"name": "create_parents", "type": "any", "default": True},
+                ]
+            },
+        }
+
+        # =============================================================================
+        # DATA CLASSES
+        # =============================================================================
+
+        @dataclass
+        class ValidationError:
+            path: str
+            message: str
+            severity: str
+
+        @dataclass
+        class TransformResult:
+            success: bool
+            workflow: dict | None
+            errors: list = field(default_factory=list)
+            warnings: list = field(default_factory=list)
+
+        # =============================================================================
+        # E: EXTRACT
+        # =============================================================================
+
+        def extract_source(json_path: str) -> dict:
+            """E1: Load LLM-generated workflow JSON."""
+            with open(json_path) as f:
+                data = json.load(f)
+            if "workflow" in data:
+                return data["workflow"]
+            if "workflow_definition" in data:
+                return data["workflow_definition"]
+            return data
+
+        # =============================================================================
+        # T1: NORMALIZE
+        # =============================================================================
+
+        def normalize_block_type(block_type: str) -> str | None:
+            if not block_type:
+                return None
+            return BLOCK_TYPE_MAP.get(block_type.lower().strip())
+
+        def normalize_string(value: Any) -> Any:
+            return value.strip() if isinstance(value, str) else value
+
+        def normalize_value_type(type_value: str) -> str:
             if isinstance(type_value, str):
-                return TYPE_MAP.get(type_value.lower(), type_value)
+                return TYPE_MAP.get(type_value.lower().strip(), type_value)
             return type_value
 
-        def array_to_dict(arr, key_field="name"):
-            """Generic: convert [{name: x, ...}] to {x: {...}}"""
-            if not arr:
-                return {}
-            result = {}
-            for item in arr:
-                if not isinstance(item, dict) or key_field not in item:
+        # =============================================================================
+        # T2: VALIDATE
+        # =============================================================================
+
+        def validate_workflow(source: dict, schema: dict) -> list[ValidationError]:
+            errors = []
+
+            if not source.get("name"):
+                errors.append(ValidationError("name", "Workflow name is required", "error"))
+
+            if not source.get("blocks"):
+                errors.append(ValidationError("blocks", "Workflow must have at least one block", "error"))
+
+            blocks = source.get("blocks", [])
+            block_ids = set()
+
+            for i, block in enumerate(blocks):
+                block_id = block.get("id", f"block_{i}")
+                path = f"blocks[{i}]"
+
+                if block_id in block_ids:
+                    errors.append(ValidationError(f"{path}.id", f"Duplicate block ID: {block_id}", "error"))
+                block_ids.add(block_id)
+
+                block_type = block.get("type")
+                if not block_type:
+                    errors.append(ValidationError(f"{path}.type", "Block type is required", "error"))
                     continue
-                item_copy = dict(item)
-                key = item_copy.pop(key_field)
-                # Normalize type field if present
-                if "type" in item_copy:
-                    item_copy["type"] = normalize_type(item_copy["type"])
-                result[key] = item_copy
-            return result
 
-        def inputs_array_to_dict(arr):
-            """Convert block inputs with dot notation support.
+                normalized_type = normalize_block_type(block_type)
+                if not normalized_type:
+                    errors.append(ValidationError(
+                        f"{path}.type",
+                        f"Unknown block type: {block_type}. Valid: {', '.join(BLOCK_TYPE_MAP.values())}",
+                        "error"
+                    ))
+                    continue
 
-            [{key: "prompt", value: "Hello"}] -> {prompt: "Hello"}
-            [{key: "inputs.param1", value: "X"}] -> {inputs: {param1: "X"}}
-            """
-            if not arr:
+                if normalized_type in schema:
+                    errors.extend(validate_block_inputs(block, normalized_type, schema, path))
+
+            return errors
+
+        def validate_block_inputs(block: dict, block_type: str, schema: dict, path: str) -> list[ValidationError]:
+            errors = []
+            type_schema = schema.get(block_type, {})
+
+            required_fields = {f["name"] for f in type_schema.get("required", [])}
+            optional_fields = {f["name"] for f in type_schema.get("optional", [])}
+            allowed_fields = required_fields | optional_fields
+
+            block_inputs = {}
+            raw_inputs = block.get("inputs", [])
+            if isinstance(raw_inputs, list):
+                for item in raw_inputs:
+                    if isinstance(item, dict) and item.get("key"):
+                        key = item["key"]
+                        base_key = key.split(".")[0] if "." in key else key
+                        block_inputs[base_key] = item.get("value")
+            elif isinstance(raw_inputs, dict):
+                block_inputs = raw_inputs
+
+            for fld in required_fields:
+                if fld not in block_inputs:
+                    errors.append(ValidationError(f"{path}.inputs.{fld}", f"Required field missing: {fld}", "error"))
+                elif is_null_equivalent(block_inputs[fld]):
+                    errors.append(ValidationError(f"{path}.inputs.{fld}", f"Required field is null: {fld}", "error"))
+
+            for fld in block_inputs:
+                if fld not in allowed_fields and fld != "inputs":
+                    errors.append(ValidationError(f"{path}.inputs.{fld}", f"Unknown field for {block_type}: {fld}", "warning"))
+
+            return errors
+
+        # =============================================================================
+        # T3: COERCE
+        # =============================================================================
+
+        def coerce_value(value: Any, expected_type: str) -> Any:
+            if value is None:
+                return None
+            if isinstance(value, str) and "{{" in value:
+                return value
+
+            if expected_type in ("integer", "number", "any"):
+                if isinstance(value, str):
+                    try:
+                        return float(value) if "." in value else int(value)
+                    except ValueError:
+                        return value
+                return value
+
+            if expected_type == "boolean":
+                if isinstance(value, str):
+                    return value.lower() in ("true", "yes", "1")
+                return bool(value)
+
+            return value
+
+        def get_field_type(schema: dict, block_type: str, field_name: str) -> str:
+            type_schema = schema.get(block_type, {})
+            for fld in type_schema.get("required", []) + type_schema.get("optional", []):
+                if fld["name"] == field_name:
+                    return fld.get("type", "any")
+            return "any"
+
+        def get_field_default(schema: dict, block_type: str, field_name: str) -> Any:
+            type_schema = schema.get(block_type, {})
+            for fld in type_schema.get("optional", []):
+                if fld["name"] == field_name:
+                    return fld.get("default")
+            return None
+
+        # =============================================================================
+        # T4: FILTER
+        # =============================================================================
+
+        def is_null_equivalent(value: Any) -> bool:
+            if value is None:
+                return True
+            if isinstance(value, str):
+                return value.strip().lower() in NULL_VALUES
+            if isinstance(value, (list, dict)):
+                return len(value) == 0
+            return False
+
+        def should_omit_control_flow(field: str, value: Any) -> bool:
+            if is_null_equivalent(value):
+                return True
+            defaults = CONTROL_FLOW_DEFAULTS.get(field)
+            if defaults is None:
+                return False
+            if isinstance(value, str):
+                return value.strip().lower() in defaults
+            if isinstance(value, list):
+                return len(value) == 0
+            if isinstance(value, bool):
+                return value in defaults
+            return False
+
+        def should_omit_input(schema: dict, block_type: str, field: str, value: Any) -> bool:
+            if is_null_equivalent(value):
+                return True
+            default = get_field_default(schema, block_type, field)
+            if default is not None:
+                if value == default or (isinstance(value, str) and str(default) == value):
+                    return True
+            return False
+
+        def get_allowed_fields(schema: dict, block_type: str) -> set:
+            type_schema = schema.get(block_type, {})
+            allowed = {f["name"] for f in type_schema.get("required", [])}
+            allowed |= {f["name"] for f in type_schema.get("optional", [])}
+            return allowed
+
+        # =============================================================================
+        # T5: RESTRUCTURE
+        # =============================================================================
+
+        def restructure_inputs(inputs_array: list, block_type: str, schema: dict) -> dict:
+            if not inputs_array:
                 return {}
+
+            allowed_fields = get_allowed_fields(schema, block_type)
             result = {}
-            for item in arr:
+
+            for item in inputs_array:
                 if not isinstance(item, dict):
                     continue
+
                 key = item.get("key")
-                if not key:  # Skip if key is None (null) or empty string
-                    continue
                 value = item.get("value")
-                if value is None:
-                    value = ""
+
+                if not key or is_null_equivalent(key):
+                    continue
 
                 if "." in key:
-                    parent, child = key.split(".", 1)
-                    if parent not in result:
-                        result[parent] = {}
-                    if isinstance(result[parent], dict):
-                        result[parent][child] = value
-                else:
-                    result[key] = value
+                    parts = key.split(".", 1)
+                    parent, child = parts
+                    if parent == "inputs":
+                        if parent not in result:
+                            result[parent] = {}
+                        if isinstance(result[parent], dict):
+                            result[parent][child] = value
+                    continue
+
+                if key not in allowed_fields:
+                    continue
+
+                expected_type = get_field_type(schema, block_type, key)
+                coerced = coerce_value(value, expected_type)
+
+                if should_omit_input(schema, block_type, key, coerced):
+                    continue
+
+                result[key] = coerced
+
             return result
 
-        def transform_block(block):
-            """Transform a single block."""
-            result = {"id": block.get("id", ""), "type": block.get("type", "")}
+        def restructure_workflow_inputs(inputs_array: list) -> dict:
+            if not inputs_array:
+                return {}
 
-            # Handle optional string fields (only include if non-empty/non-null)
-            for field in ["description", "condition", "for_each", "for_each_mode"]:
-                if block.get(field):
-                    result[field] = block[field]
+            result = {}
+            for item in inputs_array:
+                if not isinstance(item, dict):
+                    continue
 
-            # Handle continue_on_error (boolean) - only include if True
+                name = item.get("name")
+                if not name or is_null_equivalent(name):
+                    continue
+
+                entry = {"type": normalize_value_type(item.get("type", "str"))}
+
+                if item.get("description") and not is_null_equivalent(item["description"]):
+                    entry["description"] = normalize_string(item["description"])
+
+                if item.get("required") is not None:
+                    entry["required"] = bool(item["required"])
+
+                if item.get("default") is not None and not is_null_equivalent(item["default"]):
+                    entry["default"] = item["default"]
+
+                result[name] = entry
+
+            return result
+
+        def restructure_workflow_outputs(outputs_array: list) -> dict:
+            if not outputs_array:
+                return {}
+
+            result = {}
+            for item in outputs_array:
+                if not isinstance(item, dict):
+                    continue
+
+                name = item.get("name")
+                if not name or is_null_equivalent(name):
+                    continue
+
+                entry = {
+                    "value": item.get("value", ""),
+                    "type": normalize_value_type(item.get("type", "str")),
+                }
+
+                if item.get("description") and not is_null_equivalent(item["description"]):
+                    entry["description"] = normalize_string(item["description"])
+
+                result[name] = entry
+
+            return result
+
+        # =============================================================================
+        # TRANSFORM ORCHESTRATION
+        # =============================================================================
+
+        def transform_block(block: dict, schema: dict) -> dict | None:
+            raw_type = block.get("type", "")
+            block_type = normalize_block_type(raw_type)
+
+            if not block_type:
+                return None
+
+            result = {
+                "id": normalize_string(block.get("id", "")),
+                "type": block_type,
+            }
+
+            desc = block.get("description")
+            if desc and not is_null_equivalent(desc):
+                result["description"] = normalize_string(desc)
+
+            depends_on = block.get("depends_on", [])
+            if isinstance(depends_on, list) and len(depends_on) > 0:
+                result["depends_on"] = depends_on
+
+            condition = block.get("condition")
+            if condition and not should_omit_control_flow("condition", condition):
+                result["condition"] = normalize_string(condition)
+
+            for_each = block.get("for_each")
+            has_for_each = for_each and not should_omit_control_flow("for_each", for_each)
+            if has_for_each:
+                result["for_each"] = normalize_string(for_each)
+                mode = block.get("for_each_mode")
+                if mode and not should_omit_control_flow("for_each_mode", mode):
+                    result["for_each_mode"] = normalize_string(mode)
+
             if block.get("continue_on_error") is True:
                 result["continue_on_error"] = True
 
-            # Handle depends_on separately - must be a list, include even if empty
-            # to avoid YAML parsing issues (empty value becomes None)
-            if "depends_on" in block:
-                result["depends_on"] = block["depends_on"] if block["depends_on"] else []
+            raw_inputs = block.get("inputs", [])
+            if isinstance(raw_inputs, list):
+                inputs = restructure_inputs(raw_inputs, block_type, schema)
+            else:
+                inputs = raw_inputs
 
-            if block.get("inputs"):
-                result["inputs"] = inputs_array_to_dict(block["inputs"])
+            if inputs:
+                result["inputs"] = inputs
 
             return result
 
-        def transform_workflow(design_json):
-            """Transform design JSON to valid workflow structure."""
-            wd = design_json.get("workflow_definition", design_json)
-            return {
-                "name": wd.get("name", "unnamed-workflow"),
-                "description": wd.get("description", ""),
-                "inputs": array_to_dict(wd.get("inputs", []), "name"),
-                "blocks": [transform_block(b) for b in wd.get("blocks", [])],
-                "outputs": array_to_dict(wd.get("outputs", []), "name"),
-            }
+        def transform_workflow(source: dict, schema: dict) -> TransformResult:
+            errors = []
+            warnings = []
 
-        def to_yaml(obj, indent=0):
-            """Simple YAML serializer with multiline string support."""
+            validation_errors = validate_workflow(source, schema)
+            for err in validation_errors:
+                (errors if err.severity == "error" else warnings).append(err)
+
+            workflow = {"name": normalize_string(source.get("name", "unnamed-workflow"))}
+
+            desc = source.get("description")
+            if desc and not is_null_equivalent(desc):
+                workflow["description"] = normalize_string(desc)
+
+            inputs = restructure_workflow_inputs(source.get("inputs", []))
+            if inputs:
+                workflow["inputs"] = inputs
+
+            workflow["blocks"] = []
+            for block in source.get("blocks", []):
+                transformed = transform_block(block, schema)
+                if transformed:
+                    workflow["blocks"].append(transformed)
+
+            outputs = restructure_workflow_outputs(source.get("outputs", []))
+            if outputs:
+                workflow["outputs"] = outputs
+
+            return TransformResult(
+                success=len(errors) == 0,
+                workflow=workflow,
+                errors=errors,
+                warnings=warnings
+            )
+
+        # =============================================================================
+        # L: LOAD (YAML Serialization)
+        # =============================================================================
+
+        def to_yaml(obj: Any, indent: int = 0) -> str:
             lines = []
             sp = "  " * indent
 
@@ -137,21 +597,21 @@ blocks:
                             if isinstance(item, dict):
                                 first_key = True
                                 for ik, iv in item.items():
-                                    prefix = f"{sp}- " if first_key else f"{sp}  "
+                                    prefix = f"{sp}  - " if first_key else f"{sp}    "
                                     first_key = False
                                     if isinstance(iv, (dict, list)) and iv:
                                         lines.append(f"{prefix}{ik}:")
-                                        lines.append(to_yaml(iv, indent + 2))
+                                        lines.append(to_yaml(iv, indent + 3))
                                     else:
-                                        lines.append(f"{prefix}{ik}: {fmt(iv, indent + 2)}")
+                                        lines.append(f"{prefix}{ik}: {fmt_value(iv, indent + 3)}")
                             else:
-                                lines.append(f"{sp}- {fmt(item, indent + 1)}")
+                                lines.append(f"{sp}  - {fmt_value(item, indent + 2)}")
                     else:
-                        lines.append(f"{sp}{k}: {fmt(v, indent + 1)}")
+                        lines.append(f"{sp}{k}: {fmt_value(v, indent + 1)}")
+
             return "\n".join(lines)
 
-        def fmt(v, indent=0):
-            """Format a value for YAML."""
+        def fmt_value(v: Any, indent: int = 0) -> str:
             if v is None:
                 return "null"
             if isinstance(v, bool):
@@ -159,36 +619,92 @@ blocks:
             if isinstance(v, (int, float)):
                 return str(v)
             if isinstance(v, list):
-                return "[" + ", ".join(fmt(x) for x in v) + "]" if v else "[]"
+                return "[]" if not v else "[" + ", ".join(fmt_value(x) for x in v) + "]"
             if isinstance(v, dict):
                 return "{}" if not v else "\n" + to_yaml(v, indent)
+
             s = str(v)
             if "\n" in s:
                 sp = "  " * indent
                 return "|\n" + "\n".join(sp + line for line in s.split("\n"))
-            if any(c in s for c in ":#{}[]&*?|>'\",") or s in ("true", "false", "null", "yes", "no", ""):
+
+            needs_quote = (
+                any(c in s for c in ":#{}[]&*?|>'\",") or
+                s.lower() in ("true", "false", "null", "yes", "no", "on", "off") or
+                s == "" or s.startswith(" ") or s.endswith(" ")
+            )
+            if needs_quote:
                 return '"' + s.replace("\\", "\\\\").replace('"', '\\"') + '"'
             return s
+
+        # =============================================================================
+        # MAIN
+        # =============================================================================
 
         def main():
             json_path = "{{inputs.json_path}}"
             output_path = "{{inputs.output_path}}"
 
             try:
-                with open(json_path) as f:
-                    design = json.load(f)
+                print("=== ETL Pipeline: LLM JSON -> Workflow YAML ===\n")
 
-                wf = transform_workflow(design)
-                yaml_out = to_yaml(wf)
+                # E: Extract
+                print("[E1] Loading source JSON...")
+                source = extract_source(json_path)
+                print(f"     Source: {source.get('name', 'unnamed')}")
+
+                # Use hardcoded block schemas
+                schema = BLOCK_SCHEMAS
+                print(f"     Block types: {len(schema)}")
+
+                # T: Transform
+                print("\n[T1-T5] Transforming...")
+                result = transform_workflow(source, schema)
+
+                # Report
+                for warn in result.warnings:
+                    print(f"  WARN [{warn.path}]: {warn.message}")
+                for err in result.errors:
+                    print(f"  ERROR [{err.path}]: {err.message}")
+
+                if not result.success:
+                    print(f"\n[FAIL] Transform failed with {len(result.errors)} error(s)")
+                    # Output structured error data to stderr for downstream
+                    err_data = {"success": False, "errors": [{"path": e.path, "message": e.message} for e in result.errors]}
+                    sys.stderr.write(json.dumps(err_data))
+                    sys.exit(1)
+
+                # L: Load
+                print("\n[L1] Serializing to YAML...")
+                yaml_out = to_yaml(result.workflow)
 
                 with open(output_path, 'w') as f:
                     f.write(yaml_out + "\n")
 
-                print(f"Transformed: {output_path}")
-                print(f"  Inputs: {len(wf['inputs'])}, Blocks: {len(wf['blocks'])}, Outputs: {len(wf['outputs'])}")
+                wf = result.workflow
+                stats = {
+                    "success": True,
+                    "name": wf.get("name"),
+                    "inputs": len(wf.get("inputs", {})),
+                    "blocks": len(wf.get("blocks", [])),
+                    "outputs": len(wf.get("outputs", {})),
+                    "warnings": len(result.warnings),
+                }
+
+                print(f"\n[OK] Transformed: {output_path}")
+                print(f"     Name: {stats['name']}")
+                print(f"     Inputs: {stats['inputs']}, Blocks: {stats['blocks']}, Outputs: {stats['outputs']}")
+                if stats['warnings']:
+                    print(f"     Warnings: {stats['warnings']}")
+
+                # Output structured stats to stderr for downstream
+                sys.stderr.write(json.dumps(stats))
+
             except Exception as e:
-                print(f"Error: {e}")
-                import traceback; traceback.print_exc()
+                print(f"[FAIL] {e}")
+                import traceback
+                traceback.print_exc()
+                sys.stderr.write(json.dumps({"success": False, "error": str(e)}))
                 sys.exit(1)
 
         if __name__ == "__main__":
@@ -210,3 +726,8 @@ outputs:
     value: "{{inputs.output_path}}"
     type: str
     description: "Path to the transformed workflow file"
+
+  stats:
+    value: "{{blocks.transform.outputs.stderr}}"
+    type: str
+    description: "JSON stats or error details"
