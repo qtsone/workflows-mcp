@@ -606,6 +606,37 @@ Any block can iterate over collections using `for_each`:
 {{blocks.process_items.metadata.count_failed}}     # Failed count
 ```
 
+### Dynamic Iteration (Generating Lists)
+
+**IMPORTANT**: `range()` is NOT valid in for_each expressions.
+To iterate a dynamic number of times, generate a list first:
+
+```yaml
+# Step 1: Generate list of indices
+- id: generate_indices
+  type: Shell
+  inputs:
+    command: |
+      python3 -c "import json; print(json.dumps(list(range({{inputs.count}}))))"
+
+# Step 2: Use the generated list in for_each
+- id: process_each
+  type: Shell
+  depends_on: [generate_indices]
+  for_each: "{{blocks.generate_indices.outputs.stdout | fromjson}}"
+  inputs:
+    command: "echo Processing item {{each.value}}"
+```
+
+### Common for_each Mistakes
+
+| Wrong | Correct |
+|-------|---------|
+| `for_each: "{{range(inputs.n)}}"` | Use Shell block to generate list |
+| `{{loop.index}}` | `{{each.index}}` |
+| `{{item}}` | `{{each.value}}` |
+| `blocks.id.outputs.result` (for_each block) | `blocks.id["0"].outputs.result` |
+
 ### Nested Iteration (via Composition)
 
 For nested loops, use workflow composition:
