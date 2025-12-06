@@ -1,6 +1,6 @@
 name: workflow-creator
-description: Interactive workflow creator using LLM-guided design and validation
-version: "2.3"
+description: Interactive workflow creator using LLM-guided design, complexity analysis, and validation
+version: "2.4"
 tags: [agents, interactive, llm, workflow-generation]
 
 inputs:
@@ -14,6 +14,11 @@ inputs:
       outputs: "What should the workflow return? (describe expected outputs)"
       steps: "What are the main steps or phases? (describe the logical flow)"
 
+  prefilled_requirements:
+    type: dict
+    description: "Pre-filled requirements to skip interactive prompts (for recursive calls)"
+    default: {}
+
   workspace:
     type: str
     description: "Path where the workflow file should be saved"
@@ -25,6 +30,16 @@ inputs:
     description: "Maximum number of validation fix attempts"
     default: 10
 
+  recursion_depth:
+    type: num
+    description: "Current recursion depth (for sub-workflow generation)"
+    default: 0
+
+  max_recursion_depth:
+    type: num
+    description: "Maximum depth for recursive sub-workflow generation"
+    default: 2
+
 blocks:
   - id: bootstrap_context
     type: Workflow
@@ -34,8 +49,10 @@ blocks:
         workspace: "{{inputs.workspace}}/bootstrap"
         ref: "feat/workflow-companion"
 
+  # Skip interactive requirements if prefilled_requirements is provided
   - id: generate_requirements
     depends_on: [bootstrap_context]
+    condition: "{{not inputs.prefilled_requirements or inputs.prefilled_requirements | length == 0}}"
     type: Workflow
     inputs:
       workflow: workflow-creator-requirements
@@ -43,13 +60,73 @@ blocks:
         questions: "{{inputs.questions}}"
         workspace: "{{inputs.workspace}}/requirements"
 
+  # Use prefilled requirements if provided (for recursive calls)
+  - id: store_prefilled_requirements
+    depends_on: [bootstrap_context]
+    condition: "{{inputs.prefilled_requirements and inputs.prefilled_requirements | length > 0}}"
+    type: CreateFile
+    inputs:
+      create_parents: true
+      overwrite: true
+      path: "{{inputs.workspace}}/requirements/structured-requirements.json"
+      content: |
+        {{inputs.prefilled_requirements | prettyjson}}
+
+  # Analyze complexity to determine if decomposition is needed
+  - id: analyze_complexity
+    depends_on:
+      - block: generate_requirements
+        required: false
+      - block: store_prefilled_requirements
+        required: false
+    type: Workflow
+    inputs:
+      workflow: workflow-creator-analyze-complexity
+      inputs:
+        requirements: >-
+          {{blocks.generate_requirements.outputs.response
+          if blocks.generate_requirements.succeeded
+          else inputs.prefilled_requirements}}
+        executor_docs_path: "{{blocks.bootstrap_context.outputs.executor_docs_path}}"
+        workspace: "{{inputs.workspace}}/complexity"
+
+  # Generate sub-workflows if decomposition is needed and not at max depth
+  - id: generate_sub_workflows
+    depends_on: [analyze_complexity]
+    condition: >-
+      {{blocks.analyze_complexity.outputs.needs_decomposition
+      and inputs.recursion_depth < inputs.max_recursion_depth
+      and blocks.analyze_complexity.outputs.sub_workflows | length > 0}}
+    type: Workflow
+    inputs:
+      workflow: workflow-creator-decompose
+      inputs:
+        sub_workflows: "{{blocks.analyze_complexity.outputs.sub_workflows}}"
+        parent_requirements: >-
+          {{blocks.generate_requirements.outputs.response
+          if blocks.generate_requirements.succeeded
+          else inputs.prefilled_requirements}}
+        executor_docs_path: "{{blocks.bootstrap_context.outputs.executor_docs_path}}"
+        examples: "{{blocks.bootstrap_context.outputs.examples}}"
+        workspace: "{{inputs.workspace}}/sub-workflows"
+        current_depth: "{{inputs.recursion_depth}}"
+        max_depth: "{{inputs.max_recursion_depth}}"
+
+  # Generate main workflow (after complexity analysis and optional sub-workflow generation)
   - id: generate_workflow
-    depends_on: [generate_requirements]
+    depends_on:
+      - block: analyze_complexity
+        required: true
+      - block: generate_sub_workflows
+        required: false
     type: Workflow
     inputs:
       workflow: workflow-creator-generate-workflow
       inputs:
-        user_requests: "{{blocks.generate_requirements.outputs.response_path}}"
+        user_requests: >-
+          {{blocks.generate_requirements.outputs.response_path
+          if blocks.generate_requirements.succeeded
+          else blocks.store_prefilled_requirements.outputs.path}}
         executor_docs_path: "{{blocks.bootstrap_context.outputs.executor_docs_path}}"
         examples: "{{blocks.bootstrap_context.outputs.examples}}"
         workspace: "{{inputs.workspace}}/generate-workflow"
@@ -85,7 +162,10 @@ blocks:
     inputs:
       workflow: workflow-creator-summary
       inputs:
-        workflow_name: "{{blocks.generate_requirements.outputs.response.name}}"
+        workflow_name: >-
+          {{blocks.generate_requirements.outputs.response.name
+          if blocks.generate_requirements.succeeded
+          else inputs.prefilled_requirements.name}}
         workflow_path: "{{blocks.recursive_validation.outputs.workflow_path}}"
         workspace: "{{inputs.workspace}}"
         workflows_mcp_path: "{{blocks.bootstrap_context.outputs.workspace}}"
@@ -108,9 +188,22 @@ outputs:
     description: "Complete creation summary with next steps"
 
   requirements:
-    value: "{{blocks.generate_requirements.outputs.response}}"
+    value: >-
+      {{blocks.generate_requirements.outputs.response
+      if blocks.generate_requirements.succeeded
+      else inputs.prefilled_requirements}}
     type: dict
     description: "Structured workflow requirements"
+
+  complexity_analysis:
+    value: "{{blocks.analyze_complexity.outputs}}"
+    type: dict
+    description: "Complexity analysis results"
+
+  sub_workflows_generated:
+    value: "{{blocks.generate_sub_workflows.succeeded}}"
+    type: bool
+    description: "Whether sub-workflows were generated"
 
   success:
     value: "{{blocks.finalize_and_save.succeeded}}"

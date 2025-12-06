@@ -85,6 +85,11 @@ blocks:
            - If error mentions "cycle" or "circular": remove the back-edge
            - Block A cannot depend on B if B already depends on A
            - depends_on should only reference blocks defined BEFORE current block
+        6. **Preserve All Fields**: Keep all top-level workflow fields intact:
+           - `outputs` (with all output definitions - REQUIRED)
+           - `tags` (if present)
+           - `inputs` (preserve all input definitions)
+           Only modify fields that have validation errors.
 
   - id: user_prompt
     description: "User prompt for validation"
@@ -204,6 +209,7 @@ blocks:
         required:
           - name
           - blocks
+          - outputs
         additionalProperties: false
       system_instructions: |
         {{ blocks.system_prompt.outputs.content }}

@@ -20,8 +20,39 @@ sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 from workflows_mcp.engine import create_default_registry
 
 # Block type descriptions (canonical)
-# Block type descriptions (canonical)
 # REMOVED: BLOCK_DESCRIPTIONS and BLOCK_EXAMPLES are now extracted dynamically from executors.
+
+# Configuration requirements that span multiple fields (not captured by Pydantic 'required')
+# These are runtime requirements enforced by executors
+CONFIGURATION_REQUIREMENTS: dict[str, dict[str, Any]] = {
+    "LLMCall": {
+        "requirement": "profile OR provider",
+        "description": (
+            "LLMCall blocks REQUIRE exactly ONE of:\n"
+            "  - `profile`: Load config from ~/.workflows/llm-config.yml\n"
+            "  - `provider` + optionally `model`: Specify inline\n"
+            "Without this, execution fails with 'LLM configuration required' error."
+        ),
+        "examples": {
+            "valid_profile": "profile: default",
+            "valid_provider": "provider: openai\nmodel: gpt-4o",
+            "invalid": "# Missing both profile and provider - WILL FAIL",
+        },
+    },
+    "ImageGen": {
+        "requirement": "profile OR provider",
+        "description": (
+            "ImageGen blocks REQUIRE exactly ONE of:\n"
+            "  - `profile`: Load config from ~/.workflows/llm-config.yml\n"
+            "  - `provider`: Specify inline (openai, openai_compatible)\n"
+            "Without this, execution fails with configuration error."
+        ),
+        "examples": {
+            "valid_profile": "profile: default",
+            "valid_provider": "provider: openai",
+        },
+    },
+}
 
 
 def extract_schemas() -> dict[str, dict[str, Any]]:
@@ -118,7 +149,16 @@ def generate_markdown(schemas: dict[str, dict[str, Any]]) -> str:
     lines.append("|------------|-----------------|")
     for block_type, schema in schemas.items():
         req_fields = [f["name"] for f in schema["required"]]
-        lines.append(f"| {block_type} | {', '.join(req_fields) if req_fields else '(none)'} |")
+        # Add configuration requirements if they exist
+        if block_type in CONFIGURATION_REQUIREMENTS:
+            config_req = CONFIGURATION_REQUIREMENTS[block_type]["requirement"]
+            if req_fields:
+                req_str = f"{', '.join(req_fields)}; **{config_req}**"
+            else:
+                req_str = f"**{config_req}**"
+        else:
+            req_str = ", ".join(req_fields) if req_fields else "(none)"
+        lines.append(f"| {block_type} | {req_str} |")
     lines.append("")
 
     # Common mistakes warning
@@ -141,6 +181,15 @@ def generate_markdown(schemas: dict[str, dict[str, Any]]) -> str:
         lines.append("")
         lines.append(f"**Description**: {schema['description']}")
         lines.append("")
+
+        # Add configuration requirement warning if applicable
+        if block_type in CONFIGURATION_REQUIREMENTS:
+            config = CONFIGURATION_REQUIREMENTS[block_type]
+            lines.append("### ⚠️ Configuration Requirement")
+            lines.append("")
+            for line in config["description"].split("\n"):
+                lines.append(line)
+            lines.append("")
 
         if schema["required"]:
             lines.append("### Required Inputs")
@@ -221,6 +270,112 @@ def generate_markdown(schemas: dict[str, dict[str, Any]]) -> str:
     lines.append("| `tojson` | Convert to JSON string |")
     lines.append("| `fromjson` | Parse JSON string |")
     lines.append("| `toyaml` | Convert to YAML string |")
+    lines.append("")
+
+    # Workflow Composition section
+    lines.append("## Workflow Composition")
+    lines.append("")
+    lines.append("Use the `Workflow` block type to call other workflows (composition pattern):")
+    lines.append("")
+    lines.append("```yaml")
+    lines.append("- id: process_data")
+    lines.append("  type: Workflow")
+    lines.append("  inputs:")
+    lines.append('    workflow: "child-workflow-name"')
+    lines.append("    inputs:")
+    lines.append('      param1: "{{inputs.value}}"')
+    lines.append('      param2: "{{blocks.previous.outputs.result}}"')
+    lines.append("```")
+    lines.append("")
+    lines.append("### Accessing Child Workflow Outputs")
+    lines.append("")
+    lines.append("```yaml")
+    lines.append("{{blocks.process_data.outputs.result}}  # Access child output")
+    lines.append("{{blocks.process_data.succeeded}}       # Check success")
+    lines.append("```")
+    lines.append("")
+
+    # Recursive Workflows section
+    lines.append("## Recursive Workflows")
+    lines.append("")
+    lines.append("A workflow can call itself for iterative processing:")
+    lines.append("")
+    lines.append("```yaml")
+    lines.append("name: recursive-processor")
+    lines.append("inputs:")
+    lines.append("  count: {type: num, default: 0}")
+    lines.append("  max: {type: num, default: 5}")
+    lines.append("")
+    lines.append("blocks:")
+    lines.append("  - id: process")
+    lines.append("    type: Shell")
+    lines.append("    inputs:")
+    lines.append('      command: echo "Processing {{inputs.count}}"')
+    lines.append("")
+    lines.append("  - id: recurse")
+    lines.append("    type: Workflow")
+    lines.append("    depends_on: [process]")
+    lines.append('    condition: "{{inputs.count < inputs.max}}"  # Termination condition')
+    lines.append("    inputs:")
+    lines.append("      workflow: recursive-processor  # Self-reference")
+    lines.append("      inputs:")
+    lines.append('        count: "{{inputs.count + 1}}"')
+    lines.append('        max: "{{inputs.max}}"')
+    lines.append("```")
+    lines.append("")
+    lines.append("**Important**: Always include a termination condition to prevent infinite loops.")
+    lines.append("")
+
+    # for_each Iteration section
+    lines.append("## for_each Iteration")
+    lines.append("")
+    lines.append("Any block can iterate over collections using `for_each`:")
+    lines.append("")
+    lines.append("```yaml")
+    lines.append("- id: process_items")
+    lines.append("  type: Shell")
+    lines.append('  for_each: "{{inputs.items}}"  # List or dict')
+    lines.append("  for_each_mode: parallel       # parallel (default) or sequential")
+    lines.append("  inputs:")
+    lines.append('    command: "process {{each.value}}"')
+    lines.append("```")
+    lines.append("")
+    lines.append("### Iteration Variables")
+    lines.append("")
+    lines.append("| Variable | Description |")
+    lines.append("|----------|-------------|")
+    lines.append("| `{{each.key}}` | Current key (index for lists) |")
+    lines.append("| `{{each.value}}` | Current value |")
+    lines.append("| `{{each.index}}` | Zero-based position |")
+    lines.append("| `{{each.count}}` | Total iterations |")
+    lines.append("")
+    lines.append("### Accessing Iteration Results (Bracket Notation)")
+    lines.append("")
+    lines.append("```yaml")
+    lines.append('{{blocks.process_items["0"].outputs.stdout}}       # By index')
+    lines.append('{{blocks.process_items["key1"].outputs.result}}    # By key')
+    lines.append("{{blocks.process_items.metadata.count}}            # Total count")
+    lines.append("{{blocks.process_items.metadata.count_failed}}     # Failed count")
+    lines.append("```")
+    lines.append("")
+    lines.append("### Nested Iteration (via Composition)")
+    lines.append("")
+    lines.append("For nested loops, use workflow composition:")
+    lines.append("")
+    lines.append("```yaml")
+    lines.append("# Parent: iterate regions")
+    lines.append("- id: process_regions")
+    lines.append("  type: Workflow")
+    lines.append('  for_each: "{{inputs.regions}}"')
+    lines.append("  inputs:")
+    lines.append("    workflow: process-servers")
+    lines.append("    inputs:")
+    lines.append('      region: "{{each.key}}"')
+    lines.append('      servers: "{{each.value.servers}}"')
+    lines.append("")
+    lines.append("# Child workflow: process-servers.yaml")
+    lines.append("# Iterates over servers within each region")
+    lines.append("```")
     lines.append("")
 
     return "\n".join(lines)

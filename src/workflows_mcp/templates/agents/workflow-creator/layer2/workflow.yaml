@@ -74,6 +74,22 @@ blocks:
         ```
         The workflow engine handles re-execution through resume_workflow, NOT circular deps.
 
+        # CRITICAL: LLMCall and ImageGen Configuration
+        LLMCall and ImageGen blocks REQUIRE configuration. Always include:
+        ```yaml
+        inputs:
+          profile: default  # Load from ~/.workflows/llm-config.yml
+          prompt: "..."
+        ```
+        OR specify provider directly:
+        ```yaml
+        inputs:
+          provider: openai
+          model: gpt-4o
+          prompt: "..."
+        ```
+        Without profile or provider, the block WILL FAIL at runtime.
+
         # Output Format
         JSON: {workflow: {name, description, inputs: [...], blocks: [...], outputs: [...]}, explanation, clarifications}
         Note: In this representation, inputs, blocks, and outputs are arrays (lists), not objects.

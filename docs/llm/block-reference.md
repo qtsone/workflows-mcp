@@ -16,8 +16,8 @@ Field names are **exact** - use them precisely in your workflows.
 | EditFile | path, operations |
 | ReadFiles | patterns |
 | HttpCall | url |
-| LLMCall | prompt |
-| ImageGen | (none) |
+| LLMCall | prompt; **profile OR provider** |
+| ImageGen | **profile OR provider** |
 | Prompt | prompt |
 | ReadJSONState | path |
 | WriteJSONState | path, data |
@@ -258,6 +258,13 @@ Field names are **exact** - use them precisely in your workflows.
 
 **Description**: Executor for LLMCall blocks.
 
+### ⚠️ Configuration Requirement
+
+LLMCall blocks REQUIRE exactly ONE of:
+  - `profile`: Load config from ~/.workflows/llm-config.yml
+  - `provider` + optionally `model`: Specify inline
+Without this, execution fails with 'LLM configuration required' error.
+
 ### Required Inputs
 
 - **`prompt`** (string): User prompt to send to the LLM
@@ -307,6 +314,13 @@ Please provide a valid response that conforms to the schema.`)*: Template for va
 ## ImageGen
 
 **Description**: Executor for Image Generation.
+
+### ⚠️ Configuration Requirement
+
+ImageGen blocks REQUIRE exactly ONE of:
+  - `profile`: Load config from ~/.workflows/llm-config.yml
+  - `provider`: Specify inline (openai, openai_compatible)
+Without this, execution fails with configuration error.
 
 ### Optional Inputs
 
@@ -510,3 +524,103 @@ Common filters for transforming values:
 | `tojson` | Convert to JSON string |
 | `fromjson` | Parse JSON string |
 | `toyaml` | Convert to YAML string |
+
+## Workflow Composition
+
+Use the `Workflow` block type to call other workflows (composition pattern):
+
+```yaml
+- id: process_data
+  type: Workflow
+  inputs:
+    workflow: "child-workflow-name"
+    inputs:
+      param1: "{{inputs.value}}"
+      param2: "{{blocks.previous.outputs.result}}"
+```
+
+### Accessing Child Workflow Outputs
+
+```yaml
+{{blocks.process_data.outputs.result}}  # Access child output
+{{blocks.process_data.succeeded}}       # Check success
+```
+
+## Recursive Workflows
+
+A workflow can call itself for iterative processing:
+
+```yaml
+name: recursive-processor
+inputs:
+  count: {type: num, default: 0}
+  max: {type: num, default: 5}
+
+blocks:
+  - id: process
+    type: Shell
+    inputs:
+      command: echo "Processing {{inputs.count}}"
+
+  - id: recurse
+    type: Workflow
+    depends_on: [process]
+    condition: "{{inputs.count < inputs.max}}"  # Termination condition
+    inputs:
+      workflow: recursive-processor  # Self-reference
+      inputs:
+        count: "{{inputs.count + 1}}"
+        max: "{{inputs.max}}"
+```
+
+**Important**: Always include a termination condition to prevent infinite loops.
+
+## for_each Iteration
+
+Any block can iterate over collections using `for_each`:
+
+```yaml
+- id: process_items
+  type: Shell
+  for_each: "{{inputs.items}}"  # List or dict
+  for_each_mode: parallel       # parallel (default) or sequential
+  inputs:
+    command: "process {{each.value}}"
+```
+
+### Iteration Variables
+
+| Variable | Description |
+|----------|-------------|
+| `{{each.key}}` | Current key (index for lists) |
+| `{{each.value}}` | Current value |
+| `{{each.index}}` | Zero-based position |
+| `{{each.count}}` | Total iterations |
+
+### Accessing Iteration Results (Bracket Notation)
+
+```yaml
+{{blocks.process_items["0"].outputs.stdout}}       # By index
+{{blocks.process_items["key1"].outputs.result}}    # By key
+{{blocks.process_items.metadata.count}}            # Total count
+{{blocks.process_items.metadata.count_failed}}     # Failed count
+```
+
+### Nested Iteration (via Composition)
+
+For nested loops, use workflow composition:
+
+```yaml
+# Parent: iterate regions
+- id: process_regions
+  type: Workflow
+  for_each: "{{inputs.regions}}"
+  inputs:
+    workflow: process-servers
+    inputs:
+      region: "{{each.key}}"
+      servers: "{{each.value.servers}}"
+
+# Child workflow: process-servers.yaml
+# Iterates over servers within each region
+```

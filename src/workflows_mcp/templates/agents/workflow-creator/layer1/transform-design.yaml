@@ -313,6 +313,34 @@ blocks:
                 if fld not in allowed_fields and fld != "inputs":
                     errors.append(ValidationError(f"{path}.inputs.{fld}", f"Unknown field for {block_type}: {fld}", "warning"))
 
+            # Semantic validation: blocks requiring configuration
+            errors.extend(validate_block_configuration(block_type, block_inputs, path))
+
+            return errors
+
+        def validate_block_configuration(block_type: str, block_inputs: dict, path: str) -> list[ValidationError]:
+            """Validate semantic requirements that span multiple fields.
+
+            LLMCall and ImageGen require either 'profile' OR 'provider' to be specified.
+            Without this, the block will fail at runtime with 'LLM configuration required'.
+            """
+            errors = []
+
+            # Blocks requiring profile OR provider
+            config_required_blocks = {"LLMCall", "ImageGen"}
+
+            if block_type in config_required_blocks:
+                has_profile = block_inputs.get("profile") and not is_null_equivalent(block_inputs.get("profile"))
+                has_provider = block_inputs.get("provider") and not is_null_equivalent(block_inputs.get("provider"))
+
+                if not has_profile and not has_provider:
+                    errors.append(ValidationError(
+                        f"{path}.inputs",
+                        f"{block_type} requires either 'profile' OR 'provider' to be specified. "
+                        f"Add profile: default OR provider: openai (with model).",
+                        "error"
+                    ))
+
             return errors
 
         # =============================================================================
