@@ -661,6 +661,7 @@ class BlockOrchestrator:
         continue_on_error: bool = False,
         wave: int = 0,
         depth: int = 0,
+        condition: str | None = None,
     ) -> tuple[dict[str, BlockExecution], Metadata]:
         """
         Execute a for_each block with multiple iterations (ADR-009).
@@ -676,6 +677,8 @@ class BlockOrchestrator:
             continue_on_error: Continue on iteration failure
             wave: Wave number (for metadata)
             depth: Nesting depth (0 for root blocks, 1+ for nested iterations)
+            condition: Optional condition expression evaluated per-iteration
+                       with access to {{each.*}} variables
 
         Returns:
             Tuple of (iteration_results_dict, parent_metadata)
@@ -688,6 +691,7 @@ class BlockOrchestrator:
             - Aggregates child Metadata into parent using
               Metadata.create_for_each_parent()
             - Handles continue_on_error: false (fail-fast) and true (resilient)
+            - Condition is evaluated per-iteration with access to {{each.*}}
         """
         from .resolver import UnifiedVariableResolver
 
@@ -715,10 +719,39 @@ class BlockOrchestrator:
             iteration_context_dict = context.model_dump()
             iteration_context_dict["each"] = each_context
 
-            # Resolve iteration inputs (replace {{each.*}} variables)
+            # Create resolver with 'each' context for condition and inputs
             resolver = UnifiedVariableResolver(
                 iteration_context_dict, secret_provider=self.secret_provider
             )
+
+            # Evaluate per-iteration condition if provided
+            if condition:
+                # Resolve the condition expression - Jinja2 evaluates boolean expressions
+                condition_result = await resolver.resolve_async(condition)
+                if not isinstance(condition_result, bool):
+                    raise ValueError(
+                        f"Condition must evaluate to boolean, got {type(condition_result).__name__}"
+                    )
+                if not condition_result:
+                    # Return skipped result for this iteration
+                    skipped_metadata = Metadata.create_leaf_skipped(
+                        type=executor.type_name,
+                        id=iteration_key,
+                        started_at=datetime.now(UTC).isoformat(),
+                        wave=wave,
+                        execution_order=iteration_index,
+                        index=iteration_index,
+                        value=iteration_value,
+                        depth=depth + 1,
+                        message=f"Condition '{condition}' evaluated to False",
+                    )
+                    return iteration_key, BlockExecution(
+                        output=None,
+                        metadata=skipped_metadata,
+                        paused=False,
+                    )
+
+            # Resolve iteration inputs (replace {{each.*}} variables)
             resolved_inputs = await resolver.resolve_async(inputs_template)
 
             # Validate and create input model

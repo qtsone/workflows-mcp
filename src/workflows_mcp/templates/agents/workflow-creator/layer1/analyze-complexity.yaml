@@ -43,6 +43,18 @@ blocks:
         - Distinct logical phases exist (e.g., setup → process → cleanup)
         - Nested iteration needed (outer for_each calling inner for_each)
         - Recursive patterns mentioned (retry, approval loops, iterative refinement)
+
+        # CRITICAL: Sub-Workflow Step Generation
+        When decomposing, you MUST provide detailed implementation steps for each sub-workflow.
+        Each step should be actionable and describe a specific block or operation:
+        - BAD: "Process the data" (too vague)
+        - GOOD: "Read input file using ReadFiles block", "Transform data using LLMCall", "Write results to output"
+
+        For recursive sub-workflows, include:
+        - Termination condition check step
+        - Main processing step(s)
+        - Recursive call step with updated parameters
+        - Result aggregation step
       prompt: |
         Analyze these workflow requirements:
 
@@ -54,7 +66,10 @@ blocks:
         1. Complexity level
         2. Estimated block count
         3. Whether decomposition is needed
-        4. If decomposing, list sub-workflows to create
+        4. If decomposing, list sub-workflows with DETAILED implementation steps for each
+
+        IMPORTANT: For each sub-workflow, provide 3-7 specific implementation steps that describe
+        the blocks and operations needed. These steps will be used directly to generate the sub-workflow.
       response_schema:
         type: object
         properties:
@@ -89,16 +104,44 @@ blocks:
                 inputs:
                   type: array
                   items:
-                    type: string
-                  description: "Input parameter names needed"
+                    type: object
+                    properties:
+                      name:
+                        type: string
+                        description: "Parameter name"
+                      type:
+                        type: string
+                        description: "Parameter type (str, num, bool, list, dict)"
+                      description:
+                        type: string
+                        description: "What this parameter is for"
+                    required: [name, type, description]
+                  description: "Input parameters with types and descriptions"
                 outputs:
                   type: array
                   items:
+                    type: object
+                    properties:
+                      name:
+                        type: string
+                        description: "Output name"
+                      type:
+                        type: string
+                        description: "Output type (str, num, bool, list, dict)"
+                      description:
+                        type: string
+                        description: "What this output contains"
+                    required: [name, type, description]
+                  description: "Outputs with types and descriptions"
+                steps:
+                  type: array
+                  items:
                     type: string
-                  description: "Output names produced"
+                  description: "Detailed implementation steps (3-7 steps describing blocks/operations)"
               required:
                 - name
                 - purpose
+                - steps
         required:
           - complexity_level
           - estimated_blocks

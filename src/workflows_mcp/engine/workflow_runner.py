@@ -640,8 +640,10 @@ class WorkflowRunner:
                 )
                 continue
 
-            # Check condition
-            if block_def.condition:
+            # Check condition (but NOT for for_each blocks - those evaluate per-iteration)
+            # For for_each blocks, condition may reference {{each.*}} variables which
+            # only exist during iteration. Defer to orchestrator.execute_for_each().
+            if block_def.condition and not block_def.for_each:
                 should_execute = await self._evaluate_condition(block_def.condition, exec_context)
                 if not should_execute:
                     self._mark_block_skipped(
@@ -893,6 +895,7 @@ class WorkflowRunner:
             continue_on_error=block_def.continue_on_error,
             wave=wave_idx,
             depth=exec_context.depth,
+            condition=block_def.condition,  # Pass condition for per-iteration evaluation
         )
 
         # 5. Store results in execution context using fractal structure

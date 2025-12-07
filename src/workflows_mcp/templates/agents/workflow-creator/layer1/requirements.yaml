@@ -12,7 +12,7 @@ inputs:
 
   questions:
     type: dict
-    description: "(Optional) Questions to ask user."
+    description: "Questions to ask user. Keys: name, description, inputs, outputs, steps"
     default:
       name: "What should this workflow be named? (lowercase, hyphens, e.g., 'data-pipeline')"
       description: "What does this workflow do? (brief description)"
@@ -20,11 +20,17 @@ inputs:
       outputs: "What should the workflow return? (describe expected outputs)"
       steps: "What are the main steps or phases? (describe the logical flow)"
 
+  answers:
+    type: dict
+    description: "Pre-filled answers. Keys matching question keys skip prompts."
+    default: {}
+
 blocks:
   - id: gather_requirements
     type: Prompt
     for_each: "{{inputs.questions}}"
     for_each_mode: sequential
+    condition: "{{each.key not in inputs.answers}}"
     inputs:
       prompt: |
         # WORKFLOW CREATOR - REQUIREMENTS GATHERING
@@ -33,7 +39,9 @@ blocks:
 
   - id: system_prompt
     description: "System prompt for requirements gathering"
-    depends_on: [gather_requirements]
+    depends_on:
+      - block: gather_requirements
+        required: false  # Optional: may be skipped if all answers pre-provided
     type: CreateFile
     inputs:
       create_parents: true
@@ -50,7 +58,9 @@ blocks:
 
   - id: user_prompt
     description: "User prompt for requirements gathering"
-    depends_on: [gather_requirements]
+    depends_on:
+      - block: gather_requirements
+        required: false  # Optional: may be skipped if all answers pre-provided
     type: CreateFile
     inputs:
       create_parents: true
@@ -64,7 +74,7 @@ blocks:
 
         {% for key, question in inputs.questions.items() %}
         ### [{{ key }}] {{ question }}
-        {{blocks.gather_requirements[key].outputs.response}}
+        {% if key in inputs.answers %}{{inputs.answers[key]}}{% else %}{{blocks.gather_requirements[key].outputs.response}}{% endif %}
         {% endfor %}
 
         ## Instructions

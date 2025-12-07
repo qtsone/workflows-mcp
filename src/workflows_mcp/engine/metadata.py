@@ -132,9 +132,9 @@ class Metadata(BaseModel):
         ge=0,
         description="Position in parent (0-based, 0 for root blocks)",
     )
-    value: dict[str, Any] = Field(
+    value: Any = Field(
         default_factory=dict,
-        description="Iteration data from parent (empty {} for root blocks)",
+        description="Iteration data from parent (empty {} for root, any type for iterations)",
     )
     depth: int = Field(
         default=0,
@@ -275,7 +275,7 @@ class Metadata(BaseModel):
         wave: int = 0,
         execution_order: int = 0,
         index: int = 0,
-        value: dict[str, Any] | None = None,
+        value: Any = None,
         depth: int = 0,
         **executor_fields: Any,
     ) -> Metadata:
@@ -338,7 +338,7 @@ class Metadata(BaseModel):
         wave: int = 0,
         execution_order: int = 0,
         index: int = 0,
-        value: dict[str, Any] | None = None,
+        value: Any = None,
         depth: int = 0,
         outcome: Literal["failure", "crash"] = "failure",
         **executor_fields: Any,
@@ -412,7 +412,7 @@ class Metadata(BaseModel):
         wave: int = 0,
         execution_order: int = 0,
         index: int = 0,
-        value: dict[str, Any] | None = None,
+        value: Any = None,
         depth: int = 0,
         **executor_fields: Any,
     ) -> Metadata:
@@ -472,7 +472,7 @@ class Metadata(BaseModel):
         wave: int = 0,
         execution_order: int = 0,
         index: int = 0,
-        value: dict[str, Any] | None = None,
+        value: Any = None,
         depth: int = 0,
         **executor_fields: Any,
     ) -> Metadata:
@@ -539,7 +539,7 @@ class Metadata(BaseModel):
         mode: Literal["parallel", "sequential"],
         depth: int = 0,
         index: int = 0,
-        value: dict[str, Any] | None = None,
+        value: Any = None,
     ) -> Metadata:
         """
         Create metadata for a for_each parent node by aggregating child results.
