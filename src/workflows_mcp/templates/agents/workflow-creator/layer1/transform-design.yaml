@@ -585,6 +585,10 @@ blocks:
             if desc and not is_null_equivalent(desc):
                 workflow["description"] = normalize_string(desc)
 
+            tags = source.get("tags", [])
+            if tags and isinstance(tags, list) and len(tags) > 0:
+                workflow["tags"] = [normalize_string(t) for t in tags if t and not is_null_equivalent(t)]
+
             inputs = restructure_workflow_inputs(source.get("inputs", []))
             if inputs:
                 workflow["inputs"] = inputs

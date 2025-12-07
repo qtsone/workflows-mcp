@@ -76,6 +76,7 @@ blocks:
           "inputs": {{each.value.inputs | default([]) | tojson}},
           "outputs": {{each.value.outputs | default([]) | tojson}},
           "steps": {{each.value.steps | default([each.value.purpose]) | tojson}},
+          "tags": {{inputs.parent_requirements.tags | default([]) | tojson}},
           "is_sub_workflow": true,
           "is_recursive": {{each.value.is_recursive | default(false) | tojson}},
           "parent_context": "{{inputs.parent_requirements.name | default('parent')}}",

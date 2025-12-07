@@ -112,9 +112,9 @@ blocks:
         executor_docs_path: "{{blocks.bootstrap_context.outputs.executor_docs_path}}"
         examples: "{{blocks.bootstrap_context.outputs.examples}}"
         workspace: "{{inputs.workspace}}/generate-workflow"
-        # Pass sub-workflow info for composition
         sub_workflows: "{{blocks.analyze_complexity.outputs.sub_workflows | default([])}}"
         has_sub_workflows: "{{blocks.generate_sub_workflows.succeeded | default(false)}}"
+        tags: "{{blocks.generate_requirements.outputs.response.tags | default([])}}"
 
   - id: transform_design
     description: "Transform design JSON to valid workflow YAML format"

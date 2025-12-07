@@ -55,6 +55,12 @@ inputs:
     default: false
     required: false
 
+  tags:
+    type: list
+    description: "(Optional) Tags from requirements phase for categorization"
+    default: []
+    required: false
+
 blocks:
   - id: system_prompt
     description: "Log the current iteration"
@@ -120,8 +126,8 @@ blocks:
         - Use sub-workflow outputs via {% raw %}{{blocks.run_sub_workflow.outputs.field}}{% endraw %}
 
         # Output Format
-        JSON: {workflow: {name, description, inputs: [...], blocks: [...], outputs: [...]}, explanation, clarifications}
-        Note: In this representation, inputs, blocks, and outputs are arrays (lists), not objects.
+        JSON: {workflow: {name, description, inputs: [...], blocks: [...], outputs: [...], tags: [...]}, explanation, clarifications}
+        Note: In this representation, inputs, blocks, outputs, and tags are arrays (lists), not objects.
 
   - id: user_prompt
     description: "Log the LLM prompt"
@@ -145,6 +151,9 @@ blocks:
         ```json
         {{read_file(inputs.user_requests) | fromjson | prettyjson}}
         ```
+
+        ## Tags (from requirements)
+        Use these tags for the workflow: {{inputs.tags | tojson}}
 
         {%- if inputs.has_sub_workflows and inputs.sub_workflows | length > 0 %}
         ## IMPORTANT: Available Sub-Workflows for Composition
@@ -335,12 +344,18 @@ blocks:
                     - description
                     - value
                   additionalProperties: false
+              tags:
+                type: array
+                description: "Workflow tags for categorization (lowercase, hyphenated)"
+                items:
+                  type: string
             required:
               - name
               - description
               - inputs
               - blocks
               - outputs
+              - tags
             additionalProperties: false
             description: "Full structured workflow definition"
           explanation:
@@ -720,6 +735,7 @@ blocks:
         index: "{{inputs.index + 1}}"
         sub_workflows: "{{inputs.sub_workflows}}"
         has_sub_workflows: "{{inputs.has_sub_workflows}}"
+        tags: "{{inputs.tags}}"
 
 outputs:
   diagram_path:

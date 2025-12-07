@@ -193,6 +193,7 @@ blocks:
           - inputs
           - steps
           - outputs
+          - tags
         additionalProperties: false
       system_instructions: |
         {{blocks.system_prompt.outputs.content}}
