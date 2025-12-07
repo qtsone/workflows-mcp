@@ -1,0 +1,67 @@
+# Child workflow with Prompt block for testing nested workflow pause/resume
+# This simulates a workflow like workflow-creator that pauses for user approval
+
+name: nested-workflow-in-foreach-child
+description: Child workflow that pauses for approval (simulates workflow-creator)
+tags: [test, interactive, nested]
+
+inputs:
+  item_name:
+    type: str
+    description: Name of the item being processed
+    required: true
+
+  item_value:
+    type: str
+    description: Value to process
+    required: true
+
+blocks:
+  # Step 1: Process the item
+  - id: process_item
+    type: Shell
+    inputs:
+      command: |
+        echo "Processing item: {{inputs.item_name}} with value: {{inputs.item_value}}"
+
+  # Step 2: Prompt for approval (PAUSES WORKFLOW)
+  - id: approval
+    type: Prompt
+    depends_on: [process_item]
+    inputs:
+      prompt: "Approve processing of {{inputs.item_name}}? (yes/no)"
+
+  # Step 3: Complete if approved
+  - id: complete
+    type: Shell
+    depends_on: [approval]
+    condition: "{{blocks.approval.outputs.response == 'yes'}}"
+    inputs:
+      command: |
+        echo "Completed: {{inputs.item_name}} approved with response: {{blocks.approval.outputs.response}}"
+
+  # Step 4: Skip if denied
+  - id: denied
+    type: Shell
+    depends_on: [approval]
+    condition: "{{blocks.approval.outputs.response == 'no'}}"
+    inputs:
+      command: |
+        echo "Denied: {{inputs.item_name}} rejected"
+
+outputs:
+  item_name:
+    value: "{{inputs.item_name}}"
+    type: str
+
+  approval_response:
+    value: "{{blocks.approval.outputs.response}}"
+    type: str
+
+  completed:
+    value: "{{blocks.complete.succeeded}}"
+    type: bool
+
+  denied:
+    value: "{{blocks.denied.succeeded}}"
+    type: bool

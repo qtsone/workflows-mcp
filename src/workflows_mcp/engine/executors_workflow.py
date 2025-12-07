@@ -326,24 +326,36 @@ class WorkflowExecutor(BlockExecutor):
                 "ExecutionContext not found - workflow composition not supported in this context"
             )
 
-        # 4. Inject ExecutionContext into deserialized child state
+        # 4. Get child workflow name (from checkpoint or inputs)
+        workflow_name = pause_metadata.get("child_workflow") or inputs.workflow
+
+        # 5. Create child context (SAME AS execute() method)
+        # This is critical for proper variable resolution and context isolation.
+        # Without this, the child workflow would use parent's execution context,
+        # causing variable resolution to fail or return incorrect values.
+        child_context = exec_context.create_child_context(
+            parent_execution=context,
+            workflow_name=workflow_name,
+        )
+
+        # 6. Inject child ExecutionContext into deserialized child state
         # Required because _execution_context is a PrivateAttr that isn't serialized.
         # After deserialization, child_execution_state.context._execution_context is None.
         # This must be set before resume_from_state() to ensure proper context propagation.
-        child_execution_state.context.set_execution_context(exec_context)
+        child_execution_state.context.set_execution_context(child_context)
 
-        # 5. Create WorkflowRunner and resume child workflow
+        # 7. Create WorkflowRunner and resume child workflow
         from .workflow_runner import WorkflowRunner
 
         # No checkpointing for nested workflows - parent handles all checkpointing
         runner = WorkflowRunner()
 
         try:
-            # Resume child workflow from ExecutionState
+            # Resume child workflow from ExecutionState with CHILD context
             child_execution_result = await runner.resume_from_state(
                 execution_state=child_execution_state,
                 response=response,
-                context=exec_context,
+                context=child_context,
             )
         except Exception as e:
             raise ValueError(f"Failed to resume child workflow: {e}") from e

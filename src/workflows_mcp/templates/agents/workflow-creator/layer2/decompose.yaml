@@ -52,26 +52,13 @@ blocks:
         fi
         echo "Depth {{inputs.current_depth}}/{{inputs.max_depth}} - OK to proceed"
 
-  - id: generate_sub_workflows
-    description: "Generate each sub-workflow by calling workflow-creator-generate-workflow"
-    type: Workflow
-    for_each: "{{inputs.sub_workflows}}"
-    for_each_mode: sequential
-    depends_on: [check_depth]
-    condition: "{{inputs.current_depth < inputs.max_depth}}"
-    inputs:
-      workflow: workflow-creator-generate-workflow
-      inputs:
-        user_requests: "{{inputs.workspace}}/{{each.value.name}}-requirements.json"
-        executor_docs_path: "{{inputs.executor_docs_path}}"
-        examples: "{{inputs.examples}}"
-        workspace: "{{inputs.workspace}}/{{each.value.name}}"
-
   - id: prepare_sub_requirements
     description: "Create requirements files for each sub-workflow"
     type: CreateFile
     for_each: "{{inputs.sub_workflows}}"
     for_each_mode: parallel
+    depends_on: [check_depth]
+    condition: "{{inputs.current_depth < inputs.max_depth}}"
     inputs:
       create_parents: true
       overwrite: true
@@ -84,8 +71,32 @@ blocks:
           "outputs": {{each.value.outputs | default([]) | tojson}},
           "steps": ["Generated as sub-workflow of parent requirements"],
           "is_sub_workflow": true,
+          "is_recursive": {{each.value.is_recursive | default(false) | tojson}},
           "parent_context": "{{inputs.parent_requirements.name | default('parent')}}"
         }
+
+  - id: generate_sub_workflows
+    description: "Recursively call workflow-creator for each sub-workflow (includes design, validation, and save)"
+    type: Workflow
+    for_each: "{{inputs.sub_workflows}}"
+    for_each_mode: sequential
+    depends_on: [prepare_sub_requirements]
+    condition: "{{inputs.current_depth < inputs.max_depth}}"
+    inputs:
+      workflow: workflow-creator
+      inputs:
+        # Pass the sub-workflow requirements as prefilled (skips interactive prompts)
+        prefilled_requirements:
+          name: "{{each.value.name}}"
+          description: "{{each.value.purpose}}"
+          inputs: "{{each.value.inputs | default([])}}"
+          outputs: "{{each.value.outputs | default([])}}"
+          steps: ["Generated as sub-workflow"]
+          tags: ["sub-workflow", "{{inputs.parent_requirements.name | default('parent')}}"]
+        workspace: "{{inputs.workspace}}/{{each.value.name}}"
+        recursion_depth: "{{inputs.current_depth + 1}}"
+        max_recursion_depth: "{{inputs.max_depth}}"
+        max_validation_attempts: 5
 
   - id: collect_results
     description: "Summarize generated sub-workflows"
@@ -101,6 +112,8 @@ blocks:
         echo "  Depth: {{inputs.current_depth}}/{{inputs.max_depth}}"
         echo "  Sub-workflows requested: {{inputs.sub_workflows | length}}"
         echo "  Workspace: {{inputs.workspace}}"
+        echo ""
+        echo "Generated sub-workflows saved to ~/.workflows/"
 
 outputs:
   sub_workflow_count:

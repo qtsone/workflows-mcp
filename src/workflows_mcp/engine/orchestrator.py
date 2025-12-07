@@ -424,9 +424,16 @@ class BlockOrchestrator:
                 metadata = Metadata(**serialized["metadata"])
 
                 # Reconstruct output from serialized data
-                output = None
+                # Use Any type because output can be Execution (Workflow) or BlockOutput
+                output: Any = None
                 if serialized["output"] is not None:
-                    output = executor.output_type(**serialized["output"])
+                    # Special case: WorkflowExecutor returns Execution, not BlockOutput
+                    # Check by executor type name (Workflow blocks have output_type=type(None))
+                    if executor_type == "Workflow":
+                        # Workflow block - output is serialized Execution object
+                        output = Execution.model_validate(serialized["output"])
+                    else:
+                        output = executor.output_type(**serialized["output"])
 
                 iteration_results[key] = BlockExecution(
                     inputs=serialized["inputs"],
