@@ -43,6 +43,18 @@ inputs:
     default: 1
     required: false
 
+  sub_workflows:
+    type: list
+    description: "(Optional) List of sub-workflows to compose (from analyze_complexity)"
+    default: []
+    required: false
+
+  has_sub_workflows:
+    type: bool
+    description: "(Optional) Whether sub-workflows were generated"
+    default: false
+    required: false
+
 blocks:
   - id: system_prompt
     description: "Log the current iteration"
@@ -90,6 +102,23 @@ blocks:
         ```
         Without profile or provider, the block WILL FAIL at runtime.
 
+        # Workflow Composition (using sub-workflows)
+        When sub-workflows are available, you MUST compose them using Workflow blocks:
+        {% raw %}
+        ```yaml
+        - id: run_sub_workflow
+          type: Workflow
+          inputs:
+            workflow: "sub-workflow-name"  # Exact name from available sub-workflows
+            inputs:
+              param1: "{{inputs.some_param}}"
+              param2: "{{blocks.previous_block.outputs.result}}"
+        ```
+        {% endraw %}
+        - Use Workflow blocks to call pre-generated sub-workflows
+        - Pass appropriate inputs from parent workflow inputs or block outputs
+        - Use sub-workflow outputs via {% raw %}{{blocks.run_sub_workflow.outputs.field}}{% endraw %}
+
         # Output Format
         JSON: {workflow: {name, description, inputs: [...], blocks: [...], outputs: [...]}, explanation, clarifications}
         Note: In this representation, inputs, blocks, and outputs are arrays (lists), not objects.
@@ -117,6 +146,40 @@ blocks:
         {{read_file(inputs.user_requests) | fromjson | prettyjson}}
         ```
 
+        {%- if inputs.has_sub_workflows and inputs.sub_workflows | length > 0 %}
+        ## IMPORTANT: Available Sub-Workflows for Composition
+        The following sub-workflows have been generated. You MUST compose them using Workflow blocks:
+
+        {% for sw in inputs.sub_workflows %}
+        ### `{{ sw.name }}`
+        **Purpose**: {{ sw.purpose }}
+        {% if sw.inputs and sw.inputs | length > 0 %}
+        **Inputs**:
+        {% for inp in sw.inputs %}
+        - `{{ inp.name }}` ({{ inp.type }}): {{ inp.description }}
+        {% endfor %}
+        {% endif %}
+        {% if sw.outputs and sw.outputs | length > 0 %}
+        **Outputs**:
+        {% for out in sw.outputs %}
+        - `{{ out.name }}` ({{ out.type }}): {{ out.description }}
+        {% endfor %}
+        {% endif %}
+
+        {% endfor %}
+        **Usage Example**:
+        {% raw %}
+        ```yaml
+        - id: call_sub_workflow
+          type: Workflow
+          inputs:
+            workflow: "sub-workflow-name"
+            inputs:
+              param: "{{inputs.some_param}}"
+        ```
+        {% endraw %}
+        {% endif %}
+
         {%- if inputs.index == 1 %}
         # Design New Workflow
         Create a workflow based on the user's requirements:
@@ -126,6 +189,9 @@ blocks:
         1. **Inputs**: All workflow input parameters
         2. **Blocks**: Compute/Processing steps (following DAG rules - no cycles)
         3. **Outputs**: Workflow outputs
+        {% if inputs.has_sub_workflows %}
+        4. **CRITICAL**: Use Workflow blocks to compose the available sub-workflows listed above
+        {% endif %}
 
         Generate the initial workflow design now.
         {% else %}
@@ -652,6 +718,8 @@ blocks:
         feedback: "{{blocks.request_approval.outputs.response}}"
         workspace: "{{inputs.workspace}}"
         index: "{{inputs.index + 1}}"
+        sub_workflows: "{{inputs.sub_workflows}}"
+        has_sub_workflows: "{{inputs.has_sub_workflows}}"
 
 outputs:
   diagram_path:

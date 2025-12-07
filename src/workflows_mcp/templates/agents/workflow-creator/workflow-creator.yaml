@@ -40,6 +40,12 @@ inputs:
     description: "Maximum depth for recursive sub-workflow generation"
     default: 2
 
+  output_dir:
+    type: str
+    description: "Output directory for workflow files. Workflows save to <output_dir>/<name>/main.yaml"
+    default: "~/.workflows"
+    required: false
+
 blocks:
   - id: bootstrap_context
     type: Workflow
@@ -89,6 +95,7 @@ blocks:
         workspace: "{{inputs.workspace}}/sub-workflows"
         current_depth: "{{inputs.recursion_depth}}"
         max_depth: "{{inputs.max_recursion_depth}}"
+        output_dir: "{{inputs.output_dir}}/{{blocks.generate_requirements.outputs.response.name}}"
 
   - id: generate_workflow
     description: "Generate main workflow (after complexity analysis and optional sub-workflow generation)"
@@ -105,6 +112,9 @@ blocks:
         executor_docs_path: "{{blocks.bootstrap_context.outputs.executor_docs_path}}"
         examples: "{{blocks.bootstrap_context.outputs.examples}}"
         workspace: "{{inputs.workspace}}/generate-workflow"
+        # Pass sub-workflow info for composition
+        sub_workflows: "{{blocks.analyze_complexity.outputs.sub_workflows | default([])}}"
+        has_sub_workflows: "{{blocks.generate_sub_workflows.succeeded | default(false)}}"
 
   - id: transform_design
     description: "Transform design JSON to valid workflow YAML format"
@@ -142,6 +152,7 @@ blocks:
         workspace: "{{inputs.workspace}}"
         workflows_mcp_path: "{{blocks.bootstrap_context.outputs.workspace}}"
         iterations: "{{blocks.recursive_validation.outputs.iterations}}"
+        output_dir: "{{inputs.output_dir}}"
 
 outputs:
   workflow_name:

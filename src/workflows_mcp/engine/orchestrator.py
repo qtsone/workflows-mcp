@@ -501,6 +501,55 @@ class BlockOrchestrator:
         )
         iteration_results[current_key] = resumed_result
 
+        # Check if resumed iteration is STILL paused (nested workflow paused again)
+        # This handles the case where a nested workflow (e.g., parent with for_each)
+        # resumes one child but then pauses on the next child in its own for_each.
+        if resumed_result.paused:
+            # Validate pause_prompt is present
+            if not resumed_result.pause_prompt:
+                raise RuntimeError(f"Block {current_key} marked as paused but pause_prompt is None")
+
+            # Create checkpoint for the still-paused iteration
+            # No iteration completed beyond what was already completed
+            all_completed_keys = list(completed_keys)  # Only previously completed
+
+            # Serialize completed iteration results for checkpoint (ADR-010)
+            completed_iteration_results = {}
+            for comp_key in all_completed_keys:
+                if comp_key in iteration_results:
+                    exec_result = iteration_results[comp_key]
+                    completed_iteration_results[comp_key] = {
+                        "inputs": exec_result.inputs if hasattr(exec_result, "inputs") else {},
+                        "output": (exec_result.output.model_dump() if exec_result.output else None),
+                        "metadata": exec_result.metadata.model_dump(),
+                        "paused": exec_result.paused,
+                    }
+
+            for_each_checkpoint = {
+                "type": "for_each_iteration",
+                "for_each_block_id": block_id,
+                "current_iteration_key": current_key,
+                "current_iteration_index": current_idx,
+                "completed_iterations": all_completed_keys,
+                "completed_iteration_results": completed_iteration_results,
+                "remaining_iteration_keys": remaining_keys,  # Still need to process these
+                "all_iterations": all_iterations,
+                "executor_type": executor_type,
+                "inputs_template": inputs_template,
+                "mode": mode,
+                "max_parallel": max_parallel,
+                "continue_on_error": continue_on_error,
+                "iteration_count": iteration_count,
+                "wave": wave,
+                "depth": depth,
+                "paused_iteration_checkpoint": resumed_result.pause_checkpoint_data,
+            }
+            raise ExecutionPaused(
+                prompt=resumed_result.pause_prompt,
+                checkpoint_data=for_each_checkpoint,
+                execution=context,
+            )
+
         # Execute remaining iterations (sequential execution)
         for idx_offset, key in enumerate(remaining_keys):
             idx = current_idx + 1 + idx_offset

@@ -1,0 +1,65 @@
+# Parent workflow - middle level of 3-level nesting test
+# This workflow has a for_each calling child workflows AND a block AFTER the for_each
+# The bug causes the "parent_complete" block to never run after child resume
+
+name: three-level-parent
+description: Parent workflow with for_each calling child workflows, plus blocks after for_each
+tags: [test, for_each, nested, interactive]
+
+inputs:
+  parent_name:
+    type: str
+    description: Name of this parent
+    required: true
+
+  children:
+    type: list
+    description: List of child items to process
+    required: true
+
+blocks:
+  # Block BEFORE for_each (always runs)
+  - id: parent_setup
+    type: Shell
+    inputs:
+      command: |
+        echo "Parent {{inputs.parent_name}} setup: processing {{inputs.children | length}} children"
+
+  # for_each block calling child workflows
+  - id: process_children
+    type: Workflow
+    depends_on: [parent_setup]
+    for_each: "{{inputs.children}}"
+    for_each_mode: sequential
+    inputs:
+      workflow: three-level-child
+      inputs:
+        child_name: "{{each.value}}"
+        parent_name: "{{inputs.parent_name}}"
+
+  # Block AFTER for_each - THIS IS THE KEY!
+  # In the bug, this block never runs after child workflow resumes
+  - id: parent_complete
+    type: Shell
+    depends_on: [process_children]
+    inputs:
+      command: |
+        echo "Parent {{inputs.parent_name}} complete: all children processed"
+
+outputs:
+  parent_name:
+    value: "{{inputs.parent_name}}"
+    type: str
+
+  parent_setup_ran:
+    value: "{{blocks.parent_setup.succeeded}}"
+    type: bool
+
+  all_children_completed:
+    value: "{{blocks.process_children.succeeded}}"
+    type: bool
+
+  # This is the critical output - verifies the bug is fixed
+  parent_complete_ran:
+    value: "{{blocks.parent_complete.succeeded}}"
+    type: bool

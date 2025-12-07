@@ -24,14 +24,20 @@ inputs:
     description: "(Optional) Number of validation attempts made"
     default: 1
 
+  output_dir:
+    type: str
+    description: "Output directory for workflow files"
+    default: "~/.workflows"
+    required: false
+
 blocks:
   - id: save_final_workflow
     type: CreateFile
-    description: "Save final workflow to desired location"
+    description: "Save final workflow to hierarchical location"
     inputs:
       create_parents: true
       overwrite: true
-      path: "~/.workflows/{{inputs.workflow_name}}.yaml"
+      path: "{{inputs.output_dir}}/{{inputs.workflow_name}}/main.yaml"
       content: "{{ read_file(inputs.workflow_path) }}"
 
   - id: generate_summary

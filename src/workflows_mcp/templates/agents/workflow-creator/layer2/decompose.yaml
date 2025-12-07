@@ -39,6 +39,12 @@ inputs:
     description: "Current recursion depth"
     default: 0
 
+  output_dir:
+    type: str
+    description: "Output directory for sub-workflow files"
+    default: "~/.workflows"
+    required: false
+
 blocks:
   - id: check_depth
     description: "Guard against excessive nesting"
@@ -121,6 +127,7 @@ blocks:
         recursion_depth: "{{inputs.current_depth + 1}}"
         max_recursion_depth: "{{inputs.max_depth}}"
         max_validation_attempts: 5
+        output_dir: "{{inputs.output_dir}}"
 
   - id: collect_results
     description: "Summarize generated sub-workflows"

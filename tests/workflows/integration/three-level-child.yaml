@@ -1,0 +1,58 @@
+# Child workflow - deepest level of 3-level nesting test
+# Contains Prompt block that causes the pause
+# After resume, parent workflow should continue to its remaining blocks
+
+name: three-level-child
+description: Child workflow with Prompt for 3-level nesting test
+tags: [test, nested, interactive]
+
+inputs:
+  child_name:
+    type: str
+    description: Name of this child
+    required: true
+
+  parent_name:
+    type: str
+    description: Name of the parent
+    required: true
+
+blocks:
+  - id: child_setup
+    type: Shell
+    inputs:
+      command: |
+        echo "Child {{inputs.child_name}} (parent: {{inputs.parent_name}}) setup"
+
+  # This Prompt causes the pause
+  - id: child_approval
+    type: Prompt
+    depends_on: [child_setup]
+    inputs:
+      prompt: |
+        Approve child {{inputs.child_name}} (parent: {{inputs.parent_name}})?
+
+  # Block after Prompt - should run after resume
+  - id: child_complete
+    type: Shell
+    depends_on: [child_approval]
+    inputs:
+      command: |
+        echo "Child {{inputs.child_name}} complete with response: {{blocks.child_approval.outputs.response}}"
+
+outputs:
+  child_name:
+    value: "{{inputs.child_name}}"
+    type: str
+
+  parent_name:
+    value: "{{inputs.parent_name}}"
+    type: str
+
+  approval_response:
+    value: "{{blocks.child_approval.outputs.response}}"
+    type: str
+
+  child_complete_ran:
+    value: "{{blocks.child_complete.succeeded}}"
+    type: bool
