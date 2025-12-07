@@ -628,9 +628,15 @@ blocks:
                                 for ik, iv in item.items():
                                     prefix = f"{sp}  - " if first_key else f"{sp}    "
                                     first_key = False
-                                    if isinstance(iv, (dict, list)) and iv:
+                                    if isinstance(iv, dict) and iv:
                                         lines.append(f"{prefix}{ik}:")
                                         lines.append(to_yaml(iv, indent + 3))
+                                    elif isinstance(iv, list) and iv:
+                                        # Handle nested lists (e.g., depends_on: [block_id])
+                                        lines.append(f"{prefix}{ik}:")
+                                        nested_sp = "  " * (indent + 3)
+                                        for nested_item in iv:
+                                            lines.append(f"{nested_sp}- {fmt_value(nested_item, indent + 4)}")
                                     else:
                                         lines.append(f"{prefix}{ik}: {fmt_value(iv, indent + 3)}")
                             else:
