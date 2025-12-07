@@ -88,6 +88,7 @@ blocks:
     type: Workflow
     for_each: "{{inputs.sub_workflows}}"
     for_each_mode: sequential
+    continue_on_error: true
     depends_on: [prepare_sub_requirements]
     condition: "{{inputs.current_depth < inputs.max_depth}}"
     inputs:

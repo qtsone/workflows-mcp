@@ -30,6 +30,7 @@ blocks:
     type: Prompt
     for_each: "{{inputs.questions}}"
     for_each_mode: sequential
+    continue_on_error: true
     condition: "{{each.key not in inputs.answers}}"
     inputs:
       prompt: |
@@ -41,7 +42,7 @@ blocks:
     description: "System prompt for requirements gathering"
     depends_on:
       - block: gather_requirements
-        required: false  # Optional: may be skipped if all answers pre-provided
+        required: false # Optional: may be skipped if all answers pre-provided
     type: CreateFile
     inputs:
       create_parents: true
@@ -60,7 +61,7 @@ blocks:
     description: "User prompt for requirements gathering"
     depends_on:
       - block: gather_requirements
-        required: false  # Optional: may be skipped if all answers pre-provided
+        required: false # Optional: may be skipped if all answers pre-provided
     type: CreateFile
     inputs:
       create_parents: true
