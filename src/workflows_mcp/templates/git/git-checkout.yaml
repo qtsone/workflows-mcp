@@ -11,7 +11,12 @@ description: |
   - Sparse checkout for large repos
   - Clean working directory option
 
-version: "1.0"
+  Authentication strategy:
+  - explicit: User provided token/ssh_key, use directly
+  - auto: Try anonymous first, fall back to discovered credentials on failure
+  - Handles GitHub Actions CI gracefully (GITHUB_TOKEN lacks cross-repo permissions)
+
+version: "1.1"
 author: Workflows MCP Team
 tags: [git, checkout, clone, repository, github-action]
 
@@ -35,7 +40,7 @@ inputs:
 
   token:
     type: str
-    description: "Personal access token (PAT) for authentication. Leave empty to auto-discover."
+    description: "Personal access token (PAT) for authentication. Leave empty for auto-discovery."
     default: ""
     required: false
 
@@ -94,21 +99,15 @@ inputs:
 
 
 blocks:
-  # ============================================================================
-  # PHASE 1: PREPARATION & VALIDATION
-  # ============================================================================
-
   - id: validate_inputs
     type: Shell
     inputs:
       command: |
-        # Validate mutually exclusive auth methods
         if [ -n "{{inputs.token}}" ] && [ -n "{{inputs.ssh_key}}" ]; then
           echo "Error: Cannot use both token and SSH key authentication"
           exit 1
         fi
 
-        # Validate submodules input
         if [ "{{inputs.submodules}}" != "false" ] && \
            [ "{{inputs.submodules}}" != "true" ] && \
            [ "{{inputs.submodules}}" != "recursive" ]; then
@@ -116,7 +115,6 @@ blocks:
           exit 1
         fi
 
-        # Validate fetch_depth
         if [ {{inputs.fetch_depth}} -lt 0 ]; then
           echo "Error: fetch_depth must be >= 0"
           exit 1
@@ -124,187 +122,15 @@ blocks:
 
         echo "✓ Input validation passed"
 
-  - id: resolve_repository_url
-    type: Shell
+  - id: auth
+    type: Workflow
     inputs:
-      command: |
-        # Resolve repository URL (logic handled by Jinja2)
-        {% if inputs.repo.startswith('http://') or inputs.repo.startswith('https://') or inputs.repo.startswith('git@') %}
-        REPO_URL="{{inputs.repo}}"
-        {% elif inputs.ssh_key %}
-        REPO_URL="git@github.com:{{inputs.repo}}.git"
-        {% else %}
-        REPO_URL="https://github.com/{{inputs.repo}}.git"
-        {% endif %}
-
-        printf "$REPO_URL" > {{tmp}}/repo_url.txt
-        echo "Repository URL: $REPO_URL"
+      workflow: git-auth
+      inputs:
+        repo: "{{inputs.repo}}"
+        token: "{{inputs.token}}"
+        ssh_key: "{{inputs.ssh_key}}"
     depends_on: [validate_inputs]
-    outputs:
-      url:
-        type: str
-        description: "Resolved repository URL"
-        path: "{{tmp}}/repo_url.txt"
-
-  # ============================================================================
-  # CREDENTIAL DISCOVERY (Cascading Authentication Methods)
-  # ============================================================================
-  # Using CreateFile for credentials (better security handling than Shell)
-  # Cascading priority: inputs > secrets > gh CLI > env vars > ssh agent
-
-  - id: auth_write_input_token
-    type: CreateFile
-    condition: "{{inputs.token != ''}}"
-    inputs:
-      path: "{{tmp}}/auth_token"
-      content: "{{inputs.token}}"
-      mode: "0600"
-    depends_on: [resolve_repository_url, validate_inputs]
-
-  - id: auth_write_input_ssh_key
-    type: CreateFile
-    condition: "{{inputs.token == '' and inputs.ssh_key != ''}}"
-    inputs:
-      path: "{{tmp}}/auth_ssh.key"
-      content: "{{inputs.ssh_key}}"
-      mode: "0600"
-    depends_on: [resolve_repository_url, validate_inputs]
-
-  - id: auth_write_github_token_secret
-    type: CreateFile
-    condition: "{{inputs.token == '' and inputs.ssh_key == '' and secrets.GITHUB_TOKEN != ''}}"
-    inputs:
-      path: "{{tmp}}/auth_token"
-      content: "{{secrets.GITHUB_TOKEN}}"
-      mode: "0600"
-    depends_on: [resolve_repository_url, validate_inputs]
-
-  - id: auth_write_gh_token_secret
-    type: CreateFile
-    condition: "{{inputs.token == '' and inputs.ssh_key == '' and secrets.GITHUB_TOKEN == '' and secrets.GH_TOKEN != ''}}"
-    inputs:
-      path: "{{tmp}}/auth_token"
-      content: "{{secrets.GH_TOKEN}}"
-      mode: "0600"
-    depends_on: [resolve_repository_url, validate_inputs]
-
-  - id: auth_write_gitlab_token_secret
-    type: CreateFile
-    condition: "{{inputs.token == '' and inputs.ssh_key == '' and secrets.GITHUB_TOKEN == '' and secrets.GH_TOKEN == '' and secrets.GITLAB_TOKEN != ''}}"
-    inputs:
-      path: "{{tmp}}/auth_token"
-      content: "{{secrets.GITLAB_TOKEN}}"
-      mode: "0600"
-    depends_on: [resolve_repository_url, validate_inputs]
-
-  - id: auth_runtime_detection
-    type: Shell
-    condition: "{{inputs.token == '' and inputs.ssh_key == '' and secrets.GITHUB_TOKEN == '' and secrets.GH_TOKEN == '' and secrets.GITLAB_TOKEN == ''}}"
-    inputs:
-      working_dir: "{{tmp}}"
-      command: |
-        # Runtime detection: gh CLI and environment variables (token values never in template)
-        AUTH_FOUND=false
-
-        # Try gh CLI
-        if command -v gh &> /dev/null && gh auth status &> /dev/null 2>&1; then
-          gh auth token 2>/dev/null > auth_token
-          if [ -s auth_token ]; then
-            chmod 600 auth_token
-            AUTH_FOUND=true
-          fi
-        fi
-
-        # Try environment variables
-        if [ "$AUTH_FOUND" = false ]; then
-          for ENV_VAR in GITHUB_TOKEN GH_TOKEN GITLAB_TOKEN; do
-            if [ -n "${!ENV_VAR:-}" ]; then
-              printf "%s" "${!ENV_VAR}" > auth_token
-              chmod 600 auth_token
-              AUTH_FOUND=true
-              break
-            fi
-          done
-        fi
-
-        # SSH agent (for git@ URLs only)
-        {% if blocks.resolve_repository_url.outputs.url.startswith('git@') %}
-        if [ "$AUTH_FOUND" = false ] && command -v ssh-add &> /dev/null && ssh-add -L &> /dev/null 2>&1; then
-          touch ssh_agent_marker
-          AUTH_FOUND=true
-        fi
-        {% endif %}
-
-        if [ "$AUTH_FOUND" = false ]; then
-          touch no_auth_marker
-        fi
-    depends_on: [resolve_repository_url, validate_inputs]
-
-  - id: auth_determine_method
-    type: Shell
-    inputs:
-      working_dir: "{{tmp}}"
-      command: |
-        # Determine which auth method was used (based on which files exist)
-        if [ -f auth_token ]; then
-          {% if inputs.token != '' %}
-          printf "token" > auth_method
-          echo "✓ Authentication: token (from input)"
-          {% elif secrets.GITHUB_TOKEN != '' %}
-          printf "token" > auth_method
-          echo "✓ Authentication: token (from GITHUB_TOKEN secret)"
-          {% elif secrets.GH_TOKEN != '' %}
-          printf "token" > auth_method
-          echo "✓ Authentication: token (from GH_TOKEN secret)"
-          {% elif secrets.GITLAB_TOKEN != '' %}
-          printf "token" > auth_method
-          echo "✓ Authentication: token (from GITLAB_TOKEN secret)"
-          {% else %}
-          printf "token" > auth_method
-          echo "✓ Authentication: token (from gh CLI or environment)"
-          {% endif %}
-        elif [ -f auth_ssh.key ]; then
-          printf "ssh_key" > auth_method
-          echo "✓ Authentication: ssh_key"
-        elif [ -f ssh_agent_marker ]; then
-          printf "ssh_agent" > auth_method
-          echo "✓ Authentication: ssh_agent"
-        else
-          printf "none" > auth_method
-          echo "⚠ No authentication - attempting unauthenticated access"
-          echo "  For private repos: set secrets.GITHUB_TOKEN or use 'gh auth login'"
-        fi
-    depends_on:
-      - block: auth_write_input_token
-        required: false
-      - block: auth_write_input_ssh_key
-        required: false
-      - block: auth_write_github_token_secret
-        required: false
-      - block: auth_write_gh_token_secret
-        required: false
-      - block: auth_write_gitlab_token_secret
-        required: false
-      - block: auth_runtime_detection
-        required: false
-    outputs:
-      method:
-        type: str
-        description: "Authentication method used (token, ssh_key, ssh_agent, none)"
-        path: "auth_method"
-
-  # ============================================================================
-  # AUTHENTICATION SETUP
-  # ============================================================================
-
-  - id: build_git_ssh_command
-    type: CreateFile
-    condition: "{{blocks.auth_determine_method.outputs.method in ['ssh_key', 'ssh_agent']}}"
-    inputs:
-      path: "{{tmp}}/git_ssh_cmd.txt"
-      content: >-
-        ssh{% if blocks.auth_determine_method.outputs.method == 'ssh_key' %} -i {{tmp}}/auth_ssh.key{% endif %} -o StrictHostKeyChecking=accept-new -o UserKnownHostsFile={{tmp}}/known_hosts
-    depends_on: [auth_determine_method]
 
   - id: prepare_target_directory
     type: Shell
@@ -312,36 +138,28 @@ blocks:
       working_dir: "{{tmp}}"
       command: |
         TARGET_PATH="{{inputs.workspace}}"
-
-        # Create parent directory if it doesn't exist
         mkdir -p "$(dirname "$TARGET_PATH")"
 
-        # Check if directory exists and has content
         if [ -d "$TARGET_PATH" ]; then
           if [ -d "$TARGET_PATH/.git" ]; then
-            printf "existing_repo" > target_state.txt
+            printf "existing_repo" > target_state
             echo "✓ Found existing repository"
           elif [ "$(ls -A "$TARGET_PATH" 2>/dev/null)" ]; then
-            printf "non_empty_dir" > target_state.txt
+            printf "non_empty_dir" > target_state
             echo "⚠ Target directory exists and is not empty"
           else
-            printf "empty_dir" > target_state.txt
+            printf "empty_dir" > target_state
             echo "✓ Target directory is empty"
           fi
         else
-          printf "new" > target_state.txt
+          printf "new" > target_state
           echo "✓ Target directory will be created"
         fi
-    depends_on: [resolve_repository_url]
+    depends_on: [auth]
     outputs:
       state:
         type: str
-        description: "Target directory state: new, empty_dir, non_empty_dir, existing_repo"
-        path: "target_state.txt"
-
-  # ============================================================================
-  # PHASE 2: CHECK WORKING DIRECTORY STATE
-  # ============================================================================
+        path: "{{tmp}}/target_state"
 
   - id: check_clean_state
     type: Shell
@@ -350,7 +168,6 @@ blocks:
     inputs:
       working_dir: "{{inputs.workspace}}"
       command: |
-        # Check for both uncommitted changes and untracked files
         if [ -z "$(git status --porcelain 2>/dev/null)" ]; then
           echo "✓ Working directory is clean"
         else
@@ -359,10 +176,6 @@ blocks:
           exit 1
         fi
     depends_on: [prepare_target_directory]
-
-  # ============================================================================
-  # PHASE 3: INTERACTIVE PROMPT (if dirty)
-  # ============================================================================
 
   - id: prompt_for_clean_action
     type: Prompt
@@ -384,17 +197,12 @@ blocks:
       - block: check_clean_state
         required: false
 
-  # ============================================================================
-  # PHASE 4: HANDLE UNCOMMITTED CHANGES
-  # ============================================================================
-
   - id: handle_uncommitted_changes
     type: Shell
     condition: "{{blocks.check_clean_state.failed and inputs.clean_mode != 'skip'}}"
     inputs:
       working_dir: "{{inputs.workspace}}"
       command: |
-        # Determine action (from prompt or input)
         {% if inputs.clean_mode == 'prompt' %}
         ACTION="{{blocks.prompt_for_clean_action.response | trim}}"
         {% else %}
@@ -455,21 +263,18 @@ blocks:
       - block: prompt_for_clean_action
         required: false
 
-  # ============================================================================
-  # PHASE 3: CLONE OR FETCH REPOSITORY
-  # ============================================================================
-
-  # Clone with ref - uses --branch to set up tracking automatically
-  # May fail if ref doesn't exist remotely (handled by clone_fallback)
-  - id: clone_with_ref
+  - id: clone_first_attempt
     type: Shell
-    condition: "{{inputs.ref != '' and blocks.prepare_target_directory.outputs.state != 'existing_repo'}}"
+    condition: "{{blocks.prepare_target_directory.outputs.state != 'existing_repo'}}"
+    continue_on_error: true
     inputs:
       command: |
-        {% set base_url = blocks.resolve_repository_url.outputs.url %}
+        {% set strategy = blocks.auth.outputs.strategy %}
+        {% set base_url = blocks.auth.outputs.repo_url %}
+        {% set ssh_cmd = blocks.auth.outputs.git_ssh_command %}
 
-        {% if blocks.auth_determine_method.outputs.method == 'token' and base_url.startswith('https://') %}
-        AUTH_TOKEN=$(cat {{tmp}}/auth_token 2>/dev/null || echo "")
+        {% if strategy == 'explicit' and blocks.auth.outputs.method.startswith('token') %}
+        AUTH_TOKEN=$(cat "{{blocks.auth.outputs.token_file}}" 2>/dev/null || echo "")
         if [ -n "$AUTH_TOKEN" ]; then
           REPO_URL="{{ base_url | replace('https://', 'https://x-access-token:${AUTH_TOKEN}@') }}"
         else
@@ -479,39 +284,79 @@ blocks:
         REPO_URL="{{ base_url }}"
         {% endif %}
 
-        {% if blocks.build_git_ssh_command.succeeded %}
-        export GIT_SSH_COMMAND="{{blocks.build_git_ssh_command.outputs.content | trim}}"
+        {% if strategy == 'explicit' and ssh_cmd %}
+        export GIT_SSH_COMMAND="{{ ssh_cmd }}"
         {% endif %}
 
         set -e
-        echo "Cloning repository (branch: {{inputs.ref}})..."
+        echo "Cloning repository{% if strategy == 'auto' %} (anonymous){% endif %}..."
+
         git clone \
           {% if inputs.sparse_checkout != '' %}--filter=blob:none --no-checkout \
           {% elif inputs.fetch_depth > 0 %}--depth {{inputs.fetch_depth}} {% endif %}\
-          --branch {{inputs.ref}} --single-branch \
+          {% if inputs.ref != '' %}--branch {{inputs.ref}} --single-branch {% endif %}\
           --quiet \
           "$REPO_URL" "{{inputs.workspace}}"
 
-        echo "✓ Cloned with branch {{inputs.ref}}"
+        echo "✓ Clone successful"
       timeout: 300
     depends_on:
       - block: handle_uncommitted_changes
         required: false
-      - block: build_git_ssh_command
-        required: false
-      - block: auth_determine_method
-        required: false
+      - block: auth
+        required: true
 
-  # Fallback: clone default branch when ref doesn't exist remotely
-  - id: clone_fallback
+  - id: clone_with_discovered_auth
     type: Shell
-    condition: "{{inputs.ref != '' and blocks.clone_with_ref.failed}}"
+    condition: "{{blocks.auth.outputs.strategy == 'auto' and blocks.auth.outputs.method != 'none' and blocks.clone_first_attempt.failed}}"
     inputs:
       command: |
-        {% set base_url = blocks.resolve_repository_url.outputs.url %}
+        {% set base_url = blocks.auth.outputs.repo_url %}
+        {% set ssh_cmd = blocks.auth.outputs.git_ssh_command %}
+        {% set method = blocks.auth.outputs.method %}
 
-        {% if blocks.auth_determine_method.outputs.method == 'token' and base_url.startswith('https://') %}
-        AUTH_TOKEN=$(cat {{tmp}}/auth_token 2>/dev/null || echo "")
+        echo "Anonymous clone failed, retrying with discovered credentials ($METHOD)..."
+
+        {% if method.startswith('token') %}
+        AUTH_TOKEN=$(cat "{{blocks.auth.outputs.token_file}}" 2>/dev/null || echo "")
+        if [ -n "$AUTH_TOKEN" ]; then
+          REPO_URL="{{ base_url | replace('https://', 'https://x-access-token:${AUTH_TOKEN}@') }}"
+        else
+          echo "Error: No token available for fallback"
+          exit 1
+        fi
+        {% elif method == 'ssh_agent' %}
+        REPO_URL="{{ base_url }}"
+        export GIT_SSH_COMMAND="{{ ssh_cmd }}"
+        {% else %}
+        echo "Error: Unknown auth method for fallback: $METHOD"
+        exit 1
+        {% endif %}
+
+        set -e
+        git clone \
+          {% if inputs.sparse_checkout != '' %}--filter=blob:none --no-checkout \
+          {% elif inputs.fetch_depth > 0 %}--depth {{inputs.fetch_depth}} {% endif %}\
+          {% if inputs.ref != '' %}--branch {{inputs.ref}} --single-branch {% endif %}\
+          --quiet \
+          "$REPO_URL" "{{inputs.workspace}}"
+
+        echo "✓ Clone successful (with authentication)"
+      timeout: 300
+    depends_on:
+      - block: clone_first_attempt
+        required: false
+
+  - id: clone_ref_fallback
+    type: Shell
+    condition: "{{inputs.ref != '' and (blocks.clone_first_attempt.failed or blocks.clone_with_discovered_auth.failed) and not blocks.clone_with_discovered_auth.succeeded and not blocks.clone_first_attempt.succeeded}}"
+    inputs:
+      command: |
+        {% set strategy = blocks.auth.outputs.strategy %}
+        {% set base_url = blocks.auth.outputs.repo_url %}
+
+        {% if strategy == 'explicit' and blocks.auth.outputs.method.startswith('token') %}
+        AUTH_TOKEN=$(cat "{{blocks.auth.outputs.token_file}}" 2>/dev/null || echo "")
         if [ -n "$AUTH_TOKEN" ]; then
           REPO_URL="{{ base_url | replace('https://', 'https://x-access-token:${AUTH_TOKEN}@') }}"
         else
@@ -519,10 +364,6 @@ blocks:
         fi
         {% else %}
         REPO_URL="{{ base_url }}"
-        {% endif %}
-
-        {% if blocks.build_git_ssh_command.succeeded %}
-        export GIT_SSH_COMMAND="{{blocks.build_git_ssh_command.outputs.content | trim}}"
         {% endif %}
 
         set -e
@@ -536,48 +377,9 @@ blocks:
         echo "✓ Cloned (will create '{{inputs.ref}}' as new branch)"
       timeout: 300
     depends_on:
-      - block: clone_with_ref
+      - block: clone_first_attempt
         required: false
-
-  # Clone without ref - default branch
-  - id: clone_default
-    type: Shell
-    condition: "{{inputs.ref == '' and blocks.prepare_target_directory.outputs.state != 'existing_repo'}}"
-    inputs:
-      command: |
-        {% set base_url = blocks.resolve_repository_url.outputs.url %}
-
-        {% if blocks.auth_determine_method.outputs.method == 'token' and base_url.startswith('https://') %}
-        AUTH_TOKEN=$(cat {{tmp}}/auth_token 2>/dev/null || echo "")
-        if [ -n "$AUTH_TOKEN" ]; then
-          REPO_URL="{{ base_url | replace('https://', 'https://x-access-token:${AUTH_TOKEN}@') }}"
-        else
-          REPO_URL="{{ base_url }}"
-        fi
-        {% else %}
-        REPO_URL="{{ base_url }}"
-        {% endif %}
-
-        {% if blocks.build_git_ssh_command.succeeded %}
-        export GIT_SSH_COMMAND="{{blocks.build_git_ssh_command.outputs.content | trim}}"
-        {% endif %}
-
-        set -e
-        echo "Cloning repository..."
-        git clone \
-          {% if inputs.sparse_checkout != '' %}--filter=blob:none --no-checkout \
-          {% elif inputs.fetch_depth > 0 %}--depth {{inputs.fetch_depth}} {% endif %}\
-          --quiet \
-          "$REPO_URL" "{{inputs.workspace}}"
-
-        echo "✓ Repository cloned successfully"
-      timeout: 300
-    depends_on:
-      - block: handle_uncommitted_changes
-        required: false
-      - block: build_git_ssh_command
-        required: false
-      - block: auth_determine_method
+      - block: clone_with_discovered_auth
         required: false
 
   - id: fetch_updates
@@ -586,9 +388,9 @@ blocks:
     inputs:
       working_dir: "{{inputs.workspace}}"
       command: |
-        # Load Git SSH command from isolated SSH setup
-        {% if blocks.build_git_ssh_command.succeeded %}
-        export GIT_SSH_COMMAND="{{blocks.build_git_ssh_command.outputs.content | trim}}"
+        {% set ssh_cmd = blocks.auth.outputs.git_ssh_command %}
+        {% if ssh_cmd %}
+        export GIT_SSH_COMMAND="{{ ssh_cmd }}"
         {% endif %}
 
         echo "Fetching updates..."
@@ -601,14 +403,8 @@ blocks:
     depends_on:
       - block: handle_uncommitted_changes
         required: false
-      - block: build_git_ssh_command
-        required: false
-      - block: auth_determine_method
-        required: false
-
-  # ============================================================================
-  # PHASE 4: SPARSE CHECKOUT CONFIGURATION (before checkout!)
-  # ============================================================================
+      - block: auth
+        required: true
 
   - id: configure_sparse_checkout
     type: Shell
@@ -618,14 +414,12 @@ blocks:
       command: |
         echo "Configuring sparse checkout..."
 
-        # Use modern git sparse-checkout command (Git 2.25+)
         {% if inputs.sparse_checkout_cone_mode %}
         git sparse-checkout init --cone
         {% else %}
         git sparse-checkout init --no-cone
         {% endif %}
 
-        # Set sparse checkout patterns (comma-separated → space-separated)
         PATTERNS=$(echo "{{inputs.sparse_checkout}}" | tr ',' ' ')
         git sparse-checkout set $PATTERNS
 
@@ -633,43 +427,35 @@ blocks:
         git sparse-checkout list
       timeout: 60
     depends_on:
-      - block: clone_with_ref
+      - block: clone_first_attempt
         required: false
-      - block: clone_fallback
+      - block: clone_with_discovered_auth
         required: false
-      - block: clone_default
+      - block: clone_ref_fallback
         required: false
       - block: fetch_updates
         required: false
 
-  # ============================================================================
-  # PHASE 5: CHECKOUT
-  # ============================================================================
-
-  # Checkout for sparse (materialize files after sparse config)
-  # Only needed when clone_with_ref succeeded (already on right branch, but no files yet)
   - id: checkout_sparse
     type: Shell
-    condition: "{{inputs.sparse_checkout != '' and blocks.clone_with_ref.succeeded}}"
+    condition: "{{inputs.sparse_checkout != '' and (blocks.clone_first_attempt.succeeded or blocks.clone_with_discovered_auth.succeeded)}}"
     inputs:
       working_dir: "{{inputs.workspace}}"
       command: |
         echo "Checking out files (sparse)..."
         git checkout
-        echo "✓ Checked out sparse files on branch {{inputs.ref}}"
+        echo "✓ Checked out sparse files"
       timeout: 60
     depends_on: [configure_sparse_checkout]
 
-  # Create new branch (when clone_fallback ran - ref doesn't exist remotely)
   - id: checkout_new_branch
     type: Shell
-    condition: "{{blocks.clone_fallback.succeeded}}"
+    condition: "{{blocks.clone_ref_fallback.succeeded}}"
     inputs:
       working_dir: "{{inputs.workspace}}"
       command: |
         echo "Creating new branch: {{inputs.ref}}"
         {% if inputs.sparse_checkout != '' %}
-        # For sparse: create branch then checkout
         git branch {{inputs.ref}}
         git checkout {{inputs.ref}}
         {% else %}
@@ -681,20 +467,6 @@ blocks:
       - block: configure_sparse_checkout
         required: false
 
-  # Checkout default (for sparse without ref)
-  - id: checkout_sparse_default
-    type: Shell
-    condition: "{{inputs.ref == '' and inputs.sparse_checkout != '' and blocks.clone_default.succeeded}}"
-    inputs:
-      working_dir: "{{inputs.workspace}}"
-      command: |
-        echo "Checking out default branch (sparse)..."
-        git checkout
-        echo "✓ Checked out default branch"
-      timeout: 60
-    depends_on: [configure_sparse_checkout]
-
-  # For existing repos: fetch and checkout the ref
   - id: checkout_existing_repo
     type: Shell
     condition: "{{inputs.ref != '' and blocks.prepare_target_directory.outputs.state == 'existing_repo'}}"
@@ -703,15 +475,14 @@ blocks:
       command: |
         REF="{{inputs.ref}}"
 
-        {% if blocks.build_git_ssh_command.succeeded %}
-        export GIT_SSH_COMMAND="{{blocks.build_git_ssh_command.outputs.content | trim}}"
+        {% set ssh_cmd = blocks.auth.outputs.git_ssh_command %}
+        {% if ssh_cmd %}
+        export GIT_SSH_COMMAND="{{ ssh_cmd }}"
         {% endif %}
 
-        # Check if ref exists locally, remotely, or needs fetch
         if git rev-parse --verify "$REF" &>/dev/null; then
           echo "Checking out local ref: $REF"
           git checkout "$REF"
-          # Pull latest if it's a branch
           if git show-ref --verify --quiet "refs/heads/$REF"; then
             git pull origin "$REF" || true
           fi
@@ -719,7 +490,6 @@ blocks:
           echo "Checking out remote ref: $REF"
           git checkout -B "$REF" "origin/$REF"
         else
-          # Try to fetch with refspec to create proper remote tracking branch
           echo "Fetching ref: $REF"
           if git fetch origin "$REF:refs/remotes/origin/$REF"; then
             git checkout -B "$REF" "origin/$REF"
@@ -734,10 +504,6 @@ blocks:
       - block: configure_sparse_checkout
         required: false
 
-  # ============================================================================
-  # PHASE 6: FETCH TAGS (if requested)
-  # ============================================================================
-
   - id: fetch_tags
     type: Shell
     condition: "{{inputs.fetch_tags}}"
@@ -746,9 +512,9 @@ blocks:
       command: |
         echo "Fetching tags..."
 
-        # Load Git SSH command from isolated SSH setup
-        {% if blocks.build_git_ssh_command.succeeded %}
-        export GIT_SSH_COMMAND="{{blocks.build_git_ssh_command.outputs.content | trim}}"
+        {% set ssh_cmd = blocks.auth.outputs.git_ssh_command %}
+        {% if ssh_cmd %}
+        export GIT_SSH_COMMAND="{{ ssh_cmd }}"
         {% endif %}
 
         git fetch --tags origin
@@ -760,18 +526,12 @@ blocks:
         required: false
       - block: checkout_new_branch
         required: false
-      - block: checkout_sparse_default
-        required: false
       - block: checkout_existing_repo
         required: false
-      - block: clone_with_ref
+      - block: clone_first_attempt
         required: false
-      - block: clone_default
+      - block: clone_with_discovered_auth
         required: false
-
-  # ============================================================================
-  # PHASE 7: SUBMODULES
-  # ============================================================================
 
   - id: checkout_submodules
     type: Shell
@@ -781,12 +541,11 @@ blocks:
       command: |
         echo "Initializing submodules..."
 
-        # Load Git SSH command from isolated SSH setup
-        {% if blocks.build_git_ssh_command.succeeded %}
-        export GIT_SSH_COMMAND="{{blocks.build_git_ssh_command.outputs.content | trim}}"
+        {% set ssh_cmd = blocks.auth.outputs.git_ssh_command %}
+        {% if ssh_cmd %}
+        export GIT_SSH_COMMAND="{{ ssh_cmd }}"
         {% endif %}
 
-        # Initialize and update submodules
         git submodule init
 
         git submodule update \
@@ -798,10 +557,6 @@ blocks:
     depends_on:
       - block: fetch_tags
         required: false
-
-  # ============================================================================
-  # PHASE 8: GIT LFS
-  # ============================================================================
 
   - id: check_lfs_installed
     type: Shell
@@ -827,10 +582,7 @@ blocks:
       command: |
         echo "Fetching Git LFS files..."
 
-        # Initialize LFS
         git lfs install
-
-        # Fetch LFS files
         git lfs fetch
         git lfs checkout
 
@@ -838,66 +590,42 @@ blocks:
       timeout: 600
     depends_on: [check_lfs_installed]
 
-  # ============================================================================
-  # PHASE 9: FINAL STATUS & SUMMARY
-  # ============================================================================
-
   - id: get_commit_sha
     type: Shell
     inputs:
       working_dir: "{{inputs.workspace}}"
       command: |
-        git rev-parse HEAD
+        git rev-parse HEAD > {{tmp}}/commit_sha
     depends_on:
       - block: fetch_lfs_files
         required: false
+    outputs:
+      sha:
+        type: str
+        path: "{{tmp}}/commit_sha"
 
   - id: get_branch
     type: Shell
     inputs:
       working_dir: "{{inputs.workspace}}"
       command: |
-        git branch --show-current || printf "(detached)"
+        git branch --show-current > {{tmp}}/current_branch || printf "(detached)" > {{tmp}}/current_branch
     depends_on:
       - block: fetch_lfs_files
         required: false
-
-  # ============================================================================
-  # PHASE 10: CLEANUP
-  # ============================================================================
-
-  - id: cleanup_temp_files
-    type: Shell
-    inputs:
-      working_dir: "{{tmp}}"
-      command: |
-        # Clean up all temporary files
-        rm -f repo_url.txt
-        rm -f target_state.txt
-        rm -f git_ssh_cmd.txt
-        rm -f auth_method
-        rm -f auth_token
-        rm -f auth_ssh.key
-        rm -f known_hosts
-        echo "✓ Temporary files cleaned up"
-    depends_on:
-      - block: get_commit_sha
-        required: false
-      - block: get_branch
-        required: false
-
-# ============================================================================
-# WORKFLOW OUTPUTS
-# ============================================================================
+    outputs:
+      name:
+        type: str
+        path: "{{tmp}}/current_branch"
 
 outputs:
   commit_sha:
-    value: "{{blocks.get_commit_sha.outputs.stdout}}"
+    value: "{{blocks.get_commit_sha.outputs.sha}}"
     type: str
     description: "Full SHA of the checked out commit"
 
   branch:
-    value: "{{blocks.get_branch.outputs.stdout}}"
+    value: "{{blocks.get_branch.outputs.name}}"
     type: str
     description: "Current branch name (or '(detached)' if detached HEAD)"
 

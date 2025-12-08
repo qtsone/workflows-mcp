@@ -1,0 +1,219 @@
+name: git-auth
+description: |
+  Resolve git authentication for a repository.
+
+  Determines the best authentication strategy based on provided credentials
+  and environment. Supports token-based auth (GitHub/GitLab), SSH keys, and
+  anonymous access for public repositories.
+
+  Strategy output determines how the caller should proceed:
+  - explicit: Use provided credentials directly (user explicitly set token/ssh_key)
+  - auto: Try anonymous first, fall back to discovered credentials on failure
+
+version: "1.0"
+author: Workflows MCP Team
+tags: [git, auth, authentication, credentials, layer1]
+
+inputs:
+  repo:
+    type: str
+    description: "Repository (format: 'owner/repo' or full URL)"
+    required: true
+
+  token:
+    type: str
+    description: "Explicit access token. If provided, used directly without discovery."
+    default: ""
+    required: false
+
+  ssh_key:
+    type: str
+    description: "Explicit SSH private key content. If provided, used directly."
+    default: ""
+    required: false
+
+blocks:
+  - id: resolve_url
+    type: Shell
+    inputs:
+      command: |
+        REPO="{{inputs.repo}}"
+        if [[ "$REPO" == http://* ]] || [[ "$REPO" == https://* ]] || [[ "$REPO" == git@* ]]; then
+          URL="$REPO"
+        elif [[ "$REPO" == */* ]]; then
+          URL="https://github.com/$REPO.git"
+        else
+          echo "Error: Invalid repo format. Use 'owner/repo' or full URL." >&2
+          exit 1
+        fi
+        printf "%s" "$URL" > {{tmp}}/repo_url
+    outputs:
+      url:
+        type: str
+        path: "{{tmp}}/repo_url"
+
+  - id: write_explicit_token
+    type: CreateFile
+    condition: "{{inputs.token != ''}}"
+    inputs:
+      path: "{{tmp}}/auth_token"
+      content: "{{inputs.token}}"
+      mode: "0600"
+    depends_on: [resolve_url]
+
+  - id: write_explicit_ssh_key
+    type: CreateFile
+    condition: "{{inputs.token == '' and inputs.ssh_key != ''}}"
+    inputs:
+      path: "{{tmp}}/auth_ssh.key"
+      content: "{{inputs.ssh_key}}"
+      mode: "0600"
+    depends_on: [resolve_url]
+
+  - id: discover_credentials
+    type: Shell
+    condition: "{{inputs.token == '' and inputs.ssh_key == ''}}"
+    inputs:
+      working_dir: "{{tmp}}"
+      command: |
+        DISCOVERED=false
+        METHOD="none"
+
+        for SECRET_VAR in WORKFLOW_SECRET_GITHUB_TOKEN WORKFLOW_SECRET_GH_TOKEN WORKFLOW_SECRET_GITLAB_TOKEN; do
+          if [ -n "${!SECRET_VAR:-}" ]; then
+            printf "%s" "${!SECRET_VAR}" > auth_token
+            chmod 600 auth_token
+            DISCOVERED=true
+            METHOD="token_secret"
+            break
+          fi
+        done
+
+        if [ "$DISCOVERED" = false ] && command -v gh &> /dev/null; then
+          if gh auth status &> /dev/null 2>&1; then
+            TOKEN=$(gh auth token 2>/dev/null || true)
+            if [ -n "$TOKEN" ]; then
+              printf "%s" "$TOKEN" > auth_token
+              chmod 600 auth_token
+              DISCOVERED=true
+              METHOD="token_gh_cli"
+            fi
+          fi
+        fi
+
+        if [ "$DISCOVERED" = false ]; then
+          for ENV_VAR in GITHUB_TOKEN GH_TOKEN GITLAB_TOKEN; do
+            if [ -n "${!ENV_VAR:-}" ]; then
+              printf "%s" "${!ENV_VAR}" > auth_token
+              chmod 600 auth_token
+              DISCOVERED=true
+              METHOD="token_env"
+              break
+            fi
+          done
+        fi
+
+        {% if blocks.resolve_url.outputs.url.startswith('git@') %}
+        if [ "$DISCOVERED" = false ] && command -v ssh-add &> /dev/null; then
+          if ssh-add -L &> /dev/null 2>&1; then
+            touch ssh_agent_available
+            DISCOVERED=true
+            METHOD="ssh_agent"
+          fi
+        fi
+        {% endif %}
+
+        printf "%s" "$METHOD" > discovered_method
+    depends_on: [resolve_url]
+    outputs:
+      method:
+        type: str
+        path: "{{tmp}}/discovered_method"
+
+  - id: build_ssh_command
+    type: CreateFile
+    condition: "{{inputs.ssh_key != '' or (blocks.discover_credentials.succeeded and blocks.discover_credentials.outputs.method == 'ssh_agent')}}"
+    inputs:
+      path: "{{tmp}}/git_ssh_command"
+      content: >-
+        ssh{% if inputs.ssh_key != '' %} -i {{tmp}}/auth_ssh.key{% endif %} -o StrictHostKeyChecking=accept-new -o UserKnownHostsFile={{tmp}}/known_hosts
+    depends_on:
+      - block: write_explicit_ssh_key
+        required: false
+      - block: discover_credentials
+        required: false
+
+  - id: determine_strategy
+    type: Shell
+    inputs:
+      working_dir: "{{tmp}}"
+      command: |
+        {% if inputs.token != '' or inputs.ssh_key != '' %}
+        STRATEGY="explicit"
+        {% if inputs.token != '' %}
+        METHOD="token"
+        {% else %}
+        METHOD="ssh_key"
+        {% endif %}
+        {% else %}
+        STRATEGY="auto"
+        METHOD="{{blocks.discover_credentials.outputs.method | default('none')}}"
+        {% endif %}
+
+        printf "%s" "$STRATEGY" > strategy
+        printf "%s" "$METHOD" > method
+
+        if [ "$STRATEGY" = "explicit" ]; then
+          echo "✓ Authentication: $METHOD (explicit)"
+        elif [ "$METHOD" = "none" ]; then
+          echo "✓ Authentication: anonymous (no credentials available)"
+        else
+          echo "✓ Authentication: auto (anonymous first, fallback to $METHOD)"
+        fi
+    depends_on:
+      - block: write_explicit_token
+        required: false
+      - block: write_explicit_ssh_key
+        required: false
+      - block: discover_credentials
+        required: false
+      - block: build_ssh_command
+        required: false
+    outputs:
+      strategy:
+        type: str
+        path: "{{tmp}}/strategy"
+      method:
+        type: str
+        path: "{{tmp}}/method"
+
+outputs:
+  strategy:
+    value: "{{blocks.determine_strategy.outputs.strategy}}"
+    type: str
+    description: "Auth strategy: explicit or auto"
+
+  method:
+    value: "{{blocks.determine_strategy.outputs.method}}"
+    type: str
+    description: "Auth method: token, ssh_key, ssh_agent, token_secret, token_gh_cli, token_env, or none"
+
+  repo_url:
+    value: "{{blocks.resolve_url.outputs.url}}"
+    type: str
+    description: "Resolved repository URL"
+
+  token_file:
+    value: "{{tmp}}/auth_token"
+    type: str
+    description: "Path to token file (check method to see if valid)"
+
+  ssh_key_file:
+    value: "{{tmp}}/auth_ssh.key"
+    type: str
+    description: "Path to SSH key file (check method to see if valid)"
+
+  git_ssh_command:
+    value: "{{blocks.build_ssh_command.outputs.content | default('')}}"
+    type: str
+    description: "GIT_SSH_COMMAND value for SSH auth (empty if not SSH)"
