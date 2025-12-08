@@ -232,11 +232,13 @@ blocks:
   # TEST 7: Existing repo - no ref (stay on current branch)
   # ==========================================================================
   - id: test7_setup
-    type: Shell
+    type: Workflow
     inputs:
-      command: |
-        set -e
-        git clone --depth 1 "{{inputs.test_repo}}" "{{inputs.test_base_dir}}/test7-existing-no-ref"
+      workflow: git-checkout
+      inputs:
+        repo: "{{inputs.test_repo}}"
+        workspace: "{{inputs.test_base_dir}}/test7-existing-no-ref"
+        fetch_depth: 1
     depends_on: [setup_clean]
 
   - id: test7_checkout
@@ -263,11 +265,13 @@ blocks:
   # TEST 8: Existing repo - checkout ref (remote only, not local)
   # ==========================================================================
   - id: test8_setup
-    type: Shell
+    type: Workflow
     inputs:
-      command: |
-        set -e
-        git clone --depth 1 "{{inputs.test_repo}}" "{{inputs.test_base_dir}}/test8-existing-remote-ref"
+      workflow: git-checkout
+      inputs:
+        repo: "{{inputs.test_repo}}"
+        workspace: "{{inputs.test_base_dir}}/test8-existing-remote-ref"
+        fetch_depth: 1
     depends_on: [setup_clean]
 
   - id: test8_checkout
@@ -294,16 +298,25 @@ blocks:
   # ==========================================================================
   # TEST 9: Existing repo - ref exists locally (already checked out before)
   # ==========================================================================
+  - id: test9_setup_clone
+    type: Workflow
+    inputs:
+      workflow: git-checkout
+      inputs:
+        repo: "{{inputs.test_repo}}"
+        workspace: "{{inputs.test_base_dir}}/test9-existing-local-ref"
+        fetch_depth: 0
+    depends_on: [setup_clean]
+
   - id: test9_setup
     type: Shell
     inputs:
+      working_dir: "{{inputs.test_base_dir}}/test9-existing-local-ref"
       command: |
         set -e
-        git clone "{{inputs.test_repo}}" "{{inputs.test_base_dir}}/test9-existing-local-ref"
-        cd "{{inputs.test_base_dir}}/test9-existing-local-ref"
         git checkout "{{inputs.test_branch}}"
         git checkout main
-    depends_on: [setup_clean]
+    depends_on: [test9_setup_clone]
 
   - id: test9_checkout
     type: Workflow
@@ -330,11 +343,13 @@ blocks:
   # TEST 10: Existing repo - ref doesn't exist (create new branch)
   # ==========================================================================
   - id: test10_setup
-    type: Shell
+    type: Workflow
     inputs:
-      command: |
-        set -e
-        git clone --depth 1 "{{inputs.test_repo}}" "{{inputs.test_base_dir}}/test10-existing-new-branch"
+      workflow: git-checkout
+      inputs:
+        repo: "{{inputs.test_repo}}"
+        workspace: "{{inputs.test_base_dir}}/test10-existing-new-branch"
+        fetch_depth: 1
     depends_on: [setup_clean]
 
   - id: test10_checkout
@@ -362,11 +377,13 @@ blocks:
   # TEST 11: Existing repo - apply sparse checkout (no ref)
   # ==========================================================================
   - id: test11_setup
-    type: Shell
+    type: Workflow
     inputs:
-      command: |
-        set -e
-        git clone "{{inputs.test_repo}}" "{{inputs.test_base_dir}}/test11-existing-sparse"
+      workflow: git-checkout
+      inputs:
+        repo: "{{inputs.test_repo}}"
+        workspace: "{{inputs.test_base_dir}}/test11-existing-sparse"
+        fetch_depth: 0
     depends_on: [setup_clean]
 
   - id: test11_checkout

@@ -11,10 +11,10 @@ description: |
   - Sparse checkout for large repos
   - Clean working directory option
 
-  Authentication strategy:
-  - explicit: User provided token/ssh_key, use directly
-  - auto: Try anonymous first, fall back to discovered credentials on failure
-  - Handles GitHub Actions CI gracefully (GITHUB_TOKEN lacks cross-repo permissions)
+  Authentication priority:
+  1. Explicit credentials (user provided token/ssh_key) - use directly
+  2. Discovered credentials (secrets, gh CLI, env vars) - use directly
+  3. No credentials available - anonymous access
 
 version: "1.1"
 author: Workflows MCP Team
@@ -270,10 +270,11 @@ blocks:
     inputs:
       command: |
         {% set strategy = blocks.auth.outputs.strategy %}
+        {% set method = blocks.auth.outputs.method %}
         {% set base_url = blocks.auth.outputs.repo_url %}
         {% set ssh_cmd = blocks.auth.outputs.git_ssh_command %}
 
-        {% if strategy == 'explicit' and blocks.auth.outputs.method.startswith('token') %}
+        {% if method.startswith('token') %}
         AUTH_TOKEN=$(cat "{{blocks.auth.outputs.token_file}}" 2>/dev/null || echo "")
         if [ -n "$AUTH_TOKEN" ]; then
           REPO_URL="{{ base_url | replace('https://', 'https://x-access-token:${AUTH_TOKEN}@') }}"
@@ -284,12 +285,16 @@ blocks:
         REPO_URL="{{ base_url }}"
         {% endif %}
 
-        {% if strategy == 'explicit' and ssh_cmd %}
+        {% if ssh_cmd %}
         export GIT_SSH_COMMAND="{{ ssh_cmd }}"
         {% endif %}
 
         set -e
-        echo "Cloning repository{% if strategy == 'auto' %} (anonymous){% endif %}..."
+        {% if method == 'none' %}
+        echo "Cloning repository (anonymous)..."
+        {% else %}
+        echo "Cloning repository..."
+        {% endif %}
 
         git clone \
           {% if inputs.sparse_checkout != '' %}--filter=blob:none --no-checkout \
@@ -306,56 +311,16 @@ blocks:
       - block: auth
         required: true
 
-  - id: clone_with_discovered_auth
-    type: Shell
-    condition: "{{blocks.auth.outputs.strategy == 'auto' and blocks.auth.outputs.method != 'none' and blocks.clone_first_attempt.failed}}"
-    inputs:
-      command: |
-        {% set base_url = blocks.auth.outputs.repo_url %}
-        {% set ssh_cmd = blocks.auth.outputs.git_ssh_command %}
-        {% set method = blocks.auth.outputs.method %}
-
-        echo "Anonymous clone failed, retrying with discovered credentials ($METHOD)..."
-
-        {% if method.startswith('token') %}
-        AUTH_TOKEN=$(cat "{{blocks.auth.outputs.token_file}}" 2>/dev/null || echo "")
-        if [ -n "$AUTH_TOKEN" ]; then
-          REPO_URL="{{ base_url | replace('https://', 'https://x-access-token:${AUTH_TOKEN}@') }}"
-        else
-          echo "Error: No token available for fallback"
-          exit 1
-        fi
-        {% elif method == 'ssh_agent' %}
-        REPO_URL="{{ base_url }}"
-        export GIT_SSH_COMMAND="{{ ssh_cmd }}"
-        {% else %}
-        echo "Error: Unknown auth method for fallback: $METHOD"
-        exit 1
-        {% endif %}
-
-        set -e
-        git clone \
-          {% if inputs.sparse_checkout != '' %}--filter=blob:none --no-checkout \
-          {% elif inputs.fetch_depth > 0 %}--depth {{inputs.fetch_depth}} {% endif %}\
-          {% if inputs.ref != '' %}--branch {{inputs.ref}} --single-branch {% endif %}\
-          --quiet \
-          "$REPO_URL" "{{inputs.workspace}}"
-
-        echo "✓ Clone successful (with authentication)"
-      timeout: 300
-    depends_on:
-      - block: clone_first_attempt
-        required: false
-
   - id: clone_ref_fallback
     type: Shell
-    condition: "{{inputs.ref != '' and (blocks.clone_first_attempt.failed or blocks.clone_with_discovered_auth.failed) and not blocks.clone_with_discovered_auth.succeeded and not blocks.clone_first_attempt.succeeded}}"
+    condition: "{{inputs.ref != '' and blocks.clone_first_attempt.failed}}"
     inputs:
       command: |
-        {% set strategy = blocks.auth.outputs.strategy %}
+        {% set method = blocks.auth.outputs.method %}
         {% set base_url = blocks.auth.outputs.repo_url %}
+        {% set ssh_cmd = blocks.auth.outputs.git_ssh_command %}
 
-        {% if strategy == 'explicit' and blocks.auth.outputs.method.startswith('token') %}
+        {% if method.startswith('token') %}
         AUTH_TOKEN=$(cat "{{blocks.auth.outputs.token_file}}" 2>/dev/null || echo "")
         if [ -n "$AUTH_TOKEN" ]; then
           REPO_URL="{{ base_url | replace('https://', 'https://x-access-token:${AUTH_TOKEN}@') }}"
@@ -364,6 +329,10 @@ blocks:
         fi
         {% else %}
         REPO_URL="{{ base_url }}"
+        {% endif %}
+
+        {% if ssh_cmd %}
+        export GIT_SSH_COMMAND="{{ ssh_cmd }}"
         {% endif %}
 
         set -e
@@ -378,8 +347,6 @@ blocks:
       timeout: 300
     depends_on:
       - block: clone_first_attempt
-        required: false
-      - block: clone_with_discovered_auth
         required: false
 
   - id: fetch_updates
@@ -429,8 +396,6 @@ blocks:
     depends_on:
       - block: clone_first_attempt
         required: false
-      - block: clone_with_discovered_auth
-        required: false
       - block: clone_ref_fallback
         required: false
       - block: fetch_updates
@@ -438,7 +403,7 @@ blocks:
 
   - id: checkout_sparse
     type: Shell
-    condition: "{{inputs.sparse_checkout != '' and (blocks.clone_first_attempt.succeeded or blocks.clone_with_discovered_auth.succeeded)}}"
+    condition: "{{inputs.sparse_checkout != '' and blocks.clone_first_attempt.succeeded}}"
     inputs:
       working_dir: "{{inputs.workspace}}"
       command: |
@@ -529,8 +494,6 @@ blocks:
       - block: checkout_existing_repo
         required: false
       - block: clone_first_attempt
-        required: false
-      - block: clone_with_discovered_auth
         required: false
 
   - id: checkout_submodules

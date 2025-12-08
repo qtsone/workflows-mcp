@@ -6,9 +6,10 @@ description: |
   and environment. Supports token-based auth (GitHub/GitLab), SSH keys, and
   anonymous access for public repositories.
 
-  Strategy output determines how the caller should proceed:
-  - explicit: Use provided credentials directly (user explicitly set token/ssh_key)
-  - auto: Try anonymous first, fall back to discovered credentials on failure
+  Authentication priority:
+  1. Explicit credentials (user provided token/ssh_key) - use directly
+  2. Discovered credentials (secrets, gh CLI, env vars, ssh agent) - use directly
+  3. No credentials available - anonymous access
 
 version: "1.0"
 author: Workflows MCP Team
@@ -168,7 +169,7 @@ blocks:
         elif [ "$METHOD" = "none" ]; then
           echo "✓ Authentication: anonymous (no credentials available)"
         else
-          echo "✓ Authentication: auto (anonymous first, fallback to $METHOD)"
+          echo "✓ Authentication: $METHOD (discovered)"
         fi
     depends_on:
       - block: write_explicit_token
