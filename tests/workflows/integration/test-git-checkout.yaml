@@ -450,7 +450,11 @@ blocks:
       command: |
         echo "=== DEBUG: Block Status Report ==="
         echo "test1_clone succeeded: {{blocks.test1_clone.succeeded}}"
-        echo "test1_clone outputs: commit_sha={{blocks.test1_clone.outputs.commit_sha | default('N/A')}}, branch={{blocks.test1_clone.outputs.branch | default('N/A')}}, repo_path={{blocks.test1_clone.outputs.repository_path | default('N/A')}}"
+        echo "test1_clone outputs: commit_sha={{blocks.test1_clone.outputs.commit_sha | default('N/A')}}, branch={{blocks.test1_clone.outputs.branch | default('N/A')}}"
+        echo "test1_clone clone_status: {{blocks.test1_clone.outputs.clone_status | default('N/A')}}"
+        echo "test1_clone clone_stdout: {{blocks.test1_clone.outputs.clone_output | default('N/A') | replace('\n', ' | ')}}"
+        echo "test1_clone clone_stderr: {{blocks.test1_clone.outputs.clone_stderr | default('N/A') | replace('\n', ' | ')}}"
+        echo ""
         echo "test1_verify succeeded: {{blocks.test1_verify.succeeded}}"
         echo "test1_verify stdout: {{blocks.test1_verify.outputs.stdout | default('N/A') | replace('\n', ' | ')}}"
         echo ""

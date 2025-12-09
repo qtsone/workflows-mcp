@@ -617,3 +617,18 @@ outputs:
     value: "{{inputs.workspace}}"
     type: str
     description: "Full path where the repository was checked out"
+
+  clone_status:
+    value: "first_attempt={{blocks.clone_first_attempt.succeeded}}, ref_fallback={{blocks.clone_ref_fallback.succeeded}}, fetch_updates={{blocks.fetch_updates.succeeded}}"
+    type: str
+    description: "Debug: clone block status"
+
+  clone_output:
+    value: "{{blocks.clone_first_attempt.outputs.stdout | default('N/A')}}"
+    type: str
+    description: "Debug: clone stdout"
+
+  clone_stderr:
+    value: "{{blocks.clone_first_attempt.outputs.stderr | default('N/A')}}"
+    type: str
+    description: "Debug: clone stderr"
