@@ -8,7 +8,7 @@ inputs:
     description: Image prompt
     default: "A futuristic city with flying cars"
 
-  output_dir:
+  workspace:
     type: str
     description: Directory to save images
     default: "/tmp/mcp-images"
@@ -17,7 +17,7 @@ blocks:
   - id: create_dir
     type: Shell
     inputs:
-      working_dir: "{{inputs.output_dir}}"
+      working_dir: "{{inputs.workspace}}"
       command: "echo 'Ensuring directory exists'"
 
   - id: generate_image
@@ -28,18 +28,18 @@ blocks:
       model: gpt-image-1
       size: "1024x1024"
       quality: standard
-      output_file: "{{inputs.output_dir}}/image.png"
+      output_file: "{{inputs.workspace}}/image.png"
 
   - id: generate_variation
     type: ImageGen
     depends_on: [generate_image]
     inputs:
       operation: variation
-      image: "{{inputs.output_dir}}/image.png"
+      image: "{{inputs.workspace}}/image.png"
       model: dall-e-2
       n: 1
       size: "1024x1024"
-      output_file: "{{inputs.output_dir}}/variation.png"
+      output_file: "{{inputs.workspace}}/variation.png"
 
   - id: edit_image
     type: ImageGen
@@ -47,12 +47,12 @@ blocks:
     inputs:
       operation: edit
       prompt: "Add a sunset in the background"
-      image: "{{inputs.output_dir}}/image.png"
+      image: "{{inputs.workspace}}/image.png"
       model: gpt-image-1
       size: "1024x1024"
-      output_file: "{{inputs.output_dir}}/edited.png"
+      output_file: "{{inputs.workspace}}/edited.png"
 
 outputs:
   images_dir:
     type: str
-    value: "{{inputs.output_dir}}"
+    value: "{{inputs.workspace}}"
