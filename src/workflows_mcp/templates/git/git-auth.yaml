@@ -40,15 +40,14 @@ blocks:
       command: |
         echo "DEBUG resolve_url: inputs.repo={{inputs.repo}}" >&2
         echo "DEBUG resolve_url: tmp={{tmp}}" >&2
-        REPO="{{inputs.repo}}"
-        if [[ "$REPO" == http://* ]] || [[ "$REPO" == https://* ]] || [[ "$REPO" == git@* ]]; then
-          URL="$REPO"
-        elif [[ "$REPO" == */* ]]; then
-          URL="https://github.com/$REPO.git"
-        else
-          echo "Error: Invalid repo format. Use 'owner/repo' or full URL." >&2
-          exit 1
-        fi
+        {% if inputs.repo.startswith('http://') or inputs.repo.startswith('https://') or inputs.repo.startswith('git@') %}
+        URL="{{inputs.repo}}"
+        {% elif '/' in inputs.repo %}
+        URL="https://github.com/{{inputs.repo}}.git"
+        {% else %}
+        echo "Error: Invalid repo format. Use 'owner/repo' or full URL." >&2
+        exit 1
+        {% endif %}
         printf "%s" "$URL" > {{tmp}}/repo_url
         echo "DEBUG resolve_url: wrote URL=$URL to {{tmp}}/repo_url" >&2
         cat {{tmp}}/repo_url >&2
