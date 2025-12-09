@@ -56,6 +56,7 @@ blocks:
   - id: analyze_changes
     type: Workflow
     description: "Analyze staged changes in git repository"
+    depends_on: [stage_files]
     inputs:
       workflow: "git-analyze-changes"
       inputs:
@@ -67,14 +68,12 @@ blocks:
     inputs:
       command: printf "No changes to commit"
     condition: "{{not blocks.analyze_changes.outputs.has_changes}}"
-    depends_on:
-      - analyze_changes
+    depends_on: [analyze_changes]
 
   - id: system_prompt
     description: "Create system prompt for commit message generation"
     type: CreateFile
-    depends_on:
-      - analyze_changes
+    depends_on: [analyze_changes]
     inputs:
       create_parents: true
       overwrite: true
@@ -93,8 +92,7 @@ blocks:
   - id: user_prompt
     description: "Create user prompt with git changes"
     type: CreateFile
-    depends_on:
-      - analyze_changes
+    depends_on: [analyze_changes]
     inputs:
       create_parents: true
       overwrite: true
