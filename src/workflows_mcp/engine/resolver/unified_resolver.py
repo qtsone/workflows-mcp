@@ -206,7 +206,7 @@ class UnifiedVariableResolver:
         result = FileOperations.read_text(Path(path))
         if not result.is_success:
             raise ValueError(f"read_file failed for '{path}': {result.error}")
-        return result.value
+        return result.unwrap()
 
     @staticmethod
     def _get(obj: Any, key: int | str, default: Any = None) -> Any:

@@ -290,9 +290,11 @@ class ImageGenExecutor(BlockExecutor):
             effective_inputs = await self._resolve_profile_to_inputs(inputs_with_profile, context)
 
         # Default to OPENAI if provider is still None
+        # Note: effective_inputs.profile is always None here because:
+        # - If profile was resolved, _resolve_profile_to_inputs sets profile=None
+        # - If no profile was resolved, we're using direct specification
         if effective_inputs.provider is None:
-            if effective_inputs.profile is None:
-                effective_inputs.provider = ImageProvider.OPENAI
+            effective_inputs.provider = ImageProvider.OPENAI
 
         n = resolve_interpolatable_numeric(effective_inputs.n, int, "n", ge=1, le=10)
         provider = resolve_interpolatable_enum(effective_inputs.provider, ImageProvider, "provider")
@@ -454,7 +456,7 @@ class ImageGenExecutor(BlockExecutor):
                 if "style" in capabilities["params"] and inputs.style:
                     kwargs["style"] = inputs.style
 
-                response = await client.images.generate(**kwargs)
+                response = await client.images.generate(**kwargs)  # type: ignore[arg-type]
 
             elif inputs.operation == "edit":
                 if not inputs.image:
@@ -485,7 +487,7 @@ class ImageGenExecutor(BlockExecutor):
                         if "response_format" in capabilities["params"]:
                             edit_kwargs["response_format"] = inputs.response_format
 
-                        response = await client.images.edit(**edit_kwargs)
+                        response = await client.images.edit(**edit_kwargs)  # type: ignore[arg-type]
                     finally:
                         if mask_file:
                             mask_file.close()
@@ -508,7 +510,7 @@ class ImageGenExecutor(BlockExecutor):
                     if "response_format" in capabilities["params"]:
                         variation_kwargs["response_format"] = inputs.response_format
 
-                    response = await client.images.create_variation(**variation_kwargs)
+                    response = await client.images.create_variation(**variation_kwargs)  # type: ignore[arg-type]
 
             else:
                 raise ValueError(f"Unknown operation: {inputs.operation}")
@@ -518,6 +520,9 @@ class ImageGenExecutor(BlockExecutor):
             b64_json = []
             revised_prompts = []
             saved_files = []
+
+            if response is None or response.data is None:
+                raise ValueError("No response data received from image API")
 
             for i, data in enumerate(response.data):
                 if data.url:

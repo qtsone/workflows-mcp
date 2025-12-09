@@ -360,7 +360,9 @@ class ShellExecutor(BlockExecutor):
         can_network=True,
     )
 
-    async def execute(self, inputs: ShellInput, context: Execution) -> ShellOutput:
+    async def execute(  # type: ignore[override]
+        self, inputs: ShellInput, context: Execution
+    ) -> ShellOutput:
         """Execute shell command.
 
         Returns:
@@ -429,7 +431,7 @@ class ShellExecutor(BlockExecutor):
         exit_code = process.returncode or 0
 
         # Build output dict with default fields
-        output_dict = {
+        output_dict: dict[str, Any] = {
             "exit_code": exit_code,
             "stdout": stdout,
             "stderr": stderr,
