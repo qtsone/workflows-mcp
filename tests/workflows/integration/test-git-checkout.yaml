@@ -473,18 +473,30 @@ blocks:
         echo "   12. Cone mode (directory)"
         echo ""
     depends_on:
-      - test1_verify
-      - test2_verify
-      - test3_verify
-      - test4_verify
-      - test5_verify
-      - test6_verify
-      - test7_verify
-      - test8_verify
-      - test9_verify
-      - test10_verify
-      - test11_verify
-      - test12_verify
+      - block: test1_verify
+        required: false
+      - block: test2_verify
+        required: false
+      - block: test3_verify
+        required: false
+      - block: test4_verify
+        required: false
+      - block: test5_verify
+        required: false
+      - block: test6_verify
+        required: false
+      - block: test7_verify
+        required: false
+      - block: test8_verify
+        required: false
+      - block: test9_verify
+        required: false
+      - block: test10_verify
+        required: false
+      - block: test11_verify
+        required: false
+      - block: test12_verify
+        required: false
 
 outputs:
   summary:
