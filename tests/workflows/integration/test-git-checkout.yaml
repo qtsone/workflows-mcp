@@ -64,6 +64,10 @@ blocks:
       working_dir: "{{inputs.test_base_dir}}/test1-basic"
       command: |
         set -e
+        echo "DEBUG: pwd=$(pwd)"
+        echo "DEBUG: ls -la:"
+        ls -la || echo "(empty or missing)"
+
         # Verify repo exists and has files
         test -d .git || { echo "FAIL: .git not found"; exit 1; }
         test -f "{{inputs.sparse_file}}" || { echo "FAIL: {{inputs.sparse_file}} not found"; exit 1; }
@@ -446,7 +450,10 @@ blocks:
       command: |
         echo "=== DEBUG: Block Status Report ==="
         echo "test1_clone succeeded: {{blocks.test1_clone.succeeded}}"
+        echo "test1_clone outputs: commit_sha={{blocks.test1_clone.outputs.commit_sha | default('N/A')}}, branch={{blocks.test1_clone.outputs.branch | default('N/A')}}, repo_path={{blocks.test1_clone.outputs.repository_path | default('N/A')}}"
         echo "test1_verify succeeded: {{blocks.test1_verify.succeeded}}"
+        echo "test1_verify stdout: {{blocks.test1_verify.outputs.stdout | default('N/A') | replace('\n', ' | ')}}"
+        echo ""
         echo "test2_clone succeeded: {{blocks.test2_clone.succeeded}}"
         echo "test2_verify succeeded: {{blocks.test2_verify.succeeded}}"
         echo "test3_clone succeeded: {{blocks.test3_clone.succeeded}}"
@@ -462,6 +469,11 @@ blocks:
         echo "GH_TOKEN present: $([ -n \"$GH_TOKEN\" ] && echo 'yes' || echo 'no')"
         echo "CI env: ${CI:-not_set}"
         echo "GITHUB_ACTIONS: ${GITHUB_ACTIONS:-not_set}"
+        echo ""
+        echo "=== Test Base Dir ==="
+        echo "test_base_dir: {{inputs.test_base_dir}}"
+        echo "Listing test directories:"
+        ls -la "{{inputs.test_base_dir}}" 2>&1 || echo "(directory not found)"
     depends_on:
       - block: test1_verify
         required: false
