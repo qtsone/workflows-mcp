@@ -438,6 +438,57 @@ blocks:
     depends_on: [test12_clone]
 
   # ==========================================================================
+  # DEBUG - Diagnostic block to understand CI behavior
+  # ==========================================================================
+  - id: debug_block_status
+    type: Shell
+    inputs:
+      command: |
+        echo "=== DEBUG: Block Status Report ==="
+        echo "test1_clone succeeded: {{blocks.test1_clone.succeeded}}"
+        echo "test1_verify succeeded: {{blocks.test1_verify.succeeded}}"
+        echo "test2_clone succeeded: {{blocks.test2_clone.succeeded}}"
+        echo "test2_verify succeeded: {{blocks.test2_verify.succeeded}}"
+        echo "test3_clone succeeded: {{blocks.test3_clone.succeeded}}"
+        echo "test3_verify succeeded: {{blocks.test3_verify.succeeded}}"
+        echo "test7_setup succeeded: {{blocks.test7_setup.succeeded}}"
+        echo "test7_checkout succeeded: {{blocks.test7_checkout.succeeded}}"
+        echo "test7_verify succeeded: {{blocks.test7_verify.succeeded}}"
+        echo "test12_clone succeeded: {{blocks.test12_clone.succeeded}}"
+        echo "test12_verify succeeded: {{blocks.test12_verify.succeeded}}"
+        echo ""
+        echo "=== Environment Check ==="
+        echo "GITHUB_TOKEN present: $([ -n \"$GITHUB_TOKEN\" ] && echo 'yes' || echo 'no')"
+        echo "GH_TOKEN present: $([ -n \"$GH_TOKEN\" ] && echo 'yes' || echo 'no')"
+        echo "CI env: ${CI:-not_set}"
+        echo "GITHUB_ACTIONS: ${GITHUB_ACTIONS:-not_set}"
+    depends_on:
+      - block: test1_verify
+        required: false
+      - block: test2_verify
+        required: false
+      - block: test3_verify
+        required: false
+      - block: test4_verify
+        required: false
+      - block: test5_verify
+        required: false
+      - block: test6_verify
+        required: false
+      - block: test7_verify
+        required: false
+      - block: test8_verify
+        required: false
+      - block: test9_verify
+        required: false
+      - block: test10_verify
+        required: false
+      - block: test11_verify
+        required: false
+      - block: test12_verify
+        required: false
+
+  # ==========================================================================
   # SUMMARY
   # ==========================================================================
   - id: summary
@@ -487,3 +538,8 @@ outputs:
     value: "{{blocks.summary.outputs.stdout}}"
     type: str
     description: "Result summary of all tests"
+
+  debug_status:
+    value: "{{blocks.debug_block_status.outputs.stdout}}"
+    type: str
+    description: "Debug info about block statuses"
