@@ -454,6 +454,7 @@ blocks:
         echo "test1_clone clone_status: {{blocks.test1_clone.outputs.clone_status | default('N/A')}}"
         echo "test1_clone clone_stdout: {{blocks.test1_clone.outputs.clone_output | default('N/A') | replace('\n', ' | ')}}"
         echo "test1_clone clone_stderr: {{blocks.test1_clone.outputs.clone_stderr | default('N/A') | replace('\n', ' | ')}}"
+        echo "test1_clone auth_debug: {{blocks.test1_clone.outputs.auth_debug | default('N/A') | replace('\n', ' | ')}}"
         echo ""
         echo "test1_verify succeeded: {{blocks.test1_verify.succeeded}}"
         echo "test1_verify stdout: {{blocks.test1_verify.outputs.stdout | default('N/A') | replace('\n', ' | ')}}"

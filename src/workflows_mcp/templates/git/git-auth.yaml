@@ -38,6 +38,8 @@ blocks:
     type: Shell
     inputs:
       command: |
+        echo "DEBUG resolve_url: inputs.repo={{inputs.repo}}" >&2
+        echo "DEBUG resolve_url: tmp={{tmp}}" >&2
         REPO="{{inputs.repo}}"
         if [[ "$REPO" == http://* ]] || [[ "$REPO" == https://* ]] || [[ "$REPO" == git@* ]]; then
           URL="$REPO"
@@ -48,6 +50,8 @@ blocks:
           exit 1
         fi
         printf "%s" "$URL" > {{tmp}}/repo_url
+        echo "DEBUG resolve_url: wrote URL=$URL to {{tmp}}/repo_url" >&2
+        cat {{tmp}}/repo_url >&2
     outputs:
       url:
         type: str
@@ -80,9 +84,11 @@ blocks:
         DISCOVERED=false
         METHOD="none"
 
+        # Check workflow secrets (using POSIX-compatible syntax)
         for SECRET_VAR in WORKFLOW_SECRET_GITHUB_TOKEN WORKFLOW_SECRET_GH_TOKEN WORKFLOW_SECRET_GITLAB_TOKEN; do
-          if [ -n "${!SECRET_VAR:-}" ]; then
-            printf "%s" "${!SECRET_VAR}" > auth_token
+          eval "SECRET_VALUE=\$$SECRET_VAR"
+          if [ -n "$SECRET_VALUE" ]; then
+            printf "%s" "$SECRET_VALUE" > auth_token
             chmod 600 auth_token
             DISCOVERED=true
             METHOD="token_secret"
@@ -90,8 +96,9 @@ blocks:
           fi
         done
 
-        if [ "$DISCOVERED" = false ] && command -v gh &> /dev/null; then
-          if gh auth status &> /dev/null 2>&1; then
+        # Check gh CLI auth
+        if [ "$DISCOVERED" = false ] && command -v gh >/dev/null 2>&1; then
+          if gh auth status >/dev/null 2>&1; then
             TOKEN=$(gh auth token 2>/dev/null || true)
             if [ -n "$TOKEN" ]; then
               printf "%s" "$TOKEN" > auth_token
@@ -102,10 +109,12 @@ blocks:
           fi
         fi
 
+        # Check environment variables (using POSIX-compatible syntax)
         if [ "$DISCOVERED" = false ]; then
           for ENV_VAR in GITHUB_TOKEN GH_TOKEN GITLAB_TOKEN; do
-            if [ -n "${!ENV_VAR:-}" ]; then
-              printf "%s" "${!ENV_VAR}" > auth_token
+            eval "ENV_VALUE=\$$ENV_VAR"
+            if [ -n "$ENV_VALUE" ]; then
+              printf "%s" "$ENV_VALUE" > auth_token
               chmod 600 auth_token
               DISCOVERED=true
               METHOD="token_env"
@@ -115,8 +124,8 @@ blocks:
         fi
 
         {% if blocks.resolve_url.outputs.url.startswith('git@') %}
-        if [ "$DISCOVERED" = false ] && command -v ssh-add &> /dev/null; then
-          if ssh-add -L &> /dev/null 2>&1; then
+        if [ "$DISCOVERED" = false ] && command -v ssh-add >/dev/null 2>&1; then
+          if ssh-add -L >/dev/null 2>&1; then
             touch ssh_agent_available
             DISCOVERED=true
             METHOD="ssh_agent"
@@ -203,6 +212,11 @@ outputs:
     value: "{{blocks.resolve_url.outputs.url}}"
     type: str
     description: "Resolved repository URL"
+
+  debug_resolve_url:
+    value: "exit_code={{blocks.resolve_url.outputs.exit_code}}, stdout={{blocks.resolve_url.outputs.stdout | replace('\n', '|')}}, stderr={{blocks.resolve_url.outputs.stderr | replace('\n', '|')}}, url={{blocks.resolve_url.outputs.url | default('MISSING')}}"
+    type: str
+    description: "Debug output for resolve_url block"
 
   token_file:
     value: "{{tmp}}/auth_token"
