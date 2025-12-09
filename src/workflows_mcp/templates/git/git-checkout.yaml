@@ -1,0 +1,634 @@
+name: git-checkout
+description: |
+  Clone or checkout a git repository with comprehensive features similar to GitHub's checkout action.
+
+  Features:
+  - Repository cloning with authentication support
+  - Branch, tag, or commit SHA checkout
+  - Fetch depth control (shallow/full clone)
+  - Submodule support (none/true/recursive)
+  - Git LFS support
+  - Sparse checkout for large repos
+  - Clean working directory option
+
+  Authentication priority:
+  1. Explicit credentials (user provided token/ssh_key) - use directly
+  2. Discovered credentials (secrets, gh CLI, env vars) - use directly
+  3. No credentials available - anonymous access
+
+version: "1.1"
+author: Workflows MCP Team
+tags: [git, checkout, clone, repository, github-action]
+
+inputs:
+  repo:
+    type: str
+    description: "Repository to checkout (format: 'owner/repo' or full URL)"
+    required: true
+
+  ref:
+    type: str
+    description: "Branch, tag, or commit SHA to checkout. Empty defaults to default branch."
+    default: ""
+    required: false
+
+  workspace:
+    type: str
+    description: "Path where to place the repository"
+    default: "{{tmp}}/repo"
+    required: false
+
+  token:
+    type: str
+    description: "Personal access token (PAT) for authentication. Leave empty for auto-discovery."
+    default: ""
+    required: false
+
+  ssh_key:
+    type: str
+    description: "SSH private key for authentication. Leave empty to use SSH agent if available."
+    default: ""
+    required: false
+
+  fetch_depth:
+    type: num
+    description: "Number of commits to fetch. 0=full history, 1=shallow clone"
+    default: 1
+    required: false
+
+  fetch_tags:
+    type: bool
+    description: "Whether to fetch tags even with limited fetch-depth"
+    default: false
+    required: false
+
+  submodules:
+    type: str
+    description: "Submodule checkout mode: 'false', 'true', or 'recursive'"
+    default: "false"
+    required: false
+
+  lfs:
+    type: bool
+    description: "Whether to download Git LFS files"
+    default: false
+    required: false
+
+  clean_mode:
+    type: str
+    description: |
+      How to handle uncommitted changes in existing repos:
+      - 'skip': Ignore, let git handle conflicts naturally (default, safest)
+      - 'stash': Preserve changes via git stash
+      - 'discard': Remove all changes (destructive!)
+      - 'prompt': Ask user interactively what to do
+    default: "prompt"
+    required: false
+
+  sparse_checkout:
+    type: str
+    description: "Sparse checkout patterns (comma-separated paths). Empty = full checkout."
+    default: ""
+    required: false
+
+  sparse_checkout_cone_mode:
+    type: bool
+    description: "Use cone mode for sparse checkout (directories only, more efficient)"
+    default: false
+    required: false
+
+
+blocks:
+  - id: validate_inputs
+    type: Shell
+    inputs:
+      command: |
+        if [ -n "{{inputs.token}}" ] && [ -n "{{inputs.ssh_key}}" ]; then
+          echo "Error: Cannot use both token and SSH key authentication"
+          exit 1
+        fi
+
+        if [ "{{inputs.submodules}}" != "false" ] && \
+           [ "{{inputs.submodules}}" != "true" ] && \
+           [ "{{inputs.submodules}}" != "recursive" ]; then
+          echo "Error: submodules must be 'false', 'true', or 'recursive'"
+          exit 1
+        fi
+
+        if [ {{inputs.fetch_depth}} -lt 0 ]; then
+          echo "Error: fetch_depth must be >= 0"
+          exit 1
+        fi
+
+        echo "✓ Input validation passed"
+
+  - id: auth
+    type: Workflow
+    inputs:
+      workflow: git-auth
+      inputs:
+        repo: "{{inputs.repo}}"
+        token: "{{inputs.token}}"
+        ssh_key: "{{inputs.ssh_key}}"
+    depends_on: [validate_inputs]
+
+  - id: prepare_target_directory
+    type: Shell
+    inputs:
+      working_dir: "{{tmp}}"
+      command: |
+        TARGET_PATH="{{inputs.workspace}}"
+        mkdir -p "$(dirname "$TARGET_PATH")"
+
+        if [ -d "$TARGET_PATH" ]; then
+          if [ -d "$TARGET_PATH/.git" ]; then
+            printf "existing_repo" > target_state
+            echo "✓ Found existing repository"
+          elif [ "$(ls -A "$TARGET_PATH" 2>/dev/null)" ]; then
+            printf "non_empty_dir" > target_state
+            echo "⚠ Target directory exists and is not empty"
+          else
+            printf "empty_dir" > target_state
+            echo "✓ Target directory is empty"
+          fi
+        else
+          printf "new" > target_state
+          echo "✓ Target directory will be created"
+        fi
+    depends_on: [auth]
+    outputs:
+      state:
+        type: str
+        path: "{{tmp}}/target_state"
+
+  - id: check_clean_state
+    type: Shell
+    condition: "{{blocks.prepare_target_directory.outputs.state == 'existing_repo'}}"
+    continue_on_error: true
+    inputs:
+      working_dir: "{{inputs.workspace}}"
+      command: |
+        if [ -z "$(git status --porcelain 2>/dev/null)" ]; then
+          echo "✓ Working directory is clean"
+        else
+          echo "⚠ Working directory has uncommitted changes or untracked files:"
+          git status --short | head -10
+          exit 1
+        fi
+    depends_on: [prepare_target_directory]
+
+  - id: prompt_for_clean_action
+    type: Prompt
+    condition: "{{inputs.clean_mode == 'prompt' and blocks.check_clean_state.failed}}"
+    inputs:
+      prompt: |
+        ⚠ The working directory has uncommitted changes.
+
+        What would you like to do?
+
+        Options:
+          skip     - Continue anyway (git will error if conflicts occur)
+          stash    - Save changes to git stash (can restore later)
+          discard  - Permanently delete all changes
+          abort    - Stop the workflow
+
+        Enter your choice:
+    depends_on:
+      - block: check_clean_state
+        required: false
+
+  - id: handle_uncommitted_changes
+    type: Shell
+    condition: "{{blocks.check_clean_state.failed and inputs.clean_mode != 'skip'}}"
+    inputs:
+      working_dir: "{{inputs.workspace}}"
+      command: |
+        {% if inputs.clean_mode == 'prompt' %}
+        ACTION="{{blocks.prompt_for_clean_action.response | trim}}"
+        {% else %}
+        ACTION="{{inputs.clean_mode}}"
+        {% endif %}
+
+        echo "Action: $ACTION"
+
+        case "$ACTION" in
+          skip)
+            echo "Continuing with uncommitted changes..."
+            echo "Git will fail if conflicts occur during checkout"
+            ;;
+
+          stash)
+            echo "Stashing uncommitted changes..."
+            STASH_MSG="Workflows git-checkout: $(date -Iseconds)"
+
+            if git stash push -u -m "$STASH_MSG"; then
+              echo "✓ Changes stashed successfully"
+              echo ""
+              echo "To restore your changes later:"
+              echo "  cd {{inputs.workspace}}"
+              echo "  git stash list    # Find your stash"
+              echo "  git stash pop     # Restore most recent stash"
+            else
+              echo "⚠ Failed to stash changes"
+              exit 1
+            fi
+            ;;
+
+          discard)
+            echo "⚠ DESTRUCTIVE OPERATION"
+            echo "Discarding ALL uncommitted changes..."
+            git status --short
+            echo ""
+
+            git reset --hard HEAD
+            git clean -ffdx
+
+            echo "✓ All changes discarded"
+            ;;
+
+          abort)
+            echo "Workflow aborted by user"
+            exit 1
+            ;;
+
+          *)
+            echo "Error: Unknown action '$ACTION'"
+            echo "Valid options: skip, stash, discard, abort"
+            exit 1
+            ;;
+        esac
+    depends_on:
+      - block: check_clean_state
+        required: false
+      - block: prompt_for_clean_action
+        required: false
+
+  - id: clone_first_attempt
+    type: Shell
+    condition: "{{blocks.prepare_target_directory.outputs.state != 'existing_repo'}}"
+    continue_on_error: true
+    inputs:
+      command: |
+        {% set strategy = blocks.auth.outputs.strategy %}
+        {% set method = blocks.auth.outputs.method %}
+        {% set base_url = blocks.auth.outputs.repo_url %}
+        {% set ssh_cmd = blocks.auth.outputs.git_ssh_command %}
+
+        {% if method.startswith('token') %}
+        AUTH_TOKEN=$(cat "{{blocks.auth.outputs.token_file}}" 2>/dev/null || echo "")
+        if [ -n "$AUTH_TOKEN" ]; then
+          REPO_URL="{{ base_url | replace('https://', 'https://x-access-token:${AUTH_TOKEN}@') }}"
+        else
+          REPO_URL="{{ base_url }}"
+        fi
+        {% else %}
+        REPO_URL="{{ base_url }}"
+        {% endif %}
+
+        {% if ssh_cmd %}
+        export GIT_SSH_COMMAND="{{ ssh_cmd }}"
+        {% endif %}
+
+        set -e
+
+        # Debug: Show auth configuration
+        echo "DEBUG: Auth strategy={{blocks.auth.outputs.strategy}}, method={{blocks.auth.outputs.method}}"
+        echo "DEBUG: Token file={{blocks.auth.outputs.token_file}}"
+        echo "DEBUG: Token file exists: $(test -f '{{blocks.auth.outputs.token_file}}' && echo 'yes' || echo 'no')"
+        echo "DEBUG: REPO_URL=$REPO_URL"
+
+        {% if method == 'none' %}
+        echo "Cloning repository (anonymous)..."
+        {% else %}
+        echo "Cloning repository..."
+        {% endif %}
+
+        git clone \
+          {% if inputs.sparse_checkout != '' %}--filter=blob:none --no-checkout \
+          {% elif inputs.fetch_depth > 0 %}--depth {{inputs.fetch_depth}} {% endif %}\
+          {% if inputs.ref != '' %}--branch {{inputs.ref}} --single-branch {% endif %}\
+          --quiet \
+          "$REPO_URL" "{{inputs.workspace}}"
+
+        echo "✓ Clone successful"
+      timeout: 300
+    depends_on:
+      - block: handle_uncommitted_changes
+        required: false
+      - block: auth
+        required: true
+
+  - id: clone_ref_fallback
+    type: Shell
+    condition: "{{inputs.ref != '' and blocks.clone_first_attempt.failed}}"
+    inputs:
+      command: |
+        {% set method = blocks.auth.outputs.method %}
+        {% set base_url = blocks.auth.outputs.repo_url %}
+        {% set ssh_cmd = blocks.auth.outputs.git_ssh_command %}
+
+        {% if method.startswith('token') %}
+        AUTH_TOKEN=$(cat "{{blocks.auth.outputs.token_file}}" 2>/dev/null || echo "")
+        if [ -n "$AUTH_TOKEN" ]; then
+          REPO_URL="{{ base_url | replace('https://', 'https://x-access-token:${AUTH_TOKEN}@') }}"
+        else
+          REPO_URL="{{ base_url }}"
+        fi
+        {% else %}
+        REPO_URL="{{ base_url }}"
+        {% endif %}
+
+        {% if ssh_cmd %}
+        export GIT_SSH_COMMAND="{{ ssh_cmd }}"
+        {% endif %}
+
+        set -e
+        echo "Branch '{{inputs.ref}}' not found remotely, cloning default branch..."
+        git clone \
+          {% if inputs.sparse_checkout != '' %}--filter=blob:none --no-checkout \
+          {% elif inputs.fetch_depth > 0 %}--depth {{inputs.fetch_depth}} {% endif %}\
+          --quiet \
+          "$REPO_URL" "{{inputs.workspace}}"
+
+        echo "✓ Cloned (will create '{{inputs.ref}}' as new branch)"
+      timeout: 300
+    depends_on:
+      - block: clone_first_attempt
+        required: false
+
+  - id: fetch_updates
+    type: Shell
+    condition: "{{blocks.prepare_target_directory.outputs.state == 'existing_repo'}}"
+    inputs:
+      working_dir: "{{inputs.workspace}}"
+      command: |
+        {% set ssh_cmd = blocks.auth.outputs.git_ssh_command %}
+        {% if ssh_cmd %}
+        export GIT_SSH_COMMAND="{{ ssh_cmd }}"
+        {% endif %}
+
+        echo "Fetching updates..."
+        git fetch origin \
+          {% if inputs.fetch_depth > 0 %}--depth={{inputs.fetch_depth}} {% endif %}\
+          --quiet
+
+        echo "✓ Updates fetched successfully"
+      timeout: 300
+    depends_on:
+      - block: handle_uncommitted_changes
+        required: false
+      - block: auth
+        required: true
+
+  - id: configure_sparse_checkout
+    type: Shell
+    condition: "{{inputs.sparse_checkout != ''}}"
+    inputs:
+      working_dir: "{{inputs.workspace}}"
+      command: |
+        echo "Configuring sparse checkout..."
+
+        {% if inputs.sparse_checkout_cone_mode %}
+        git sparse-checkout init --cone
+        {% else %}
+        git sparse-checkout init --no-cone
+        {% endif %}
+
+        PATTERNS=$(echo "{{inputs.sparse_checkout}}" | tr ',' ' ')
+        git sparse-checkout set $PATTERNS
+
+        echo "✓ Sparse checkout configured with patterns:"
+        git sparse-checkout list
+      timeout: 60
+    depends_on:
+      - block: clone_first_attempt
+        required: false
+      - block: clone_ref_fallback
+        required: false
+      - block: fetch_updates
+        required: false
+
+  - id: checkout_sparse
+    type: Shell
+    condition: "{{inputs.sparse_checkout != '' and blocks.clone_first_attempt.succeeded}}"
+    inputs:
+      working_dir: "{{inputs.workspace}}"
+      command: |
+        echo "Checking out files (sparse)..."
+        git checkout
+        echo "✓ Checked out sparse files"
+      timeout: 60
+    depends_on: [configure_sparse_checkout]
+
+  - id: checkout_new_branch
+    type: Shell
+    condition: "{{blocks.clone_ref_fallback.succeeded}}"
+    inputs:
+      working_dir: "{{inputs.workspace}}"
+      command: |
+        echo "Creating new branch: {{inputs.ref}}"
+        {% if inputs.sparse_checkout != '' %}
+        git branch {{inputs.ref}}
+        git checkout {{inputs.ref}}
+        {% else %}
+        git checkout -b {{inputs.ref}}
+        {% endif %}
+        echo "✓ Created and checked out new branch: {{inputs.ref}}"
+      timeout: 60
+    depends_on:
+      - block: configure_sparse_checkout
+        required: false
+
+  - id: checkout_existing_repo
+    type: Shell
+    condition: "{{inputs.ref != '' and blocks.prepare_target_directory.outputs.state == 'existing_repo'}}"
+    inputs:
+      working_dir: "{{inputs.workspace}}"
+      command: |
+        REF="{{inputs.ref}}"
+
+        {% set ssh_cmd = blocks.auth.outputs.git_ssh_command %}
+        {% if ssh_cmd %}
+        export GIT_SSH_COMMAND="{{ ssh_cmd }}"
+        {% endif %}
+
+        if git rev-parse --verify "$REF" &>/dev/null; then
+          echo "Checking out local ref: $REF"
+          git checkout "$REF"
+          if git show-ref --verify --quiet "refs/heads/$REF"; then
+            git pull origin "$REF" || true
+          fi
+        elif git rev-parse --verify "origin/$REF" &>/dev/null; then
+          echo "Checking out remote ref: $REF"
+          git checkout -B "$REF" "origin/$REF"
+        else
+          echo "Fetching ref: $REF"
+          if git fetch origin "$REF:refs/remotes/origin/$REF"; then
+            git checkout -B "$REF" "origin/$REF"
+          else
+            echo "Creating new branch: $REF"
+            git checkout -b "$REF"
+          fi
+        fi
+        echo "✓ Checked out: $REF"
+      timeout: 120
+    depends_on:
+      - block: configure_sparse_checkout
+        required: false
+
+  - id: fetch_tags
+    type: Shell
+    condition: "{{inputs.fetch_tags}}"
+    inputs:
+      working_dir: "{{inputs.workspace}}"
+      command: |
+        echo "Fetching tags..."
+
+        {% set ssh_cmd = blocks.auth.outputs.git_ssh_command %}
+        {% if ssh_cmd %}
+        export GIT_SSH_COMMAND="{{ ssh_cmd }}"
+        {% endif %}
+
+        git fetch --tags origin
+
+        echo "✓ Tags fetched successfully"
+      timeout: 60
+    depends_on:
+      - block: checkout_sparse
+        required: false
+      - block: checkout_new_branch
+        required: false
+      - block: checkout_existing_repo
+        required: false
+      - block: clone_first_attempt
+        required: false
+
+  - id: checkout_submodules
+    type: Shell
+    condition: "{{inputs.submodules != 'false'}}"
+    inputs:
+      working_dir: "{{inputs.workspace}}"
+      command: |
+        echo "Initializing submodules..."
+
+        {% set ssh_cmd = blocks.auth.outputs.git_ssh_command %}
+        {% if ssh_cmd %}
+        export GIT_SSH_COMMAND="{{ ssh_cmd }}"
+        {% endif %}
+
+        git submodule init
+
+        git submodule update \
+          {% if inputs.submodules == 'recursive' %}--recursive {% endif %}\
+          {% if inputs.fetch_depth > 0 %}--depth={{inputs.fetch_depth}} {% endif %}
+
+        echo "✓ Submodules checked out successfully"
+      timeout: 300
+    depends_on:
+      - block: fetch_tags
+        required: false
+
+  - id: check_lfs_installed
+    type: Shell
+    condition: "{{inputs.lfs}}"
+    inputs:
+      command: |
+        if ! command -v git-lfs &> /dev/null; then
+          echo "Error: Git LFS is not installed but lfs=true was specified"
+          echo "Install with: brew install git-lfs (macOS) or apt-get install git-lfs (Linux)"
+          exit 1
+        fi
+
+        echo "✓ Git LFS is installed"
+    depends_on:
+      - block: checkout_submodules
+        required: false
+
+  - id: fetch_lfs_files
+    type: Shell
+    condition: "{{inputs.lfs and blocks.check_lfs_installed.succeeded}}"
+    inputs:
+      working_dir: "{{inputs.workspace}}"
+      command: |
+        echo "Fetching Git LFS files..."
+
+        git lfs install
+        git lfs fetch
+        git lfs checkout
+
+        echo "✓ Git LFS files downloaded successfully"
+      timeout: 600
+    depends_on: [check_lfs_installed]
+
+  - id: get_commit_sha
+    type: Shell
+    condition: "{{blocks.clone_first_attempt.succeeded or blocks.clone_ref_fallback.succeeded or blocks.fetch_updates.succeeded}}"
+    inputs:
+      working_dir: "{{inputs.workspace}}"
+      command: |
+        git rev-parse HEAD > {{tmp}}/commit_sha
+    depends_on:
+      - block: fetch_lfs_files
+        required: false
+      - block: clone_first_attempt
+        required: false
+      - block: clone_ref_fallback
+        required: false
+      - block: fetch_updates
+        required: false
+    outputs:
+      sha:
+        type: str
+        path: "{{tmp}}/commit_sha"
+
+  - id: get_branch
+    type: Shell
+    condition: "{{blocks.clone_first_attempt.succeeded or blocks.clone_ref_fallback.succeeded or blocks.fetch_updates.succeeded}}"
+    inputs:
+      working_dir: "{{inputs.workspace}}"
+      command: |
+        git branch --show-current > {{tmp}}/current_branch || printf "(detached)" > {{tmp}}/current_branch
+    depends_on:
+      - block: fetch_lfs_files
+        required: false
+      - block: clone_first_attempt
+        required: false
+      - block: clone_ref_fallback
+        required: false
+      - block: fetch_updates
+        required: false
+    outputs:
+      name:
+        type: str
+        path: "{{tmp}}/current_branch"
+
+outputs:
+  commit_sha:
+    value: "{{blocks.get_commit_sha.outputs.sha}}"
+    type: str
+    description: "Full SHA of the checked out commit"
+
+  branch:
+    value: "{{blocks.get_branch.outputs.name}}"
+    type: str
+    description: "Current branch name (or '(detached)' if detached HEAD)"
+
+  repository_path:
+    value: "{{inputs.workspace}}"
+    type: str
+    description: "Full path where the repository was checked out"
+
+  clone_status:
+    value: "first_attempt={{blocks.clone_first_attempt.succeeded}}, ref_fallback={{blocks.clone_ref_fallback.succeeded}}, fetch_updates={{blocks.fetch_updates.succeeded}}"
+    type: str
+    description: "Debug: clone block status"
+
+  clone_output:
+    value: "{{blocks.clone_first_attempt.outputs.stdout | default('N/A')}}"
+    type: str
+    description: "Debug: clone stdout"
+
+  clone_stderr:
+    value: "{{blocks.clone_first_attempt.outputs.stderr | default('N/A')}}"
+    type: str
+    description: "Debug: clone stderr"

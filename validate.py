@@ -29,7 +29,7 @@ def validate_workflow_file(file_path: Path) -> tuple[bool, str]:
     if not file_path.is_file():
         return False, f"Not a file: {file_path}"
 
-    if file_path.suffix not in ['.yaml', '.yml']:
+    if file_path.suffix not in [".yaml", ".yml"]:
         return False, f"Not a YAML file: {file_path}"
 
     # Load using the same mechanism as MCP server
@@ -38,8 +38,8 @@ def validate_workflow_file(file_path: Path) -> tuple[bool, str]:
     if not result.is_success:
         return False, f"Load failed: {result.error}"
 
-    # Successfully loaded
     workflow = result.value
+
     return True, f"✓ Valid workflow: {workflow.name}"
 
 
@@ -75,9 +75,9 @@ def test_registry_loading(paths: list[Path]) -> None:
 
     This replicates the exact loading process from server.py
     """
-    print("\n" + "="*80)
+    print("\n" + "=" * 80)
     print("Testing Registry Loading (MCP Server Pattern)")
-    print("="*80)
+    print("=" * 80)
 
     registry = WorkflowRegistry()
 
@@ -100,30 +100,24 @@ def test_registry_loading(paths: list[Path]) -> None:
         elif path.is_dir():
             # Load directory
             try:
-                stats = registry.load_from_directory(
-                    path,
-                    on_duplicate="overwrite"
-                )
-                print(f"  ✓ Loaded: {stats['loaded']} workflows")
-                print(f"  ✗ Failed: {stats['failed']} workflows")
-
-                if stats['failed'] > 0:
-                    print("\n  Failed files:")
-                    for error in stats.get('errors', []):
-                        print(f"    - {error}")
+                result = registry.load_from_directory(path)
+                if result.is_success:
+                    print(f"  ✓ Loaded: {result.value} workflows")
+                else:
+                    print(f"  ✗ Load failed: {result.error}")
 
             except Exception as e:
                 print(f"  ✗ Directory load failed: {e}")
 
     # Show final registry state
-    print(f"\n{'='*80}")
+    print(f"\n{'=' * 80}")
     print("Registry Summary")
-    print(f"{'='*80}")
+    print(f"{'=' * 80}")
     print(f"Total workflows: {len(registry.list_names())}")
     print(f"Workflows: {', '.join(sorted(registry.list_names()))}")
 
 
-def main():
+def main() -> None:
     if len(sys.argv) < 2:
         print(__doc__)
         sys.exit(1)
@@ -131,12 +125,12 @@ def main():
     target_path = Path(sys.argv[1])
 
     print("Workflow Validation Tool")
-    print("="*80)
+    print("=" * 80)
 
     if target_path.is_file():
         # Validate single file
         print(f"Validating file: {target_path}")
-        print("-"*80)
+        print("-" * 80)
 
         success, message = validate_workflow_file(target_path)
         print(message)
@@ -150,7 +144,7 @@ def main():
     elif target_path.is_dir():
         # Validate directory
         print(f"Validating directory: {target_path}")
-        print("-"*80)
+        print("-" * 80)
 
         results = validate_directory(target_path)
 
@@ -166,7 +160,7 @@ def main():
             else:
                 failure_count += 1
 
-        print(f"\n{'='*80}")
+        print(f"\n{'=' * 80}")
         print(f"Summary: {success_count} valid, {failure_count} failed")
 
         if failure_count > 0:
@@ -179,7 +173,7 @@ def main():
         print(f"Error: Path not found: {target_path}")
         sys.exit(1)
 
-    print(f"\n{'='*80}")
+    print(f"\n{'=' * 80}")
     print("All validations passed!")
 
 

@@ -1,0 +1,53 @@
+# Grandparent workflow - 3-level nesting test
+# Tests that after deepest child completes, middle workflow continues to remaining blocks
+
+name: three-level-grandparent
+description: Grandparent workflow with for_each calling parent workflows
+tags: [test, for_each, nested, interactive]
+
+inputs:
+  parents:
+    type: list
+    description: List of parent items
+    default:
+      - name: parent1
+        children:
+          - child1
+
+blocks:
+  - id: grandparent_setup
+    type: Shell
+    inputs:
+      command: |
+        echo "Grandparent setup: processing {{inputs.parents | length}} parents"
+
+  - id: process_parents
+    type: Workflow
+    depends_on: [grandparent_setup]
+    for_each: "{{inputs.parents}}"
+    for_each_mode: sequential
+    inputs:
+      workflow: three-level-parent
+      inputs:
+        parent_name: "{{each.value.name}}"
+        children: "{{each.value.children}}"
+
+  - id: grandparent_complete
+    type: Shell
+    depends_on: [process_parents]
+    inputs:
+      command: |
+        echo "Grandparent complete: all parents processed"
+
+outputs:
+  grandparent_setup_completed:
+    value: "{{blocks.grandparent_setup.succeeded}}"
+    type: bool
+
+  all_parents_completed:
+    value: "{{blocks.process_parents.succeeded}}"
+    type: bool
+
+  grandparent_complete_ran:
+    value: "{{blocks.grandparent_complete.succeeded}}"
+    type: bool

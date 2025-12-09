@@ -1,0 +1,6 @@
+{
+  "outputs": {
+    "summary": "==========================================\n  All git-checkout tests completed!\n==========================================\n\nTests run:\n  FRESH CLONE:\n    1. No ref, no sparse\n    2. With existing ref\n    3. Sparse checkout (no ref)\n    4. Ref + sparse checkout\n    5. New branch creation (ref doesn't exist)\n    6. New branch + sparse\n\n  EXISTING REPO:\n    7. No ref (stay on current branch)\n    8. Checkout remote ref\n    9. Checkout local ref\n   10. Create new branch\n   11. Apply sparse checkout\n\n  SPARSE MODES:\n   12. Cone mode (directory)"
+  },
+  "status": "success"
+}

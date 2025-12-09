@@ -62,14 +62,14 @@ class HttpCallInput(BlockInput):
         default_factory=dict,
         description="HTTP headers (supports ${ENV_VAR} substitution in values)",
     )
-    json: dict[str, Any] | None = Field(  # type: ignore[assignment]
+    json_body: dict[str, Any] | None = Field(
         default=None,
+        validation_alias="json",
         description=(
-            "JSON request body (mutually exclusive with content). Matches httpx parameter name."
+            "JSON request body (mutually exclusive with content). "
+            "Use 'json' in YAML for httpx compatibility."
         ),
     )
-    # Note: Field name 'json' intentionally shadows Pydantic's deprecated .json() method
-    # to match httpx.AsyncClient.request() API for type-safe parameter passthrough
     content: str | bytes | None = Field(
         default=None,
         description=(
@@ -163,6 +163,15 @@ class HttpCallExecutor(BlockExecutor):
     type_name: ClassVar[str] = "HttpCall"
     input_type: ClassVar[type[BlockInput]] = HttpCallInput
     output_type: ClassVar[type[BlockOutput]] = HttpCallOutput
+    examples: ClassVar[str] = """```yaml
+- id: call-api
+  type: HttpCall
+  inputs:
+    url: "https://api.example.com/data"
+    method: GET
+    headers:
+      Authorization: "Bearer {{secrets.API_KEY}}"
+```"""
 
     security_level: ClassVar[ExecutorSecurityLevel] = ExecutorSecurityLevel.TRUSTED
     capabilities: ClassVar[ExecutorCapabilities] = ExecutorCapabilities(can_network=True)
@@ -194,7 +203,7 @@ class HttpCallExecutor(BlockExecutor):
         headers = {key: self._substitute_env_vars(value) for key, value in inputs.headers.items()}
 
         # Set Content-Type for JSON if not already specified
-        if inputs.json is not None:
+        if inputs.json_body is not None:
             if "Content-Type" not in headers and "content-type" not in headers:
                 headers["Content-Type"] = "application/json"
 
@@ -210,7 +219,7 @@ class HttpCallExecutor(BlockExecutor):
                     method=inputs.method.upper(),
                     url=url,
                     headers=headers,
-                    json=inputs.json,  # Direct passthrough - type-safe!
+                    json=inputs.json_body,  # Direct passthrough - type-safe!
                     content=inputs.content,  # Direct passthrough - type-safe!
                 )
             except httpx.TimeoutException as e:

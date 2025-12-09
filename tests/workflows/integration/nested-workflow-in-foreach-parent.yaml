@@ -1,0 +1,66 @@
+# Parent workflow that calls child workflows in for_each sequential mode
+# This reproduces the bug where resume response is routed to wrong workflow level
+
+name: nested-workflow-in-foreach-parent
+description: Parent workflow with for_each sequential calling child workflows that pause
+tags: [test, for_each, nested, interactive]
+
+inputs:
+  work_items:
+    type: list
+    description: List of items to process
+    default:
+      - name: item1
+        value: value1
+      - name: item2
+        value: value2
+
+blocks:
+  # Step 1: Setup
+  - id: setup
+    type: Shell
+    inputs:
+      command: |
+        echo "Starting parent workflow with {{inputs.work_items | length}} items"
+
+  # Step 2: Process each item using child workflow (SEQUENTIAL - this is key!)
+  - id: process_items
+    type: Workflow
+    depends_on: [setup]
+    for_each: "{{inputs.work_items}}"
+    for_each_mode: sequential
+    inputs:
+      workflow: nested-workflow-in-foreach-child
+      inputs:
+        item_name: "{{each.value.name}}"
+        item_value: "{{each.value.value}}"
+
+  # Step 3: Finalize
+  - id: finalize
+    type: Shell
+    depends_on: [process_items]
+    inputs:
+      command: |
+        echo "All items processed"
+
+outputs:
+  setup_completed:
+    value: "{{blocks.setup.succeeded}}"
+    type: bool
+
+  all_items_processed:
+    value: "{{blocks.process_items.succeeded}}"
+    type: bool
+
+  finalize_completed:
+    value: "{{blocks.finalize.succeeded}}"
+    type: bool
+
+  # Access nested workflow outputs for first item
+  first_item_response:
+    value: "{{blocks.process_items.blocks['0'].outputs.approval_response}}"
+    type: str
+
+  first_item_completed:
+    value: "{{blocks.process_items.blocks['0'].outputs.completed}}"
+    type: bool

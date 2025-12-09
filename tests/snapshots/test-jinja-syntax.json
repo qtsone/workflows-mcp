@@ -1,0 +1,12 @@
+{
+  "outputs": {
+    "filtered_items": {
+      "field_a": "Question for field A",
+      "field_b": "Question for field B",
+      "field_c": "Question for field C",
+      "field_d": "Question for field D",
+      "field_e": "Question for field E"
+    }
+  },
+  "status": "success"
+}

@@ -16,6 +16,7 @@ from pydantic import Field
 from .block import BlockInput
 from .exceptions import ExecutionPaused
 from .execution import Execution
+from .execution_result import ExecutionState
 from .executor_base import BlockExecutor, ExecutorCapabilities, ExecutorSecurityLevel
 
 
@@ -92,6 +93,14 @@ class WorkflowExecutor(BlockExecutor):
     type_name: ClassVar[str] = "Workflow"
     input_type: ClassVar[type[BlockInput]] = WorkflowInput
     output_type: ClassVar[type] = type(None)  # Special: returns Execution, not BlockOutput
+    examples: ClassVar[str] = """```yaml
+- id: run-child
+  type: Workflow
+  inputs:
+    workflow: child-workflow-name
+    inputs:
+      param1: "{{inputs.value}}"
+```"""
 
     security_level: ClassVar[ExecutorSecurityLevel] = ExecutorSecurityLevel.TRUSTED
     capabilities: ClassVar[ExecutorCapabilities] = ExecutorCapabilities(
@@ -271,40 +280,82 @@ class WorkflowExecutor(BlockExecutor):
         assert isinstance(inputs, WorkflowInput)
 
         # 1. Extract child execution state from pause metadata (unified Job architecture)
-        child_execution_state = pause_metadata.get("child_execution_state")
-        if not child_execution_state:
+        child_execution_state_raw = pause_metadata.get("child_execution_state")
+        if not child_execution_state_raw:
             raise ValueError(
                 "Missing child_execution_state in pause_metadata - cannot resume nested workflow"
             )
 
-        # 2. Get ExecutionContext from parent context (typed accessor)
+        # 2. Deserialize ExecutionState if needed (after loading from JSON storage)
+        # When workflows pause, ExecutionState is serialized to JSON for storage.
+        # When resuming, we need to reconstruct the ExecutionState object from dict.
+        if isinstance(child_execution_state_raw, dict):
+            # Deserialize from storage format
+            try:
+                child_execution_state = ExecutionState(
+                    context=Execution.model_validate(child_execution_state_raw["context"]),
+                    completed_blocks=child_execution_state_raw["completed_blocks"],
+                    current_wave_index=child_execution_state_raw["current_wave_index"],
+                    execution_waves=child_execution_state_raw["execution_waves"],
+                    block_definitions=child_execution_state_raw["block_definitions"],
+                    workflow_stack=child_execution_state_raw["workflow_stack"],
+                    paused_block_id=child_execution_state_raw["paused_block_id"],
+                    workflow_name=child_execution_state_raw["workflow_name"],
+                    runtime_inputs=child_execution_state_raw["runtime_inputs"],
+                    pause_metadata=child_execution_state_raw.get("pause_metadata"),
+                )
+            except KeyError as e:
+                raise ValueError(
+                    f"Invalid ExecutionState format in pause_metadata: missing field {e}"
+                ) from e
+            except Exception as e:
+                raise ValueError(f"Failed to deserialize child execution state: {e}") from e
+        elif isinstance(child_execution_state_raw, ExecutionState):
+            # Already deserialized (in-memory execution)
+            child_execution_state = child_execution_state_raw
+        else:
+            raise ValueError(
+                f"Invalid child_execution_state type: {type(child_execution_state_raw)}. "
+                f"Expected ExecutionState or dict, got {type(child_execution_state_raw).__name__}"
+            )
+
+        # 3. Get ExecutionContext from parent context (typed accessor)
         exec_context = context.execution_context
         if exec_context is None:
             raise RuntimeError(
                 "ExecutionContext not found - workflow composition not supported in this context"
             )
 
-        # 3. Create WorkflowRunner and resume child workflow
+        # 4. Get child workflow name (from checkpoint or inputs)
+        workflow_name = pause_metadata.get("child_workflow") or inputs.workflow
+
+        # 5. Create child context (SAME AS execute() method)
+        # This is critical for proper variable resolution and context isolation.
+        # Without this, the child workflow would use parent's execution context,
+        # causing variable resolution to fail or return incorrect values.
+        child_context = exec_context.create_child_context(
+            parent_execution=context,
+            workflow_name=workflow_name,
+        )
+
+        # 6. Inject child ExecutionContext into deserialized child state
+        # Required because _execution_context is a PrivateAttr that isn't serialized.
+        # After deserialization, child_execution_state.context._execution_context is None.
+        # This must be set before resume_from_state() to ensure proper context propagation.
+        child_execution_state.context.set_execution_context(child_context)
+
+        # 7. Create WorkflowRunner and resume child workflow
         from .workflow_runner import WorkflowRunner
 
         # No checkpointing for nested workflows - parent handles all checkpointing
         runner = WorkflowRunner()
 
-        # Resume child workflow using unified Job architecture (ExecutionState)
-        from .execution_result import ExecutionState
-
-        if not isinstance(child_execution_state, ExecutionState):
-            raise ValueError(
-                f"Invalid child execution state type: {type(child_execution_state)}. "
-                "Expected ExecutionState."
-            )
-
         try:
-            # Resume child workflow from ExecutionState
+            # Resume child workflow from ExecutionState with CHILD context
             child_execution_result = await runner.resume_from_state(
                 execution_state=child_execution_state,
                 response=response,
-                context=exec_context,
+                context=child_context,
             )
         except Exception as e:
             raise ValueError(f"Failed to resume child workflow: {e}") from e

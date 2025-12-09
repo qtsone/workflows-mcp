@@ -112,6 +112,13 @@ class CreateFileExecutor(BlockExecutor):
     type_name: ClassVar[str] = "CreateFile"
     input_type: ClassVar[type[BlockInput]] = CreateFileInput
     output_type: ClassVar[type[BlockOutput]] = CreateFileOutput
+    examples: ClassVar[str] = """```yaml
+- id: write-output
+  type: CreateFile
+  inputs:
+    path: "{{tmp}}/output.txt"
+    content: "{{blocks.previous.outputs.result}}"
+```"""
 
     security_level: ClassVar[ExecutorSecurityLevel] = ExecutorSecurityLevel.TRUSTED
     capabilities: ClassVar[ExecutorCapabilities] = ExecutorCapabilities(can_write_files=True)
@@ -374,6 +381,13 @@ class ReadFilesExecutor(BlockExecutor):
     type_name: ClassVar[str] = "ReadFiles"
     input_type: ClassVar[type[BlockInput]] = ReadFilesInput
     output_type: ClassVar[type[BlockOutput]] = ReadFilesOutput
+    examples: ClassVar[str] = """```yaml
+- id: read-sources
+  type: ReadFiles
+  inputs:
+    patterns: ["src/**/*.py"]
+    mode: outline
+```"""
 
     security_level: ClassVar[ExecutorSecurityLevel] = ExecutorSecurityLevel.TRUSTED
     capabilities: ClassVar[ExecutorCapabilities] = ExecutorCapabilities(can_read_files=True)
@@ -760,6 +774,16 @@ class EditFileExecutor(BlockExecutor):
     type_name: ClassVar[str] = "EditFile"
     input_type: ClassVar[type[BlockInput]] = EditFileInput
     output_type: ClassVar[type[BlockOutput]] = EditFileOutput
+    examples: ClassVar[str] = """```yaml
+- id: update-config
+  type: EditFile
+  inputs:
+    path: "./config.json"
+    operations:
+      - type: regex_replace
+        pattern: '"version": ".*"'
+        replacement: '"version": "2.0.0"'
+```"""
 
     security_level: ClassVar[ExecutorSecurityLevel] = ExecutorSecurityLevel.TRUSTED
     capabilities: ClassVar[ExecutorCapabilities] = ExecutorCapabilities(

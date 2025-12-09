@@ -36,6 +36,7 @@ from . import (  # noqa: F401
     executors_core,  # Shell executor
     executors_file,  # File operation executors
     executors_http,  # HTTP/REST API executor
+    executors_image,  # Image generation executor
     executors_interactive,  # Interactive executors
     executors_llm,  # LLM call executor
     executors_state,  # JSON state executors
@@ -68,6 +69,11 @@ from .executors_http import (
     HttpCallExecutor,
     HttpCallInput,
     HttpCallOutput,
+)
+from .executors_image import (
+    ImageGenExecutor,
+    ImageGenInput,
+    ImageGenOutput,
 )
 from .executors_interactive import (
     PromptExecutor,
@@ -133,6 +139,10 @@ __all__ = [
     "HttpCallExecutor",
     "HttpCallInput",
     "HttpCallOutput",
+    # Image Executors
+    "ImageGenExecutor",
+    "ImageGenInput",
+    "ImageGenOutput",
     # Interactive Executors
     "PromptExecutor",
     "PromptInput",

@@ -30,21 +30,26 @@ import asyncio
 import base64
 import hashlib
 import json
+import logging
 import shlex
 from datetime import datetime
 from typing import TYPE_CHECKING, Any
 
+import yaml
 from jinja2 import Environment, StrictUndefined
 from jinja2.sandbox import SandboxedEnvironment
 
+from ..secrets.exceptions import SecretNotFoundError
 from .classifier import ExpressionClassifier, ExpressionType
 from .proxies import BlockProxy, SecretProxy
 from .rules import RuleContext, TransformRule
 from .security_rules import ForbiddenNamespaceRule, SecretRedactionRule, SecurityError
-from .syntax_rules import BracketNotationRule, DotNotationNormalizationRule
+from .syntax_rules import DotNotationNormalizationRule
 
 if TYPE_CHECKING:
     from ..secrets import SecretAuditLog, SecretProvider
+
+logger = logging.getLogger(__name__)
 
 
 class UnifiedVariableResolver:
@@ -136,8 +141,7 @@ class UnifiedVariableResolver:
         default_rules = [
             ForbiddenNamespaceRule(),  # Security first
             SecretRedactionRule(),
-            BracketNotationRule(),  # Syntax transformation
-            DotNotationNormalizationRule(),
+            DotNotationNormalizationRule(),  # Syntax transformation
         ]
 
         # Merge with custom rules
@@ -154,6 +158,8 @@ class UnifiedVariableResolver:
                 "quote": shlex.quote,
                 "prettyjson": lambda x: json.dumps(x, indent=2),
                 "tojson": json.dumps,
+                "fromjson": json.loads,
+                "toyaml": lambda x: yaml.dump(x, default_flow_style=False, sort_keys=False),
                 "b64encode": lambda x: base64.b64encode(x.encode()).decode(),
                 "b64decode": lambda x: base64.b64decode(x).decode(),
                 "hash": lambda x, algo="sha256": hashlib.new(algo, x.encode()).hexdigest(),
@@ -175,8 +181,32 @@ class UnifiedVariableResolver:
                 "bool": bool,
                 "get": self._get,
                 "render": self._render,
+                "read_file": self._read_file,
             }
         )
+
+    @staticmethod
+    def _read_file(path: str) -> str:
+        """
+        Read file content for Jinja2 templates.
+
+        Args:
+            path: Path to file to read
+
+        Returns:
+            File content as string
+
+        Raises:
+            ValueError: If file cannot be read
+        """
+        from pathlib import Path
+
+        from ..block_utils import FileOperations
+
+        result = FileOperations.read_text(Path(path))
+        if not result.is_success:
+            raise ValueError(f"read_file failed for '{path}': {result.error}")
+        return result.unwrap()
 
     @staticmethod
     def _get(obj: Any, key: int | str, default: Any = None) -> Any:
@@ -531,9 +561,19 @@ class UnifiedVariableResolver:
         secret_values = dict(existing_secrets)  # Copy existing secrets
         for key, result in zip(secret_keys, results):
             if isinstance(result, Exception):
-                # Re-raise first error (audit logging already done in SecretProxy.get)
-                raise result
-            secret_values[key] = result
+                # Handle missing secrets gracefully (audit logging already done in SecretProxy.get)
+                if isinstance(result, SecretNotFoundError):
+                    logger.warning(
+                        f"Secret '{key}' not found - defaulting to empty string. "
+                        f"{result.provider_hint or ''}"
+                    )
+                    # Set to empty string - safe default that works with shell tests and Jinja2
+                    secret_values[key] = ""
+                else:
+                    # Other exceptions (provider errors, etc.) should still fail
+                    raise result
+            else:
+                secret_values[key] = result
 
         # Replace proxy with materialized dict for Jinja2 rendering
         self.jinja_context["secrets"] = secret_values

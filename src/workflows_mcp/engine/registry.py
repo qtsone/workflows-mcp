@@ -191,7 +191,7 @@ class WorkflowRegistry:
 
         Args:
             name: Workflow name
-            detailed: If True, include version, author, and outputs (default: False)
+            detailed: If True, include author and outputs (default: False)
 
         Returns:
             Dictionary with metadata fields.
@@ -199,12 +199,12 @@ class WorkflowRegistry:
             Default mode (detailed=False):
             - name: Workflow name
             - description: Workflow description
+            - version: Workflow version
             - tags: List of tags
             - inputs: Input schema (type, description, required, default)
 
             Detailed mode (detailed=True):
             Additionally includes:
-            - version: Workflow version
             - author: Workflow author (if available)
             - outputs: Output mappings
 
@@ -213,10 +213,11 @@ class WorkflowRegistry:
         """
         workflow = self.get(name)
 
-        # Build default metadata (name, description, tags, inputs)
+        # Build default metadata (name, description, version, tags, inputs)
         metadata: dict[str, Any] = {
             "name": workflow.name,
             "description": workflow.description,
+            "version": workflow.version,
             "tags": workflow.tags or [],
         }
 
@@ -236,7 +237,6 @@ class WorkflowRegistry:
 
         # Add detailed fields if requested
         if detailed:
-            metadata["version"] = workflow.version
             if workflow.author:
                 metadata["author"] = workflow.author
             if workflow.outputs:

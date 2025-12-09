@@ -110,6 +110,7 @@
               "ReadFiles",
               "HttpCall",
               "LLMCall",
+              "ImageGen",
               "Prompt",
               "ReadJSONState",
               "WriteJSONState",
@@ -916,6 +917,221 @@
                     "prompt"
                   ],
                   "title": "LLMCallInput",
+                  "type": "object"
+                }
+              }
+            }
+          },
+          {
+            "if": {
+              "properties": {
+                "type": {
+                  "const": "ImageGen"
+                }
+              }
+            },
+            "then": {
+              "properties": {
+                "inputs": {
+                  "additionalProperties": false,
+                  "description": "Inputs for ImageGen block",
+                  "properties": {
+                    "prompt": {
+                      "anyOf": [
+                        {
+                          "type": "string"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ],
+                      "default": null,
+                      "description": "Text prompt (required for generate/edit, not used for variation)",
+                      "title": "Prompt"
+                    },
+                    "profile": {
+                      "anyOf": [
+                        {
+                          "type": "string"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ],
+                      "default": null,
+                      "description": "Profile name from ~/.workflows/llm-config.yml. If specified, provider/model are loaded from config. Mutually exclusive with direct provider/model specification.",
+                      "title": "Profile"
+                    },
+                    "provider": {
+                      "anyOf": [
+                        {
+                          "$ref": "#/$defs/ImageProvider"
+                        },
+                        {
+                          "type": "string"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ],
+                      "default": null,
+                      "description": "Image provider (openai, openai_compatible). Required if profile not specified.",
+                      "title": "Provider"
+                    },
+                    "model": {
+                      "anyOf": [
+                        {
+                          "type": "string"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ],
+                      "default": "dall-e-3",
+                      "description": "Model to use (dall-e-3, dall-e-2, or custom model name)",
+                      "title": "Model"
+                    },
+                    "api_url": {
+                      "anyOf": [
+                        {
+                          "type": "string"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ],
+                      "default": null,
+                      "description": "Custom API endpoint URL (required for openai_compatible)",
+                      "title": "Api Url"
+                    },
+                    "api_key": {
+                      "anyOf": [
+                        {
+                          "type": "string"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ],
+                      "default": null,
+                      "description": "API key (pre-resolved from {{secrets.OPENAI_API_KEY}})",
+                      "title": "Api Key"
+                    },
+                    "operation": {
+                      "default": "generate",
+                      "description": "Operation to perform",
+                      "enum": [
+                        "generate",
+                        "edit",
+                        "variation"
+                      ],
+                      "title": "Operation",
+                      "type": "string"
+                    },
+                    "size": {
+                      "default": "1024x1024",
+                      "description": "Image size (e.g., 1024x1024, 256x256, 512x512)",
+                      "title": "Size",
+                      "type": "string"
+                    },
+                    "quality": {
+                      "anyOf": [
+                        {
+                          "enum": [
+                            "standard",
+                            "hd"
+                          ],
+                          "type": "string"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ],
+                      "default": "standard",
+                      "description": "Image quality (dall-e-3 only)",
+                      "title": "Quality"
+                    },
+                    "style": {
+                      "anyOf": [
+                        {
+                          "enum": [
+                            "vivid",
+                            "natural"
+                          ],
+                          "type": "string"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ],
+                      "default": "vivid",
+                      "description": "Image style (dall-e-3 only)",
+                      "title": "Style"
+                    },
+                    "response_format": {
+                      "default": "url",
+                      "description": "Format of the response",
+                      "enum": [
+                        "url",
+                        "b64_json"
+                      ],
+                      "title": "Response Format",
+                      "type": "string"
+                    },
+                    "n": {
+                      "anyOf": [
+                        {
+                          "type": "integer"
+                        },
+                        {
+                          "type": "string"
+                        }
+                      ],
+                      "default": 1,
+                      "description": "Number of images to generate (supports interpolation)",
+                      "title": "N"
+                    },
+                    "image": {
+                      "anyOf": [
+                        {
+                          "type": "string"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ],
+                      "default": null,
+                      "description": "Path to base image (required for edit/variation)",
+                      "title": "Image"
+                    },
+                    "mask": {
+                      "anyOf": [
+                        {
+                          "type": "string"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ],
+                      "default": null,
+                      "description": "Path to mask image (optional for edit)",
+                      "title": "Mask"
+                    },
+                    "output_file": {
+                      "anyOf": [
+                        {
+                          "type": "string"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ],
+                      "default": null,
+                      "description": "Path to save the generated image(s). If n>1, appends index.",
+                      "title": "Output File"
+                    }
+                  },
+                  "title": "ImageGenInput",
                   "type": "object"
                 }
               }
@@ -1921,6 +2137,217 @@
         "prompt"
       ],
       "title": "LLMCallInput",
+      "type": "object"
+    },
+    "ImageProvider": {
+      "description": "Supported image generation providers.",
+      "enum": [
+        "openai",
+        "openai_compatible"
+      ],
+      "title": "ImageProvider",
+      "type": "string"
+    },
+    "ImageGenInput": {
+      "additionalProperties": false,
+      "description": "Input model for ImageGen executor.",
+      "properties": {
+        "prompt": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Text prompt (required for generate/edit, not used for variation)",
+          "title": "Prompt"
+        },
+        "profile": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Profile name from ~/.workflows/llm-config.yml. If specified, provider/model are loaded from config. Mutually exclusive with direct provider/model specification.",
+          "title": "Profile"
+        },
+        "provider": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ImageProvider"
+            },
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Image provider (openai, openai_compatible). Required if profile not specified.",
+          "title": "Provider"
+        },
+        "model": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": "dall-e-3",
+          "description": "Model to use (dall-e-3, dall-e-2, or custom model name)",
+          "title": "Model"
+        },
+        "api_url": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Custom API endpoint URL (required for openai_compatible)",
+          "title": "Api Url"
+        },
+        "api_key": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "API key (pre-resolved from {{secrets.OPENAI_API_KEY}})",
+          "title": "Api Key"
+        },
+        "operation": {
+          "default": "generate",
+          "description": "Operation to perform",
+          "enum": [
+            "generate",
+            "edit",
+            "variation"
+          ],
+          "title": "Operation",
+          "type": "string"
+        },
+        "size": {
+          "default": "1024x1024",
+          "description": "Image size (e.g., 1024x1024, 256x256, 512x512)",
+          "title": "Size",
+          "type": "string"
+        },
+        "quality": {
+          "anyOf": [
+            {
+              "enum": [
+                "standard",
+                "hd"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": "standard",
+          "description": "Image quality (dall-e-3 only)",
+          "title": "Quality"
+        },
+        "style": {
+          "anyOf": [
+            {
+              "enum": [
+                "vivid",
+                "natural"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": "vivid",
+          "description": "Image style (dall-e-3 only)",
+          "title": "Style"
+        },
+        "response_format": {
+          "default": "url",
+          "description": "Format of the response",
+          "enum": [
+            "url",
+            "b64_json"
+          ],
+          "title": "Response Format",
+          "type": "string"
+        },
+        "n": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "string"
+            }
+          ],
+          "default": 1,
+          "description": "Number of images to generate (supports interpolation)",
+          "title": "N"
+        },
+        "image": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Path to base image (required for edit/variation)",
+          "title": "Image"
+        },
+        "mask": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Path to mask image (optional for edit)",
+          "title": "Mask"
+        },
+        "output_file": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Path to save the generated image(s). If n>1, appends index.",
+          "title": "Output File"
+        }
+      },
+      "title": "ImageGenInput",
       "type": "object"
     },
     "PromptInput": {

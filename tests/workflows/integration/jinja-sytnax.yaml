@@ -1,0 +1,55 @@
+name: test-jinja-syntax
+description: Test Jinja template syntax features (filtering, loops, conditionals)
+version: "1.0"
+tags: [test, jinja]
+
+inputs:
+  field_a:
+    type: str
+    description: "Test field A"
+    default: ""
+    required: false
+
+  field_b:
+    type: str
+    description: "Test field B"
+    default: ""
+    required: false
+
+  field_c:
+    type: str
+    description: "Test field C"
+    default: ""
+    required: false
+
+  questions:
+    type: dict
+    description: "Dictionary of items to filter - keys matching provided inputs are excluded"
+    default:
+      field_a: "Question for field A"
+      field_b: "Question for field B"
+      field_c: "Question for field C"
+      field_d: "Question for field D"
+      field_e: "Question for field E"
+
+blocks:
+  - id: filter
+    type: WriteJSONState
+    inputs:
+      path: "{{tmp}}/filtered-items.json"
+      data:
+        filtered: >-
+          {%- set result = {} -%}
+          {%- for key, value in inputs.questions.items() -%}
+            {%- set skip = inputs.get(key, '') | trim != '' -%}
+            {%- if not skip -%}
+              {%- set _ = result.update({key: value}) -%}
+            {%- endif -%}
+          {%- endfor -%}
+          {{ result | tojson }}
+
+outputs:
+  filtered_items:
+    value: "{{blocks.filter.inputs.data.filtered | fromjson}}"
+    type: json
+    description: "Items after filtering out keys with provided values"

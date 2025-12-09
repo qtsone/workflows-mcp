@@ -1,0 +1,191 @@
+name: workflow-creator
+description: Interactive workflow creator using LLM-guided design, complexity analysis, and validation
+version: "2.4"
+tags: [agents, interactive, llm, workflow-generation]
+
+inputs:
+  questions:
+    type: dict
+    description: "Questions to ask user. Key matches input name - if input provided, question is skipped"
+    default:
+      name: "What should this workflow be named? (lowercase, hyphens, e.g., 'data-pipeline')"
+      description: "What does this workflow do? (brief description)"
+      inputs: "What inputs does the workflow need? (describe parameters and their purposes)"
+      outputs: "What should the workflow return? (describe expected outputs)"
+      steps: "What are the main steps or phases? (describe the logical flow)"
+
+  answers:
+    type: dict
+    description: "Pre-filled answers to skip prompts (keys: name, description, inputs, outputs, steps)"
+    default: {}
+
+  workspace:
+    type: str
+    description: "Path where the workflow file should be saved"
+    default: "/tmp/workflow-creator"
+    required: false
+
+  max_validation_attempts:
+    type: num
+    description: "Maximum number of validation fix attempts"
+    default: 10
+
+  recursion_depth:
+    type: num
+    description: "Current recursion depth (for sub-workflow generation)"
+    default: 0
+
+  max_recursion_depth:
+    type: num
+    description: "Maximum depth for recursive sub-workflow generation"
+    default: 2
+
+  output_dir:
+    type: str
+    description: "Output directory for workflow files. Workflows save to <output_dir>/<name>/main.yaml"
+    default: "~/.workflows"
+    required: false
+
+blocks:
+  - id: bootstrap_context
+    type: Workflow
+    inputs:
+      workflow: workflow-creator-bootstrap
+      inputs:
+        workspace: "{{inputs.workspace}}/bootstrap"
+        ref: "feat/workflow-companion"
+
+  - id: generate_requirements
+    description: "Generate requirements for the workflow"
+    depends_on: [bootstrap_context]
+    type: Workflow
+    inputs:
+      workflow: workflow-creator-requirements
+      inputs:
+        questions: "{{inputs.questions}}"
+        answers: "{{inputs.answers}}"
+        workspace: "{{inputs.workspace}}/requirements"
+
+  - id: analyze_complexity
+    description: "Analyze complexity to determine if decomposition is needed"
+    depends_on: [generate_requirements]
+    type: Workflow
+    inputs:
+      workflow: workflow-creator-analyze-complexity
+      inputs:
+        requirements: "{{blocks.generate_requirements.outputs.response}}"
+        executor_docs_path: "{{blocks.bootstrap_context.outputs.executor_docs_path}}"
+        workspace: "{{inputs.workspace}}/complexity"
+
+  - id: generate_sub_workflows
+    description: "Generate sub-workflows if decomposition is needed and not at max depth"
+    depends_on: [analyze_complexity]
+    condition: >-
+      {{blocks.analyze_complexity.outputs.needs_decomposition
+      and inputs.recursion_depth < inputs.max_recursion_depth
+      and blocks.analyze_complexity.outputs.sub_workflows | length > 0}}
+    type: Workflow
+    inputs:
+      workflow: workflow-creator-decompose
+      inputs:
+        sub_workflows: "{{blocks.analyze_complexity.outputs.sub_workflows}}"
+        parent_requirements: "{{blocks.generate_requirements.outputs.response}}"
+        executor_docs_path: "{{blocks.bootstrap_context.outputs.executor_docs_path}}"
+        examples: "{{blocks.bootstrap_context.outputs.examples}}"
+        workspace: "{{inputs.workspace}}/sub-workflows"
+        current_depth: "{{inputs.recursion_depth}}"
+        max_depth: "{{inputs.max_recursion_depth}}"
+        output_dir: "{{inputs.output_dir}}/{{blocks.generate_requirements.outputs.response.name}}"
+
+  - id: generate_workflow
+    description: "Generate main workflow (after complexity analysis and optional sub-workflow generation)"
+    depends_on:
+      - block: analyze_complexity
+        required: true
+      - block: generate_sub_workflows
+        required: false
+    type: Workflow
+    inputs:
+      workflow: workflow-creator-generate-workflow
+      inputs:
+        user_requests: "{{blocks.generate_requirements.outputs.response_path}}"
+        executor_docs_path: "{{blocks.bootstrap_context.outputs.executor_docs_path}}"
+        examples: "{{blocks.bootstrap_context.outputs.examples}}"
+        workspace: "{{inputs.workspace}}/generate-workflow"
+        sub_workflows: "{{blocks.analyze_complexity.outputs.sub_workflows | default([])}}"
+        has_sub_workflows: "{{blocks.generate_sub_workflows.succeeded | default(false)}}"
+        tags: "{{blocks.generate_requirements.outputs.response.tags | default([])}}"
+
+  - id: transform_design
+    description: "Transform design JSON to valid workflow YAML format"
+    depends_on: [generate_workflow]
+    condition: "{{blocks.generate_workflow.outputs.approved}}"
+    type: Workflow
+    inputs:
+      workflow: transform-design
+      inputs:
+        json_path: "{{blocks.generate_workflow.outputs.workflow_path}}"
+        output_path: "{{inputs.workspace}}/draft-workflow.yaml"
+
+  - id: recursive_validation
+    depends_on: [transform_design]
+    condition: "{{blocks.transform_design.outputs.approved}}"
+    type: Workflow
+    inputs:
+      workflow: workflow-creator-validation
+      inputs:
+        workflow_path: "{{blocks.transform_design.outputs.workflow_path}}"
+        executor_docs_path: "{{blocks.bootstrap_context.outputs.executor_docs_path}}"
+        workflows_mcp_path: "{{blocks.bootstrap_context.outputs.workspace}}"
+        limit: "{{inputs.max_validation_attempts}}"
+        workspace: "{{inputs.workspace}}/validation"
+
+  - id: finalize_and_save
+    depends_on: [recursive_validation]
+    condition: "{{blocks.recursive_validation.outputs.approved}}"
+    type: Workflow
+    inputs:
+      workflow: workflow-creator-summary
+      inputs:
+        workflow_name: "{{blocks.generate_requirements.outputs.response.name}}"
+        workflow_path: "{{blocks.recursive_validation.outputs.workflow_path}}"
+        workspace: "{{inputs.workspace}}"
+        workflows_mcp_path: "{{blocks.bootstrap_context.outputs.workspace}}"
+        iterations: "{{blocks.recursive_validation.outputs.iterations}}"
+        output_dir: "{{inputs.output_dir}}"
+
+outputs:
+  workflow_name:
+    value: "{{blocks.finalize_and_save.outputs.workflow_name}}"
+    type: str
+    description: "Name of the created workflow"
+
+  workflow_path:
+    value: "{{blocks.finalize_and_save.outputs.workflow_path}}"
+    type: str
+    description: "Path to the saved workflow file"
+
+  summary:
+    value: "{{blocks.finalize_and_save.outputs.summary}}"
+    type: str
+    description: "Complete creation summary with next steps"
+
+  requirements:
+    value: "{{blocks.generate_requirements.outputs.response}}"
+    type: dict
+    description: "Structured workflow requirements"
+
+  complexity_analysis:
+    value: "{{blocks.analyze_complexity.outputs}}"
+    type: dict
+    description: "Complexity analysis results"
+
+  sub_workflows_generated:
+    value: "{{blocks.generate_sub_workflows.succeeded}}"
+    type: bool
+    description: "Whether sub-workflows were generated"
+
+  success:
+    value: "{{blocks.finalize_and_save.succeeded}}"
+    type: bool
+    description: "Whether workflow creation completed successfully"

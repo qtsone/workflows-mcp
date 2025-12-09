@@ -5,41 +5,12 @@ These rules transform expression syntax to be compatible with Jinja2 while
 maintaining workflow-specific semantics.
 
 Rules:
-    - BracketNotationRule: Convert double-quote brackets to single-quote
     - DotNotationNormalizationRule: Normalize special characters in paths
 """
 
 import re
 
 from .rules import RuleContext, RuleType, TransformRule
-
-
-class BracketNotationRule(TransformRule):
-    """
-    Convert double-quote brackets to single-quote for Jinja2 compatibility.
-
-    Transforms: blocks["foo-bar"] → blocks['foo-bar']
-    Reason: Jinja2 prefers single quotes for bracket notation
-    """
-
-    rule_type = RuleType.SYNTAX
-    priority = 10
-
-    def applies_to(self, context: RuleContext) -> bool:
-        return '["' in context.expression and '"]' in context.expression
-
-    def transform(self, context: RuleContext) -> RuleContext:
-        # Convert ["foo"] to ['foo']
-        context.expression = re.sub(
-            r'\["([^"]+)"\]',
-            r"['\1']",
-            context.expression,
-        )
-        return context
-
-    @property
-    def description(self) -> str:
-        return "Convert double-quote bracket notation to Jinja2-compatible single quotes"
 
 
 class DotNotationNormalizationRule(TransformRule):

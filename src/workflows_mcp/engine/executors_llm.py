@@ -309,6 +309,13 @@ class LLMCallExecutor(BlockExecutor):
     type_name: ClassVar[str] = "LLMCall"
     input_type: ClassVar[type[BlockInput]] = LLMCallInput
     output_type: ClassVar[type[BlockOutput]] = LLMCallOutput
+    examples: ClassVar[str] = """```yaml
+- id: summarize
+  type: LLMCall
+  inputs:
+    profile: default
+    prompt: "Summarize this text: {{inputs.text}}"
+```"""
 
     security_level: ClassVar[ExecutorSecurityLevel] = ExecutorSecurityLevel.TRUSTED
     capabilities: ClassVar[ExecutorCapabilities] = ExecutorCapabilities(can_network=True)
@@ -382,16 +389,30 @@ class LLMCallExecutor(BlockExecutor):
         # Determine if we need schema validation
         needs_validation = effective_inputs.response_schema is not None
 
+        # Prepare schema ONCE before retry loop - this is the schema LLM receives
+        # CRITICAL: Use the SAME prepared schema for validation to avoid mismatch
+        # where LLM generates null (allowed by prepared schema) but validation
+        # uses original schema (which doesn't allow null)
+        prepared_schema: dict[str, Any] | None = None
+        if needs_validation:
+            prepared_schema = self._prepare_schema_for_openai(effective_inputs.response_schema)
+
         for attempt in range(max_retries):
             attempts += 1
 
             try:
-                # Build prompt (add validation feedback if retry due to validation failure)
+                # Build prompt (append validation feedback if retry due to validation failure)
                 prompt = effective_inputs.prompt
                 if validation_error and attempt > 0:
-                    prompt = effective_inputs.validation_prompt_template.format(
-                        validation_error=validation_error,
-                        schema=json.dumps(effective_inputs.response_schema, indent=2),
+                    # APPEND validation feedback to original prompt instead of replacing
+                    # This preserves context so LLM knows what task it's performing
+                    prompt = (
+                        effective_inputs.prompt
+                        + "\n\n"
+                        + effective_inputs.validation_prompt_template.format(
+                            validation_error=validation_error,
+                            schema=json.dumps(prepared_schema, indent=2),
+                        )
                     )
 
                 # Make LLM API call
@@ -402,14 +423,16 @@ class LLMCallExecutor(BlockExecutor):
                     temperature=temperature,
                     max_tokens=max_tokens,
                     context=context,
+                    prepared_schema=prepared_schema,
                 )
 
                 # Validate response if schema provided (client-side for all providers)
                 if needs_validation:
                     try:
+                        # Use the SAME prepared schema that was sent to the LLM
                         validated_response = self._validate_response(
                             response_text=response_text,
-                            schema=cast(dict[str, Any], effective_inputs.response_schema),
+                            schema=cast(dict[str, Any], prepared_schema),
                         )
 
                         # Success - return validated JSON structure directly
@@ -653,8 +676,13 @@ class LLMCallExecutor(BlockExecutor):
         temperature: float | None,
         max_tokens: int | None,
         context: Execution,
+        prepared_schema: dict[str, Any] | None = None,
     ) -> tuple[str, dict[str, Any]]:
         """Call LLM provider API.
+
+        Args:
+            prepared_schema: Pre-prepared schema for OpenAI-compatible providers.
+                If provided, used directly instead of re-preparing from inputs.
 
         Raises:
             ValueError: Invalid provider or configuration
@@ -670,7 +698,9 @@ class LLMCallExecutor(BlockExecutor):
         provider = resolve_interpolatable_enum(inputs.provider, LLMProvider, "provider")
 
         if provider == LLMProvider.OPENAI:
-            return await self._call_openai(inputs, prompt, timeout, temperature, max_tokens)
+            return await self._call_openai(
+                inputs, prompt, timeout, temperature, max_tokens, prepared_schema
+            )
         elif provider == LLMProvider.ANTHROPIC:
             return await self._call_anthropic(inputs, prompt, timeout, temperature, max_tokens)
         elif provider == LLMProvider.GEMINI:
@@ -681,6 +711,160 @@ class LLMCallExecutor(BlockExecutor):
             # This case should be unreachable due to the Enum validation
             raise ValueError(f"Unsupported provider: {provider}")
 
+    # Whitelist of supported JSON schema keywords for OpenAI's format
+    SUPPORTED_KEYWORDS: ClassVar[set[str]] = {
+        "type",
+        "properties",
+        "items",
+        "required",
+        "enum",
+        "description",
+        "additionalProperties",
+        "anyOf",
+    }
+
+    def _prepare_schema_for_openai(self, schema: Any) -> Any:
+        """Recursively simplifies and strictifies a JSON schema for OpenAI.
+
+        This function processes a JSON schema to make it compliant with
+        OpenAI's strict requirements for 'response_format'. It does this by:
+        1.  Stripping unsupported keywords to reduce complexity.
+        2.  Enforcing 'additionalProperties: false' on objects that are not
+            explicitly defined as maps (i.e., don't have a schema in
+            'additionalProperties' already).
+        3.  Converting 'additionalProperties: true' to a string-typed schema
+            (OpenAI strict mode doesn't allow 'true').
+        4.  Converting empty 'items: {}' to a string-typed schema for arrays.
+        5.  Ensuring ALL properties are in the 'required' array (OpenAI strict mode
+            requirement). Properties not originally required are made nullable.
+        """
+        if not isinstance(schema, dict):
+            return schema
+
+        # Prune unsupported keywords
+        simplified_schema = {
+            key: value for key, value in schema.items() if key in self.SUPPORTED_KEYWORDS
+        }
+
+        # Enforce strictness for objects
+        if simplified_schema.get("type") == "object":
+            # If 'properties' are defined, recurse into them
+            if "properties" in simplified_schema:
+                original_required = set(simplified_schema.get("required", []))
+                all_property_keys = list(simplified_schema["properties"].keys())
+
+                new_properties = {}
+                for k, v in simplified_schema["properties"].items():
+                    processed = self._prepare_schema_for_openai(v)
+
+                    # If property was not originally required, make it nullable
+                    if k not in original_required:
+                        processed = self._make_nullable(processed)
+
+                    new_properties[k] = processed
+
+                simplified_schema["properties"] = new_properties
+
+                # OpenAI strict mode: ALL properties must be in required array
+                simplified_schema["required"] = all_property_keys
+
+            # Handle additionalProperties
+            addl_props = simplified_schema.get("additionalProperties")
+            if isinstance(addl_props, dict) and addl_props:
+                # If it's a non-empty schema dict, recurse into it
+                simplified_schema["additionalProperties"] = self._prepare_schema_for_openai(
+                    addl_props
+                )
+            elif addl_props is True or (isinstance(addl_props, dict) and not addl_props):
+                # Convert 'true' or empty dict {} to a string-typed schema
+                # This allows arbitrary string-valued properties (best we can do
+                # while remaining OpenAI strict-mode compliant)
+                simplified_schema["additionalProperties"] = {"type": "string"}
+            elif "additionalProperties" not in simplified_schema:
+                # If not set at all, forbid extra properties
+                simplified_schema["additionalProperties"] = False
+
+        # Recurse into array items
+        elif simplified_schema.get("type") == "array":
+            items = simplified_schema.get("items")
+            if isinstance(items, dict) and items:
+                # Non-empty items schema - recurse
+                simplified_schema["items"] = self._prepare_schema_for_openai(items)
+            elif items == {} or items is None or "items" not in simplified_schema:
+                # Empty items {} or missing items - use string type as fallback
+                simplified_schema["items"] = {"type": "string"}
+
+        # Recurse into anyOf options
+        if "anyOf" in simplified_schema:
+            simplified_schema["anyOf"] = [
+                self._prepare_schema_for_openai(option) for option in simplified_schema["anyOf"]
+            ]
+
+        return simplified_schema
+
+    def _make_nullable(self, schema: dict[str, Any]) -> dict[str, Any]:
+        """Make a schema nullable using anyOf union with null type.
+
+        OpenAI strict mode requires all properties in the required array.
+        To make a property optional, we use anyOf: [{original_schema}, {type: "null"}].
+
+        Uses anyOf syntax instead of type arrays for broader compatibility
+        with LLM providers (e.g., LMStudio doesn't support type: ["string", "null"]).
+        """
+        if not isinstance(schema, dict):
+            return schema
+
+        schema = schema.copy()
+
+        # If already has anyOf, add null option if not present
+        if "anyOf" in schema:
+            has_null = any(
+                isinstance(opt, dict) and opt.get("type") == "null" for opt in schema["anyOf"]
+            )
+            if not has_null:
+                schema["anyOf"] = list(schema["anyOf"]) + [{"type": "null"}]
+            return schema
+
+        current_type = schema.get("type")
+
+        if current_type is None:
+            # No type specified, use nullable string as default
+            schema["anyOf"] = [{"type": "string"}, {"type": "null"}]
+            return schema
+
+        if isinstance(current_type, list):
+            # Already a list of types, convert to anyOf format
+            type_options = [{"type": t} for t in current_type]
+            if not any(opt["type"] == "null" for opt in type_options):
+                type_options.append({"type": "null"})
+            del schema["type"]
+            schema["anyOf"] = type_options
+            return schema
+
+        # Single type - build anyOf with the type schema and null
+        # For complex types (object, array), include their sub-schemas
+        type_schema: dict[str, Any] = {"type": current_type}
+
+        # Move type-specific keywords into the type schema
+        if current_type == "object":
+            for key in ["properties", "required", "additionalProperties"]:
+                if key in schema:
+                    type_schema[key] = schema.pop(key)
+        elif current_type == "array":
+            if "items" in schema:
+                type_schema["items"] = schema.pop("items")
+        elif current_type == "string":
+            if "enum" in schema:
+                type_schema["enum"] = schema.pop("enum")
+
+        # Remove type from top level
+        del schema["type"]
+
+        # Add anyOf with original type and null
+        schema["anyOf"] = [type_schema, {"type": "null"}]
+
+        return schema
+
     async def _call_openai(
         self,
         inputs: LLMCallInput,
@@ -688,12 +872,18 @@ class LLMCallExecutor(BlockExecutor):
         timeout: int,
         temperature: float | None,
         max_tokens: int | None,
+        prepared_schema: dict[str, Any] | None = None,
     ) -> tuple[str, dict[str, Any]]:
         """Call OpenAI API using official AsyncOpenAI client.
 
         Uses OpenAI's official Python library with built-in retry logic, better error
         handling, and native structured outputs support. Compatible with OpenAI-like
         servers (LM Studio, vLLM, etc.) via custom base_url.
+
+        Args:
+            prepared_schema: Pre-prepared schema. If provided, used directly instead
+                of re-preparing from inputs.response_schema. This ensures the same
+                schema is used for both the API call and validation.
 
         Raises:
             ValueError: Null content, refusal, or unexpected format
@@ -749,17 +939,18 @@ class LLMCallExecutor(BlockExecutor):
             completion_kwargs["max_completion_tokens"] = max_tokens
 
         # Native schema validation (OpenAI Structured Outputs)
-        if inputs.response_schema:
-            schema = cast(dict[str, Any], inputs.response_schema).copy()
-            if "additionalProperties" not in schema:
-                schema["additionalProperties"] = False
+        # Use pre-prepared schema if provided, otherwise prepare from inputs
+        schema_for_api = prepared_schema
+        if schema_for_api is None and inputs.response_schema:
+            schema_for_api = self._prepare_schema_for_openai(inputs.response_schema)
 
+        if schema_for_api:
             completion_kwargs["response_format"] = {
                 "type": "json_schema",
                 "json_schema": {
                     "name": "response_schema",
                     "strict": True,
-                    "schema": schema,
+                    "schema": schema_for_api,
                 },
             }
 

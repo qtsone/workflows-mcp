@@ -1,0 +1,25 @@
+name: test-tmp-in-input-defaults
+description: Test that {{tmp}} is resolved in input defaults
+version: "1.0"
+tags: [test, tmp, input-defaults]
+
+inputs:
+  test_dir:
+    type: str
+    description: Output path with {{tmp}} default
+    default: "{{tmp}}"
+    required: false
+
+blocks:
+  - id: verify_tmp_resolved
+    type: Shell
+    inputs:
+      working_dir: "{{tmp}}"
+      command: |
+        echo "marker" > test.txt
+        [ -f "{{inputs.test_dir}}/test.txt" ]
+
+outputs:
+  resolved:
+    value: "{{blocks.verify_tmp_resolved.succeeded}}"
+    type: bool

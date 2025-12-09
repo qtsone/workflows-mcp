@@ -88,6 +88,7 @@ class BlockExecutor(ABC):
     type_name: ClassVar[str]  # Block type identifier (e.g., "Shell")
     input_type: ClassVar[type[BlockInput]]  # Pydantic input model
     output_type: ClassVar[type[BlockOutput]]  # Pydantic output model
+    examples: ClassVar[str] = ""  # YAML examples for documentation
 
     # Security attributes (can be overridden by subclasses)
     security_level: ClassVar[ExecutorSecurityLevel] = ExecutorSecurityLevel.SAFE
@@ -632,6 +633,7 @@ def create_default_registry() -> ExecutorRegistry:
         ReadFilesExecutor,
     )
     from .executors_http import HttpCallExecutor
+    from .executors_image import ImageGenExecutor
     from .executors_interactive import PromptExecutor
     from .executors_llm import LLMCallExecutor
     from .executors_state import (
@@ -657,6 +659,9 @@ def create_default_registry() -> ExecutorRegistry:
 
     # Register LLM executor
     registry.register(LLMCallExecutor())
+
+    # Register Image executor
+    registry.register(ImageGenExecutor())
 
     # Register interactive executor
     registry.register(PromptExecutor())

@@ -27,7 +27,7 @@ class ForbiddenNamespaceRule(TransformRule):
     - __internal__: Internal system state
     - __builtins__: Python built-ins
     - __import__: Import system
-    - Dangerous functions: exec, eval, compile, open, file
+    - Dangerous functions: exec, eval, compile, open
     """
 
     rule_type = RuleType.SECURITY
@@ -41,8 +41,6 @@ class ForbiddenNamespaceRule(TransformRule):
         "exec(",
         "eval(",
         "compile(",
-        "open(",
-        "file(",
     ]
 
     def applies_to(self, context: RuleContext) -> bool:

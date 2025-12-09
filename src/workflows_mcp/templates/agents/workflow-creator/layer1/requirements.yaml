@@ -1,0 +1,222 @@
+name: workflow-creator-requirements
+description: Interactive workflow creator using LLM-guided design and validation
+version: "1.0"
+tags: [agents, interactive, llm, workflow-generation]
+
+inputs:
+  workspace:
+    type: str
+    description: "Workspace directory for temporary files"
+    default: "{{tmp}}"
+    required: false
+
+  questions:
+    type: dict
+    description: "Questions to ask user. Keys: name, description, inputs, outputs, steps"
+    default:
+      name: "What should this workflow be named? (lowercase, hyphens, e.g., 'data-pipeline')"
+      description: "What does this workflow do? (brief description)"
+      inputs: "What inputs does the workflow need? (describe parameters and their purposes)"
+      outputs: "What should the workflow return? (describe expected outputs)"
+      steps: "What are the main steps or phases? (describe the logical flow)"
+
+  answers:
+    type: dict
+    description: "Pre-filled answers. Keys matching question keys skip prompts."
+    default: {}
+
+blocks:
+  - id: gather_requirements
+    type: Prompt
+    for_each: "{{inputs.questions}}"
+    for_each_mode: sequential
+    continue_on_error: true
+    condition: "{{each.key not in inputs.answers}}"
+    inputs:
+      prompt: |
+        # WORKFLOW CREATOR - REQUIREMENTS GATHERING
+        [{{each.key}}] {{each.value}}
+        Your answer:
+
+  - id: system_prompt
+    description: "System prompt for requirements gathering"
+    depends_on:
+      - block: gather_requirements
+        required: false # Optional: may be skipped if all answers pre-provided
+    type: CreateFile
+    inputs:
+      create_parents: true
+      overwrite: true
+      path: "{{inputs.workspace}}/system-prompt.md"
+      content: |
+        You are an expert workflow requirements analyst.
+        Your goal is to extract clear, structured requirements from user conversations.
+
+        # Output Rules
+        - name: lowercase, hyphenated (e.g., "data-pipeline")
+        - defaults: MUST be strings, bools, dicts, lists, or empty strings
+        - inputs/outputs: explicit types and descriptions
+
+  - id: user_prompt
+    description: "User prompt for requirements gathering"
+    depends_on:
+      - block: gather_requirements
+        required: false # Optional: may be skipped if all answers pre-provided
+    type: CreateFile
+    inputs:
+      create_parents: true
+      overwrite: true
+      path: "{{inputs.workspace}}/user-prompt.md"
+      content: |
+        # Task: Structure Workflow Requirements
+        Extract and structure workflow requirements from user responses.
+
+        ## User Responses to Questions
+
+        {% for key, question in inputs.questions.items() %}
+        ### [{{ key }}] {{ question }}
+        {% if key in inputs.answers %}{{inputs.answers[key]}}{% else %}{{blocks.gather_requirements[key].outputs.response}}{% endif %}
+        {% endfor %}
+
+        ## Instructions
+
+        Create a structured requirements document with:
+        1. **name**: Clean, lowercase, hyphenated name
+        2. **description**: Clear, concise description
+        3. **inputs**: List of {name, type, description, required, default}
+           - IMPORTANT: 'default' must be a STRING. If the default is a number (e.g. 10), use "10".
+           - If no default exists, use the string "None".
+        4. **steps**: Ordered list of workflow phases/steps
+        5. **outputs**: List of {name, type, description}
+        6. **tags**: Relevant tags for categorization
+
+        Be specific and detailed. Infer reasonable defaults where appropriate.
+        Generate structured requirements now.
+
+  - id: generate_requirements
+    depends_on: [system_prompt, user_prompt]
+    type: LLMCall
+    inputs:
+      profile: default
+      timeout: 600
+      response_schema:
+        type: object
+        properties:
+          name:
+            type: string
+            description: "Hyphenated, lowercase workflow name"
+          description:
+            type: string
+            description: "Concise workflow description"
+          inputs:
+            type: array
+            items:
+              type: object
+              properties:
+                name:
+                  type: string
+                type:
+                  type: string
+                  enum:
+                    [
+                      "str",
+                      "string",
+                      "num",
+                      "number",
+                      "int",
+                      "integer",
+                      "bool",
+                      "boolean",
+                      "list",
+                      "array",
+                      "dict",
+                      "object",
+                    ]
+                description:
+                  type: string
+                required:
+                  type: boolean
+                default:
+                  type: string
+                  description: "Default value as a string (e.g. '10', 'true'). Omit if none."
+              required:
+                - name
+                - type
+                - description
+                - required
+              additionalProperties: false
+            description: "Workflow input parameters"
+          steps:
+            type: array
+            items:
+              type: string
+            description: "Main workflow steps/phases"
+          outputs:
+            type: array
+            items:
+              type: object
+              properties:
+                name:
+                  type: string
+                type:
+                  type: string
+                  enum:
+                    [
+                      "str",
+                      "string",
+                      "num",
+                      "number",
+                      "int",
+                      "integer",
+                      "bool",
+                      "boolean",
+                      "list",
+                      "array",
+                      "dict",
+                      "object",
+                    ]
+                description:
+                  type: string
+              required:
+                - name
+                - type
+                - description
+              additionalProperties: false
+            description: "Workflow outputs"
+          tags:
+            type: array
+            items:
+              type: string
+            description: "Hyphenated, lowercase workflow tags"
+        required:
+          - name
+          - description
+          - inputs
+          - steps
+          - outputs
+          - tags
+        additionalProperties: false
+      system_instructions: |
+        {{blocks.system_prompt.outputs.content}}
+      prompt: |
+        {{blocks.user_prompt.outputs.content}}
+
+  - id: store_response
+    depends_on: [generate_requirements]
+    type: CreateFile
+    inputs:
+      create_parents: true
+      overwrite: true
+      path: "{{inputs.workspace}}/response.json"
+      content: "{{blocks.generate_requirements.outputs.response | prettyjson}}"
+
+outputs:
+  response_path:
+    type: str
+    value: "{{blocks.store_response.outputs.path}}"
+    description: "Path to the response file"
+
+  response:
+    type: dict
+    value: "{{blocks.generate_requirements.outputs.response}}"
+    description: "Structured workflow requirements"

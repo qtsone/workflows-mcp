@@ -392,10 +392,11 @@ class BlockDefinition(BaseModel):
     )
 
     # ADR-009: For_Each Abstraction (fractal design)
-    for_each: str | None = Field(
+    for_each: str | list[Any] | dict[str, Any] | None = Field(
         default=None,
         description=(
-            "Variable expression evaluating to dict/list for iteration (e.g., '{{inputs.files}}')"
+            "Variable expression or literal collection for iteration. "
+            "Supports: string expression (e.g., '{{inputs.files}}'), literal list, or literal dict"
         ),
     )
     for_each_mode: str = Field(
@@ -704,9 +705,16 @@ class WorkflowSchema(BaseModel):
         # Build mapping of block_id -> whether it has for_each (for 'each' namespace validation)
         for_each_blocks = {block.id for block in self.blocks if block.for_each}
 
+        # Pattern to match and remove {% raw %}...{% endraw %} blocks
+        # Supports Jinja2 whitespace control: {%- raw -%}, {% raw %}, etc.
+        raw_block_pattern = re.compile(r"\{%-?\s*raw\s*-?%\}.*?\{%-?\s*endraw\s*-?%\}", re.DOTALL)
+
         def validate_string_value(value: str, context: str, allow_each: bool = False) -> None:
             """Validate variable references in a string value."""
-            matches = var_pattern.findall(value)
+            # Remove {% raw %}...{% endraw %} blocks before validation
+            # These blocks contain literal template syntax that shouldn't be validated
+            value_without_raw = raw_block_pattern.sub("", value)
+            matches = var_pattern.findall(value_without_raw)
             for var_path in matches:
                 # Parse variable path (simple dot notation split for validation)
                 # Full resolution is handled by UnifiedVariableResolver at runtime
@@ -833,7 +841,7 @@ class WorkflowSchema(BaseModel):
                         f"{context}: Invalid variable reference '{{{{{var_path}}}}}'. "
                         f"Unknown namespace '{parts[0]}'. "
                         f"Valid namespaces: 'inputs', 'blocks', 'metadata', 'secrets', "
-                        f"'each' (for_each blocks only)"
+                        f"'tmp', 'each' (for_each blocks only)"
                     )
 
         def check_dict_values(obj: Any, path: str, allow_each: bool = False) -> None:

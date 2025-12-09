@@ -59,7 +59,7 @@ blocks:
     inputs:
       working_dir: "{{tmp}}"
       command: |
-        MAX_LINES=40
+        MAX_LINES=300
 
         # Process raw diff with line limiting
         if [ -f "raw_diff.txt" ]; then
@@ -110,7 +110,7 @@ blocks:
 
 outputs:
   has_changes:
-    value: "{{blocks.get_staged_diff.succeeded or blocks.get_all_diff.succeeded}}"
+    value: "{{blocks.processing.outputs.diff | trim | length > 0}}"
     type: bool
   summary:
     value: "{{blocks.processing.outputs.summary}}"

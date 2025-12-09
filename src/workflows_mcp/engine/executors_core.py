@@ -345,6 +345,12 @@ class ShellExecutor(BlockExecutor):
     type_name: ClassVar[str] = "Shell"
     input_type: ClassVar[type[BlockInput]] = ShellInput
     output_type: ClassVar[type[BlockOutput]] = ShellOutput
+    examples: ClassVar[str] = """```yaml
+- id: run-command
+  type: Shell
+  inputs:
+    command: echo "Hello World"
+```"""
 
     security_level: ClassVar[ExecutorSecurityLevel] = ExecutorSecurityLevel.PRIVILEGED
     capabilities: ClassVar[ExecutorCapabilities] = ExecutorCapabilities(
@@ -373,7 +379,7 @@ class ShellExecutor(BlockExecutor):
         # Prepare working directory
         cwd = Path(inputs.working_dir) if inputs.working_dir else Path.cwd()
         if not cwd.exists():
-            raise FileNotFoundError(f"Working directory does not exist: {cwd}")
+            cwd.mkdir(parents=True, exist_ok=True)
 
         # Get workflow-scoped scratch directory from execution context
         scratch_dir = context.scratch_dir
@@ -425,7 +431,7 @@ class ShellExecutor(BlockExecutor):
         exit_code = process.returncode or 0
 
         # Build output dict with default fields
-        output_dict = {
+        output_dict: dict[str, Any] = {
             "exit_code": exit_code,
             "stdout": stdout,
             "stderr": stderr,
@@ -475,4 +481,4 @@ class ShellExecutor(BlockExecutor):
                     # Optional output, continue without it
 
         # Create output with merged fields (extra="allow" handles custom fields)
-        return ShellOutput(**output_dict)  # type: ignore[arg-type]
+        return ShellOutput(**output_dict)

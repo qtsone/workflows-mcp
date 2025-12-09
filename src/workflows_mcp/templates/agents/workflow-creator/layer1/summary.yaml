@@ -1,0 +1,122 @@
+name: workflow-creator-summary
+description: Generate summary report for workflow creation
+version: "1.1"
+tags: [agents, finalization, internal]
+
+inputs:
+  workflow_name:
+    type: str
+    description: "(Required) Name of the workflow (for file naming)"
+    required: true
+
+  workflow_path:
+    type: str
+    description: "(Required) Final validated workflow path"
+    required: true
+
+  workflows_mcp_path:
+    type: str
+    description: "(Required) Directory path where validation script is located"
+    required: true
+
+  iterations:
+    type: num
+    description: "(Optional) Number of validation attempts made"
+    default: 1
+
+  output_dir:
+    type: str
+    description: "Output directory for workflow files"
+    default: "~/.workflows"
+    required: false
+
+blocks:
+  - id: save_final_workflow
+    type: CreateFile
+    description: "Save final workflow to hierarchical location"
+    inputs:
+      create_parents: true
+      overwrite: true
+      path: "{{inputs.output_dir}}/{{inputs.workflow_name}}/main.yaml"
+      content: "{{ read_file(inputs.workflow_path) }}"
+
+  - id: generate_summary
+    type: Shell
+    description: "Generate summary report"
+    inputs:
+      command: |
+        cat <<'EOF'
+
+        ═══════════════════════════════════════════════════════════════
+        WORKFLOW CREATION SUMMARY
+        ═══════════════════════════════════════════════════════════════
+
+        Workflow Name:       {{inputs.workflow_name}}
+        Output Path:         {{blocks.save_final_workflow.outputs.path}}
+        File Size:           {{blocks.save_final_workflow.outputs.size_bytes}} bytes
+        Validation Attempts: {{inputs.iterations}}
+
+        ═══════════════════════════════════════════════════════════════
+        IMPORTANT: TESTING LIMITATION
+        ═══════════════════════════════════════════════════════════════
+
+        ⚠️  The workflow has been saved but CANNOT be tested now.
+        ⚠️  The MCP server MUST be restarted to load new workflows.
+
+        This is a known limitation of the MCP server architecture.
+        Workflows are loaded at server startup, not dynamically.
+
+        ═══════════════════════════════════════════════════════════════
+        NEXT STEPS
+        ═══════════════════════════════════════════════════════════════
+
+        1. RESTART MCP Server
+           • Stop the current MCP server process
+           • Start it again to reload workflow templates
+
+        2. Test Your Workflow
+           Use the execute_workflow tool:
+
+           execute_workflow(
+             workflow="{{inputs.workflow_name}}",
+             inputs={
+               # Add your workflow inputs here
+             }
+           )
+
+        3. Iterate and Improve
+           • Review the generated workflow YAML
+           • Make manual adjustments if needed
+           • Test with different inputs
+           • Add error handling and edge cases
+
+        4. Share and Document
+           • Add workflow documentation (description, usage examples)
+           • Consider adding the workflow to the templates library
+           • Share with your team if applicable
+
+        ═══════════════════════════════════════════════════════════════
+
+        Workflow creation completed successfully! 🎉
+        EOF
+
+outputs:
+  workflow_path:
+    value: "{{blocks.save_final_workflow.outputs.path}}"
+    type: str
+    description: "Path to the saved workflow file"
+
+  workflow_name:
+    value: "{{inputs.workflow_name}}"
+    type: str
+    description: "Name of the created workflow"
+
+  file_size:
+    value: "{{blocks.save_final_workflow.outputs.size_bytes}}"
+    type: num
+    description: "Size of the workflow file in bytes"
+
+  summary:
+    value: "{{blocks.generate_summary.outputs.stdout}}"
+    type: str
+    description: "Complete summary report"
