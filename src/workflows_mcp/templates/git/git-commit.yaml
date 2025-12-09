@@ -56,7 +56,9 @@ blocks:
   - id: analyze_changes
     type: Workflow
     description: "Analyze staged changes in git repository"
-    depends_on: [stage_files]
+    depends_on:
+      - block: stage_files
+        required: false
     inputs:
       workflow: "git-analyze-changes"
       inputs:
