@@ -290,6 +290,13 @@ blocks:
         {% endif %}
 
         set -e
+
+        # Debug: Show auth configuration
+        echo "DEBUG: Auth strategy={{blocks.auth.outputs.strategy}}, method={{blocks.auth.outputs.method}}"
+        echo "DEBUG: Token file={{blocks.auth.outputs.token_file}}"
+        echo "DEBUG: Token file exists: $(test -f '{{blocks.auth.outputs.token_file}}' && echo 'yes' || echo 'no')"
+        echo "DEBUG: REPO_URL=$REPO_URL"
+
         {% if method == 'none' %}
         echo "Cloning repository (anonymous)..."
         {% else %}
@@ -555,12 +562,19 @@ blocks:
 
   - id: get_commit_sha
     type: Shell
+    condition: "{{blocks.clone_first_attempt.succeeded or blocks.clone_ref_fallback.succeeded or blocks.fetch_updates.succeeded}}"
     inputs:
       working_dir: "{{inputs.workspace}}"
       command: |
         git rev-parse HEAD > {{tmp}}/commit_sha
     depends_on:
       - block: fetch_lfs_files
+        required: false
+      - block: clone_first_attempt
+        required: false
+      - block: clone_ref_fallback
+        required: false
+      - block: fetch_updates
         required: false
     outputs:
       sha:
@@ -569,12 +583,19 @@ blocks:
 
   - id: get_branch
     type: Shell
+    condition: "{{blocks.clone_first_attempt.succeeded or blocks.clone_ref_fallback.succeeded or blocks.fetch_updates.succeeded}}"
     inputs:
       working_dir: "{{inputs.workspace}}"
       command: |
         git branch --show-current > {{tmp}}/current_branch || printf "(detached)" > {{tmp}}/current_branch
     depends_on:
       - block: fetch_lfs_files
+        required: false
+      - block: clone_first_attempt
+        required: false
+      - block: clone_ref_fallback
+        required: false
+      - block: fetch_updates
         required: false
     outputs:
       name:
