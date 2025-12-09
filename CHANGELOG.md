@@ -2,6 +2,74 @@
 
 All notable changes to this project will be documented in this file.
 
+# [8.0.0](https://github.com/qtsone/workflows-mcp/compare/v7.1.0...v8.0.0) (2025-12-09)
+
+
+* feat(resolver)!: handle missing secrets gracefully and add git-checkout template ([b8d0279](https://github.com/qtsone/workflows-mcp/commit/b8d027916e706e6742ff6b0e06d46f2985d6e807))
+* refactor(git-commit)!: restructure git commit workflow with llm prompt files ([553229a](https://github.com/qtsone/workflows-mcp/commit/553229a92bad113766ffec7f356d6ae00d6d45a9))
+
+
+### Bug Fixes
+
+* **ci:** fix schema validation error for commit output ([a851403](https://github.com/qtsone/workflows-mcp/commit/a8514033abbd67c204a832764713e8e0bb0a43d6))
+* **engine:** preserve for_each pause metadata and resume iterations ([2014ebf](https://github.com/qtsone/workflows-mcp/commit/2014ebf202c2ada521eec0e3f7ac0918e294ccf4))
+* **engine:** serialize nested execution state in pause_metadata ([3154cb9](https://github.com/qtsone/workflows-mcp/commit/3154cb9c47aa6c99c214d9c37741b9a582979c1c))
+* **git-auth:** use jinja for URL pattern matching in resolve_url ([38361e6](https://github.com/qtsone/workflows-mcp/commit/38361e6a27a784abcc013a0580d4494119c59d2a))
+* **git-auth:** use POSIX-compatible shell syntax for credential discovery ([8aed833](https://github.com/qtsone/workflows-mcp/commit/8aed833d8ea2b09ab4a7010a0049cd0f6e292df7))
+* **git-checkout:** add clone success condition to get_commit_sha/get_branch ([75db338](https://github.com/qtsone/workflows-mcp/commit/75db338a8ce2e8bddad7ec895d087f09b8a73a8d))
+* **git-checkout:** create branch when ref doesn't exist ([e6b8fc7](https://github.com/qtsone/workflows-mcp/commit/e6b8fc7d2cc56e13489876eafa26bad62e8ec441))
+* **git-commit:** add missing dependency from analyze_changes to stage_files ([8da6d5e](https://github.com/qtsone/workflows-mcp/commit/8da6d5e6da94f04a7a474c64290d2c2c0558dd21))
+* **git:** correct has_changes detection and dependency handling ([32fe808](https://github.com/qtsone/workflows-mcp/commit/32fe808401e0cff6d8963870d6c10d07ffd3aa54))
+* **test-git-checkout:** make summary dependencies optional ([203f126](https://github.com/qtsone/workflows-mcp/commit/203f12645d98219b0e6f181d9b258481a84b7f70))
+* **tools:** Add consistent resume instructions to paused workflow messages ([0ee7766](https://github.com/qtsone/workflows-mcp/commit/0ee7766da475f13536a2a2c2420711667bff3670))
+* **transform-design:** fix YAML serialization of nested lists in blocks ([300b0be](https://github.com/qtsone/workflows-mcp/commit/300b0bebb7243f33ac6bf3c19a583a71afc5b6a5))
+* **workflow-creator:** prevent infinite recursion on empty LLM responses ([e4d07a0](https://github.com/qtsone/workflows-mcp/commit/e4d07a029616b721e72a6452d759b36d14c6b9cc))
+* **workflow-creator:** resolve nested template issue in read_file calls ([9b9fd99](https://github.com/qtsone/workflows-mcp/commit/9b9fd99615345c66d34aefa27de72527a356e09e))
+* **workflows:** allow 'tmp' in for_each and expose metadata.depth for templates ([901d142](https://github.com/qtsone/workflows-mcp/commit/901d142b093cb59bbee07058ba85c9094f012207))
+
+
+### Features
+
+* **agents:** add layer4 code-assistant-agent template ([72bbbb9](https://github.com/qtsone/workflows-mcp/commit/72bbbb90617a7360a9f496d0b370de237d06bbc4)), closes [hi#level](https://github.com/hi/issues/level)
+* **auth:** introduce git-auth template and enhance git-checkout ([d9cebcc](https://github.com/qtsone/workflows-mcp/commit/d9cebcc33a8e6b21cb9afe80523b6aa8fe8a65a8))
+* **engine:** add executor examples and make LLM schema OpenAI-compatible ([954f26b](https://github.com/qtsone/workflows-mcp/commit/954f26b98ba135aba0cdf2ccd15b56353b4f207f))
+* **engine:** generate llm-compatible schema and support literal for_each ([fde69a8](https://github.com/qtsone/workflows-mcp/commit/fde69a87af51011b090ead4eb8dfc5bd23642829))
+* **git:** update git-checkout workflow ([1996cfc](https://github.com/qtsone/workflows-mcp/commit/1996cfce932c8704cc9bf8bf61f8dde00afb7675))
+* **inputs:** support {{tmp}} resolution in input defaults ([ff51efe](https://github.com/qtsone/workflows-mcp/commit/ff51efe80ca308f3fac4d243f0f29296f7dad14e))
+* **llm:** add generated llm block reference, generator, and CI verification ([9c7b40b](https://github.com/qtsone/workflows-mcp/commit/9c7b40b34ed1ccfe9b8ac0718b0554a479f256af))
+* **workflow-creator:** add complexity analysis, decomposition, and validation improvements ([4ad1f8a](https://github.com/qtsone/workflows-mcp/commit/4ad1f8a419774ea7961c115a2f4995d08f63987a))
+* **workflow-creator:** add continue_on_error option to yaml configs ([7d0469d](https://github.com/qtsone/workflows-mcp/commit/7d0469d605e1221d09730e4b4c48ce409d18f0ac))
+* **workflow-creator:** add support for tags in workflow creation ([d9d9da3](https://github.com/qtsone/workflows-mcp/commit/d9d9da348baec5af8f0e9b4cb11c55ded61bbeee))
+* **workflow-creator:** improve workflow display with dynamic titles and explanations ([0e65e5a](https://github.com/qtsone/workflows-mcp/commit/0e65e5a5c8aef049fac9e41a37c4db6afda34cae))
+* **workflow-creator:** update workflow-creator templates and bootstrap, add workspace input ([ed66fc3](https://github.com/qtsone/workflows-mcp/commit/ed66fc39e788014d4e8864f601f4633153368ba3))
+* **workflow:** add workflow-creator agent templates and imagegen schema ([d3c8242](https://github.com/qtsone/workflows-mcp/commit/d3c8242fab0ffcdda26680ed530b946d38ed47af))
+* **workflows_mcp:** add three-level nested workflow handling with pause/resume support ([be0d4ca](https://github.com/qtsone/workflows-mcp/commit/be0d4ca87d2e07e8030d9002e944e880c7834def))
+* **workflows:** improve nested workflow pause/resume handling ([cdc973b](https://github.com/qtsone/workflows-mcp/commit/cdc973b8eb001bb8a5d34bda7be5d27d624dbec1))
+
+
+### BREAKING CHANGES
+
+* renamed input 'working_dir' to 'workspace', 'auto_commit' to 'auto', and 'commit_message' to 'message'; requires updating workflow configurations
+
+split commit generation into system and user prompts, update input names (workspace, auto, message), improve documentation clarity
+* What breaks and why:
+- Workflows or callers that previously relied on SecretNotFoundError being raised by the UnifiedVariableResolver will no longer receive that exception; the resolver now substitutes an empty string and logs a warning. This changes error signaling semantics and may allow workflows that previously failed to continue with an empty secret value, potentially leading to downstream behavioural differences or silent misconfiguration.
+
+Migration steps:
+1. Audit workflows that depend on missing-secret errors to perform explicit failure handling. Update them to validate secret values where presence is required (for example, test for empty string and explicitly fail if needed).
+2. If you need the old behavior (fail on missing secrets), modify your resolver usage to re-check secret_values after resolution and raise or abort when a secret value is empty, or adjust SecretProxy/providers to raise a different exception type for required secrets.
+3. Search for code paths that assumed exception-based control flow from secret lookups and update to handle empty-string defaults explicitly.
+
+Alternative approaches:
+- Mark secrets as required at workflow/step level so missing secrets are detected earlier and surfaced as configuration errors.
+- If you control the secret provider, configure it to return a distinct error type for required-secret failures so callers can still differentiate missing-secret vs. provider errors.
+
+- unified_resolver: when a secret lookup returns SecretNotFoundError, log a warning and default the secret value to an empty string instead of re-raising. Other exceptions from secret providers are still propagated.
+- templates: add a new comprehensive git-checkout workflow template (src/workflows_mcp/templates/git/git-checkout.yaml).
+- tools: clarify the resume_workflow message to include the response parameter example.
+
+These changes make workflows more resilient to optional/missing secrets and add a reusable git checkout template.
+
 # [7.1.0](https://github.com/qtsone/workflows-mcp/compare/v7.0.0...v7.1.0) (2025-11-18)
 
 
