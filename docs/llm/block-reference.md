@@ -225,7 +225,7 @@ Field names are **exact** - use them precisely in your workflows.
 
 - **`method`** (string) *(default: `POST`)*: HTTP method (GET, POST, PUT, DELETE, PATCH, etc.)
 - **`headers`** (object): HTTP headers (supports ${ENV_VAR} substitution in values)
-- **`json`** (any): JSON request body (mutually exclusive with content). Matches httpx parameter name.
+- **`json`** (any): JSON request body (mutually exclusive with content). Use 'json' in YAML for httpx compatibility.
 - **`content`** (any): Text or binary request body (mutually exclusive with json). Matches httpx parameter name.
 - **`timeout`** (any) *(default: `30`)*: Request timeout in seconds (or interpolation string)
 - **`follow_redirects`** (any) *(default: `True`)*: Whether to follow HTTP redirects (or interpolation string)
