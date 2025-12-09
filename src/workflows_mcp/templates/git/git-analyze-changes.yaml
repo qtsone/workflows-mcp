@@ -59,7 +59,7 @@ blocks:
     inputs:
       working_dir: "{{tmp}}"
       command: |
-        MAX_LINES=40
+        MAX_LINES=300
 
         # Process raw diff with line limiting
         if [ -f "raw_diff.txt" ]; then
