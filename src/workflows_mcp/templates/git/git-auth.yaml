@@ -38,8 +38,6 @@ blocks:
     type: Shell
     inputs:
       command: |
-        echo "DEBUG resolve_url: inputs.repo={{inputs.repo}}" >&2
-        echo "DEBUG resolve_url: tmp={{tmp}}" >&2
         {% if inputs.repo.startswith('http://') or inputs.repo.startswith('https://') or inputs.repo.startswith('git@') %}
         URL="{{inputs.repo}}"
         {% elif '/' in inputs.repo %}
@@ -49,8 +47,6 @@ blocks:
         exit 1
         {% endif %}
         printf "%s" "$URL" > {{tmp}}/repo_url
-        echo "DEBUG resolve_url: wrote URL=$URL to {{tmp}}/repo_url" >&2
-        cat {{tmp}}/repo_url >&2
     outputs:
       url:
         type: str
@@ -211,11 +207,6 @@ outputs:
     value: "{{blocks.resolve_url.outputs.url}}"
     type: str
     description: "Resolved repository URL"
-
-  debug_resolve_url:
-    value: "exit_code={{blocks.resolve_url.outputs.exit_code}}, stdout={{blocks.resolve_url.outputs.stdout | replace('\n', '|')}}, stderr={{blocks.resolve_url.outputs.stderr | replace('\n', '|')}}, url={{blocks.resolve_url.outputs.url | default('MISSING')}}"
-    type: str
-    description: "Debug output for resolve_url block"
 
   token_file:
     value: "{{tmp}}/auth_token"

@@ -632,8 +632,3 @@ outputs:
     value: "{{blocks.clone_first_attempt.outputs.stderr | default('N/A')}}"
     type: str
     description: "Debug: clone stderr"
-
-  auth_debug:
-    value: "repo_url={{blocks.auth.outputs.repo_url | default('MISSING')}}, debug_resolve={{blocks.auth.outputs.debug_resolve_url | default('MISSING')}}"
-    type: str
-    description: "Debug: auth block outputs"
