@@ -3,7 +3,7 @@
 **Automate anything with simple YAML workflows for your AI assistant.**
 
 Workflows MCP is a [Model Context Protocol](https://modelcontextprotocol.io/) (MCP) server that lets you define powerful, reusable automation workflows in YAML and execute them through AI assistants like Claude. Think of it as GitHub Actions for your AI assistant—define your automation once, run it anywhere.
-
+<test>
 ---
 
 ## Table of Contents
