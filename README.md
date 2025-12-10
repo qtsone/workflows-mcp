@@ -959,6 +959,20 @@ We welcome contributions! Here's how you can help:
 
 [AGPL-3.0-or-later](./LICENSE)
 
+### Workflow Files and Your IP
+
+**YAML workflow files that use the workflows-mcp engine are NOT considered derivative works under AGPL-3.0.** Users retain full ownership and may license their workflow files under any terms they choose.
+
+This clarification applies to:
+- `.yaml`/`.yml` workflow definition files
+- Configuration files (e.g., `llm-config.yml`)
+- Workflow documentation and examples you create
+
+This does NOT apply to:
+- Modifications to the engine source code
+- Custom block executors (Python code)
+- Forks of the engine itself
+
 ---
 
 ## FAQ
