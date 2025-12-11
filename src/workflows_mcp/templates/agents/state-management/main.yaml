@@ -1,0 +1,171 @@
+name: agent-state-management
+description: Reusable state management with audit trail. Initialize and update a state file for any task.
+tags: [agent, state-management, task-tracking, audit]
+
+inputs:
+  task:
+    type: str
+    description: (Optional) concise task description. Can be loaded from existing state.
+    required: false
+    default: ""
+
+  state:
+    type: str
+    description: (Optional) path to an existing state file. Empty = create new in tmp.
+    required: false
+    default: ""
+
+  caller:
+    type: str
+    description: (Required) caller id. Who/What is calling this workflow.
+    required: true
+
+  data:
+    type: dict
+    description: (Optional) data that should be stored/updated in the statefile.
+    required: false
+    default: {}
+
+  status:
+    type: str
+    description: (Optional) task status - in-progress, done, blocked.
+    required: false
+    default: ""
+
+  audit:
+    type: bool
+    description: (Optional) whether to add an audit entry. Default true.
+    required: false
+    default: true
+
+  ai:
+    type: bool
+    description: (Optional) whether to use AI for audit description. If false, uses task as description. Default true.
+    required: false
+    default: true
+
+blocks:
+  - id: check
+    description: Check if the state file exists at the given path
+    condition: "{{inputs.state != ''}}"
+    type: ReadJSONState
+    inputs:
+      path: "{{inputs.state}}"
+      required: true
+
+  - id: initialize
+    description: Initialize a new state file with default values if not found
+    depends_on:
+      - block: check
+        required: false
+    condition: "{{not blocks.check.succeeded}}"
+    type: WriteJSONState
+    inputs:
+      path: "{{inputs.state if inputs.state != '' else tmp ~ '/state.json'}}"
+      data:
+        initialized: true
+        created_at: "{{now()}}"
+        caller: "{{inputs.caller}}"
+        task: "{{inputs.task}}"
+        task_id: ""
+        status: "{{inputs.status if inputs.status != '' else 'in-progress'}}"
+        data: {}
+        audit: []
+
+  - id: load
+    type: ReadJSONState
+    description: Load the state from the specified file.
+    depends_on:
+      - block: check
+        required: false
+      - block: initialize
+        required: false
+    inputs:
+      path: "{{inputs.state if inputs.state != '' else tmp ~ '/state.json'}}"
+
+  - id: audit
+    description: Call the LLM to generate task_id and audit description for the changes.
+    condition: "{{inputs.ai and inputs.audit and ((inputs.data | length) > 0 or inputs.status != '')}}"
+    depends_on:
+      - load
+    type: LLMCall
+    inputs:
+      profile: default
+      system_instructions: |
+        You are an expert at generating task identifiers and audit descriptions.
+        Analyze state changes and produce concise, meaningful identifiers.
+        Return valid JSON matching the requested schema.
+      prompt: |
+        {% if inputs.task %}
+        Task description:
+        ```
+        {{inputs.task}}
+        ```
+        {% endif %}
+
+        Current state:
+        ```json
+        {{blocks.load.outputs.data | tojson}}
+        ```
+
+        {% if inputs.data %}
+        Data updates to apply:
+        ```json
+        {{inputs.data | tojson}}
+        ```
+        {% endif %}
+
+        {% if inputs.status %}
+        Status change: {{inputs.status}}
+        {% endif %}
+
+        Based on the updates, generate:
+        1. A short, unique task_id (e.g., "auth-fix-001", "data-migration") - reuse existing task_id if present in state
+        2. A one-line audit description of the changes
+      response_schema:
+        type: object
+        properties:
+          task_id:
+            type: string
+            description: Short unique identifier for the task
+          audit:
+            type: string
+            description: One-line description of the changes
+        required:
+          - task_id
+          - audit
+
+  - id: update_state
+    type: MergeJSONState
+    description: Merge audited data and update specific fields in the current state.
+    condition: "{{(inputs.data | length) > 0 or inputs.status != ''}}"
+    depends_on:
+      - block: audit
+        required: false
+      - block: load
+    inputs:
+      path: "{{blocks.load.outputs.path}}"
+      updates:
+        data: "{{inputs.data or get(blocks.load.outputs.data, 'data', {})}}"
+        task_id: "{{blocks.audit.outputs.response.task_id if blocks.audit.succeeded else get(blocks.load.outputs.data, 'task_id', '')}}"
+        status: "{{inputs.status if inputs.status != '' else get(blocks.load.outputs.data, 'status', 'in-progress')}}"
+        audit: >-
+          {{(get(blocks.load.outputs.data, 'audit', []) or []) +
+            ([{'date': now(), 'description': blocks.audit.outputs.response.audit, 'caller': inputs.caller}] if blocks.audit.succeeded
+            else ([{'date': now(), 'description': (inputs.task if inputs.task != '' else 'State updated'), 'caller': inputs.caller}] if inputs.audit else []))}}
+        last_edit: "{{now()}}"
+        caller: "{{inputs.caller}}"
+
+outputs:
+  task_id:
+    description: Task identifier (from AI or existing state)
+    type: str
+    value: "{{get(blocks.update_state.outputs.merged_data, 'task_id', '') if blocks.update_state.succeeded else get(blocks.load.outputs.data, 'task_id', '')}}"
+  status:
+    description: Task status (in-progress, done, blocked)
+    type: str
+    value: "{{get(blocks.update_state.outputs.merged_data, 'status', 'in-progress') if blocks.update_state.succeeded else get(blocks.load.outputs.data, 'status', 'in-progress')}}"
+  state:
+    description: Path to the state file
+    type: str
+    value: "{{blocks.load.outputs.path}}"
