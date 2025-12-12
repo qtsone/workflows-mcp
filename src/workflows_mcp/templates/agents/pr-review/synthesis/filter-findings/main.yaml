@@ -1,0 +1,45 @@
+name: filter-findings
+description: Filter findings based on a severity threshold.
+tags:
+  - filter
+  - findings
+  - severity
+  - threshold
+inputs:
+  compiled_findings:
+    type: dict
+    description: Findings compiled by severity.
+    required: true
+  threshold:
+    type: str
+    description: Minimum severity to report.
+    required: true
+blocks:
+  - id: convert_threshold
+    type: Shell
+    description: Convert the severity threshold to a comparable numeric value.
+    inputs:
+      command: |
+        python3 -c "
+        severity_map = {'info': 0, 'low': 1, 'medium': 2, 'high': 3, 'critical': 4}
+        print(severity_map.get('{{inputs.threshold}}', 0))
+        "
+  - id: filter_findings
+    type: Shell
+    description: Filter findings based on severity threshold.
+    depends_on:
+      - convert_threshold
+    inputs:
+      command: |
+        python3 -c "
+        import json
+        findings = {{inputs.compiled_findings | tojson}}
+        threshold = {{blocks.convert_threshold.outputs.stdout | trim}}
+        filtered = [f for s, fs in findings.items() if int(s) >= int(threshold) for f in fs]
+        print(json.dumps(filtered))
+        "
+outputs:
+  filtered_findings:
+    value: "{{blocks.filter_findings.outputs.stdout | fromjson}}"
+    type: list
+    description: List of findings that meet the severity threshold.

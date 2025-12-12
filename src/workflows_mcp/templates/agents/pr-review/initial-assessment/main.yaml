@@ -1,0 +1,269 @@
+name: initial-assessment
+description: |
+  Perform an initial assessment of the PR using LLM to understand intent,
+  risk, and areas for further investigation.
+
+  This phase analyzes the diff and metadata to:
+  - Understand the PR's purpose and scope
+  - Assess overall risk level
+  - Identify specific files/areas that need deeper investigation
+  - Flag any missing elements (tests, docs, etc.)
+  - Note initial concerns for follow-up
+
+tags:
+  - pr-assessment
+  - risk-analysis
+  - llm
+  - code-review
+
+inputs:
+  diff:
+    type: str
+    description: Diff between base and head branches.
+    required: true
+
+  pr_metadata:
+    type: dict
+    description: |
+      Metadata of the PR (title, description, author, labels, etc.).
+      Empty dict for local repos without remote URL.
+    required: false
+    default: {}
+
+  focus:
+    type: str
+    description: |
+      Area to prioritize in review.
+      Options: security, performance, architecture, tests, general
+    required: false
+    default: general
+
+  changed_files:
+    type: dict
+    description: |
+      Categorized list of changed files from context-gathering.
+      Contains categories, total_files, summary, and primary_languages.
+    required: false
+
+  state_path:
+    type: str
+    description: |
+      Path to state file for task tracking.
+      Used by state-management workflow to persist hierarchical task state.
+      When provided, enables progress tracking and audit trails.
+    required: false
+    default: ""
+
+  parent_task_id:
+    type: str
+    description: |
+      Parent task ID for creating sub-tasks in the state tree.
+      Used with state_path to create hierarchical task relationships.
+    required: false
+    default: ""
+
+blocks:
+  # ============================================================================
+  # STATE TRACKING: Create sub-task at phase start
+  # ============================================================================
+  - id: track_start
+    type: Workflow
+    description: Create sub-task for initial-assessment phase in state tree.
+    condition: "{{ inputs.state_path and inputs.state_path != '' }}"
+    inputs:
+      workflow: agent-state-management
+      inputs:
+        state: "{{ inputs.state_path }}"
+        parent_id: "{{ inputs.parent_task_id }}"
+        task: "Phase: Initial Assessment"
+        task_type: "phase"
+        status: "in-progress"
+        caller: "pr-review:initial-assessment"
+
+  - id: consolidated_pr_assessment
+    type: LLMCall
+    description: |
+      Consolidate PR analysis, risk assessment, and identification of
+      investigation targets into a single structured response.
+    inputs:
+      profile: default
+      prompt: |
+        # PR Review Initial Assessment
+
+        Analyze this Pull Request to understand its intent, assess risk, and identify
+        areas that need deeper investigation.
+
+        ## Review Focus
+        {% if inputs.focus and inputs.focus != 'general' %}
+        **Priority Focus Area:** {{ inputs.focus }}
+        Pay special attention to {{ inputs.focus }}-related concerns.
+        {% else %}
+        **Focus:** General comprehensive review
+        {% endif %}
+
+        ## PR Metadata
+        {% if inputs.pr_metadata and inputs.pr_metadata != {} %}
+        - **Title:** {{ inputs.pr_metadata.title | default('N/A') }}
+        - **Author:** {{ inputs.pr_metadata.author | default('N/A') }}
+        - **Description:** {{ inputs.pr_metadata.description | default('No description provided') }}
+        - **Labels:** {{ inputs.pr_metadata.labels | default([]) | join(', ') or 'None' }}
+        - **Base Branch:** {{ inputs.pr_metadata.base_branch | default('N/A') }}
+        - **Head Branch:** {{ inputs.pr_metadata.head_branch | default('N/A') }}
+        {% else %}
+        _No PR metadata available (local review mode)_
+        {% endif %}
+
+        ## Changed Files Summary
+        {% if inputs.changed_files %}
+        - **Total Files:** {{ inputs.changed_files.total_files | default('Unknown') }}
+        - **Summary:** {{ inputs.changed_files.summary | default('No summary') }}
+        - **Languages:** {{ inputs.changed_files.primary_languages | default([]) | join(', ') or 'Unknown' }}
+
+        **Categories:**
+        {% for cat in inputs.changed_files.categories | default([]) %}
+        - {{ cat.category }}: {{ cat.files | length }} files
+          {{ cat.description | default('') }}
+        {% endfor %}
+        {% endif %}
+
+        ## Diff Content
+        ```diff
+        {{ inputs.diff[:12000] }}
+        {% if inputs.diff | length > 12000 %}
+        ... [truncated, {{ inputs.diff | length }} total characters]
+        {% endif %}
+        ```
+
+        ## Your Task
+
+        Provide a comprehensive initial assessment with:
+
+        1. **PR Intent**: What is this PR trying to accomplish?
+
+        2. **Risk Assessment**: Evaluate the risk level (critical/high/medium/low) based on:
+           - Scope of changes (number of files, lines changed)
+           - Sensitivity of areas touched (auth, payments, data handling)
+           - Complexity of changes
+           - Test coverage implications
+           {% if inputs.focus == 'security' %}
+           - **Security-specific concerns** (auth, injection, data exposure)
+           {% elif inputs.focus == 'performance' %}
+           - **Performance-specific concerns** (loops, queries, memory)
+           {% endif %}
+
+        3. **Investigation Targets**: List specific files or code areas that need
+           deeper analysis. Be specific - include file paths where possible.
+           {% if inputs.focus and inputs.focus != 'general' %}
+           Prioritize {{ inputs.focus }}-related files.
+           {% endif %}
+
+        4. **Missing Elements**: What should be there but isn't?
+           (tests, documentation, error handling, etc.)
+
+        5. **Initial Concerns**: Any red flags or concerns from the diff?
+
+      response_schema:
+        type: object
+        properties:
+          pr_intent:
+            type: string
+            description: "Clear description of what this PR is trying to accomplish"
+          risk_level:
+            type: string
+            enum: [low, medium, high, critical]
+            description: "Overall risk level of the changes"
+          risk_rationale:
+            type: string
+            description: "Explanation of why this risk level was assigned"
+          investigation_targets:
+            type: array
+            items:
+              type: object
+              properties:
+                path:
+                  type: string
+                  description: "File path or area to investigate"
+                reason:
+                  type: string
+                  description: "Why this needs investigation"
+                priority:
+                  type: string
+                  enum: [high, medium, low]
+              required: [path, reason]
+            description: "Specific files/areas that need deeper investigation"
+          missing_elements:
+            type: array
+            items:
+              type: string
+            description: "Things that should be present but aren't"
+          initial_concerns:
+            type: array
+            items:
+              type: object
+              properties:
+                concern:
+                  type: string
+                severity:
+                  type: string
+                  enum: [critical, high, medium, low, info]
+                location:
+                  type: string
+              required: [concern, severity]
+            description: "Initial concerns or red flags identified"
+          scope_summary:
+            type: string
+            description: "Brief summary of the change scope"
+        required: [pr_intent, risk_level, risk_rationale, investigation_targets]
+
+  # ============================================================================
+  # STATE TRACKING: Mark phase complete with captured data
+  # ============================================================================
+  - id: track_done
+    type: Workflow
+    description: Mark initial-assessment phase as complete with captured data.
+    condition: "{{ inputs.state_path and inputs.state_path != '' and blocks.track_start.succeeded }}"
+    depends_on:
+      - consolidated_pr_assessment
+    inputs:
+      workflow: agent-state-management
+      inputs:
+        state: "{{ inputs.state_path }}"
+        task_id: "{{ blocks.track_start.outputs.task_id }}"
+        status: "done"
+        caller: "pr-review:initial-assessment"
+        data:
+          risk_level: "{{ blocks.consolidated_pr_assessment.outputs.response.risk_level }}"
+          targets_count: "{{ blocks.consolidated_pr_assessment.outputs.response.investigation_targets | length }}"
+          intent: "{{ blocks.consolidated_pr_assessment.outputs.response.pr_intent }}"
+          focus: "{{ inputs.focus | default('general', true) }}"
+
+outputs:
+  risk_level:
+    value: "{{ blocks.consolidated_pr_assessment.outputs.response.risk_level }}"
+    type: str
+    description: "Assessed risk level of the PR: critical, high, medium, or low."
+
+  investigation_targets:
+    value: "{{ blocks.consolidated_pr_assessment.outputs.response.investigation_targets }}"
+    type: list
+    description: "Files or areas that need deeper investigation with priority and reason."
+
+  pr_intent:
+    value: "{{ blocks.consolidated_pr_assessment.outputs.response.pr_intent }}"
+    type: str
+    description: "Description of what the PR is trying to accomplish."
+
+  initial_concerns:
+    value: "{{ blocks.consolidated_pr_assessment.outputs.response.initial_concerns | default([]) }}"
+    type: list
+    description: "Initial concerns or red flags identified in the assessment."
+
+  missing_elements:
+    value: "{{ blocks.consolidated_pr_assessment.outputs.response.missing_elements | default([]) }}"
+    type: list
+    description: "Elements that should be present but are missing."
+
+  full_assessment:
+    value: "{{ blocks.consolidated_pr_assessment.outputs.response | tojson }}"
+    type: dict
+    description: "Complete assessment response for reference."

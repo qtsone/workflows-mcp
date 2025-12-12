@@ -1,0 +1,161 @@
+name: synthesis
+description: |
+  Compile and filter findings, generate report, and make approval decision.
+
+  This phase receives investigation results and produces:
+  - Filtered findings based on severity threshold
+  - Markdown report with context from PR metadata
+  - Approval decision based on blocking issues
+
+tags:
+  - report-generation
+  - decision-making
+  - filtering
+  - investigation-analysis
+
+inputs:
+  investigation_results:
+    type: list
+    description: Results from the investigation loop.
+    required: true
+
+  threshold:
+    type: str
+    description: |
+      Minimum severity to report.
+      Values: critical, high, medium, low, info
+    required: false
+    default: medium
+
+  pr_metadata:
+    type: dict
+    description: |
+      PR metadata from context-gathering for report context.
+      Contains: title, author, description, labels, base_branch, head_branch.
+      Empty dict for local-only reviews.
+    required: false
+    default: {}
+
+  focus:
+    type: str
+    description: |
+      Area that was prioritized in the review.
+      Used to tailor report sections and emphasis.
+      Options: security, performance, architecture, tests, general
+    required: false
+    default: general
+
+  state_path:
+    type: str
+    description: |
+      Path to state file for task tracking.
+      Used by state-management workflow to persist hierarchical task state.
+      When provided, enables progress tracking and audit trails.
+    required: false
+    default: ""
+
+  parent_task_id:
+    type: str
+    description: |
+      Parent task ID for creating sub-tasks in the state tree.
+      Used with state_path to create hierarchical task relationships.
+    required: false
+    default: ""
+
+blocks:
+  # ============================================================================
+  # STATE TRACKING: Create sub-task at phase start
+  # ============================================================================
+  - id: track_start
+    type: Workflow
+    description: Create sub-task for synthesis phase in state tree.
+    condition: "{{ inputs.state_path and inputs.state_path != '' }}"
+    inputs:
+      workflow: agent-state-management
+      inputs:
+        state: "{{ inputs.state_path }}"
+        parent_id: "{{ inputs.parent_task_id }}"
+        task: "Phase: Synthesis"
+        task_type: "phase"
+        status: "in-progress"
+        caller: "pr-review:synthesis"
+
+  - id: compile_findings
+    type: Workflow
+    description: Compile findings by severity from investigation results.
+    inputs:
+      workflow: compile-findings
+      inputs:
+        investigation_results: "{{ inputs.investigation_results }}"
+
+  - id: filter_findings
+    type: Workflow
+    description: Filter findings based on severity threshold.
+    depends_on:
+      - compile_findings
+    inputs:
+      workflow: filter-findings
+      inputs:
+        compiled_findings: "{{ blocks.compile_findings.outputs.compiled_findings }}"
+        threshold: "{{ inputs.threshold }}"
+
+  - id: generate_report
+    type: Workflow
+    description: Generate a markdown report with findings, suggestions, and rationale.
+    depends_on:
+      - filter_findings
+    inputs:
+      workflow: generate-report
+      inputs:
+        filtered_findings: "{{ blocks.filter_findings.outputs.filtered_findings }}"
+        pr_metadata: "{{ inputs.pr_metadata }}"
+        focus: "{{ inputs.focus }}"
+
+  - id: make_approval_decision
+    type: Workflow
+    description: Decide on PR approval based on the severity of findings.
+    depends_on:
+      - filter_findings
+    inputs:
+      workflow: make-approval-decision
+      inputs:
+        filtered_findings: "{{ blocks.filter_findings.outputs.filtered_findings }}"
+
+  # ============================================================================
+  # STATE TRACKING: Mark phase complete with captured data
+  # ============================================================================
+  - id: track_done
+    type: Workflow
+    description: Mark synthesis phase as complete with captured data.
+    condition: "{{ inputs.state_path and inputs.state_path != '' and blocks.track_start.succeeded }}"
+    depends_on:
+      - generate_report
+      - make_approval_decision
+    inputs:
+      workflow: agent-state-management
+      inputs:
+        state: "{{ inputs.state_path }}"
+        task_id: "{{ blocks.track_start.outputs.task_id }}"
+        status: "done"
+        caller: "pr-review:synthesis"
+        data:
+          filtered_issues: "{{ blocks.filter_findings.outputs.filtered_findings | length }}"
+          approve: "{{ blocks.make_approval_decision.outputs.approve }}"
+          threshold: "{{ inputs.threshold }}"
+          focus: "{{ inputs.focus | default('general', true) }}"
+
+outputs:
+  report:
+    value: "{{ blocks.generate_report.outputs.report }}"
+    type: str
+    description: Markdown report of findings.
+
+  approve:
+    value: "{{ blocks.make_approval_decision.outputs.approve }}"
+    type: bool
+    description: Approval decision based on findings.
+
+  findings_count:
+    value: "{{ blocks.filter_findings.outputs.filtered_findings | length }}"
+    type: num
+    description: Number of findings that met the severity threshold.

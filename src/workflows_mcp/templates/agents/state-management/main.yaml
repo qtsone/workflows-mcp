@@ -1,171 +1,403 @@
 name: agent-state-management
-description: Reusable state management with audit trail. Initialize and update a state file for any task.
-tags: [agent, state-management, task-tracking, audit]
+description: |
+  Reusable hierarchical state management with audit trail.
+
+  Supports recursive workflows through a task tree model:
+  - Root tasks: Created when no state/parent_id provided
+  - Sub-tasks: Created by specifying parent_id
+  - Updates: Target specific task_id within the state
+
+  State file: ~/.workflows/tasks/<trace_id>.json (configurable via WORKFLOWS_STATE_DIR)
+  Audit file: ~/.workflows/tasks/<trace_id>.audit.json
+
+tags: [agent, state-management, task-tracking, audit, hierarchical]
 
 inputs:
-  task:
+  state:
     type: str
-    description: (Optional) concise task description. Can be loaded from existing state.
+    description: |
+      Path to existing state file.
+      - Empty: Creates new state in ~/.workflows/tasks/<trace_id>.json
+      - Existing path: Loads and operates on that state
     required: false
     default: ""
 
-  state:
+  task_id:
     type: str
-    description: (Optional) path to an existing state file. Empty = create new in tmp.
+    description: |
+      Task to operate on within the state:
+      - Empty + no parent_id: Operates on root task
+      - Empty + parent_id: Creates NEW sub-task under parent
+      - Specified: Updates EXISTING task with that ID
+    required: false
+    default: ""
+
+  parent_id:
+    type: str
+    description: |
+      Parent task ID when creating a new sub-task.
+      - Empty: This is a root task or updating existing task
+      - Specified: Creates new sub-task under this parent
+    required: false
+    default: ""
+
+  task:
+    type: str
+    description: Human-readable task description.
+    required: false
+    default: ""
+
+  task_type:
+    type: str
+    description: Category/type of task (e.g., "investigation", "pr-review"). Optional.
     required: false
     default: ""
 
   caller:
     type: str
-    description: (Required) caller id. Who/What is calling this workflow.
+    description: Who/what is making this call (for audit trail).
     required: true
 
   data:
     type: dict
-    description: (Optional) data that should be stored/updated in the statefile.
+    description: Task-specific data to merge into the task's data field.
     required: false
     default: {}
 
   status:
     type: str
-    description: (Optional) task status - in-progress, done, blocked.
+    description: Task status (pending, in-progress, done, failed, blocked).
     required: false
     default: ""
 
   audit:
     type: bool
-    description: (Optional) whether to add an audit entry. Default true.
+    description: Whether to add an audit entry for this operation.
     required: false
     default: true
 
   ai:
     type: bool
-    description: (Optional) whether to use AI for audit description. If false, uses task as description. Default true.
+    description: Whether to use AI for generating audit descriptions.
     required: false
     default: true
 
 blocks:
-  - id: check
-    description: Check if the state file exists at the given path
-    condition: "{{inputs.state != ''}}"
-    type: ReadJSONState
+  # ==========================================================================
+  # STEP 1: Generate state/audit file paths
+  # ==========================================================================
+  - id: paths
+    type: Shell
+    description: Generate trace_id and file paths for state and audit.
     inputs:
-      path: "{{inputs.state}}"
-      required: true
+      command: |
+        python3 << 'EOF'
+        import os, json, secrets
+        from pathlib import Path
 
-  - id: initialize
-    description: Initialize a new state file with default values if not found
+        state_input = os.environ.get('STATE_INPUT', '')
+        state_dir = os.environ.get('WORKFLOWS_STATE_DIR', str(Path.home() / '.workflows' / 'tasks'))
+        Path(state_dir).mkdir(parents=True, exist_ok=True)
+
+        if state_input:
+            state_path = state_input
+            state_base = state_path.rsplit('.json', 1)[0] if state_path.endswith('.json') else state_path
+            audit_path = f'{state_base}.audit.json'
+            trace_id = Path(state_path).stem
+        else:
+            trace_id = f'exec-{secrets.token_hex(6)}'
+            state_path = str(Path(state_dir) / f'{trace_id}.json')
+            audit_path = str(Path(state_dir) / f'{trace_id}.audit.json')
+
+        print(json.dumps({
+            'trace_id': trace_id,
+            'state_path': state_path,
+            'audit_path': audit_path,
+            'state_exists': os.path.isfile(state_path)
+        }))
+        EOF
+      env:
+        STATE_INPUT: "{{inputs.state}}"
+
+  # ==========================================================================
+  # STEP 2: Load existing state if path provided and file exists
+  # ==========================================================================
+  - id: load_existing
+    type: ReadJSONState
+    description: Load existing state file if it exists.
+    depends_on: [paths]
+    condition: "{{(blocks.paths.outputs.stdout | fromjson).state_exists}}"
+    inputs:
+      path: "{{(blocks.paths.outputs.stdout | fromjson).state_path}}"
+      required: false
+
+  # ==========================================================================
+  # STEP 3: Generate new task ID if needed
+  # ==========================================================================
+  - id: new_task_id
+    type: Shell
+    description: Generate a new task ID for root or sub-task creation.
     depends_on:
-      - block: check
+      - paths
+      - block: load_existing
         required: false
-    condition: "{{not blocks.check.succeeded}}"
+    condition: "{{inputs.task_id == '' and (inputs.parent_id != '' or not blocks.load_existing.succeeded)}}"
+    inputs:
+      command: |
+        python3 -c "import secrets; print(f'task-{secrets.token_hex(4)}')"
+
+  # ==========================================================================
+  # STEP 4: Build task data structure
+  # ==========================================================================
+  - id: build_task
+    type: Shell
+    description: Build the task structure for creation or update.
+    depends_on:
+      - paths
+      - block: load_existing
+        required: false
+      - block: new_task_id
+        required: false
+    inputs:
+      command: |
+        python3 << 'EOF'
+        import os, json
+        from datetime import datetime, timezone
+
+        # Load environment
+        paths = json.loads(os.environ['PATHS_JSON'])
+        task_input = os.environ.get('TASK_INPUT', '')
+        task_id_input = os.environ.get('TASK_ID_INPUT', '')
+        parent_id_input = os.environ.get('PARENT_ID_INPUT', '')
+        task_type_input = os.environ.get('TASK_TYPE_INPUT', '')
+        status_input = os.environ.get('STATUS_INPUT', '')
+        data_input = json.loads(os.environ.get('DATA_INPUT', '{}'))
+        caller = os.environ.get('CALLER', 'unknown')
+        new_task_id = os.environ.get('NEW_TASK_ID', '').strip()
+        existing_state_json = os.environ.get('EXISTING_STATE', '')
+
+        now = datetime.now(timezone.utc).isoformat()
+        trace_id = paths['trace_id']
+
+        # Load existing state or create new
+        if existing_state_json:
+            state = json.loads(existing_state_json)
+            is_new_state = False
+        else:
+            # Initialize new state
+            root_id = task_id_input or new_task_id or f'task-unknown'
+            state = {
+                'root_task_id': root_id,
+                'created_at': now,
+                'updated_at': now,
+                'tasks': {}
+            }
+            is_new_state = True
+
+        # Determine target task and operation
+        if task_id_input and task_id_input in state.get('tasks', {}):
+            # Update existing task
+            target_task_id = task_id_input
+            operation = 'update'
+        elif parent_id_input:
+            # Create sub-task
+            target_task_id = new_task_id
+            operation = 'create_subtask'
+            if parent_id_input not in state.get('tasks', {}):
+                raise ValueError(f'Parent task {parent_id_input} not found')
+        else:
+            # Root task (new or update)
+            target_task_id = state.get('root_task_id') or task_id_input or new_task_id
+            operation = 'create_root' if is_new_state else 'update'
+            if is_new_state:
+                state['root_task_id'] = target_task_id
+
+        # Get or create task entry
+        if target_task_id not in state['tasks']:
+            state['tasks'][target_task_id] = {
+                'task': task_input or 'Task',
+                'task_type': task_type_input,
+                'status': status_input or 'in-progress',
+                'parent_id': parent_id_input or None,
+                'children': [],
+                'data': {},
+                'created_at': now,
+                'updated_at': now
+            }
+            # Add to parent's children list
+            if parent_id_input and parent_id_input in state['tasks']:
+                if target_task_id not in state['tasks'][parent_id_input]['children']:
+                    state['tasks'][parent_id_input]['children'].append(target_task_id)
+        else:
+            operation = 'update'
+
+        # Apply updates to target task
+        task = state['tasks'][target_task_id]
+        changes = {}
+
+        if task_input and task_input != task.get('task', ''):
+            changes['task'] = [task.get('task'), task_input]
+            task['task'] = task_input
+
+        if task_type_input and task_type_input != task.get('task_type', ''):
+            changes['task_type'] = [task.get('task_type'), task_type_input]
+            task['task_type'] = task_type_input
+
+        if status_input and status_input != task.get('status', ''):
+            changes['status'] = [task.get('status'), status_input]
+            task['status'] = status_input
+
+        if data_input:
+            task['data'] = {**task.get('data', {}), **data_input}
+            changes['data'] = 'merged'
+
+        task['updated_at'] = now
+        state['updated_at'] = now
+
+        # Compute pending children
+        children = task.get('children', [])
+        pending = [c for c in children if state['tasks'].get(c, {}).get('status') not in ('done', 'failed')]
+
+        # Build audit entry
+        if operation.startswith('create'):
+            audit_desc = f"Created {'root' if operation == 'create_root' else 'sub-'}task: {task.get('task', target_task_id)}"
+            action = operation
+        elif changes:
+            audit_desc = f"Updated: {list(changes.keys())}"
+            action = 'task_completed' if status_input == 'done' else 'task_updated'
+        else:
+            audit_desc = 'Task accessed'
+            action = 'task_accessed'
+
+        audit_entry = {
+            'timestamp': now,
+            'task_id': target_task_id,
+            'caller': caller,
+            'action': action,
+            'description': audit_desc
+        }
+        if changes:
+            audit_entry['changes'] = changes
+        if task.get('parent_id'):
+            audit_entry['parent_id'] = task['parent_id']
+
+        print(json.dumps({
+            'state': state,
+            'target_task_id': target_task_id,
+            'operation': operation,
+            'audit_entry': audit_entry,
+            'pending_children': pending,
+            'task': task
+        }))
+        EOF
+      env:
+        PATHS_JSON: "{{blocks.paths.outputs.stdout}}"
+        TASK_INPUT: "{{inputs.task}}"
+        TASK_ID_INPUT: "{{inputs.task_id}}"
+        PARENT_ID_INPUT: "{{inputs.parent_id}}"
+        TASK_TYPE_INPUT: "{{inputs.task_type}}"
+        STATUS_INPUT: "{{inputs.status}}"
+        DATA_INPUT: "{{inputs.data | tojson}}"
+        CALLER: "{{inputs.caller}}"
+        NEW_TASK_ID: "{{blocks.new_task_id.outputs.stdout if blocks.new_task_id.succeeded else ''}}"
+        EXISTING_STATE: "{{blocks.load_existing.outputs.data | tojson if blocks.load_existing.succeeded else ''}}"
+
+  # ==========================================================================
+  # STEP 5: Write updated state
+  # ==========================================================================
+  - id: write_state
     type: WriteJSONState
+    description: Write the updated state to file.
+    depends_on: [build_task, paths]
     inputs:
-      path: "{{inputs.state if inputs.state != '' else tmp ~ '/state.json'}}"
-      data:
-        initialized: true
-        created_at: "{{now()}}"
-        caller: "{{inputs.caller}}"
-        task: "{{inputs.task}}"
-        task_id: ""
-        status: "{{inputs.status if inputs.status != '' else 'in-progress'}}"
-        data: {}
-        audit: []
+      path: "{{(blocks.paths.outputs.stdout | fromjson).state_path}}"
+      data: "{{(blocks.build_task.outputs.stdout | fromjson).state}}"
 
-  - id: load
-    type: ReadJSONState
-    description: Load the state from the specified file.
-    depends_on:
-      - block: check
-        required: false
-      - block: initialize
-        required: false
+  # ==========================================================================
+  # STEP 6: Write audit entry (separate file)
+  # ==========================================================================
+  - id: write_audit
+    type: Shell
+    description: Append audit entry to the audit log file.
+    condition: "{{inputs.audit}}"
+    depends_on: [build_task, paths]
     inputs:
-      path: "{{inputs.state if inputs.state != '' else tmp ~ '/state.json'}}"
+      command: |
+        python3 << 'EOF'
+        import os, json
+        from pathlib import Path
 
-  - id: audit
-    description: Call the LLM to generate task_id and audit description for the changes.
-    condition: "{{inputs.ai and inputs.audit and ((inputs.data | length) > 0 or inputs.status != '')}}"
-    depends_on:
-      - load
-    type: LLMCall
-    inputs:
-      profile: default
-      system_instructions: |
-        You are an expert at generating task identifiers and audit descriptions.
-        Analyze state changes and produce concise, meaningful identifiers.
-        Return valid JSON matching the requested schema.
-      prompt: |
-        {% if inputs.task %}
-        Task description:
-        ```
-        {{inputs.task}}
-        ```
-        {% endif %}
+        audit_path = os.environ['AUDIT_PATH']
+        new_entry = json.loads(os.environ['AUDIT_ENTRY'])
 
-        Current state:
-        ```json
-        {{blocks.load.outputs.data | tojson}}
-        ```
+        # Load existing audit or create new
+        if os.path.isfile(audit_path):
+            with open(audit_path) as f:
+                audit = json.load(f)
+        else:
+            audit = {'entries': []}
 
-        {% if inputs.data %}
-        Data updates to apply:
-        ```json
-        {{inputs.data | tojson}}
-        ```
-        {% endif %}
+        # Append new entry
+        audit['entries'].append(new_entry)
 
-        {% if inputs.status %}
-        Status change: {{inputs.status}}
-        {% endif %}
+        # Write back
+        Path(audit_path).parent.mkdir(parents=True, exist_ok=True)
+        with open(audit_path, 'w') as f:
+            json.dump(audit, f, indent=2)
 
-        Based on the updates, generate:
-        1. A short, unique task_id (e.g., "auth-fix-001", "data-migration") - reuse existing task_id if present in state
-        2. A one-line audit description of the changes
-      response_schema:
-        type: object
-        properties:
-          task_id:
-            type: string
-            description: Short unique identifier for the task
-          audit:
-            type: string
-            description: One-line description of the changes
-        required:
-          - task_id
-          - audit
-
-  - id: update_state
-    type: MergeJSONState
-    description: Merge audited data and update specific fields in the current state.
-    condition: "{{(inputs.data | length) > 0 or inputs.status != ''}}"
-    depends_on:
-      - block: audit
-        required: false
-      - block: load
-    inputs:
-      path: "{{blocks.load.outputs.path}}"
-      updates:
-        data: "{{inputs.data or get(blocks.load.outputs.data, 'data', {})}}"
-        task_id: "{{blocks.audit.outputs.response.task_id if blocks.audit.succeeded else get(blocks.load.outputs.data, 'task_id', '')}}"
-        status: "{{inputs.status if inputs.status != '' else get(blocks.load.outputs.data, 'status', 'in-progress')}}"
-        audit: >-
-          {{(get(blocks.load.outputs.data, 'audit', []) or []) +
-            ([{'date': now(), 'description': blocks.audit.outputs.response.audit, 'caller': inputs.caller}] if blocks.audit.succeeded
-            else ([{'date': now(), 'description': (inputs.task if inputs.task != '' else 'State updated'), 'caller': inputs.caller}] if inputs.audit else []))}}
-        last_edit: "{{now()}}"
-        caller: "{{inputs.caller}}"
+        print(json.dumps({'path': audit_path, 'total_entries': len(audit['entries'])}))
+        EOF
+      env:
+        AUDIT_PATH: "{{(blocks.paths.outputs.stdout | fromjson).audit_path}}"
+        AUDIT_ENTRY: "{{(blocks.build_task.outputs.stdout | fromjson).audit_entry | tojson}}"
 
 outputs:
-  task_id:
-    description: Task identifier (from AI or existing state)
-    type: str
-    value: "{{get(blocks.update_state.outputs.merged_data, 'task_id', '') if blocks.update_state.succeeded else get(blocks.load.outputs.data, 'task_id', '')}}"
-  status:
-    description: Task status (in-progress, done, blocked)
-    type: str
-    value: "{{get(blocks.update_state.outputs.merged_data, 'status', 'in-progress') if blocks.update_state.succeeded else get(blocks.load.outputs.data, 'status', 'in-progress')}}"
   state:
     description: Path to the state file
     type: str
-    value: "{{blocks.load.outputs.path}}"
+    value: "{{(blocks.paths.outputs.stdout | fromjson).state_path}}"
+
+  task_id:
+    description: ID of the created/updated task
+    type: str
+    value: "{{(blocks.build_task.outputs.stdout | fromjson).target_task_id}}"
+
+  root_task_id:
+    description: ID of the root task in this state
+    type: str
+    value: "{{(blocks.build_task.outputs.stdout | fromjson).state.root_task_id}}"
+
+  trace_id:
+    description: Execution trace ID (state file identifier)
+    type: str
+    value: "{{(blocks.paths.outputs.stdout | fromjson).trace_id}}"
+
+  status:
+    description: Current status of the target task
+    type: str
+    value: "{{(blocks.build_task.outputs.stdout | fromjson).task.status}}"
+
+  parent_id:
+    description: Parent task ID (null for root task)
+    type: str
+    value: "{{(blocks.build_task.outputs.stdout | fromjson).task.parent_id}}"
+
+  children:
+    description: List of child task IDs
+    type: list
+    value: "{{(blocks.build_task.outputs.stdout | fromjson).task.children}}"
+
+  pending_children:
+    description: Child task IDs with status != done/failed
+    type: list
+    value: "{{(blocks.build_task.outputs.stdout | fromjson).pending_children}}"
+
+  audit_path:
+    description: Path to the audit log file
+    type: str
+    value: "{{(blocks.paths.outputs.stdout | fromjson).audit_path}}"
+
+  task_data:
+    description: The target task's data field
+    type: dict
+    value: "{{(blocks.build_task.outputs.stdout | fromjson).task.data}}"

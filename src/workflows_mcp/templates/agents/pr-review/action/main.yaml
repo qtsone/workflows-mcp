@@ -1,0 +1,208 @@
+name: post-review-comments
+description: |
+  Post review comments to the PR/MR (GitHub or GitLab) if conditions are met.
+
+  Receives platform info directly from context-gathering to avoid redundant
+  URL parsing. Only parses URL for API-specific details when posting comments.
+tags:
+  - review
+  - pr
+  - comments
+  - approval
+  - github
+  - gitlab
+inputs:
+  url:
+    type: str
+    description: |
+      Full PR/MR URL for remote review (GitHub or GitLab).
+      Empty string for local-only reviews.
+    required: false
+    default: ""
+
+  platform:
+    type: str
+    description: |
+      Platform detected by context-gathering: 'github', 'gitlab', or 'local'.
+      Received directly - no URL parsing needed.
+    required: false
+    default: local
+
+  comment:
+    type: bool
+    description: Whether to post comments directly to the PR/MR.
+    required: false
+    default: false
+
+  report:
+    type: str
+    description: Markdown report of findings.
+    required: true
+
+  approve:
+    type: bool
+    description: Approval decision.
+    required: true
+
+  state_path:
+    type: str
+    description: |
+      Path to state file for task tracking.
+      Used by state-management workflow to persist hierarchical task state.
+      When provided, enables progress tracking and audit trails.
+    required: false
+    default: ""
+
+  parent_task_id:
+    type: str
+    description: |
+      Parent task ID for creating sub-tasks in the state tree.
+      Used with state_path to create hierarchical task relationships.
+    required: false
+    default: ""
+
+blocks:
+  # ============================================================================
+  # STATE TRACKING: Create sub-task at phase start
+  # ============================================================================
+  - id: track_start
+    type: Workflow
+    description: Create sub-task for action phase in state tree.
+    condition: "{{ inputs.state_path and inputs.state_path != '' }}"
+    inputs:
+      workflow: agent-state-management
+      inputs:
+        state: "{{ inputs.state_path }}"
+        parent_id: "{{ inputs.parent_task_id }}"
+        task: "Phase: Action"
+        task_type: "phase"
+        status: "in-progress"
+        caller: "pr-review:action"
+        data:
+          platform: "{{ inputs.platform }}"
+          comment_requested: "{{ inputs.comment }}"
+          approve: "{{ inputs.approve }}"
+
+  # Only parse URL when we actually need to post comments
+  - id: parse_url_for_api
+    type: Shell
+    description: |
+      Parse URL to extract API-specific details (owner/repo/number).
+      Only runs when we need to post comments to a remote platform.
+    condition: "{{ inputs.comment and inputs.platform in ['github', 'gitlab'] and inputs.url and inputs.url != '' }}"
+    inputs:
+      command: |
+        python3 -c "
+        import re
+        import json
+
+        url = '''{{ inputs.url }}'''
+        platform = '{{ inputs.platform }}'
+
+        result = {'platform': platform, 'valid': False}
+
+        if platform == 'github':
+            # GitHub: https://github.com/owner/repo/pull/123
+            match = re.search(r'github\.com/([^/]+)/([^/]+)/pull/(\d+)', url)
+            if match:
+                result.update({
+                    'valid': True,
+                    'owner_repo': f'{match.group(1)}/{match.group(2)}',
+                    'number': match.group(3)
+                })
+
+        elif platform == 'gitlab':
+            # GitLab: https://gitlab.com/group/project/-/merge_requests/123
+            match = re.search(r'(https?://[^/]+)/(.+?)/-/merge_requests/(\d+)', url)
+            if match:
+                project_path = match.group(2).replace('/', '%2F')
+                result.update({
+                    'valid': True,
+                    'base_url': match.group(1),
+                    'project_path': project_path,
+                    'number': match.group(3)
+                })
+
+        print(json.dumps(result))
+        "
+
+  - id: post_github_comment
+    type: HttpCall
+    description: Post review comments to GitHub PR via Issues API.
+    depends_on:
+      - parse_url_for_api
+    condition: >-
+      {{ inputs.comment and inputs.platform == 'github'
+         and blocks.parse_url_for_api.succeeded
+         and (blocks.parse_url_for_api.outputs.stdout | fromjson).valid }}
+    inputs:
+      url: "https://api.github.com/repos/{{ (blocks.parse_url_for_api.outputs.stdout | fromjson).owner_repo }}/issues/{{ (blocks.parse_url_for_api.outputs.stdout | fromjson).number }}/comments"
+      method: POST
+      headers:
+        Authorization: "Bearer {{ secrets.GITHUB_TOKEN }}"
+        Accept: "application/vnd.github+json"
+        X-GitHub-Api-Version: "2022-11-28"
+      json:
+        body: "{{ inputs.report }}"
+
+  - id: post_gitlab_comment
+    type: HttpCall
+    description: Post review comments to GitLab MR via Notes API.
+    depends_on:
+      - parse_url_for_api
+    condition: >-
+      {{ inputs.comment and inputs.platform == 'gitlab'
+         and blocks.parse_url_for_api.succeeded
+         and (blocks.parse_url_for_api.outputs.stdout | fromjson).valid }}
+    inputs:
+      url: "{{ (blocks.parse_url_for_api.outputs.stdout | fromjson).base_url }}/api/v4/projects/{{ (blocks.parse_url_for_api.outputs.stdout | fromjson).project_path }}/merge_requests/{{ (blocks.parse_url_for_api.outputs.stdout | fromjson).number }}/notes"
+      method: POST
+      headers:
+        PRIVATE-TOKEN: "{{ secrets.GITLAB_TOKEN }}"
+        Content-Type: "application/json"
+      json:
+        body: "{{ inputs.report }}"
+
+  # ============================================================================
+  # STATE TRACKING: Mark phase complete with captured data
+  # ============================================================================
+  - id: track_done
+    type: Workflow
+    description: Mark action phase as complete with captured data.
+    condition: "{{ inputs.state_path and inputs.state_path != '' and blocks.track_start.succeeded }}"
+    depends_on:
+      - post_github_comment
+      - post_gitlab_comment
+    inputs:
+      workflow: agent-state-management
+      inputs:
+        state: "{{ inputs.state_path }}"
+        task_id: "{{ blocks.track_start.outputs.task_id }}"
+        status: "done"
+        caller: "pr-review:action"
+        data:
+          action_taken: "{{ blocks.post_github_comment.succeeded or blocks.post_gitlab_comment.succeeded }}"
+          platform: "{{ inputs.platform }}"
+          approve: "{{ inputs.approve }}"
+
+outputs:
+  final_report:
+    value: "{{ inputs.report }}"
+    type: str
+    description: Markdown report to be returned as output.
+
+  final_approval:
+    value: "{{ inputs.approve }}"
+    type: bool
+    description: Final approval decision to be returned as output.
+
+  platform:
+    value: "{{ inputs.platform }}"
+    type: str
+    description: "Platform from input: 'github', 'gitlab', or 'local'."
+
+  comment_posted:
+    value: >-
+      {{ blocks.post_github_comment.succeeded or blocks.post_gitlab_comment.succeeded }}
+    type: bool
+    description: "Whether a comment was successfully posted to the remote platform."

@@ -1,0 +1,126 @@
+name: generate-report
+description: |
+  Generate a markdown report with findings, suggestions, and rationale.
+
+  Uses LLM to create a professional, well-structured report that includes
+  PR context and is tailored to the review focus area.
+
+tags:
+  - report-generation
+  - markdown
+  - findings-analysis
+  - llm
+
+inputs:
+  filtered_findings:
+    type: list
+    description: List of findings that meet the severity threshold.
+    required: true
+
+  pr_metadata:
+    type: dict
+    description: |
+      PR metadata for report context (title, author, description, etc.).
+      Empty dict for local-only reviews.
+    required: false
+    default: {}
+
+  focus:
+    type: str
+    description: |
+      Area that was prioritized in the review.
+      Used to emphasize relevant sections.
+    required: false
+    default: general
+
+blocks:
+  - id: generate_report_llm
+    type: LLMCall
+    description: Use LLM to generate a professional markdown report.
+    inputs:
+      profile: default
+      prompt: |
+        # Generate PR Review Report
+
+        Create a professional markdown report for this code review.
+
+        ## PR Context
+        {% if inputs.pr_metadata and inputs.pr_metadata != {} %}
+        - **Title:** {{ inputs.pr_metadata.title | default('N/A') }}
+        - **Author:** {{ inputs.pr_metadata.author | default('N/A') }}
+        - **Description:** {{ inputs.pr_metadata.description | default('No description') }}
+        - **Base → Head:** {{ inputs.pr_metadata.base_branch | default('main') }} ← {{ inputs.pr_metadata.head_branch | default('feature') }}
+        {% else %}
+        _Local review mode - no PR metadata available_
+        {% endif %}
+
+        ## Review Focus
+        {% if inputs.focus and inputs.focus != 'general' %}
+        This review prioritized **{{ inputs.focus }}** concerns.
+        {% else %}
+        General comprehensive review.
+        {% endif %}
+
+        ## Findings ({{ inputs.filtered_findings | length }} total)
+        ```json
+        {{ inputs.filtered_findings | tojson }}
+        ```
+
+        ## Report Requirements
+
+        Generate a markdown report with:
+
+        1. **Executive Summary** (2-3 sentences)
+           - Overall assessment
+           - Key concerns if any
+
+        2. **Findings by Severity**
+           - Group findings by severity (critical → info)
+           - For each finding include:
+             - File and line number (if available)
+             - Clear description of the issue
+             - Suggested fix
+           {% if inputs.focus and inputs.focus != 'general' %}
+           - Highlight {{ inputs.focus }}-related issues prominently
+           {% endif %}
+
+        3. **Recommendations**
+           - Actionable steps to address findings
+           - Priority order
+
+        4. **Conclusion**
+           - Overall verdict
+           - Whether PR is ready to merge
+
+        Use proper markdown formatting (headers, code blocks, lists).
+        Be concise but thorough.
+
+      response_schema:
+        type: object
+        properties:
+          report:
+            type: string
+            description: "Complete markdown report"
+          summary:
+            type: string
+            description: "One-line summary for quick reference"
+          blocking_issues:
+            type: integer
+            description: "Count of critical/high severity issues"
+        required: [report, summary, blocking_issues]
+
+outputs:
+  report:
+    value: "{{ blocks.generate_report_llm.outputs.response.report }}"
+    type: str
+    description: Markdown report of findings.
+
+  summary:
+    value: "{{ blocks.generate_report_llm.outputs.response.summary | default('Review complete') }}"
+    type: str
+    description: One-line summary for quick reference.
+
+  blocking_issues:
+    value: "{{ blocks.generate_report_llm.outputs.response.blocking_issues | default(0) }}"
+    type: num
+    description: Count of critical/high severity issues.

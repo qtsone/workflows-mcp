@@ -32,6 +32,8 @@ import hashlib
 import json
 import logging
 import shlex
+import time
+import uuid
 from datetime import datetime
 from typing import TYPE_CHECKING, Any
 
@@ -173,6 +175,7 @@ class UnifiedVariableResolver:
             {
                 "now": lambda: datetime.now().isoformat(),
                 "timestamp": lambda: int(datetime.now().timestamp()),
+                "generate_id": self._generate_id,
                 "len": len,
                 "range": range,
                 "int": int,
@@ -207,6 +210,35 @@ class UnifiedVariableResolver:
         if not result.is_success:
             raise ValueError(f"read_file failed for '{path}': {result.error}")
         return result.unwrap()
+
+    @staticmethod
+    def _generate_id(prefix: str = "task") -> str:
+        """
+        Generate a unique, sortable identifier.
+
+        Format: {prefix}-{unix_timestamp}-{random_hex}
+        Example: task-1734012345-a1b2c3
+
+        The format provides:
+        - Chronological sorting via timestamp
+        - Human-readable structure
+        - Uniqueness via random suffix
+        - Clear auto-generated indication
+
+        Args:
+            prefix: ID prefix (default: "task")
+
+        Returns:
+            Generated unique identifier
+
+        Examples:
+            {{generate_id()}}           -> task-1734012345-a1b2c3
+            {{generate_id('job')}}      -> job-1734012345-d4e5f6
+            {{generate_id('req')}}      -> req-1734012345-789abc
+        """
+        ts = int(time.time())
+        random_hex = uuid.uuid4().hex[:6]
+        return f"{prefix}-{ts}-{random_hex}"
 
     @staticmethod
     def _get(obj: Any, key: int | str, default: Any = None) -> Any:

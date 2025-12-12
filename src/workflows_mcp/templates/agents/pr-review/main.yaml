@@ -1,0 +1,233 @@
+name: agent-pr-review
+description: |
+  AI Autonomous agent for in-depth PR/MR review.
+
+  This agent performs comprehensive code review by:
+  1. Gathering context (cloning repo if URL provided, or using local repo)
+  2. Initial assessment to understand intent and identify investigation targets
+  3. Iterative investigation loop with LLM-driven analysis
+  4. Synthesis of findings with severity filtering
+  5. Optional posting of review comments to GitHub/GitLab
+
+  The workflow normalizes input early - regardless of whether you provide a URL
+  or local repo path, all downstream processing uses a consistent local path.
+
+tags: ["agent", "review", ""]
+
+inputs:
+  url:
+    type: str
+    description: |
+      Full PR/MR URL for remote review.
+      Mutually exclusive with repo_path. One must be provided.
+      Examples:
+        - https://github.com/owner/repo/pull/123
+        - https://gitlab.com/group/project/-/merge_requests/456
+    required: false
+
+  repo_path:
+    type: str
+    description: |
+      Path to local git repository for local review.
+      Mutually exclusive with url. One must be provided.
+    required: false
+
+  base_branch:
+    type: str
+    description: |
+      Branch to compare against (target branch).
+      For remote PRs, this is typically extracted from PR metadata.
+    required: false
+    default: main
+
+  head_branch:
+    type: str
+    description: |
+      Branch being reviewed (source branch).
+      Defaults to current branch if not specified.
+    required: false
+
+  focus:
+    type: str
+    description: |
+      Area to prioritize in review.
+      Options: security, performance, architecture, tests, general
+    required: false
+
+  threshold:
+    type: str
+    description: |
+      Minimum severity to report.
+      Values: critical, high, medium, low, info
+    required: false
+    default: low
+
+  comment:
+    type: bool
+    description: |
+      Whether to post review comments directly to remote PR/MR.
+      Only works when url is provided and platform is supported.
+    required: false
+    default: false
+
+  iteration_cap:
+    type: num
+    description: Maximum number of investigation iterations.
+    required: false
+    default: 10
+
+blocks:
+  - id: state_management
+    type: Workflow
+    description: |
+      Manage state for the PR review.
+    inputs:
+      workflow: agent-state-management
+      inputs:
+        task: "PR review"
+        caller: "pr-review"
+        data: "{{ inputs }}"
+        ai: true
+        audit: true
+
+  # ==========================================================================
+  # PHASE 1: Context Gathering
+  # Normalizes input (URL vs local path) and outputs consistent repo_path
+  # ==========================================================================
+  - id: context_gathering
+    type: Workflow
+    description: |
+      Gather and validate context for the PR review.
+      Outputs normalized repo_path regardless of input source.
+    depends_on:
+      - state_management
+    inputs:
+      workflow: context-gathering
+      inputs:
+        url: "{{ inputs.url }}"
+        repo_path: "{{ inputs.repo_path }}"
+        base_branch: "{{ inputs.base_branch }}"
+        head_branch: "{{ inputs.head_branch }}"
+        state_path: "{{ blocks.state_management.outputs.state }}"
+        parent_task_id: "{{ blocks.state_management.outputs.task_id }}"
+
+  # ==========================================================================
+  # PHASE 2: Initial Assessment
+  # Analyze diff and metadata to understand intent and identify targets
+  # ==========================================================================
+  - id: initial_assessment
+    type: Workflow
+    description: |
+      Perform initial assessment to understand PR intent and identify
+      files/areas that need deeper investigation.
+    depends_on:
+      - context_gathering
+    inputs:
+      workflow: initial-assessment
+      inputs:
+        diff: "{{ blocks.context_gathering.outputs.diff }}"
+        pr_metadata: "{{ blocks.context_gathering.outputs.pr_metadata }}"
+        # Pass focus if provided for targeted assessment
+        focus: "{{ inputs.focus | default('general', true) }}"
+        changed_files: "{{ blocks.context_gathering.outputs.changed_files }}"
+        state_path: "{{ blocks.state_management.outputs.state }}"
+        parent_task_id: "{{ blocks.state_management.outputs.task_id }}"
+
+  # ==========================================================================
+  # PHASE 3: Investigation Loop
+  # Iteratively investigate identified targets with file access
+  # ==========================================================================
+  - id: agent_investigation_loop
+    type: Workflow
+    description: |
+      Iteratively investigate the PR based on LLM decisions.
+      Now has access to local repo via repo_path for file reading.
+    depends_on:
+      - initial_assessment
+    inputs:
+      workflow: agent-investigation-loop
+      inputs:
+        investigation_targets: "{{ blocks.initial_assessment.outputs.investigation_targets }}"
+        # KEY: Pass the normalized repo_path for file access
+        repo_path: "{{ blocks.context_gathering.outputs.repo_path }}"
+        base_branch: "{{ blocks.context_gathering.outputs.base_branch }}"
+        head_branch: "{{ blocks.context_gathering.outputs.head_branch }}"
+        iteration_cap: "{{ inputs.iteration_cap }}"
+        focus: "{{ inputs.focus | default('general', true) }}"
+        state_path: "{{ blocks.state_management.outputs.state }}"
+        parent_task_id: "{{ blocks.state_management.outputs.task_id }}"
+
+  # ==========================================================================
+  # PHASE 4: Synthesis
+  # Compile findings, filter by threshold, generate report
+  # ==========================================================================
+  - id: synthesis
+    type: Workflow
+    description: |
+      Compile and filter findings, generate report, and make approval decision.
+    depends_on:
+      - agent_investigation_loop
+    inputs:
+      workflow: synthesis
+      inputs:
+        investigation_results: "{{ blocks.agent_investigation_loop.outputs.investigation_results }}"
+        threshold: "{{ inputs.threshold }}"
+        pr_metadata: "{{ blocks.context_gathering.outputs.pr_metadata }}"
+        focus: "{{ inputs.focus | default('general', true) }}"
+        state_path: "{{ blocks.state_management.outputs.state }}"
+        parent_task_id: "{{ blocks.state_management.outputs.task_id }}"
+
+  # ==========================================================================
+  # PHASE 5: Action
+  # Post review comments if enabled, return final outputs
+  # ==========================================================================
+  - id: action
+    type: Workflow
+    description: |
+      Post review comments to the PR/MR if conditions are met.
+      Uses platform info from context_gathering to determine API to use.
+    depends_on:
+      - synthesis
+    inputs:
+      workflow: action
+      inputs:
+        # Use normalized pr_url from context_gathering (empty for local repos)
+        url: "{{ blocks.context_gathering.outputs.pr_url }}"
+        # Use detected platform from context_gathering
+        platform: "{{ blocks.context_gathering.outputs.platform }}"
+        comment: "{{ inputs.comment }}"
+        report: "{{ blocks.synthesis.outputs.report }}"
+        approve: "{{ blocks.synthesis.outputs.approve }}"
+        state_path: "{{ blocks.state_management.outputs.state }}"
+        parent_task_id: "{{ blocks.state_management.outputs.task_id }}"
+
+outputs:
+  report:
+    value: "{{ blocks.action.outputs.final_report }}"
+    type: str
+    description: |
+      Full review findings in markdown format, including all issues found,
+      code suggestions, and rationale.
+
+  approve:
+    value: "{{ blocks.action.outputs.final_approval }}"
+    type: bool
+    description: |
+      Whether the PR should be approved.
+      If false, the report contains details on why.
+
+  # Additional outputs for debugging/integration
+  platform:
+    value: "{{ blocks.context_gathering.outputs.platform }}"
+    type: str
+    description: "Detected platform: 'github', 'gitlab', or 'local'."
+
+  repo_path:
+    value: "{{ blocks.context_gathering.outputs.repo_path }}"
+    type: str
+    description: "Local path where the repository is located."
+
+  risk_level:
+    value: "{{ blocks.initial_assessment.outputs.risk_level }}"
+    type: str
+    description: "Overall risk level assessment: critical, high, medium, low."

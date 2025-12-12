@@ -1,0 +1,151 @@
+name: agent-investigation-loop
+description: |
+  Iteratively investigate the PR based on LLM decisions until confident
+  or iteration limit reached.
+
+  This phase performs deep analysis of specific files and areas identified
+  in the initial assessment. It has access to the local repository via
+  repo_path, enabling actual file reading for thorough investigation.
+
+tags:
+  - llm
+  - iteration
+  - investigation
+  - automation
+  - code-review
+
+inputs:
+  investigation_targets:
+    type: list
+    description: |
+      Files or areas identified for deeper investigation.
+      Each target should have: path, reason, and optional priority.
+    required: true
+
+  repo_path:
+    type: str
+    description: |
+      Local path to the repository. This is the normalized path from
+      context-gathering, whether the source was URL or local.
+    required: true
+
+  base_branch:
+    type: str
+    description: Base branch for comparison.
+    required: false
+    default: main
+
+  head_branch:
+    type: str
+    description: Head branch being reviewed.
+    required: false
+
+  iteration_cap:
+    type: num
+    description: Maximum number of investigation iterations allowed.
+    required: false
+    default: 10
+
+  focus:
+    type: str
+    description: |
+      Area to prioritize in investigation.
+      Options: security, performance, architecture, tests, general
+    required: false
+    default: general
+
+  state_path:
+    type: str
+    description: |
+      Path to state file for task tracking.
+      Used by state-management workflow to persist hierarchical task state.
+      When provided, enables progress tracking and audit trails.
+    required: false
+    default: ""
+
+  parent_task_id:
+    type: str
+    description: |
+      Parent task ID for creating sub-tasks in the state tree.
+      Used with state_path to create hierarchical task relationships.
+    required: false
+    default: ""
+
+blocks:
+  # ============================================================================
+  # STATE TRACKING: Create sub-task at phase start
+  # ============================================================================
+  - id: track_start
+    type: Workflow
+    description: Create sub-task for investigation-loop phase in state tree.
+    condition: "{{ inputs.state_path and inputs.state_path != '' }}"
+    inputs:
+      workflow: agent-state-management
+      inputs:
+        state: "{{ inputs.state_path }}"
+        parent_id: "{{ inputs.parent_task_id }}"
+        task: "Phase: Investigation Loop"
+        task_type: "phase"
+        status: "in-progress"
+        caller: "pr-review:investigation-loop"
+        data:
+          targets_count: "{{ inputs.investigation_targets | length }}"
+          iteration_cap: "{{ inputs.iteration_cap }}"
+
+  - id: initialize_iteration
+    type: Workflow
+    description: Initialize the iteration counter for the investigation process.
+    inputs:
+      workflow: initialize-iteration-counter
+      inputs:
+        iteration_cap: "{{ inputs.iteration_cap }}"
+
+  - id: process_targets
+    type: Workflow
+    description: |
+      Process each investigation target using LLM to decide and execute
+      the next steps. Has access to local repo for file reading.
+    depends_on:
+      - initialize_iteration
+      - track_start
+    inputs:
+      workflow: process-investigation-targets
+      inputs:
+        targets: "{{ inputs.investigation_targets }}"
+        repo_path: "{{ inputs.repo_path }}"
+        base_branch: "{{ inputs.base_branch }}"
+        head_branch: "{{ inputs.head_branch }}"
+        iteration_counter: "{{ blocks.initialize_iteration.outputs.iteration_counter }}"
+        iteration_cap: "{{ inputs.iteration_cap }}"
+        focus: "{{ inputs.focus }}"
+        state_path: "{{ inputs.state_path }}"
+        parent_task_id: "{{ blocks.track_start.outputs.task_id | default(inputs.parent_task_id, true) }}"
+
+  # ============================================================================
+  # STATE TRACKING: Mark phase complete with captured data
+  # ============================================================================
+  - id: track_done
+    type: Workflow
+    description: Mark investigation-loop phase as complete with captured data.
+    condition: "{{ inputs.state_path and inputs.state_path != '' and blocks.track_start.succeeded }}"
+    depends_on:
+      - process_targets
+    inputs:
+      workflow: agent-state-management
+      inputs:
+        state: "{{ inputs.state_path }}"
+        task_id: "{{ blocks.track_start.outputs.task_id }}"
+        status: "done"
+        caller: "pr-review:investigation-loop"
+        data:
+          confidence: "{{ blocks.process_targets.outputs.investigation_results.confidence | default(0) }}"
+          findings_count: "{{ blocks.process_targets.outputs.investigation_results.findings | length | default(0) }}"
+          iterations_completed: "{{ blocks.process_targets.outputs.iteration_completed | default(0) }}"
+
+outputs:
+  investigation_results:
+    value: "{{ blocks.process_targets.outputs.investigation_results }}"
+    type: list
+    description: |
+      Results of the investigation including confidence levels and findings.
+      Each result contains: target, findings, severity, confidence, suggestions.

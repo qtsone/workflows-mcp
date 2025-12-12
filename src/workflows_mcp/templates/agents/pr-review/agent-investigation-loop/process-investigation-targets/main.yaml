@@ -1,0 +1,245 @@
+name: process-investigation-targets
+description: |
+  Process each investigation target using LLM to decide and execute
+  the next investigation steps. Has access to local repository for
+  reading actual file contents.
+
+tags:
+  - llm
+  - investigation
+  - automation
+  - recursion
+  - code-review
+
+inputs:
+  targets:
+    type: list
+    description: |
+      Files or areas identified for deeper investigation.
+      Each target should have: path, reason, and optional priority.
+    required: true
+
+  repo_path:
+    type: str
+    description: |
+      Local path to the repository for file reading.
+      This is the normalized path from context-gathering.
+    required: true
+
+  base_branch:
+    type: str
+    description: Base branch for comparison.
+    required: false
+    default: main
+
+  head_branch:
+    type: str
+    description: Head branch being reviewed.
+    required: false
+
+  iteration_counter:
+    type: num
+    description: Current iteration count.
+    required: false
+    default: 0
+
+  iteration_cap:
+    type: num
+    description: Maximum number of iterations allowed.
+    required: false
+    default: 10
+
+  focus:
+    type: str
+    description: |
+      Area to prioritize in investigation.
+      Options: security, performance, architecture, tests, general
+    required: false
+    default: general
+
+  state_path:
+    type: str
+    description: |
+      Path to state file for task tracking.
+      Used by state-management workflow to persist hierarchical task state.
+      When provided, enables progress tracking and audit trails.
+    required: false
+    default: ""
+
+  parent_task_id:
+    type: str
+    description: |
+      Parent task ID for creating sub-tasks in the state tree.
+      Used with state_path to create hierarchical task relationships.
+    required: false
+    default: ""
+
+blocks:
+  - id: process_each_target
+    type: Workflow
+    description: Iterate over each target and process using sub-workflow with file access.
+    for_each: "{{ inputs.targets }}"
+    for_each_mode: sequential
+    inputs:
+      workflow: investigation-sub-workflow
+      inputs:
+        target: "{{ each.value }}"
+        repo_path: "{{ inputs.repo_path }}"
+        base_branch: "{{ inputs.base_branch }}"
+        head_branch: "{{ inputs.head_branch }}"
+        iteration_counter: "{{ inputs.iteration_counter }}"
+        iteration_cap: "{{ inputs.iteration_cap }}"
+        focus: "{{ inputs.focus }}"
+        state_path: "{{ inputs.state_path }}"
+        parent_task_id: "{{ inputs.parent_task_id }}"
+
+  - id: gather_results
+    type: LLMCall
+    description: |
+      Analyze the aggregated results from all target investigations
+      to determine overall findings and if further investigation is needed.
+    depends_on:
+      - process_each_target
+    inputs:
+      profile: default
+      prompt: |
+        # Investigation Results Analysis
+
+        Analyze the results of investigating the following targets and provide
+        a consolidated assessment.
+
+        ## Iteration Info
+        - Current iteration: {{ inputs.iteration_counter }} of {{ inputs.iteration_cap }}
+        - Focus area: {{ inputs.focus }}
+
+        ## Investigation Targets
+        {% for target in inputs.targets %}
+        - {{ target.path | default(target) }}: {{ target.reason | default('No reason specified') }}
+        {% endfor %}
+
+        ## Your Task
+
+        Based on the individual target analyses, provide:
+
+        1. **Confidence Level** (0.0-1.0): How confident are you in the overall findings?
+           - 1.0 = Very confident, no more investigation needed
+           - < 0.7 = Low confidence, more investigation recommended
+
+        2. **Need More Investigation**: Should we continue investigating?
+           Consider: confidence level, iteration count, and unresolved concerns.
+
+        3. **Consolidated Findings**: Merge findings from all targets into a unified list.
+           Include: target path, severity, description, and suggestions.
+
+        4. **Conclusion**: Overall summary of the investigation results.
+
+      response_schema:
+        type: object
+        properties:
+          confidence:
+            type: number
+            minimum: 0
+            maximum: 1
+            description: "Overall confidence in the findings (0.0-1.0)"
+          needs_more_investigation:
+            type: boolean
+            description: "Whether further investigation iterations are recommended"
+          findings:
+            type: array
+            items:
+              type: object
+              properties:
+                target:
+                  type: string
+                  description: "File path or area where issue was found"
+                summary:
+                  type: string
+                  description: "Brief description of the finding"
+                severity:
+                  type: string
+                  enum: [critical, high, medium, low, info]
+                line_numbers:
+                  type: array
+                  items:
+                    type: integer
+                  description: "Specific line numbers if applicable"
+                suggestion:
+                  type: string
+                  description: "Recommended fix or action"
+              required: [target, summary, severity]
+            description: "Consolidated list of findings from all targets"
+          conclusion:
+            type: string
+            description: "Overall summary and assessment"
+          new_targets:
+            type: array
+            items:
+              type: string
+            description: "New targets to investigate if continuation is needed"
+        required: [confidence, needs_more_investigation, findings, conclusion]
+
+  - id: check_should_continue
+    type: Shell
+    description: Determine if we should continue with another iteration.
+    depends_on:
+      - gather_results
+    inputs:
+      command: |
+        python3 -c "
+        import json
+
+        confidence = {{ blocks.gather_results.outputs.response.confidence | default(1.0) }}
+        needs_more = {{ blocks.gather_results.outputs.response.needs_more_investigation | default(false) | tojson }}
+        iteration = {{ inputs.iteration_counter }}
+        cap = {{ inputs.iteration_cap }}
+
+        # Continue if: needs more investigation AND confidence < 0.9 AND under cap
+        should_continue = needs_more and confidence < 0.9 and iteration < (cap - 1)
+
+        result = {
+            'should_continue': should_continue,
+            'reason': 'confidence_reached' if confidence >= 0.9 else ('cap_reached' if iteration >= (cap - 1) else 'continue')
+        }
+        print(json.dumps(result))
+        "
+
+  - id: recurse_workflow
+    type: Workflow
+    description: Recursively call the workflow if further investigation is needed.
+    depends_on:
+      - check_should_continue
+    condition: "{{ (blocks.check_should_continue.outputs.stdout | fromjson).should_continue }}"
+    inputs:
+      workflow: process-investigation-targets
+      inputs:
+        # Use new targets if provided, otherwise continue with same targets
+        targets: >-
+          {%- if blocks.gather_results.outputs.response.new_targets -%}
+            {{ blocks.gather_results.outputs.response.new_targets | tojson }}
+          {%- else -%}
+            {{ inputs.targets | tojson }}
+          {%- endif -%}
+        repo_path: "{{ inputs.repo_path }}"
+        base_branch: "{{ inputs.base_branch }}"
+        head_branch: "{{ inputs.head_branch }}"
+        iteration_counter: "{{ inputs.iteration_counter + 1 }}"
+        iteration_cap: "{{ inputs.iteration_cap }}"
+        focus: "{{ inputs.focus }}"
+        state_path: "{{ inputs.state_path }}"
+        parent_task_id: "{{ inputs.parent_task_id }}"
+
+outputs:
+  investigation_results:
+    value: "{{ blocks.gather_results.outputs.response }}"
+    type: dict
+    description: |
+      Results of the investigation including:
+      - confidence: Overall confidence level
+      - needs_more_investigation: Whether more investigation is recommended
+      - findings: List of findings with severity and suggestions
+      - conclusion: Overall summary
+
+  iteration_completed:
+    value: "{{ inputs.iteration_counter }}"
+    type: num
+    description: "Number of iterations completed."

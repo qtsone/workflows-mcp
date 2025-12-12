@@ -1,0 +1,152 @@
+name: pr-metadata-fetch
+description: Fetch metadata for a PR/MR from GitHub or GitLab remote URL
+tags:
+  - pr
+  - metadata
+  - fetch
+  - api
+  - url-parsing
+  - github
+  - gitlab
+inputs:
+  url:
+    type: str
+    description: Full PR/MR URL for remote review (GitHub or GitLab).
+    required: true
+blocks:
+  - id: parse_url
+    type: Shell
+    description: Parse the PR/MR URL to detect platform and extract project/number.
+    inputs:
+      command: |
+        url="{{inputs.url}}"
+
+        # GitHub: https://github.com/owner/repo/pull/123
+        if echo "$url" | grep -qE 'github\.com/([^/]+)/([^/]+)/pull/([0-9]+)'; then
+          owner_repo=$(echo "$url" | sed -E 's|.*github\.com/([^/]+/[^/]+)/pull/.*|\1|')
+          pr_number=$(echo "$url" | sed -E 's|.*github\.com/[^/]+/[^/]+/pull/([0-9]+).*|\1|')
+          echo "github,${owner_repo},${pr_number}"
+          exit 0
+        fi
+
+        # GitLab: https://gitlab.com/group/project/-/merge_requests/123
+        # Also supports: https://gitlab.example.com/group/subgroup/project/-/merge_requests/456
+        if echo "$url" | grep -qE '/merge_requests/([0-9]+)'; then
+          # Extract base URL (protocol + host)
+          base_url=$(echo "$url" | sed -E 's|(https?://[^/]+).*|\1|')
+          # Extract project path (everything between host and /-/merge_requests)
+          project_path=$(echo "$url" | sed -E 's|https?://[^/]+/(.+)/-/merge_requests/.*|\1|')
+          # URL-encode the project path (replace / with %2F)
+          encoded_path=$(echo "$project_path" | sed 's|/|%2F|g')
+          mr_number=$(echo "$url" | sed -E 's|.*/merge_requests/([0-9]+).*|\1|')
+          echo "gitlab,${base_url},${encoded_path},${mr_number}"
+          exit 0
+        fi
+
+        echo "Error: Unsupported URL format. Expected GitHub PR or GitLab MR URL." >&2
+        echo "  GitHub: https://github.com/owner/repo/pull/NUMBER" >&2
+        echo "  GitLab: https://gitlab.com/group/project/-/merge_requests/NUMBER" >&2
+        exit 1
+
+  - id: fetch_github_pr
+    type: HttpCall
+    description: Call GitHub API to fetch PR details.
+    depends_on:
+      - parse_url
+    condition: "{{blocks.parse_url.outputs.stdout | trim | split(',')[0] == 'github'}}"
+    inputs:
+      url: "https://api.github.com/repos/{{blocks.parse_url.outputs.stdout | trim | split(',')[1]}}/pulls/{{blocks.parse_url.outputs.stdout | trim | split(',')[2]}}"
+      method: GET
+      headers:
+        Authorization: "Bearer {{secrets.GITHUB_TOKEN}}"
+        Accept: "application/vnd.github+json"
+        X-GitHub-Api-Version: "2022-11-28"
+
+  - id: fetch_gitlab_mr
+    type: HttpCall
+    description: Call GitLab API to fetch MR details.
+    depends_on:
+      - parse_url
+    condition: "{{blocks.parse_url.outputs.stdout | trim | split(',')[0] == 'gitlab'}}"
+    inputs:
+      url: "{{blocks.parse_url.outputs.stdout | trim | split(',')[1]}}/api/v4/projects/{{blocks.parse_url.outputs.stdout | trim | split(',')[2]}}/merge_requests/{{blocks.parse_url.outputs.stdout | trim | split(',')[3]}}"
+      method: GET
+      headers:
+        PRIVATE-TOKEN: "{{secrets.GITLAB_TOKEN}}"
+
+  - id: extract_metadata
+    type: LLMCall
+    description: Extract and normalize metadata from the API response (GitHub or GitLab).
+    depends_on:
+      - fetch_github_pr
+      - fetch_gitlab_mr
+    inputs:
+      profile: default
+      prompt: |
+        Extract PR/MR metadata from this JSON response and normalize it to the schema below.
+
+        Platform: {{blocks.parse_url.outputs.stdout | trim | split(',')[0]}}
+
+        API Response:
+        {% if blocks.fetch_github_pr.succeeded %}
+        {{blocks.fetch_github_pr.outputs.response_body}}
+        {% elif blocks.fetch_gitlab_mr.succeeded %}
+        {{blocks.fetch_gitlab_mr.outputs.response_body}}
+        {% endif %}
+
+        Notes for normalization:
+        - GitHub uses "open/closed/merged" states; GitLab uses "opened/closed/merged/locked"
+        - Map GitLab "opened" to "open" for consistency
+        - GitHub: author is in "user.login", GitLab: author is in "author.username"
+        - GitHub: base branch is "base.ref", head branch is "head.ref"
+        - GitLab: base branch is "target_branch", head branch is "source_branch"
+      response_schema:
+        type: object
+        properties:
+          title:
+            type: string
+          description:
+            type: string
+          author:
+            type: string
+          state:
+            type: string
+            enum: [open, closed, merged]
+          created_at:
+            type: string
+          updated_at:
+            type: string
+          base_branch:
+            type: string
+          head_branch:
+            type: string
+          commits_count:
+            type: integer
+          changed_files_count:
+            type: integer
+          additions:
+            type: integer
+          deletions:
+            type: integer
+          labels:
+            type: array
+            items:
+              type: string
+          reviewers:
+            type: array
+            items:
+              type: string
+          linked_issues:
+            type: array
+            items:
+              type: string
+        required: [title, author, state, base_branch, head_branch]
+outputs:
+  pr_metadata:
+    value: "{{blocks.extract_metadata.outputs.response}}"
+    type: dict
+    description: "Normalized metadata of the PR/MR (works for both GitHub and GitLab)."
+  platform:
+    value: "{{blocks.parse_url.outputs.stdout | trim | split(',')[0]}}"
+    type: str
+    description: "Detected platform: 'github' or 'gitlab'."

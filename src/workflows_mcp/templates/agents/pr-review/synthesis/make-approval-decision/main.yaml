@@ -1,0 +1,79 @@
+name: make-approval-decision
+description: "Decide on PR approval based on the severity of findings, using LLM for intelligent analysis and automated decision-making."
+tags:
+  - approval
+  - decision-making
+  - severity-analysis
+  - pr-management
+inputs:
+  filtered_findings:
+    type: list
+    description: List of findings that meet the severity threshold.
+    required: true
+blocks:
+  - id: initialize_approval
+    type: Shell
+    description: Initialize approval as true.
+    inputs:
+      command: "echo 'true'"
+  - id: analyze_findings
+    type: LLMCall
+    description: Use LLM to analyze findings and provide structured reasoning.
+    depends_on:
+      - initialize_approval
+    for_each: "{{inputs.filtered_findings}}"
+    inputs:
+      profile: default
+      prompt: "Analyze the following finding and determine if it should block an approval: {{each.value}}"
+      response_schema:
+        type: object
+        properties:
+          blocker:
+            type: boolean
+          reason:
+            type: string
+          severity:
+            type: string
+            enum: [critical, high, medium, low, info]
+        required: [blocker, reason]
+  - id: aggregate_blockers
+    type: Shell
+    description: Aggregate all blocker values from for_each iterations into a JSON array.
+    depends_on:
+      - analyze_findings
+    inputs:
+      command: |
+        # Build JSON array of blocker values from all iterations
+        # for_each blocks store results in blocks.id['0'], blocks.id['1'], etc.
+        python3 -c "
+        import json
+        # Iteration results as JSON objects
+        results = {{blocks.analyze_findings.blocks | tojson}}
+        # Extract blocker values from each iteration
+        blockers = []
+        for key, iteration in results.items():
+            outputs = iteration.get('outputs', {})
+            response = outputs.get('response', {})
+            blocker = response.get('blocker', False)
+            blockers.append(blocker)
+        print(json.dumps(blockers))
+        "
+  - id: determine_approval
+    type: Shell
+    description: Determine final approval decision based on findings.
+    depends_on:
+      - aggregate_blockers
+    inputs:
+      command: |
+        # Check if any blocker is true
+        blockers='{{blocks.aggregate_blockers.outputs.stdout | trim}}'
+        if echo "$blockers" | grep -q 'true'; then
+          echo 'false'
+        else
+          echo 'true'
+        fi
+outputs:
+  approve:
+    value: "{{blocks.determine_approval.outputs.stdout}}"
+    type: bool
+    description: Approval decision based on findings.
