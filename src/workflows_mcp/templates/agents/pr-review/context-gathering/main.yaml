@@ -62,7 +62,7 @@ inputs:
     required: false
     default: "{{tmp}}/pr-review-repo"
 
-  state_path:
+  state:
     type: str
     description: |
       Path to state file for task tracking.
@@ -75,7 +75,7 @@ inputs:
     type: str
     description: |
       Parent task ID for creating sub-tasks in the state tree.
-      Used with state_path to create hierarchical task relationships.
+      Used with state to create hierarchical task relationships.
     required: false
     default: ""
 
@@ -86,11 +86,11 @@ blocks:
   - id: track_start
     type: Workflow
     description: Create sub-task for context-gathering phase in state tree.
-    condition: "{{ inputs.state_path and inputs.state_path != '' }}"
+    condition: "{{ inputs.state | trim != '' }}"
     inputs:
       workflow: agent-state-management
       inputs:
-        state: "{{ inputs.state_path }}"
+        state: "{{ inputs.state }}"
         parent_id: "{{ inputs.parent_task_id }}"
         task: "Phase: Context Gathering"
         task_type: "phase"
@@ -188,15 +188,15 @@ blocks:
         {% set is_url_mode = inputs.url and inputs.url != 'None' and inputs.url != '' %}
 
         # Base branch: PR metadata > input > default
-        {% if is_url_mode and blocks.fetch_pr_metadata.outputs.pr_metadata.base_branch %}
-        BASE="{{ blocks.fetch_pr_metadata.outputs.pr_metadata.base_branch }}"
+        {% if is_url_mode and blocks.fetch_pr_metadata.succeeded and blocks.fetch_pr_metadata.outputs.pr_metadata.get('base_branch') %}
+        BASE="{{ blocks.fetch_pr_metadata.outputs.pr_metadata.get('base_branch') }}"
         {% else %}
         BASE="{{ inputs.base_branch }}"
         {% endif %}
 
         # Head branch: PR metadata > input > detected
-        {% if is_url_mode and blocks.fetch_pr_metadata.outputs.pr_metadata.head_branch %}
-        HEAD="{{ blocks.fetch_pr_metadata.outputs.pr_metadata.head_branch }}"
+        {% if is_url_mode and blocks.fetch_pr_metadata.succeeded and blocks.fetch_pr_metadata.outputs.pr_metadata.get('head_branch') %}
+        HEAD="{{ blocks.fetch_pr_metadata.outputs.pr_metadata.get('head_branch') }}"
         {% elif inputs.head_branch and inputs.head_branch != 'None' and inputs.head_branch != '' %}
         HEAD="{{ inputs.head_branch }}"
         {% elif blocks.get_local_current_branch.succeeded %}
@@ -235,14 +235,14 @@ blocks:
       command: |
         {% set is_url_mode = inputs.url and inputs.url != 'None' and inputs.url != '' %}
 
-        {% if is_url_mode and blocks.fetch_pr_metadata.outputs.pr_metadata.base_branch %}
-        BASE="{{ blocks.fetch_pr_metadata.outputs.pr_metadata.base_branch }}"
+        {% if is_url_mode and blocks.fetch_pr_metadata.succeeded and blocks.fetch_pr_metadata.outputs.pr_metadata.get('base_branch') %}
+        BASE="{{ blocks.fetch_pr_metadata.outputs.pr_metadata.get('base_branch') }}"
         {% else %}
         BASE="{{ inputs.base_branch }}"
         {% endif %}
 
-        {% if is_url_mode and blocks.fetch_pr_metadata.outputs.pr_metadata.head_branch %}
-        HEAD="{{ blocks.fetch_pr_metadata.outputs.pr_metadata.head_branch }}"
+        {% if is_url_mode and blocks.fetch_pr_metadata.succeeded and blocks.fetch_pr_metadata.outputs.pr_metadata.get('head_branch') %}
+        HEAD="{{ blocks.fetch_pr_metadata.outputs.pr_metadata.get('head_branch') }}"
         {% elif inputs.head_branch and inputs.head_branch != 'None' and inputs.head_branch != '' %}
         HEAD="{{ inputs.head_branch }}"
         {% elif blocks.get_local_current_branch.succeeded %}
@@ -315,13 +315,13 @@ blocks:
   - id: track_done
     type: Workflow
     description: Mark context-gathering phase as complete with captured data.
-    condition: "{{ inputs.state_path and inputs.state_path != '' and blocks.track_start.succeeded }}"
+    condition: "{{ inputs.state | trim != '' and blocks.track_start.succeeded }}"
     depends_on:
       - categorize_changes
     inputs:
       workflow: agent-state-management
       inputs:
-        state: "{{ inputs.state_path }}"
+        state: "{{ inputs.state }}"
         task_id: "{{ blocks.track_start.outputs.task_id }}"
         status: "done"
         caller: "pr-review:context-gathering"
@@ -389,8 +389,8 @@ outputs:
   # Branch information - resolved from PR metadata or inputs
   base_branch:
     value: >-
-      {%- if inputs.url and inputs.url != 'None' and blocks.fetch_pr_metadata.outputs.pr_metadata.base_branch -%}
-        {{ blocks.fetch_pr_metadata.outputs.pr_metadata.base_branch }}
+      {%- if inputs.url and inputs.url != 'None' and blocks.fetch_pr_metadata.succeeded and blocks.fetch_pr_metadata.outputs.pr_metadata.get('base_branch') -%}
+        {{ blocks.fetch_pr_metadata.outputs.pr_metadata.get('base_branch') }}
       {%- else -%}
         {{ inputs.base_branch }}
       {%- endif -%}
@@ -399,8 +399,8 @@ outputs:
 
   head_branch:
     value: >-
-      {%- if inputs.url and inputs.url != 'None' and blocks.fetch_pr_metadata.outputs.pr_metadata.head_branch -%}
-        {{ blocks.fetch_pr_metadata.outputs.pr_metadata.head_branch }}
+      {%- if inputs.url and inputs.url != 'None' and blocks.fetch_pr_metadata.succeeded and blocks.fetch_pr_metadata.outputs.pr_metadata.get('head_branch') -%}
+        {{ blocks.fetch_pr_metadata.outputs.pr_metadata.get('head_branch') }}
       {%- elif inputs.head_branch and inputs.head_branch != 'None' and inputs.head_branch != '' -%}
         {{ inputs.head_branch }}
       {%- elif blocks.get_local_current_branch.succeeded -%}

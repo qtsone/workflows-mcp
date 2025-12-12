@@ -108,7 +108,7 @@ blocks:
         repo_path: "{{ inputs.repo_path }}"
         base_branch: "{{ inputs.base_branch }}"
         head_branch: "{{ inputs.head_branch }}"
-        state_path: "{{ blocks.state_management.outputs.state }}"
+        state: "{{ blocks.state_management.outputs.state }}"
         parent_task_id: "{{ blocks.state_management.outputs.task_id }}"
 
   # ==========================================================================
@@ -130,7 +130,7 @@ blocks:
         # Pass focus if provided for targeted assessment
         focus: "{{ inputs.focus | default('general', true) }}"
         changed_files: "{{ blocks.context_gathering.outputs.changed_files }}"
-        state_path: "{{ blocks.state_management.outputs.state }}"
+        state: "{{ blocks.state_management.outputs.state }}"
         parent_task_id: "{{ blocks.state_management.outputs.task_id }}"
 
   # ==========================================================================
@@ -154,7 +154,7 @@ blocks:
         head_branch: "{{ blocks.context_gathering.outputs.head_branch }}"
         iteration_cap: "{{ inputs.iteration_cap }}"
         focus: "{{ inputs.focus | default('general', true) }}"
-        state_path: "{{ blocks.state_management.outputs.state }}"
+        state: "{{ blocks.state_management.outputs.state }}"
         parent_task_id: "{{ blocks.state_management.outputs.task_id }}"
 
   # ==========================================================================
@@ -174,7 +174,7 @@ blocks:
         threshold: "{{ inputs.threshold }}"
         pr_metadata: "{{ blocks.context_gathering.outputs.pr_metadata }}"
         focus: "{{ inputs.focus | default('general', true) }}"
-        state_path: "{{ blocks.state_management.outputs.state }}"
+        state: "{{ blocks.state_management.outputs.state }}"
         parent_task_id: "{{ blocks.state_management.outputs.task_id }}"
 
   # ==========================================================================
@@ -198,7 +198,7 @@ blocks:
         comment: "{{ inputs.comment }}"
         report: "{{ blocks.synthesis.outputs.report }}"
         approve: "{{ blocks.synthesis.outputs.approve }}"
-        state_path: "{{ blocks.state_management.outputs.state }}"
+        state: "{{ blocks.state_management.outputs.state }}"
         parent_task_id: "{{ blocks.state_management.outputs.task_id }}"
 
 outputs:
