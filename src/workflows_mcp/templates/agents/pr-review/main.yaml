@@ -189,7 +189,7 @@ blocks:
     depends_on:
       - synthesis
     inputs:
-      workflow: action
+      workflow: post-review-comments
       inputs:
         # Use normalized pr_url from context_gathering (empty for local repos)
         url: "{{ blocks.context_gathering.outputs.pr_url }}"

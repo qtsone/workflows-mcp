@@ -55,16 +55,19 @@ blocks:
       - compile_by_severity
     inputs:
       command: |
-        python3 -c "
+        python3 << 'EOF'
         import json
-        findings = {{blocks.compile_by_severity.outputs.response | tojson}}
+        import os
+        findings = json.loads(os.environ['FINDINGS_JSON'])
         severity_map = {'info': 0, 'low': 1, 'medium': 2, 'high': 3, 'critical': 4}
         result = {}
         for severity, items in findings.items():
             if items:
                 result[str(severity_map.get(severity, 0))] = items
         print(json.dumps(result))
-        "
+        EOF
+      env:
+        FINDINGS_JSON: "{{ blocks.compile_by_severity.outputs.response | tojson }}"
 outputs:
   compiled_findings:
     value: "{{blocks.transform_to_numeric.outputs.stdout | fromjson}}"

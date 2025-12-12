@@ -53,9 +53,9 @@ blocks:
     description: Call GitHub API to fetch PR details.
     depends_on:
       - parse_url
-    condition: "{{blocks.parse_url.outputs.stdout | trim | split(',')[0] == 'github'}}"
+    condition: "{{ (blocks.parse_url.outputs.stdout | trim).split(',')[0] == 'github' }}"
     inputs:
-      url: "https://api.github.com/repos/{{blocks.parse_url.outputs.stdout | trim | split(',')[1]}}/pulls/{{blocks.parse_url.outputs.stdout | trim | split(',')[2]}}"
+      url: "https://api.github.com/repos/{{ (blocks.parse_url.outputs.stdout | trim).split(',')[1] }}/pulls/{{ (blocks.parse_url.outputs.stdout | trim).split(',')[2] }}"
       method: GET
       headers:
         Authorization: "Bearer {{secrets.GITHUB_TOKEN}}"
@@ -67,9 +67,9 @@ blocks:
     description: Call GitLab API to fetch MR details.
     depends_on:
       - parse_url
-    condition: "{{blocks.parse_url.outputs.stdout | trim | split(',')[0] == 'gitlab'}}"
+    condition: "{{ (blocks.parse_url.outputs.stdout | trim).split(',')[0] == 'gitlab' }}"
     inputs:
-      url: "{{blocks.parse_url.outputs.stdout | trim | split(',')[1]}}/api/v4/projects/{{blocks.parse_url.outputs.stdout | trim | split(',')[2]}}/merge_requests/{{blocks.parse_url.outputs.stdout | trim | split(',')[3]}}"
+      url: "{{ (blocks.parse_url.outputs.stdout | trim).split(',')[1] }}/api/v4/projects/{{ (blocks.parse_url.outputs.stdout | trim).split(',')[2] }}/merge_requests/{{ (blocks.parse_url.outputs.stdout | trim).split(',')[3] }}"
       method: GET
       headers:
         PRIVATE-TOKEN: "{{secrets.GITLAB_TOKEN}}"
@@ -85,7 +85,7 @@ blocks:
       prompt: |
         Extract PR/MR metadata from this JSON response and normalize it to the schema below.
 
-        Platform: {{blocks.parse_url.outputs.stdout | trim | split(',')[0]}}
+        Platform: {{ (blocks.parse_url.outputs.stdout | trim).split(',')[0] }}
 
         API Response:
         {% if blocks.fetch_github_pr.succeeded %}
@@ -147,6 +147,6 @@ outputs:
     type: dict
     description: "Normalized metadata of the PR/MR (works for both GitHub and GitLab)."
   platform:
-    value: "{{blocks.parse_url.outputs.stdout | trim | split(',')[0]}}"
+    value: "{{ (blocks.parse_url.outputs.stdout | trim).split(',')[0] }}"
     type: str
     description: "Detected platform: 'github' or 'gitlab'."

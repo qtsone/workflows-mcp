@@ -114,7 +114,7 @@ blocks:
   - id: clone_remote_repo
     type: Workflow
     description: Clone the remote repository using git-repository-management workflow.
-    condition: "{{ inputs.url and inputs.url != 'None' and inputs.url != '' }}"
+    condition: "{{ (inputs.url | default('', true)) not in ('', 'None') }}"
     inputs:
       workflow: git-repository-management
       inputs:
@@ -124,7 +124,7 @@ blocks:
   - id: fetch_pr_metadata
     type: Workflow
     description: Fetch PR metadata via API for remote PRs.
-    condition: "{{ inputs.url and inputs.url != 'None' and inputs.url != '' }}"
+    condition: "{{ (inputs.url | default('', true)) not in ('', 'None') }}"
     inputs:
       workflow: pr-metadata-fetch
       inputs:
@@ -137,7 +137,7 @@ blocks:
   - id: validate_local_repo
     type: Shell
     description: Validate that the local repository path exists and is a git repo.
-    condition: "{{ inputs.repo_path and inputs.repo_path != 'None' and inputs.repo_path != '' }}"
+    condition: "{{ (inputs.repo_path | default('', true)) not in ('', 'None') }}"
     inputs:
       command: |
         if [ ! -d "{{ inputs.repo_path }}/.git" ]; then
@@ -149,7 +149,7 @@ blocks:
   - id: get_local_current_branch
     type: Shell
     description: Get current branch from local repository if head_branch not specified.
-    condition: "{{ inputs.repo_path and inputs.repo_path != 'None' and (not inputs.head_branch or inputs.head_branch == 'None' or inputs.head_branch == '') }}"
+    condition: "{{ (inputs.repo_path | default('', true)) not in ('', 'None') and (inputs.head_branch | default('', true)) in ('', 'None') }}"
     depends_on:
       - block: validate_local_repo
         required: false
