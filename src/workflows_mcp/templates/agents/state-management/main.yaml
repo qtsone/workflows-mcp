@@ -254,8 +254,29 @@ blocks:
         task['updated_at'] = now
         state['updated_at'] = now
 
-        # Compute pending children
+        # Compute children status aggregates
         children = task.get('children', [])
+        child_statuses = [state['tasks'].get(c, {}).get('status', 'pending') for c in children]
+
+        children_done = sum(1 for s in child_statuses if s == 'done')
+        children_failed = sum(1 for s in child_statuses if s == 'failed')
+        children_in_progress = sum(1 for s in child_statuses if s == 'in-progress')
+        children_pending_count = len(children) - children_done - children_failed - children_in_progress
+
+        # Aggregate status helpers
+        all_children_done = len(children) > 0 and children_done == len(children)
+        any_child_failed = children_failed > 0
+        progress_pct = round((children_done / len(children) * 100), 1) if children else 100.0
+
+        children_summary = {
+            'total': len(children),
+            'done': children_done,
+            'failed': children_failed,
+            'in_progress': children_in_progress,
+            'pending': children_pending_count
+        }
+
+        # List of child IDs that aren't complete (for iteration)
         pending = [c for c in children if state['tasks'].get(c, {}).get('status') not in ('done', 'failed')]
 
         # Build audit entry
@@ -287,7 +308,11 @@ blocks:
             'operation': operation,
             'audit_entry': audit_entry,
             'pending_children': pending,
-            'task': task
+            'task': task,
+            'all_children_done': all_children_done,
+            'any_child_failed': any_child_failed,
+            'progress_pct': progress_pct,
+            'children_summary': children_summary
         }))
         EOF
       env:
@@ -401,3 +426,23 @@ outputs:
     description: The target task's data field
     type: dict
     value: "{{(blocks.build_task.outputs.stdout | fromjson).task.data}}"
+
+  all_children_done:
+    description: True if all children have status 'done' (and there is at least one child)
+    type: bool
+    value: "{{(blocks.build_task.outputs.stdout | fromjson).all_children_done}}"
+
+  any_child_failed:
+    description: True if any child has status 'failed'
+    type: bool
+    value: "{{(blocks.build_task.outputs.stdout | fromjson).any_child_failed}}"
+
+  progress_pct:
+    description: Percentage of children completed (0-100). Returns 100 if no children.
+    type: num
+    value: "{{(blocks.build_task.outputs.stdout | fromjson).progress_pct}}"
+
+  children_summary:
+    description: Summary counts of children by status (total, done, failed, in_progress, pending)
+    type: dict
+    value: "{{(blocks.build_task.outputs.stdout | fromjson).children_summary}}"
