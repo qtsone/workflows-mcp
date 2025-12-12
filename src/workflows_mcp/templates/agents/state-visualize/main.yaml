@@ -1,0 +1,267 @@
+name: agent-state-visualize
+description: |
+  Visualize hierarchical task state as ASCII tree.
+
+  Renders task tree with status icons, durations, and optional data fields.
+  Useful for debugging and progress tracking.
+
+  Example output:
+    PR Review [task-fa67c4a3] done (23.4s)
+    ├─ Context Gathering ✓ 2.3s
+    ├─ Initial Assessment ✓ 4.1s (risk: high)
+    ├─ Investigation Loop ● 15.7s
+    │  ├─ file1.py ✓ 3.2s
+    │  └─ file2.py ○ pending
+    └─ Synthesis ○ pending
+
+tags: [agent, state-management, visualization, debugging, tree]
+
+inputs:
+  state:
+    type: str
+    description: |
+      Path to state file (JSON).
+      Must be a valid state file created by agent-state-management.
+    required: true
+
+  show_data:
+    type: bool
+    description: |
+      Include key data fields in output.
+      Shows select fields like 'risk', 'platform', etc. in parentheses.
+    required: false
+    default: true
+
+  max_depth:
+    type: num
+    description: |
+      Maximum tree depth to show (0 = unlimited).
+      Useful for large state trees.
+    required: false
+    default: 0
+
+  task_id:
+    type: str
+    description: |
+      Task ID to use as root for visualization.
+      Defaults to the root_task_id from state.
+    required: false
+    default: ""
+
+blocks:
+  # ==========================================================================
+  # Render tree and compute statistics
+  # ==========================================================================
+  - id: render
+    type: Shell
+    description: Render ASCII tree and compute statistics.
+    inputs:
+      command: |
+        python3 << 'EOF'
+        import os
+        import json
+        from datetime import datetime
+
+        # Load state from file
+        state_path = os.environ['STATE_PATH']
+        with open(state_path) as f:
+            state = json.load(f)
+        show_data = os.environ.get('SHOW_DATA', 'true').lower() == 'true'
+        max_depth = int(os.environ.get('MAX_DEPTH', '0'))
+        task_id_input = os.environ.get('TASK_ID', '').strip()
+
+        # Status icons
+        STATUS_ICONS = {
+            'done': '\u2713',      # ✓
+            'failed': '\u2717',    # ✗
+            'in-progress': '\u25cf',  # ●
+            'pending': '\u25cb',   # ○
+            'blocked': '\u26a0',   # ⚠
+        }
+
+        # Data fields to show (in priority order)
+        SHOW_FIELDS = ['risk_level', 'platform', 'focus', 'files_changed', 'approve']
+
+        def parse_iso(dt_str):
+            """Parse ISO datetime string."""
+            if not dt_str:
+                return None
+            try:
+                # Handle various ISO formats
+                dt_str = dt_str.replace('Z', '+00:00')
+                if '+' in dt_str:
+                    dt_str = dt_str.rsplit('+', 1)[0]
+                return datetime.fromisoformat(dt_str)
+            except (ValueError, TypeError):
+                return None
+
+        def format_duration(seconds):
+            """Format duration in human-readable form."""
+            if seconds < 0.1:
+                return ""
+            elif seconds < 60:
+                return f"{seconds:.1f}s"
+            elif seconds < 3600:
+                mins = int(seconds // 60)
+                secs = seconds % 60
+                return f"{mins}m{secs:.0f}s"
+            else:
+                hours = int(seconds // 3600)
+                mins = int((seconds % 3600) // 60)
+                return f"{hours}h{mins}m"
+
+        def get_duration(task):
+            """Calculate task duration from timestamps."""
+            created = parse_iso(task.get('created_at'))
+            updated = parse_iso(task.get('updated_at'))
+            if created and updated:
+                return (updated - created).total_seconds()
+            return 0
+
+        def get_data_summary(task, show_data):
+            """Extract key data fields for display."""
+            if not show_data:
+                return ""
+            data = task.get('data', {})
+            if not data:
+                return ""
+            parts = []
+            for field in SHOW_FIELDS:
+                if field in data:
+                    val = data[field]
+                    if val not in (None, '', 0, False):
+                        # Shorten field name for display
+                        short = field.replace('_level', '').replace('_changed', '')
+                        parts.append(f"{short}: {val}")
+            return f" ({', '.join(parts)})" if parts else ""
+
+        def render_tree(state, task_id, prefix="", is_last=True, depth=0, lines=None):
+            """Render task tree recursively."""
+            if lines is None:
+                lines = []
+
+            tasks = state.get('tasks', {})
+            if task_id not in tasks:
+                return lines
+
+            task = tasks[task_id]
+            status = task.get('status', 'pending')
+            icon = STATUS_ICONS.get(status, '?')
+
+            # Duration
+            duration = get_duration(task)
+            duration_str = format_duration(duration) if duration else ""
+
+            # Data summary
+            data_str = get_data_summary(task, show_data)
+
+            # Build line
+            if depth == 0:
+                # Root task - no connector
+                task_name = task.get('task', task_id)
+                line = f"{task_name} [{task_id}] {icon} {status}"
+                if duration_str:
+                    line += f" ({duration_str})"
+                line += data_str
+            else:
+                connector = "\u2514\u2500" if is_last else "\u251c\u2500"  # └─ or ├─
+                task_name = task.get('task', task_id)
+                line = f"{prefix}{connector} {task_name} {icon}"
+                if duration_str:
+                    line += f" {duration_str}"
+                line += data_str
+
+            lines.append(line)
+
+            # Check depth limit
+            if max_depth > 0 and depth >= max_depth:
+                children = task.get('children', [])
+                if children:
+                    child_prefix = prefix + ("   " if is_last else "\u2502  ")
+                    lines.append(f"{child_prefix}... ({len(children)} children)")
+                return lines
+
+            # Recurse for children
+            children = task.get('children', [])
+            for i, child_id in enumerate(children):
+                child_is_last = (i == len(children) - 1)
+                child_prefix = prefix + ("   " if is_last else "\u2502  ")  # │
+                render_tree(state, child_id, child_prefix, child_is_last, depth + 1, lines)
+
+            return lines
+
+        def compute_statistics(state):
+            """Compute summary statistics."""
+            tasks = state.get('tasks', {})
+            total = len(tasks)
+
+            status_counts = {}
+            total_duration = 0
+            max_depth_found = 0
+
+            def get_depth(task_id, depth=0):
+                task = tasks.get(task_id, {})
+                children = task.get('children', [])
+                if not children:
+                    return depth
+                return max(get_depth(c, depth + 1) for c in children)
+
+            for task_id, task in tasks.items():
+                status = task.get('status', 'pending')
+                status_counts[status] = status_counts.get(status, 0) + 1
+                total_duration += get_duration(task)
+
+            root_id = state.get('root_task_id')
+            if root_id:
+                max_depth_found = get_depth(root_id)
+
+            return {
+                'total_tasks': total,
+                'status_counts': status_counts,
+                'total_duration': round(total_duration, 2),
+                'total_duration_formatted': format_duration(total_duration),
+                'max_depth': max_depth_found,
+                'done': status_counts.get('done', 0),
+                'failed': status_counts.get('failed', 0),
+                'in_progress': status_counts.get('in-progress', 0),
+                'pending': status_counts.get('pending', 0)
+            }
+
+        # Determine root task
+        root_id = task_id_input or state.get('root_task_id')
+        if not root_id:
+            # Fallback: find task with no parent
+            for tid, task in state.get('tasks', {}).items():
+                if not task.get('parent_id'):
+                    root_id = tid
+                    break
+
+        # Render tree
+        tree_lines = render_tree(state, root_id) if root_id else ["No tasks found"]
+        tree_output = "\n".join(tree_lines)
+
+        # Compute statistics
+        summary = compute_statistics(state)
+
+        # Output
+        print(json.dumps({
+            'tree': tree_output,
+            'summary': summary
+        }))
+        EOF
+      env:
+        STATE_PATH: "{{inputs.state}}"
+        SHOW_DATA: "{{inputs.show_data | string | lower}}"
+        MAX_DEPTH: "{{inputs.max_depth | string}}"
+        TASK_ID: "{{inputs.task_id}}"
+
+outputs:
+  tree:
+    description: ASCII tree visualization of task hierarchy
+    type: str
+    value: "{{(blocks.render.outputs.stdout | fromjson).tree}}"
+
+  summary:
+    description: Statistics (total_tasks, done, failed, in_progress, pending, total_duration, max_depth)
+    type: dict
+    value: "{{(blocks.render.outputs.stdout | fromjson).summary}}"
