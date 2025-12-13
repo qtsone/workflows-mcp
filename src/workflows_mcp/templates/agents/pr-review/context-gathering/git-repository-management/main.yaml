@@ -1,0 +1,214 @@
+name: git-repository-management
+description: |
+  Manage git repository setup from a PR/MR URL - clone, fetch, and checkout appropriate branch.
+  Supports both GitHub PRs and GitLab MRs.
+
+tags:
+  - git
+  - repository
+  - management
+  - pr-review
+  - github
+  - gitlab
+
+inputs:
+  url:
+    type: str
+    description: |
+      Full PR/MR URL or repository URL.
+      Supported formats:
+        - GitHub PR: https://github.com/owner/repo/pull/123
+        - GitLab MR: https://gitlab.com/group/project/-/merge_requests/456
+        - Plain repo: https://github.com/owner/repo
+    required: true
+
+  workspace:
+    type: str
+    description: Local path where the repository should be cloned.
+    required: false
+    default: "{{tmp}}/repo"
+
+blocks:
+  - id: parse_url
+    type: Shell
+    description: Parse the PR/MR/repo URL to extract repository info and PR/MR number.
+    inputs:
+      command: |
+        python3 << 'PYEOF'
+        import re
+        import json
+        import sys
+
+        url = '{{ inputs.url }}'
+        result = {
+            'platform': 'unknown',
+            'repo': '',
+            'pr_number': '',
+            'base_url': ''
+        }
+
+        # GitHub PR URL: https://github.com/owner/repo/pull/123
+        gh_pr = re.match(r'https://github\.com/([^/]+/[^/]+)/pull/(\d+)', url)
+        if gh_pr:
+            result['platform'] = 'github'
+            result['repo'] = gh_pr.group(1)
+            result['pr_number'] = gh_pr.group(2)
+            result['base_url'] = 'https://github.com'
+
+        # Plain GitHub URL: https://github.com/owner/repo
+        elif 'github.com' in url:
+            result['platform'] = 'github'
+            result['base_url'] = 'https://github.com'
+            clean = url.rstrip('/').replace('.git', '')
+            parts = clean.split('github.com/')[-1].split('/')
+            if len(parts) >= 2:
+                result['repo'] = f'{parts[0]}/{parts[1]}'
+
+        # GitLab MR URL: https://gitlab.com/group/project/-/merge_requests/123
+        # Also: https://gitlab.example.com/group/subgroup/project/-/merge_requests/456
+        elif '/merge_requests/' in url:
+            result['platform'] = 'gitlab'
+            gl_mr = re.match(r'(https?://[^/]+)/(.+)/-/merge_requests/(\d+)', url)
+            if gl_mr:
+                result['base_url'] = gl_mr.group(1)
+                result['repo'] = gl_mr.group(2)
+                result['pr_number'] = gl_mr.group(3)
+
+        # Plain GitLab URL: https://gitlab.com/group/project
+        elif 'gitlab' in url:
+            result['platform'] = 'gitlab'
+            gl_match = re.match(r'(https?://[^/]+)/(.+?)(?:\.git)?/?$', url)
+            if gl_match:
+                result['base_url'] = gl_match.group(1)
+                result['repo'] = gl_match.group(2).rstrip('/')
+
+        # Output JSON result
+        print(json.dumps(result))
+
+        # Also write individual files for outputs
+        with open('{{ tmp }}/platform', 'w') as f:
+            f.write(result['platform'])
+        with open('{{ tmp }}/repo', 'w') as f:
+            f.write(result['repo'])
+        with open('{{ tmp }}/pr_number', 'w') as f:
+            f.write(result['pr_number'])
+        with open('{{ tmp }}/base_url', 'w') as f:
+            f.write(result['base_url'])
+
+        PYEOF
+    outputs:
+      platform:
+        type: str
+        path: "{{tmp}}/platform"
+      repo:
+        type: str
+        path: "{{tmp}}/repo"
+      pr_number:
+        type: str
+        path: "{{tmp}}/pr_number"
+      base_url:
+        type: str
+        path: "{{tmp}}/base_url"
+
+  - id: setup_repository
+    type: Workflow
+    description: Clone or fetch the repository using the standard git-checkout workflow.
+    depends_on:
+      - parse_url
+    inputs:
+      workflow: git-checkout
+      inputs:
+        repo: "{{ blocks.parse_url.outputs.repo }}"
+        workspace: "{{ inputs.workspace }}"
+        fetch_depth: 100
+        clean_mode: skip
+
+  - id: checkout_github_pr
+    type: Shell
+    description: Fetch and checkout the GitHub PR branch.
+    depends_on:
+      - setup_repository
+    condition: "{{ blocks.parse_url.outputs.platform == 'github' and blocks.parse_url.outputs.pr_number != '' }}"
+    inputs:
+      working_dir: "{{ inputs.workspace }}"
+      command: |
+        PR_NUMBER="{{ blocks.parse_url.outputs.pr_number }}"
+        echo "Fetching GitHub PR #$PR_NUMBER..."
+        git fetch origin "pull/$PR_NUMBER/head:pr-$PR_NUMBER"
+        git checkout "pr-$PR_NUMBER"
+        echo "✓ Checked out PR branch: pr-$PR_NUMBER"
+
+  - id: checkout_gitlab_mr
+    type: Shell
+    description: Fetch and checkout the GitLab MR branch.
+    depends_on:
+      - setup_repository
+    condition: "{{ blocks.parse_url.outputs.platform == 'gitlab' and blocks.parse_url.outputs.pr_number != '' }}"
+    inputs:
+      working_dir: "{{ inputs.workspace }}"
+      command: |
+        MR_NUMBER="{{ blocks.parse_url.outputs.pr_number }}"
+        echo "Fetching GitLab MR !$MR_NUMBER..."
+
+        # GitLab uses refs/merge-requests/N/head for MR branches
+        git fetch origin "merge-requests/$MR_NUMBER/head:mr-$MR_NUMBER" 2>/dev/null || \
+        git fetch origin "refs/merge-requests/$MR_NUMBER/head:mr-$MR_NUMBER" 2>/dev/null || \
+        echo "Warning: Could not fetch MR ref, will use default branch"
+
+        if git rev-parse --verify "mr-$MR_NUMBER" &>/dev/null; then
+          git checkout "mr-$MR_NUMBER"
+          echo "✓ Checked out MR branch: mr-$MR_NUMBER"
+        else
+          echo "⚠ MR branch not available, using current branch"
+        fi
+
+  - id: get_repo_info
+    type: Shell
+    description: Get repository information.
+    depends_on:
+      - block: checkout_github_pr
+        required: false
+      - block: checkout_gitlab_mr
+        required: false
+    inputs:
+      working_dir: "{{ inputs.workspace }}"
+      command: |
+        BRANCH=$(git branch --show-current || echo "detached")
+        COMMIT=$(git rev-parse --short HEAD)
+
+        cat << EOF > {{ tmp }}/repo_info.json
+        {
+          "branch": "$BRANCH",
+          "commit": "$COMMIT",
+          "path": "{{ inputs.workspace }}",
+          "platform": "{{ blocks.parse_url.outputs.platform }}",
+          "repo": "{{ blocks.parse_url.outputs.repo }}"
+        }
+        EOF
+
+        echo "✓ Repository ready: $BRANCH @ $COMMIT"
+    outputs:
+      info:
+        type: str
+        path: "{{tmp}}/repo_info.json"
+
+outputs:
+  repo_info:
+    value: "{{ blocks.get_repo_info.outputs.info | fromjson }}"
+    type: dict
+    description: "Repository information including branch, commit, path, platform, and repo."
+
+  workspace:
+    value: "{{ inputs.workspace }}"
+    type: str
+    description: "Path to the repository workspace."
+
+  platform:
+    value: "{{ blocks.parse_url.outputs.platform }}"
+    type: str
+    description: "Detected platform: 'github', 'gitlab', or 'unknown'."
+
+  pr_number:
+    value: "{{ blocks.parse_url.outputs.pr_number }}"
+    type: str
+    description: "PR/MR number (empty if not a PR/MR URL)."

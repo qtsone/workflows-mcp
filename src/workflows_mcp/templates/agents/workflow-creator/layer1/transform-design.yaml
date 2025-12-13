@@ -468,6 +468,37 @@ blocks:
 
             return result
 
+        def coerce_default_value(value: Any, declared_type: str) -> Any:
+            """Coerce default value to match the declared input type.
+
+            LLM response schemas often output all defaults as strings.
+            This converts string representations to proper Python types.
+            """
+            if value is None:
+                return None
+
+            declared_type = declared_type.lower()
+
+            if declared_type == "bool":
+                if isinstance(value, bool):
+                    return value
+                if isinstance(value, str):
+                    return value.lower() in ("true", "yes", "1", "on")
+                return bool(value)
+
+            if declared_type == "num":
+                if isinstance(value, (int, float)):
+                    return value
+                if isinstance(value, str):
+                    try:
+                        return int(value) if "." not in value else float(value)
+                    except ValueError:
+                        return value
+                return value
+
+            # For str and other types, return as-is
+            return value
+
         def restructure_workflow_inputs(inputs_array: list) -> dict:
             if not inputs_array:
                 return {}
@@ -481,7 +512,8 @@ blocks:
                 if not name or is_null_equivalent(name):
                     continue
 
-                entry = {"type": normalize_value_type(item.get("type", "str"))}
+                declared_type = normalize_value_type(item.get("type", "str"))
+                entry = {"type": declared_type}
 
                 if item.get("description") and not is_null_equivalent(item["description"]):
                     entry["description"] = normalize_string(item["description"])
@@ -490,7 +522,7 @@ blocks:
                     entry["required"] = bool(item["required"])
 
                 if item.get("default") is not None and not is_null_equivalent(item["default"]):
-                    entry["default"] = item["default"]
+                    entry["default"] = coerce_default_value(item["default"], declared_type)
 
                 result[name] = entry
 

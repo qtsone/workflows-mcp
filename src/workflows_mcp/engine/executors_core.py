@@ -52,6 +52,18 @@ class ShellInput(BlockInput):
         interpolatable_numeric_validator(int, ge=1, le=3600)
     )
 
+    @field_validator("env", mode="before")
+    @classmethod
+    def _coerce_env_values_to_strings(cls, v: Any) -> dict[str, str] | Any:
+        """Auto-coerce env values to strings.
+
+        Environment variables are always strings at the OS level, so we
+        auto-convert numeric and other types for convenience.
+        """
+        if not isinstance(v, dict):
+            return v
+        return {str(k): str(val) for k, val in v.items()}
+
 
 class ShellOutput(BlockOutput):
     """Output model for Shell executor.

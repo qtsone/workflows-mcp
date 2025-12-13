@@ -1,0 +1,324 @@
+name: agent-memory
+description: |
+  Key-value memory storage for agentic workflows.
+
+  Provides shared memory across recursive workflow calls with dot-notation
+  key access and multiple operations.
+
+  Operations:
+  - set: Store value at key (returns previous value)
+  - get: Retrieve value at key (returns default if missing)
+  - append: Append to list at key (creates list if needed)
+  - merge: Deep merge dict into key (creates dict if needed)
+  - delete: Remove key (returns deleted value)
+  - keys: List keys matching pattern (glob-style)
+
+  Example:
+    # Store a finding
+    workflow: agent-memory
+    inputs:
+      memory_path: "{{state.memory_path}}"
+      op: append
+      key: findings
+      value: {"file": "auth.py", "issue": "Missing validation"}
+
+tags: [agent, memory, state-management, key-value]
+
+inputs:
+  memory_path:
+    type: str
+    description: |
+      Path to memory file.
+      File created automatically on first write operation.
+    required: true
+
+  op:
+    type: str
+    description: |
+      Memory operation to perform:
+      - set: Store value at key
+      - get: Retrieve value at key
+      - append: Append value to list at key
+      - merge: Deep merge dict into key
+      - delete: Remove key
+      - keys: List keys matching pattern
+    required: true
+
+  key:
+    type: str
+    description: |
+      Key path using dot-notation for nested access.
+      Examples: "context.framework", "findings", "decisions.auth"
+    required: true
+
+  value:
+    type: str
+    description: |
+      Value for set/append/merge operations (as JSON string).
+      - set: Any JSON-serializable value
+      - append: Value to add to list
+      - merge: Dict to merge into existing dict
+    required: false
+    default: ""
+
+  default:
+    type: str
+    description: |
+      Default value for get operation if key doesn't exist (as JSON string).
+      Returns null if not specified and key missing.
+    required: false
+    default: ""
+
+blocks:
+  # ==========================================================================
+  # Execute memory operation
+  # ==========================================================================
+  - id: execute
+    type: Shell
+    description: Execute the memory operation.
+    inputs:
+      command: |
+        python3 << 'EOF'
+        import os
+        import json
+        import fnmatch
+        from datetime import datetime, timezone
+        from pathlib import Path
+        from typing import Any
+
+        # Load inputs
+        memory_path = os.environ['MEMORY_PATH']
+        op = os.environ['OP']
+        key = os.environ['KEY']
+        value_json = os.environ.get('VALUE', 'null')
+        default_json = os.environ.get('DEFAULT', 'null')
+
+        # Parse JSON values
+        try:
+            value = json.loads(value_json) if value_json != '' else None
+        except json.JSONDecodeError:
+            value = value_json  # Treat as string if not valid JSON
+
+        try:
+            default = json.loads(default_json) if default_json != '' else None
+        except json.JSONDecodeError:
+            default = default_json
+
+        def load_memory(path: str) -> dict:
+            """Load memory file or create empty structure."""
+            if os.path.isfile(path):
+                with open(path) as f:
+                    return json.load(f)
+            return {
+                'created_at': datetime.now(timezone.utc).isoformat(),
+                'updated_at': datetime.now(timezone.utc).isoformat(),
+                'version': 1,
+                'data': {}
+            }
+
+        def save_memory(path: str, memory: dict) -> None:
+            """Save memory file."""
+            memory['updated_at'] = datetime.now(timezone.utc).isoformat()
+            Path(path).parent.mkdir(parents=True, exist_ok=True)
+            with open(path, 'w') as f:
+                json.dump(memory, f, indent=2)
+
+        def get_nested(data: dict, key_path: str, default: Any = None) -> tuple[Any, bool]:
+            """Get value at dot-notation path. Returns (value, exists)."""
+            if not key_path:
+                return data, True
+
+            parts = key_path.split('.')
+            current = data
+
+            for part in parts:
+                if isinstance(current, dict) and part in current:
+                    current = current[part]
+                else:
+                    return default, False
+
+            return current, True
+
+        def set_nested(data: dict, key_path: str, value: Any) -> Any:
+            """Set value at dot-notation path. Returns previous value."""
+            if not key_path:
+                raise ValueError("Key path cannot be empty for set operation")
+
+            parts = key_path.split('.')
+            current = data
+            previous = None
+
+            # Navigate to parent
+            for part in parts[:-1]:
+                if part not in current:
+                    current[part] = {}
+                elif not isinstance(current[part], dict):
+                    # Overwrite non-dict with dict
+                    current[part] = {}
+                current = current[part]
+
+            # Set value
+            final_key = parts[-1]
+            previous = current.get(final_key)
+            current[final_key] = value
+
+            return previous
+
+        def delete_nested(data: dict, key_path: str) -> tuple[Any, bool]:
+            """Delete value at dot-notation path. Returns (deleted_value, existed)."""
+            if not key_path:
+                raise ValueError("Key path cannot be empty for delete operation")
+
+            parts = key_path.split('.')
+            current = data
+
+            # Navigate to parent
+            for part in parts[:-1]:
+                if isinstance(current, dict) and part in current:
+                    current = current[part]
+                else:
+                    return None, False
+
+            # Delete
+            final_key = parts[-1]
+            if isinstance(current, dict) and final_key in current:
+                deleted = current.pop(final_key)
+                return deleted, True
+
+            return None, False
+
+        def deep_merge(base: dict, update: dict) -> dict:
+            """Deep merge update into base."""
+            result = base.copy()
+            for key, val in update.items():
+                if key in result and isinstance(result[key], dict) and isinstance(val, dict):
+                    result[key] = deep_merge(result[key], val)
+                else:
+                    result[key] = val
+            return result
+
+        def collect_keys(data: dict, prefix: str = '') -> list[str]:
+            """Collect all leaf keys with dot-notation paths."""
+            keys = []
+            for k, v in data.items():
+                full_key = f"{prefix}.{k}" if prefix else k
+                if isinstance(v, dict) and v:
+                    keys.extend(collect_keys(v, full_key))
+                else:
+                    keys.append(full_key)
+            return keys
+
+        # Load memory
+        memory = load_memory(memory_path)
+        data = memory.get('data', {})
+
+        result = {
+            'value': None,
+            'exists': False,
+            'keys': [],
+            'previous': None,
+            'op': op,
+            'key': key
+        }
+
+        # Execute operation
+        if op == 'get':
+            val, exists = get_nested(data, key, default)
+            result['value'] = val
+            result['exists'] = exists
+
+        elif op == 'set':
+            previous = set_nested(data, key, value)
+            result['previous'] = previous
+            result['exists'] = previous is not None
+            result['value'] = value
+            save_memory(memory_path, memory)
+
+        elif op == 'append':
+            current, exists = get_nested(data, key)
+            if not exists or current is None:
+                current = []
+            elif not isinstance(current, list):
+                current = [current]  # Convert to list
+
+            current.append(value)
+            set_nested(data, key, current)
+            result['value'] = current
+            result['exists'] = exists
+            save_memory(memory_path, memory)
+
+        elif op == 'merge':
+            if not isinstance(value, dict):
+                raise ValueError("merge operation requires dict value")
+
+            current, exists = get_nested(data, key)
+            if not exists or current is None:
+                current = {}
+            elif not isinstance(current, dict):
+                raise ValueError(f"Cannot merge into non-dict at key '{key}'")
+
+            merged = deep_merge(current, value)
+            set_nested(data, key, merged)
+            result['value'] = merged
+            result['exists'] = exists
+            save_memory(memory_path, memory)
+
+        elif op == 'delete':
+            deleted, existed = delete_nested(data, key)
+            result['previous'] = deleted
+            result['exists'] = existed
+            result['value'] = deleted
+            if existed:
+                save_memory(memory_path, memory)
+
+        elif op == 'keys':
+            all_keys = collect_keys(data)
+            # Filter by pattern if key contains wildcards
+            if '*' in key or '?' in key:
+                matched = [k for k in all_keys if fnmatch.fnmatch(k, key)]
+            else:
+                # Prefix match
+                matched = [k for k in all_keys if k.startswith(key) or k == key]
+            result['keys'] = sorted(matched)
+            result['value'] = result['keys']
+            result['exists'] = len(matched) > 0
+
+        else:
+            raise ValueError(f"Unknown operation: {op}")
+
+        print(json.dumps(result))
+        EOF
+      env:
+        MEMORY_PATH: "{{inputs.memory_path}}"
+        OP: "{{inputs.op}}"
+        KEY: "{{inputs.key}}"
+        VALUE: "{{inputs.value}}"
+        DEFAULT: "{{inputs.default}}"
+
+outputs:
+  value:
+    description: |
+      Retrieved or resulting value:
+      - get: Value at key (or default)
+      - set: New value that was set
+      - append: Updated list
+      - merge: Merged dict
+      - delete: Deleted value
+      - keys: List of matching keys
+    type: json
+    value: "{{(blocks.execute.outputs.stdout | fromjson).value}}"
+
+  exists:
+    description: Whether the key existed before the operation.
+    type: bool
+    value: "{{(blocks.execute.outputs.stdout | fromjson).exists}}"
+
+  previous:
+    description: Previous value (for set/delete operations).
+    type: json
+    value: "{{(blocks.execute.outputs.stdout | fromjson).previous}}"
+
+  keys:
+    description: List of matching keys (for keys operation).
+    type: list
+    value: "{{(blocks.execute.outputs.stdout | fromjson)['keys']}}"
