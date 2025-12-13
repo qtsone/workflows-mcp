@@ -1,18 +1,23 @@
 name: agent-pr-review
 description: |
-  AI Autonomous agent for in-depth PR/MR review.
+  AI Autonomous agent for in-depth PR/MR review using fractal investigation.
 
   This agent performs comprehensive code review by:
   1. Gathering context (cloning repo if URL provided, or using local repo)
-  2. Initial assessment to understand intent and identify investigation targets
-  3. Iterative investigation loop with LLM-driven analysis
-  4. Synthesis of findings with severity filtering
-  5. Optional posting of review comments to GitHub/GitLab
+  2. Fractal investigation with recursive depth-based analysis
+  3. Automatic synthesis of all findings from memory tree
+  4. Optional posting of review comments to GitHub/GitLab
+
+  Architecture:
+  - Uses investigation-agent for recursive, self-similar analysis
+  - Memory-centric: all findings accumulated in shared memory
+  - Parallel execution of sibling sub-investigations
+  - Progressive detail: outline at depth=0, full content at depth>0
 
   The workflow normalizes input early - regardless of whether you provide a URL
   or local repo path, all downstream processing uses a consistent local path.
 
-tags: ["agent", "review", ""]
+tags: ["agent", "review", "fractal", "investigation"]
 
 inputs:
   url:
@@ -70,13 +75,16 @@ inputs:
     required: false
     default: false
 
-  iteration_cap:
+  max_depth:
     type: num
-    description: Maximum number of investigation iterations.
+    description: Maximum recursion depth for investigation (prevents infinite loops).
     required: false
-    default: 10
+    default: 3
 
 blocks:
+  # ==========================================================================
+  # STATE MANAGEMENT: Initialize state for the PR review
+  # ==========================================================================
   - id: state_management
     type: Workflow
     description: |
@@ -112,7 +120,7 @@ blocks:
           {
             "trace_id": "{{ blocks.state_management.outputs.trace_id }}",
             "started_at": "{{ now() }}",
-            "version": 1
+            "version": 2
           }
         caller: "pr-review:main"
 
@@ -141,73 +149,107 @@ blocks:
         parent_task_id: "{{ get(blocks.state_management.outputs.task, 'task_id', '') }}"
 
   # ==========================================================================
-  # PHASE 2: Initial Assessment
-  # Analyze diff and metadata to understand intent and identify targets
+  # PHASE 2: Fractal Investigation
+  # Recursive investigation using investigation-agent (replaces initial_assessment,
+  # agent_investigation_loop, and synthesis)
   # ==========================================================================
-  - id: initial_assessment
-    type: Workflow
+  - id: extract_file_targets
+    type: Shell
     description: |
-      Perform initial assessment to understand PR intent and identify
-      files/areas that need deeper investigation.
+      Extract file paths from changed_files categories for investigation scope.
     depends_on:
       - context_gathering
     inputs:
-      workflow: initial-assessment
+      command: |
+        python3 << 'EOF'
+        import json
+        import os
+
+        changed_files_json = os.environ.get('CHANGED_FILES', '{}')
+
+        try:
+            changed_files = json.loads(changed_files_json)
+        except json.JSONDecodeError:
+            changed_files = {}
+
+        # Extract all file paths from categories
+        targets = []
+        categories = changed_files.get('categories', [])
+        for cat in categories:
+            files = cat.get('files', [])
+            targets.extend(files)
+
+        # Deduplicate while preserving order
+        seen = set()
+        unique_targets = []
+        for t in targets:
+            if t not in seen:
+                seen.add(t)
+                unique_targets.append(t)
+
+        # If no files found, use a wildcard pattern for common source files
+        if not unique_targets:
+            unique_targets = ["**/*.py", "**/*.ts", "**/*.js", "**/*.go", "**/*.rs"]
+
+        print(json.dumps({
+            'targets': unique_targets,
+            'count': len(unique_targets)
+        }))
+        EOF
+      env:
+        CHANGED_FILES: "{{ blocks.context_gathering.outputs.changed_files | tojson }}"
+
+  - id: investigation
+    type: Workflow
+    description: |
+      Fractal investigation using investigation-agent.
+      - At depth=0: reads file outlines, identifies areas for deep investigation
+      - Recurses in parallel for sub-investigations
+      - Synthesizes all findings from memory at root level
+    depends_on:
+      - context_gathering
+      - extract_file_targets
+    inputs:
+      workflow: investigation-agent
       inputs:
-        diff: "{{ blocks.context_gathering.outputs.diff }}"
-        pr_metadata: "{{ blocks.context_gathering.outputs.pr_metadata }}"
-        # Pass focus if provided for targeted assessment
-        focus: "{{ inputs.focus | default('general', true) }}"
-        changed_files: "{{ blocks.context_gathering.outputs.changed_files }}"
+        scope:
+          type: "files"
+          targets: "{{ (blocks.extract_file_targets.outputs.stdout | fromjson).targets }}"
+          focus: "{{ inputs.focus | default('general') }}"
+        context:
+          repo_path: "{{ blocks.context_gathering.outputs.repo_path }}"
+          diff: "{{ blocks.context_gathering.outputs.diff }}"
+          base_branch: "{{ blocks.context_gathering.outputs.base_branch }}"
+          head_branch: "{{ blocks.context_gathering.outputs.head_branch }}"
+          pr_metadata: "{{ blocks.context_gathering.outputs.pr_metadata }}"
+          focus: "{{ inputs.focus | default('general') }}"
+        depth: 0
+        max_depth: "{{ inputs.max_depth }}"
         state: "{{ blocks.state_management.outputs.state }}"
         parent_task_id: "{{ get(blocks.state_management.outputs.task, 'task_id', '') }}"
 
   # ==========================================================================
-  # PHASE 3: Investigation Loop
-  # Iteratively investigate identified targets with file access
+  # PHASE 3: Generate Report
+  # Format synthesis results into markdown report
   # ==========================================================================
-  - id: agent_investigation_loop
+  - id: generate_report
     type: Workflow
     description: |
-      Iteratively investigate the PR based on LLM decisions.
-      Now has access to local repo via repo_path for file reading.
+      Generate markdown report from investigation synthesis.
+      Formats findings, risk assessment, and approval decision.
     depends_on:
-      - initial_assessment
+      - investigation
+      - context_gathering
     inputs:
-      workflow: agent-investigation-loop
+      workflow: generate-report
       inputs:
-        investigation_targets: "{{ blocks.initial_assessment.outputs.investigation_targets }}"
-        # KEY: Pass the normalized repo_path for file access
-        repo_path: "{{ blocks.context_gathering.outputs.repo_path }}"
-        base_branch: "{{ blocks.context_gathering.outputs.base_branch }}"
-        head_branch: "{{ blocks.context_gathering.outputs.head_branch }}"
-        iteration_cap: "{{ inputs.iteration_cap }}"
-        focus: "{{ inputs.focus | default('general', true) }}"
-        state: "{{ blocks.state_management.outputs.state }}"
-        parent_task_id: "{{ get(blocks.state_management.outputs.task, 'task_id', '') }}"
-
-  # ==========================================================================
-  # PHASE 4: Synthesis
-  # Compile findings, filter by threshold, generate report
-  # ==========================================================================
-  - id: synthesis
-    type: Workflow
-    description: |
-      Compile and filter findings, generate report, and make approval decision.
-    depends_on:
-      - agent_investigation_loop
-    inputs:
-      workflow: synthesis
-      inputs:
-        investigation_results: "{{ blocks.agent_investigation_loop.outputs.investigation_results }}"
+        synthesis: "{{ blocks.investigation.outputs.synthesis | default({}) }}"
+        pr_metadata: "{{ blocks.context_gathering.outputs.pr_metadata | default({}) }}"
+        focus: "{{ inputs.focus | default('general') }}"
         threshold: "{{ inputs.threshold }}"
-        pr_metadata: "{{ blocks.context_gathering.outputs.pr_metadata }}"
-        focus: "{{ inputs.focus | default('general', true) }}"
-        state: "{{ blocks.state_management.outputs.state }}"
-        parent_task_id: "{{ get(blocks.state_management.outputs.task, 'task_id', '') }}"
 
   # ==========================================================================
-  # PHASE 5: Action
+  # PHASE 4: Action
   # Post review comments if enabled, return final outputs
   # ==========================================================================
   - id: action
@@ -216,7 +258,8 @@ blocks:
       Post review comments to the PR/MR if conditions are met.
       Uses platform info from context_gathering to determine API to use.
     depends_on:
-      - synthesis
+      - investigation
+      - generate_report
     inputs:
       workflow: post-review-comments
       inputs:
@@ -225,8 +268,8 @@ blocks:
         # Use detected platform from context_gathering
         platform: "{{ blocks.context_gathering.outputs.platform }}"
         comment: "{{ inputs.comment }}"
-        report: "{{ blocks.synthesis.outputs.report }}"
-        approve: "{{ blocks.synthesis.outputs.approve }}"
+        report: "{{ blocks.generate_report.outputs.report }}"
+        approve: "{{ blocks.investigation.outputs.synthesis.approve | default(false) }}"
         state: "{{ blocks.state_management.outputs.state }}"
         parent_task_id: "{{ get(blocks.state_management.outputs.task, 'task_id', '') }}"
 
@@ -257,9 +300,9 @@ outputs:
     description: "Local path where the repository is located."
 
   risk_level:
-    value: "{{ blocks.initial_assessment.outputs.risk_level }}"
+    value: "{{ blocks.investigation.outputs.synthesis.risk_level | default('unknown') }}"
     type: str
-    description: "Overall risk level assessment: critical, high, medium, low."
+    description: "Overall risk level assessment: critical, high, medium, low, info."
 
   task_tree:
     value: "{{ blocks.action.outputs.task_tree | default('') }}"
@@ -270,3 +313,13 @@ outputs:
     value: "{{ blocks.action.outputs.task_summary | default({}) }}"
     type: dict
     description: "Task statistics (total_tasks, done, failed, total_duration, etc.)."
+
+  synthesis:
+    value: "{{ blocks.investigation.outputs.synthesis | default({}) }}"
+    type: dict
+    description: "Full synthesis results from investigation-agent."
+
+  investigation_stats:
+    value: "{{ blocks.investigation.outputs.synthesis.statistics | default({}) }}"
+    type: dict
+    description: "Statistics from the fractal investigation."

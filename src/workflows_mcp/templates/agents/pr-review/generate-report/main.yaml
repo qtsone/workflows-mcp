@@ -1,0 +1,324 @@
+name: generate-report
+description: |
+  Generate a markdown report from investigation synthesis results.
+
+  Accepts the output from investigation-synthesize and formats it into a
+  professional, well-structured markdown report suitable for PR review comments.
+
+  This workflow does NOT use LLM for report generation - all intelligence is
+  already in the synthesis. It uses deterministic formatting for consistency.
+
+  Report sections:
+  1. Executive Summary
+  2. Risk Assessment
+  3. Approval Decision
+  4. Top Issues (prioritized)
+  5. Action Items
+  6. Investigation Statistics
+  7. All Findings (collapsible)
+
+tags: [agent, report-generation, markdown, pr-review]
+
+inputs:
+  synthesis:
+    type: dict
+    description: |
+      Output from investigation-synthesize workflow containing:
+      - executive_summary: Brief overview of investigation results
+      - risk_level: critical/high/medium/low/info
+      - approve: Whether PR should be approved
+      - approval_rationale: Reasoning for approval decision
+      - top_issues: Prioritized list of most important findings
+      - action_items: Required actions before approval
+      - all_findings: Complete list of unique findings
+      - filtered_out_count: Findings filtered by threshold
+      - statistics: Investigation metrics
+    required: true
+
+  pr_metadata:
+    type: dict
+    description: |
+      PR metadata for report context (optional):
+      - title: PR title
+      - author: PR author
+      - description: PR description
+      - base_branch: Target branch
+      - head_branch: Source branch
+      - url: PR URL
+    required: false
+    default: {}
+
+  focus:
+    type: str
+    description: |
+      Area that was prioritized in the review.
+      Values: security, performance, architecture, tests, general
+    required: false
+    default: "general"
+
+  threshold:
+    type: str
+    description: |
+      Severity threshold that was applied.
+      Values: critical, high, medium, low, info
+    required: false
+    default: "low"
+
+blocks:
+  # ==========================================================================
+  # Generate markdown report from synthesis
+  # ==========================================================================
+  - id: format_report
+    type: Shell
+    description: |
+      Format synthesis results into markdown report.
+      Deterministic formatting for consistent output.
+    inputs:
+      command: |
+        python3 << 'EOF'
+        import json
+        import os
+        from datetime import datetime
+
+        # Load inputs
+        synthesis_json = os.environ.get('SYNTHESIS', '{}')
+        pr_metadata_json = os.environ.get('PR_METADATA', '{}')
+        focus = os.environ.get('FOCUS', 'general')
+        threshold = os.environ.get('THRESHOLD', 'low')
+
+        try:
+            synthesis = json.loads(synthesis_json) if synthesis_json else {}
+        except json.JSONDecodeError:
+            synthesis = {}
+
+        try:
+            pr_metadata = json.loads(pr_metadata_json) if pr_metadata_json else {}
+        except json.JSONDecodeError:
+            pr_metadata = {}
+
+        # Extract synthesis fields with defaults
+        executive_summary = synthesis.get('executive_summary', 'No synthesis available.')
+        risk_level = synthesis.get('risk_level', 'unknown')
+        approve = synthesis.get('approve', False)
+        approval_rationale = synthesis.get('approval_rationale', 'No rationale provided.')
+        top_issues = synthesis.get('top_issues', [])
+        action_items = synthesis.get('action_items', [])
+        all_findings = synthesis.get('all_findings', [])
+        filtered_out_count = synthesis.get('filtered_out_count', 0)
+        statistics = synthesis.get('statistics', {})
+        acknowledgments = synthesis.get('acknowledgments', [])
+
+        # Build markdown report
+        lines = []
+
+        # Header
+        lines.append("# PR Review Report")
+        lines.append("")
+        lines.append(f"**Generated:** {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+
+        # PR Context (if available)
+        if pr_metadata:
+            if pr_metadata.get('title'):
+                lines.append(f"**PR:** {pr_metadata.get('title')}")
+            if pr_metadata.get('author'):
+                lines.append(f"**Author:** {pr_metadata.get('author')}")
+            if pr_metadata.get('base_branch') or pr_metadata.get('head_branch'):
+                base = pr_metadata.get('base_branch', 'main')
+                head = pr_metadata.get('head_branch', 'feature')
+                lines.append(f"**Branches:** {base} ← {head}")
+
+        lines.append(f"**Focus:** {focus}")
+        lines.append(f"**Threshold:** {threshold}")
+        lines.append("")
+
+        # Executive Summary
+        lines.append("## Executive Summary")
+        lines.append("")
+        lines.append(executive_summary)
+        lines.append("")
+
+        # Risk Assessment
+        risk_emoji = {
+            'critical': '🔴',
+            'high': '🟠',
+            'medium': '🟡',
+            'low': '🟢',
+            'info': '🔵',
+            'unknown': '⚪'
+        }.get(risk_level.lower(), '⚪')
+
+        lines.append("## Risk Assessment")
+        lines.append("")
+        lines.append(f"**Risk Level:** {risk_emoji} **{risk_level.upper()}**")
+        lines.append("")
+
+        # Approval Decision
+        approval_emoji = '✅' if approve else '❌'
+        decision_text = 'APPROVED' if approve else 'CHANGES REQUESTED'
+
+        lines.append("## Approval Decision")
+        lines.append("")
+        lines.append(f"**Decision:** {approval_emoji} **{decision_text}**")
+        lines.append("")
+        lines.append(f"**Rationale:** {approval_rationale}")
+        lines.append("")
+
+        # Top Issues
+        if top_issues:
+            lines.append("## Top Issues")
+            lines.append("")
+
+            for i, issue in enumerate(top_issues[:5], 1):
+                severity = issue.get('severity', 'info').lower()
+                title = issue.get('title', 'Unknown Issue')
+                description = issue.get('description', '')
+                action_required = issue.get('action_required', False)
+
+                severity_badge = {
+                    'critical': '🔴 CRITICAL',
+                    'high': '🟠 HIGH',
+                    'medium': '🟡 MEDIUM',
+                    'low': '🟢 LOW',
+                    'info': '🔵 INFO'
+                }.get(severity, severity.upper())
+
+                lines.append(f"### {i}. [{severity_badge}] {title}")
+                lines.append("")
+                lines.append(description)
+
+                if action_required:
+                    lines.append("")
+                    lines.append("⚠️ **Action Required**")
+
+                lines.append("")
+
+        # Action Items
+        if action_items:
+            lines.append("## Action Items")
+            lines.append("")
+            for item in action_items:
+                lines.append(f"- [ ] {item}")
+            lines.append("")
+
+        # Acknowledgments (positive aspects)
+        if acknowledgments:
+            lines.append("## Positive Aspects")
+            lines.append("")
+            for ack in acknowledgments:
+                lines.append(f"- ✓ {ack}")
+            lines.append("")
+
+        # Investigation Statistics
+        if statistics:
+            lines.append("## Investigation Statistics")
+            lines.append("")
+            lines.append(f"- **Files Analyzed:** {statistics.get('files_analyzed', 'N/A')}")
+            lines.append(f"- **Total Investigations:** {statistics.get('investigations_count', 'N/A')}")
+            lines.append(f"- **Findings Count:** {statistics.get('findings_count', 'N/A')}")
+
+            if filtered_out_count > 0:
+                lines.append(f"- **Filtered Out:** {filtered_out_count} (below {threshold} threshold)")
+
+            severity_counts = statistics.get('severity_counts', {})
+            if severity_counts:
+                counts_str = ", ".join([f"{k}: {v}" for k, v in sorted(severity_counts.items())])
+                lines.append(f"- **By Severity:** {counts_str}")
+
+            depth_dist = statistics.get('depth_distribution', {})
+            if depth_dist:
+                depth_str = ", ".join([f"depth {k}: {v}" for k, v in sorted(depth_dist.items())])
+                lines.append(f"- **Depth Distribution:** {depth_str}")
+
+            lines.append("")
+
+        # All Findings (collapsible)
+        if all_findings and len(all_findings) > len(top_issues):
+            lines.append("## All Findings")
+            lines.append("")
+            lines.append("<details>")
+            lines.append("<summary>Click to expand all findings</summary>")
+            lines.append("")
+
+            for finding in all_findings:
+                severity = finding.get('severity', 'info').lower()
+                title = finding.get('title', 'Finding')
+                file_path = finding.get('file_path', '')
+                line_number = finding.get('line_number')
+                description = finding.get('description', '')
+                suggestion = finding.get('suggestion', '')
+                finding_type = finding.get('type', '')
+
+                # Build location string
+                location = file_path
+                if line_number:
+                    location += f":{line_number}"
+
+                lines.append(f"#### [{severity.upper()}] {title}")
+
+                if location:
+                    lines.append(f"**Location:** `{location}`")
+                if finding_type:
+                    lines.append(f"**Type:** {finding_type}")
+
+                lines.append("")
+                lines.append(description)
+
+                if suggestion:
+                    lines.append("")
+                    lines.append(f"**Suggestion:** {suggestion}")
+
+                lines.append("")
+
+            lines.append("</details>")
+            lines.append("")
+
+        # Footer
+        lines.append("---")
+        lines.append("*Generated by AI PR Review Agent (Fractal Investigation Architecture)*")
+
+        report = '\n'.join(lines)
+
+        # Calculate summary stats for output
+        blocking_count = sum(1 for f in all_findings if f.get('severity', '').lower() in ('critical', 'high'))
+
+        result = {
+            'report': report,
+            'summary': f"{risk_level.upper()} risk - {len(all_findings)} findings - {'APPROVED' if approve else 'CHANGES REQUESTED'}",
+            'blocking_issues': blocking_count,
+            'approve': approve,
+            'risk_level': risk_level
+        }
+
+        print(json.dumps(result))
+        EOF
+      env:
+        SYNTHESIS: "{{ inputs.synthesis | tojson }}"
+        PR_METADATA: "{{ inputs.pr_metadata | tojson }}"
+        FOCUS: "{{ inputs.focus }}"
+        THRESHOLD: "{{ inputs.threshold }}"
+
+outputs:
+  report:
+    value: "{{ (blocks.format_report.outputs.stdout | fromjson).report }}"
+    type: str
+    description: "Complete markdown report."
+
+  summary:
+    value: "{{ (blocks.format_report.outputs.stdout | fromjson).summary }}"
+    type: str
+    description: "One-line summary for quick reference."
+
+  blocking_issues:
+    value: "{{ (blocks.format_report.outputs.stdout | fromjson).blocking_issues }}"
+    type: num
+    description: "Count of critical/high severity issues."
+
+  approve:
+    value: "{{ (blocks.format_report.outputs.stdout | fromjson).approve }}"
+    type: bool
+    description: "Whether the PR should be approved (passthrough from synthesis)."
+
+  risk_level:
+    value: "{{ (blocks.format_report.outputs.stdout | fromjson).risk_level }}"
+    type: str
+    description: "Risk level (passthrough from synthesis)."

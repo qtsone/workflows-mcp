@@ -41,7 +41,7 @@ blocks:
     inputs:
       working_dir: "{{inputs.workflows_mcp_path}}"
       command: |
-        python validate.py "{{inputs.workflow_path}}"
+        python scripts/validate.py "{{inputs.workflow_path}}"
 
   - id: request_approval
     description: "Notify user that we hit limit and ask for approval"

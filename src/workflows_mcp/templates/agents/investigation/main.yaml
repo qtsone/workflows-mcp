@@ -1,0 +1,490 @@
+name: investigation-agent
+description: |
+  Fractal investigation agent - self-similar at every depth level.
+
+  This workflow implements a recursive investigation pattern where the same
+  workflow is used at every depth level, creating a fractal structure for
+  code analysis.
+
+  Key features:
+  - Self-similar: Same workflow at every depth
+  - Memory-centric: All findings stored to memory immediately
+  - Parallel: Sibling investigations run in parallel
+  - Progressive: outline mode at depth=0, full mode at depth>0
+  - Bounded: max_depth prevents infinite recursion
+  - Observable: Task hierarchy tracks every investigation
+
+  Execution flow:
+  1. GATHER: ReadFiles with patterns from scope (outline/full based on depth)
+  2. ANALYZE: LLM analyzes content and identifies sub-investigations
+  3. STORE: Findings written to memory immediately
+  4. RECURSE: Sub-investigations run in parallel (if depth < max_depth)
+  5. SYNTHESIZE: Only at depth=0, merge all findings from memory
+
+tags: [agent, investigation, fractal, recursive, pr-review]
+
+inputs:
+  # WHAT to investigate
+  scope:
+    type: dict
+    description: |
+      Investigation specification:
+      - type: "files" | "directories" | "topics"
+      - targets: list of targets (file paths, directory paths, or topic strings)
+      - mode: "outline" | "full" | "summary" (auto-selected if not provided)
+      - focus: optional focus area (security, performance, architecture, tests)
+    required: true
+
+  # CONTEXT from parent
+  context:
+    type: dict
+    description: |
+      Context for the investigation:
+      - repo_path: local repository path (required)
+      - diff: PR diff content (optional)
+      - base_branch: base branch name (optional)
+      - head_branch: head branch name (optional)
+      - parent_findings: findings from parent investigation (optional)
+      - focus: review focus area (optional)
+    required: true
+
+  # RECURSION control
+  depth:
+    type: num
+    description: Current recursion depth (0 = root investigation).
+    required: false
+    default: 0
+
+  max_depth:
+    type: num
+    description: Maximum recursion depth to prevent infinite loops.
+    required: false
+    default: 3
+
+  # STATE management
+  state:
+    type: str
+    description: Path to state file for task tracking and memory.
+    required: true
+
+  parent_task_id:
+    type: str
+    description: Parent task ID for creating sub-tasks in the state tree.
+    required: false
+    default: ""
+
+blocks:
+  # ==========================================================================
+  # STEP 1: Register task in state tree
+  # ==========================================================================
+  - id: register_task
+    type: Workflow
+    description: Create task in state tree for this investigation.
+    inputs:
+      workflow: agent-state-management
+      inputs:
+        state: "{{ inputs.state }}"
+        parent_id: "{{ inputs.parent_task_id }}"
+        task: "Investigation (depth={{ inputs.depth }})"
+        task_type: "investigation"
+        status: "in-progress"
+        caller: "investigation-agent"
+        data:
+          depth: "{{ inputs.depth }}"
+          scope_type: "{{ inputs.scope.type | default('files') }}"
+          targets_count: "{{ inputs.scope.targets | length }}"
+
+  # ==========================================================================
+  # STEP 2: Determine read mode based on depth
+  # ==========================================================================
+  - id: determine_mode
+    type: Shell
+    description: Determine ReadFiles mode based on depth and scope.
+    depends_on: [register_task]
+    inputs:
+      command: |
+        python3 << 'EOF'
+        import json
+        import os
+
+        depth = int(os.environ.get('DEPTH', '0'))
+        scope_mode = os.environ.get('SCOPE_MODE', '')
+
+        # If scope specifies a mode, use it; otherwise auto-select
+        if scope_mode and scope_mode in ('outline', 'full', 'summary'):
+            mode = scope_mode
+        else:
+            # Progressive detail: outline at depth=0, full at depth>0
+            mode = 'outline' if depth == 0 else 'full'
+
+        print(json.dumps({
+            'mode': mode,
+            'depth': depth,
+            'is_root': depth == 0
+        }))
+        EOF
+      env:
+        DEPTH: "{{ inputs.depth }}"
+        SCOPE_MODE: "{{ inputs.scope.mode | default('') }}"
+
+  # ==========================================================================
+  # STEP 3: Gather - ReadFiles with patterns from scope
+  # ==========================================================================
+  - id: gather
+    type: ReadFiles
+    description: |
+      Read files specified in scope using the appropriate mode.
+      Uses outline mode at depth=0 for initial overview, full mode deeper.
+    depends_on: [determine_mode]
+    inputs:
+      patterns: "{{ inputs.scope.targets }}"
+      base_path: "{{ inputs.context.repo_path }}"
+      mode: "{{ (blocks.determine_mode.outputs.stdout | fromjson).mode }}"
+      max_files: 20
+      max_file_size_kb: 150
+
+  # ==========================================================================
+  # STEP 4: Analyze - LLM assessment of gathered content
+  # ==========================================================================
+  - id: analyze
+    type: LLMCall
+    description: |
+      Analyze gathered content and identify issues and sub-investigations.
+      The LLM determines what needs deeper investigation.
+    depends_on: [gather, determine_mode]
+    inputs:
+      profile: default
+      prompt: |
+        # Code Investigation Analysis
+
+        You are analyzing code as part of a recursive investigation system.
+        Your task is to identify issues and determine if deeper investigation is needed.
+
+        ## Investigation Context
+        - **Depth Level:** {{ inputs.depth }} ({{ 'ROOT - initial overview' if inputs.depth == 0 else 'DEEP DIVE - detailed analysis' }})
+        - **Max Depth:** {{ inputs.max_depth }}
+        - **Read Mode:** {{ (blocks.determine_mode.outputs.stdout | fromjson).mode }}
+        - **Focus Area:** {{ inputs.scope.focus | default(inputs.context.focus) | default('general') }}
+        - **Scope Type:** {{ inputs.scope.type | default('files') }}
+
+        {% if inputs.context.diff %}
+        ## PR Diff Context
+        ```diff
+        {{ inputs.context.diff[:6000] }}
+        {% if inputs.context.diff | length > 6000 %}
+        ... [diff truncated]
+        {% endif %}
+        ```
+        {% endif %}
+
+        {% if inputs.context.parent_findings %}
+        ## Parent Investigation Findings
+        The parent investigation found these issues relevant to your targets:
+        {{ inputs.context.parent_findings | tojson }}
+        {% endif %}
+
+        ## Files Analyzed
+        - **Total Files:** {{ blocks.gather.outputs.total_files }}
+        - **Total Size:** {{ blocks.gather.outputs.total_size_kb }} KB
+        - **Patterns Matched:** {{ blocks.gather.outputs.patterns_matched }}
+        {% if blocks.gather.outputs.skipped_files | length > 0 %}
+        - **Skipped Files:** {{ blocks.gather.outputs.skipped_files | length }}
+        {% endif %}
+
+        ## File Contents
+        {% for file in blocks.gather.outputs.files %}
+        ### {{ file.path }} ({{ file.size_kb | default(0) }} KB)
+        ```{{ file.extension | default('') }}
+        {{ file.content[:4000] }}
+        {% if file.content | length > 4000 %}
+        ... [content truncated]
+        {% endif %}
+        ```
+        {% endfor %}
+
+        ## Analysis Instructions
+
+        {% if inputs.depth == 0 %}
+        **ROOT LEVEL ANALYSIS** - You're seeing outlines/summaries. Focus on:
+        1. Overall structure and organization
+        2. High-level architectural issues
+        3. Files/functions that need DEEP investigation (will be read in full)
+        4. Cross-cutting concerns
+        {% else %}
+        **DEEP DIVE ANALYSIS** - You're seeing full file contents. Focus on:
+        1. Line-by-line issue identification
+        2. Specific bugs, vulnerabilities, or problems
+        3. Code quality and best practices
+        4. Related files that might be affected
+        {% endif %}
+
+        {% if inputs.scope.focus == 'security' or inputs.context.focus == 'security' %}
+        **SECURITY FOCUS** - Prioritize:
+        - Authentication/authorization flaws
+        - Input validation and sanitization
+        - SQL injection, XSS, command injection
+        - Sensitive data exposure
+        - Cryptographic issues
+        {% elif inputs.scope.focus == 'performance' or inputs.context.focus == 'performance' %}
+        **PERFORMANCE FOCUS** - Prioritize:
+        - O(n²) or worse algorithms
+        - N+1 query patterns
+        - Memory leaks or excessive allocations
+        - Blocking operations in async code
+        - Missing caching opportunities
+        {% endif %}
+
+        Provide your analysis:
+
+      response_schema:
+        type: object
+        properties:
+          summary:
+            type: string
+            description: "Brief summary of what was analyzed and key observations"
+          findings:
+            type: array
+            items:
+              type: object
+              properties:
+                type:
+                  type: string
+                  enum: [security, performance, quality, logic, best_practice, test, architecture]
+                  description: "Category of the finding"
+                severity:
+                  type: string
+                  enum: [critical, high, medium, low, info]
+                  description: "Severity level"
+                title:
+                  type: string
+                  description: "Short title for the finding"
+                description:
+                  type: string
+                  description: "Detailed description of the issue"
+                file_path:
+                  type: string
+                  description: "File where the issue was found"
+                line_number:
+                  type: integer
+                  description: "Line number if applicable"
+                code_snippet:
+                  type: string
+                  description: "Relevant code snippet"
+                suggestion:
+                  type: string
+                  description: "Suggested fix or improvement"
+              required: [type, severity, title, description]
+            description: "List of issues found during analysis"
+          sub_investigations:
+            type: array
+            items:
+              type: object
+              properties:
+                targets:
+                  type: array
+                  items:
+                    type: string
+                  description: "File paths or patterns to investigate"
+                reason:
+                  type: string
+                  description: "Why this needs deeper investigation"
+                priority:
+                  type: string
+                  enum: [high, medium, low]
+                  description: "Priority of this sub-investigation"
+                focus:
+                  type: string
+                  description: "Specific focus area for this sub-investigation"
+              required: [targets, reason]
+            description: "Areas needing deeper investigation (triggers recursion)"
+          confidence:
+            type: number
+            minimum: 0
+            maximum: 1
+            description: "Confidence level in the analysis (0.0-1.0)"
+          needs_deeper_analysis:
+            type: boolean
+            description: "Whether sub-investigations are recommended"
+        required: [summary, findings, confidence, needs_deeper_analysis]
+
+  # ==========================================================================
+  # STEP 5: Store findings in memory immediately
+  # ==========================================================================
+  - id: store_findings
+    type: Workflow
+    description: Store findings in memory for accumulation across recursion.
+    depends_on: [analyze, register_task]
+    inputs:
+      workflow: agent-state-management
+      inputs:
+        state: "{{ inputs.state }}"
+        op: memory
+        memory_op: append
+        memory_key: "investigations"
+        memory_value: |
+          {
+            "task_id": "{{ blocks.register_task.outputs.task.task_id }}",
+            "depth": {{ inputs.depth }},
+            "targets": {{ inputs.scope.targets | tojson }},
+            "mode": "{{ (blocks.determine_mode.outputs.stdout | fromjson).mode }}",
+            "summary": {{ blocks.analyze.outputs.response.summary | tojson }},
+            "findings": {{ blocks.analyze.outputs.response.findings | tojson }},
+            "confidence": {{ blocks.analyze.outputs.response.confidence }},
+            "files_analyzed": {{ blocks.gather.outputs.total_files }}
+          }
+        caller: "investigation-agent"
+
+  # ==========================================================================
+  # STEP 6: Check if recursion is needed and allowed
+  # ==========================================================================
+  - id: check_recurse
+    type: Shell
+    description: Determine if we should spawn sub-investigations.
+    depends_on: [analyze]
+    inputs:
+      command: |
+        python3 << 'EOF'
+        import json
+        import os
+
+        depth = int(os.environ.get('DEPTH', '0'))
+        max_depth = int(os.environ.get('MAX_DEPTH', '3'))
+        needs_deeper = os.environ.get('NEEDS_DEEPER', 'false').lower() == 'true'
+        sub_investigations_json = os.environ.get('SUB_INVESTIGATIONS', '[]')
+
+        try:
+            sub_investigations = json.loads(sub_investigations_json)
+        except json.JSONDecodeError:
+            sub_investigations = []
+
+        should_recurse = (
+            needs_deeper and
+            depth < max_depth and
+            len(sub_investigations) > 0
+        )
+
+        print(json.dumps({
+            'should_recurse': should_recurse,
+            'sub_investigations': sub_investigations if should_recurse else [],
+            'reason': (
+                'Recursion allowed' if should_recurse else
+                'Max depth reached' if depth >= max_depth else
+                'No sub-investigations needed' if not needs_deeper else
+                'No targets identified'
+            )
+        }))
+        EOF
+      env:
+        DEPTH: "{{ inputs.depth }}"
+        MAX_DEPTH: "{{ inputs.max_depth }}"
+        NEEDS_DEEPER: "{{ blocks.analyze.outputs.response.needs_deeper_analysis }}"
+        SUB_INVESTIGATIONS: "{{ blocks.analyze.outputs.response.sub_investigations | default([]) | tojson }}"
+
+  # ==========================================================================
+  # STEP 7: Recurse - spawn sub-investigations in parallel
+  # ==========================================================================
+  - id: recurse
+    type: Workflow
+    description: |
+      Spawn sub-investigations in parallel for areas needing deeper analysis.
+      This is the fractal core - same workflow calling itself.
+    depends_on:
+      - store_findings
+      - check_recurse
+    condition: "{{ (blocks.check_recurse.outputs.stdout | fromjson).should_recurse }}"
+    for_each: "{{ (blocks.check_recurse.outputs.stdout | fromjson).sub_investigations }}"
+    for_each_mode: parallel
+    inputs:
+      workflow: investigation-agent
+      inputs:
+        scope:
+          type: "files"
+          targets: "{{ each.value.targets }}"
+          focus: "{{ each.value.focus | default(inputs.scope.focus) | default('') }}"
+        context:
+          repo_path: "{{ inputs.context.repo_path }}"
+          diff: "{{ inputs.context.diff | default('') }}"
+          base_branch: "{{ inputs.context.base_branch | default('main') }}"
+          head_branch: "{{ inputs.context.head_branch | default('') }}"
+          parent_findings: "{{ blocks.analyze.outputs.response.findings }}"
+          focus: "{{ inputs.context.focus | default('general') }}"
+        depth: "{{ inputs.depth + 1 }}"
+        max_depth: "{{ inputs.max_depth }}"
+        state: "{{ inputs.state }}"
+        parent_task_id: "{{ blocks.register_task.outputs.task.task_id }}"
+
+  # ==========================================================================
+  # STEP 8: Synthesize - only at depth=0, merge all findings
+  # ==========================================================================
+  - id: synthesize
+    type: Workflow
+    description: |
+      Synthesis phase - only runs at root level (depth=0).
+      Retrieves all findings from memory tree and merges them.
+    depends_on:
+      - store_findings
+      - block: recurse
+        required: false
+    condition: "{{ inputs.depth == 0 }}"
+    inputs:
+      workflow: investigation-synthesize
+      inputs:
+        state: "{{ inputs.state }}"
+        parent_task_id: "{{ blocks.register_task.outputs.task.task_id }}"
+        context: "{{ inputs.context }}"
+        root_findings: "{{ blocks.analyze.outputs.response.findings }}"
+
+  # ==========================================================================
+  # STEP 9: Mark task complete
+  # ==========================================================================
+  - id: track_done
+    type: Workflow
+    description: Mark investigation task as complete with summary data.
+    depends_on:
+      - store_findings
+      - block: recurse
+        required: false
+      - block: synthesize
+        required: false
+    inputs:
+      workflow: agent-state-management
+      inputs:
+        state: "{{ inputs.state }}"
+        task_id: "{{ blocks.register_task.outputs.task.task_id }}"
+        status: "done"
+        caller: "investigation-agent"
+        data:
+          findings_count: "{{ blocks.analyze.outputs.response.findings | length }}"
+          confidence: "{{ blocks.analyze.outputs.response.confidence }}"
+          recursed: "{{ (blocks.check_recurse.outputs.stdout | fromjson).should_recurse }}"
+
+outputs:
+  findings:
+    value: "{{ blocks.analyze.outputs.response.findings }}"
+    type: list
+    description: "Direct findings from this investigation level."
+
+  summary:
+    value: "{{ blocks.analyze.outputs.response.summary }}"
+    type: str
+    description: "Summary of what was analyzed at this level."
+
+  confidence:
+    value: "{{ blocks.analyze.outputs.response.confidence }}"
+    type: num
+    description: "Confidence level of this investigation (0.0-1.0)."
+
+  synthesis:
+    value: "{{ blocks.synthesize.outputs if blocks.synthesize.succeeded else {} }}"
+    type: dict
+    description: "Synthesis results (only populated at depth=0)."
+
+  task_id:
+    value: "{{ blocks.register_task.outputs.task.task_id }}"
+    type: str
+    description: "Task ID for this investigation in the state tree."
+
+  recursed:
+    value: "{{ (blocks.check_recurse.outputs.stdout | fromjson).should_recurse }}"
+    type: bool
+    description: "Whether this investigation spawned sub-investigations."

@@ -24,7 +24,7 @@ inputs:
   sparse_checkout:
     type: str
     description: "(Optional) Sparse checkout patterns (comma-separated)"
-    default: "validate.py,docs/llm/block-reference.md,tests/workflows,src/workflows_mcp/templates"
+    default: "scripts/validate.py,docs/llm/block-reference.md,tests/workflows,src/workflows_mcp/templates"
     required: false
 
 blocks:
