@@ -197,7 +197,7 @@ blocks:
         }))
         EOF
       env:
-        CHANGED_FILES: "{{ blocks.context_gathering.outputs.changed_files | tojson }}"
+        CHANGED_FILES: "{{ blocks.context_gathering.outputs.changed_files }}"
 
   - id: investigation
     type: Workflow
