@@ -136,6 +136,7 @@ blocks:
         repo_path: "{{ inputs.repo_path }}"
         base_branch: "{{ inputs.base_branch }}"
         head_branch: "{{ inputs.head_branch }}"
+        workspace: "{{ tmp }}/pr-review-repo"
         state: "{{ blocks.state_management.outputs.state }}"
         parent_task_id: "{{ get(blocks.state_management.outputs.task, 'task_id', '') }}"
 
@@ -259,3 +260,13 @@ outputs:
     value: "{{ blocks.initial_assessment.outputs.risk_level }}"
     type: str
     description: "Overall risk level assessment: critical, high, medium, low."
+
+  task_tree:
+    value: "{{ blocks.action.outputs.task_tree | default('') }}"
+    type: str
+    description: "ASCII tree visualization of task hierarchy for debugging."
+
+  task_summary:
+    value: "{{ blocks.action.outputs.task_summary | default({}) }}"
+    type: dict
+    description: "Task statistics (total_tasks, done, failed, total_duration, etc.)."

@@ -187,6 +187,22 @@ blocks:
           platform: "{{ inputs.platform }}"
           approve: "{{ inputs.approve }}"
 
+  # ============================================================================
+  # VISUALIZATION: Generate ASCII tree of task hierarchy
+  # ============================================================================
+  - id: visualize_state
+    type: Workflow
+    description: Generate ASCII tree visualization of task hierarchy for debugging.
+    condition: "{{ inputs.state | trim != '' }}"
+    depends_on:
+      - track_done
+    inputs:
+      workflow: agent-state-visualize
+      inputs:
+        state: "{{ inputs.state }}"
+        show_data: true
+        max_depth: 0
+
 outputs:
   final_report:
     value: "{{ inputs.report }}"
@@ -208,3 +224,13 @@ outputs:
       {{ blocks.post_github_comment.succeeded or blocks.post_gitlab_comment.succeeded }}
     type: bool
     description: "Whether a comment was successfully posted to the remote platform."
+
+  task_tree:
+    value: "{{ blocks.visualize_state.outputs.tree | default('') }}"
+    type: str
+    description: "ASCII tree visualization of task hierarchy."
+
+  task_summary:
+    value: "{{ blocks.visualize_state.outputs.summary | default({}) }}"
+    type: dict
+    description: "Task statistics (total_tasks, done, failed, in_progress, etc.)."
