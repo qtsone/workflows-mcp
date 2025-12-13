@@ -109,7 +109,7 @@ blocks:
         base_branch: "{{ inputs.base_branch }}"
         head_branch: "{{ inputs.head_branch }}"
         state: "{{ blocks.state_management.outputs.state }}"
-        parent_task_id: "{{ blocks.state_management.outputs.task_id }}"
+        parent_task_id: "{{ get(blocks.state_management.outputs.task, 'task_id', '') }}"
 
   # ==========================================================================
   # PHASE 2: Initial Assessment
@@ -131,7 +131,7 @@ blocks:
         focus: "{{ inputs.focus | default('general', true) }}"
         changed_files: "{{ blocks.context_gathering.outputs.changed_files }}"
         state: "{{ blocks.state_management.outputs.state }}"
-        parent_task_id: "{{ blocks.state_management.outputs.task_id }}"
+        parent_task_id: "{{ get(blocks.state_management.outputs.task, 'task_id', '') }}"
 
   # ==========================================================================
   # PHASE 3: Investigation Loop
@@ -155,7 +155,7 @@ blocks:
         iteration_cap: "{{ inputs.iteration_cap }}"
         focus: "{{ inputs.focus | default('general', true) }}"
         state: "{{ blocks.state_management.outputs.state }}"
-        parent_task_id: "{{ blocks.state_management.outputs.task_id }}"
+        parent_task_id: "{{ get(blocks.state_management.outputs.task, 'task_id', '') }}"
 
   # ==========================================================================
   # PHASE 4: Synthesis
@@ -175,7 +175,7 @@ blocks:
         pr_metadata: "{{ blocks.context_gathering.outputs.pr_metadata }}"
         focus: "{{ inputs.focus | default('general', true) }}"
         state: "{{ blocks.state_management.outputs.state }}"
-        parent_task_id: "{{ blocks.state_management.outputs.task_id }}"
+        parent_task_id: "{{ get(blocks.state_management.outputs.task, 'task_id', '') }}"
 
   # ==========================================================================
   # PHASE 5: Action
@@ -199,7 +199,7 @@ blocks:
         report: "{{ blocks.synthesis.outputs.report }}"
         approve: "{{ blocks.synthesis.outputs.approve }}"
         state: "{{ blocks.state_management.outputs.state }}"
-        parent_task_id: "{{ blocks.state_management.outputs.task_id }}"
+        parent_task_id: "{{ get(blocks.state_management.outputs.task, 'task_id', '') }}"
 
 outputs:
   report:

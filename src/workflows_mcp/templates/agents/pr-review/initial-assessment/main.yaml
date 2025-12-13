@@ -228,7 +228,7 @@ blocks:
       workflow: agent-state-management
       inputs:
         state: "{{ inputs.state }}"
-        task_id: "{{ blocks.track_start.outputs.task_id }}"
+        task_id: "{{ get(blocks.track_start.outputs.task, 'task_id', '') }}"
         status: "done"
         caller: "pr-review:initial-assessment"
         data:

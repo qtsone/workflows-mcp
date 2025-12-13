@@ -114,9 +114,13 @@ blocks:
     description: Extract the file path from the target (handles both dict and string).
     inputs:
       command: |
-        python3 -c "
+        python3 << 'EOF'
         import json
-        target = {{ inputs.target | tojson }}
+        import os
+
+        target_json = os.environ.get('TARGET_JSON', '{}')
+        target = json.loads(target_json)
+
         if isinstance(target, dict):
             path = target.get('path', '')
             reason = target.get('reason', 'No reason specified')
@@ -128,7 +132,9 @@ blocks:
 
         result = {'path': path, 'reason': reason, 'priority': priority}
         print(json.dumps(result))
-        "
+        EOF
+      env:
+        TARGET_JSON: "{{ inputs.target | tojson }}"
 
   - id: read_file_content
     type: Shell
