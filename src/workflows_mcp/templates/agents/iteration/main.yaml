@@ -337,8 +337,8 @@ blocks:
         STATE_PATH: "{{inputs.state_path}}"
         TASK_ID: "{{inputs.task_id}}"
         OP: "{{inputs.op}}"
-        TOTAL: "{{inputs.total | string}}"
-        CAP: "{{inputs.cap | string}}"
+        TOTAL: "{{inputs.total}}"
+        CAP: "{{inputs.cap}}"
         CHECKPOINT_DATA: "{{inputs.checkpoint_data}}"
 
 outputs:

@@ -251,8 +251,8 @@ blocks:
         EOF
       env:
         STATE_PATH: "{{inputs.state}}"
-        SHOW_DATA: "{{inputs.show_data | string | lower}}"
-        MAX_DEPTH: "{{inputs.max_depth | string}}"
+        SHOW_DATA: "{{inputs.show_data | lower}}"
+        MAX_DEPTH: "{{inputs.max_depth}}"
         TASK_ID: "{{inputs.task_id}}"
 
 outputs:

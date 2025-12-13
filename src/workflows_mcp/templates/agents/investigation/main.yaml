@@ -177,7 +177,7 @@ blocks:
         ```
         {% endif %}
 
-        {% if inputs.context.parent_findings %}
+        {% if get(inputs.context, 'parent_findings', false) %}
         ## Parent Investigation Findings
         The parent investigation found these issues relevant to your targets:
         {{ inputs.context.parent_findings | tojson }}
