@@ -154,6 +154,7 @@ blocks:
     depends_on: [gather, determine_mode]
     inputs:
       profile: default
+      timeout: 600
       prompt: |
         # Code Investigation Analysis
 
@@ -249,7 +250,16 @@ blocks:
               properties:
                 type:
                   type: string
-                  enum: [security, performance, quality, logic, best_practice, test, architecture]
+                  enum:
+                    [
+                      security,
+                      performance,
+                      quality,
+                      logic,
+                      best_practice,
+                      test,
+                      architecture,
+                    ]
                   description: "Category of the finding"
                 severity:
                   type: string

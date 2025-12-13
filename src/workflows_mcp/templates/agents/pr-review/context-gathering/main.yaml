@@ -264,6 +264,7 @@ blocks:
       - list_changed_files
     inputs:
       profile: default
+      timeout: 600
       prompt: |
         Analyze the following git diff and categorize the changed files.
 

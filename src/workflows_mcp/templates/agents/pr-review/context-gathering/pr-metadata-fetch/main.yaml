@@ -82,6 +82,7 @@ blocks:
       - fetch_gitlab_mr
     inputs:
       profile: default
+      timeout: 600
       prompt: |
         Extract PR/MR metadata from this JSON response and normalize it to the schema below.
 

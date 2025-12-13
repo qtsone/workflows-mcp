@@ -295,6 +295,7 @@ blocks:
     depends_on: [filter_by_threshold]
     inputs:
       profile: default
+      timeout: 600
       prompt: |
         # Investigation Synthesis
 
@@ -390,7 +391,14 @@ blocks:
             items:
               type: string
             description: "Positive aspects worth noting"
-        required: [executive_summary, top_issues, risk_level, approve, approval_rationale]
+        required:
+          [
+            executive_summary,
+            top_issues,
+            risk_level,
+            approve,
+            approval_rationale,
+          ]
 
   # ==========================================================================
   # STEP 6: Store synthesis results in memory
