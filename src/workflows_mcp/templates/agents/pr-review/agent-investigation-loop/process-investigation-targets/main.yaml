@@ -37,12 +37,6 @@ inputs:
     description: Head branch being reviewed.
     required: false
 
-  iteration_counter:
-    type: num
-    description: Current iteration count.
-    required: false
-    default: 0
-
   iteration_cap:
     type: num
     description: Maximum number of iterations allowed.
@@ -57,7 +51,7 @@ inputs:
     required: false
     default: general
 
-  state_path:
+  state:
     type: str
     description: |
       Path to state file for task tracking.
@@ -66,11 +60,19 @@ inputs:
     required: false
     default: ""
 
+  task_id:
+    type: str
+    description: |
+      Task ID for iteration tracking.
+      This is the phase task ID from investigation-loop where iteration is tracked.
+    required: false
+    default: ""
+
   parent_task_id:
     type: str
     description: |
       Parent task ID for creating sub-tasks in the state tree.
-      Used with state_path to create hierarchical task relationships.
+      Used with state to create hierarchical task relationships.
     required: false
     default: ""
 
@@ -87,10 +89,9 @@ blocks:
         repo_path: "{{ inputs.repo_path }}"
         base_branch: "{{ inputs.base_branch }}"
         head_branch: "{{ inputs.head_branch }}"
-        iteration_counter: "{{ inputs.iteration_counter }}"
         iteration_cap: "{{ inputs.iteration_cap }}"
         focus: "{{ inputs.focus }}"
-        state_path: "{{ inputs.state_path }}"
+        state: "{{ inputs.state }}"
         parent_task_id: "{{ inputs.parent_task_id }}"
 
   - id: gather_results
@@ -108,8 +109,8 @@ blocks:
         Analyze the results of investigating the following targets and provide
         a consolidated assessment.
 
-        ## Iteration Info
-        - Current iteration: {{ inputs.iteration_counter }} of {{ inputs.iteration_cap }}
+        ## Configuration
+        - Maximum iterations: {{ inputs.iteration_cap }}
         - Focus area: {{ inputs.focus }}
 
         ## Investigation Targets
@@ -178,11 +179,31 @@ blocks:
             description: "New targets to investigate if continuation is needed"
         required: [confidence, needs_more_investigation, findings, conclusion]
 
+  # ============================================================================
+  # ITERATION: Advance iteration counter and check if capped
+  # ============================================================================
+  - id: advance_iteration
+    type: Workflow
+    description: Advance iteration counter and check if safety cap reached.
+    depends_on:
+      - gather_results
+    condition: "{{ inputs.state | trim != '' and inputs.task_id | trim != '' }}"
+    inputs:
+      workflow: agent-state-management
+      inputs:
+        state: "{{ inputs.state }}"
+        task_id: "{{ inputs.task_id }}"
+        op: iteration
+        iteration_op: advance
+        caller: "pr-review:process-targets"
+
   - id: check_should_continue
     type: Shell
     description: Determine if we should continue with another iteration.
     depends_on:
       - gather_results
+      - block: advance_iteration
+        required: false
     inputs:
       command: |
         python3 -c "
@@ -190,15 +211,15 @@ blocks:
 
         confidence = {{ blocks.gather_results.outputs.response.confidence | default(1.0) }}
         needs_more = {{ blocks.gather_results.outputs.response.needs_more_investigation | default(false) | tojson }}
-        iteration = {{ inputs.iteration_counter }}
-        cap = {{ inputs.iteration_cap }}
+        is_capped = {{ blocks.advance_iteration.outputs.iteration.is_capped | default(false) | tojson }}
 
-        # Continue if: needs more investigation AND confidence < 0.9 AND under cap
-        should_continue = needs_more and confidence < 0.9 and iteration < (cap - 1)
+        # Continue if: needs more investigation AND confidence < 0.9 AND not capped
+        should_continue = needs_more and confidence < 0.9 and not is_capped
 
         result = {
             'should_continue': should_continue,
-            'reason': 'confidence_reached' if confidence >= 0.9 else ('cap_reached' if iteration >= (cap - 1) else 'continue')
+            'reason': 'confidence_reached' if confidence >= 0.9 else ('cap_reached' if is_capped else 'continue'),
+            'is_capped': is_capped
         }
         print(json.dumps(result))
         "
@@ -222,10 +243,10 @@ blocks:
         repo_path: "{{ inputs.repo_path }}"
         base_branch: "{{ inputs.base_branch }}"
         head_branch: "{{ inputs.head_branch }}"
-        iteration_counter: "{{ inputs.iteration_counter + 1 }}"
         iteration_cap: "{{ inputs.iteration_cap }}"
         focus: "{{ inputs.focus }}"
-        state_path: "{{ inputs.state_path }}"
+        state: "{{ inputs.state }}"
+        task_id: "{{ inputs.task_id }}"
         parent_task_id: "{{ inputs.parent_task_id }}"
 
 outputs:
@@ -238,8 +259,3 @@ outputs:
       - needs_more_investigation: Whether more investigation is recommended
       - findings: List of findings with severity and suggestions
       - conclusion: Overall summary
-
-  iteration_completed:
-    value: "{{ inputs.iteration_counter }}"
-    type: num
-    description: "Number of iterations completed."

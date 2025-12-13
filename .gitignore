@@ -226,3 +226,5 @@ src/workflows_mcp/templates/agents/*
 !src/workflows_mcp/templates/agents/pr-review/
 !src/workflows_mcp/templates/agents/state-management/
 !src/workflows_mcp/templates/agents/state-visualize/
+!src/workflows_mcp/templates/agents/memory/
+!src/workflows_mcp/templates/agents/iteration/

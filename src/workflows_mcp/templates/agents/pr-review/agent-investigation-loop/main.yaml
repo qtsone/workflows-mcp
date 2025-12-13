@@ -92,13 +92,26 @@ blocks:
           targets_count: "{{ inputs.investigation_targets | length }}"
           iteration_cap: "{{ inputs.iteration_cap }}"
 
-  - id: initialize_iteration
+  # ============================================================================
+  # ITERATION: Initialize iteration tracking via unified state management
+  # ============================================================================
+  - id: init_iteration
     type: Workflow
-    description: Initialize the iteration counter for the investigation process.
+    description: Initialize iteration counter for the investigation loop.
+    depends_on:
+      - block: track_start
+        required: false
+    condition: "{{ inputs.state | trim != '' }}"
     inputs:
-      workflow: initialize-iteration-counter
+      workflow: agent-state-management
       inputs:
+        state: "{{ inputs.state }}"
+        task_id: "{{ blocks.track_start.outputs.task.task_id | default('', true) }}"
+        op: iteration
+        iteration_op: init
+        iteration_total: "{{ inputs.investigation_targets | length }}"
         iteration_cap: "{{ inputs.iteration_cap }}"
+        caller: "pr-review:investigation-loop"
 
   - id: process_targets
     type: Workflow
@@ -106,7 +119,8 @@ blocks:
       Process each investigation target using LLM to decide and execute
       the next steps. Has access to local repo for file reading.
     depends_on:
-      - initialize_iteration
+      - block: init_iteration
+        required: false
       - block: track_start
         required: false
     inputs:
@@ -116,11 +130,10 @@ blocks:
         repo_path: "{{ inputs.repo_path }}"
         base_branch: "{{ inputs.base_branch }}"
         head_branch: "{{ inputs.head_branch }}"
-        iteration_counter: "{{ blocks.initialize_iteration.outputs.iteration_counter }}"
         iteration_cap: "{{ inputs.iteration_cap }}"
         focus: "{{ inputs.focus }}"
         state: "{{ inputs.state }}"
-        parent_task_id: "{{ blocks.track_start.outputs.task_id | default(inputs.parent_task_id, true) }}"
+        task_id: "{{ blocks.track_start.outputs.task.task_id | default('', true) }}"
 
   # ============================================================================
   # STATE TRACKING: Mark phase complete with captured data
@@ -135,13 +148,12 @@ blocks:
       workflow: agent-state-management
       inputs:
         state: "{{ inputs.state }}"
-        task_id: "{{ blocks.track_start.outputs.task_id }}"
+        task_id: "{{ blocks.track_start.outputs.task.task_id }}"
         status: "done"
         caller: "pr-review:investigation-loop"
         data:
           confidence: "{{ blocks.process_targets.outputs.investigation_results.confidence | default(0) }}"
           findings_count: "{{ blocks.process_targets.outputs.investigation_results.findings | length | default(0) }}"
-          iterations_completed: "{{ blocks.process_targets.outputs.iteration_completed | default(0) }}"
 
 outputs:
   investigation_results:

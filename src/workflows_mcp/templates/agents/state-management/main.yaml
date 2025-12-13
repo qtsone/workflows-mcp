@@ -8,6 +8,7 @@ description: |
   - Updates: Target specific task_id within the state
 
   State file: ~/.workflows/tasks/<trace_id>.json (configurable via WORKFLOWS_STATE_DIR)
+  Memory file: ~/.workflows/tasks/<trace_id>.memory.json
   Audit file: ~/.workflows/tasks/<trace_id>.audit.json
 
 tags: [agent, state-management, task-tracking, audit, hierarchical]
@@ -82,13 +83,87 @@ inputs:
     required: false
     default: true
 
+  # Operation routing
+  op:
+    type: str
+    description: |
+      Operation type to perform:
+      - task: Task operations (create, update) - default
+      - iteration: Iteration tracking (init, advance, checkpoint, complete, reset)
+      - memory: Key-value memory (set, get, append, merge, delete, keys)
+    required: false
+    default: "task"
+
+  # Iteration-specific inputs (used when op=iteration)
+  iteration_op:
+    type: str
+    description: |
+      Iteration operation (when op=iteration):
+      - init: Initialize iteration counter
+      - advance: Increment counter
+      - checkpoint: Save checkpoint data
+      - complete: Mark iteration done
+      - reset: Reset counter to zero
+    required: false
+    default: ""
+
+  iteration_total:
+    type: num
+    description: Expected total iterations (for progress calculation).
+    required: false
+    default: 0
+
+  iteration_cap:
+    type: num
+    description: Maximum iterations allowed (safety limit).
+    required: false
+    default: 100
+
+  checkpoint_data:
+    type: str
+    description: JSON data to save with iteration checkpoint.
+    required: false
+    default: ""
+
+  # Memory-specific inputs (used when op=memory)
+  memory_op:
+    type: str
+    description: |
+      Memory operation (when op=memory):
+      - set: Store value at key
+      - get: Retrieve value at key
+      - append: Append to list at key
+      - merge: Deep merge dict into key
+      - delete: Remove key
+      - keys: List keys matching pattern
+    required: false
+    default: ""
+
+  memory_key:
+    type: str
+    description: Key path using dot-notation (e.g., "context.framework").
+    required: false
+    default: ""
+
+  memory_value:
+    type: str
+    description: Value for set/append/merge operations (as JSON string).
+    required: false
+    default: ""
+
+  memory_default:
+    type: str
+    description: Default value for get operation if key missing (as JSON string).
+    required: false
+    default: ""
+
 blocks:
   # ==========================================================================
   # STEP 1: Generate state/audit file paths
   # ==========================================================================
   - id: paths
     type: Shell
-    description: Generate trace_id and file paths for state and audit.
+    description: Generate trace_id and file paths for state, audit, and memory.
     inputs:
       command: |
         python3 << 'EOF'
@@ -103,16 +178,19 @@ blocks:
             state_path = state_input
             state_base = state_path.rsplit('.json', 1)[0] if state_path.endswith('.json') else state_path
             audit_path = f'{state_base}.audit.json'
+            memory_path = f'{state_base}.memory.json'
             trace_id = Path(state_path).stem
         else:
             trace_id = f'exec-{secrets.token_hex(6)}'
             state_path = str(Path(state_dir) / f'{trace_id}.json')
             audit_path = str(Path(state_dir) / f'{trace_id}.audit.json')
+            memory_path = str(Path(state_dir) / f'{trace_id}.memory.json')
 
         print(json.dumps({
             'trace_id': trace_id,
             'state_path': state_path,
             'audit_path': audit_path,
+            'memory_path': memory_path,
             'state_exists': os.path.isfile(state_path)
         }))
         EOF
@@ -120,13 +198,48 @@ blocks:
         STATE_INPUT: "{{inputs.state}}"
 
   # ==========================================================================
-  # STEP 2: Load existing state if path provided and file exists
+  # ROUTING: Handle iteration operations
+  # ==========================================================================
+  - id: handle_iteration
+    type: Workflow
+    description: Route to iteration sub-workflow when op=iteration.
+    depends_on: [paths]
+    condition: "{{inputs.op == 'iteration'}}"
+    inputs:
+      workflow: agent-iteration
+      inputs:
+        state_path: "{{(blocks.paths.outputs.stdout | fromjson).state_path}}"
+        task_id: "{{inputs.task_id}}"
+        op: "{{inputs.iteration_op}}"
+        total: "{{inputs.iteration_total}}"
+        cap: "{{inputs.iteration_cap}}"
+        checkpoint_data: "{{inputs.checkpoint_data}}"
+
+  # ==========================================================================
+  # ROUTING: Handle memory operations
+  # ==========================================================================
+  - id: handle_memory
+    type: Workflow
+    description: Route to memory sub-workflow when op=memory.
+    depends_on: [paths]
+    condition: "{{inputs.op == 'memory'}}"
+    inputs:
+      workflow: agent-memory
+      inputs:
+        memory_path: "{{(blocks.paths.outputs.stdout | fromjson).memory_path}}"
+        op: "{{inputs.memory_op}}"
+        key: "{{inputs.memory_key}}"
+        value: "{{inputs.memory_value}}"
+        default: "{{inputs.memory_default}}"
+
+  # ==========================================================================
+  # TASK OPS - STEP 2: Load existing state if path provided and file exists
   # ==========================================================================
   - id: load_existing
     type: ReadJSONState
     description: Load existing state file if it exists.
     depends_on: [paths]
-    condition: "{{(blocks.paths.outputs.stdout | fromjson).state_exists}}"
+    condition: "{{inputs.op == 'task' and (blocks.paths.outputs.stdout | fromjson).state_exists}}"
     inputs:
       path: "{{(blocks.paths.outputs.stdout | fromjson).state_path}}"
       required: false
@@ -141,7 +254,7 @@ blocks:
       - paths
       - block: load_existing
         required: false
-    condition: "{{inputs.task_id == '' and (inputs.parent_id != '' or not blocks.load_existing.succeeded)}}"
+    condition: "{{inputs.op == 'task' and inputs.task_id == '' and (inputs.parent_id != '' or not blocks.load_existing.succeeded)}}"
     inputs:
       command: |
         python3 -c "import secrets; print(f'task-{secrets.token_hex(4)}')"
@@ -158,6 +271,7 @@ blocks:
         required: false
       - block: new_task_id
         required: false
+    condition: "{{inputs.op == 'task'}}"
     inputs:
       command: |
         python3 << 'EOF'
@@ -302,17 +416,24 @@ blocks:
         if task.get('parent_id'):
             audit_entry['parent_id'] = task['parent_id']
 
+        # Output clean structure for task output + internal state for write_state
         print(json.dumps({
-            'state': state,
-            'target_task_id': target_task_id,
-            'operation': operation,
-            'audit_entry': audit_entry,
+            # Clean task output fields
+            'task_id': target_task_id,
+            'root_task_id': state.get('root_task_id'),
+            'status': task.get('status'),
+            'parent_id': task.get('parent_id'),
+            'children': task.get('children', []),
             'pending_children': pending,
-            'task': task,
+            'data': task.get('data', {}),
             'all_children_done': all_children_done,
             'any_child_failed': any_child_failed,
             'progress_pct': progress_pct,
-            'children_summary': children_summary
+            'children_summary': children_summary,
+            # Internal fields for other blocks
+            '_state': state,
+            '_audit_entry': audit_entry,
+            '_operation': operation
         }))
         EOF
       env:
@@ -334,9 +455,10 @@ blocks:
     type: WriteJSONState
     description: Write the updated state to file.
     depends_on: [build_task, paths]
+    condition: "{{inputs.op == 'task'}}"
     inputs:
       path: "{{(blocks.paths.outputs.stdout | fromjson).state_path}}"
-      data: "{{(blocks.build_task.outputs.stdout | fromjson).state}}"
+      data: "{{(blocks.build_task.outputs.stdout | fromjson)._state}}"
 
   # ==========================================================================
   # STEP 6: Write audit entry (separate file)
@@ -344,7 +466,7 @@ blocks:
   - id: write_audit
     type: Shell
     description: Append audit entry to the audit log file.
-    condition: "{{inputs.audit}}"
+    condition: "{{inputs.op == 'task' and inputs.audit}}"
     depends_on: [build_task, paths]
     inputs:
       command: |
@@ -374,75 +496,69 @@ blocks:
         EOF
       env:
         AUDIT_PATH: "{{(blocks.paths.outputs.stdout | fromjson).audit_path}}"
-        AUDIT_ENTRY: "{{(blocks.build_task.outputs.stdout | fromjson).audit_entry | tojson}}"
+        AUDIT_ENTRY: "{{(blocks.build_task.outputs.stdout | fromjson)._audit_entry | tojson}}"
 
 outputs:
+  # ==========================================================================
+  # Common outputs (always available)
+  # ==========================================================================
   state:
-    description: Path to the state file
+    description: Path to the state file (entrypoint for all operations)
     type: str
     value: "{{(blocks.paths.outputs.stdout | fromjson).state_path}}"
-
-  task_id:
-    description: ID of the created/updated task
-    type: str
-    value: "{{(blocks.build_task.outputs.stdout | fromjson).target_task_id}}"
-
-  root_task_id:
-    description: ID of the root task in this state
-    type: str
-    value: "{{(blocks.build_task.outputs.stdout | fromjson).state.root_task_id}}"
 
   trace_id:
     description: Execution trace ID (state file identifier)
     type: str
     value: "{{(blocks.paths.outputs.stdout | fromjson).trace_id}}"
 
-  status:
-    description: Current status of the target task
-    type: str
-    value: "{{(blocks.build_task.outputs.stdout | fromjson).task.status}}"
-
-  parent_id:
-    description: Parent task ID (null for root task)
-    type: str
-    value: "{{(blocks.build_task.outputs.stdout | fromjson).task.parent_id}}"
-
-  children:
-    description: List of child task IDs
-    type: list
-    value: "{{(blocks.build_task.outputs.stdout | fromjson).task.children}}"
-
-  pending_children:
-    description: Child task IDs with status != done/failed
-    type: list
-    value: "{{(blocks.build_task.outputs.stdout | fromjson).pending_children}}"
-
-  audit_path:
-    description: Path to the audit log file
-    type: str
-    value: "{{(blocks.paths.outputs.stdout | fromjson).audit_path}}"
-
-  task_data:
-    description: The target task's data field
+  # ==========================================================================
+  # Task outputs (populated when op=task)
+  # ==========================================================================
+  task:
+    description: |
+      Task operation results (when op=task). Contains:
+      - task_id: ID of created/updated task
+      - root_task_id: ID of root task in state
+      - status: Current task status
+      - parent_id: Parent task ID (null for root)
+      - children: List of child task IDs
+      - pending_children: Children not done/failed
+      - data: Task-specific data field
+      - all_children_done: True if all children done
+      - any_child_failed: True if any child failed
+      - progress_pct: Percentage of children completed
+      - children_summary: Counts by status
     type: dict
-    value: "{{(blocks.build_task.outputs.stdout | fromjson).task.data}}"
+    value: "{{(blocks.build_task.outputs.stdout | fromjson) if blocks.build_task.succeeded else {}}}"
 
-  all_children_done:
-    description: True if all children have status 'done' (and there is at least one child)
-    type: bool
-    value: "{{(blocks.build_task.outputs.stdout | fromjson).all_children_done}}"
-
-  any_child_failed:
-    description: True if any child has status 'failed'
-    type: bool
-    value: "{{(blocks.build_task.outputs.stdout | fromjson).any_child_failed}}"
-
-  progress_pct:
-    description: Percentage of children completed (0-100). Returns 100 if no children.
-    type: num
-    value: "{{(blocks.build_task.outputs.stdout | fromjson).progress_pct}}"
-
-  children_summary:
-    description: Summary counts of children by status (total, done, failed, in_progress, pending)
+  # ==========================================================================
+  # Iteration outputs (populated when op=iteration)
+  # ==========================================================================
+  iteration:
+    description: |
+      Iteration operation results (when op=iteration). Contains:
+      - current: Current iteration index (0-based)
+      - total: Expected total iterations
+      - cap: Maximum allowed (safety limit)
+      - progress_pct: Percentage complete (0-100)
+      - progress_str: Human-readable (e.g., "5/10 (50%)")
+      - rate: Iterations per second
+      - eta_seconds: Estimated seconds remaining
+      - is_capped: True if safety limit reached
+      - checkpoint: Last checkpoint data
     type: dict
-    value: "{{(blocks.build_task.outputs.stdout | fromjson).children_summary}}"
+    value: "{{blocks.handle_iteration.outputs if blocks.handle_iteration.succeeded else {}}}"
+
+  # ==========================================================================
+  # Memory outputs (populated when op=memory)
+  # ==========================================================================
+  memory:
+    description: |
+      Memory operation results (when op=memory). Contains:
+      - value: Retrieved/resulting value
+      - exists: Whether key existed before operation
+      - previous: Previous value (set/delete ops)
+      - keys: List of matching keys (keys op)
+    type: dict
+    value: "{{blocks.handle_memory.outputs if blocks.handle_memory.succeeded else {}}}"

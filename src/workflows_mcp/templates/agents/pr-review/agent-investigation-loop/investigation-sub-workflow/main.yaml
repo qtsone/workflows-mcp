@@ -39,12 +39,6 @@ inputs:
     description: Head branch being reviewed.
     required: false
 
-  iteration_counter:
-    type: num
-    description: Current iteration count.
-    required: false
-    default: 0
-
   iteration_cap:
     type: num
     description: Maximum number of iterations allowed.
@@ -59,7 +53,7 @@ inputs:
     required: false
     default: general
 
-  state_path:
+  state:
     type: str
     description: |
       Path to state file for task tracking.
@@ -72,7 +66,7 @@ inputs:
     type: str
     description: |
       Parent task ID for creating sub-tasks in the state tree.
-      Used with state_path to create hierarchical task relationships.
+      Used with state to create hierarchical task relationships.
     required: false
     default: ""
 
@@ -99,11 +93,11 @@ blocks:
   - id: track_file_start
     type: Workflow
     description: Create sub-task for individual file investigation in state tree.
-    condition: "{{ inputs.state_path and inputs.state_path != '' }}"
+    condition: "{{ inputs.state and inputs.state != '' }}"
     inputs:
       workflow: agent-state-management
       inputs:
-        state: "{{ inputs.state_path }}"
+        state: "{{ inputs.state }}"
         parent_id: "{{ inputs.parent_task_id }}"
         task: >-
           Investigate: {{ inputs.target.path | default(inputs.target, true) }}
@@ -114,7 +108,6 @@ blocks:
           path: "{{ inputs.target.path | default(inputs.target, true) }}"
           reason: "{{ inputs.target.reason | default('Investigation target', true) }}"
           priority: "{{ inputs.target.priority | default('medium', true) }}"
-          iteration: "{{ inputs.iteration_counter }}"
 
   - id: extract_target_path
     type: Shell
@@ -230,7 +223,6 @@ blocks:
         - **File Path:** {{ (blocks.extract_target_path.outputs.stdout | fromjson).path }}
         - **Reason for Investigation:** {{ (blocks.extract_target_path.outputs.stdout | fromjson).reason }}
         - **Priority:** {{ (blocks.extract_target_path.outputs.stdout | fromjson).priority }}
-        - **Iteration:** {{ inputs.iteration_counter }} of {{ inputs.iteration_cap }}
         - **Focus Area:** {{ inputs.focus }}
 
         ## File Content
@@ -368,11 +360,10 @@ blocks:
         repo_path: "{{ inputs.repo_path }}"
         base_branch: "{{ inputs.base_branch }}"
         head_branch: "{{ inputs.head_branch }}"
-        iteration_counter: "{{ inputs.iteration_counter }}"
         iteration_cap: "{{ inputs.iteration_cap }}"
         focus: "{{ inputs.focus }}"
-        state_path: "{{ inputs.state_path }}"
-        parent_task_id: "{{ blocks.track_file_start.outputs.task_id | default(inputs.parent_task_id, true) }}"
+        state: "{{ inputs.state }}"
+        parent_task_id: "{{ blocks.track_file_start.outputs.task.task_id | default(inputs.parent_task_id, true) }}"
         investigation_depth: "{{ inputs.investigation_depth + 1 }}"
         max_investigation_depth: "{{ inputs.max_investigation_depth }}"
 
@@ -382,15 +373,15 @@ blocks:
   - id: track_file_done
     type: Workflow
     description: Mark file investigation as complete with captured data.
-    condition: "{{ inputs.state_path and inputs.state_path != '' and blocks.track_file_start.succeeded }}"
+    condition: "{{ inputs.state and inputs.state != '' and blocks.track_file_start.succeeded }}"
     depends_on:
       - analyze_target
       - investigate_related_files
     inputs:
       workflow: agent-state-management
       inputs:
-        state: "{{ inputs.state_path }}"
-        task_id: "{{ blocks.track_file_start.outputs.task_id }}"
+        state: "{{ inputs.state }}"
+        task_id: "{{ blocks.track_file_start.outputs.task.task_id }}"
         status: "done"
         caller: "pr-review:investigation-sub-workflow"
         data:
