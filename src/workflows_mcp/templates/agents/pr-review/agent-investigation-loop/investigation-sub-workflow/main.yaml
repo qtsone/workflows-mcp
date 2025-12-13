@@ -339,6 +339,31 @@ blocks:
         required: [summary, issues, severity, suggestions, needs_further_investigation, confidence]
 
   # ============================================================================
+  # MEMORY: Store file findings for accumulation across iterations
+  # ============================================================================
+  - id: store_file_findings
+    type: Workflow
+    description: Store file analysis findings in memory for accumulation.
+    condition: "{{ inputs.state | trim != '' }}"
+    depends_on:
+      - analyze_target
+      - extract_target_path
+    inputs:
+      workflow: agent-state-management
+      inputs:
+        state: "{{ inputs.state }}"
+        op: memory
+        memory_op: append
+        memory_key: "findings.by_file"
+        memory_value: |
+          {
+            "path": "{{ (blocks.extract_target_path.outputs.stdout | fromjson).path }}",
+            "analysis": {{ blocks.analyze_target.outputs.response | tojson }},
+            "depth": {{ inputs.investigation_depth }}
+          }
+        caller: "pr-review:investigation-sub-workflow"
+
+  # ============================================================================
   # RECURSIVE INVESTIGATION: Process related files if needed
   # ============================================================================
   - id: investigate_related_files
@@ -382,7 +407,10 @@ blocks:
     condition: "{{ inputs.state and inputs.state != '' and blocks.track_file_start.succeeded }}"
     depends_on:
       - analyze_target
-      - investigate_related_files
+      - block: store_file_findings
+        required: false
+      - block: investigate_related_files
+        required: false
     inputs:
       workflow: agent-state-management
       inputs:

@@ -180,6 +180,31 @@ blocks:
         required: [confidence, needs_more_investigation, findings, conclusion]
 
   # ============================================================================
+  # MEMORY: Store iteration findings for accumulation
+  # ============================================================================
+  - id: store_iteration_findings
+    type: Workflow
+    description: Store this iteration's findings in memory for accumulation.
+    condition: "{{ inputs.state | trim != '' }}"
+    depends_on:
+      - gather_results
+    inputs:
+      workflow: agent-state-management
+      inputs:
+        state: "{{ inputs.state }}"
+        op: memory
+        memory_op: append
+        memory_key: "iterations.history"
+        memory_value: |
+          {
+            "confidence": {{ blocks.gather_results.outputs.response.confidence | default(0) }},
+            "findings": {{ blocks.gather_results.outputs.response.findings | default([]) | tojson }},
+            "conclusion": "{{ blocks.gather_results.outputs.response.conclusion | default('') }}",
+            "needs_more": {{ blocks.gather_results.outputs.response.needs_more_investigation | default(false) | tojson }}
+          }
+        caller: "pr-review:process-targets"
+
+  # ============================================================================
   # ITERATION: Advance iteration counter and check if capped
   # ============================================================================
   - id: advance_iteration
@@ -187,6 +212,8 @@ blocks:
     description: Advance iteration counter and check if safety cap reached.
     depends_on:
       - gather_results
+      - block: store_iteration_findings
+        required: false
     condition: "{{ inputs.state | trim != '' and inputs.task_id | trim != '' }}"
     inputs:
       workflow: agent-state-management

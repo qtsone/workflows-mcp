@@ -91,6 +91,32 @@ blocks:
         audit: true
 
   # ==========================================================================
+  # MEMORY INITIALIZATION: Clear memory for fresh review
+  # ==========================================================================
+  - id: init_memory
+    type: Workflow
+    description: |
+      Initialize/clear memory for this PR review execution.
+      Creates fresh memory file to avoid cross-review contamination.
+    depends_on:
+      - state_management
+    condition: "{{ blocks.state_management.outputs.state | trim != '' }}"
+    inputs:
+      workflow: agent-state-management
+      inputs:
+        state: "{{ blocks.state_management.outputs.state }}"
+        op: memory
+        memory_op: set
+        memory_key: "_initialized"
+        memory_value: |
+          {
+            "trace_id": "{{ blocks.state_management.outputs.trace_id }}",
+            "started_at": "{{ now() }}",
+            "version": 1
+          }
+        caller: "pr-review:main"
+
+  # ==========================================================================
   # PHASE 1: Context Gathering
   # Normalizes input (URL vs local path) and outputs consistent repo_path
   # ==========================================================================
@@ -101,6 +127,8 @@ blocks:
       Outputs normalized repo_path regardless of input source.
     depends_on:
       - state_management
+      - block: init_memory
+        required: false
     inputs:
       workflow: context-gathering
       inputs:

@@ -33,6 +33,14 @@ inputs:
     required: false
     default: general
 
+  memory_summary:
+    type: dict
+    description: |
+      Summary of accumulated memory data for report.
+      Contains metrics from memory accumulation across phases.
+    required: false
+    default: {}
+
 blocks:
   - id: generate_report_llm
     type: LLMCall
@@ -61,6 +69,17 @@ blocks:
         General comprehensive review.
         {% endif %}
 
+        ## Investigation Summary
+        {% if inputs.memory_summary and inputs.memory_summary != {} %}
+        - **Initial Concerns Captured:** {{ inputs.memory_summary.initial_concerns_count | default(0) }}
+        - **Files Analyzed:** {{ inputs.memory_summary.files_analyzed | default(0) }}
+        - **Investigation Iterations:** {{ inputs.memory_summary.iterations_completed | default(0) }}
+        - **Total Findings (before deduplication):** {{ inputs.memory_summary.total_findings_from_memory | default(0) }}
+        - **Final Unique Findings:** {{ inputs.memory_summary.deduplicated_findings | default(0) }}
+        {% else %}
+        _No memory summary available_
+        {% endif %}
+
         ## Findings ({{ inputs.filtered_findings | length }} total)
         ```json
         {{ inputs.filtered_findings | tojson }}
@@ -84,11 +103,15 @@ blocks:
            - Highlight {{ inputs.focus }}-related issues prominently
            {% endif %}
 
-        3. **Recommendations**
+        3. **Investigation Summary** (if memory_summary provided)
+           - Include the metrics table from Investigation Summary above
+           - Note if any findings came from initial concerns vs iterations
+
+        4. **Recommendations**
            - Actionable steps to address findings
            - Priority order
 
-        4. **Conclusion**
+        5. **Conclusion**
            - Overall verdict
            - Whether PR is ready to merge
 

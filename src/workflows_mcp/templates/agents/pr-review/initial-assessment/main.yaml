@@ -85,6 +85,9 @@ blocks:
     description: |
       Consolidate PR analysis, risk assessment, and identification of
       investigation targets into a single structured response.
+    depends_on:
+      - block: track_start
+        required: false
     inputs:
       profile: default
       prompt: |
@@ -216,6 +219,41 @@ blocks:
         required: [pr_intent, risk_level, risk_rationale, investigation_targets]
 
   # ============================================================================
+  # MEMORY: Store initial concerns for synthesis phase
+  # ============================================================================
+  - id: store_initial_concerns
+    type: Workflow
+    description: Store initial concerns in memory for synthesis phase access.
+    condition: "{{ inputs.state | trim != '' }}"
+    depends_on:
+      - consolidated_pr_assessment
+    inputs:
+      workflow: agent-state-management
+      inputs:
+        state: "{{ inputs.state }}"
+        op: memory
+        memory_op: set
+        memory_key: "synthesis.initial_concerns"
+        memory_value: "{{ blocks.consolidated_pr_assessment.outputs.response.initial_concerns | default([]) | tojson }}"
+        caller: "pr-review:initial-assessment"
+
+  - id: store_investigation_targets
+    type: Workflow
+    description: Store investigation targets in memory for reference.
+    condition: "{{ inputs.state | trim != '' }}"
+    depends_on:
+      - consolidated_pr_assessment
+    inputs:
+      workflow: agent-state-management
+      inputs:
+        state: "{{ inputs.state }}"
+        op: memory
+        memory_op: set
+        memory_key: "investigation.targets.initial"
+        memory_value: "{{ blocks.consolidated_pr_assessment.outputs.response.investigation_targets | tojson }}"
+        caller: "pr-review:initial-assessment"
+
+  # ============================================================================
   # STATE TRACKING: Mark phase complete with captured data
   # ============================================================================
   - id: track_done
@@ -224,6 +262,10 @@ blocks:
     condition: "{{ inputs.state | trim != '' and blocks.track_start.succeeded }}"
     depends_on:
       - consolidated_pr_assessment
+      - block: store_initial_concerns
+        required: false
+      - block: store_investigation_targets
+        required: false
     inputs:
       workflow: agent-state-management
       inputs:

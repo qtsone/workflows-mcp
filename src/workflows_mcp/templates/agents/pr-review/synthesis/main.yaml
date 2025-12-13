@@ -80,13 +80,166 @@ blocks:
         status: "in-progress"
         caller: "pr-review:synthesis"
 
+  # ============================================================================
+  # MEMORY RETRIEVAL: Get accumulated findings from all phases
+  # ============================================================================
+  - id: retrieve_initial_concerns
+    type: Workflow
+    description: Retrieve initial concerns stored during assessment phase.
+    condition: "{{ inputs.state | trim != '' }}"
+    depends_on:
+      - block: track_start
+        required: false
+    inputs:
+      workflow: agent-state-management
+      inputs:
+        state: "{{ inputs.state }}"
+        op: memory
+        memory_op: get
+        memory_key: "synthesis.initial_concerns"
+        memory_default: "[]"
+        caller: "pr-review:synthesis"
+
+  - id: retrieve_all_findings
+    type: Workflow
+    description: Retrieve all accumulated findings from investigation iterations.
+    condition: "{{ inputs.state | trim != '' }}"
+    depends_on:
+      - block: track_start
+        required: false
+    inputs:
+      workflow: agent-state-management
+      inputs:
+        state: "{{ inputs.state }}"
+        op: memory
+        memory_op: get
+        memory_key: "findings.by_file"
+        memory_default: "[]"
+        caller: "pr-review:synthesis"
+
+  - id: retrieve_iteration_history
+    type: Workflow
+    description: Retrieve iteration history for comprehensive findings.
+    condition: "{{ inputs.state | trim != '' }}"
+    depends_on:
+      - block: track_start
+        required: false
+    inputs:
+      workflow: agent-state-management
+      inputs:
+        state: "{{ inputs.state }}"
+        op: memory
+        memory_op: get
+        memory_key: "iterations.history"
+        memory_default: "[]"
+        caller: "pr-review:synthesis"
+
+  # ============================================================================
+  # MERGE: Combine investigation_results with accumulated memory findings
+  # ============================================================================
+  - id: merge_all_findings
+    type: Shell
+    description: Merge investigation_results with accumulated memory findings.
+    depends_on:
+      - block: retrieve_initial_concerns
+        required: false
+      - block: retrieve_all_findings
+        required: false
+      - block: retrieve_iteration_history
+        required: false
+    inputs:
+      command: |
+        python3 << 'EOF'
+        import os, json
+
+        # Load inputs
+        investigation_results = json.loads(os.environ.get('INVESTIGATION_RESULTS', '{}'))
+        initial_concerns_raw = os.environ.get('INITIAL_CONCERNS', '[]')
+        file_findings_raw = os.environ.get('FILE_FINDINGS', '[]')
+        iteration_history_raw = os.environ.get('ITERATION_HISTORY', '[]')
+
+        # Parse - handle nested JSON (from memory value)
+        def safe_parse(raw, default):
+            if not raw or raw == 'null':
+                return default
+            try:
+                parsed = json.loads(raw)
+                # Handle double-encoded JSON from memory
+                if isinstance(parsed, str):
+                    parsed = json.loads(parsed)
+                return parsed if parsed else default
+            except (json.JSONDecodeError, TypeError):
+                return default
+
+        initial_concerns = safe_parse(initial_concerns_raw, [])
+        file_findings = safe_parse(file_findings_raw, [])
+        iteration_history = safe_parse(iteration_history_raw, [])
+
+        # Merge all findings
+        all_findings = []
+
+        # Add initial concerns as findings
+        if isinstance(initial_concerns, list):
+            for concern in initial_concerns:
+                if isinstance(concern, dict):
+                    all_findings.append({
+                        'target': concern.get('location', 'initial-assessment'),
+                        'summary': concern.get('concern', ''),
+                        'severity': concern.get('severity', 'info'),
+                        'source': 'initial_concerns'
+                    })
+
+        # Add findings from all iterations (not just final)
+        if isinstance(iteration_history, list):
+            for iteration in iteration_history:
+                if isinstance(iteration, dict):
+                    for finding in iteration.get('findings', []):
+                        if isinstance(finding, dict):
+                            finding['source'] = 'iteration'
+                            all_findings.append(finding)
+
+        # Deduplicate by target+summary (keep highest severity)
+        severity_order = {'critical': 0, 'high': 1, 'medium': 2, 'low': 3, 'info': 4}
+        unique_findings = {}
+        for f in all_findings:
+            key = f"{f.get('target', '')}:{f.get('summary', '')[:50]}"
+            if key not in unique_findings:
+                unique_findings[key] = f
+            else:
+                existing_sev = severity_order.get(unique_findings[key].get('severity', 'info'), 4)
+                new_sev = severity_order.get(f.get('severity', 'info'), 4)
+                if new_sev < existing_sev:
+                    unique_findings[key] = f
+
+        merged = {
+            'findings': list(unique_findings.values()),
+            'confidence': investigation_results.get('confidence', 0) if isinstance(investigation_results, dict) else 0,
+            'conclusion': investigation_results.get('conclusion', '') if isinstance(investigation_results, dict) else '',
+            'total_from_memory': len(all_findings),
+            'deduplicated_count': len(unique_findings),
+            'initial_concerns_count': len(initial_concerns) if isinstance(initial_concerns, list) else 0,
+            'files_analyzed_count': len(file_findings) if isinstance(file_findings, list) else 0,
+            'iterations_count': len(iteration_history) if isinstance(iteration_history, list) else 0
+        }
+
+        print(json.dumps(merged))
+        EOF
+      env:
+        INVESTIGATION_RESULTS: "{{ inputs.investigation_results | tojson }}"
+        INITIAL_CONCERNS: "{{ blocks.retrieve_initial_concerns.outputs.memory.value | default('[]') | tojson }}"
+        FILE_FINDINGS: "{{ blocks.retrieve_all_findings.outputs.memory.value | default('[]') | tojson }}"
+        ITERATION_HISTORY: "{{ blocks.retrieve_iteration_history.outputs.memory.value | default('[]') | tojson }}"
+
   - id: compile_findings
     type: Workflow
-    description: Compile findings by severity from investigation results.
+    description: Compile findings by severity from merged investigation results.
+    depends_on:
+      - merge_all_findings
     inputs:
       workflow: compile-findings
       inputs:
-        investigation_results: "{{ inputs.investigation_results }}"
+        # Use merged findings that include all iterations + initial concerns
+        investigation_results: "{{ blocks.merge_all_findings.outputs.stdout | fromjson }}"
 
   - id: filter_findings
     type: Workflow
@@ -101,15 +254,22 @@ blocks:
 
   - id: generate_report
     type: Workflow
-    description: Generate a markdown report with findings, suggestions, and rationale.
+    description: Generate a markdown report with findings, suggestions, and memory summary.
     depends_on:
       - filter_findings
+      - merge_all_findings
     inputs:
       workflow: generate-report
       inputs:
         filtered_findings: "{{ blocks.filter_findings.outputs.filtered_findings }}"
         pr_metadata: "{{ inputs.pr_metadata }}"
         focus: "{{ inputs.focus }}"
+        memory_summary:
+          initial_concerns_count: "{{ (blocks.merge_all_findings.outputs.stdout | fromjson).initial_concerns_count | default(0) }}"
+          files_analyzed: "{{ (blocks.merge_all_findings.outputs.stdout | fromjson).files_analyzed_count | default(0) }}"
+          iterations_completed: "{{ (blocks.merge_all_findings.outputs.stdout | fromjson).iterations_count | default(0) }}"
+          total_findings_from_memory: "{{ (blocks.merge_all_findings.outputs.stdout | fromjson).total_from_memory | default(0) }}"
+          deduplicated_findings: "{{ (blocks.merge_all_findings.outputs.stdout | fromjson).deduplicated_count | default(0) }}"
 
   - id: make_approval_decision
     type: Workflow
@@ -131,6 +291,7 @@ blocks:
     depends_on:
       - generate_report
       - make_approval_decision
+      - merge_all_findings
     inputs:
       workflow: agent-state-management
       inputs:
@@ -143,6 +304,12 @@ blocks:
           approve: "{{ blocks.make_approval_decision.outputs.approve }}"
           threshold: "{{ inputs.threshold }}"
           focus: "{{ inputs.focus | default('general', true) }}"
+          # Memory summary data
+          initial_concerns_count: "{{ (blocks.merge_all_findings.outputs.stdout | fromjson).initial_concerns_count | default(0) }}"
+          files_analyzed: "{{ (blocks.merge_all_findings.outputs.stdout | fromjson).files_analyzed_count | default(0) }}"
+          iterations_completed: "{{ (blocks.merge_all_findings.outputs.stdout | fromjson).iterations_count | default(0) }}"
+          total_findings: "{{ (blocks.merge_all_findings.outputs.stdout | fromjson).total_from_memory | default(0) }}"
+          deduplicated_findings: "{{ (blocks.merge_all_findings.outputs.stdout | fromjson).deduplicated_count | default(0) }}"
 
 outputs:
   report:
