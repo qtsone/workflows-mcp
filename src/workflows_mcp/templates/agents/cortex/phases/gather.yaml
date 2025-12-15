@@ -44,8 +44,9 @@ inputs:
 
   state:
     type: str
-    description: Path to SQLite state database.
-    required: true
+    description: Path to SQLite state database (auto-created if empty).
+    required: false
+    default: ""
 
   parent_task_id:
     type: str
@@ -110,6 +111,14 @@ blocks:
         3. **Search** - Find specific patterns or terms
         4. **Commands** - Execute only if needed for verification
 
+        ## Target Formats
+
+        IMPORTANT - Use the correct format for each operation type:
+        - **outline**: Use GLOB patterns like "**/*.py", "src/**/*.ts", "*.yaml"
+        - **content**: Use file paths relative to repo root like "README.md", "src/main.py"
+        - **search**: Use regex search patterns like "class.*Handler", "def main"
+        - **command**: Use shell commands like "ls -la", "git log --oneline -5"
+
         ## Instructions
 
         Plan which gathering operations to perform. Be efficient - don't gather
@@ -132,7 +141,7 @@ blocks:
                   description: "Type of gathering operation"
                 target:
                   type: string
-                  description: "What to gather (patterns, search term, command)"
+                  description: "outline=glob pattern (e.g. **/*.py), content=file path, search=regex, command=shell cmd"
                 reason:
                   type: string
                   description: "Why this evidence is needed"
@@ -252,21 +261,24 @@ blocks:
                 continue
 
             try:
-                result = subprocess.run(
-                    ['rg', '--json', '-e', target, repo_path, '-l'],
-                    capture_output=True,
-                    text=True,
-                    timeout=30
-                )
-                matches = []
-                for line in result.stdout.strip().split('\n')[:20]:
-                    if line:
-                        try:
-                            data = json.loads(line)
-                            if data.get('type') == 'match':
-                                matches.append(data.get('data', {}).get('path', {}).get('text', ''))
-                        except json.JSONDecodeError:
-                            pass
+                # Try ripgrep first, fall back to grep
+                try:
+                    result = subprocess.run(
+                        ['rg', '-l', '-e', target, repo_path],
+                        capture_output=True,
+                        text=True,
+                        timeout=30
+                    )
+                    matches = [m for m in result.stdout.strip().split('\n') if m][:20]
+                except FileNotFoundError:
+                    # Fall back to grep
+                    result = subprocess.run(
+                        ['grep', '-r', '-l', target, repo_path],
+                        capture_output=True,
+                        text=True,
+                        timeout=30
+                    )
+                    matches = [m for m in result.stdout.strip().split('\n') if m][:20]
 
                 results.append({
                     'pattern': target,

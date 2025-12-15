@@ -32,8 +32,9 @@ inputs:
 
   state:
     type: str
-    description: Path to SQLite state database.
-    required: true
+    description: Path to SQLite state database (auto-created if empty).
+    required: false
+    default: ""
 
   parent_task_id:
     type: str
@@ -99,7 +100,7 @@ blocks:
         - Repository Path: {{ inputs.context.repo_path | default('Not specified') }}
         - Focus Area: {{ inputs.context.focus | default('general') }}
         - Current Depth: {{ inputs.depth }} / {{ inputs.max_depth }}
-        {% if inputs.context.accumulated_knowledge %}
+        {% if get(inputs.context, 'accumulated_knowledge') %}
         - Prior Knowledge: {{ inputs.context.accumulated_knowledge | tojson }}
         {% endif %}
 

@@ -36,8 +36,9 @@ inputs:
 
   state:
     type: str
-    description: Path to SQLite state database.
-    required: true
+    description: Path to SQLite state database (auto-created if empty).
+    required: false
+    default: ""
 
   parent_task_id:
     type: str
@@ -84,7 +85,7 @@ blocks:
         ## Context
         - Repository Path: {{ inputs.context.repo_path | default('Not specified') }}
         - Focus Area: {{ inputs.context.focus | default('general') }}
-        {% if inputs.context.constraints %}
+        {% if get(inputs.context, 'constraints') %}
         - Constraints: {{ inputs.context.constraints | tojson }}
         {% endif %}
 

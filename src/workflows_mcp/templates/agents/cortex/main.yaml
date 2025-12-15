@@ -111,8 +111,11 @@ inputs:
   # State Management
   state:
     type: str
-    description: Path to SQLite state database.
-    required: true
+    description: |
+      Path to SQLite state database. If empty, a new state is auto-created
+      at ~/.workflows/tasks/<trace_id>.db
+    required: false
+    default: ""
 
   parent_task_id:
     type: str

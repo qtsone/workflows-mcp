@@ -38,8 +38,9 @@ inputs:
 
   state:
     type: str
-    description: Path to SQLite state database.
-    required: true
+    description: Path to SQLite state database (auto-created if empty).
+    required: false
+    default: ""
 
   parent_task_id:
     type: str
