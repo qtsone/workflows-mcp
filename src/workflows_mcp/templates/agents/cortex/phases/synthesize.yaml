@@ -191,9 +191,9 @@ blocks:
         - **Evidence:** {{ finding.evidence_refs | default([]) | join(', ') }}
         - **Confidence:** {{ finding.confidence | default(0.5) }}
         - **Verified:** {{ finding.verified | default(false) }}
-        {% if finding.code_snippet %}
+        {% if get(finding, 'code_snippet') %}
         ```
-        {{ finding.code_snippet[:500] }}
+        {{ get(finding, 'code_snippet')[:500] }}
         ```
         {% endif %}
         {% endfor %}
@@ -323,11 +323,11 @@ outputs:
     description: Overall risk level.
 
   recommendations:
-    value: "{{ blocks.synthesize.outputs.response.synthesis.recommendations | default([]) }}"
+    value: "{{ get(blocks.synthesize.outputs.response.synthesis, 'recommendations', []) }}"
     type: list
     description: Recommended next steps.
 
   actions_needed:
-    value: "{{ blocks.synthesize.outputs.response.synthesis.actions_needed | default(false) }}"
+    value: "{{ get(blocks.synthesize.outputs.response.synthesis, 'actions_needed', false) }}"
     type: bool
     description: Whether actions are recommended.

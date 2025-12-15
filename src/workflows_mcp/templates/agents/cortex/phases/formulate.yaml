@@ -204,7 +204,7 @@ blocks:
         caller: "cortex-phase-formulate"
         data:
           assumptions_count: "{{ blocks.formulate.outputs.response.assumptions | length }}"
-          sub_questions_count: "{{ blocks.formulate.outputs.response.sub_questions | default([]) | length }}"
+          sub_questions_count: "{{ get(blocks.formulate.outputs.response, 'sub_questions', []) | length }}"
 
 outputs:
   refined_query:
@@ -223,11 +223,11 @@ outputs:
     description: Success criteria for the query.
 
   sub_questions:
-    value: "{{ blocks.formulate.outputs.response.sub_questions | default([]) }}"
+    value: "{{ get(blocks.formulate.outputs.response, 'sub_questions', []) }}"
     type: list
     description: Atomic sub-questions if query is compound.
 
   gather_hints:
-    value: "{{ blocks.formulate.outputs.response.gather_hints | default({}) }}"
+    value: "{{ get(blocks.formulate.outputs.response, 'gather_hints', {}) }}"
     type: dict
     description: Hints for the gather phase.

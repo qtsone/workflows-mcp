@@ -259,7 +259,7 @@ blocks:
       env:
         DEPTH: "{{ inputs.depth }}"
         MAX_DEPTH: "{{ inputs.max_depth }}"
-        SUB_QUERIES: "{{ blocks.analyze.outputs.response.sub_queries | default([]) | tojson }}"
+        SUB_QUERIES: "{{ get(blocks.analyze.outputs.response, 'sub_queries', []) | tojson }}"
 
   - id: store_findings
     type: Workflow
@@ -314,7 +314,7 @@ outputs:
     description: Sub-queries for deeper investigation.
 
   contradictions:
-    value: "{{ blocks.analyze.outputs.response.contradictions | default([]) }}"
+    value: "{{ get(blocks.analyze.outputs.response, 'contradictions', []) }}"
     type: list
     description: Contradictions found in evidence.
 

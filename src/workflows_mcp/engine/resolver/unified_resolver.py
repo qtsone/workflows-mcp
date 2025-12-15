@@ -250,13 +250,19 @@ class UnifiedVariableResolver:
         - List index access: get(mylist, 1, default)
         - Attribute access: get(myobj, 'attr', default)
 
-        Returns default if key/index/attribute doesn't exist or is out of bounds.
+        Returns default if:
+        - Key/index/attribute doesn't exist or is out of bounds
+        - Value is None/null (unlike Python's dict.get which returns None)
+
+        This null-handling behavior is important for LLM responses where
+        optional fields may be explicitly set to null rather than omitted.
 
         Examples:
             {{get(files, 1, {})}}                      # List index
             {{get(files, 1, {}).content | default('')}} # Chained access
             {{get(block, 'outputs', {})}}              # Dict key
             {{get(obj, 'missing_attr', None)}}         # Attribute
+            {{get(response, 'sub_queries', [])}}       # Returns [] if null
         """
         try:
             # List/tuple index access
@@ -267,7 +273,9 @@ class UnifiedVariableResolver:
 
             # Dict key access
             if isinstance(obj, dict):
-                return obj.get(key, default)
+                value = obj.get(key, default)
+                # Return default if value is None (handles JSON null)
+                return value if value is not None else default
 
             # Attribute access
             if isinstance(key, str) and hasattr(obj, key):

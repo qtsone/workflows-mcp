@@ -250,7 +250,7 @@ blocks:
           {
             "summary": {{ blocks.understand.outputs.response.understanding.summary | tojson }},
             "key_facts": {{ blocks.understand.outputs.response.understanding.key_facts | tojson }},
-            "relevant_files": {{ blocks.understand.outputs.response.understanding.relevant_files | default([]) | tojson }},
+            "relevant_files": {{ get(blocks.understand.outputs.response.understanding, 'relevant_files', []) | tojson }},
             "gaps_count": {{ blocks.understand.outputs.response.gaps | length }}
           }
         caller: "cortex-phase-understand"
