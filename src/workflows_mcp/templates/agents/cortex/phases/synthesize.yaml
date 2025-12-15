@@ -18,12 +18,6 @@ inputs:
     description: Findings from analysis phase(s).
     required: true
 
-  child_syntheses:
-    type: list
-    description: Synthesis results from child cells.
-    required: false
-    default: []
-
   context:
     type: dict
     description: Shared context from parent cell.
@@ -67,6 +61,24 @@ blocks:
         status: "in-progress"
         caller: "cortex-phase-synthesize"
 
+  # Query child cells for their syntheses (via task tree relationship)
+  - id: get_child_syntheses
+    type: Workflow
+    description: Get syntheses from child cells via relational query.
+    depends_on: [register_task]
+    inputs:
+      workflow: agent-state-management
+      inputs:
+        state: "{{ inputs.state }}"
+        op: query
+        task_id: "{{ inputs.parent_task_id }}"
+        query:
+          relation: children
+          where:
+            task_type: cortex-cell
+          select: [synthesis, answer]
+        caller: "cortex-phase-synthesize"
+
   # Retrieve all findings from memory
   - id: retrieve_all_findings
     type: Workflow
@@ -85,8 +97,8 @@ blocks:
   # Merge all findings
   - id: merge_findings
     type: Shell
-    description: Merge local findings with memory and child syntheses.
-    depends_on: [retrieve_all_findings]
+    description: Merge local findings with memory and child syntheses from DB query.
+    depends_on: [retrieve_all_findings, get_child_syntheses]
     inputs:
       command: |
         python3 << 'EOF'
@@ -96,7 +108,7 @@ blocks:
 
         local_findings = json.loads(os.environ.get('LOCAL_FINDINGS', '[]'))
         memory_findings = json.loads(os.environ.get('MEMORY_FINDINGS', '[]'))
-        child_syntheses = json.loads(os.environ.get('CHILD_SYNTHESES', '[]'))
+        child_query_results = json.loads(os.environ.get('CHILD_QUERY_RESULTS', '{}'))
 
         all_findings = []
 
@@ -113,16 +125,17 @@ blocks:
                         f['source'] = f'depth_{batch.get("depth", "?")}'
                         all_findings.append(f)
 
-        # Add child synthesis findings
-        for cs in child_syntheses:
-            if isinstance(cs, dict):
-                # Handle for_each iteration results
-                outputs = cs.get('outputs', cs)
-                if 'synthesis' in outputs:
-                    child_findings = outputs['synthesis'].get('findings', [])
-                    for f in child_findings:
-                        f['source'] = 'child'
-                        all_findings.append(f)
+        # Add child synthesis findings from query results
+        # Query format: { "results": [{"task_id": "...", "synthesis": {...}}, ...] }
+        child_results = child_query_results.get('results', [])
+        for child in child_results:
+            if isinstance(child, dict) and child.get('synthesis'):
+                synthesis = child['synthesis']
+                child_findings = synthesis.get('findings', [])
+                child_task_id = child.get('task_id', '?')
+                for f in child_findings:
+                    f['source'] = f'child:{child_task_id}'
+                    all_findings.append(f)
 
         # Deduplicate by claim
         seen_claims = set()
@@ -147,8 +160,9 @@ blocks:
             'sources': {
                 'local': len([f for f in unique_findings if f.get('source') == 'local']),
                 'memory': len([f for f in unique_findings if f.get('source', '').startswith('depth')]),
-                'child': len([f for f in unique_findings if f.get('source') == 'child'])
-            }
+                'child': len([f for f in unique_findings if f.get('source', '').startswith('child')])
+            },
+            'child_cells_queried': len(child_results)
         }
 
         print(json.dumps(result))
@@ -156,7 +170,7 @@ blocks:
       env:
         LOCAL_FINDINGS: "{{ inputs.findings | tojson }}"
         MEMORY_FINDINGS: "{{ blocks.retrieve_all_findings.outputs.memory.value | default([]) | tojson }}"
-        CHILD_SYNTHESES: "{{ inputs.child_syntheses | tojson }}"
+        CHILD_QUERY_RESULTS: "{{ blocks.get_child_syntheses.outputs.query | default({}) | tojson }}"
 
   - id: synthesize
     type: LLMCall
@@ -266,29 +280,10 @@ blocks:
             description: "How completely the query was answered"
         required: [synthesis, answer, completeness]
 
-  - id: store_synthesis
-    type: Workflow
-    description: Store synthesis in memory.
-    depends_on: [synthesize]
-    inputs:
-      workflow: agent-state-management
-      inputs:
-        state: "{{ inputs.state }}"
-        op: memory
-        memory_op: set
-        memory_key: "synthesis"
-        memory_value: |
-          {
-            "synthesis": {{ blocks.synthesize.outputs.response.synthesis | tojson }},
-            "answer": {{ blocks.synthesize.outputs.response.answer | tojson }},
-            "completeness": "{{ blocks.synthesize.outputs.response.completeness }}"
-          }
-        caller: "cortex-phase-synthesize"
-
   - id: track_done
     type: Workflow
-    description: Mark phase complete.
-    depends_on: [synthesize, store_synthesis]
+    description: Mark phase complete and store synthesis in task.data.
+    depends_on: [synthesize]
     inputs:
       workflow: agent-state-management
       inputs:
@@ -297,9 +292,9 @@ blocks:
         status: "done"
         caller: "cortex-phase-synthesize"
         data:
-          risk_level: "{{ blocks.synthesize.outputs.response.synthesis.risk_level }}"
+          synthesis: "{{ blocks.synthesize.outputs.response.synthesis }}"
+          answer: "{{ blocks.synthesize.outputs.response.answer }}"
           completeness: "{{ blocks.synthesize.outputs.response.completeness }}"
-          findings_count: "{{ blocks.synthesize.outputs.response.synthesis.findings | length }}"
 
 outputs:
   synthesis:

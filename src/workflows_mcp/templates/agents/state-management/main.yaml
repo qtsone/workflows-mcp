@@ -93,8 +93,32 @@ inputs:
       - task: Task operations (create, update) - default
       - iteration: Iteration tracking (init, advance, checkpoint, complete, reset)
       - memory: Key-value memory (set, get, append, merge, delete, keys)
+      - query: Relational query on task tree (children, parent, ancestors, descendants)
     required: false
     default: "task"
+
+  # Query input (used when op=query)
+  query:
+    type: dict
+    description: |
+      Query specification (when op=query). Uses task_id as reference point.
+      Structure:
+        relation: children | parent | ancestors | descendants (required)
+        where: { task_type: "...", status: "..." }  # Optional filters
+        select: ["key1", "key2"]  # Optional: keys to extract from data JSON
+        limit: 100  # Optional: max results (default 100)
+
+      Examples:
+        # Get child cells with synthesis data
+        { relation: children, where: { task_type: cortex-cell }, select: [synthesis] }
+
+        # Get parent task
+        { relation: parent, select: [accumulated_knowledge] }
+
+        # Get all ancestors
+        { relation: ancestors, select: [synthesis] }
+    required: false
+    default: {}
 
   # Iteration-specific inputs (used when op=iteration)
   iteration_op:
@@ -312,6 +336,159 @@ blocks:
         key: "{{inputs.memory_key}}"
         value: "{{inputs.memory_value}}"
         default: "{{inputs.memory_default}}"
+
+  # ==========================================================================
+  # ROUTING: Handle query operations
+  # ==========================================================================
+  - id: handle_query
+    type: Shell
+    description: Execute relational query on task tree when op=query.
+    depends_on: [paths]
+    condition: "{{ inputs.op == 'query' }}"
+    inputs:
+      command: |
+        python3 << 'EOF'
+        import os, json, sqlite3
+
+        db_path = os.environ['DB_PATH']
+        task_id = os.environ.get('TASK_ID', '')
+        query_json = os.environ.get('QUERY', '{}')
+
+        try:
+            query = json.loads(query_json) if query_json else {}
+        except json.JSONDecodeError:
+            print(json.dumps({'error': 'Invalid query JSON', 'results': [], 'count': 0}))
+            exit(0)
+
+        relation = query.get('relation', '')
+        where = query.get('where', {})
+        select_keys = query.get('select', [])
+        limit = query.get('limit', 100)
+
+        if not relation:
+            print(json.dumps({'error': 'relation is required in query', 'results': [], 'count': 0}))
+            exit(0)
+
+        if not task_id and relation != 'all':
+            print(json.dumps({'error': 'task_id required for relational queries', 'results': [], 'count': 0}))
+            exit(0)
+
+        conn = sqlite3.connect(db_path)
+        conn.row_factory = sqlite3.Row
+        conn.execute("PRAGMA busy_timeout=30000")
+
+        results = []
+
+        if relation == 'children':
+            # Direct children of task_id
+            sql = "SELECT task_id, parent_id, task_type, status, data FROM tasks WHERE parent_id = ?"
+            params = [task_id]
+
+        elif relation == 'parent':
+            # Get parent of task_id
+            row = conn.execute("SELECT parent_id FROM tasks WHERE task_id = ?", (task_id,)).fetchone()
+            if row and row['parent_id']:
+                sql = "SELECT task_id, parent_id, task_type, status, data FROM tasks WHERE task_id = ?"
+                params = [row['parent_id']]
+            else:
+                print(json.dumps({'results': [], 'count': 0, 'relation': 'parent'}))
+                conn.close()
+                exit(0)
+
+        elif relation == 'ancestors':
+            # Recursive CTE to get all ancestors
+            sql = """
+                WITH RECURSIVE ancestors AS (
+                    SELECT task_id, parent_id, task_type, status, data, 1 as depth
+                    FROM tasks WHERE task_id = (SELECT parent_id FROM tasks WHERE task_id = ?)
+                    UNION ALL
+                    SELECT t.task_id, t.parent_id, t.task_type, t.status, t.data, a.depth + 1
+                    FROM tasks t
+                    JOIN ancestors a ON t.task_id = a.parent_id
+                )
+                SELECT task_id, parent_id, task_type, status, data, depth FROM ancestors
+                ORDER BY depth
+            """
+            params = [task_id]
+
+        elif relation == 'descendants':
+            # Recursive CTE to get all descendants
+            sql = """
+                WITH RECURSIVE descendants AS (
+                    SELECT task_id, parent_id, task_type, status, data, 1 as depth
+                    FROM tasks WHERE parent_id = ?
+                    UNION ALL
+                    SELECT t.task_id, t.parent_id, t.task_type, t.status, t.data, d.depth + 1
+                    FROM tasks t
+                    JOIN descendants d ON t.parent_id = d.task_id
+                )
+                SELECT task_id, parent_id, task_type, status, data, depth FROM descendants
+                ORDER BY depth
+            """
+            params = [task_id]
+
+        else:
+            print(json.dumps({'error': f'Unknown relation: {relation}', 'results': [], 'count': 0}))
+            conn.close()
+            exit(0)
+
+        # Execute base query
+        rows = conn.execute(sql, params).fetchall()
+
+        # Apply where filters and build results
+        for row in rows:
+            # Check where conditions
+            match = True
+            if where:
+                if 'task_type' in where and row['task_type'] != where['task_type']:
+                    match = False
+                if 'status' in where and row['status'] != where['status']:
+                    match = False
+
+            if not match:
+                continue
+
+            # Build result object
+            result = {
+                'task_id': row['task_id'],
+                'parent_id': row['parent_id'],
+                'task_type': row['task_type'],
+                'status': row['status']
+            }
+
+            # Handle data extraction
+            if row['data']:
+                try:
+                    data = json.loads(row['data'])
+                    if select_keys:
+                        # Extract only specified keys
+                        for key in select_keys:
+                            if key in data:
+                                result[key] = data[key]
+                    else:
+                        # Return full data
+                        result['data'] = data
+                except json.JSONDecodeError:
+                    result['data'] = {}
+
+            results.append(result)
+
+            if len(results) >= limit:
+                break
+
+        conn.close()
+
+        print(json.dumps({
+            'results': results,
+            'count': len(results),
+            'relation': relation,
+            'reference_task_id': task_id
+        }))
+        EOF
+      env:
+        DB_PATH: "{{ (blocks.paths.outputs.stdout | fromjson).db_path }}"
+        TASK_ID: "{{ inputs.task_id }}"
+        QUERY: "{{ inputs.query | tojson }}"
 
   # ==========================================================================
   # TASK OPS - STEP 2: Generate new task ID if needed
@@ -682,3 +859,17 @@ outputs:
       - keys: List of matching keys (keys op)
     type: dict
     value: "{{blocks.handle_memory.outputs if blocks.handle_memory.succeeded else {}}}"
+
+  # ==========================================================================
+  # Query outputs (populated when op=query)
+  # ==========================================================================
+  query:
+    description: |
+      Query operation results (when op=query). Contains:
+      - results: List of matching tasks with requested data
+      - count: Number of results returned
+      - relation: The relation queried (children, parent, ancestors, descendants)
+      - reference_task_id: The task_id used as reference point
+      - error: Error message if query failed
+    type: dict
+    value: "{{ (blocks.handle_query.outputs.stdout | fromjson) if blocks.handle_query.succeeded else {} }}"

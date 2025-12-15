@@ -574,7 +574,6 @@ blocks:
             (blocks.phase_analyze.outputs.findings if blocks.phase_analyze.succeeded else []) +
             (inputs.findings if inputs.findings else [])
           }}
-        child_syntheses: "{{ blocks.phase_investigate.outputs if blocks.phase_investigate.succeeded else [] }}"
         context: "{{ inputs.context }}"
         capabilities: "{{ inputs.capabilities }}"
         state: "{{ inputs.state }}"
