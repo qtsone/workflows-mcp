@@ -1,0 +1,75 @@
+name: cortex-categorize
+description: |
+  Cognitive capability: Classify a query.
+  Invokes cortex-cell in categorize mode.
+
+tags: [cortex, capability, cognitive, categorize]
+
+inputs:
+  query:
+    type: str
+    description: Query to categorize.
+    required: true
+
+  context:
+    type: dict
+    description: Execution context.
+    required: true
+
+  state:
+    type: str
+    description: Path to SQLite state database.
+    required: true
+
+  depth:
+    type: num
+    description: Current recursion depth.
+    required: false
+    default: 0
+
+  max_depth:
+    type: num
+    description: Maximum recursion depth.
+    required: false
+    default: 5
+
+  parent_trace:
+    type: str
+    description: Parent trace ID for linking.
+    required: false
+    default: ""
+
+blocks:
+  - id: categorize
+    type: Workflow
+    inputs:
+      workflow: cortex-cell
+      inputs:
+        query: "{{ inputs.query }}"
+        mode: "categorize"
+        context: "{{ inputs.context }}"
+        state: "{{ inputs.state }}"
+        depth: "{{ inputs.depth }}"
+        max_depth: "{{ inputs.max_depth }}"
+        parent_trace: "{{ inputs.parent_trace }}"
+
+outputs:
+  category:
+    value: "{{ blocks.categorize.outputs.category }}"
+    type: str
+    description: Query category.
+
+  confidence:
+    value: "{{ blocks.categorize.outputs.confidence | default(0.8) }}"
+    type: num
+    description: Classification confidence.
+
+  reasoning:
+    value: "{{ blocks.categorize.outputs.reasoning | default('') }}"
+    type: str
+    description: Categorization reasoning.
+
+  trace_id:
+    value: "{{ blocks.categorize.outputs.trace_id }}"
+    type: str
+    description: Trace ID for this invocation.

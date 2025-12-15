@@ -1,0 +1,70 @@
+name: cortex-formulate
+description: |
+  Cognitive capability: Refine a query into actionable form.
+  Invokes cortex-cell in formulate mode.
+
+tags: [cortex, capability, cognitive, formulate]
+
+inputs:
+  query:
+    type: str
+    description: Query to formulate.
+    required: true
+
+  context:
+    type: dict
+    description: Execution context.
+    required: true
+
+  state:
+    type: str
+    description: Path to SQLite state database.
+    required: true
+
+  depth:
+    type: num
+    description: Current recursion depth.
+    required: false
+    default: 0
+
+  max_depth:
+    type: num
+    description: Maximum recursion depth.
+    required: false
+    default: 5
+
+  parent_trace:
+    type: str
+    description: Parent trace ID for linking.
+    required: false
+    default: ""
+
+blocks:
+  - id: formulate
+    type: Workflow
+    inputs:
+      workflow: cortex-cell
+      inputs:
+        query: "{{ inputs.query }}"
+        mode: "formulate"
+        context: "{{ inputs.context }}"
+        state: "{{ inputs.state }}"
+        depth: "{{ inputs.depth }}"
+        max_depth: "{{ inputs.max_depth }}"
+        parent_trace: "{{ inputs.parent_trace }}"
+
+outputs:
+  refined_query:
+    value: "{{ blocks.formulate.outputs.refined_query }}"
+    type: str
+    description: Refined, actionable query.
+
+  sub_queries:
+    value: "{{ blocks.formulate.outputs.sub_queries | default([]) }}"
+    type: list
+    description: Decomposed sub-queries if needed.
+
+  trace_id:
+    value: "{{ blocks.formulate.outputs.trace_id }}"
+    type: str
+    description: Trace ID for this invocation.

@@ -1,0 +1,70 @@
+name: cortex-synthesize
+description: |
+  Cognitive capability: Merge findings into unified conclusions.
+  Invokes cortex-cell in synthesize mode.
+
+tags: [cortex, capability, cognitive, synthesize]
+
+inputs:
+  query:
+    type: str
+    description: Query to synthesize answer for.
+    required: true
+
+  context:
+    type: dict
+    description: Execution context.
+    required: true
+
+  state:
+    type: str
+    description: Path to SQLite state database.
+    required: true
+
+  depth:
+    type: num
+    description: Current recursion depth.
+    required: false
+    default: 0
+
+  max_depth:
+    type: num
+    description: Maximum recursion depth.
+    required: false
+    default: 5
+
+  parent_trace:
+    type: str
+    description: Parent trace ID for linking.
+    required: false
+    default: ""
+
+blocks:
+  - id: synthesize
+    type: Workflow
+    inputs:
+      workflow: cortex-cell
+      inputs:
+        query: "{{ inputs.query }}"
+        mode: "synthesize"
+        context: "{{ inputs.context }}"
+        state: "{{ inputs.state }}"
+        depth: "{{ inputs.depth }}"
+        max_depth: "{{ inputs.max_depth }}"
+        parent_trace: "{{ inputs.parent_trace }}"
+
+outputs:
+  synthesis:
+    value: "{{ blocks.synthesize.outputs.synthesis }}"
+    type: dict
+    description: Synthesized answer with conclusions.
+
+  answer:
+    value: "{{ blocks.synthesize.outputs.answer | default('') }}"
+    type: str
+    description: Final synthesized answer.
+
+  trace_id:
+    value: "{{ blocks.synthesize.outputs.trace_id }}"
+    type: str
+    description: Trace ID for this invocation.

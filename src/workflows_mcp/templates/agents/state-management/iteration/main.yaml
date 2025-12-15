@@ -1,9 +1,9 @@
 name: agent-iteration
 description: |
-  Iteration tracking for agentic workflows.
+  Iteration tracking for agentic workflows using SQLite.
 
   Provides loop tracking with automatic progress computation.
-  Stores iteration state in the main state file under `iterations` key.
+  Stores iteration state in the SQLite iterations table.
 
   Operations:
   - init: Initialize iteration counter for a task
@@ -26,7 +26,7 @@ description: |
       inputs:
         workflow: agent-iteration
         inputs:
-          state_path: "{{state.path}}"
+          path: "{{state.db_path}}"
           task_id: "{{state.task_id}}"
           op: init
           total: 10
@@ -38,16 +38,16 @@ description: |
       inputs:
         workflow: agent-iteration
         inputs:
-          state_path: "{{state.path}}"
+          path: "{{state.db_path}}"
           task_id: "{{state.task_id}}"
           op: advance
 
-tags: [agent, iteration, state-management, loop-tracking, progress]
+tags: [agent, iteration, state-management, loop-tracking, progress, sqlite]
 
 inputs:
-  state_path:
+  path:
     type: str
-    description: Path to the state file.
+    description: Path to the SQLite database file.
     required: true
 
   task_id:
@@ -88,21 +88,19 @@ inputs:
 
 blocks:
   # ==========================================================================
-  # Execute iteration operation
+  # Execute iteration operation using SQLite
   # ==========================================================================
   - id: execute
     type: Shell
-    description: Execute the iteration operation.
+    description: Execute the iteration operation on SQLite iterations table.
     inputs:
       command: |
         python3 << 'EOF'
-        import os
-        import json
+        import os, json, sqlite3
         from datetime import datetime, timezone
-        from pathlib import Path
 
         # Load inputs
-        state_path = os.environ['STATE_PATH']
+        db_path = os.environ['DB_PATH']
         task_id = os.environ['TASK_ID']
         op = os.environ['OP']
         total = int(os.environ.get('TOTAL', '0'))
@@ -119,24 +117,9 @@ blocks:
 
         now = datetime.now(timezone.utc).isoformat()
 
-        def load_state(path: str) -> dict:
-            """Load state file or create empty structure."""
-            if os.path.isfile(path):
-                with open(path) as f:
-                    return json.load(f)
-            return {
-                'created_at': now,
-                'updated_at': now,
-                'tasks': {},
-                'iterations': {}
-            }
-
-        def save_state(path: str, state: dict) -> None:
-            """Save state file."""
-            state['updated_at'] = now
-            Path(path).parent.mkdir(parents=True, exist_ok=True)
-            with open(path, 'w') as f:
-                json.dump(state, f, indent=2)
+        conn = sqlite3.connect(db_path)
+        conn.row_factory = sqlite3.Row
+        conn.execute("PRAGMA busy_timeout=30000")
 
         def compute_rate(started_at: str, current: int) -> float:
             """Compute iterations per second."""
@@ -173,15 +156,6 @@ blocks:
             remaining = total - current
             return round(remaining / rate, 1)
 
-        # Load state
-        state = load_state(state_path)
-
-        # Ensure iterations key exists
-        if 'iterations' not in state:
-            state['iterations'] = {}
-
-        iterations = state['iterations']
-
         # Result structure
         result = {
             'current': 0,
@@ -202,36 +176,45 @@ blocks:
         # Execute operation
         if op == 'init':
             # Initialize new iteration counter
-            iterations[task_id] = {
-                'current': 0,
-                'total': total,
-                'cap': cap,
-                'started_at': now,
-                'updated_at': now,
-                'checkpoints': []
-            }
-            save_state(state_path, state)
+            conn.execute('''
+                INSERT OR REPLACE INTO iterations (task_id, current, total, cap, started_at, checkpoints)
+                VALUES (?, 0, ?, ?, ?, '[]')
+            ''', (task_id, total, cap, now))
+            conn.commit()
+
             result['started_at'] = now
             result['progress_str'] = f"0/{total} (0%)" if total > 0 else f"0 (cap: {cap})"
 
         elif op == 'advance':
-            if task_id not in iterations:
+            # Atomic increment using UPDATE ... RETURNING for race-free operation
+            conn.execute("BEGIN IMMEDIATE")  # Acquire write lock immediately
+            try:
+                # Atomic increment
+                conn.execute(
+                    "UPDATE iterations SET current = current + 1 WHERE task_id=?",
+                    (task_id,)
+                )
+                # Get updated row
+                row = conn.execute(
+                    "SELECT * FROM iterations WHERE task_id=?", (task_id,)
+                ).fetchone()
+                conn.commit()
+            except Exception:
+                conn.rollback()
+                raise
+
+            if not row:
                 raise ValueError(f"No iteration found for task {task_id}. Call init first.")
 
-            iter_data = iterations[task_id]
-            iter_data['current'] += 1
-            iter_data['updated_at'] = now
+            current = row['current']
+            iter_total = row['total'] or total
+            iter_cap = row['cap'] or cap
+            started_at = row['started_at'] or ''
 
-            current = iter_data['current']
-            iter_total = iter_data.get('total', total) or total
-            iter_cap = iter_data.get('cap', cap) or cap
-
-            # Update computed values
-            rate = compute_rate(iter_data.get('started_at'), current)
+            # Compute stats
+            rate = compute_rate(started_at, current)
             progress = compute_progress(current, iter_total, iter_cap)
             eta = compute_eta(current, iter_total, rate)
-
-            save_state(state_path, state)
 
             result.update({
                 'current': current,
@@ -239,16 +222,26 @@ blocks:
                 'cap': iter_cap,
                 'rate': round(rate, 3),
                 'eta_seconds': eta,
-                'started_at': iter_data.get('started_at', ''),
+                'started_at': started_at,
                 **progress
             })
 
         elif op == 'checkpoint':
-            if task_id not in iterations:
+            # Get current iteration
+            row = conn.execute(
+                "SELECT * FROM iterations WHERE task_id=?", (task_id,)
+            ).fetchone()
+
+            if not row:
                 raise ValueError(f"No iteration found for task {task_id}. Call init first.")
 
-            iter_data = iterations[task_id]
-            current = iter_data['current']
+            current = row['current']
+            iter_total = row['total'] or total
+            iter_cap = row['cap'] or cap
+            started_at = row['started_at'] or ''
+
+            # Get existing checkpoints
+            checkpoints = json.loads(row['checkpoints'] or '[]')
 
             # Add checkpoint
             checkpoint_entry = {
@@ -256,52 +249,49 @@ blocks:
                 'created_at': now,
                 'data': checkpoint_data
             }
-            if 'checkpoints' not in iter_data:
-                iter_data['checkpoints'] = []
-            iter_data['checkpoints'].append(checkpoint_entry)
-            iter_data['updated_at'] = now
+            checkpoints.append(checkpoint_entry)
 
-            save_state(state_path, state)
+            # Update checkpoints
+            conn.execute(
+                "UPDATE iterations SET checkpoints=? WHERE task_id=?",
+                (json.dumps(checkpoints), task_id)
+            )
+            conn.commit()
 
+            progress = compute_progress(current, iter_total, iter_cap)
             result.update({
                 'current': current,
-                'total': iter_data.get('total', total),
-                'cap': iter_data.get('cap', cap),
+                'total': iter_total,
+                'cap': iter_cap,
                 'checkpoint': checkpoint_data,
-                'started_at': iter_data.get('started_at', '')
+                'started_at': started_at,
+                **progress
             })
-            progress = compute_progress(current, iter_data.get('total', total), iter_data.get('cap', cap))
-            result.update(progress)
 
         elif op == 'complete':
-            if task_id not in iterations:
+            # Get current iteration
+            row = conn.execute(
+                "SELECT * FROM iterations WHERE task_id=?", (task_id,)
+            ).fetchone()
+
+            if not row:
                 raise ValueError(f"No iteration found for task {task_id}. Call init first.")
 
-            iter_data = iterations[task_id]
-            iter_data['completed_at'] = now
-            iter_data['updated_at'] = now
+            current = row['current']
+            iter_total = row['total'] or total
+            iter_cap = row['cap'] or cap
+            started_at = row['started_at'] or ''
 
-            current = iter_data['current']
-            iter_total = iter_data.get('total', total) or total
-            iter_cap = iter_data.get('cap', cap) or cap
+            # Update completed_at
+            conn.execute(
+                "UPDATE iterations SET completed_at=? WHERE task_id=?",
+                (now, task_id)
+            )
+            conn.commit()
 
             # Final stats
-            rate = compute_rate(iter_data.get('started_at'), current)
+            rate = compute_rate(started_at, current)
             progress = compute_progress(current, iter_total, iter_cap)
-
-            # Calculate total duration
-            duration = 0.0
-            if iter_data.get('started_at'):
-                try:
-                    start = datetime.fromisoformat(iter_data['started_at'].replace('Z', '+00:00'))
-                    duration = (datetime.now(timezone.utc) - start).total_seconds()
-                except (ValueError, TypeError):
-                    pass
-
-            iter_data['duration_seconds'] = round(duration, 2)
-            iter_data['final_rate'] = round(rate, 3)
-
-            save_state(state_path, state)
 
             result.update({
                 'current': current,
@@ -309,21 +299,17 @@ blocks:
                 'cap': iter_cap,
                 'rate': round(rate, 3),
                 'eta_seconds': 0.0,
-                'started_at': iter_data.get('started_at', ''),
+                'started_at': started_at,
                 **progress
             })
 
         elif op == 'reset':
-            if task_id in iterations:
-                iterations[task_id] = {
-                    'current': 0,
-                    'total': total,
-                    'cap': cap,
-                    'started_at': now,
-                    'updated_at': now,
-                    'checkpoints': []
-                }
-                save_state(state_path, state)
+            # Reset iteration (insert or update)
+            conn.execute('''
+                INSERT OR REPLACE INTO iterations (task_id, current, total, cap, started_at, checkpoints)
+                VALUES (?, 0, ?, ?, ?, '[]')
+            ''', (task_id, total, cap, now))
+            conn.commit()
 
             result['started_at'] = now
             result['progress_str'] = f"0/{total} (0%)" if total > 0 else f"0 (cap: {cap})"
@@ -331,10 +317,11 @@ blocks:
         else:
             raise ValueError(f"Unknown operation: {op}")
 
+        conn.close()
         print(json.dumps(result))
         EOF
       env:
-        STATE_PATH: "{{inputs.state_path}}"
+        DB_PATH: "{{inputs.path}}"
         TASK_ID: "{{inputs.task_id}}"
         OP: "{{inputs.op}}"
         TOTAL: "{{inputs.total}}"

@@ -1,0 +1,70 @@
+name: cortex-gather
+description: |
+  Cognitive capability: Collect evidence for a query.
+  Invokes cortex-cell in gather mode.
+
+tags: [cortex, capability, cognitive, gather]
+
+inputs:
+  query:
+    type: str
+    description: Query to gather evidence for.
+    required: true
+
+  context:
+    type: dict
+    description: Execution context.
+    required: true
+
+  state:
+    type: str
+    description: Path to SQLite state database.
+    required: true
+
+  depth:
+    type: num
+    description: Current recursion depth.
+    required: false
+    default: 0
+
+  max_depth:
+    type: num
+    description: Maximum recursion depth.
+    required: false
+    default: 5
+
+  parent_trace:
+    type: str
+    description: Parent trace ID for linking.
+    required: false
+    default: ""
+
+blocks:
+  - id: gather
+    type: Workflow
+    inputs:
+      workflow: cortex-cell
+      inputs:
+        query: "{{ inputs.query }}"
+        mode: "gather"
+        context: "{{ inputs.context }}"
+        state: "{{ inputs.state }}"
+        depth: "{{ inputs.depth }}"
+        max_depth: "{{ inputs.max_depth }}"
+        parent_trace: "{{ inputs.parent_trace }}"
+
+outputs:
+  evidence:
+    value: "{{ blocks.gather.outputs.evidence }}"
+    type: list
+    description: Collected evidence items.
+
+  sources:
+    value: "{{ blocks.gather.outputs.sources | default([]) }}"
+    type: list
+    description: Sources consulted.
+
+  trace_id:
+    value: "{{ blocks.gather.outputs.trace_id }}"
+    type: str
+    description: Trace ID for this invocation.

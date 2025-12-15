@@ -1,0 +1,107 @@
+name: cortex-gather-search
+description: |
+  Atomic capability: Search for patterns in codebase.
+  Wraps ripgrep via Shell block.
+
+tags: [cortex, capability, atomic, gather, search]
+
+inputs:
+  pattern:
+    type: str
+    description: Regex pattern to search for.
+    required: true
+
+  path:
+    type: str
+    description: Directory to search in.
+    required: false
+    default: "."
+
+  file_type:
+    type: str
+    description: File type filter (e.g., py, js, yaml).
+    required: false
+    default: ""
+
+  max_matches:
+    type: num
+    description: Maximum matches to return.
+    required: false
+    default: 50
+
+blocks:
+  - id: search
+    type: Shell
+    inputs:
+      command: |
+        python3 << 'EOF'
+        import json
+        import subprocess
+        import os
+
+        pattern = os.environ.get('PATTERN', '')
+        path = os.environ.get('PATH_ARG', '.')
+        file_type = os.environ.get('FILE_TYPE', '')
+        max_matches = int(os.environ.get('MAX_MATCHES', '50'))
+
+        cmd = ['rg', '--json', '-e', pattern, path]
+        if file_type:
+            cmd.extend(['--type', file_type])
+
+        try:
+            result = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
+            matches = []
+            for line in result.stdout.strip().split('\n'):
+                if not line:
+                    continue
+                try:
+                    data = json.loads(line)
+                    if data.get('type') == 'match':
+                        match_data = data.get('data', {})
+                        matches.append({
+                            'path': match_data.get('path', {}).get('text', ''),
+                            'line_number': match_data.get('line_number', 0),
+                            'line_text': match_data.get('lines', {}).get('text', '').strip()
+                        })
+                        if len(matches) >= max_matches:
+                            break
+                except json.JSONDecodeError:
+                    pass
+
+            print(json.dumps({
+                'matches': matches,
+                'count': len(matches),
+                'pattern': pattern,
+                'truncated': len(matches) >= max_matches
+            }))
+        except subprocess.TimeoutExpired:
+            print(json.dumps({'matches': [], 'count': 0, 'error': 'timeout'}))
+        except Exception as e:
+            print(json.dumps({'matches': [], 'count': 0, 'error': str(e)}))
+        EOF
+      env:
+        PATTERN: "{{ inputs.pattern }}"
+        PATH_ARG: "{{ inputs.path }}"
+        FILE_TYPE: "{{ inputs.file_type }}"
+        MAX_MATCHES: "{{ inputs.max_matches }}"
+
+outputs:
+  matches:
+    value: "{{ (blocks.search.outputs.stdout | fromjson).matches }}"
+    type: list
+    description: List of matches with path, line_number, line_text.
+
+  count:
+    value: "{{ (blocks.search.outputs.stdout | fromjson).count }}"
+    type: num
+    description: Number of matches found.
+
+  pattern:
+    value: "{{ inputs.pattern }}"
+    type: str
+    description: Pattern that was searched.
+
+  evidence:
+    value: "{{ ['search:' ~ inputs.pattern ~ ':' ~ (blocks.search.outputs.stdout | fromjson).count ~ ' matches'] }}"
+    type: list
+    description: Evidence reference for findings.

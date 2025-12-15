@@ -1,0 +1,70 @@
+name: cortex-gather-files
+description: |
+  Atomic capability: Read files matching patterns.
+  Wraps ReadFiles block with cortex-compatible interface.
+
+tags: [cortex, capability, atomic, gather]
+
+inputs:
+  patterns:
+    type: list
+    description: Glob patterns for files to read.
+    required: true
+
+  base_path:
+    type: str
+    description: Base directory to search from.
+    required: false
+    default: "."
+
+  mode:
+    type: str
+    description: Output mode (outline, full, summary).
+    required: false
+    default: "outline"
+
+  max_files:
+    type: num
+    description: Maximum files to read.
+    required: false
+    default: 20
+
+  max_file_size_kb:
+    type: num
+    description: Maximum file size in KB.
+    required: false
+    default: 100
+
+blocks:
+  - id: read
+    type: ReadFiles
+    inputs:
+      patterns: "{{ inputs.patterns }}"
+      base_path: "{{ inputs.base_path }}"
+      mode: "{{ inputs.mode }}"
+      max_files: "{{ inputs.max_files }}"
+      max_file_size_kb: "{{ inputs.max_file_size_kb }}"
+
+outputs:
+  files:
+    value: "{{ blocks.read.outputs.files }}"
+    type: list
+    description: List of files with content.
+
+  total_files:
+    value: "{{ blocks.read.outputs.total_files }}"
+    type: num
+    description: Number of files read.
+
+  total_size_kb:
+    value: "{{ blocks.read.outputs.total_size_kb }}"
+    type: num
+    description: Total size in KB.
+
+  evidence:
+    value: |
+      {{
+        blocks.read.outputs.files | map(attribute='path') | map('regex_replace', '^', inputs.mode ~ ':') | list
+      }}
+    type: list
+    description: Evidence references for findings.

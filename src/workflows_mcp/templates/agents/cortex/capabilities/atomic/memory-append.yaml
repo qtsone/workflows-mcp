@@ -1,0 +1,46 @@
+name: cortex-memory-append
+description: |
+  Atomic capability: Append to list in memory.
+  Used to accumulate findings, evidence, etc.
+
+tags: [cortex, capability, atomic, memory]
+
+inputs:
+  state:
+    type: str
+    description: Path to SQLite state database.
+    required: true
+
+  key:
+    type: str
+    description: Memory key (must be a list).
+    required: true
+
+  value:
+    type: str
+    description: Value to append (JSON string).
+    required: true
+
+blocks:
+  - id: append
+    type: Workflow
+    inputs:
+      workflow: agent-state-management
+      inputs:
+        state: "{{ inputs.state }}"
+        op: memory
+        memory_op: append
+        memory_key: "{{ inputs.key }}"
+        memory_value: "{{ inputs.value }}"
+        caller: "cortex-memory-append"
+
+outputs:
+  success:
+    value: "{{ blocks.append.succeeded }}"
+    type: bool
+    description: Whether operation succeeded.
+
+  key:
+    value: "{{ inputs.key }}"
+    type: str
+    description: Key that was appended to.

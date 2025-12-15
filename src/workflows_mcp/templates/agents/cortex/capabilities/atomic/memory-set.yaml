@@ -1,0 +1,46 @@
+name: cortex-memory-set
+description: |
+  Atomic capability: Store value in memory.
+  Used to persist knowledge across cell invocations.
+
+tags: [cortex, capability, atomic, memory]
+
+inputs:
+  state:
+    type: str
+    description: Path to SQLite state database.
+    required: true
+
+  key:
+    type: str
+    description: Memory key (dot-notation supported).
+    required: true
+
+  value:
+    type: str
+    description: Value to store (JSON string).
+    required: true
+
+blocks:
+  - id: set
+    type: Workflow
+    inputs:
+      workflow: agent-state-management
+      inputs:
+        state: "{{ inputs.state }}"
+        op: memory
+        memory_op: set
+        memory_key: "{{ inputs.key }}"
+        memory_value: "{{ inputs.value }}"
+        caller: "cortex-memory-set"
+
+outputs:
+  success:
+    value: "{{ blocks.set.succeeded }}"
+    type: bool
+    description: Whether operation succeeded.
+
+  key:
+    value: "{{ inputs.key }}"
+    type: str
+    description: Key that was set.

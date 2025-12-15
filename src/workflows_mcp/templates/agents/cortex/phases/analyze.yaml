@@ -1,0 +1,328 @@
+name: cortex-phase-analyze
+description: |
+  CORTEX Analysis Phase
+
+  Reasons about evidence to produce findings.
+  Every finding must cite specific evidence.
+  Identifies what needs deeper investigation.
+
+tags: [cortex, phase, analyze]
+
+inputs:
+  query:
+    type: str
+    description: The query being analyzed.
+    required: true
+
+  context:
+    type: dict
+    description: Shared context from parent cell.
+    required: true
+
+  capabilities:
+    type: dict
+    description: Available capabilities registry.
+    required: false
+    default: {}
+
+  evidence:
+    type: list
+    description: Evidence collected in gather phase.
+    required: true
+
+  state:
+    type: str
+    description: Path to SQLite state database.
+    required: true
+
+  parent_task_id:
+    type: str
+    description: Parent cell's task ID.
+    required: false
+    default: ""
+
+  depth:
+    type: num
+    description: Current recursion depth.
+    required: false
+    default: 0
+
+  max_depth:
+    type: num
+    description: Maximum recursion depth.
+    required: false
+    default: 5
+
+  query_history:
+    type: list
+    description: Query hashes for cycle detection.
+    required: false
+    default: []
+
+  profile:
+    type: str
+    description: LLM profile to use.
+    required: false
+    default: "default"
+
+blocks:
+  - id: register_task
+    type: Workflow
+    description: Register this phase in the task tree.
+    inputs:
+      workflow: agent-state-management
+      inputs:
+        state: "{{ inputs.state }}"
+        parent_id: "{{ inputs.parent_task_id }}"
+        task: "Phase: Analyze"
+        task_type: "cortex-analyze"
+        status: "in-progress"
+        caller: "cortex-phase-analyze"
+
+  - id: analyze
+    type: LLMCall
+    description: Analyze evidence and produce findings.
+    depends_on: [register_task]
+    inputs:
+      profile: "{{ inputs.profile }}"
+      timeout: 180
+      prompt: |
+        # Evidence Analysis Phase
+
+        You are the analysis module of a recursive cognitive system (CORTEX).
+        Reason about the evidence to produce findings that answer the query.
+
+        ## Query
+        {{ inputs.query }}
+
+        ## Context
+        - Repository Path: {{ inputs.context.repo_path | default('Not specified') }}
+        - Focus Area: {{ inputs.context.focus | default('general') }}
+        - Current Depth: {{ inputs.depth }} / {{ inputs.max_depth }}
+        {% if inputs.context.accumulated_knowledge %}
+        - Prior Knowledge: {{ inputs.context.accumulated_knowledge | tojson }}
+        {% endif %}
+
+        ## Evidence Collected ({{ inputs.evidence | length }} items)
+
+        {% for ev in inputs.evidence %}
+        ### Evidence {{ loop.index }}: {{ ev.type | upper }}
+        {% if ev.type == 'outline' or ev.type == 'content' %}
+        **File:** {{ ev.path }}
+        ```
+        {{ ev.content[:3000] }}
+        {% if ev.content | length > 3000 %}
+        ... [truncated, {{ ev.size_kb }}KB total]
+        {% endif %}
+        ```
+        {% elif ev.type == 'search' %}
+        **Pattern:** {{ ev.pattern }}
+        **Matches ({{ ev.count }}):** {{ ev.matches[:10] | tojson }}
+        {% else %}
+        {{ ev | tojson }}
+        {% endif %}
+        {% endfor %}
+
+        ## Analysis Rules
+
+        1. **Every finding MUST cite specific evidence**
+           - Reference file paths and line numbers
+           - Quote relevant code snippets
+        2. **Rate findings by severity and confidence**
+           - Severity: critical, high, medium, low, info
+           - Confidence: 0.0-1.0 (how certain is this finding?)
+        3. **Mark findings needing deeper investigation**
+           - If you can't verify from available evidence
+           - If the finding suggests broader issues
+        4. **Identify contradictions in evidence**
+        5. **Generate sub-queries for unresolved questions**
+           - Only if depth < max_depth ({{ inputs.depth }} < {{ inputs.max_depth }})
+
+        ## Instructions
+
+        Analyze the evidence thoroughly. Be specific and cite sources.
+
+      response_schema:
+        type: object
+        properties:
+          findings:
+            type: array
+            items:
+              type: object
+              properties:
+                claim:
+                  type: string
+                  description: "What you concluded"
+                evidence_refs:
+                  type: array
+                  items:
+                    type: string
+                  description: "References to evidence (file:line or search pattern)"
+                confidence:
+                  type: number
+                  minimum: 0
+                  maximum: 1
+                  description: "How certain (0.0-1.0)"
+                severity:
+                  type: string
+                  enum: [critical, high, medium, low, info]
+                verified:
+                  type: boolean
+                  description: "Did evidence confirm directly?"
+                needs_investigation:
+                  type: boolean
+                  description: "Requires deeper look?"
+                code_snippet:
+                  type: string
+                  description: "Relevant code if applicable"
+              required: [claim, evidence_refs, confidence, severity, verified]
+            description: "Findings from analysis"
+          needs_deeper:
+            type: boolean
+            description: "Whether sub-investigations are recommended"
+          sub_queries:
+            type: array
+            items:
+              type: object
+              properties:
+                query:
+                  type: string
+                  description: "What to investigate"
+                reason:
+                  type: string
+                  description: "Why this needs investigation"
+                priority:
+                  type: string
+                  enum: [high, medium, low]
+                focus:
+                  type: string
+                  description: "Focus area for sub-investigation"
+              required: [query, reason]
+            description: "Questions needing further investigation"
+          contradictions:
+            type: array
+            items:
+              type: object
+              properties:
+                claim1:
+                  type: string
+                claim2:
+                  type: string
+                evidence1:
+                  type: string
+                evidence2:
+                  type: string
+              required: [claim1, claim2]
+            description: "Contradictions found in evidence"
+          summary:
+            type: string
+            description: "Brief summary of analysis"
+          overall_confidence:
+            type: number
+            minimum: 0
+            maximum: 1
+            description: "Overall confidence in analysis"
+        required: [findings, needs_deeper, summary, overall_confidence]
+
+  - id: filter_sub_queries
+    type: Shell
+    description: Filter sub-queries based on depth limit.
+    depends_on: [analyze]
+    inputs:
+      command: |
+        python3 << 'EOF'
+        import json
+        import os
+
+        depth = int(os.environ.get('DEPTH', '0'))
+        max_depth = int(os.environ.get('MAX_DEPTH', '5'))
+        sub_queries = json.loads(os.environ.get('SUB_QUERIES', '[]'))
+
+        can_recurse = depth < max_depth
+        filtered = sub_queries if can_recurse else []
+
+        # Prioritize high priority queries
+        if filtered:
+            filtered = sorted(filtered, key=lambda x: {'high': 0, 'medium': 1, 'low': 2}.get(x.get('priority', 'low'), 2))
+
+        result = {
+            'sub_queries': filtered[:5],  # Limit to 5 sub-queries
+            'can_recurse': can_recurse,
+            'filtered_out': len(sub_queries) - len(filtered[:5]) if filtered else len(sub_queries),
+            'depth': depth,
+            'max_depth': max_depth
+        }
+
+        print(json.dumps(result))
+        EOF
+      env:
+        DEPTH: "{{ inputs.depth }}"
+        MAX_DEPTH: "{{ inputs.max_depth }}"
+        SUB_QUERIES: "{{ blocks.analyze.outputs.response.sub_queries | default([]) | tojson }}"
+
+  - id: store_findings
+    type: Workflow
+    description: Store findings in memory.
+    depends_on: [analyze]
+    inputs:
+      workflow: agent-state-management
+      inputs:
+        state: "{{ inputs.state }}"
+        op: memory
+        memory_op: append
+        memory_key: "findings"
+        memory_value: |
+          {
+            "depth": {{ inputs.depth }},
+            "findings": {{ blocks.analyze.outputs.response.findings | tojson }},
+            "summary": {{ blocks.analyze.outputs.response.summary | tojson }},
+            "confidence": {{ blocks.analyze.outputs.response.overall_confidence }}
+          }
+        caller: "cortex-phase-analyze"
+
+  - id: track_done
+    type: Workflow
+    description: Mark phase complete.
+    depends_on: [analyze, store_findings, filter_sub_queries]
+    inputs:
+      workflow: agent-state-management
+      inputs:
+        state: "{{ inputs.state }}"
+        task_id: "{{ blocks.register_task.outputs.task.task_id }}"
+        status: "done"
+        caller: "cortex-phase-analyze"
+        data:
+          findings_count: "{{ blocks.analyze.outputs.response.findings | length }}"
+          needs_deeper: "{{ blocks.analyze.outputs.response.needs_deeper }}"
+          sub_queries_count: "{{ (blocks.filter_sub_queries.outputs.stdout | fromjson).sub_queries | length }}"
+
+outputs:
+  findings:
+    value: "{{ blocks.analyze.outputs.response.findings }}"
+    type: list
+    description: Findings from analysis.
+
+  needs_deeper:
+    value: "{{ blocks.analyze.outputs.response.needs_deeper and (blocks.filter_sub_queries.outputs.stdout | fromjson).can_recurse }}"
+    type: bool
+    description: Whether deeper investigation is needed and possible.
+
+  sub_queries:
+    value: "{{ (blocks.filter_sub_queries.outputs.stdout | fromjson).sub_queries }}"
+    type: list
+    description: Sub-queries for deeper investigation.
+
+  contradictions:
+    value: "{{ blocks.analyze.outputs.response.contradictions | default([]) }}"
+    type: list
+    description: Contradictions found in evidence.
+
+  summary:
+    value: "{{ blocks.analyze.outputs.response.summary }}"
+    type: str
+    description: Analysis summary.
+
+  overall_confidence:
+    value: "{{ blocks.analyze.outputs.response.overall_confidence }}"
+    type: num
+    description: Overall confidence in analysis.

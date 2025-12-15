@@ -1,0 +1,65 @@
+name: cortex-action-write
+description: |
+  Atomic capability: Create a new file.
+  Use for generating reports, creating new code files, etc.
+
+tags: [cortex, capability, atomic, action, write]
+
+inputs:
+  path:
+    type: str
+    description: File path to create.
+    required: true
+
+  content:
+    type: str
+    description: File content to write.
+    required: true
+
+  overwrite:
+    type: bool
+    description: Whether to overwrite existing file.
+    required: false
+    default: false
+
+blocks:
+  - id: write
+    type: CreateFile
+    inputs:
+      path: "{{ inputs.path }}"
+      content: "{{ inputs.content }}"
+      overwrite: "{{ inputs.overwrite }}"
+
+outputs:
+  path:
+    value: "{{ blocks.write.outputs.path }}"
+    type: str
+    description: Absolute path to created file.
+
+  size_bytes:
+    value: "{{ blocks.write.outputs.size_bytes }}"
+    type: num
+    description: File size in bytes.
+
+  created:
+    value: "{{ blocks.write.outputs.created }}"
+    type: bool
+    description: True if file was created (vs overwritten).
+
+  success:
+    value: "{{ blocks.write.succeeded }}"
+    type: bool
+    description: Whether write succeeded.
+
+  action:
+    value: |
+      {{
+        {
+          'type': 'write',
+          'path': blocks.write.outputs.path,
+          'size_bytes': blocks.write.outputs.size_bytes,
+          'created': blocks.write.outputs.created
+        }
+      }}
+    type: dict
+    description: Action record for audit trail.

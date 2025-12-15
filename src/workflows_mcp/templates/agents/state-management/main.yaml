@@ -7,19 +7,21 @@ description: |
   - Sub-tasks: Created by specifying parent_id
   - Updates: Target specific task_id within the state
 
-  State file: ~/.workflows/tasks/<trace_id>.json (configurable via WORKFLOWS_STATE_DIR)
-  Memory file: ~/.workflows/tasks/<trace_id>.memory.json
-  Audit file: ~/.workflows/tasks/<trace_id>.audit.json
+  Storage: SQLite database at ~/.workflows/tasks/<trace_id>.db
+  (configurable via WORKFLOWS_STATE_DIR)
 
-tags: [agent, state-management, task-tracking, audit, hierarchical]
+  Uses WAL mode for concurrent access with automatic retry on busy.
+
+tags: [agent, state-management, task-tracking, audit, hierarchical, sqlite]
 
 inputs:
   state:
     type: str
     description: |
-      Path to existing state file.
-      - Empty: Creates new state in ~/.workflows/tasks/<trace_id>.json
-      - Existing path: Loads and operates on that state
+      Path to existing SQLite database or trace ID.
+      - Empty: Creates new state in ~/.workflows/tasks/<trace_id>.db
+      - Existing path (*.db): Uses that database
+      - Trace ID: Uses ~/.workflows/tasks/<trace_id>.db
     required: false
     default: ""
 
@@ -159,39 +161,118 @@ inputs:
 
 blocks:
   # ==========================================================================
-  # STEP 1: Generate state/audit file paths
+  # STEP 1: Generate database path and initialize SQLite schema
   # ==========================================================================
   - id: paths
     type: Shell
-    description: Generate trace_id and file paths for state, audit, and memory.
+    description: Generate trace_id and initialize SQLite database with schema.
     inputs:
       command: |
         python3 << 'EOF'
-        import os, json, secrets
+        import os, json, secrets, sqlite3
         from pathlib import Path
+        from datetime import datetime, timezone
 
         state_input = os.environ.get('STATE_INPUT', '')
         state_dir = os.environ.get('WORKFLOWS_STATE_DIR', str(Path.home() / '.workflows' / 'tasks'))
         Path(state_dir).mkdir(parents=True, exist_ok=True)
 
+        # Determine paths
         if state_input:
-            state_path = state_input
-            state_base = state_path.rsplit('.json', 1)[0] if state_path.endswith('.json') else state_path
-            audit_path = f'{state_base}.audit.json'
-            memory_path = f'{state_base}.memory.json'
-            trace_id = Path(state_path).stem
+            if state_input.endswith('.json'):
+                raise ValueError(
+                    f"JSON state files are no longer supported. "
+                    f"Please delete old traces and use .db extension: {state_input}"
+                )
+            elif state_input.endswith('.db'):
+                db_path = state_input
+                trace_id = Path(state_input).stem
+            else:
+                # Assume it's a trace_id or path without extension
+                trace_id = Path(state_input).stem
+                db_path = str(Path(state_dir) / f'{trace_id}.db')
         else:
+            # New state
             trace_id = f'exec-{secrets.token_hex(6)}'
-            state_path = str(Path(state_dir) / f'{trace_id}.json')
-            audit_path = str(Path(state_dir) / f'{trace_id}.audit.json')
-            memory_path = str(Path(state_dir) / f'{trace_id}.memory.json')
+            db_path = str(Path(state_dir) / f'{trace_id}.db')
+
+        db_exists = os.path.isfile(db_path)
+        now = datetime.now(timezone.utc).isoformat()
+
+        # Initialize database if new
+        if not db_exists:
+            conn = sqlite3.connect(db_path)
+            conn.execute("PRAGMA journal_mode=WAL")
+            conn.execute("PRAGMA busy_timeout=30000")
+            conn.execute("PRAGMA synchronous=NORMAL")
+
+            # Create schema
+            conn.executescript('''
+                CREATE TABLE IF NOT EXISTS metadata (
+                    key TEXT PRIMARY KEY,
+                    value TEXT NOT NULL
+                );
+
+                CREATE TABLE IF NOT EXISTS tasks (
+                    task_id TEXT PRIMARY KEY,
+                    parent_id TEXT REFERENCES tasks(task_id),
+                    task TEXT NOT NULL,
+                    task_type TEXT DEFAULT '',
+                    status TEXT DEFAULT 'pending'
+                        CHECK(status IN ('pending', 'in-progress', 'done', 'failed', 'blocked')),
+                    data JSON DEFAULT '{}',
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL
+                );
+                CREATE INDEX IF NOT EXISTS idx_tasks_parent ON tasks(parent_id);
+                CREATE INDEX IF NOT EXISTS idx_tasks_status ON tasks(status);
+
+                CREATE TABLE IF NOT EXISTS memory (
+                    key TEXT PRIMARY KEY,
+                    value JSON,
+                    updated_at TEXT NOT NULL
+                );
+                CREATE INDEX IF NOT EXISTS idx_memory_key ON memory(key);
+
+                CREATE TABLE IF NOT EXISTS audit (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    timestamp TEXT NOT NULL,
+                    task_id TEXT,
+                    caller TEXT NOT NULL,
+                    action TEXT NOT NULL,
+                    description TEXT,
+                    changes JSON,
+                    parent_id TEXT
+                );
+                CREATE INDEX IF NOT EXISTS idx_audit_task ON audit(task_id);
+                CREATE INDEX IF NOT EXISTS idx_audit_timestamp ON audit(timestamp);
+
+                CREATE TABLE IF NOT EXISTS iterations (
+                    task_id TEXT PRIMARY KEY,
+                    current INTEGER DEFAULT 0,
+                    total INTEGER DEFAULT 0,
+                    cap INTEGER DEFAULT 100,
+                    started_at TEXT,
+                    completed_at TEXT,
+                    checkpoints JSON DEFAULT '[]'
+                );
+            ''')
+
+            # Initialize metadata
+            conn.execute("INSERT INTO metadata VALUES ('created_at', ?)", (now,))
+            conn.execute("INSERT INTO metadata VALUES ('updated_at', ?)", (now,))
+            conn.execute("INSERT INTO metadata VALUES ('schema_version', '1')")
+            conn.commit()
+            conn.close()
 
         print(json.dumps({
             'trace_id': trace_id,
-            'state_path': state_path,
-            'audit_path': audit_path,
-            'memory_path': memory_path,
-            'state_exists': os.path.isfile(state_path)
+            'db_path': db_path,
+            'db_exists': db_exists,
+            # Backward compat fields (all point to same DB)
+            'state_path': db_path,
+            'memory_path': db_path,
+            'audit_path': db_path
         }))
         EOF
       env:
@@ -208,7 +289,7 @@ blocks:
     inputs:
       workflow: agent-iteration
       inputs:
-        state_path: "{{(blocks.paths.outputs.stdout | fromjson).state_path}}"
+        path: "{{(blocks.paths.outputs.stdout | fromjson).db_path}}"
         task_id: "{{inputs.task_id}}"
         op: "{{inputs.iteration_op}}"
         total: "{{inputs.iteration_total}}"
@@ -226,152 +307,188 @@ blocks:
     inputs:
       workflow: agent-memory
       inputs:
-        memory_path: "{{(blocks.paths.outputs.stdout | fromjson).memory_path}}"
+        path: "{{(blocks.paths.outputs.stdout | fromjson).db_path}}"
         op: "{{inputs.memory_op}}"
         key: "{{inputs.memory_key}}"
         value: "{{inputs.memory_value}}"
         default: "{{inputs.memory_default}}"
 
   # ==========================================================================
-  # TASK OPS - STEP 2: Load existing state if path provided and file exists
-  # ==========================================================================
-  - id: load_existing
-    type: ReadJSONState
-    description: Load existing state file if it exists.
-    depends_on: [paths]
-    condition: "{{inputs.op == 'task' and (blocks.paths.outputs.stdout | fromjson).state_exists}}"
-    inputs:
-      path: "{{(blocks.paths.outputs.stdout | fromjson).state_path}}"
-      required: false
-
-  # ==========================================================================
-  # STEP 3: Generate new task ID if needed
+  # TASK OPS - STEP 2: Generate new task ID if needed
   # ==========================================================================
   - id: new_task_id
     type: Shell
     description: Generate a new task ID for root or sub-task creation.
-    depends_on:
-      - paths
-      - block: load_existing
-        required: false
-    condition: "{{inputs.op == 'task' and inputs.task_id == '' and (inputs.parent_id != '' or not blocks.load_existing.succeeded)}}"
+    depends_on: [paths]
+    condition: "{{inputs.op == 'task' and inputs.task_id == '' and (inputs.parent_id != '' or not (blocks.paths.outputs.stdout | fromjson).db_exists)}}"
     inputs:
       command: |
         python3 -c "import secrets; print(f'task-{secrets.token_hex(4)}')"
 
   # ==========================================================================
-  # STEP 4: Build task data structure
+  # TASK OPS - STEP 3: Build/update task in SQLite
   # ==========================================================================
   - id: build_task
     type: Shell
-    description: Build the task structure for creation or update.
+    description: Create or update task in SQLite database.
     depends_on:
       - paths
-      - block: load_existing
-        required: false
       - block: new_task_id
         required: false
     condition: "{{inputs.op == 'task'}}"
     inputs:
       command: |
         python3 << 'EOF'
-        import os, json
+        import os, json, sqlite3, secrets
         from datetime import datetime, timezone
 
         # Load environment
-        paths = json.loads(os.environ['PATHS_JSON'])
+        db_path = os.environ['DB_PATH']
         task_input = os.environ.get('TASK_INPUT', '')
         task_id_input = os.environ.get('TASK_ID_INPUT', '')
         parent_id_input = os.environ.get('PARENT_ID_INPUT', '')
         task_type_input = os.environ.get('TASK_TYPE_INPUT', '')
         status_input = os.environ.get('STATUS_INPUT', '')
-        data_input = json.loads(os.environ.get('DATA_INPUT', '{}'))
+        data_input = json.loads(os.environ.get('DATA_INPUT', '{}') or '{}')
         caller = os.environ.get('CALLER', 'unknown')
         new_task_id = os.environ.get('NEW_TASK_ID', '').strip()
-        existing_state_json = os.environ.get('EXISTING_STATE', '')
 
         now = datetime.now(timezone.utc).isoformat()
-        trace_id = paths['trace_id']
 
-        # Load existing state or create new
-        if existing_state_json:
-            state = json.loads(existing_state_json)
-            is_new_state = False
-        else:
-            # Initialize new state
-            root_id = task_id_input or new_task_id or f'task-unknown'
-            state = {
-                'root_task_id': root_id,
-                'created_at': now,
-                'updated_at': now,
-                'tasks': {}
-            }
-            is_new_state = True
+        # Connect to SQLite
+        conn = sqlite3.connect(db_path)
+        conn.row_factory = sqlite3.Row
+        conn.execute("PRAGMA busy_timeout=30000")
 
-        # Determine target task and operation
-        if task_id_input and task_id_input in state.get('tasks', {}):
+        # Get or create root_task_id from metadata
+        root_row = conn.execute(
+            "SELECT value FROM metadata WHERE key='root_task_id'"
+        ).fetchone()
+        root_task_id = root_row['value'] if root_row else None
+
+        # Determine operation and target task
+        changes = {}
+        existing_data = {}
+
+        if task_id_input:
             # Update existing task
-            target_task_id = task_id_input
-            operation = 'update'
+            row = conn.execute(
+                "SELECT * FROM tasks WHERE task_id=?", (task_id_input,)
+            ).fetchone()
+            if row:
+                target_task_id = task_id_input
+                operation = 'update'
+                existing_data = json.loads(row['data'] or '{}')
+            else:
+                raise ValueError(f"Task {task_id_input} not found")
         elif parent_id_input:
             # Create sub-task
-            target_task_id = new_task_id
+            target_task_id = new_task_id or f'task-{secrets.token_hex(4)}'
             operation = 'create_subtask'
-            if parent_id_input not in state.get('tasks', {}):
-                raise ValueError(f'Parent task {parent_id_input} not found')
+            # Verify parent exists
+            parent = conn.execute(
+                "SELECT task_id FROM tasks WHERE task_id=?", (parent_id_input,)
+            ).fetchone()
+            if not parent:
+                raise ValueError(f"Parent task {parent_id_input} not found")
         else:
-            # Root task (new or update)
-            target_task_id = state.get('root_task_id') or task_id_input or new_task_id
-            operation = 'create_root' if is_new_state else 'update'
-            if is_new_state:
-                state['root_task_id'] = target_task_id
+            # Root task
+            if root_task_id:
+                # Check if root task exists in tasks table
+                row = conn.execute(
+                    "SELECT * FROM tasks WHERE task_id=?", (root_task_id,)
+                ).fetchone()
+                if row:
+                    target_task_id = root_task_id
+                    operation = 'update'
+                    existing_data = json.loads(row['data'] or '{}')
+                else:
+                    # Root task ID in metadata but task not in table - create it
+                    target_task_id = root_task_id
+                    operation = 'create_root'
+            else:
+                # Create new root
+                target_task_id = new_task_id or f'task-{secrets.token_hex(4)}'
+                operation = 'create_root'
+                conn.execute(
+                    "INSERT OR REPLACE INTO metadata (key, value) VALUES ('root_task_id', ?)",
+                    (target_task_id,)
+                )
+                root_task_id = target_task_id
 
-        # Get or create task entry
-        if target_task_id not in state['tasks']:
-            state['tasks'][target_task_id] = {
-                'task': task_input or 'Task',
-                'task_type': task_type_input,
-                'status': status_input or 'in-progress',
-                'parent_id': parent_id_input or None,
-                'children': [],
-                'data': {},
-                'created_at': now,
-                'updated_at': now
-            }
-            # Add to parent's children list
-            if parent_id_input and parent_id_input in state['tasks']:
-                if target_task_id not in state['tasks'][parent_id_input]['children']:
-                    state['tasks'][parent_id_input]['children'].append(target_task_id)
+        # Merge data
+        merged_data = {**existing_data, **data_input} if data_input else existing_data
+
+        # Perform operation
+        if operation in ('create_root', 'create_subtask'):
+            conn.execute('''
+                INSERT INTO tasks (task_id, parent_id, task, task_type, status, data, created_at, updated_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            ''', (
+                target_task_id,
+                parent_id_input or None,
+                task_input or 'Task',
+                task_type_input or '',
+                status_input or 'in-progress',
+                json.dumps(merged_data),
+                now,
+                now
+            ))
+            changes = {'created': True}
         else:
-            operation = 'update'
+            # Update existing task - build dynamic UPDATE query
+            updates = []
+            params = []
 
-        # Apply updates to target task
-        task = state['tasks'][target_task_id]
-        changes = {}
+            # Get current values for change tracking
+            current_row = conn.execute(
+                "SELECT task, task_type, status FROM tasks WHERE task_id=?",
+                (target_task_id,)
+            ).fetchone()
 
-        if task_input and task_input != task.get('task', ''):
-            changes['task'] = [task.get('task'), task_input]
-            task['task'] = task_input
+            if task_input and task_input != (current_row['task'] if current_row else ''):
+                updates.append("task=?")
+                params.append(task_input)
+                changes['task'] = [current_row['task'] if current_row else '', task_input]
 
-        if task_type_input and task_type_input != task.get('task_type', ''):
-            changes['task_type'] = [task.get('task_type'), task_type_input]
-            task['task_type'] = task_type_input
+            if task_type_input and task_type_input != (current_row['task_type'] if current_row else ''):
+                updates.append("task_type=?")
+                params.append(task_type_input)
+                changes['task_type'] = [current_row['task_type'] if current_row else '', task_type_input]
 
-        if status_input and status_input != task.get('status', ''):
-            changes['status'] = [task.get('status'), status_input]
-            task['status'] = status_input
+            if status_input and status_input != (current_row['status'] if current_row else ''):
+                updates.append("status=?")
+                params.append(status_input)
+                changes['status'] = [current_row['status'] if current_row else '', status_input]
 
-        if data_input:
-            task['data'] = {**task.get('data', {}), **data_input}
-            changes['data'] = 'merged'
+            if data_input:
+                updates.append("data=?")
+                params.append(json.dumps(merged_data))
+                changes['data'] = 'merged'
 
-        task['updated_at'] = now
-        state['updated_at'] = now
+            updates.append("updated_at=?")
+            params.append(now)
+            params.append(target_task_id)
 
-        # Compute children status aggregates
-        children = task.get('children', [])
-        child_statuses = [state['tasks'].get(c, {}).get('status', 'pending') for c in children]
+            if updates:
+                conn.execute(f'''
+                    UPDATE tasks SET {', '.join(updates)} WHERE task_id=?
+                ''', params)
 
+        # Update metadata timestamp
+        conn.execute(
+            "UPDATE metadata SET value=? WHERE key='updated_at'", (now,)
+        )
+
+        # Get children via SQL query (computed from parent_id relationships)
+        children_rows = conn.execute(
+            "SELECT task_id, status FROM tasks WHERE parent_id=?", (target_task_id,)
+        ).fetchall()
+
+        children = [r['task_id'] for r in children_rows]
+        child_statuses = [r['status'] for r in children_rows]
+
+        # Compute children stats
         children_done = sum(1 for s in child_statuses if s == 'done')
         children_failed = sum(1 for s in child_statuses if s == 'failed')
         children_in_progress = sum(1 for s in child_statuses if s == 'in-progress')
@@ -391,11 +508,23 @@ blocks:
         }
 
         # List of child IDs that aren't complete (for iteration)
-        pending = [c for c in children if state['tasks'].get(c, {}).get('status') not in ('done', 'failed')]
+        pending_children = [
+            task_id for task_id, status in zip(children, child_statuses)
+            if status not in ('done', 'failed')
+        ]
 
-        # Build audit entry
+        # Commit all changes
+        conn.commit()
+
+        # Get final task state
+        row = conn.execute(
+            "SELECT * FROM tasks WHERE task_id=?", (target_task_id,)
+        ).fetchone()
+        conn.close()
+
+        # Build audit entry for audit block
         if operation.startswith('create'):
-            audit_desc = f"Created {'root' if operation == 'create_root' else 'sub-'}task: {task.get('task', target_task_id)}"
+            audit_desc = f"Created {'root' if operation == 'create_root' else 'sub-'}task: {task_input or target_task_id}"
             action = operation
         elif changes:
             audit_desc = f"Updated: {list(changes.keys())}"
@@ -413,31 +542,29 @@ blocks:
         }
         if changes:
             audit_entry['changes'] = changes
-        if task.get('parent_id'):
-            audit_entry['parent_id'] = task['parent_id']
+        if parent_id_input:
+            audit_entry['parent_id'] = parent_id_input
 
-        # Output clean structure for task output + internal state for write_state
+        # Output (matches current interface for callers)
         print(json.dumps({
-            # Clean task output fields
             'task_id': target_task_id,
-            'root_task_id': state.get('root_task_id'),
-            'status': task.get('status'),
-            'parent_id': task.get('parent_id'),
-            'children': task.get('children', []),
-            'pending_children': pending,
-            'data': task.get('data', {}),
+            'root_task_id': root_task_id or target_task_id,
+            'status': row['status'] if row else (status_input or 'in-progress'),
+            'parent_id': row['parent_id'] if row else parent_id_input,
+            'children': children,
+            'pending_children': pending_children,
+            'data': json.loads(row['data'] or '{}') if row else merged_data,
             'all_children_done': all_children_done,
             'any_child_failed': any_child_failed,
             'progress_pct': progress_pct,
             'children_summary': children_summary,
-            # Internal fields for other blocks
-            '_state': state,
+            # Internal field for audit block
             '_audit_entry': audit_entry,
             '_operation': operation
         }))
         EOF
       env:
-        PATHS_JSON: "{{blocks.paths.outputs.stdout}}"
+        DB_PATH: "{{(blocks.paths.outputs.stdout | fromjson).db_path}}"
         TASK_INPUT: "{{inputs.task}}"
         TASK_ID_INPUT: "{{inputs.task_id}}"
         PARENT_ID_INPUT: "{{inputs.parent_id}}"
@@ -446,56 +573,49 @@ blocks:
         DATA_INPUT: "{{inputs.data | tojson}}"
         CALLER: "{{inputs.caller}}"
         NEW_TASK_ID: "{{blocks.new_task_id.outputs.stdout if blocks.new_task_id.succeeded else ''}}"
-        EXISTING_STATE: "{{blocks.load_existing.outputs.data | tojson if blocks.load_existing.succeeded else ''}}"
 
   # ==========================================================================
-  # STEP 5: Write updated state
-  # ==========================================================================
-  - id: write_state
-    type: WriteJSONState
-    description: Write the updated state to file.
-    depends_on: [build_task, paths]
-    condition: "{{inputs.op == 'task'}}"
-    inputs:
-      path: "{{(blocks.paths.outputs.stdout | fromjson).state_path}}"
-      data: "{{(blocks.build_task.outputs.stdout | fromjson)._state}}"
-
-  # ==========================================================================
-  # STEP 6: Write audit entry (separate file)
+  # TASK OPS - STEP 4: Write audit entry to SQLite
   # ==========================================================================
   - id: write_audit
     type: Shell
-    description: Append audit entry to the audit log file.
+    description: Insert audit entry into SQLite audit table.
     condition: "{{inputs.op == 'task' and inputs.audit}}"
     depends_on: [build_task, paths]
     inputs:
       command: |
         python3 << 'EOF'
-        import os, json
-        from pathlib import Path
+        import os, json, sqlite3
 
-        audit_path = os.environ['AUDIT_PATH']
-        new_entry = json.loads(os.environ['AUDIT_ENTRY'])
+        db_path = os.environ['DB_PATH']
+        entry = json.loads(os.environ['AUDIT_ENTRY'])
 
-        # Load existing audit or create new
-        if os.path.isfile(audit_path):
-            with open(audit_path) as f:
-                audit = json.load(f)
-        else:
-            audit = {'entries': []}
+        conn = sqlite3.connect(db_path)
+        conn.execute("PRAGMA busy_timeout=30000")
 
-        # Append new entry
-        audit['entries'].append(new_entry)
+        # Insert audit entry
+        conn.execute('''
+            INSERT INTO audit (timestamp, task_id, caller, action, description, changes, parent_id)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+        ''', (
+            entry.get('timestamp'),
+            entry.get('task_id'),
+            entry.get('caller'),
+            entry.get('action'),
+            entry.get('description'),
+            json.dumps(entry.get('changes')) if entry.get('changes') else None,
+            entry.get('parent_id')
+        ))
+        conn.commit()
 
-        # Write back
-        Path(audit_path).parent.mkdir(parents=True, exist_ok=True)
-        with open(audit_path, 'w') as f:
-            json.dump(audit, f, indent=2)
+        # Get total audit entries
+        count = conn.execute("SELECT COUNT(*) FROM audit").fetchone()[0]
+        conn.close()
 
-        print(json.dumps({'path': audit_path, 'total_entries': len(audit['entries'])}))
+        print(json.dumps({'db_path': db_path, 'total_entries': count}))
         EOF
       env:
-        AUDIT_PATH: "{{(blocks.paths.outputs.stdout | fromjson).audit_path}}"
+        DB_PATH: "{{(blocks.paths.outputs.stdout | fromjson).db_path}}"
         AUDIT_ENTRY: "{{(blocks.build_task.outputs.stdout | fromjson)._audit_entry | tojson}}"
 
 outputs:
@@ -503,12 +623,12 @@ outputs:
   # Common outputs (always available)
   # ==========================================================================
   state:
-    description: Path to the state file (entrypoint for all operations)
+    description: Path to the SQLite database (entrypoint for all operations)
     type: str
-    value: "{{(blocks.paths.outputs.stdout | fromjson).state_path}}"
+    value: "{{(blocks.paths.outputs.stdout | fromjson).db_path}}"
 
   trace_id:
-    description: Execution trace ID (state file identifier)
+    description: Execution trace ID (database file identifier)
     type: str
     value: "{{(blocks.paths.outputs.stdout | fromjson).trace_id}}"
 

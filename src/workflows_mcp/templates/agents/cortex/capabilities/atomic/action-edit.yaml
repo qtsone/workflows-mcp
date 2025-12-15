@@ -1,0 +1,78 @@
+name: cortex-action-edit
+description: |
+  Atomic capability: Modify an existing file.
+  Supports multiple edit operations with atomic rollback.
+
+tags: [cortex, capability, atomic, action, edit]
+
+inputs:
+  path:
+    type: str
+    description: File path to edit.
+    required: true
+
+  operations:
+    type: list
+    description: List of edit operations.
+    required: true
+
+  backup:
+    type: bool
+    description: Create backup before editing.
+    required: false
+    default: true
+
+  dry_run:
+    type: bool
+    description: Preview changes without applying.
+    required: false
+    default: false
+
+blocks:
+  - id: edit
+    type: EditFile
+    inputs:
+      path: "{{ inputs.path }}"
+      operations: "{{ inputs.operations }}"
+      backup: "{{ inputs.backup }}"
+      dry_run: "{{ inputs.dry_run }}"
+
+outputs:
+  operations_applied:
+    value: "{{ blocks.edit.outputs.operations_applied }}"
+    type: num
+    description: Number of operations applied.
+
+  lines_added:
+    value: "{{ blocks.edit.outputs.lines_added }}"
+    type: num
+    description: Lines added.
+
+  lines_removed:
+    value: "{{ blocks.edit.outputs.lines_removed }}"
+    type: num
+    description: Lines removed.
+
+  diff:
+    value: "{{ blocks.edit.outputs.diff }}"
+    type: str
+    description: Unified diff of changes.
+
+  success:
+    value: "{{ blocks.edit.outputs.success }}"
+    type: bool
+    description: Whether all operations succeeded.
+
+  action:
+    value: |
+      {{
+        {
+          'type': 'edit',
+          'path': inputs.path,
+          'operations_applied': blocks.edit.outputs.operations_applied,
+          'lines_added': blocks.edit.outputs.lines_added,
+          'lines_removed': blocks.edit.outputs.lines_removed
+        }
+      }}
+    type: dict
+    description: Action record for audit trail.

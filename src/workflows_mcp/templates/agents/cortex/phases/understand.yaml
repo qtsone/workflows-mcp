@@ -1,0 +1,301 @@
+name: cortex-phase-understand
+description: |
+  CORTEX Understanding Phase
+
+  Builds sufficient understanding to proceed with the query.
+  Identifies knowledge gaps and determines whether they can be
+  filled with atomic capabilities or require full investigation.
+
+tags: [cortex, phase, understand]
+
+inputs:
+  query:
+    type: str
+    description: The query requiring understanding.
+    required: true
+
+  context:
+    type: dict
+    description: Shared context from parent cell.
+    required: true
+
+  capabilities:
+    type: dict
+    description: Available capabilities registry.
+    required: false
+    default: {}
+
+  category:
+    type: str
+    description: Query category from categorize phase.
+    required: false
+    default: "unknown"
+
+  state:
+    type: str
+    description: Path to SQLite state database.
+    required: true
+
+  parent_task_id:
+    type: str
+    description: Parent cell's task ID.
+    required: false
+    default: ""
+
+  depth:
+    type: num
+    description: Current recursion depth.
+    required: false
+    default: 0
+
+  max_depth:
+    type: num
+    description: Maximum recursion depth.
+    required: false
+    default: 5
+
+  query_history:
+    type: list
+    description: Query hashes for cycle detection.
+    required: false
+    default: []
+
+  profile:
+    type: str
+    description: LLM profile to use.
+    required: false
+    default: "default"
+
+blocks:
+  - id: register_task
+    type: Workflow
+    description: Register this phase in the task tree.
+    inputs:
+      workflow: agent-state-management
+      inputs:
+        state: "{{ inputs.state }}"
+        parent_id: "{{ inputs.parent_task_id }}"
+        task: "Phase: Understand"
+        task_type: "cortex-understand"
+        status: "in-progress"
+        caller: "cortex-phase-understand"
+
+  # Quick structural scan to inform understanding
+  - id: quick_scan
+    type: ReadFiles
+    description: Quick structural scan of relevant files.
+    depends_on: [register_task]
+    inputs:
+      patterns: ["**/*.py", "**/*.yaml", "**/*.yml", "**/*.md"]
+      base_path: "{{ inputs.context.repo_path | default('.') }}"
+      mode: "outline"
+      max_files: 30
+      max_file_size_kb: 50
+
+  - id: understand
+    type: LLMCall
+    description: Build understanding and identify knowledge gaps.
+    depends_on: [quick_scan]
+    inputs:
+      profile: "{{ inputs.profile }}"
+      timeout: 120
+      prompt: |
+        # Understanding Phase
+
+        You are the understanding module of a recursive cognitive system (CORTEX).
+        Your task is to build sufficient understanding to proceed with the query.
+
+        ## Query
+        {{ inputs.query }}
+
+        ## Category
+        {{ inputs.category }}
+
+        ## Context
+        - Repository Path: {{ inputs.context.repo_path | default('Not specified') }}
+        - Focus Area: {{ inputs.context.focus | default('general') }}
+        - Current Depth: {{ inputs.depth }} / {{ inputs.max_depth }}
+        {% if inputs.context.accumulated_knowledge %}
+        - Prior Knowledge: {{ inputs.context.accumulated_knowledge | tojson }}
+        {% endif %}
+
+        ## Structural Overview
+        Files found: {{ blocks.quick_scan.outputs.total_files }}
+        Total size: {{ blocks.quick_scan.outputs.total_size_kb }} KB
+
+        {% for file in blocks.quick_scan.outputs.files[:20] %}
+        ### {{ file.path }}
+        ```
+        {{ file.content[:1500] }}
+        {% if file.content | length > 1500 %}...{% endif %}
+        ```
+        {% endfor %}
+
+        ## Understanding Process
+
+        1. **Identify what you now understand** about answering the query
+        2. **Identify knowledge gaps** that block progress
+        3. For each gap, determine if it's:
+           - **Atomic**: Answerable with a single capability (file read, search, command)
+           - **Complex**: Requires full investigation (spawn child cell)
+        4. **Prioritize**: Blocking gaps before helpful gaps
+
+        ## Instructions
+
+        Build your understanding and identify what's still needed.
+
+      response_schema:
+        type: object
+        properties:
+          understanding:
+            type: object
+            properties:
+              summary:
+                type: string
+                description: "What we now understand about the query"
+              key_facts:
+                type: array
+                items:
+                  type: string
+                description: "Key facts established"
+              relevant_files:
+                type: array
+                items:
+                  type: string
+                description: "Files that appear relevant to the query"
+              architecture_notes:
+                type: string
+                description: "Notes about system architecture if relevant"
+            required: [summary, key_facts]
+          gaps:
+            type: array
+            items:
+              type: object
+              properties:
+                description:
+                  type: string
+                  description: "What knowledge is missing"
+                is_blocking:
+                  type: boolean
+                  description: "Whether this blocks progress"
+                is_atomic:
+                  type: boolean
+                  description: "Can be resolved with single capability"
+                resolution_capability:
+                  type: string
+                  description: "If atomic, which capability (gather-files, gather-search, etc.)"
+                resolution_query:
+                  type: string
+                  description: "If complex, what query would fill this gap"
+                priority:
+                  type: string
+                  enum: [high, medium, low]
+              required: [description, is_blocking, is_atomic]
+            description: "Knowledge gaps identified"
+          confidence_increase:
+            type: number
+            minimum: 0
+            maximum: 1
+            description: "How much confidence increased from this phase"
+          ready_to_proceed:
+            type: boolean
+            description: "Whether we have enough understanding to continue"
+        required: [understanding, gaps, ready_to_proceed]
+
+  # Resolve atomic gaps in parallel
+  - id: resolve_atomic_gaps
+    type: Shell
+    description: Prepare atomic gap resolutions.
+    depends_on: [understand]
+    inputs:
+      command: |
+        python3 << 'EOF'
+        import json
+        import os
+
+        gaps_json = os.environ.get('GAPS', '[]')
+        try:
+            gaps = json.loads(gaps_json)
+        except json.JSONDecodeError:
+            gaps = []
+
+        atomic_gaps = [g for g in gaps if g.get('is_atomic', False)]
+        complex_gaps = [g for g in gaps if not g.get('is_atomic', False)]
+
+        result = {
+            'atomic_gaps': atomic_gaps,
+            'complex_gaps': complex_gaps,
+            'has_atomic': len(atomic_gaps) > 0,
+            'has_complex': len(complex_gaps) > 0
+        }
+
+        print(json.dumps(result))
+        EOF
+      env:
+        GAPS: "{{ blocks.understand.outputs.response.gaps | tojson }}"
+
+  - id: store_understanding
+    type: Workflow
+    description: Store understanding in memory.
+    depends_on: [understand]
+    inputs:
+      workflow: agent-state-management
+      inputs:
+        state: "{{ inputs.state }}"
+        op: memory
+        memory_op: merge
+        memory_key: "understanding"
+        memory_value: |
+          {
+            "summary": {{ blocks.understand.outputs.response.understanding.summary | tojson }},
+            "key_facts": {{ blocks.understand.outputs.response.understanding.key_facts | tojson }},
+            "relevant_files": {{ blocks.understand.outputs.response.understanding.relevant_files | default([]) | tojson }},
+            "gaps_count": {{ blocks.understand.outputs.response.gaps | length }}
+          }
+        caller: "cortex-phase-understand"
+
+  - id: track_done
+    type: Workflow
+    description: Mark phase complete.
+    depends_on: [understand, store_understanding, resolve_atomic_gaps]
+    inputs:
+      workflow: agent-state-management
+      inputs:
+        state: "{{ inputs.state }}"
+        task_id: "{{ blocks.register_task.outputs.task.task_id }}"
+        status: "done"
+        caller: "cortex-phase-understand"
+        data:
+          gaps_found: "{{ blocks.understand.outputs.response.gaps | length }}"
+          ready_to_proceed: "{{ blocks.understand.outputs.response.ready_to_proceed }}"
+
+outputs:
+  understanding:
+    value: "{{ blocks.understand.outputs.response.understanding }}"
+    type: dict
+    description: Understanding built in this phase.
+
+  gaps:
+    value: "{{ blocks.understand.outputs.response.gaps }}"
+    type: list
+    description: Knowledge gaps identified.
+
+  atomic_gaps:
+    value: "{{ (blocks.resolve_atomic_gaps.outputs.stdout | fromjson).atomic_gaps }}"
+    type: list
+    description: Gaps resolvable with atomic capabilities.
+
+  complex_gaps:
+    value: "{{ (blocks.resolve_atomic_gaps.outputs.stdout | fromjson).complex_gaps }}"
+    type: list
+    description: Gaps requiring full investigation.
+
+  confidence_increase:
+    value: "{{ blocks.understand.outputs.response.confidence_increase | default(0.2) }}"
+    type: num
+    description: Confidence increase from this phase.
+
+  ready_to_proceed:
+    value: "{{ blocks.understand.outputs.response.ready_to_proceed }}"
+    type: bool
+    description: Whether we can proceed with the query.

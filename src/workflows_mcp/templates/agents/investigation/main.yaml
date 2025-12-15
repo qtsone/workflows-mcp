@@ -205,14 +205,46 @@ blocks:
 
         ## Analysis Instructions
 
+        ## Evidence-Based Analysis Framework
+
+        Your analysis MUST be based on **evidence you can actually see**. Different claims
+        require different levels of evidence. Use this framework:
+
+        | Claim Type | Required Evidence | Available in Outline? |
+        |------------|-------------------|----------------------|
+        | Missing file/module | File not in tree | ✅ Yes |
+        | Missing import target | Import exists, target absent | ✅ Yes |
+        | Structural issue | Symbol relationships visible | ✅ Yes |
+        | Missing implementation | Must see function body | ❌ No - outline shows ranges only |
+        | Code quality issue | Must see actual code | ❌ No - need full content |
+        | Logic bug | Must analyze code flow | ❌ No - need full content |
+
+        **For each potential finding, ask yourself:**
+        1. What evidence do I have? (structure, content, or inferred)
+        2. Is this evidence sufficient for this claim type?
+        3. If NO → add to `sub_investigations` instead of `findings`
+
         {% if inputs.depth == 0 %}
-        **ROOT LEVEL ANALYSIS** - You're seeing outlines/summaries. Focus on:
-        1. Overall structure and organization
-        2. High-level architectural issues
-        3. Files/functions that need DEEP investigation (will be read in full)
-        4. Cross-cutting concerns
+        **TRIAGE MODE (Depth 0)** - You see structural outlines with line ranges.
+
+        **What you CAN determine:**
+        - Files/modules that exist or are missing
+        - Import statements and their targets
+        - Function/class signatures and hierarchy
+        - Overall architecture and organization
+        - Areas that warrant deeper investigation
+
+        **What you CANNOT determine (add to sub_investigations instead):**
+        - Whether implementations are complete (line ranges show size, not quality)
+        - Code quality issues (you don't see the actual code)
+        - Logic bugs or edge cases
+        - Specific security vulnerabilities in code
+
+        **Line ranges explained:** `def func(...) [106-189]` = function spans 84 lines.
+        This indicates substantial implementation EXISTS - NOT that it's missing.
+
         {% else %}
-        **DEEP DIVE ANALYSIS** - You're seeing full file contents. Focus on:
+        **DEEP DIVE MODE (Depth {{ inputs.depth }})** - You see full file contents.
         1. Line-by-line issue identification
         2. Specific bugs, vulnerabilities, or problems
         3. Code quality and best practices
@@ -283,7 +315,14 @@ blocks:
                 suggestion:
                   type: string
                   description: "Suggested fix or improvement"
-              required: [type, severity, title, description]
+                evidence_type:
+                  type: string
+                  enum: [structure, content, inferred, cross_reference]
+                  description: "What evidence supports this finding: structure (visible in outline), content (visible in full code), inferred (derived from patterns), cross_reference (from multiple files)"
+                verified:
+                  type: boolean
+                  description: "Whether this finding is verified by sufficient evidence. False if based on outline-only inference."
+              required: [type, severity, title, description, evidence_type, verified]
             description: "List of issues found during analysis"
           sub_investigations:
             type: array

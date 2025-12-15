@@ -25,7 +25,7 @@ Recursive workflows enable complex, multi-level task execution with built-in sta
 
 **Hierarchical State Tracking**: Build multi-level task trees with parent-child relationships, enabling complex workflow decomposition and progress tracking.
 
-**Persistent State**: Task state persists across workflow calls in JSON files, enabling pause/resume, progress monitoring, and audit trails.
+**Persistent State**: Task state persists across workflow calls in SQLite databases, enabling pause/resume, progress monitoring, and audit trails with concurrent access support.
 
 **Progress Aggregation**: Automatic rollup of child task status, including completion percentages, pending tasks, and failure detection.
 
@@ -153,7 +153,7 @@ result = await execute_workflow(
     }
 )
 
-# State file created at: ~/.workflows/tasks/<trace_id>.json
+# State database created at: ~/.workflows/tasks/<trace_id>.db
 print(f"State: {result['state']}")
 print(f"Processed: {result['processed_count']} items")
 ```
@@ -180,42 +180,71 @@ await execute_workflow(
 
 ## State Management Basics
 
-### State File Structure
+### State Database Structure
 
-The state management system persists task hierarchies in JSON files at `~/.workflows/tasks/<trace_id>.json`:
+The state management system persists task hierarchies in SQLite databases at `~/.workflows/tasks/<trace_id>.db`.
+
+**Database Schema:**
+
+```sql
+-- Task hierarchy with parent-child relationships
+CREATE TABLE tasks (
+    task_id TEXT PRIMARY KEY,
+    parent_id TEXT REFERENCES tasks(task_id),
+    task TEXT NOT NULL,
+    task_type TEXT DEFAULT '',
+    status TEXT DEFAULT 'pending',
+    data JSON DEFAULT '{}',
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+);
+
+-- Key-value memory storage for workflow state
+CREATE TABLE memory (
+    key TEXT PRIMARY KEY,
+    value JSON,
+    updated_at TEXT NOT NULL
+);
+
+-- Audit trail for all state operations
+CREATE TABLE audit (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    timestamp TEXT NOT NULL,
+    task_id TEXT,
+    caller TEXT NOT NULL,
+    action TEXT NOT NULL,
+    description TEXT,
+    changes JSON,
+    parent_id TEXT
+);
+
+-- Iteration tracking for loops
+CREATE TABLE iterations (
+    task_id TEXT PRIMARY KEY,
+    current INTEGER DEFAULT 0,
+    total INTEGER DEFAULT 0,
+    cap INTEGER DEFAULT 100,
+    started_at TEXT,
+    completed_at TEXT,
+    checkpoints JSON DEFAULT '[]'
+);
+```
+
+**Example task data (logical structure):**
 
 ```json
 {
-  "root_task_id": "task-abc123",
+  "task_id": "task-abc123",
+  "task": "PR Review",
+  "task_type": "pr-review",
+  "status": "in-progress",
+  "parent_id": null,
+  "data": {
+    "platform": "github",
+    "files_changed": 19
+  },
   "created_at": "2025-12-12T10:30:00.123Z",
-  "updated_at": "2025-12-12T10:35:45.456Z",
-  "tasks": {
-    "task-abc123": {
-      "task": "PR Review",
-      "task_type": "pr-review",
-      "status": "in-progress",
-      "parent_id": null,
-      "children": ["task-def456", "task-ghi789"],
-      "data": {
-        "platform": "github",
-        "files_changed": 19
-      },
-      "created_at": "2025-12-12T10:30:00.123Z",
-      "updated_at": "2025-12-12T10:35:45.456Z"
-    },
-    "task-def456": {
-      "task": "Phase: Context Gathering",
-      "task_type": "phase",
-      "status": "done",
-      "parent_id": "task-abc123",
-      "children": [],
-      "data": {
-        "files_found": 19
-      },
-      "created_at": "2025-12-12T10:30:01.234Z",
-      "updated_at": "2025-12-12T10:30:11.234Z"
-    }
-  }
+  "updated_at": "2025-12-12T10:35:45.456Z"
 }
 ```
 
@@ -234,7 +263,7 @@ The state management system persists task hierarchies in JSON files at `~/.workf
 The `agent-state-management` workflow provides comprehensive outputs for building recursive patterns:
 
 #### Core Identifiers
-- **`state`**: Path to state file (`~/.workflows/tasks/<trace_id>.json`)
+- **`state`**: Path to SQLite database (`~/.workflows/tasks/<trace_id>.db`)
 - **`task_id`**: ID of created/updated task
 - **`root_task_id`**: ID of the root task in the tree
 - **`trace_id`**: Execution trace ID (filename without extension)
@@ -265,38 +294,42 @@ The `agent-state-management` workflow provides comprehensive outputs for buildin
 
 ### Audit Trail
 
-Each state operation is logged to a separate audit file (`<trace_id>.audit.json`):
+Each state operation is logged to the `audit` table in the same SQLite database. Query with SQL:
+
+```sql
+SELECT timestamp, task_id, caller, action, description, changes
+FROM audit
+ORDER BY timestamp;
+```
+
+**Example audit entries (logical structure):**
 
 ```json
-{
-  "entries": [
-    {
-      "timestamp": "2025-12-12T10:30:00.123Z",
-      "task_id": "task-abc123",
-      "caller": "pr-review",
-      "action": "create_root",
-      "description": "Created root task: PR Review"
-    },
-    {
-      "timestamp": "2025-12-12T10:30:01.234Z",
-      "task_id": "task-def456",
-      "parent_id": "task-abc123",
-      "caller": "pr-review:context-gathering",
-      "action": "create_subtask",
-      "description": "Created sub-task: Phase: Context Gathering"
-    },
-    {
-      "timestamp": "2025-12-12T10:30:11.234Z",
-      "task_id": "task-def456",
-      "caller": "pr-review:context-gathering",
-      "action": "task_completed",
-      "description": "Updated: ['status']",
-      "changes": {
-        "status": ["in-progress", "done"]
-      }
-    }
-  ]
-}
+[
+  {
+    "timestamp": "2025-12-12T10:30:00.123Z",
+    "task_id": "task-abc123",
+    "caller": "pr-review",
+    "action": "create_root",
+    "description": "Created root task: PR Review"
+  },
+  {
+    "timestamp": "2025-12-12T10:30:01.234Z",
+    "task_id": "task-def456",
+    "parent_id": "task-abc123",
+    "caller": "pr-review:context-gathering",
+    "action": "create_subtask",
+    "description": "Created sub-task: Phase: Context Gathering"
+  },
+  {
+    "timestamp": "2025-12-12T10:30:11.234Z",
+    "task_id": "task-def456",
+    "caller": "pr-review:context-gathering",
+    "action": "task_completed",
+    "description": "Updated: ['status']",
+    "changes": {"status": ["in-progress", "done"]}
+  }
+]
 ```
 
 ---
@@ -1039,7 +1072,7 @@ Use the `agent-state-visualize` workflow to inspect task hierarchies:
 result = await execute_workflow(
     workflow="agent-state-visualize",
     inputs={
-        "state": "/Users/user/.workflows/tasks/exec-abc123.json",
+        "state": "/Users/user/.workflows/tasks/exec-abc123.db",
         "show_data": True,
         "max_depth": 0  # 0 = unlimited
     }
@@ -1092,23 +1125,27 @@ inputs:
     description: Visualize subtree starting from this task
 ```
 
-### Reading State Files Directly
+### Querying State Directly
 
-State files are human-readable JSON:
+State is stored in SQLite with queryable tables:
 
 ```bash
-# View state file
-cat ~/.workflows/tasks/exec-abc123.json | jq .
+# Open database
+sqlite3 ~/.workflows/tasks/exec-abc123.db
 
 # List all tasks
-cat ~/.workflows/tasks/exec-abc123.json | jq '.tasks | keys'
+SELECT task_id, status, task FROM tasks;
 
 # Get task details
-cat ~/.workflows/tasks/exec-abc123.json | jq '.tasks["task-abc123"]'
+SELECT * FROM tasks WHERE task_id = 'task-abc123';
 
 # Check children status
-cat ~/.workflows/tasks/exec-abc123.json | \
-  jq '.tasks["task-abc123"].children | map(.status)'
+SELECT task_id, status FROM tasks WHERE parent_id = 'task-abc123';
+
+# Task tree with hierarchy
+SELECT t.task_id, t.status, t.task, p.task_id as parent
+FROM tasks t
+LEFT JOIN tasks p ON t.parent_id = p.task_id;
 ```
 
 ### Audit Trail Analysis
@@ -1116,16 +1153,17 @@ cat ~/.workflows/tasks/exec-abc123.json | \
 Review audit logs to understand workflow execution:
 
 ```bash
+# Open database
+sqlite3 ~/.workflows/tasks/exec-abc123.db
+
 # View audit log
-cat ~/.workflows/tasks/exec-abc123.audit.json | jq .
+SELECT * FROM audit ORDER BY timestamp;
 
 # Filter by caller
-cat ~/.workflows/tasks/exec-abc123.audit.json | \
-  jq '.entries[] | select(.caller == "pr-review:investigation-loop")'
+SELECT * FROM audit WHERE caller LIKE 'pr-review:investigation-loop%';
 
 # Timeline of events
-cat ~/.workflows/tasks/exec-abc123.audit.json | \
-  jq '.entries[] | {timestamp, task_id, action, description}'
+SELECT timestamp, task_id, action, description FROM audit ORDER BY timestamp;
 ```
 
 ---
@@ -1843,7 +1881,8 @@ execute_workflow(
 
 ```bash
 # Check parent-child relationships
-cat ~/.workflows/tasks/exec-abc123.json | jq '.tasks | to_entries | .[] | {id: .key, parent: .value.parent_id, children: .value.children}'
+sqlite3 ~/.workflows/tasks/exec-abc123.db \
+  "SELECT task_id, parent_id FROM tasks"
 ```
 
 **Solution**: Ensure `parent_id` matches the actual parent's `task_id`.
@@ -1854,7 +1893,7 @@ cat ~/.workflows/tasks/exec-abc123.json | jq '.tasks | to_entries | .[] | {id: .
 
 ### Q: Can I pause and resume recursive workflows?
 
-**A**: Yes, the state file persists between calls. You can stop execution and resume later by passing the same `state` path:
+**A**: Yes, the SQLite database persists between calls. You can stop execution and resume later by passing the same `state` path:
 
 ```yaml
 # First execution
@@ -1879,13 +1918,13 @@ result2 = execute_workflow(workflow="my-workflow", inputs={"items": [...], "stat
   for_each_mode: parallel  # Process all files concurrently
 ```
 
-### Q: How do I delete old state files?
+### Q: How do I delete old state databases?
 
-**A**: State files accumulate in `~/.workflows/tasks/`. Clean up manually:
+**A**: State databases accumulate in `~/.workflows/tasks/`. Clean up manually:
 
 ```bash
-# Delete state files older than 7 days
-find ~/.workflows/tasks -name "*.json" -mtime +7 -delete
+# Delete state databases older than 7 days
+find ~/.workflows/tasks -name "*.db" -mtime +7 -delete
 ```
 
 ### Q: Can I use state management without recursion?
@@ -1894,7 +1933,7 @@ find ~/.workflows/tasks -name "*.json" -mtime +7 -delete
 
 ### Q: What's the performance impact of state tracking?
 
-**A**: Minimal - state operations are fast file writes. Typical overhead: < 100ms per task.
+**A**: Minimal - SQLite operations are fast with WAL mode. Typical overhead: < 100ms per task. Concurrent writes are handled automatically.
 
 ### Q: Can I share state between different workflows?
 

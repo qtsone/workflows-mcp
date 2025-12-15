@@ -1,0 +1,403 @@
+name: cortex-phase-gather
+description: |
+  CORTEX Evidence Gathering Phase
+
+  Collects evidence to answer the query using atomic capabilities.
+  Prioritizes structural information first, then targeted content.
+
+  Evidence Types:
+  - Structure: File trees, outlines, symbol tables (cheap, broad)
+  - Content: Full file contents, code snippets (expensive, deep)
+  - Execution: Command outputs, test results (dynamic, verifying)
+  - External: API responses, documentation (contextual)
+
+tags: [cortex, phase, gather]
+
+inputs:
+  query:
+    type: str
+    description: The query to gather evidence for.
+    required: true
+
+  context:
+    type: dict
+    description: Shared context from parent cell.
+    required: true
+
+  capabilities:
+    type: dict
+    description: Available capabilities registry.
+    required: false
+    default: {}
+
+  category:
+    type: str
+    description: Query category to guide gathering strategy.
+    required: false
+    default: "understanding"
+
+  gather_hints:
+    type: dict
+    description: Hints from formulate phase.
+    required: false
+    default: {}
+
+  state:
+    type: str
+    description: Path to SQLite state database.
+    required: true
+
+  parent_task_id:
+    type: str
+    description: Parent cell's task ID.
+    required: false
+    default: ""
+
+  profile:
+    type: str
+    description: LLM profile to use.
+    required: false
+    default: "default"
+
+blocks:
+  - id: register_task
+    type: Workflow
+    description: Register this phase in the task tree.
+    inputs:
+      workflow: agent-state-management
+      inputs:
+        state: "{{ inputs.state }}"
+        parent_id: "{{ inputs.parent_task_id }}"
+        task: "Phase: Gather"
+        task_type: "cortex-gather"
+        status: "in-progress"
+        caller: "cortex-phase-gather"
+
+  # Step 1: Plan gathering strategy
+  - id: plan_gathering
+    type: LLMCall
+    description: Plan evidence gathering strategy.
+    depends_on: [register_task]
+    inputs:
+      profile: "{{ inputs.profile }}"
+      timeout: 60
+      prompt: |
+        # Evidence Gathering Planning
+
+        You are the gathering module of a recursive cognitive system (CORTEX).
+        Plan what evidence to collect to answer the query.
+
+        ## Query
+        {{ inputs.query }}
+
+        ## Context
+        - Repository Path: {{ inputs.context.repo_path | default('.') }}
+        - Focus Area: {{ inputs.context.focus | default('general') }}
+        - Category: {{ inputs.category }}
+
+        {% if inputs.gather_hints %}
+        ## Hints from Formulation
+        - File Patterns: {{ inputs.gather_hints.file_patterns | default([]) | tojson }}
+        - Search Terms: {{ inputs.gather_hints.search_terms | default([]) | tojson }}
+        - Commands: {{ inputs.gather_hints.commands | default([]) | tojson }}
+        {% endif %}
+
+        ## Gathering Strategy
+
+        PRIORITIZE in this order:
+        1. **Structure first** - Use outline mode to understand landscape
+        2. **Targeted content** - Read specific files identified as relevant
+        3. **Search** - Find specific patterns or terms
+        4. **Commands** - Execute only if needed for verification
+
+        ## Instructions
+
+        Plan which gathering operations to perform. Be efficient - don't gather
+        more than necessary to answer the query.
+
+      response_schema:
+        type: object
+        properties:
+          strategy:
+            type: string
+            description: "Brief description of gathering approach"
+          operations:
+            type: array
+            items:
+              type: object
+              properties:
+                type:
+                  type: string
+                  enum: [outline, content, search, command]
+                  description: "Type of gathering operation"
+                target:
+                  type: string
+                  description: "What to gather (patterns, search term, command)"
+                reason:
+                  type: string
+                  description: "Why this evidence is needed"
+                priority:
+                  type: integer
+                  minimum: 1
+                  maximum: 3
+                  description: "Priority (1=highest)"
+              required: [type, target, reason, priority]
+            description: "Ordered list of gathering operations"
+          estimated_tokens:
+            type: integer
+            description: "Rough estimate of token cost"
+        required: [strategy, operations]
+
+  # Step 2: Execute outline gathering
+  - id: gather_outline
+    type: ReadFiles
+    description: Gather structural outlines.
+    depends_on: [plan_gathering]
+    inputs:
+      patterns: |
+        {{
+          (blocks.plan_gathering.outputs.response.operations | selectattr('type', 'equalto', 'outline') | map(attribute='target') | list) or
+          ['**/*.py', '**/*.yaml', '**/*.yml']
+        }}
+      base_path: "{{ inputs.context.repo_path | default('.') }}"
+      mode: "outline"
+      max_files: 30
+      max_file_size_kb: 50
+
+  # Step 3: Determine content targets based on outline
+  - id: identify_content_targets
+    type: LLMCall
+    description: Identify specific files to read in full.
+    depends_on: [gather_outline, plan_gathering]
+    inputs:
+      profile: "{{ inputs.profile }}"
+      timeout: 60
+      prompt: |
+        # Content Target Identification
+
+        Based on the structural outline, identify which files need full content reading.
+
+        ## Query
+        {{ inputs.query }}
+
+        ## Structural Overview
+        Files scanned: {{ blocks.gather_outline.outputs.total_files }}
+
+        {% for file in blocks.gather_outline.outputs.files[:25] %}
+        ### {{ file.path }}
+        ```
+        {{ file.content[:1000] }}
+        {% if file.content | length > 1000 %}...{% endif %}
+        ```
+        {% endfor %}
+
+        ## Planned Operations
+        {{ blocks.plan_gathering.outputs.response.operations | tojson }}
+
+        ## Instructions
+
+        Select UP TO 10 files that should be read in full to answer the query.
+        Prioritize files most likely to contain the answer.
+
+      response_schema:
+        type: object
+        properties:
+          files_to_read:
+            type: array
+            items:
+              type: string
+            maxItems: 10
+            description: "File paths to read in full"
+          reasoning:
+            type: string
+            description: "Why these files were selected"
+        required: [files_to_read]
+
+  # Step 4: Read targeted content
+  - id: gather_content
+    type: ReadFiles
+    description: Read targeted files in full.
+    depends_on: [identify_content_targets]
+    condition: "{{ blocks.identify_content_targets.outputs.response.files_to_read | length > 0 }}"
+    inputs:
+      patterns: "{{ blocks.identify_content_targets.outputs.response.files_to_read }}"
+      base_path: "{{ inputs.context.repo_path | default('.') }}"
+      mode: "full"
+      max_files: 10
+      max_file_size_kb: 100
+
+  # Step 5: Execute search operations if planned
+  - id: execute_search
+    type: Shell
+    description: Execute search operations.
+    depends_on: [plan_gathering]
+    condition: |
+      {{ blocks.plan_gathering.outputs.response.operations | selectattr('type', 'equalto', 'search') | list | length > 0 }}
+    inputs:
+      command: |
+        python3 << 'EOF'
+        import json
+        import subprocess
+        import os
+
+        operations = json.loads(os.environ.get('OPERATIONS', '[]'))
+        repo_path = os.environ.get('REPO_PATH', '.')
+
+        search_ops = [op for op in operations if op.get('type') == 'search']
+        results = []
+
+        for op in search_ops[:3]:  # Limit to 3 searches
+            target = op.get('target', '')
+            if not target:
+                continue
+
+            try:
+                result = subprocess.run(
+                    ['rg', '--json', '-e', target, repo_path, '-l'],
+                    capture_output=True,
+                    text=True,
+                    timeout=30
+                )
+                matches = []
+                for line in result.stdout.strip().split('\n')[:20]:
+                    if line:
+                        try:
+                            data = json.loads(line)
+                            if data.get('type') == 'match':
+                                matches.append(data.get('data', {}).get('path', {}).get('text', ''))
+                        except json.JSONDecodeError:
+                            pass
+
+                results.append({
+                    'pattern': target,
+                    'matches': matches,
+                    'count': len(matches)
+                })
+            except Exception as e:
+                results.append({
+                    'pattern': target,
+                    'error': str(e),
+                    'matches': []
+                })
+
+        print(json.dumps({'searches': results}))
+        EOF
+      env:
+        OPERATIONS: "{{ blocks.plan_gathering.outputs.response.operations | tojson }}"
+        REPO_PATH: "{{ inputs.context.repo_path | default('.') }}"
+
+  # Step 6: Compile all evidence
+  - id: compile_evidence
+    type: Shell
+    description: Compile all gathered evidence.
+    depends_on:
+      - gather_outline
+      - block: gather_content
+        required: false
+      - block: execute_search
+        required: false
+    inputs:
+      command: |
+        python3 << 'EOF'
+        import json
+        import os
+
+        outline_files = json.loads(os.environ.get('OUTLINE_FILES', '[]'))
+        content_files = json.loads(os.environ.get('CONTENT_FILES', '[]'))
+        searches = json.loads(os.environ.get('SEARCHES', '{"searches": []}'))
+
+        evidence = []
+
+        # Add outline evidence
+        for f in outline_files:
+            evidence.append({
+                'type': 'outline',
+                'path': f.get('path', ''),
+                'content': f.get('content', ''),
+                'size_kb': f.get('size_kb', 0)
+            })
+
+        # Add content evidence
+        for f in content_files:
+            evidence.append({
+                'type': 'content',
+                'path': f.get('path', ''),
+                'content': f.get('content', ''),
+                'size_kb': f.get('size_kb', 0)
+            })
+
+        # Add search evidence
+        for s in searches.get('searches', []):
+            evidence.append({
+                'type': 'search',
+                'pattern': s.get('pattern', ''),
+                'matches': s.get('matches', []),
+                'count': s.get('count', 0)
+            })
+
+        result = {
+            'evidence': evidence,
+            'total_items': len(evidence),
+            'outline_count': len(outline_files),
+            'content_count': len(content_files),
+            'search_count': len(searches.get('searches', []))
+        }
+
+        print(json.dumps(result))
+        EOF
+      env:
+        OUTLINE_FILES: "{{ blocks.gather_outline.outputs.files | tojson }}"
+        CONTENT_FILES: "{{ blocks.gather_content.outputs.files | default([]) | tojson }}"
+        SEARCHES: "{{ blocks.execute_search.outputs.stdout if blocks.execute_search.succeeded else '{\"searches\": []}' }}"
+
+  - id: store_evidence
+    type: Workflow
+    description: Store evidence in memory.
+    depends_on: [compile_evidence]
+    inputs:
+      workflow: agent-state-management
+      inputs:
+        state: "{{ inputs.state }}"
+        op: memory
+        memory_op: set
+        memory_key: "evidence"
+        memory_value: "{{ blocks.compile_evidence.outputs.stdout }}"
+        caller: "cortex-phase-gather"
+
+  - id: track_done
+    type: Workflow
+    description: Mark phase complete.
+    depends_on: [compile_evidence, store_evidence]
+    inputs:
+      workflow: agent-state-management
+      inputs:
+        state: "{{ inputs.state }}"
+        task_id: "{{ blocks.register_task.outputs.task.task_id }}"
+        status: "done"
+        caller: "cortex-phase-gather"
+        data:
+          evidence_count: "{{ (blocks.compile_evidence.outputs.stdout | fromjson).total_items }}"
+
+outputs:
+  evidence:
+    value: "{{ (blocks.compile_evidence.outputs.stdout | fromjson).evidence }}"
+    type: list
+    description: All gathered evidence.
+
+  strategy:
+    value: "{{ blocks.plan_gathering.outputs.response.strategy }}"
+    type: str
+    description: Gathering strategy used.
+
+  stats:
+    value: |
+      {{
+        {
+          'total_items': (blocks.compile_evidence.outputs.stdout | fromjson).total_items,
+          'outline_count': (blocks.compile_evidence.outputs.stdout | fromjson).outline_count,
+          'content_count': (blocks.compile_evidence.outputs.stdout | fromjson).content_count,
+          'search_count': (blocks.compile_evidence.outputs.stdout | fromjson).search_count
+        }
+      }}
+    type: dict
+    description: Evidence gathering statistics.

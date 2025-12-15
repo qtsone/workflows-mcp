@@ -1,0 +1,70 @@
+name: cortex-act
+description: |
+  Cognitive capability: Execute actions or spawn complex investigations.
+  Invokes cortex-cell in act mode.
+
+tags: [cortex, capability, cognitive, act]
+
+inputs:
+  query:
+    type: str
+    description: Query requiring action.
+    required: true
+
+  context:
+    type: dict
+    description: Execution context.
+    required: true
+
+  state:
+    type: str
+    description: Path to SQLite state database.
+    required: true
+
+  depth:
+    type: num
+    description: Current recursion depth.
+    required: false
+    default: 0
+
+  max_depth:
+    type: num
+    description: Maximum recursion depth.
+    required: false
+    default: 5
+
+  parent_trace:
+    type: str
+    description: Parent trace ID for linking.
+    required: false
+    default: ""
+
+blocks:
+  - id: act
+    type: Workflow
+    inputs:
+      workflow: cortex-cell
+      inputs:
+        query: "{{ inputs.query }}"
+        mode: "act"
+        context: "{{ inputs.context }}"
+        state: "{{ inputs.state }}"
+        depth: "{{ inputs.depth }}"
+        max_depth: "{{ inputs.max_depth }}"
+        parent_trace: "{{ inputs.parent_trace }}"
+
+outputs:
+  actions:
+    value: "{{ blocks.act.outputs.actions }}"
+    type: list
+    description: Actions taken or spawned.
+
+  results:
+    value: "{{ blocks.act.outputs.results | default({}) }}"
+    type: dict
+    description: Action results.
+
+  trace_id:
+    value: "{{ blocks.act.outputs.trace_id }}"
+    type: str
+    description: Trace ID for this invocation.

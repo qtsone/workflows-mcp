@@ -1,0 +1,67 @@
+name: cortex-reason-llm
+description: |
+  Atomic capability: Call LLM for reasoning, analysis, or decision-making.
+  Core reasoning capability used by all cognitive phases.
+
+tags: [cortex, capability, atomic, reason, llm]
+
+inputs:
+  prompt:
+    type: str
+    description: User prompt to send to the LLM.
+    required: true
+
+  system_instructions:
+    type: str
+    description: System instructions for the LLM.
+    required: false
+    default: ""
+
+  response_schema:
+    type: dict
+    description: JSON Schema for structured response.
+    required: false
+    default: {}
+
+  profile:
+    type: str
+    description: LLM profile from config.
+    required: false
+    default: "default"
+
+  timeout:
+    type: num
+    description: Timeout in seconds.
+    required: false
+    default: 120
+
+blocks:
+  - id: call_llm
+    type: LLMCall
+    inputs:
+      profile: "{{ inputs.profile }}"
+      prompt: "{{ inputs.prompt }}"
+      system_instructions: "{{ inputs.system_instructions if inputs.system_instructions else None }}"
+      response_schema: "{{ inputs.response_schema if inputs.response_schema else None }}"
+      timeout: "{{ inputs.timeout }}"
+
+outputs:
+  response:
+    value: "{{ blocks.call_llm.outputs.response }}"
+    type: dict
+    description: LLM response (structured if schema provided).
+
+  success:
+    value: "{{ blocks.call_llm.outputs.success }}"
+    type: bool
+    description: Whether LLM call succeeded.
+
+  metadata:
+    value: "{{ blocks.call_llm.outputs.metadata }}"
+    type: dict
+    description: Call metadata (tokens, model, etc.).
+
+  evidence:
+    value: "{{ ['llm:' ~ inputs.profile ~ ':' ~ (blocks.call_llm.outputs.metadata.model | default('unknown'))] }}"
+    type: list
+    description: Evidence reference for findings.

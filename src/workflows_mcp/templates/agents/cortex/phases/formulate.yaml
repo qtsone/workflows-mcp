@@ -1,0 +1,232 @@
+name: cortex-phase-formulate
+description: |
+  CORTEX Formulation Phase
+
+  Transforms vague queries into precise, actionable questions.
+  Makes implicit assumptions explicit and defines success criteria.
+
+tags: [cortex, phase, formulate]
+
+inputs:
+  query:
+    type: str
+    description: The query to refine.
+    required: true
+
+  context:
+    type: dict
+    description: Shared context from parent cell.
+    required: true
+
+  capabilities:
+    type: dict
+    description: Available capabilities registry.
+    required: false
+    default: {}
+
+  understanding:
+    type: dict
+    description: Understanding built in previous phase.
+    required: false
+    default: {}
+
+  state:
+    type: str
+    description: Path to SQLite state database.
+    required: true
+
+  parent_task_id:
+    type: str
+    description: Parent cell's task ID.
+    required: false
+    default: ""
+
+  profile:
+    type: str
+    description: LLM profile to use.
+    required: false
+    default: "default"
+
+blocks:
+  - id: register_task
+    type: Workflow
+    description: Register this phase in the task tree.
+    inputs:
+      workflow: agent-state-management
+      inputs:
+        state: "{{ inputs.state }}"
+        parent_id: "{{ inputs.parent_task_id }}"
+        task: "Phase: Formulate"
+        task_type: "cortex-formulate"
+        status: "in-progress"
+        caller: "cortex-phase-formulate"
+
+  - id: formulate
+    type: LLMCall
+    description: Refine the query into actionable form.
+    depends_on: [register_task]
+    inputs:
+      profile: "{{ inputs.profile }}"
+      timeout: 60
+      prompt: |
+        # Query Formulation Phase
+
+        You are the formulation module of a recursive cognitive system (CORTEX).
+        Your task is to transform the query into a precise, actionable form.
+
+        ## Original Query
+        {{ inputs.query }}
+
+        ## Context
+        - Repository Path: {{ inputs.context.repo_path | default('Not specified') }}
+        - Focus Area: {{ inputs.context.focus | default('general') }}
+        {% if inputs.context.constraints %}
+        - Constraints: {{ inputs.context.constraints | tojson }}
+        {% endif %}
+
+        {% if inputs.understanding %}
+        ## Understanding So Far
+        - Summary: {{ inputs.understanding.summary | default('No summary') }}
+        - Key Facts: {{ inputs.understanding.key_facts | default([]) | tojson }}
+        {% if inputs.understanding.relevant_files %}
+        - Relevant Files: {{ inputs.understanding.relevant_files | tojson }}
+        {% endif %}
+        {% endif %}
+
+        ## Formulation Rules
+
+        1. **Make implicit assumptions explicit** - What is taken for granted?
+        2. **Define success criteria** - How do we know when we're done?
+        3. **Identify constraints and boundaries** - What are the limits?
+        4. **Break compound queries** - Split into atomic questions if needed
+        5. **Preserve original intent** - Don't change what's being asked
+
+        ## Instructions
+
+        Refine this query into a clear, actionable form that the gather and analyze
+        phases can work with effectively.
+
+      response_schema:
+        type: object
+        properties:
+          refined_query:
+            type: string
+            description: "The refined, precise version of the query"
+          original_preserved:
+            type: boolean
+            description: "Whether the original intent is fully preserved"
+          assumptions:
+            type: array
+            items:
+              type: object
+              properties:
+                assumption:
+                  type: string
+                  description: "The implicit assumption"
+                made_explicit:
+                  type: string
+                  description: "How it's now explicit in the refined query"
+              required: [assumption, made_explicit]
+            description: "Assumptions made explicit"
+          success_criteria:
+            type: array
+            items:
+              type: string
+            description: "How to know when the query is answered"
+          sub_questions:
+            type: array
+            items:
+              type: object
+              properties:
+                question:
+                  type: string
+                order:
+                  type: integer
+                  description: "Order to answer (1 = first)"
+                depends_on:
+                  type: array
+                  items:
+                    type: integer
+                  description: "Which questions this depends on"
+              required: [question, order]
+            description: "Atomic sub-questions if query is compound"
+          gather_hints:
+            type: object
+            properties:
+              file_patterns:
+                type: array
+                items:
+                  type: string
+                description: "File patterns likely to contain answers"
+              search_terms:
+                type: array
+                items:
+                  type: string
+                description: "Terms to search for"
+              commands:
+                type: array
+                items:
+                  type: string
+                description: "Commands that might help"
+            description: "Hints for the gather phase"
+        required: [refined_query, assumptions, success_criteria]
+
+  - id: store_formulation
+    type: Workflow
+    description: Store formulation in memory.
+    depends_on: [formulate]
+    inputs:
+      workflow: agent-state-management
+      inputs:
+        state: "{{ inputs.state }}"
+        op: memory
+        memory_op: set
+        memory_key: "formulation"
+        memory_value: |
+          {
+            "refined_query": {{ blocks.formulate.outputs.response.refined_query | tojson }},
+            "success_criteria": {{ blocks.formulate.outputs.response.success_criteria | tojson }},
+            "gather_hints": {{ blocks.formulate.outputs.response.gather_hints | default({}) | tojson }}
+          }
+        caller: "cortex-phase-formulate"
+
+  - id: track_done
+    type: Workflow
+    description: Mark phase complete.
+    depends_on: [formulate, store_formulation]
+    inputs:
+      workflow: agent-state-management
+      inputs:
+        state: "{{ inputs.state }}"
+        task_id: "{{ blocks.register_task.outputs.task.task_id }}"
+        status: "done"
+        caller: "cortex-phase-formulate"
+        data:
+          assumptions_count: "{{ blocks.formulate.outputs.response.assumptions | length }}"
+          sub_questions_count: "{{ blocks.formulate.outputs.response.sub_questions | default([]) | length }}"
+
+outputs:
+  refined_query:
+    value: "{{ blocks.formulate.outputs.response.refined_query }}"
+    type: str
+    description: The refined, actionable query.
+
+  assumptions:
+    value: "{{ blocks.formulate.outputs.response.assumptions }}"
+    type: list
+    description: Assumptions made explicit.
+
+  success_criteria:
+    value: "{{ blocks.formulate.outputs.response.success_criteria }}"
+    type: list
+    description: Success criteria for the query.
+
+  sub_questions:
+    value: "{{ blocks.formulate.outputs.response.sub_questions | default([]) }}"
+    type: list
+    description: Atomic sub-questions if query is compound.
+
+  gather_hints:
+    value: "{{ blocks.formulate.outputs.response.gather_hints | default({}) }}"
+    type: dict
+    description: Hints for the gather phase.
