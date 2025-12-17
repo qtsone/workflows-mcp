@@ -361,7 +361,7 @@ blocks:
                     reason:
                       type: string
                       description: "Why this operation is needed"
-                  required: [capability, inputs, reason]
+                  required: [capability, reason]
               spawn_cells:
                 type: array
                 description: "Child cells for complex implementations (COGNITIVE dispatch)"

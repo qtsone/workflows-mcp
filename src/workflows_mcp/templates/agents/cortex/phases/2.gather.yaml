@@ -302,7 +302,7 @@ blocks:
                     reason:
                       type: string
                       description: "Why this operation is needed"
-                  required: [capability, inputs, reason]
+                  required: [capability, reason]
               spawn_cells:
                 type: array
                 description: "Child cells for complex sub-gathering (COGNITIVE dispatch)"
@@ -338,7 +338,7 @@ blocks:
                     enum: [never, findings_require, always]
                   mode:
                     type: string
-                    enum: [null, report, implement, fix, verify]
+                    enum: [none, report, implement, fix, verify]
           confidence:
             type: number
             minimum: 0

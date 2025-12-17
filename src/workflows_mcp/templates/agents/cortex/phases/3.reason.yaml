@@ -441,7 +441,7 @@ blocks:
                     enum: [never, findings_require, always]
                   mode:
                     type: string
-                    enum: [null, report, implement, fix, verify]
+                    enum: [none, report, implement, fix, verify]
           confidence:
             type: number
             minimum: 0
