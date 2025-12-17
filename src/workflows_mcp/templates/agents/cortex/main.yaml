@@ -253,12 +253,12 @@ blocks:
         parent_id: "{{ inputs.parent_id }}"
         task: "CORTEX Cell (depth={{ inputs.depth }}, iter={{ inputs.iterations }})"
         category: "cortex-cell"
+        depth: "{{ inputs.depth }}"
         status: "in-progress"
         caller: "cortex-cell"
         data:
           prompt: "{{ inputs.prompt }}"
           hash: "{{ (blocks.init.outputs.stdout | fromjson).hash }}"
-          depth: "{{ inputs.depth }}"
           iterations: "{{ inputs.iterations }}"
           spawning_phase: "{{ inputs.context.spawning_phase | default('root') }}"
 

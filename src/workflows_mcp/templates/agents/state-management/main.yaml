@@ -55,6 +55,12 @@ inputs:
     required: false
     default: ""
 
+  depth:
+    type: num
+    description: Task depth in the hierarchy (0 = root, increments for children).
+    required: false
+    default: 0
+
   caller:
     type: str
     description: Who/what is making this call (for audit trail).
@@ -455,6 +461,7 @@ blocks:
                     parent_id TEXT REFERENCES tasks(task_id),
                     task TEXT NOT NULL,
                     category TEXT DEFAULT '',
+                    depth INTEGER DEFAULT 0,
                     status TEXT DEFAULT 'pending'
                         CHECK(status IN ('pending', 'in-progress', 'done', 'failed', 'blocked')),
                     data JSON DEFAULT '{}',
@@ -463,6 +470,7 @@ blocks:
                 );
                 CREATE INDEX IF NOT EXISTS idx_tasks_parent ON tasks(parent_id);
                 CREATE INDEX IF NOT EXISTS idx_tasks_status ON tasks(status);
+                CREATE INDEX IF NOT EXISTS idx_tasks_depth ON tasks(depth);
 
                 CREATE TABLE IF NOT EXISTS memory (
                     type TEXT NOT NULL DEFAULT '',
@@ -574,7 +582,7 @@ blocks:
             # Initialize metadata
             conn.execute("INSERT INTO metadata VALUES ('created_at', ?)", (now,))
             conn.execute("INSERT INTO metadata VALUES ('updated_at', ?)", (now,))
-            conn.execute("INSERT INTO metadata VALUES ('schema_version', '2')")
+            conn.execute("INSERT INTO metadata VALUES ('schema_version', '3')")
             conn.commit()
             conn.close()
         else:
@@ -666,6 +674,17 @@ blocks:
                     CREATE INDEX IF NOT EXISTS idx_actions_capability ON actions(capability);
                 ''')
                 conn.execute("INSERT OR REPLACE INTO metadata VALUES ('schema_version', '2')")
+                conn.commit()
+                current_version = 2
+
+            if current_version < 3:
+                # Migrate to v3: Add depth column to tasks table
+                # Check if depth column already exists
+                columns = [row[1] for row in conn.execute("PRAGMA table_info(tasks)").fetchall()]
+                if 'depth' not in columns:
+                    conn.execute("ALTER TABLE tasks ADD COLUMN depth INTEGER DEFAULT 0")
+                    conn.execute("CREATE INDEX IF NOT EXISTS idx_tasks_depth ON tasks(depth)")
+                conn.execute("INSERT OR REPLACE INTO metadata VALUES ('schema_version', '3')")
                 conn.commit()
 
             conn.close()
@@ -763,14 +782,14 @@ blocks:
 
         if relation == 'children':
             # Direct children of task_id
-            sql = "SELECT task_id, parent_id, category, status, data FROM tasks WHERE parent_id = ?"
+            sql = "SELECT task_id, parent_id, category, depth, status, data FROM tasks WHERE parent_id = ?"
             params = [task_id]
 
         elif relation == 'parent':
             # Get parent of task_id
             row = conn.execute("SELECT parent_id FROM tasks WHERE task_id = ?", (task_id,)).fetchone()
             if row and row['parent_id']:
-                sql = "SELECT task_id, parent_id, category, status, data FROM tasks WHERE task_id = ?"
+                sql = "SELECT task_id, parent_id, category, depth, status, data FROM tasks WHERE task_id = ?"
                 params = [row['parent_id']]
             else:
                 print(json.dumps({'results': [], 'count': 0, 'relation': 'parent'}))
@@ -781,15 +800,15 @@ blocks:
             # Recursive CTE to get all ancestors
             sql = """
                 WITH RECURSIVE ancestors AS (
-                    SELECT task_id, parent_id, category, status, data, 1 as depth
+                    SELECT task_id, parent_id, category, depth, status, data, 1 as traversal_depth
                     FROM tasks WHERE task_id = (SELECT parent_id FROM tasks WHERE task_id = ?)
                     UNION ALL
-                    SELECT t.task_id, t.parent_id, t.category, t.status, t.data, a.depth + 1
+                    SELECT t.task_id, t.parent_id, t.category, t.depth, t.status, t.data, a.traversal_depth + 1
                     FROM tasks t
                     JOIN ancestors a ON t.task_id = a.parent_id
                 )
-                SELECT task_id, parent_id, category, status, data, depth FROM ancestors
-                ORDER BY depth
+                SELECT task_id, parent_id, category, depth, status, data, traversal_depth FROM ancestors
+                ORDER BY traversal_depth
             """
             params = [task_id]
 
@@ -797,15 +816,15 @@ blocks:
             # Recursive CTE to get all descendants
             sql = """
                 WITH RECURSIVE descendants AS (
-                    SELECT task_id, parent_id, category, status, data, 1 as depth
+                    SELECT task_id, parent_id, category, depth, status, data, 1 as traversal_depth
                     FROM tasks WHERE parent_id = ?
                     UNION ALL
-                    SELECT t.task_id, t.parent_id, t.category, t.status, t.data, d.depth + 1
+                    SELECT t.task_id, t.parent_id, t.category, t.depth, t.status, t.data, d.traversal_depth + 1
                     FROM tasks t
                     JOIN descendants d ON t.parent_id = d.task_id
                 )
-                SELECT task_id, parent_id, category, status, data, depth FROM descendants
-                ORDER BY depth
+                SELECT task_id, parent_id, category, depth, status, data, traversal_depth FROM descendants
+                ORDER BY traversal_depth
             """
             params = [task_id]
 
@@ -835,6 +854,7 @@ blocks:
                 'task_id': row['task_id'],
                 'parent_id': row['parent_id'],
                 'category': row['category'],
+                'depth': row['depth'],
                 'status': row['status']
             }
 
@@ -976,6 +996,7 @@ blocks:
         task_id_input = os.environ.get('TASK_ID_INPUT', '')
         parent_id_input = os.environ.get('PARENT_ID_INPUT', '')
         category_input = os.environ.get('TASK_TYPE_INPUT', '')
+        depth_input = int(os.environ.get('DEPTH_INPUT', '0') or '0')
         status_input = os.environ.get('STATUS_INPUT', '')
         data_input = json.loads(os.environ.get('DATA_INPUT', '{}') or '{}')
         caller = os.environ.get('CALLER', 'unknown')
@@ -1050,13 +1071,14 @@ blocks:
         # Perform operation
         if operation in ('create_root', 'create_subtask'):
             conn.execute('''
-                INSERT INTO tasks (task_id, parent_id, task, category, status, data, created_at, updated_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                INSERT INTO tasks (task_id, parent_id, task, category, depth, status, data, created_at, updated_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
             ''', (
                 target_task_id,
                 parent_id_input or None,
                 task_input or 'Task',
                 category_input or '',
+                depth_input,
                 status_input or 'in-progress',
                 json.dumps(merged_data),
                 now,
@@ -1178,6 +1200,7 @@ blocks:
             'task_id': target_task_id,
             'root_task_id': root_task_id or target_task_id,
             'status': row['status'] if row else (status_input or 'in-progress'),
+            'depth': row['depth'] if row else depth_input,
             'parent_id': row['parent_id'] if row else parent_id_input,
             'children': children,
             'pending_children': pending_children,
@@ -1197,6 +1220,7 @@ blocks:
         TASK_ID_INPUT: "{{inputs.task_id}}"
         PARENT_ID_INPUT: "{{inputs.parent_id}}"
         TASK_TYPE_INPUT: "{{inputs.category}}"
+        DEPTH_INPUT: "{{inputs.depth}}"
         STATUS_INPUT: "{{inputs.status}}"
         DATA_INPUT: "{{inputs.data | tojson}}"
         CALLER: "{{inputs.caller}}"
@@ -1269,6 +1293,7 @@ outputs:
       - task_id: ID of created/updated task
       - root_task_id: ID of root task in state
       - status: Current task status
+      - depth: Task depth in hierarchy (0 = root)
       - parent_id: Parent task ID (null for root)
       - children: List of child task IDs
       - pending_children: Children not done/failed
