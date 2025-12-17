@@ -73,7 +73,7 @@ inputs:
   confidence_threshold:
     type: num
     description: Minimum confidence to skip investigation.
-    default: 0.7
+    default: 0.9
 
   state:
     type: str
@@ -423,7 +423,7 @@ blocks:
         depth: "{{ inputs.depth + 1 }}"
         synthesis: |
           {{ inputs.synthesis + [{
-            'query': blocks.attempt.outputs.response.uncertainty.question,
+            'prompt': blocks.attempt.outputs.response.uncertainty.question,
             'response': blocks.investigate.outputs.response,
             'synthesis': blocks.investigate.outputs.synthesis
           }] }}
