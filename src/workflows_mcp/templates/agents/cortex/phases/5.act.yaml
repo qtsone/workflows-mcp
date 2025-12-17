@@ -1,0 +1,697 @@
+# =============================================================================
+# CORTEX Act Phase (v2)
+# =============================================================================
+#
+# Action Phase - executes actions based on synthesis and pipeline_config.
+#
+# v2 Changes:
+#   - Reads pipeline_config.act.trigger and mode (from CATEGORIZE + overrides)
+#   - Trigger policy: never, findings_require, always
+#   - Mode determines action type: report, implement, fix, verify
+#   - Continuation logic: if work incomplete, outputs continuation_prompt
+#   - Uses iterations counter (NOT depth) for continuation
+#
+# Trigger Policy:
+#   - never: No action (read-only query)
+#   - findings_require: Only if REASON says actions_needed=true
+#   - always: Always attempt action
+#
+# Action Modes:
+#   - null: No action
+#   - report: Generate report/review
+#   - implement: Create/modify code
+#   - fix: Apply fix to issue
+#   - verify: Fix and run verification
+#
+# Follows universal fractal pattern with continuation capability.
+#
+# =============================================================================
+
+name: cortex-phase-act
+description: "CORTEX Act Phase - executes actions based on synthesis and config"
+
+tags: [cortex, phase, act, v2]
+
+inputs:
+  prompt:
+    type: str
+    description: The original query.
+    required: true
+
+  system:
+    type: str
+    description: System prompt override.
+    default: |
+      You are the action module of a recursive cognitive system (CORTEX).
+      Your role is to execute actions based on synthesis results and configuration.
+
+      Be conservative - prefer reporting over direct changes unless explicitly requested.
+      Never execute destructive actions without high confidence.
+
+      Evaluate whether the task is COMPLETE:
+      - complete=true: Original request is fully satisfied
+      - complete=false + continuation_needed=true: More work needed
+
+      Be honest about your confidence. If you're uncertain about the action,
+      set uncertainty.exists = true and provide a specific question.
+
+  context:
+    type: dict
+    description: Context including synthesis, category, repo_path, original_prompt, etc.
+    default: {}
+
+  pipeline_config:
+    type: dict
+    description: Pipeline configuration from CATEGORIZE (with any overrides).
+    default: {}
+
+  memory:
+    type: list
+    description: List of memory keys to retrieve.
+    default: []
+
+  synthesis:
+    type: list
+    description: Accumulated synthesis from previous investigations.
+    default: []
+
+  depth:
+    type: num
+    description: Current recursion depth (for investigations).
+    default: 0
+
+  max_depth:
+    type: num
+    description: Maximum recursion depth.
+    default: 5
+
+  iterations:
+    type: num
+    description: Current task completion iteration.
+    default: 0
+
+  max_iterations:
+    type: num
+    description: Maximum continuation attempts.
+    default: 3
+
+  confidence_threshold:
+    type: num
+    description: Minimum confidence to skip investigation.
+    default: 0.7
+
+  state:
+    type: str
+    description: Path to SQLite state database.
+    default: ""
+
+  parent_id:
+    type: str
+    description: Parent task ID for task tree.
+    default: ""
+
+  profile:
+    type: str
+    description: LLM profile to use.
+    default: "default"
+
+  capabilities:
+    type: list
+    description: Available capabilities registry (filtered by permissions).
+    default: []
+
+  permissions:
+    type: dict
+    description: Available permissions.
+    default: { "read": true, "write": false, "execute": false }
+
+blocks:
+  # ===========================================================================
+  # STEP 1: Register phase task
+  # ===========================================================================
+  - id: register_phase
+    type: Workflow
+    description: Register this phase in the task tree.
+    inputs:
+      workflow: agent-state-management
+      inputs:
+        state: "{{ inputs.state }}"
+        parent_id: "{{ inputs.parent_id }}"
+        task: "Phase: Act"
+        category: "cortex-act"
+        status: "in-progress"
+        caller: "cortex-phase-act"
+        data:
+          depth: "{{ inputs.depth }}"
+          iterations: "{{ inputs.iterations }}"
+          trigger: "{{ inputs.pipeline_config.act.trigger | default('never') }}"
+          mode: "{{ inputs.pipeline_config.act.mode | default('null') }}"
+
+  # ===========================================================================
+  # STEP 2: Check trigger policy
+  # ===========================================================================
+  - id: check_trigger
+    type: Shell
+    description: Evaluate whether to proceed with action based on trigger policy.
+    depends_on: [register_phase]
+    inputs:
+      command: |
+        python3 << 'EOF'
+        import json
+        import os
+
+        trigger = os.environ.get('TRIGGER', 'never')
+        mode = os.environ.get('MODE', 'null')
+        actions_needed = os.environ.get('ACTIONS_NEEDED', 'false').lower() == 'true'
+        synthesis_summary = os.environ.get('SYNTHESIS_SUMMARY', '')
+
+        # Determine if we should proceed with action
+        if trigger == 'never' or mode == 'null':
+            should_act = False
+            reason = 'trigger_disabled' if trigger == 'never' else 'no_mode'
+        elif trigger == 'always':
+            should_act = True
+            reason = 'trigger_always'
+        elif trigger == 'findings_require':
+            should_act = actions_needed
+            reason = 'findings_require_action' if actions_needed else 'findings_no_action'
+        else:
+            should_act = False
+            reason = 'unknown_trigger'
+
+        print(json.dumps({
+            'should_act': should_act,
+            'reason': reason,
+            'trigger': trigger,
+            'mode': mode,
+            'actions_needed': actions_needed
+        }))
+        EOF
+      env:
+        TRIGGER: "{{ inputs.pipeline_config.act.trigger | default('never') }}"
+        MODE: "{{ inputs.pipeline_config.act.mode | default('null') }}"
+        ACTIONS_NEEDED: "{{ inputs.context.synthesis.actions_needed | default(false) }}"
+        SYNTHESIS_SUMMARY: "{{ inputs.context.synthesis.summary | default('') }}"
+
+  # ===========================================================================
+  # STEP 3: Retrieve memory (if proceeding with action)
+  # ===========================================================================
+  - id: retrieve_memory
+    type: Workflow
+    description: Get files from memory.
+    depends_on: [check_trigger]
+    condition: "{{ (blocks.check_trigger.outputs.stdout | fromjson).should_act and inputs.memory | length > 0 }}"
+    inputs:
+      workflow: agent-state-management
+      inputs:
+        state: "{{ blocks.register_phase.outputs.state }}"
+        op: memory
+        memory_op: query
+        memory_type: "content"
+
+  # ===========================================================================
+  # STEP 4: Attempt - Decide and plan action
+  # ===========================================================================
+  - id: attempt
+    type: LLMCall
+    description: Decide what action to take and evaluate completion.
+    depends_on:
+      - block: check_trigger
+        required: true
+      - block: retrieve_memory
+        required: false
+    condition: "{{ (blocks.check_trigger.outputs.stdout | fromjson).should_act }}"
+    inputs:
+      profile: "{{ inputs.profile }}"
+      timeout: 600
+      system_instructions: "{{ inputs.system }}"
+      prompt: |
+        # Action Phase
+
+        ## Original Query
+        {{ inputs.prompt }}
+
+        {% if inputs.context.original_prompt and inputs.context.original_prompt != inputs.prompt %}
+        ## Root Query (if this is a continuation)
+        {{ inputs.context.original_prompt }}
+        {% endif %}
+
+        ## Action Mode: {{ inputs.pipeline_config.act.mode | default('report') | upper }}
+
+        {% if inputs.context %}
+        ## Context
+        {{ inputs.context | tojson }}
+        {% endif %}
+
+        {% if inputs.context.synthesis %}
+        ## Synthesis from REASON Phase
+        - Summary: {{ inputs.context.synthesis.summary | default('N/A') }}
+        - Risk Level: {{ inputs.context.synthesis.risk_level | default('N/A') }}
+        - Actions Needed: {{ inputs.context.synthesis.actions_needed | default(false) }}
+        {% if inputs.context.synthesis.recommendations %}
+        - Recommendations:
+        {% for rec in inputs.context.synthesis.recommendations %}
+          - {{ rec }}
+        {% endfor %}
+        {% endif %}
+        {% if inputs.context.synthesis.findings %}
+        - Findings Count: {{ inputs.context.synthesis.findings | length }}
+        {% endif %}
+        {% endif %}
+
+        {% if inputs.synthesis | length > 0 %}
+        ## Previous Investigations
+        {% for c in inputs.synthesis %}
+        ### Investigation {{ loop.index }}
+        - Question: {{ c.prompt }}
+        - Answer: {{ c.response }}
+        {% if c.synthesis %}
+        - Key Findings: {{ c.synthesis.summary | default('N/A') }}
+        {% endif %}
+        {% endfor %}
+        {% endif %}
+
+        ## Permissions
+        - Read: {{ inputs.permissions.read | default(true) }}
+        - Write: {{ inputs.permissions.write | default(false) }}
+        - Execute: {{ inputs.permissions.execute | default(false) }}
+
+        ## Mode-Specific Instructions
+
+        {% if inputs.pipeline_config.act.mode == 'report' %}
+        **REPORT MODE**: Generate a comprehensive report/review.
+        - Summarize all findings
+        - Include recommendations
+        - No file modifications
+        {% elif inputs.pipeline_config.act.mode == 'implement' %}
+        **IMPLEMENT MODE**: Create or modify code.
+        - Plan implementation steps
+        - Create/edit files as needed
+        - Verify changes work
+        {% elif inputs.pipeline_config.act.mode == 'fix' %}
+        **FIX MODE**: Apply fix to the identified issue.
+        - Target the root cause
+        - Make minimal changes
+        - Verify fix works
+        {% elif inputs.pipeline_config.act.mode == 'verify' %}
+        **VERIFY MODE**: Fix and run verification.
+        - Apply the fix
+        - Run relevant tests
+        - Report verification results
+        {% else %}
+        **DEFAULT MODE**: Decide appropriate action based on synthesis.
+        {% endif %}
+
+        ## Available Capabilities (ATOMIC Operations)
+
+        Use these capability workflows in your `operations` array.
+        **IMPORTANT**: Operations are executed SEQUENTIALLY (order matters for mutations).
+        {% if inputs.capabilities %}
+        {% for cap in inputs.capabilities %}
+
+        **{{ cap.name }}** - {{ cap.description }}
+        Inputs:
+        {% for key, desc in cap.inputs.items() %}
+          - {{ key }}: {{ desc }}
+        {% endfor %}
+        {% endfor %}
+        {% else %}
+        No capabilities available (check permissions).
+        {% endif %}
+
+        ## Cognitive Spawning (Complex Implementations)
+
+        For complex sub-tasks that need full CATEGORIZE→GATHER→REASON→ACT:
+        ```yaml
+        spawn_cells:
+          - prompt: "Create tests for the new authentication module"
+            reason: "Testing requires understanding test patterns"
+        ```
+
+        ## Completion Evaluation
+
+        After deciding on action, evaluate:
+        - Is the ORIGINAL request fully satisfied?
+        - If not, what remains to be done?
+
+        Current iteration: {{ inputs.iterations }} of {{ inputs.max_iterations }}
+
+      response_schema:
+        type: object
+        properties:
+          result:
+            type: object
+            description: "Action plan (OUTPUT)"
+            properties:
+              strategy:
+                type: string
+                description: "High-level action strategy description"
+              operations:
+                type: array
+                description: "Capability workflows to execute SEQUENTIALLY (ATOMIC dispatch)"
+                items:
+                  type: object
+                  properties:
+                    capability:
+                      type: string
+                      description: "Capability workflow name: cortex-action-write, cortex-action-edit, cortex-action-execute"
+                    inputs:
+                      type: object
+                      description: "Capability-specific inputs (path, content, command, etc.)"
+                    reason:
+                      type: string
+                      description: "Why this operation is needed"
+                  required: [capability, inputs, reason]
+              spawn_cells:
+                type: array
+                description: "Child cells for complex implementations (COGNITIVE dispatch)"
+                items:
+                  type: object
+                  properties:
+                    prompt:
+                      type: string
+                      description: "What to implement"
+                    reason:
+                      type: string
+                      description: "Why spawning is needed"
+                  required: [prompt, reason]
+            required: [strategy]
+          complete:
+            type: boolean
+            description: "Is the original request fully satisfied? (OUTPUT)"
+          continuation_needed:
+            type: boolean
+            description: "Should a continuation cell be spawned? (OUTPUT)"
+          continuation_prompt:
+            type: string
+            description: "What remains to be done? (OUTPUT)"
+          confidence:
+            type: number
+            minimum: 0
+            maximum: 1
+            description: "Confidence in action decision (INTERNAL)"
+          uncertainty:
+            type: object
+            description: "What you need to know (INTERNAL)"
+            properties:
+              exists:
+                type: boolean
+              question:
+                type: string
+            required: [exists]
+        required: [result, complete, confidence, uncertainty]
+
+  # ===========================================================================
+  # STEP 5: No-action result (when trigger says don't act)
+  # ===========================================================================
+  - id: no_action_result
+    type: Shell
+    description: Generate result when trigger policy says don't act.
+    depends_on: [check_trigger]
+    condition: "{{ not (blocks.check_trigger.outputs.stdout | fromjson).should_act }}"
+    inputs:
+      command: |
+        python3 << 'EOF'
+        import json
+        import os
+
+        reason = os.environ.get('REASON', 'trigger_disabled')
+
+        result = {
+            'result': {
+                'action_type': 'none',
+                'action_reason': f'No action taken: {reason}'
+            },
+            'complete': True,
+            'continuation_needed': False
+        }
+
+        print(json.dumps(result))
+        EOF
+      env:
+        REASON: "{{ (blocks.check_trigger.outputs.stdout | fromjson).reason }}"
+
+  # ===========================================================================
+  # STEP 6: Check if investigation needed
+  # ===========================================================================
+  - id: needs_investigation
+    type: Shell
+    description: Evaluate whether to spawn investigation cell.
+    depends_on:
+      - block: attempt
+        required: false
+      - block: no_action_result
+        required: false
+    condition: "{{ blocks.attempt.succeeded }}"
+    inputs:
+      command: |
+        python3 << 'EOF'
+        import json, os
+
+        confidence = float(os.environ.get('CONFIDENCE', '1'))
+        threshold = float(os.environ.get('THRESHOLD', '0.7'))
+        uncertainty_exists = os.environ.get('UNCERTAINTY_EXISTS', 'false').lower() == 'true'
+        question = os.environ.get('UNCERTAINTY_QUESTION', '').strip()
+        depth = int(os.environ.get('DEPTH', '0'))
+        max_depth = int(os.environ.get('MAX_DEPTH', '5'))
+
+        should_investigate = (
+            confidence < threshold and
+            uncertainty_exists and
+            question != '' and
+            depth < max_depth
+        )
+
+        if confidence >= threshold:
+            reason = 'confident'
+        elif not uncertainty_exists or not question:
+            reason = 'no_uncertainty'
+        elif depth >= max_depth:
+            reason = 'max_depth_reached'
+        else:
+            reason = 'investigating'
+
+        print(json.dumps({
+            'should_investigate': should_investigate,
+            'reason': reason,
+            'confidence': confidence,
+            'depth': depth
+        }))
+        EOF
+      env:
+        CONFIDENCE: "{{ blocks.attempt.outputs.response.confidence | default(1) }}"
+        THRESHOLD: "{{ inputs.confidence_threshold }}"
+        UNCERTAINTY_EXISTS: "{{ blocks.attempt.outputs.response.uncertainty.exists | default(false) }}"
+        UNCERTAINTY_QUESTION: "{{ blocks.attempt.outputs.response.uncertainty.question | default('') }}"
+        DEPTH: "{{ inputs.depth }}"
+        MAX_DEPTH: "{{ inputs.max_depth }}"
+
+  # ===========================================================================
+  # STEP 7: Spawn child cell to investigate
+  # ===========================================================================
+  - id: investigate
+    type: Workflow
+    description: Spawn cortex-cell to investigate uncertainty.
+    depends_on: [needs_investigation]
+    condition: "{{ blocks.needs_investigation.succeeded and (blocks.needs_investigation.outputs.stdout | fromjson).should_investigate }}"
+    inputs:
+      workflow: cortex-cell
+      inputs:
+        prompt: "{{ blocks.attempt.outputs.response.uncertainty.question }}"
+        context:
+          repo_path: "{{ inputs.context.repo_path | default('') }}"
+          parent_prompt: "{{ inputs.prompt }}"
+          spawning_phase: "act"
+        depth: "{{ inputs.depth + 1 }}"
+        max_depth: "{{ inputs.max_depth }}"
+        iterations: 0
+        max_iterations: "{{ inputs.max_iterations }}"
+        state: "{{ blocks.register_phase.outputs.state }}"
+        parent_id: "{{ blocks.register_phase.outputs.task.task_id }}"
+        profile: "{{ inputs.profile }}"
+        confidence_threshold: "{{ inputs.confidence_threshold }}"
+        capabilities: "{{ inputs.capabilities }}"
+        permissions: "{{ inputs.permissions }}"
+
+  # ===========================================================================
+  # STEP 8: Self-recurse with accumulated synthesis
+  # ===========================================================================
+  - id: self_recurse
+    type: Workflow
+    description: Call THIS phase with synthesis from investigation.
+    depends_on: [investigate]
+    condition: "{{ blocks.investigate.succeeded }}"
+    inputs:
+      workflow: cortex-phase-act
+      inputs:
+        prompt: "{{ inputs.prompt }}"
+        system: "{{ inputs.system }}"
+        context: "{{ inputs.context }}"
+        pipeline_config: "{{ inputs.pipeline_config }}"
+        memory: "{{ inputs.memory }}"
+        state: "{{ blocks.register_phase.outputs.state }}"
+        parent_id: "{{ inputs.parent_id }}"
+        profile: "{{ inputs.profile }}"
+        confidence_threshold: "{{ inputs.confidence_threshold }}"
+        capabilities: "{{ inputs.capabilities }}"
+        permissions: "{{ inputs.permissions }}"
+        max_depth: "{{ inputs.max_depth }}"
+        depth: "{{ inputs.depth + 1 }}"
+        iterations: "{{ inputs.iterations }}"
+        max_iterations: "{{ inputs.max_iterations }}"
+        synthesis: |
+          {{ inputs.synthesis + [{
+            'prompt': blocks.attempt.outputs.response.uncertainty.question,
+            'response': blocks.investigate.outputs.response,
+            'synthesis': blocks.investigate.outputs.synthesis
+          }] }}
+
+  # ===========================================================================
+  # STEP 8b: Dispatch ATOMIC operations via for_each (SEQUENTIAL with deduplication)
+  # ===========================================================================
+  # Uses cortex-action-dispatch wrapper for idempotency:
+  # - Actions are logged with (capability, inputs) hash
+  # - Already-completed actions return cached results (skipped)
+  # - Failed/pending actions are (re-)executed
+  # - Results are cached for future deduplication
+  # ===========================================================================
+  - id: dispatch_operations
+    type: Workflow
+    description: Execute capability workflows SEQUENTIALLY with deduplication.
+    depends_on: [needs_investigation]
+    condition: |
+      {{ blocks.attempt.succeeded
+         and (not blocks.needs_investigation.succeeded or not (blocks.needs_investigation.outputs.stdout | fromjson).should_investigate)
+         and (blocks.attempt.outputs.response.result.operations | default([]) | length > 0) }}
+    for_each: "{{ blocks.attempt.outputs.response.result.operations }}"
+    for_each_mode: sequential
+    continue_on_error: true
+    inputs:
+      workflow: cortex-action-dispatch
+      inputs:
+        state: "{{ blocks.register_phase.outputs.state }}"
+        cell_id: "{{ blocks.register_phase.outputs.task.task_id }}"
+        capability: "{{ each.value.capability }}"
+        inputs: "{{ each.value.inputs }}"
+        reason: "{{ each.value.reason | default('') }}"
+        base_path: "{{ inputs.context.repo_path | default('.') }}"
+        permissions: "{{ inputs.permissions }}"
+
+  # ===========================================================================
+  # STEP 8c: Dispatch COGNITIVE spawning via for_each
+  # ===========================================================================
+  - id: spawn_cells
+    type: Workflow
+    description: Spawn child cortex-cells for complex implementations.
+    depends_on: [needs_investigation]
+    condition: |
+      {{ blocks.attempt.succeeded
+         and (not blocks.needs_investigation.succeeded or not (blocks.needs_investigation.outputs.stdout | fromjson).should_investigate)
+         and (blocks.attempt.outputs.response.result.spawn_cells | default([]) | length > 0)
+         and inputs.depth < inputs.max_depth }}
+    for_each: "{{ blocks.attempt.outputs.response.result.spawn_cells }}"
+    for_each_mode: parallel
+    max_parallel: 3
+    continue_on_error: true
+    inputs:
+      workflow: cortex-cell
+      inputs:
+        prompt: "{{ each.value.prompt }}"
+        context: "{{ inputs.context | combine({'parent_prompt': inputs.prompt, 'spawning_phase': 'act', 'spawn_reason': each.value.reason}) }}"
+        depth: "{{ inputs.depth + 1 }}"
+        max_depth: "{{ inputs.max_depth }}"
+        iterations: 0
+        max_iterations: "{{ inputs.max_iterations }}"
+        state: "{{ blocks.register_phase.outputs.state }}"
+        parent_id: "{{ blocks.register_phase.outputs.task.task_id }}"
+        profile: "{{ inputs.profile }}"
+        confidence_threshold: "{{ inputs.confidence_threshold }}"
+        capabilities: "{{ inputs.capabilities }}"
+        permissions: "{{ inputs.permissions }}"
+
+  # ===========================================================================
+  # STEP 9: Track completion
+  # ===========================================================================
+  - id: track_done
+    type: Workflow
+    description: Mark phase complete.
+    depends_on:
+      - block: attempt
+        required: false
+      - block: no_action_result
+        required: false
+      - block: self_recurse
+        required: false
+      - block: dispatch_operations
+        required: false
+      - block: spawn_cells
+        required: false
+    inputs:
+      workflow: agent-state-management
+      inputs:
+        state: "{{ blocks.register_phase.outputs.state }}"
+        task_id: "{{ blocks.register_phase.outputs.task.task_id }}"
+        status: "done"
+        caller: "cortex-phase-act"
+        data:
+          depth: "{{ inputs.depth }}"
+          iterations: "{{ inputs.iterations }}"
+          recursed: "{{ blocks.self_recurse.succeeded | default(false) }}"
+          action_taken: "{{ blocks.attempt.succeeded }}"
+          operations_dispatched: "{{ blocks.dispatch_operations.metadata.count | default(0) }}"
+          operations_executed: |
+            {{
+              (blocks.dispatch_operations.outputs.results | default([])
+               | selectattr('executed', 'equalto', true) | list | length)
+              if blocks.dispatch_operations.succeeded else 0
+            }}
+          operations_cached: |
+            {{
+              (blocks.dispatch_operations.outputs.results | default([])
+               | selectattr('cached', 'equalto', true) | list | length)
+              if blocks.dispatch_operations.succeeded else 0
+            }}
+          operations_failed: "{{ blocks.dispatch_operations.metadata.count_failed | default(0) }}"
+          cells_spawned: "{{ blocks.spawn_cells.metadata.count | default(0) }}"
+          cells_failed: "{{ blocks.spawn_cells.metadata.count_failed | default(0) }}"
+
+# =============================================================================
+# OUTPUTS: Action result + completion status
+# =============================================================================
+outputs:
+  result:
+    type: dict
+    description: "Action result. Child's result passes through unchanged."
+    value: |
+      {{ blocks.self_recurse.outputs.result if blocks.self_recurse.succeeded
+         else (blocks.attempt.outputs.response.result if blocks.attempt.succeeded
+         else (blocks.no_action_result.outputs.stdout | fromjson).result) }}
+
+  complete:
+    type: bool
+    description: "Whether the original request is fully satisfied."
+    value: |
+      {{ blocks.self_recurse.outputs.complete if blocks.self_recurse.succeeded
+         else (blocks.attempt.outputs.response.complete if blocks.attempt.succeeded
+         else true) }}
+
+  continuation_needed:
+    type: bool
+    description: "Whether a continuation cell should be spawned."
+    value: |
+      {{ blocks.self_recurse.outputs.continuation_needed if blocks.self_recurse.succeeded
+         else (blocks.attempt.outputs.response.continuation_needed | default(false) if blocks.attempt.succeeded
+         else false) }}
+
+  continuation_prompt:
+    type: str
+    description: "Prompt for continuation cell if needed."
+    value: |
+      {{ blocks.self_recurse.outputs.continuation_prompt if blocks.self_recurse.succeeded
+         else (blocks.attempt.outputs.response.continuation_prompt | default('') if blocks.attempt.succeeded
+         else '') }}
+
+  state:
+    type: str
+    description: "Path to state database."
+    value: "{{ blocks.register_phase.outputs.state }}"

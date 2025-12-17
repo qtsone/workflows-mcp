@@ -1,14 +1,14 @@
-name: cortex-understand
+name: cortex-analyze
 description: |
-  Cognitive capability: Build understanding of a query.
-  Invokes cortex-cell in understand mode.
+  Cognitive capability: Analyze evidence and produce findings.
+  Invokes cortex-cell in analyze mode.
 
-tags: [cortex, capability, cognitive, understand]
+tags: [cortex, capability, cognitive, analyze]
 
 inputs:
-  query:
+  prompt:
     type: str
-    description: Query to understand.
+    description: Prompt to analyze.
     required: true
 
   context:
@@ -41,13 +41,13 @@ inputs:
     default: ""
 
 blocks:
-  - id: understand
+  - id: analyze
     type: Workflow
     inputs:
       workflow: cortex-cell
       inputs:
-        query: "{{ inputs.query }}"
-        mode: "understand"
+        prompt: "{{ inputs.prompt }}"
+        mode: "analyze"
         context: "{{ inputs.context }}"
         state: "{{ inputs.state }}"
         depth: "{{ inputs.depth }}"
@@ -55,17 +55,17 @@ blocks:
         parent_trace: "{{ inputs.parent_trace }}"
 
 outputs:
-  understanding:
-    value: "{{ blocks.understand.outputs.understanding }}"
-    type: dict
-    description: Understanding object with components, assumptions, gaps.
-
-  gaps:
-    value: "{{ blocks.understand.outputs.gaps | default([]) }}"
+  findings:
+    value: "{{ blocks.analyze.outputs.findings }}"
     type: list
-    description: Identified knowledge gaps.
+    description: Analysis findings with evidence citations.
+
+  confidence:
+    value: "{{ blocks.analyze.outputs.confidence | default(0.8) }}"
+    type: num
+    description: Analysis confidence.
 
   trace_id:
-    value: "{{ blocks.understand.outputs.trace_id }}"
+    value: "{{ blocks.analyze.outputs.trace_id }}"
     type: str
     description: Trace ID for this invocation.

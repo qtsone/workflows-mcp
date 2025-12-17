@@ -1,0 +1,52 @@
+name: cortex-action-complete
+description: |
+  Atomic capability: Mark action as completed with result.
+  Used by ACT phase after successful execution.
+
+tags: [cortex, capability, atomic, actions, deduplication]
+
+inputs:
+  state:
+    type: str
+    description: Path to SQLite state database.
+    required: true
+
+  action_id:
+    type: str
+    description: ID of the action to complete.
+    required: true
+
+  result_json:
+    type: str
+    description: Action result as JSON string.
+    required: false
+    default: "{}"
+
+blocks:
+  - id: complete
+    type: Workflow
+    inputs:
+      workflow: agent-state-management
+      inputs:
+        state: "{{ inputs.state }}"
+        op: actions
+        actions_op: complete
+        actions_action_id: "{{ inputs.action_id }}"
+        actions_result_json: "{{ inputs.result_json }}"
+        caller: "cortex-action-complete"
+
+outputs:
+  success:
+    value: "{{ blocks.complete.outputs.actions.success | default(false) }}"
+    type: bool
+    description: Whether operation succeeded.
+
+  action_id:
+    value: "{{ inputs.action_id }}"
+    type: str
+    description: ID of the completed action.
+
+  status:
+    value: "{{ blocks.complete.outputs.actions.status | default('') }}"
+    type: str
+    description: New status of the action (should be "completed").

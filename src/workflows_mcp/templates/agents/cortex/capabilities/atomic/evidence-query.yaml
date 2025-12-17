@@ -1,0 +1,69 @@
+name: cortex-evidence-query
+description: |
+  Atomic capability: Query gathered evidence from episodic memory.
+  Used by REASON phase to retrieve raw content for analysis.
+
+  Supports filtering by:
+  - evidence_type: content, outline, search
+  - source_cell: Cell that gathered the evidence
+
+tags: [cortex, capability, atomic, evidence, memory]
+
+inputs:
+  state:
+    type: str
+    description: Path to SQLite state database.
+    required: true
+
+  evidence_type:
+    type: str
+    description: Filter by evidence type (content, outline, search).
+    required: false
+    default: ""
+
+  source_cell:
+    type: str
+    description: Filter by source cell ID.
+    required: false
+    default: ""
+
+  limit:
+    type: num
+    description: Maximum results to return.
+    required: false
+    default: 100
+
+blocks:
+  - id: query
+    type: Workflow
+    inputs:
+      workflow: agent-state-management
+      inputs:
+        state: "{{ inputs.state }}"
+        op: evidence
+        evidence_op: query
+        evidence_query_type: "{{ inputs.evidence_type }}"
+        evidence_query_cell: "{{ inputs.source_cell }}"
+        evidence_limit: "{{ inputs.limit }}"
+        caller: "cortex-evidence-query"
+
+outputs:
+  success:
+    value: "{{ blocks.query.outputs.evidence.success | default(false) }}"
+    type: bool
+    description: Whether operation succeeded.
+
+  items:
+    value: "{{ blocks.query.outputs.evidence.items | default([]) }}"
+    type: list
+    description: List of evidence items.
+
+  count:
+    value: "{{ blocks.query.outputs.evidence.count | default(0) }}"
+    type: num
+    description: Number of items returned.
+
+  total_bytes:
+    value: "{{ blocks.query.outputs.evidence.total_bytes | default(0) }}"
+    type: num
+    description: Total bytes of returned evidence.

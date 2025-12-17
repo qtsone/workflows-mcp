@@ -1,225 +1,163 @@
+# =============================================================================
+# CORTEX Cell - The Fundamental Cognitive Unit (v2)
+# =============================================================================
+#
+# The cell is the spawnable cognitive unit that phases invoke when they
+# need to investigate uncertainty. It handles:
+#   1. Cycle detection (query hash checking)
+#   2. Depth tracking (for cognitive spawning - investigations)
+#   3. Iteration tracking (for task completion - ACT continuation)
+#   4. Task registration (category: cortex-cell)
+#   5. Phase orchestration (categorize → gather → reason → act)
+#   6. Pipeline configuration flow with override merging
+#   7. Synthesis storage in task.data for child querying
+#
+# Key v2 Changes:
+#   - ALL phases always run (no skipping)
+#   - Merged ANALYZE + SYNTHESIZE into REASON phase
+#   - Category → pipeline_config via mapping table
+#   - Config override: later phases can update config based on discoveries
+#   - Fractal continuation: ACT can spawn continuation (same depth, iter+1)
+#   - Two counters: depth (investigations) vs iterations (task completion)
+#
+# Each phase follows the universal fractal pattern and can spawn child cells
+# when uncertain. The reason phase queries all child cells to merge their
+# findings.
+#
+# =============================================================================
+
 name: cortex-cell
 description: |
-  CORTEX: Cognitive Operations for Reasoning and Task EXecution
+  CORTEX Cell - the fundamental cognitive unit. Processes queries through
+  the complete cognitive cycle: categorize → gather → reason → act.
+  ALL phases always run. Can be spawned by any phase that encounters uncertainty.
 
-  A fractal cognitive architecture where every cognitive operation follows
-  the same pattern. The fundamental unit that can operate in different modes:
-
-  - mode=null: Full cognitive cycle (categorize → understand → formulate → gather → analyze → synthesize → act)
-  - mode="categorize": Query classification only
-  - mode="understand": Build understanding only
-  - mode="formulate": Query refinement only
-  - mode="gather": Evidence collection only
-  - mode="analyze": Evidence analysis only
-  - mode="synthesize": Finding synthesis only
-  - mode="act": Action execution only
-
-  The same cell structure handles ALL cognitive operations at every scale.
-
-  Termination conditions:
-  - Depth exhausted (depth >= max_depth)
-  - Atomic capability resolves the query
-  - Cycle detected (query hash in ancestor chain)
-  - Goal achieved (confidence >= threshold)
-  - No sub-queries needed
-  - Cost/time exceeded
-
-tags: [agent, cortex, cognitive, fractal, recursive]
+tags: [agent, cortex, cell, fractal, recursive, v2]
 
 inputs:
-  # The Query (determines what to do)
-  query:
+  prompt:
     type: str
-    description: The question, task, or goal for this cell.
+    description: The detailed task description.
     required: true
 
-  # Mode (determines how to do it)
-  mode:
-    type: str
-    description: |
-      Cognitive mode for this cell:
-      - null/empty: Full cycle (categorize → act)
-      - "categorize": Query classification only
-      - "understand": Build understanding only
-      - "formulate": Query refinement only
-      - "gather": Evidence collection only
-      - "analyze": Evidence analysis only
-      - "synthesize": Finding synthesis only
-      - "act": Action execution only
-    required: false
-    default: ""
-
-  # Accumulated Context
   context:
     type: dict
     description: |
-      Shared context passed through the cell tree:
+      Shared context:
       - repo_path: Working directory
-      - accumulated_knowledge: Facts from ancestor cells
-      - constraints: Permissions and limitations
-      - focus: Priority area (security, performance, etc.)
-    required: true
-
-  # Evidence (for analyze/synthesize modes)
-  evidence:
-    type: list
-    description: Evidence collected for analysis (used in analyze mode).
-    required: false
-    default: []
-
-  # Findings (for synthesize mode)
-  findings:
-    type: list
-    description: Findings to synthesize (used in synthesize mode).
-    required: false
-    default: []
-
-  # Synthesis (for act mode)
-  synthesis:
-    type: dict
-    description: Synthesis results (used in act mode).
-    required: false
+      - parent_prompt: Query that spawned this cell
+      - spawning_phase: Which phase spawned this cell
     default: {}
 
-  # Recursion Control
   depth:
     type: num
-    description: Current depth in cell tree (0 = root).
-    required: false
+    description: Current cell depth (0 = root).
     default: 0
 
   max_depth:
     type: num
-    description: Maximum recursion depth.
-    required: false
+    description: Maximum investigation depth (cognitive spawning for sub-questions).
     default: 5
 
-  # Confidence threshold
+  iterations:
+    type: num
+    description: Current task completion attempt (ACT continuation counter).
+    default: 0
+
+  max_iterations:
+    type: num
+    description: Maximum continuation attempts for incomplete tasks.
+    default: 3
+
   confidence_threshold:
     type: num
-    description: Minimum confidence to skip understanding phase (0.0-1.0).
-    required: false
-    default: 0.7
+    description: Minimum confidence to proceed without investigation.
+    default: 0.95
 
-  # History (for cycle detection)
-  query_history:
-    type: list
-    description: Hashes of ancestor queries (for cycle detection).
-    required: false
-    default: []
-
-  # State Management
   state:
     type: str
-    description: |
-      Path to SQLite state database. If empty, a new state is auto-created
-      at ~/.workflows/tasks/<trace_id>.db
-    required: false
+    description: Path to SQLite state database. Created if empty.
     default: ""
 
-  parent_task_id:
+  parent_id:
     type: str
-    description: Parent cell's task ID.
-    required: false
+    description: Parent task ID in the task tree.
     default: ""
 
-  # LLM Profile configuration
   profile:
     type: str
-    description: LLM profile to use (from ~/.workflows/llm-config.yml).
-    required: false
+    description: LLM profile to use.
     default: "default"
 
-  # Capabilities registry - embedded default with all available capabilities
   capabilities:
+    type: list
+    description: |
+      Available capabilities registry (flat list).
+      Each capability has: name, description, inputs, requires (permission).
+      Capabilities are filtered based on permissions before being passed to phases.
+    default:
+      - name: cortex-gather-files
+        description: Read files matching glob patterns
+        inputs:
+          patterns: "list[str] - Glob patterns to match (required)"
+          base_path: "str - Base directory (optional)"
+          mode: "str - outline|full|summary (optional)"
+          max_files: "int - Max files to read (optional)"
+        requires: read
+
+      - name: cortex-gather-search
+        description: Search codebase with regex
+        inputs:
+          pattern: "str - Regex pattern to search (required)"
+          path: "str - Directory to search (optional)"
+          file_type: "str - File extension filter e.g. py, js (optional)"
+          max_matches: "int - Max results to return (optional)"
+        requires: read
+
+      - name: cortex-action-write
+        description: Create or overwrite a file
+        inputs:
+          path: "str - File path to write (required)"
+          content: "str - File content (required)"
+          overwrite: "bool - Allow overwriting existing file (optional)"
+        requires: write
+
+      - name: cortex-action-edit
+        description: Edit an existing file with operations
+        inputs:
+          path: "str - File path to edit (required)"
+          operations: "list - Edit operations [{type, old_string, new_string}] (required)"
+          backup: "bool - Create backup before editing (optional)"
+          dry_run: "bool - Preview changes without applying (optional)"
+        requires: write
+
+      - name: cortex-action-execute
+        description: Execute a shell command
+        inputs:
+          command: "str - Command to execute (required)"
+          working_dir: "str - Working directory (optional)"
+          timeout: "int - Timeout in seconds (optional)"
+        requires: execute
+
+  permissions:
     type: dict
     description: |
-      Capability registry defining available atomic and cognitive capabilities.
-      Passed to phases for LLM-driven capability selection.
-    required: false
+      Permission flags controlling which capabilities are available.
+      Capabilities are filtered based on these flags before phases receive them.
     default:
-      atomic:
-        gather-files:
-          description: "Read files matching patterns (structure or content)"
-          workflow: "cortex-gather-files"
-          inputs: ["patterns", "base_path", "mode", "max_files"]
-        gather-search:
-          description: "Search for patterns in codebase using ripgrep"
-          workflow: "cortex-gather-search"
-          inputs: ["pattern", "path", "file_type"]
-        gather-command:
-          description: "Execute shell command for read-only info gathering"
-          workflow: "cortex-gather-command"
-          inputs: ["command", "working_dir", "timeout"]
-        reason-llm:
-          description: "Call LLM for reasoning, analysis, or decision-making"
-          workflow: "cortex-reason-llm"
-          inputs: ["prompt", "system_instructions", "response_schema"]
-        action-write:
-          description: "Create a new file"
-          workflow: "cortex-action-write"
-          inputs: ["path", "content", "overwrite"]
-        action-edit:
-          description: "Modify an existing file"
-          workflow: "cortex-action-edit"
-          inputs: ["path", "operations", "backup"]
-        action-execute:
-          description: "Execute command with side effects"
-          workflow: "cortex-action-execute"
-          inputs: ["command", "working_dir", "timeout"]
-        memory-set:
-          description: "Store value in memory"
-          workflow: "cortex-memory-set"
-          inputs: ["state", "key", "value"]
-        memory-get:
-          description: "Retrieve value from memory"
-          workflow: "cortex-memory-get"
-          inputs: ["state", "key", "default"]
-        memory-append:
-          description: "Append to list in memory"
-          workflow: "cortex-memory-append"
-          inputs: ["state", "key", "value"]
-      cognitive:
-        cortex-categorize:
-          description: "Categorize a query/task to determine processing strategy"
-          workflow: "cortex-categorize"
-          mode: "categorize"
-        cortex-understand:
-          description: "Build understanding of a topic, identify knowledge gaps"
-          workflow: "cortex-understand"
-          mode: "understand"
-        cortex-formulate:
-          description: "Refine and clarify a query into actionable form"
-          workflow: "cortex-formulate"
-          mode: "formulate"
-        cortex-gather:
-          description: "Collect evidence for a query"
-          workflow: "cortex-gather"
-          mode: "gather"
-        cortex-analyze:
-          description: "Analyze evidence and draw conclusions"
-          workflow: "cortex-analyze"
-          mode: "analyze"
-        cortex-synthesize:
-          description: "Synthesize findings into conclusions"
-          workflow: "cortex-synthesize"
-          mode: "synthesize"
-        cortex-act:
-          description: "Plan and execute actions based on synthesis"
-          workflow: "cortex-act"
-          mode: "act"
-        cortex-full:
-          description: "Complete cognitive cycle (all phases)"
-          workflow: "cortex-full"
-          mode: null
+      read: true
+      write: false
+      execute: false
+
+  prompt_history:
+    type: list
+    description: Hashes of ancestor queries (for cycle detection).
+    default: []
 
 blocks:
-  # ==========================================================================
-  # STEP 1: Initialize cell - register task, check termination conditions
-  # ==========================================================================
   - id: init
+    description: Compute query hash, check for cycles, depth, and iteration limits.
     type: Shell
-    description: Initialize cell, compute query hash, check for cycles.
     inputs:
       command: |
         python3 << 'EOF'
@@ -227,86 +165,108 @@ blocks:
         import hashlib
         import os
 
-        query = os.environ.get('QUERY', '')
-        mode = os.environ.get('MODE', '')
+        prompt = os.environ.get('PROMPT', '')
         depth = int(os.environ.get('DEPTH', '0'))
         max_depth = int(os.environ.get('MAX_DEPTH', '5'))
-        history_json = os.environ.get('QUERY_HISTORY', '[]')
+        iterations = int(os.environ.get('ITERATIONS', '0'))
+        max_iterations = int(os.environ.get('MAX_ITERATIONS', '3'))
+        history_json = os.environ.get('PROMPT_HISTORY', '[]')
 
         try:
-            query_history = json.loads(history_json) if history_json else []
+            prompt_history = json.loads(history_json) if history_json else []
         except json.JSONDecodeError:
-            query_history = []
+            prompt_history = []
 
-        # Compute query hash for cycle detection
-        query_hash = hashlib.sha256(query.encode()).hexdigest()[:16]
+        hash = hashlib.sha256(prompt.encode()).hexdigest()[:16]
 
-        # Check termination conditions
         depth_exceeded = depth >= max_depth
-        cycle_detected = query_hash in query_history
+        iterations_exceeded = iterations >= max_iterations
+        cycle_detected = hash in prompt_history
+        terminate = depth_exceeded or cycle_detected or iterations_exceeded
 
-        # Determine if this is a full cycle or single phase
-        is_full_cycle = mode == '' or mode == 'null'
+        new_history = prompt_history + [hash]
 
-        # Add current query to history for children
-        new_history = query_history + [query_hash]
+        if depth_exceeded:
+            reason = 'depth_exceeded'
+        elif iterations_exceeded:
+            reason = 'iterations_exceeded'
+        elif cycle_detected:
+            reason = 'cycle_detected'
+        else:
+            reason = None
 
         result = {
-            'query_hash': query_hash,
+            'hash': hash,
             'depth': depth,
-            'max_depth': max_depth,
-            'mode': mode if mode else 'full_cycle',
-            'is_full_cycle': is_full_cycle,
-            'depth_exceeded': depth_exceeded,
-            'cycle_detected': cycle_detected,
-            'should_terminate_early': depth_exceeded or cycle_detected,
-            'termination_reason': (
-                'depth_exceeded' if depth_exceeded else
-                'cycle_detected' if cycle_detected else
-                None
-            ),
-            'query_history': new_history
+            'iterations': iterations,
+            'terminate': terminate,
+            'reason': reason,
+            'prompt_history': new_history
         }
 
         print(json.dumps(result))
         EOF
       env:
-        QUERY: "{{ inputs.query }}"
-        MODE: "{{ inputs.mode }}"
+        PROMPT: "{{ inputs.prompt }}"
         DEPTH: "{{ inputs.depth }}"
         MAX_DEPTH: "{{ inputs.max_depth }}"
-        QUERY_HISTORY: "{{ inputs.query_history | tojson }}"
+        ITERATIONS: "{{ inputs.iterations }}"
+        MAX_ITERATIONS: "{{ inputs.max_iterations }}"
+        PROMPT_HISTORY: "{{ inputs.prompt_history | tojson }}"
 
-  # ==========================================================================
-  # STEP 2: Register task in state tree
-  # ==========================================================================
-  - id: register_task
-    type: Workflow
-    description: Create task in state tree for this cell.
+  # ===========================================================================
+  # Filter capabilities based on permissions
+  # ===========================================================================
+  - id: filter_capabilities
+    type: Shell
+    description: Filter capabilities based on permission flags.
     depends_on: [init]
+    inputs:
+      command: |
+        python3 << 'EOF'
+        import json
+        import os
+
+        capabilities = json.loads(os.environ.get('CAPABILITIES', '[]'))
+        permissions = json.loads(os.environ.get('PERMISSIONS', '{}'))
+
+        # Filter to only capabilities whose required permission is granted
+        filtered = [
+            cap for cap in capabilities
+            if permissions.get(cap.get('requires', 'read'), False)
+        ]
+
+        print(json.dumps(filtered))
+        EOF
+      env:
+        CAPABILITIES: "{{ inputs.capabilities | tojson }}"
+        PERMISSIONS: "{{ inputs.permissions | tojson }}"
+
+  - id: register
+    type: Workflow
+    description: Register this cell in the task tree.
+    depends_on: [init, filter_capabilities]
     inputs:
       workflow: agent-state-management
       inputs:
         state: "{{ inputs.state }}"
-        parent_id: "{{ inputs.parent_task_id }}"
-        task: "CORTEX Cell ({{ (blocks.init.outputs.stdout | fromjson).mode }}, depth={{ inputs.depth }})"
-        task_type: "cortex-cell"
+        parent_id: "{{ inputs.parent_id }}"
+        task: "CORTEX Cell (depth={{ inputs.depth }}, iter={{ inputs.iterations }})"
+        category: "cortex-cell"
         status: "in-progress"
         caller: "cortex-cell"
         data:
-          query_hash: "{{ (blocks.init.outputs.stdout | fromjson).query_hash }}"
-          mode: "{{ (blocks.init.outputs.stdout | fromjson).mode }}"
+          prompt: "{{ inputs.prompt }}"
+          hash: "{{ (blocks.init.outputs.stdout | fromjson).hash }}"
           depth: "{{ inputs.depth }}"
-          query_preview: "{{ inputs.query[:100] }}"
+          iterations: "{{ inputs.iterations }}"
+          spawning_phase: "{{ inputs.context.spawning_phase | default('root') }}"
 
-  # ==========================================================================
-  # STEP 3: Early termination check
-  # ==========================================================================
   - id: early_termination
     type: Shell
-    description: Return early if termination conditions met.
-    depends_on: [init, register_task]
-    condition: "{{ (blocks.init.outputs.stdout | fromjson).should_terminate_early }}"
+    description: Return early termination result.
+    depends_on: [init, register]
+    condition: "{{ (blocks.init.outputs.stdout | fromjson).terminate }}"
     inputs:
       command: |
         python3 << 'EOF'
@@ -314,456 +274,232 @@ blocks:
         import os
 
         reason = os.environ.get('TERMINATION_REASON', 'unknown')
-        query_hash = os.environ.get('QUERY_HASH', '')
-        depth = int(os.environ.get('DEPTH', '0'))
 
         result = {
-            'terminated_early': True,
-            'reason': reason,
             'synthesis': {
                 'findings': [],
-                'summary': f'Cell terminated early: {reason}',
-                'risk_level': 'info',
+                'summary': f'Cell terminated: {reason}',
                 'recommendations': [],
-                'confidence': 0.0,
-                'actions_taken': []
+                'actions_needed': False
             },
-            'stats': {
-                'phases_executed': [],
-                'children_spawned': 0,
-                'capabilities_used': [],
-                'depth': depth
-            }
+            'response': f'Unable to complete: {reason}',
+            'categorization': {},
+            'actions': {}
         }
 
         print(json.dumps(result))
         EOF
       env:
-        TERMINATION_REASON: "{{ (blocks.init.outputs.stdout | fromjson).termination_reason }}"
-        QUERY_HASH: "{{ (blocks.init.outputs.stdout | fromjson).query_hash }}"
-        DEPTH: "{{ inputs.depth }}"
+        TERMINATION_REASON: "{{ (blocks.init.outputs.stdout | fromjson).reason }}"
 
-  # ==========================================================================
-  # ROUTING: Determine which phase(s) to execute
-  # ==========================================================================
-  - id: route_phase
-    type: Shell
-    description: Determine execution path based on mode.
-    depends_on: [init]
-    condition: "{{ not (blocks.init.outputs.stdout | fromjson).should_terminate_early }}"
-    inputs:
-      command: |
-        python3 << 'EOF'
-        import json
-        import os
-
-        mode = os.environ.get('MODE', '')
-        is_full_cycle = mode == '' or mode == 'null'
-
-        # Map mode to phase execution
-        phases = {
-            '': ['categorize', 'understand', 'formulate', 'gather', 'analyze', 'synthesize', 'act'],
-            'null': ['categorize', 'understand', 'formulate', 'gather', 'analyze', 'synthesize', 'act'],
-            'full_cycle': ['categorize', 'understand', 'formulate', 'gather', 'analyze', 'synthesize', 'act'],
-            'categorize': ['categorize'],
-            'understand': ['understand'],
-            'formulate': ['formulate'],
-            'gather': ['gather'],
-            'analyze': ['analyze'],
-            'synthesize': ['synthesize'],
-            'act': ['act']
-        }
-
-        active_phases = phases.get(mode, [mode] if mode else phases[''])
-
-        result = {
-            'mode': mode if mode else 'full_cycle',
-            'is_full_cycle': is_full_cycle,
-            'active_phases': active_phases,
-            'run_categorize': 'categorize' in active_phases,
-            'run_understand': 'understand' in active_phases,
-            'run_formulate': 'formulate' in active_phases,
-            'run_gather': 'gather' in active_phases,
-            'run_analyze': 'analyze' in active_phases,
-            'run_synthesize': 'synthesize' in active_phases,
-            'run_act': 'act' in active_phases
-        }
-
-        print(json.dumps(result))
-        EOF
-      env:
-        MODE: "{{ inputs.mode }}"
-
-  # ==========================================================================
-  # PHASE 1: CATEGORIZE - Classify the query
-  # ==========================================================================
-  - id: phase_categorize
+  # ===========================================================================
+  # PHASE 1: CATEGORIZE - classify query and set pipeline_config
+  # ===========================================================================
+  - id: categorize
+    description: Classify the query and set pipeline configuration from mapping table.
     type: Workflow
-    description: Categorize the query to determine processing strategy.
-    depends_on: [route_phase, register_task]
-    condition: "{{ (blocks.route_phase.outputs.stdout | fromjson).run_categorize }}"
+    depends_on: [register]
+    condition: "{{ not (blocks.init.outputs.stdout | fromjson).terminate }}"
     inputs:
       workflow: cortex-phase-categorize
       inputs:
-        query: "{{ inputs.query }}"
+        prompt: "{{ inputs.prompt }}"
         context: "{{ inputs.context }}"
-        capabilities: "{{ inputs.capabilities }}"
-        state: "{{ inputs.state }}"
-        parent_task_id: "{{ blocks.register_task.outputs.task.task_id }}"
-        profile: "{{ inputs.profile }}"
-
-  # ==========================================================================
-  # PHASE 2: UNDERSTAND - Build understanding (if needed)
-  # ==========================================================================
-  - id: phase_understand
-    type: Workflow
-    description: Build understanding of the topic, identify knowledge gaps.
-    depends_on:
-      - route_phase
-      - register_task
-      - block: phase_categorize
-        required: false
-    condition: |
-      {{
-        (blocks.route_phase.outputs.stdout | fromjson).run_understand and
-        (
-          not (blocks.route_phase.outputs.stdout | fromjson).is_full_cycle or
-          (blocks.phase_categorize.succeeded and blocks.phase_categorize.outputs.confidence < inputs.confidence_threshold)
-        )
-      }}
-    inputs:
-      workflow: cortex-phase-understand
-      inputs:
-        query: "{{ inputs.query }}"
-        context: "{{ inputs.context }}"
-        capabilities: "{{ inputs.capabilities }}"
-        category: "{{ blocks.phase_categorize.outputs.category if blocks.phase_categorize.succeeded else 'unknown' }}"
-        state: "{{ inputs.state }}"
-        parent_task_id: "{{ blocks.register_task.outputs.task.task_id }}"
         depth: "{{ inputs.depth }}"
         max_depth: "{{ inputs.max_depth }}"
-        query_history: "{{ (blocks.init.outputs.stdout | fromjson).query_history }}"
+        iterations: "{{ inputs.iterations }}"
+        max_iterations: "{{ inputs.max_iterations }}"
+        confidence_threshold: "{{ inputs.confidence_threshold }}"
+        state: "{{ blocks.register.outputs.state }}"
+        parent_id: "{{ blocks.register.outputs.task.task_id }}"
         profile: "{{ inputs.profile }}"
+        capabilities: "{{ blocks.filter_capabilities.outputs.stdout | fromjson }}"
+        permissions: "{{ inputs.permissions }}"
 
-  # ==========================================================================
-  # PHASE 3: FORMULATE - Refine the query
-  # ==========================================================================
-  - id: phase_formulate
+  # ===========================================================================
+  # PHASE 2: GATHER - collect evidence (always runs)
+  # ===========================================================================
+  - id: gather
     type: Workflow
-    description: Refine and clarify the query into actionable form.
-    depends_on:
-      - route_phase
-      - register_task
-      - block: phase_understand
-        required: false
-    condition: "{{ (blocks.route_phase.outputs.stdout | fromjson).run_formulate }}"
-    inputs:
-      workflow: cortex-phase-formulate
-      inputs:
-        query: "{{ inputs.query }}"
-        context: "{{ inputs.context }}"
-        capabilities: "{{ inputs.capabilities }}"
-        understanding: "{{ blocks.phase_understand.outputs.understanding if blocks.phase_understand.succeeded else {} }}"
-        state: "{{ inputs.state }}"
-        parent_task_id: "{{ blocks.register_task.outputs.task.task_id }}"
-        profile: "{{ inputs.profile }}"
-
-  # ==========================================================================
-  # PHASE 4: GATHER - Collect evidence
-  # ==========================================================================
-  - id: phase_gather
-    type: Workflow
-    description: Collect evidence relevant to the query.
-    depends_on:
-      - route_phase
-      - register_task
-      - block: phase_formulate
-        required: false
-    condition: "{{ (blocks.route_phase.outputs.stdout | fromjson).run_gather }}"
+    description: Collect evidence based on pipeline_config.gather settings.
+    depends_on: [categorize]
+    condition: "{{ blocks.categorize.succeeded }}"
     inputs:
       workflow: cortex-phase-gather
       inputs:
-        query: "{{ blocks.phase_formulate.outputs.refined_query if blocks.phase_formulate.succeeded else inputs.query }}"
-        context: "{{ inputs.context }}"
-        capabilities: "{{ inputs.capabilities }}"
-        category: "{{ blocks.phase_categorize.outputs.category if blocks.phase_categorize.succeeded else 'unknown' }}"
-        state: "{{ inputs.state }}"
-        parent_task_id: "{{ blocks.register_task.outputs.task.task_id }}"
-        profile: "{{ inputs.profile }}"
-
-  # ==========================================================================
-  # PHASE 5: ANALYZE - Analyze evidence
-  # ==========================================================================
-  - id: phase_analyze
-    type: Workflow
-    description: Analyze collected evidence and draw conclusions.
-    depends_on:
-      - route_phase
-      - register_task
-      - block: phase_gather
-        required: false
-    condition: "{{ (blocks.route_phase.outputs.stdout | fromjson).run_analyze }}"
-    inputs:
-      workflow: cortex-phase-analyze
-      inputs:
-        query: "{{ blocks.phase_formulate.outputs.refined_query if blocks.phase_formulate.succeeded else inputs.query }}"
-        context: "{{ inputs.context }}"
-        capabilities: "{{ inputs.capabilities }}"
-        evidence: "{{ blocks.phase_gather.outputs.evidence if blocks.phase_gather.succeeded else inputs.evidence }}"
-        state: "{{ inputs.state }}"
-        parent_task_id: "{{ blocks.register_task.outputs.task.task_id }}"
+        prompt: "{{ inputs.prompt }}"
+        context:
+          repo_path: "{{ inputs.context.repo_path | default('.') }}"
+          category: "{{ blocks.categorize.outputs.result.category | default('understanding') }}"
+        # Pipeline config from CATEGORIZE
+        pipeline_config: "{{ blocks.categorize.outputs.pipeline_config | default({}) }}"
         depth: "{{ inputs.depth }}"
         max_depth: "{{ inputs.max_depth }}"
-        query_history: "{{ (blocks.init.outputs.stdout | fromjson).query_history }}"
+        iterations: "{{ inputs.iterations }}"
+        max_iterations: "{{ inputs.max_iterations }}"
+        confidence_threshold: "{{ inputs.confidence_threshold }}"
+        state: "{{ blocks.categorize.outputs.state }}"
+        parent_id: "{{ blocks.register.outputs.task.task_id }}"
         profile: "{{ inputs.profile }}"
+        capabilities: "{{ blocks.filter_capabilities.outputs.stdout | fromjson }}"
+        permissions: "{{ inputs.permissions }}"
 
-  # ==========================================================================
-  # PHASE 5.5: RECURSIVE INVESTIGATION (if sub-queries exist)
-  # ==========================================================================
-  - id: phase_investigate
+  # ===========================================================================
+  # PHASE 3: REASON - analyze + synthesize (always runs)
+  # ===========================================================================
+  - id: reason
+    description: Analyze evidence and synthesize into unified conclusions.
+    depends_on: [gather]
+    condition: "{{ blocks.gather.succeeded }}"
     type: Workflow
-    description: Spawn child cells for sub-queries identified during analysis.
-    depends_on: [phase_analyze]
-    condition: |
-      {{
-        blocks.phase_analyze.succeeded and
-        blocks.phase_analyze.outputs.needs_deeper and
-        blocks.phase_analyze.outputs.sub_queries | length > 0 and
-        inputs.depth < inputs.max_depth
-      }}
-    for_each: "{{ blocks.phase_analyze.outputs.sub_queries }}"
-    for_each_mode: parallel
     inputs:
-      workflow: cortex-cell
+      workflow: cortex-phase-reason
       inputs:
-        query: "{{ each.value.query }}"
-        mode: ""
+        prompt: "{{ inputs.prompt }}"
         context:
-          repo_path: "{{ inputs.context.repo_path }}"
-          accumulated_knowledge: "{{ blocks.phase_analyze.outputs.findings }}"
-          constraints: "{{ inputs.context.constraints | default({}) }}"
-          focus: "{{ each.value.focus | default(inputs.context.focus) | default('general') }}"
-        capabilities: "{{ inputs.capabilities }}"
-        depth: "{{ inputs.depth + 1 }}"
+          repo_path: "{{ inputs.context.repo_path | default('.') }}"
+          category: "{{ blocks.categorize.outputs.result.category | default('understanding') }}"
+          gather_result: "{{ blocks.gather.outputs.result | default({}) }}"
+        # Merge GATHER's config override into pipeline_config
+        pipeline_config: |
+          {{ blocks.categorize.outputs.pipeline_config | default({}) | combine(blocks.gather.outputs.config_override | default({}), recursive=True) }}
+        depth: "{{ inputs.depth }}"
         max_depth: "{{ inputs.max_depth }}"
-        query_history: "{{ (blocks.init.outputs.stdout | fromjson).query_history }}"
-        state: "{{ inputs.state }}"
-        parent_task_id: "{{ blocks.register_task.outputs.task.task_id }}"
+        iterations: "{{ inputs.iterations }}"
+        max_iterations: "{{ inputs.max_iterations }}"
+        confidence_threshold: "{{ inputs.confidence_threshold }}"
+        state: "{{ blocks.gather.outputs.state }}"
+        parent_id: "{{ blocks.register.outputs.task.task_id }}"
         profile: "{{ inputs.profile }}"
+        capabilities: "{{ blocks.filter_capabilities.outputs.stdout | fromjson }}"
+        permissions: "{{ inputs.permissions }}"
 
-  # ==========================================================================
-  # PHASE 6: SYNTHESIZE - Merge findings
-  # ==========================================================================
-  - id: phase_synthesize
+  # ===========================================================================
+  # PHASE 4: ACT - take action (always runs, respects trigger policy)
+  # ===========================================================================
+  - id: act
+    description: Take action based on synthesis and pipeline_config.act settings.
+    depends_on: [reason]
+    condition: "{{ blocks.reason.succeeded }}"
     type: Workflow
-    description: Synthesize all findings into unified conclusions.
-    depends_on:
-      - route_phase
-      - register_task
-      - block: phase_analyze
-        required: false
-      - block: phase_investigate
-        required: false
-    condition: "{{ (blocks.route_phase.outputs.stdout | fromjson).run_synthesize }}"
-    inputs:
-      workflow: cortex-phase-synthesize
-      inputs:
-        query: "{{ inputs.query }}"
-        findings: |
-          {{
-            (blocks.phase_analyze.outputs.findings if blocks.phase_analyze.succeeded else []) +
-            (inputs.findings if inputs.findings else [])
-          }}
-        context: "{{ inputs.context }}"
-        capabilities: "{{ inputs.capabilities }}"
-        state: "{{ inputs.state }}"
-        parent_task_id: "{{ blocks.register_task.outputs.task.task_id }}"
-        profile: "{{ inputs.profile }}"
-
-  # ==========================================================================
-  # PHASE 7: ACT - Execute actions
-  # ==========================================================================
-  - id: phase_act
-    type: Workflow
-    description: Plan and execute actions based on synthesis.
-    depends_on:
-      - route_phase
-      - register_task
-      - block: phase_synthesize
-        required: false
-    condition: "{{ (blocks.route_phase.outputs.stdout | fromjson).run_act }}"
     inputs:
       workflow: cortex-phase-act
       inputs:
-        query: "{{ inputs.query }}"
-        synthesis: "{{ blocks.phase_synthesize.outputs.synthesis if blocks.phase_synthesize.succeeded else inputs.synthesis }}"
-        context: "{{ inputs.context }}"
-        capabilities: "{{ inputs.capabilities }}"
-        state: "{{ inputs.state }}"
-        parent_task_id: "{{ blocks.register_task.outputs.task.task_id }}"
+        prompt: "{{ inputs.prompt }}"
+        context:
+          repo_path: "{{ inputs.context.repo_path | default('.') }}"
+          category: "{{ blocks.categorize.outputs.result.category | default('understanding') }}"
+          synthesis: "{{ blocks.reason.outputs.synthesis | default({}) }}"
+          original_prompt: "{{ inputs.context.original_prompt | default(inputs.prompt) }}"
+        # Merge REASON's config override into pipeline_config
+        pipeline_config: |
+          {{ blocks.categorize.outputs.pipeline_config | default({}) | combine(blocks.gather.outputs.config_override | default({}), recursive=True) | combine(blocks.reason.outputs.config_override | default({}), recursive=True) }}
         depth: "{{ inputs.depth }}"
         max_depth: "{{ inputs.max_depth }}"
-        query_history: "{{ (blocks.init.outputs.stdout | fromjson).query_history }}"
+        iterations: "{{ inputs.iterations }}"
+        max_iterations: "{{ inputs.max_iterations }}"
+        confidence_threshold: "{{ inputs.confidence_threshold }}"
+        state: "{{ blocks.reason.outputs.state }}"
+        parent_id: "{{ blocks.register.outputs.task.task_id }}"
         profile: "{{ inputs.profile }}"
+        capabilities: "{{ blocks.filter_capabilities.outputs.stdout | fromjson }}"
+        permissions: "{{ inputs.permissions }}"
 
-  # ==========================================================================
-  # FINALIZE: Collect stats and mark complete
-  # ==========================================================================
-  - id: finalize
-    type: Shell
-    description: Collect execution statistics.
-    depends_on:
-      - init
-      - block: early_termination
-        required: false
-      - block: phase_categorize
-        required: false
-      - block: phase_understand
-        required: false
-      - block: phase_formulate
-        required: false
-      - block: phase_gather
-        required: false
-      - block: phase_analyze
-        required: false
-      - block: phase_investigate
-        required: false
-      - block: phase_synthesize
-        required: false
-      - block: phase_act
-        required: false
-    inputs:
-      command: |
-        python3 << 'EOF'
-        import json
-        import os
-
-        # Collect phase execution status
-        phases_executed = []
-
-        for phase in ['categorize', 'understand', 'formulate', 'gather', 'analyze', 'investigate', 'synthesize', 'act']:
-            status = os.environ.get(f'PHASE_{phase.upper()}_STATUS', 'skipped')
-            if status == 'succeeded':
-                phases_executed.append(phase)
-
-        depth = int(os.environ.get('DEPTH', '0'))
-        mode = os.environ.get('MODE', 'full_cycle')
-
-        result = {
-            'phases_executed': phases_executed,
-            'depth': depth,
-            'mode': mode,
-            'children_spawned': int(os.environ.get('CHILDREN_COUNT', '0'))
-        }
-
-        print(json.dumps(result))
-        EOF
-      env:
-        DEPTH: "{{ inputs.depth }}"
-        MODE: "{{ (blocks.init.outputs.stdout | fromjson).mode }}"
-        PHASE_CATEGORIZE_STATUS: "{{ 'succeeded' if blocks.phase_categorize.succeeded else 'skipped' }}"
-        PHASE_UNDERSTAND_STATUS: "{{ 'succeeded' if blocks.phase_understand.succeeded else 'skipped' }}"
-        PHASE_FORMULATE_STATUS: "{{ 'succeeded' if blocks.phase_formulate.succeeded else 'skipped' }}"
-        PHASE_GATHER_STATUS: "{{ 'succeeded' if blocks.phase_gather.succeeded else 'skipped' }}"
-        PHASE_ANALYZE_STATUS: "{{ 'succeeded' if blocks.phase_analyze.succeeded else 'skipped' }}"
-        PHASE_INVESTIGATE_STATUS: "{{ 'succeeded' if blocks.phase_investigate.succeeded else 'skipped' }}"
-        PHASE_SYNTHESIZE_STATUS: "{{ 'succeeded' if blocks.phase_synthesize.succeeded else 'skipped' }}"
-        PHASE_ACT_STATUS: "{{ 'succeeded' if blocks.phase_act.succeeded else 'skipped' }}"
-        CHILDREN_COUNT: "{{ blocks.phase_investigate.metadata.count if blocks.phase_investigate.succeeded else 0 }}"
-
-  # ==========================================================================
-  # Mark task complete
-  # ==========================================================================
+  # ===========================================================================
+  # TRACK COMPLETION - store synthesis for child querying
+  # ===========================================================================
   - id: track_done
     type: Workflow
-    description: Mark cell task as complete.
-    depends_on: [finalize, register_task]
+    description: Mark cell complete and store synthesis for child querying.
+    depends_on:
+      - block: early_termination
+        required: false
+      - block: reason
+        required: false
+      - block: act
+        required: false
     inputs:
       workflow: agent-state-management
       inputs:
-        state: "{{ inputs.state }}"
-        task_id: "{{ blocks.register_task.outputs.task.task_id }}"
+        state: "{{ blocks.register.outputs.state }}"
+        task_id: "{{ blocks.register.outputs.task.task_id }}"
         status: "done"
         caller: "cortex-cell"
         data:
-          phases_executed: "{{ (blocks.finalize.outputs.stdout | fromjson).phases_executed }}"
-          children_spawned: "{{ (blocks.finalize.outputs.stdout | fromjson).children_spawned }}"
+          prompt: "{{ inputs.prompt }}"
+          depth: "{{ inputs.depth }}"
+          iterations: "{{ inputs.iterations }}"
+          spawning_phase: "{{ inputs.context.spawning_phase | default('root') }}"
+          # CRITICAL: Store response and synthesis so REASON phase can query children
+          response: |
+            {{ blocks.reason.outputs.response if blocks.reason.succeeded
+               else (blocks.early_termination.outputs.stdout | fromjson).response if blocks.early_termination.succeeded
+               else 'No response produced' }}
+          synthesis: |
+            {{ blocks.reason.outputs.synthesis if blocks.reason.succeeded
+               else (blocks.early_termination.outputs.stdout | fromjson).synthesis if blocks.early_termination.succeeded
+               else {} }}
+          # Store action completion status for continuation
+          complete: "{{ blocks.act.outputs.complete | default(true) }}"
+          continuation_needed: "{{ blocks.act.outputs.continuation_needed | default(false) }}"
 
+# =============================================================================
+# OUTPUTS
+# =============================================================================
 outputs:
-  # Primary output - synthesis from the cell
   synthesis:
+    type: dict
+    description: "Unified synthesis from the cognitive cycle."
     value: |
-      {{
-        (blocks.early_termination.outputs.stdout | fromjson).synthesis if blocks.early_termination.succeeded else
-        blocks.phase_synthesize.outputs.synthesis if blocks.phase_synthesize.succeeded else
-        blocks.phase_act.outputs.synthesis if blocks.phase_act.succeeded else
-        {
-          'findings': blocks.phase_analyze.outputs.findings if blocks.phase_analyze.succeeded else [],
-          'summary': 'No synthesis performed',
-          'confidence': blocks.phase_categorize.outputs.confidence if blocks.phase_categorize.succeeded else 0.5
-        }
-      }}
-    type: dict
-    description: Unified synthesis from this cell.
+      {{ blocks.reason.outputs.synthesis if blocks.reason.succeeded
+         else (blocks.early_termination.outputs.stdout | fromjson).synthesis if blocks.early_termination.succeeded
+         else {'findings': [], 'summary': 'No synthesis'} }}
 
-  # Phase-specific outputs (for single-phase modes)
-  category:
-    value: "{{ blocks.phase_categorize.outputs.category if blocks.phase_categorize.succeeded else 'unknown' }}"
+  response:
     type: str
-    description: Query category (from categorize phase).
+    description: "Direct response to the query."
+    value: |
+      {{ blocks.reason.outputs.response if blocks.reason.succeeded
+         else (blocks.early_termination.outputs.stdout | fromjson).response if blocks.early_termination.succeeded
+         else 'No response produced' }}
 
-  confidence:
-    value: "{{ blocks.phase_categorize.outputs.confidence if blocks.phase_categorize.succeeded else 0.5 }}"
-    type: num
-    description: Confidence in categorization (0.0-1.0).
-
-  understanding:
-    value: "{{ blocks.phase_understand.outputs.understanding if blocks.phase_understand.succeeded else {} }}"
+  categorization:
     type: dict
-    description: Understanding built (from understand phase).
+    description: "Query categorization result with pipeline_config."
+    value: "{{ blocks.categorize.outputs.result if blocks.categorize.succeeded else {} }}"
 
-  refined_query:
-    value: "{{ blocks.phase_formulate.outputs.refined_query if blocks.phase_formulate.succeeded else inputs.query }}"
-    type: str
-    description: Refined query (from formulate phase).
+  pipeline_config:
+    type: dict
+    description: "Final pipeline configuration (with all overrides applied)."
+    value: |
+      {{ blocks.categorize.outputs.pipeline_config | default({}) | combine(blocks.gather.outputs.config_override | default({}), recursive=True) | combine(blocks.reason.outputs.config_override | default({}), recursive=True) if blocks.reason.succeeded else {} }}
 
-  evidence:
-    value: "{{ blocks.phase_gather.outputs.evidence if blocks.phase_gather.succeeded else [] }}"
-    type: list
-    description: Evidence collected (from gather phase).
+  actions:
+    type: dict
+    description: "Action results (if any were taken)."
+    value: "{{ blocks.act.outputs.result if blocks.act.succeeded else {} }}"
 
-  findings:
-    value: "{{ blocks.phase_analyze.outputs.findings if blocks.phase_analyze.succeeded else [] }}"
-    type: list
-    description: Findings from analysis (from analyze phase).
-
-  needs_deeper:
-    value: "{{ blocks.phase_analyze.outputs.needs_deeper if blocks.phase_analyze.succeeded else false }}"
+  complete:
     type: bool
-    description: Whether deeper investigation is needed.
+    description: "Whether the task was fully completed."
+    value: "{{ blocks.act.outputs.complete | default(true) }}"
 
-  actions_taken:
-    value: "{{ blocks.phase_act.outputs.actions_taken if blocks.phase_act.succeeded else [] }}"
-    type: list
-    description: Actions executed (from act phase).
+  continuation_needed:
+    type: bool
+    description: "Whether a continuation cell should be spawned."
+    value: "{{ blocks.act.outputs.continuation_needed | default(false) }}"
 
-  # Cell metadata
-  cell_id:
-    value: "{{ blocks.register_task.outputs.task.task_id }}"
+  continuation_prompt:
     type: str
-    description: This cell's identifier.
+    description: "Prompt for continuation cell if needed."
+    value: "{{ blocks.act.outputs.continuation_prompt | default('') }}"
 
-  depth:
-    value: "{{ inputs.depth }}"
-    type: num
-    description: Depth at which this cell operated.
-
-  mode:
-    value: "{{ (blocks.init.outputs.stdout | fromjson).mode }}"
+  task_id:
     type: str
-    description: Mode this cell operated in.
+    description: "This cell's task ID."
+    value: "{{ blocks.register.outputs.task.task_id }}"
 
-  stats:
-    value: "{{ blocks.finalize.outputs.stdout | fromjson }}"
-    type: dict
-    description: Execution statistics.
+  state:
+    type: str
+    description: "Path to state database."
+    value: "{{ blocks.register.outputs.state }}"

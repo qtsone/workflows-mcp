@@ -18,10 +18,9 @@ inputs:
   state:
     type: str
     description: |
-      Path to existing SQLite database or trace ID.
+      Path to existing SQLite database.
       - Empty: Creates new state in ~/.workflows/tasks/<trace_id>.db
       - Existing path (*.db): Uses that database
-      - Trace ID: Uses ~/.workflows/tasks/<trace_id>.db
     required: false
     default: ""
 
@@ -50,7 +49,7 @@ inputs:
     required: false
     default: ""
 
-  task_type:
+  category:
     type: str
     description: Category/type of task (e.g., "investigation", "pr-review"). Optional.
     required: false
@@ -83,7 +82,7 @@ inputs:
     type: bool
     description: Whether to use AI for generating audit descriptions.
     required: false
-    default: true
+    default: false
 
   # Operation routing
   op:
@@ -94,6 +93,9 @@ inputs:
       - iteration: Iteration tracking (init, advance, checkpoint, complete, reset)
       - memory: Key-value memory (set, get, append, merge, delete, keys)
       - query: Relational query on task tree (children, parent, ancestors, descendants)
+      - evidence: Episodic memory (store, query, get, delete gathered content)
+      - facts: Semantic memory with FTS (store, query, get, conflicts, update_status)
+      - actions: Action deduplication (log, check, complete, fail, query)
     required: false
     default: "task"
 
@@ -104,13 +106,13 @@ inputs:
       Query specification (when op=query). Uses task_id as reference point.
       Structure:
         relation: children | parent | ancestors | descendants (required)
-        where: { task_type: "...", status: "..." }  # Optional filters
+        where: { category: "...", status: "..." }  # Optional filters
         select: ["key1", "key2"]  # Optional: keys to extract from data JSON
         limit: 100  # Optional: max results (default 100)
 
       Examples:
         # Get child cells with synthesis data
-        { relation: children, where: { task_type: cortex-cell }, select: [synthesis] }
+        { relation: children, where: { category: cortex-cell }, select: [synthesis] }
 
         # Get parent task
         { relation: parent, select: [accumulated_knowledge] }
@@ -183,6 +185,217 @@ inputs:
     required: false
     default: ""
 
+  memory_type:
+    type: str
+    description: |
+      Memory namespace for composite key support.
+      Combined with memory_key forms composite primary key (type, key) in SQLite.
+      Examples:
+        - type: "findings" + key: "categorize" → row at (findings, categorize)
+        - type: "evidence" + key: "gather" → row at (evidence, gather)
+    required: false
+    default: ""
+
+  # Evidence-specific inputs (used when op=evidence)
+  evidence_op:
+    type: str
+    description: |
+      Evidence operation (when op=evidence):
+      - store: Store evidence with metadata
+      - query: Query evidence by type/cell
+      - get: Get single evidence by key
+      - delete: Remove evidence by key
+    required: false
+    default: ""
+
+  evidence_key:
+    type: str
+    description: Evidence key (file path or search identifier).
+    required: false
+    default: ""
+
+  evidence_value:
+    type: str
+    description: Evidence content (JSON string).
+    required: false
+    default: ""
+
+  evidence_type:
+    type: str
+    description: Type of evidence (content, outline, search).
+    required: false
+    default: "content"
+
+  evidence_source_cell:
+    type: str
+    description: Cell ID that gathered this evidence.
+    required: false
+    default: ""
+
+  evidence_source_operation:
+    type: str
+    description: Capability name that produced this evidence.
+    required: false
+    default: ""
+
+  evidence_query_type:
+    type: str
+    description: Filter by evidence_type for query op.
+    required: false
+    default: ""
+
+  evidence_query_cell:
+    type: str
+    description: Filter by source_cell for query op.
+    required: false
+    default: ""
+
+  evidence_limit:
+    type: num
+    description: Max results for evidence query.
+    required: false
+    default: 100
+
+  # Facts-specific inputs (used when op=facts)
+  facts_op:
+    type: str
+    description: |
+      Facts operation (when op=facts):
+      - store: Store a new fact
+      - query: Query facts (FTS or filter)
+      - get: Get single fact by ID
+      - conflicts: Detect conflicting facts
+      - update_status: Update fact status
+    required: false
+    default: ""
+
+  facts_claim:
+    type: str
+    description: The fact statement.
+    required: false
+    default: ""
+
+  facts_evidence_type:
+    type: str
+    description: Epistemic status (direct, inferred, assumed).
+    required: false
+    default: "inferred"
+
+  facts_confidence:
+    type: num
+    description: Confidence score (0.0-1.0).
+    required: false
+    default: 0.7
+
+  facts_grounding:
+    type: str
+    description: Evidence references as JSON array.
+    required: false
+    default: "[]"
+
+  facts_scope:
+    type: str
+    description: Optional scope limitation (e.g., "src/auth/").
+    required: false
+    default: ""
+
+  facts_source_cell:
+    type: str
+    description: Cell ID that created this fact.
+    required: false
+    default: ""
+
+  facts_query:
+    type: str
+    description: FTS query string (for query op).
+    required: false
+    default: ""
+
+  facts_status_filter:
+    type: str
+    description: Filter by status (default "active").
+    required: false
+    default: "active"
+
+  facts_limit:
+    type: num
+    description: Max results for facts query.
+    required: false
+    default: 50
+
+  facts_id:
+    type: str
+    description: Fact ID for get/update operations.
+    required: false
+    default: ""
+
+  facts_new_status:
+    type: str
+    description: New status for update_status operation.
+    required: false
+    default: ""
+
+  facts_new_facts:
+    type: str
+    description: JSON array of new facts to check for conflicts.
+    required: false
+    default: "[]"
+
+  # Actions-specific inputs (used when op=actions)
+  actions_op:
+    type: str
+    description: |
+      Actions operation (when op=actions):
+      - log: Log a new action (returns existing if duplicate)
+      - check: Check if action already exists/completed
+      - complete: Mark action as completed with result
+      - fail: Mark action as failed with error
+      - query: Query actions by cell/capability
+    required: false
+    default: ""
+
+  actions_cell_id:
+    type: str
+    description: Cell ID requesting the action.
+    required: false
+    default: ""
+
+  actions_capability:
+    type: str
+    description: Capability workflow name.
+    required: false
+    default: ""
+
+  actions_inputs_json:
+    type: str
+    description: Action inputs (JSON string).
+    required: false
+    default: "{}"
+
+  actions_result_json:
+    type: str
+    description: Action result (JSON string) for complete/fail operation.
+    required: false
+    default: ""
+
+  actions_action_id:
+    type: str
+    description: Action ID for complete/fail/query operations.
+    required: false
+    default: ""
+
+  actions_status_filter:
+    type: str
+    description: Filter by status for query op.
+    required: false
+    default: ""
+
+  actions_limit:
+    type: num
+    description: Max results for actions query.
+    required: false
+    default: 100
+
 blocks:
   # ==========================================================================
   # STEP 1: Generate database path and initialize SQLite schema
@@ -241,7 +454,7 @@ blocks:
                     task_id TEXT PRIMARY KEY,
                     parent_id TEXT REFERENCES tasks(task_id),
                     task TEXT NOT NULL,
-                    task_type TEXT DEFAULT '',
+                    category TEXT DEFAULT '',
                     status TEXT DEFAULT 'pending'
                         CHECK(status IN ('pending', 'in-progress', 'done', 'failed', 'blocked')),
                     data JSON DEFAULT '{}',
@@ -252,11 +465,13 @@ blocks:
                 CREATE INDEX IF NOT EXISTS idx_tasks_status ON tasks(status);
 
                 CREATE TABLE IF NOT EXISTS memory (
-                    key TEXT PRIMARY KEY,
+                    type TEXT NOT NULL DEFAULT '',
+                    key TEXT NOT NULL,
                     value JSON,
-                    updated_at TEXT NOT NULL
+                    updated_at TEXT NOT NULL,
+                    PRIMARY KEY (type, key)
                 );
-                CREATE INDEX IF NOT EXISTS idx_memory_key ON memory(key);
+                CREATE INDEX IF NOT EXISTS idx_memory_type_key ON memory(type, key);
 
                 CREATE TABLE IF NOT EXISTS audit (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -280,13 +495,179 @@ blocks:
                     completed_at TEXT,
                     checkpoints JSON DEFAULT '[]'
                 );
+
+                -- CORTEX Memory Architecture (v2)
+                -- Evidence table (episodic memory)
+                CREATE TABLE IF NOT EXISTS evidence (
+                    key TEXT PRIMARY KEY,
+                    value TEXT NOT NULL,
+                    evidence_type TEXT NOT NULL
+                        CHECK(evidence_type IN ('content', 'outline', 'search')),
+                    source_cell TEXT NOT NULL,
+                    source_operation TEXT,
+                    byte_size INTEGER,
+                    created_at TEXT DEFAULT (datetime('now'))
+                );
+                CREATE INDEX IF NOT EXISTS idx_evidence_type ON evidence(evidence_type);
+                CREATE INDEX IF NOT EXISTS idx_evidence_cell ON evidence(source_cell);
+
+                -- Facts table (semantic memory)
+                CREATE TABLE IF NOT EXISTS facts (
+                    id TEXT PRIMARY KEY,
+                    claim TEXT NOT NULL,
+                    evidence_type TEXT NOT NULL
+                        CHECK(evidence_type IN ('direct', 'inferred', 'assumed')),
+                    confidence REAL NOT NULL
+                        CHECK(confidence >= 0 AND confidence <= 1),
+                    grounding TEXT NOT NULL,
+                    scope TEXT,
+                    source_cell TEXT NOT NULL,
+                    source_phase TEXT DEFAULT 'reason',
+                    status TEXT DEFAULT 'active'
+                        CHECK(status IN ('active', 'verified', 'contested', 'superseded', 'refuted')),
+                    superseded_by TEXT,
+                    contested_with TEXT,
+                    created_at TEXT DEFAULT (datetime('now')),
+                    updated_at TEXT DEFAULT (datetime('now'))
+                );
+                CREATE INDEX IF NOT EXISTS idx_facts_status ON facts(status);
+                CREATE INDEX IF NOT EXISTS idx_facts_type ON facts(evidence_type);
+                CREATE INDEX IF NOT EXISTS idx_facts_cell ON facts(source_cell);
+                CREATE INDEX IF NOT EXISTS idx_facts_confidence ON facts(confidence DESC);
+
+                -- FTS5 for fact search
+                CREATE VIRTUAL TABLE IF NOT EXISTS facts_fts USING fts5(
+                    id, claim, content=facts, content_rowid=rowid
+                );
+
+                -- FTS sync triggers
+                CREATE TRIGGER IF NOT EXISTS facts_ai AFTER INSERT ON facts BEGIN
+                    INSERT INTO facts_fts(rowid, id, claim) VALUES (NEW.rowid, NEW.id, NEW.claim);
+                END;
+                CREATE TRIGGER IF NOT EXISTS facts_ad AFTER DELETE ON facts BEGIN
+                    INSERT INTO facts_fts(facts_fts, rowid, id, claim) VALUES('delete', OLD.rowid, OLD.id, OLD.claim);
+                END;
+                CREATE TRIGGER IF NOT EXISTS facts_au AFTER UPDATE ON facts BEGIN
+                    INSERT INTO facts_fts(facts_fts, rowid, id, claim) VALUES('delete', OLD.rowid, OLD.id, OLD.claim);
+                    INSERT INTO facts_fts(rowid, id, claim) VALUES (NEW.rowid, NEW.id, NEW.claim);
+                END;
+
+                -- Actions table (deduplication)
+                CREATE TABLE IF NOT EXISTS actions (
+                    id TEXT PRIMARY KEY,
+                    cell_id TEXT NOT NULL,
+                    capability TEXT NOT NULL,
+                    inputs_hash TEXT NOT NULL,
+                    inputs TEXT NOT NULL,
+                    status TEXT DEFAULT 'pending'
+                        CHECK(status IN ('pending', 'completed', 'failed', 'rolled_back')),
+                    result TEXT,
+                    created_at TEXT DEFAULT (datetime('now')),
+                    completed_at TEXT,
+                    UNIQUE(capability, inputs_hash)
+                );
+                CREATE INDEX IF NOT EXISTS idx_actions_status ON actions(status);
+                CREATE INDEX IF NOT EXISTS idx_actions_cell ON actions(cell_id);
+                CREATE INDEX IF NOT EXISTS idx_actions_capability ON actions(capability);
             ''')
 
             # Initialize metadata
             conn.execute("INSERT INTO metadata VALUES ('created_at', ?)", (now,))
             conn.execute("INSERT INTO metadata VALUES ('updated_at', ?)", (now,))
-            conn.execute("INSERT INTO metadata VALUES ('schema_version', '1')")
+            conn.execute("INSERT INTO metadata VALUES ('schema_version', '2')")
             conn.commit()
+            conn.close()
+        else:
+            # Migrate existing database if needed
+            conn = sqlite3.connect(db_path)
+            conn.execute("PRAGMA busy_timeout=30000")
+
+            # Check schema version
+            try:
+                row = conn.execute("SELECT value FROM metadata WHERE key='schema_version'").fetchone()
+                current_version = int(row[0]) if row else 1
+            except:
+                current_version = 1
+
+            if current_version < 2:
+                # Migrate to v2: Add CORTEX memory tables
+                conn.executescript('''
+                    -- Evidence table (episodic memory)
+                    CREATE TABLE IF NOT EXISTS evidence (
+                        key TEXT PRIMARY KEY,
+                        value TEXT NOT NULL,
+                        evidence_type TEXT NOT NULL
+                            CHECK(evidence_type IN ('content', 'outline', 'search')),
+                        source_cell TEXT NOT NULL,
+                        source_operation TEXT,
+                        byte_size INTEGER,
+                        created_at TEXT DEFAULT (datetime('now'))
+                    );
+                    CREATE INDEX IF NOT EXISTS idx_evidence_type ON evidence(evidence_type);
+                    CREATE INDEX IF NOT EXISTS idx_evidence_cell ON evidence(source_cell);
+
+                    -- Facts table (semantic memory)
+                    CREATE TABLE IF NOT EXISTS facts (
+                        id TEXT PRIMARY KEY,
+                        claim TEXT NOT NULL,
+                        evidence_type TEXT NOT NULL
+                            CHECK(evidence_type IN ('direct', 'inferred', 'assumed')),
+                        confidence REAL NOT NULL
+                            CHECK(confidence >= 0 AND confidence <= 1),
+                        grounding TEXT NOT NULL,
+                        scope TEXT,
+                        source_cell TEXT NOT NULL,
+                        source_phase TEXT DEFAULT 'reason',
+                        status TEXT DEFAULT 'active'
+                            CHECK(status IN ('active', 'verified', 'contested', 'superseded', 'refuted')),
+                        superseded_by TEXT,
+                        contested_with TEXT,
+                        created_at TEXT DEFAULT (datetime('now')),
+                        updated_at TEXT DEFAULT (datetime('now'))
+                    );
+                    CREATE INDEX IF NOT EXISTS idx_facts_status ON facts(status);
+                    CREATE INDEX IF NOT EXISTS idx_facts_type ON facts(evidence_type);
+                    CREATE INDEX IF NOT EXISTS idx_facts_cell ON facts(source_cell);
+                    CREATE INDEX IF NOT EXISTS idx_facts_confidence ON facts(confidence DESC);
+
+                    -- FTS5 for fact search
+                    CREATE VIRTUAL TABLE IF NOT EXISTS facts_fts USING fts5(
+                        id, claim, content=facts, content_rowid=rowid
+                    );
+
+                    -- FTS sync triggers
+                    CREATE TRIGGER IF NOT EXISTS facts_ai AFTER INSERT ON facts BEGIN
+                        INSERT INTO facts_fts(rowid, id, claim) VALUES (NEW.rowid, NEW.id, NEW.claim);
+                    END;
+                    CREATE TRIGGER IF NOT EXISTS facts_ad AFTER DELETE ON facts BEGIN
+                        INSERT INTO facts_fts(facts_fts, rowid, id, claim) VALUES('delete', OLD.rowid, OLD.id, OLD.claim);
+                    END;
+                    CREATE TRIGGER IF NOT EXISTS facts_au AFTER UPDATE ON facts BEGIN
+                        INSERT INTO facts_fts(facts_fts, rowid, id, claim) VALUES('delete', OLD.rowid, OLD.id, OLD.claim);
+                        INSERT INTO facts_fts(rowid, id, claim) VALUES (NEW.rowid, NEW.id, NEW.claim);
+                    END;
+
+                    -- Actions table (deduplication)
+                    CREATE TABLE IF NOT EXISTS actions (
+                        id TEXT PRIMARY KEY,
+                        cell_id TEXT NOT NULL,
+                        capability TEXT NOT NULL,
+                        inputs_hash TEXT NOT NULL,
+                        inputs TEXT NOT NULL,
+                        status TEXT DEFAULT 'pending'
+                            CHECK(status IN ('pending', 'completed', 'failed', 'rolled_back')),
+                        result TEXT,
+                        created_at TEXT DEFAULT (datetime('now')),
+                        completed_at TEXT,
+                        UNIQUE(capability, inputs_hash)
+                    );
+                    CREATE INDEX IF NOT EXISTS idx_actions_status ON actions(status);
+                    CREATE INDEX IF NOT EXISTS idx_actions_cell ON actions(cell_id);
+                    CREATE INDEX IF NOT EXISTS idx_actions_capability ON actions(capability);
+                ''')
+                conn.execute("INSERT OR REPLACE INTO metadata VALUES ('schema_version', '2')")
+                conn.commit()
+
             conn.close()
 
         print(json.dumps({
@@ -333,6 +714,7 @@ blocks:
       inputs:
         path: "{{(blocks.paths.outputs.stdout | fromjson).db_path}}"
         op: "{{inputs.memory_op}}"
+        type: "{{inputs.memory_type}}"
         key: "{{inputs.memory_key}}"
         value: "{{inputs.memory_value}}"
         default: "{{inputs.memory_default}}"
@@ -381,14 +763,14 @@ blocks:
 
         if relation == 'children':
             # Direct children of task_id
-            sql = "SELECT task_id, parent_id, task_type, status, data FROM tasks WHERE parent_id = ?"
+            sql = "SELECT task_id, parent_id, category, status, data FROM tasks WHERE parent_id = ?"
             params = [task_id]
 
         elif relation == 'parent':
             # Get parent of task_id
             row = conn.execute("SELECT parent_id FROM tasks WHERE task_id = ?", (task_id,)).fetchone()
             if row and row['parent_id']:
-                sql = "SELECT task_id, parent_id, task_type, status, data FROM tasks WHERE task_id = ?"
+                sql = "SELECT task_id, parent_id, category, status, data FROM tasks WHERE task_id = ?"
                 params = [row['parent_id']]
             else:
                 print(json.dumps({'results': [], 'count': 0, 'relation': 'parent'}))
@@ -399,14 +781,14 @@ blocks:
             # Recursive CTE to get all ancestors
             sql = """
                 WITH RECURSIVE ancestors AS (
-                    SELECT task_id, parent_id, task_type, status, data, 1 as depth
+                    SELECT task_id, parent_id, category, status, data, 1 as depth
                     FROM tasks WHERE task_id = (SELECT parent_id FROM tasks WHERE task_id = ?)
                     UNION ALL
-                    SELECT t.task_id, t.parent_id, t.task_type, t.status, t.data, a.depth + 1
+                    SELECT t.task_id, t.parent_id, t.category, t.status, t.data, a.depth + 1
                     FROM tasks t
                     JOIN ancestors a ON t.task_id = a.parent_id
                 )
-                SELECT task_id, parent_id, task_type, status, data, depth FROM ancestors
+                SELECT task_id, parent_id, category, status, data, depth FROM ancestors
                 ORDER BY depth
             """
             params = [task_id]
@@ -415,14 +797,14 @@ blocks:
             # Recursive CTE to get all descendants
             sql = """
                 WITH RECURSIVE descendants AS (
-                    SELECT task_id, parent_id, task_type, status, data, 1 as depth
+                    SELECT task_id, parent_id, category, status, data, 1 as depth
                     FROM tasks WHERE parent_id = ?
                     UNION ALL
-                    SELECT t.task_id, t.parent_id, t.task_type, t.status, t.data, d.depth + 1
+                    SELECT t.task_id, t.parent_id, t.category, t.status, t.data, d.depth + 1
                     FROM tasks t
                     JOIN descendants d ON t.parent_id = d.task_id
                 )
-                SELECT task_id, parent_id, task_type, status, data, depth FROM descendants
+                SELECT task_id, parent_id, category, status, data, depth FROM descendants
                 ORDER BY depth
             """
             params = [task_id]
@@ -440,7 +822,7 @@ blocks:
             # Check where conditions
             match = True
             if where:
-                if 'task_type' in where and row['task_type'] != where['task_type']:
+                if 'category' in where and row['category'] != where['category']:
                     match = False
                 if 'status' in where and row['status'] != where['status']:
                     match = False
@@ -452,7 +834,7 @@ blocks:
             result = {
                 'task_id': row['task_id'],
                 'parent_id': row['parent_id'],
-                'task_type': row['task_type'],
+                'category': row['category'],
                 'status': row['status']
             }
 
@@ -491,6 +873,75 @@ blocks:
         QUERY: "{{ inputs.query | tojson }}"
 
   # ==========================================================================
+  # ROUTING: Handle evidence operations (episodic memory)
+  # ==========================================================================
+  - id: handle_evidence
+    type: Workflow
+    description: Route to evidence sub-workflow when op=evidence.
+    depends_on: [paths]
+    condition: "{{inputs.op == 'evidence'}}"
+    inputs:
+      workflow: agent-evidence
+      inputs:
+        path: "{{(blocks.paths.outputs.stdout | fromjson).db_path}}"
+        op: "{{inputs.evidence_op}}"
+        key: "{{inputs.evidence_key}}"
+        value: "{{inputs.evidence_value}}"
+        evidence_type: "{{inputs.evidence_type}}"
+        source_cell: "{{inputs.evidence_source_cell}}"
+        source_operation: "{{inputs.evidence_source_operation}}"
+        query_type: "{{inputs.evidence_query_type}}"
+        query_cell: "{{inputs.evidence_query_cell}}"
+        limit: "{{inputs.evidence_limit}}"
+
+  # ==========================================================================
+  # ROUTING: Handle facts operations (semantic memory with FTS)
+  # ==========================================================================
+  - id: handle_facts
+    type: Workflow
+    description: Route to facts sub-workflow when op=facts.
+    depends_on: [paths]
+    condition: "{{inputs.op == 'facts'}}"
+    inputs:
+      workflow: agent-facts
+      inputs:
+        path: "{{(blocks.paths.outputs.stdout | fromjson).db_path}}"
+        op: "{{inputs.facts_op}}"
+        claim: "{{inputs.facts_claim}}"
+        evidence_type: "{{inputs.facts_evidence_type}}"
+        confidence: "{{inputs.facts_confidence}}"
+        grounding: "{{inputs.facts_grounding}}"
+        scope: "{{inputs.facts_scope}}"
+        source_cell: "{{inputs.facts_source_cell}}"
+        query: "{{inputs.facts_query}}"
+        status_filter: "{{inputs.facts_status_filter}}"
+        limit: "{{inputs.facts_limit}}"
+        fact_id: "{{inputs.facts_id}}"
+        new_status: "{{inputs.facts_new_status}}"
+        new_facts: "{{inputs.facts_new_facts}}"
+
+  # ==========================================================================
+  # ROUTING: Handle actions operations (deduplication)
+  # ==========================================================================
+  - id: handle_actions
+    type: Workflow
+    description: Route to actions sub-workflow when op=actions.
+    depends_on: [paths]
+    condition: "{{inputs.op == 'actions'}}"
+    inputs:
+      workflow: agent-actions
+      inputs:
+        path: "{{(blocks.paths.outputs.stdout | fromjson).db_path}}"
+        op: "{{inputs.actions_op}}"
+        cell_id: "{{inputs.actions_cell_id}}"
+        capability: "{{inputs.actions_capability}}"
+        inputs_json: "{{inputs.actions_inputs_json}}"
+        result_json: "{{inputs.actions_result_json}}"
+        action_id: "{{inputs.actions_action_id}}"
+        status_filter: "{{inputs.actions_status_filter}}"
+        limit: "{{inputs.actions_limit}}"
+
+  # ==========================================================================
   # TASK OPS - STEP 2: Generate new task ID if needed
   # ==========================================================================
   - id: new_task_id
@@ -524,7 +975,7 @@ blocks:
         task_input = os.environ.get('TASK_INPUT', '')
         task_id_input = os.environ.get('TASK_ID_INPUT', '')
         parent_id_input = os.environ.get('PARENT_ID_INPUT', '')
-        task_type_input = os.environ.get('TASK_TYPE_INPUT', '')
+        category_input = os.environ.get('TASK_TYPE_INPUT', '')
         status_input = os.environ.get('STATUS_INPUT', '')
         data_input = json.loads(os.environ.get('DATA_INPUT', '{}') or '{}')
         caller = os.environ.get('CALLER', 'unknown')
@@ -599,13 +1050,13 @@ blocks:
         # Perform operation
         if operation in ('create_root', 'create_subtask'):
             conn.execute('''
-                INSERT INTO tasks (task_id, parent_id, task, task_type, status, data, created_at, updated_at)
+                INSERT INTO tasks (task_id, parent_id, task, category, status, data, created_at, updated_at)
                 VALUES (?, ?, ?, ?, ?, ?, ?, ?)
             ''', (
                 target_task_id,
                 parent_id_input or None,
                 task_input or 'Task',
-                task_type_input or '',
+                category_input or '',
                 status_input or 'in-progress',
                 json.dumps(merged_data),
                 now,
@@ -619,7 +1070,7 @@ blocks:
 
             # Get current values for change tracking
             current_row = conn.execute(
-                "SELECT task, task_type, status FROM tasks WHERE task_id=?",
+                "SELECT task, category, status FROM tasks WHERE task_id=?",
                 (target_task_id,)
             ).fetchone()
 
@@ -628,10 +1079,10 @@ blocks:
                 params.append(task_input)
                 changes['task'] = [current_row['task'] if current_row else '', task_input]
 
-            if task_type_input and task_type_input != (current_row['task_type'] if current_row else ''):
-                updates.append("task_type=?")
-                params.append(task_type_input)
-                changes['task_type'] = [current_row['task_type'] if current_row else '', task_type_input]
+            if category_input and category_input != (current_row['category'] if current_row else ''):
+                updates.append("category=?")
+                params.append(category_input)
+                changes['category'] = [current_row['category'] if current_row else '', category_input]
 
             if status_input and status_input != (current_row['status'] if current_row else ''):
                 updates.append("status=?")
@@ -745,7 +1196,7 @@ blocks:
         TASK_INPUT: "{{inputs.task}}"
         TASK_ID_INPUT: "{{inputs.task_id}}"
         PARENT_ID_INPUT: "{{inputs.parent_id}}"
-        TASK_TYPE_INPUT: "{{inputs.task_type}}"
+        TASK_TYPE_INPUT: "{{inputs.category}}"
         STATUS_INPUT: "{{inputs.status}}"
         DATA_INPUT: "{{inputs.data | tojson}}"
         CALLER: "{{inputs.caller}}"
@@ -873,3 +1324,50 @@ outputs:
       - error: Error message if query failed
     type: dict
     value: "{{ (blocks.handle_query.outputs.stdout | fromjson) if blocks.handle_query.succeeded else {} }}"
+
+  # ==========================================================================
+  # Evidence outputs (populated when op=evidence)
+  # ==========================================================================
+  evidence:
+    description: |
+      Evidence operation results (when op=evidence). Contains:
+      - result: Full operation result
+      - success: Whether operation succeeded
+      - items: Query results (for query op)
+      - count: Number of items returned
+      - total_bytes: Total bytes of evidence (for query op)
+    type: dict
+    value: "{{blocks.handle_evidence.outputs if blocks.handle_evidence.succeeded else {}}}"
+
+  # ==========================================================================
+  # Facts outputs (populated when op=facts)
+  # ==========================================================================
+  facts:
+    description: |
+      Facts operation results (when op=facts). Contains:
+      - result: Full operation result
+      - success: Whether operation succeeded
+      - fact_id: Fact ID (for store/get/update ops)
+      - items: Query results (for query op)
+      - count: Number of items returned
+      - conflicts: Detected conflicts (for conflicts op)
+      - has_conflicts: Whether conflicts were found
+    type: dict
+    value: "{{blocks.handle_facts.outputs if blocks.handle_facts.succeeded else {}}}"
+
+  # ==========================================================================
+  # Actions outputs (populated when op=actions)
+  # ==========================================================================
+  actions:
+    description: |
+      Actions operation results (when op=actions). Contains:
+      - result: Full operation result
+      - success: Whether operation succeeded
+      - action_id: Action ID (for log/complete/fail ops)
+      - already_exists: Whether action already existed (for log op)
+      - status: Action status
+      - exists: Whether action exists (for check op)
+      - items: Query results (for query op)
+      - count: Number of items returned
+    type: dict
+    value: "{{blocks.handle_actions.outputs if blocks.handle_actions.succeeded else {}}}"

@@ -1,7 +1,7 @@
 name: cortex-memory-append
 description: |
-  Atomic capability: Append to list in memory.
-  Used to accumulate findings, evidence, etc.
+  Atomic capability: Append to list in memory using composite key.
+  Used to accumulate findings, evidence, file contents across phases.
 
 tags: [cortex, capability, atomic, memory]
 
@@ -11,9 +11,15 @@ inputs:
     description: Path to SQLite state database.
     required: true
 
+  type:
+    type: str
+    description: Memory namespace (e.g., "findings", "evidence").
+    required: false
+    default: ""
+
   key:
     type: str
-    description: Memory key (must be a list).
+    description: Memory key within namespace (must be a list).
     required: true
 
   value:
@@ -30,6 +36,7 @@ blocks:
         state: "{{ inputs.state }}"
         op: memory
         memory_op: append
+        memory_type: "{{ inputs.type }}"
         memory_key: "{{ inputs.key }}"
         memory_value: "{{ inputs.value }}"
         caller: "cortex-memory-append"

@@ -1,0 +1,612 @@
+# =============================================================================
+# CORTEX Gather Phase (v2)
+# =============================================================================
+#
+# Evidence Gathering Phase - collects files and data to answer the query.
+# Stores gathered content in memory for use by subsequent phases.
+#
+# v2 Changes:
+#   - Reads pipeline_config.gather.depth and spawn settings
+#   - Depth controls gathering scope: shallow, focused, broad, deep
+#   - Spawn controls child cell creation: never, complex_only, always
+#   - Can output config_override for REASON/ACT phases
+#
+# Depth Levels:
+#   - shallow: One targeted search (existence checks)
+#   - focused: Few searches in specific area (understanding)
+#   - broad: Many searches across codebase (discovery)
+#   - deep: Everything + related context (debugging, action)
+#
+# Spawn Policies:
+#   - never: Use only atomic capabilities
+#   - complex_only: Spawn for complex sub-gathering
+#   - always: Always spawn parallel gatherers
+#
+# Follows universal fractal pattern with memory storage.
+#
+# =============================================================================
+
+name: cortex-phase-gather
+description: "CORTEX Gather Phase - collects evidence with configurable depth"
+
+tags: [cortex, phase, gather, v2]
+
+inputs:
+  prompt:
+    type: str
+    description: The prompt to gather evidence for.
+    required: true
+
+  system:
+    type: str
+    description: System prompt override.
+    default: |
+      You are the evidence gathering module of a recursive cognitive system (CORTEX).
+      Your role is to plan and execute data collection to answer queries.
+
+      Be efficient - gather only what's needed based on the configured depth level.
+      Store important files to memory for use by later phases.
+
+      If you discover something that requires different analysis than expected,
+      you can output config_override to adjust REASON/ACT behavior.
+
+      Be honest about your confidence. If you're uncertain about what to gather,
+      set uncertainty.exists = true and provide a specific question.
+
+  context:
+    type: dict
+    description: Context including repo_path, category, etc.
+    default: {}
+
+  pipeline_config:
+    type: dict
+    description: Pipeline configuration from CATEGORIZE.
+    default: {}
+
+  memory:
+    type: list
+    description: List of memory keys to retrieve (file paths already gathered).
+    default: []
+
+  synthesis:
+    type: list
+    description: Accumulated synthesis from previous investigations.
+    default: []
+
+  depth:
+    type: num
+    description: Current recursion depth.
+    default: 0
+
+  max_depth:
+    type: num
+    description: Maximum recursion depth.
+    default: 5
+
+  iterations:
+    type: num
+    description: Current task completion iteration.
+    default: 0
+
+  max_iterations:
+    type: num
+    description: Maximum continuation attempts.
+    default: 3
+
+  confidence_threshold:
+    type: num
+    description: Minimum confidence to skip investigation.
+    default: 0.7
+
+  state:
+    type: str
+    description: Path to SQLite state database.
+    default: ""
+
+  parent_id:
+    type: str
+    description: Parent task ID for task tree.
+    default: ""
+
+  profile:
+    type: str
+    description: LLM profile to use.
+    default: "default"
+
+  capabilities:
+    type: list
+    description: Available capabilities registry (filtered by permissions).
+    default: []
+
+  permissions:
+    type: dict
+    description: Permission flags for capability filtering.
+    default: { "read": true, "write": false, "execute": false }
+
+blocks:
+  # ===========================================================================
+  # STEP 1: Register phase task
+  # ===========================================================================
+  - id: register_phase
+    type: Workflow
+    description: Register this phase in the task tree.
+    inputs:
+      workflow: agent-state-management
+      inputs:
+        state: "{{ inputs.state }}"
+        parent_id: "{{ inputs.parent_id }}"
+        task: "Phase: Gather"
+        category: "cortex-gather"
+        status: "in-progress"
+        caller: "cortex-phase-gather"
+        data:
+          depth: "{{ inputs.depth }}"
+          gather_depth: "{{ inputs.pipeline_config.gather.depth | default('focused') }}"
+          spawn_policy: "{{ inputs.pipeline_config.gather.spawn | default('complex_only') }}"
+
+  # ===========================================================================
+  # STEP 2: Retrieve existing memory (if any)
+  # ===========================================================================
+  - id: retrieve_memory
+    type: Workflow
+    description: Check what files already exist in memory.
+    depends_on: [register_phase]
+    condition: "{{ inputs.memory | length > 0 }}"
+    inputs:
+      workflow: agent-state-management
+      inputs:
+        state: "{{ blocks.register_phase.outputs.state }}"
+        op: memory
+        memory_op: query
+        memory_type: "content"
+
+  # ===========================================================================
+  # STEP 3: Attempt - Plan gathering strategy
+  # ===========================================================================
+  - id: attempt
+    type: LLMCall
+    description: Plan evidence gathering strategy based on depth config.
+    depends_on:
+      - block: register_phase
+        required: true
+      - block: retrieve_memory
+        required: false
+    inputs:
+      profile: "{{ inputs.profile }}"
+      timeout: 600
+      system_instructions: "{{ inputs.system }}"
+      prompt: |
+        # Evidence Gathering Planning
+
+        ## Query
+        {{ inputs.prompt }}
+
+        ## Gather Depth: {{ inputs.pipeline_config.gather.depth | default('focused') | upper }}
+
+        {% if inputs.context %}
+        ## Context
+        {{ inputs.context | tojson }}
+        {% endif %}
+
+        {% if blocks.retrieve_memory.succeeded and blocks.retrieve_memory.outputs.prompt.results | length > 0 %}
+        ## Files Already in Memory
+        {% for file in blocks.retrieve_memory.outputs.prompt.results %}
+        - {{ file.key }}
+        {% endfor %}
+        {% endif %}
+
+        {% if inputs.synthesis | length > 0 %}
+        ## Previous Investigations
+        {% for c in inputs.synthesis %}
+        ### Investigation {{ loop.index }}
+        - Question: {{ c.prompt }}
+        - Answer: {{ c.response }}
+        {% if c.synthesis %}
+        - Key Findings: {{ c.synthesis.summary | default('N/A') }}
+        {% endif %}
+        {% endfor %}
+        {% endif %}
+
+        ## Depth-Specific Instructions
+
+        {% if inputs.pipeline_config.gather.depth == 'shallow' %}
+        **SHALLOW DEPTH**: Minimal gathering for quick verification.
+        - 1-2 targeted searches only
+        - Focus on existence verification
+        - Skip broad exploration
+        {% elif inputs.pipeline_config.gather.depth == 'focused' %}
+        **FOCUSED DEPTH**: Targeted gathering in specific area.
+        - 3-5 searches in relevant directories
+        - Get key files, not everything
+        - Follow obvious connections
+        {% elif inputs.pipeline_config.gather.depth == 'broad' %}
+        **BROAD DEPTH**: Comprehensive search across codebase.
+        - Multiple search patterns
+        - Cover all relevant directories
+        - Cast a wide net
+        {% elif inputs.pipeline_config.gather.depth == 'deep' %}
+        **DEEP DEPTH**: Everything relevant + context.
+        - Full file contents, not just outlines
+        - Include related/dependent code
+        - Get tests, configs, documentation
+        {% else %}
+        **DEFAULT**: Use focused gathering strategy.
+        {% endif %}
+
+        ## Available Capabilities (ATOMIC Operations)
+
+        Use these capability workflows in your `operations` array:
+        {% if inputs.capabilities %}
+        {% for cap in inputs.capabilities %}
+
+        **{{ cap.name }}** - {{ cap.description }}
+        Inputs:
+        {% for key, desc in cap.inputs.items() %}
+          - {{ key }}: {{ desc }}
+        {% endfor %}
+        {% endfor %}
+        {% else %}
+        No capabilities available (check permissions).
+        {% endif %}
+
+        ## Cognitive Spawning (COGNITIVE Operations)
+
+        For complex sub-tasks that need full CATEGORIZE→GATHER→REASON→ACT:
+        ```yaml
+        spawn_cells:
+          - prompt: "How does the authentication middleware validate tokens?"
+            reason: "Need deep understanding of auth flow"
+        ```
+
+        Spawn policy: {{ inputs.pipeline_config.gather.spawn | default('complex_only') }}
+
+        ## Config Override
+
+        If you discover something unexpected that should change how REASON or ACT
+        behaves, output config_override. For example:
+        - Found security issues → reason.goal: evaluate, act.trigger: findings_require
+        - Found complex architecture → reason.spawn: uncertain_only
+
+      response_schema:
+        type: object
+        properties:
+          result:
+            type: object
+            description: "Gathering plan (OUTPUT)"
+            properties:
+              strategy:
+                type: string
+                description: "High-level gathering strategy description"
+              operations:
+                type: array
+                description: "Capability workflows to execute (ATOMIC dispatch)"
+                items:
+                  type: object
+                  properties:
+                    capability:
+                      type: string
+                      description: "Capability workflow name: cortex-gather-files, cortex-gather-search"
+                    inputs:
+                      type: object
+                      description: "Capability-specific inputs (patterns, query, mode, etc.)"
+                    reason:
+                      type: string
+                      description: "Why this operation is needed"
+                  required: [capability, inputs, reason]
+              spawn_cells:
+                type: array
+                description: "Child cells for complex sub-gathering (COGNITIVE dispatch)"
+                items:
+                  type: object
+                  properties:
+                    prompt:
+                      type: string
+                      description: "What to investigate"
+                    reason:
+                      type: string
+                      description: "Why spawning is needed"
+                  required: [prompt, reason]
+            required: [strategy, operations]
+          config_override:
+            type: object
+            description: "Override config for REASON/ACT based on discoveries (OUTPUT)"
+            properties:
+              reason:
+                type: object
+                properties:
+                  goal:
+                    type: string
+                    enum: [verify, explain, evaluate, plan, diagnose, enumerate]
+                  spawn:
+                    type: string
+                    enum: [never, uncertain_only, always]
+              act:
+                type: object
+                properties:
+                  trigger:
+                    type: string
+                    enum: [never, findings_require, always]
+                  mode:
+                    type: string
+                    enum: [null, report, implement, fix, verify]
+          confidence:
+            type: number
+            minimum: 0
+            maximum: 1
+            description: "Confidence in gathering plan (INTERNAL)"
+          uncertainty:
+            type: object
+            description: "What you need to know (INTERNAL)"
+            properties:
+              exists:
+                type: boolean
+              question:
+                type: string
+            required: [exists]
+        required: [result, confidence, uncertainty]
+
+  # ===========================================================================
+  # STEP 4: Check if investigation needed
+  # ===========================================================================
+  - id: needs_investigation
+    type: Shell
+    description: Evaluate whether to spawn investigation cell.
+    depends_on: [attempt]
+    inputs:
+      command: |
+        python3 << 'EOF'
+        import json, os
+
+        confidence = float(os.environ.get('CONFIDENCE', '1'))
+        threshold = float(os.environ.get('THRESHOLD', '0.7'))
+        uncertainty_exists = os.environ.get('UNCERTAINTY_EXISTS', 'false').lower() == 'true'
+        question = os.environ.get('UNCERTAINTY_QUESTION', '').strip()
+        depth = int(os.environ.get('DEPTH', '0'))
+        max_depth = int(os.environ.get('MAX_DEPTH', '5'))
+        spawn_policy = os.environ.get('SPAWN_POLICY', 'complex_only')
+
+        # Spawn policy determines when to investigate
+        # never: Never spawn investigations
+        # complex_only: Spawn only when uncertain AND complex
+        # always: Always spawn for parallel gathering
+        allow_spawn = spawn_policy != 'never'
+
+        should_investigate = (
+            allow_spawn and
+            confidence < threshold and
+            uncertainty_exists and
+            question != '' and
+            depth < max_depth
+        )
+
+        if spawn_policy == 'never':
+            reason = 'spawn_disabled'
+        elif confidence >= threshold:
+            reason = 'confident'
+        elif not uncertainty_exists or not question:
+            reason = 'no_uncertainty'
+        elif depth >= max_depth:
+            reason = 'max_depth_reached'
+        else:
+            reason = 'investigating'
+
+        print(json.dumps({
+            'should_investigate': should_investigate,
+            'reason': reason,
+            'confidence': confidence,
+            'depth': depth,
+            'spawn_policy': spawn_policy
+        }))
+        EOF
+      env:
+        CONFIDENCE: "{{ blocks.attempt.outputs.response.confidence }}"
+        THRESHOLD: "{{ inputs.confidence_threshold }}"
+        UNCERTAINTY_EXISTS: "{{ blocks.attempt.outputs.response.uncertainty.exists | default(false) }}"
+        UNCERTAINTY_QUESTION: "{{ blocks.attempt.outputs.response.uncertainty.question | default('') }}"
+        DEPTH: "{{ inputs.depth }}"
+        MAX_DEPTH: "{{ inputs.max_depth }}"
+        SPAWN_POLICY: "{{ inputs.pipeline_config.gather.spawn | default('complex_only') }}"
+
+  # ===========================================================================
+  # STEP 5: Spawn child cell to investigate (if uncertain)
+  # ===========================================================================
+  - id: investigate
+    type: Workflow
+    description: Spawn cortex-cell to investigate uncertainty.
+    depends_on: [needs_investigation]
+    condition: "{{ (blocks.needs_investigation.outputs.stdout | fromjson).should_investigate }}"
+    inputs:
+      workflow: cortex-cell
+      inputs:
+        prompt: "{{ blocks.attempt.outputs.response.uncertainty.question }}"
+        context:
+          repo_path: "{{ inputs.context.repo_path | default('') }}"
+          parent_prompt: "{{ inputs.prompt }}"
+          spawning_phase: "gather"
+        depth: "{{ inputs.depth + 1 }}"
+        max_depth: "{{ inputs.max_depth }}"
+        iterations: 0
+        max_iterations: "{{ inputs.max_iterations }}"
+        state: "{{ blocks.register_phase.outputs.state }}"
+        parent_id: "{{ blocks.register_phase.outputs.task.task_id }}"
+        profile: "{{ inputs.profile }}"
+        confidence_threshold: "{{ inputs.confidence_threshold }}"
+        capabilities: "{{ inputs.capabilities }}"
+        permissions: "{{ inputs.permissions }}"
+
+  # ===========================================================================
+  # STEP 6: Self-recurse if investigation succeeded
+  # ===========================================================================
+  - id: self_recurse
+    type: Workflow
+    description: Call THIS phase with synthesis from investigation.
+    depends_on: [investigate]
+    condition: "{{ blocks.investigate.succeeded }}"
+    inputs:
+      workflow: cortex-phase-gather
+      inputs:
+        prompt: "{{ inputs.prompt }}"
+        system: "{{ inputs.system }}"
+        context: "{{ inputs.context }}"
+        pipeline_config: "{{ inputs.pipeline_config }}"
+        memory: "{{ inputs.memory }}"
+        state: "{{ blocks.register_phase.outputs.state }}"
+        parent_id: "{{ inputs.parent_id }}"
+        profile: "{{ inputs.profile }}"
+        confidence_threshold: "{{ inputs.confidence_threshold }}"
+        capabilities: "{{ inputs.capabilities }}"
+        max_depth: "{{ inputs.max_depth }}"
+        depth: "{{ inputs.depth + 1 }}"
+        iterations: "{{ inputs.iterations }}"
+        max_iterations: "{{ inputs.max_iterations }}"
+        synthesis: |
+          {{ inputs.synthesis + [{
+            'prompt': blocks.attempt.outputs.response.uncertainty.question,
+            'response': blocks.investigate.outputs.response,
+            'synthesis': blocks.investigate.outputs.synthesis
+          }] }}
+
+  # ===========================================================================
+  # STEP 7: Dispatch ATOMIC operations via for_each
+  # ===========================================================================
+  - id: dispatch_operations
+    type: Workflow
+    description: Execute capability workflows in parallel via for_each.
+    depends_on: [needs_investigation]
+    condition: |
+      {{ not (blocks.needs_investigation.outputs.stdout | fromjson).should_investigate
+         and (blocks.attempt.outputs.response.result.operations | default([]) | length > 0) }}
+    for_each: "{{ blocks.attempt.outputs.response.result.operations }}"
+    for_each_mode: parallel
+    max_parallel: 5
+    continue_on_error: true
+    inputs:
+      workflow: "{{ each.value.capability }}"
+      inputs: "{{ {'state': blocks.register_phase.outputs.state, 'base_path': inputs.context.repo_path | default('.')} | combine(each.value.inputs) }}"
+
+  # ===========================================================================
+  # STEP 7b: Dispatch COGNITIVE spawning via for_each
+  # ===========================================================================
+  - id: spawn_cells
+    type: Workflow
+    description: Spawn child cortex-cells for complex sub-gathering.
+    depends_on: [needs_investigation]
+    condition: |
+      {{ not (blocks.needs_investigation.outputs.stdout | fromjson).should_investigate
+         and (blocks.attempt.outputs.response.result.spawn_cells | default([]) | length > 0)
+         and inputs.pipeline_config.gather.spawn != 'never'
+         and inputs.depth < inputs.max_depth }}
+    for_each: "{{ blocks.attempt.outputs.response.result.spawn_cells }}"
+    for_each_mode: parallel
+    max_parallel: 3
+    continue_on_error: true
+    inputs:
+      workflow: cortex-cell
+      inputs:
+        prompt: "{{ each.value.prompt }}"
+        context: "{{ inputs.context | combine({'parent_prompt': inputs.prompt, 'spawning_phase': 'gather', 'spawn_reason': each.value.reason}) }}"
+        depth: "{{ inputs.depth + 1 }}"
+        max_depth: "{{ inputs.max_depth }}"
+        iterations: 0
+        max_iterations: "{{ inputs.max_iterations }}"
+        state: "{{ blocks.register_phase.outputs.state }}"
+        parent_id: "{{ blocks.register_phase.outputs.task.task_id }}"
+        profile: "{{ inputs.profile }}"
+        confidence_threshold: "{{ inputs.confidence_threshold }}"
+        capabilities: "{{ inputs.capabilities }}"
+        permissions: "{{ inputs.permissions }}"
+
+  # ===========================================================================
+  # STEP 8: Compile results from for_each dispatch
+  # ===========================================================================
+  - id: compile_result
+    type: Shell
+    description: Compile gathering results from dispatch operations and spawn cells.
+    depends_on:
+      - block: self_recurse
+        required: false
+      - block: dispatch_operations
+        required: false
+      - block: spawn_cells
+        required: false
+    inputs:
+      command: |
+        python3 << 'EOF'
+        import json
+        import os
+
+        self_recursed = os.environ.get('SELF_RECURSED', 'false').lower() == 'true'
+        self_recurse_result = json.loads(os.environ.get('SELF_RECURSE_RESULT', '{}'))
+        strategy = os.environ.get('STRATEGY', '')
+        ops_count = int(os.environ.get('OPS_COUNT', '0'))
+        ops_failed = int(os.environ.get('OPS_FAILED', '0'))
+        spawn_count = int(os.environ.get('SPAWN_COUNT', '0'))
+        spawn_failed = int(os.environ.get('SPAWN_FAILED', '0'))
+
+        if self_recursed and self_recurse_result:
+            # Pass through recursive result
+            print(json.dumps(self_recurse_result))
+        else:
+            # Build result from dispatch execution
+            result = {
+                'strategy': strategy,
+                'operations_executed': ops_count,
+                'operations_failed': ops_failed,
+                'cells_spawned': spawn_count,
+                'cells_failed': spawn_failed
+            }
+            print(json.dumps(result))
+        EOF
+      env:
+        SELF_RECURSED: "{{ 'true' if blocks.self_recurse.succeeded else 'false' }}"
+        SELF_RECURSE_RESULT: "{{ blocks.self_recurse.outputs.result | default({}) | tojson }}"
+        STRATEGY: "{{ blocks.attempt.outputs.response.result.strategy | default('') }}"
+        OPS_COUNT: "{{ blocks.dispatch_operations.metadata.count | default(0) }}"
+        OPS_FAILED: "{{ blocks.dispatch_operations.metadata.count_failed | default(0) }}"
+        SPAWN_COUNT: "{{ blocks.spawn_cells.metadata.count | default(0) }}"
+        SPAWN_FAILED: "{{ blocks.spawn_cells.metadata.count_failed | default(0) }}"
+
+  # ===========================================================================
+  # STEP 10: Track completion
+  # ===========================================================================
+  - id: track_done
+    type: Workflow
+    description: Mark phase complete.
+    depends_on: [compile_result]
+    inputs:
+      workflow: agent-state-management
+      inputs:
+        state: "{{ blocks.register_phase.outputs.state }}"
+        task_id: "{{ blocks.register_phase.outputs.task.task_id }}"
+        status: "done"
+        caller: "cortex-phase-gather"
+        data:
+          depth: "{{ inputs.depth }}"
+          gather_depth: "{{ inputs.pipeline_config.gather.depth | default('focused') }}"
+          recursed: "{{ blocks.self_recurse.succeeded | default(false) }}"
+
+# =============================================================================
+# OUTPUTS
+# =============================================================================
+outputs:
+  result:
+    type: dict
+    description: "Gathering result. Child's result passes through unchanged."
+    value: "{{ blocks.compile_result.outputs.stdout | fromjson }}"
+
+  config_override:
+    type: dict
+    description: "Config override for REASON/ACT based on discoveries."
+    value: |
+      {{ blocks.self_recurse.outputs.config_override if blocks.self_recurse.succeeded
+         else (blocks.attempt.outputs.response.config_override | default({})) }}
+
+  memories:
+    type: list
+    description: "File paths stored to memory (tracked via state DB, not aggregated here)."
+    value: "{{ blocks.self_recurse.outputs.memories if blocks.self_recurse.succeeded else [] }}"
+
+  state:
+    type: str
+    description: "Path to state database."
+    value: "{{ blocks.register_phase.outputs.state }}"

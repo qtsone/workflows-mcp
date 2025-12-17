@@ -1,9 +1,10 @@
 name: cortex-gather-files
 description: |
-  Atomic capability: Read files matching patterns.
+  Atomic capability: Read files matching patterns and store as evidence.
   Wraps ReadFiles block with cortex-compatible interface.
+  Automatically stores gathered content in episodic memory (evidence table).
 
-tags: [cortex, capability, atomic, gather]
+tags: [cortex, capability, atomic, gather, evidence]
 
 inputs:
   patterns:
@@ -35,6 +36,18 @@ inputs:
     required: false
     default: 100
 
+  state:
+    type: str
+    description: Path to SQLite state database (for evidence storage).
+    required: false
+    default: ""
+
+  source_cell:
+    type: str
+    description: Cell ID gathering this evidence.
+    required: false
+    default: ""
+
 blocks:
   - id: read
     type: ReadFiles
@@ -44,6 +57,26 @@ blocks:
       mode: "{{ inputs.mode }}"
       max_files: "{{ inputs.max_files }}"
       max_file_size_kb: "{{ inputs.max_file_size_kb }}"
+
+  # Store each file as evidence in episodic memory
+  - id: store_evidence
+    type: Workflow
+    description: Store gathered files as evidence.
+    depends_on: [read]
+    condition: "{{ inputs.state != '' and blocks.read.outputs.files | length > 0 }}"
+    for_each: "{{ blocks.read.outputs.files }}"
+    for_each_mode: parallel
+    max_parallel: 10
+    continue_on_error: true
+    inputs:
+      workflow: cortex-evidence-store
+      inputs:
+        state: "{{ inputs.state }}"
+        key: "{{ each.value.path }}"
+        value: "{{ each.value | tojson }}"
+        evidence_type: "{{ 'outline' if inputs.mode == 'outline' else 'content' }}"
+        source_cell: "{{ inputs.source_cell }}"
+        source_operation: "cortex-gather-files"
 
 outputs:
   files:
@@ -64,7 +97,12 @@ outputs:
   evidence:
     value: |
       {{
-        blocks.read.outputs.files | map(attribute='path') | map('regex_replace', '^', inputs.mode ~ ':') | list
+        blocks.read.outputs.files | map(attribute='path') | list
       }}
     type: list
-    description: Evidence references for findings.
+    description: Evidence references for findings (file paths).
+
+  evidence_stored:
+    value: "{{ blocks.store_evidence.metadata.count | default(0) }}"
+    type: num
+    description: Number of files stored as evidence.

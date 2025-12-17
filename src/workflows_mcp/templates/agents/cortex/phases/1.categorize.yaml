@@ -1,0 +1,476 @@
+# =============================================================================
+# CORTEX Categorize Phase (v2)
+# =============================================================================
+#
+# Classifies the query and configures the pipeline via mapping table.
+# First phase in the cognitive cycle.
+#
+# v2 Changes:
+#   - Outputs pipeline_config from mapping table (deterministic, no LLM variance)
+#   - Removed is_atomic/suggested_phases (ALL phases always run in v2)
+#   - Category determines HOW phases behave, not WHICH phases run
+#
+# Categories → Pipeline Config:
+#   - existence: shallow/verify/never - Quick check
+#   - understanding: focused/explain/never - Learn about something
+#   - discovery: broad/enumerate/never - Find all instances
+#   - quality: focused/evaluate/report - Evaluate quality
+#   - planning: focused/plan/never - Create a plan
+#   - debugging: deep/diagnose/fix - Find root cause
+#   - action: deep/plan/implement - Execute something
+#
+# Follows universal fractal pattern: can spawn sub-investigation if uncertain.
+#
+# =============================================================================
+
+name: cortex-phase-categorize
+description: "CORTEX Categorize Phase - classifies prompt for optimal processing"
+
+tags: [cortex, phase, categorize]
+
+inputs:
+  prompt:
+    type: str
+    description: The prompt to categorize.
+    required: true
+
+  system:
+    type: str
+    description: System prompt override.
+    default: |
+      You are the categorization module of a recursive cognitive system (CORTEX).
+      Your role is to classify prompts to determine the optimal processing strategy.
+
+      Be honest about your confidence. If you're uncertain about the category,
+      set uncertainty.exists = true and provide a specific question that would
+      help clarify the classification.
+
+  context:
+    type: dict
+    description: Shared context (repo_path, parent_prompt, spawning_phase, etc.).
+    default: {}
+
+  memory:
+    type: list
+    description: List of memory keys to retrieve (file paths).
+    default: []
+
+  synthesis:
+    type: list
+    description: Accumulated synthesis from previous investigations.
+    default: []
+
+  depth:
+    type: num
+    description: Current recursion depth.
+    default: 0
+
+  max_depth:
+    type: num
+    description: Maximum recursion depth.
+    default: 5
+
+  confidence_threshold:
+    type: num
+    description: Minimum confidence to skip investigation.
+    default: 0.7
+
+  state:
+    type: str
+    description: Path to SQLite state database. Created if empty.
+    default: ""
+
+  parent_id:
+    type: str
+    description: Parent task ID for task tree.
+    default: ""
+
+  profile:
+    type: str
+    description: LLM profile to use.
+    default: "default"
+
+  capabilities:
+    type: list
+    description: Available capabilities registry (filtered by permissions).
+    default: []
+
+  permissions:
+    type: dict
+    description: Permission flags for capability filtering.
+    default: { "read": true, "write": false, "execute": false }
+
+blocks:
+  # ===========================================================================
+  # STEP 1: Register phase task
+  # ===========================================================================
+  - id: register_phase
+    type: Workflow
+    description: Register this phase in the task tree.
+    inputs:
+      workflow: agent-state-management
+      inputs:
+        state: "{{ inputs.state }}"
+        parent_id: "{{ inputs.parent_id }}"
+        task: "Phase: Categorize"
+        category: "cortex-categorize"
+        status: "in-progress"
+        caller: "cortex-phase-categorize"
+        data:
+          depth: "{{ inputs.depth }}"
+
+  # ===========================================================================
+  # STEP 2: Retrieve memory (if requested)
+  # ===========================================================================
+  - id: retrieve_memory
+    type: Workflow
+    description: Get files from memory.
+    depends_on: [register_phase]
+    condition: "{{ inputs.memory | length > 0 }}"
+    inputs:
+      workflow: agent-state-management
+      inputs:
+        state: "{{ blocks.register_phase.outputs.state }}"
+        op: memory
+        memory_op: query
+        memory_type: "content"
+
+  # ===========================================================================
+  # STEP 3: Attempt categorization
+  # ===========================================================================
+  - id: attempt
+    type: LLMCall
+    description: Classify the prompt.
+    depends_on:
+      - block: register_phase
+        required: true
+      - block: retrieve_memory
+        required: false
+    inputs:
+      profile: "{{ inputs.profile }}"
+      timeout: 600
+      system_instructions: "{{ inputs.system }}"
+      prompt: |
+        # Prompt Categorization
+
+        ## Prompt
+        {{ inputs.prompt }}
+
+        {% if inputs.context %}
+        ## Context
+        {{ inputs.context | tojson }}
+        {% endif %}
+
+        {% if blocks.retrieve_memory.succeeded and blocks.retrieve_memory.outputs.prompt.results %}
+        ## Retrieved Files
+        {% for file in blocks.retrieve_memory.outputs.prompt.results %}
+        ### {{ file.key }}
+        ```
+        {{ file.value }}
+        ```
+        {% endfor %}
+        {% endif %}
+
+        {% if inputs.synthesis | length > 0 %}
+        ## Previous Investigations
+        Use these findings to improve your confidence:
+        {% for c in inputs.synthesis %}
+        ### Investigation {{ loop.index }}
+        - Question: {{ c.prompt }}
+        - Answer: {{ c.response }}
+        {% if c.synthesis %}
+        - Key Findings: {{ c.synthesis.summary | default('N/A') }}
+        {% endif %}
+        {% endfor %}
+        {% endif %}
+
+        ## Categories
+
+        Classify into ONE category:
+
+        | Category | Description | Examples |
+        |----------|-------------|----------|
+        | existence | Check if something exists | "Does file X exist?", "Is there a config for Y?" |
+        | understanding | Learn about something | "What does X do?", "How does Y work?" |
+        | discovery | Find all instances | "Find all security issues", "List all API endpoints" |
+        | quality | Evaluate something | "Is this code good?", "Are there any bugs?" |
+        | planning | Create a plan | "How do I implement X?", "Plan the migration" |
+        | debugging | Find root cause | "Why does X fail?", "What causes the error?" |
+        | action | Execute something | "Fix the bug", "Implement feature X" |
+
+        ## Assessment
+
+        Determine:
+        1. **category**: Which category best fits this query?
+        2. **confidence**: How confident are you? (0.0-1.0)
+        3. **uncertainty**: If confidence < {{ inputs.confidence_threshold }}, what would help?
+
+        Note: ALL phases always run in CORTEX v2. Category determines HOW each phase
+        behaves via pipeline_config, not WHICH phases run.
+
+      response_schema:
+        type: object
+        properties:
+          result:
+            type: object
+            description: "Categorization result (OUTPUT)"
+            properties:
+              category:
+                type: string
+                enum:
+                  [
+                    existence,
+                    understanding,
+                    discovery,
+                    quality,
+                    planning,
+                    debugging,
+                    action,
+                  ]
+              reasoning:
+                type: string
+                description: "Why this category was chosen"
+            required: [category, reasoning]
+          confidence:
+            type: number
+            minimum: 0
+            maximum: 1
+            description: "Confidence in classification (INTERNAL)"
+          uncertainty:
+            type: object
+            description: "What you need to know (INTERNAL)"
+            properties:
+              exists:
+                type: boolean
+              question:
+                type: string
+            required: [exists]
+        required: [result, confidence, uncertainty]
+
+  # ===========================================================================
+  # STEP 4: Check if investigation needed
+  # ===========================================================================
+  - id: needs_investigation
+    type: Shell
+    description: Evaluate whether to spawn investigation cell.
+    depends_on: [attempt]
+    inputs:
+      command: |
+        python3 << 'EOF'
+        import json, os
+
+        confidence = float(os.environ.get('CONFIDENCE', '1'))
+        threshold = float(os.environ.get('THRESHOLD', '0.7'))
+        uncertainty_exists = os.environ.get('UNCERTAINTY_EXISTS', 'false').lower() == 'true'
+        question = os.environ.get('UNCERTAINTY_QUESTION', '').strip()
+        depth = int(os.environ.get('DEPTH', '0'))
+        max_depth = int(os.environ.get('MAX_DEPTH', '5'))
+
+        should_investigate = (
+            confidence < threshold and
+            uncertainty_exists and
+            question != '' and
+            depth < max_depth
+        )
+
+        if confidence >= threshold:
+            reason = 'confident'
+        elif not uncertainty_exists or not question:
+            reason = 'no_uncertainty'
+        elif depth >= max_depth:
+            reason = 'max_depth_reached'
+        else:
+            reason = 'investigating'
+
+        print(json.dumps({
+            'should_investigate': should_investigate,
+            'reason': reason,
+            'confidence': confidence,
+            'depth': depth
+        }))
+        EOF
+      env:
+        CONFIDENCE: "{{ blocks.attempt.outputs.response.confidence }}"
+        THRESHOLD: "{{ inputs.confidence_threshold }}"
+        UNCERTAINTY_EXISTS: "{{ blocks.attempt.outputs.response.uncertainty.exists | default(false) }}"
+        UNCERTAINTY_QUESTION: "{{ blocks.attempt.outputs.response.uncertainty.question | default('') }}"
+        DEPTH: "{{ inputs.depth }}"
+        MAX_DEPTH: "{{ inputs.max_depth }}"
+
+  # ===========================================================================
+  # STEP 5: Look up pipeline_config from mapping table
+  # ===========================================================================
+  - id: lookup_config
+    type: Shell
+    description: Map category to pipeline_config (deterministic lookup).
+    depends_on: [attempt]
+    inputs:
+      command: |
+        python3 << 'EOF'
+        import json
+        import os
+
+        # =======================================================================
+        # CATEGORY → PIPELINE CONFIG MAPPING TABLE
+        # =======================================================================
+        # This table is the SINGLE SOURCE OF TRUTH for how categories configure
+        # the pipeline. Changing this table changes CORTEX behavior.
+        #
+        # gather.depth: shallow | focused | broad | deep
+        # gather.spawn: never | complex_only | always
+        # reason.goal: verify | explain | evaluate | plan | diagnose | enumerate
+        # reason.spawn: never | uncertain_only | always
+        # act.trigger: never | findings_require | always
+        # act.mode: null | report | implement | fix | verify
+        # =======================================================================
+
+        MAPPING = {
+            "existence": {
+                "gather": {"depth": "shallow", "spawn": "never"},
+                "reason": {"goal": "verify", "spawn": "never"},
+                "act": {"trigger": "never", "mode": None}
+            },
+            "understanding": {
+                "gather": {"depth": "focused", "spawn": "complex_only"},
+                "reason": {"goal": "explain", "spawn": "uncertain_only"},
+                "act": {"trigger": "never", "mode": None}
+            },
+            "discovery": {
+                "gather": {"depth": "broad", "spawn": "always"},
+                "reason": {"goal": "enumerate", "spawn": "never"},
+                "act": {"trigger": "never", "mode": None}
+            },
+            "quality": {
+                "gather": {"depth": "focused", "spawn": "complex_only"},
+                "reason": {"goal": "evaluate", "spawn": "uncertain_only"},
+                "act": {"trigger": "findings_require", "mode": "report"}
+            },
+            "planning": {
+                "gather": {"depth": "focused", "spawn": "complex_only"},
+                "reason": {"goal": "plan", "spawn": "uncertain_only"},
+                "act": {"trigger": "never", "mode": None}
+            },
+            "action": {
+                "gather": {"depth": "deep", "spawn": "complex_only"},
+                "reason": {"goal": "plan", "spawn": "uncertain_only"},
+                "act": {"trigger": "always", "mode": "implement"}
+            },
+            "debugging": {
+                "gather": {"depth": "deep", "spawn": "complex_only"},
+                "reason": {"goal": "diagnose", "spawn": "uncertain_only"},
+                "act": {"trigger": "findings_require", "mode": "fix"}
+            }
+        }
+
+        category = os.environ.get('CATEGORY', 'understanding')
+        config = MAPPING.get(category, MAPPING['understanding'])
+
+        print(json.dumps({
+            "category": category,
+            "pipeline_config": config
+        }))
+        EOF
+      env:
+        CATEGORY: "{{ blocks.attempt.outputs.response.result.category }}"
+
+  # ===========================================================================
+  # STEP 6: Spawn child cell to investigate
+  # ===========================================================================
+  - id: investigate
+    type: Workflow
+    description: Spawn cortex-cell to investigate uncertainty.
+    depends_on: [needs_investigation, lookup_config]
+    condition: "{{ (blocks.needs_investigation.outputs.stdout | fromjson).should_investigate }}"
+    inputs:
+      workflow: cortex-cell
+      inputs:
+        prompt: "{{ blocks.attempt.outputs.response.uncertainty.question }}"
+        context:
+          repo_path: "{{ inputs.context.repo_path | default('') }}"
+          parent_prompt: "{{ inputs.prompt }}"
+          spawning_phase: "categorize"
+        depth: "{{ inputs.depth + 1 }}"
+        max_depth: "{{ inputs.max_depth }}"
+        state: "{{ blocks.register_phase.outputs.state }}"
+        parent_id: "{{ blocks.register_phase.outputs.task.task_id }}"
+        profile: "{{ inputs.profile }}"
+        confidence_threshold: "{{ inputs.confidence_threshold }}"
+        capabilities: "{{ inputs.capabilities }}"
+        permissions: "{{ inputs.permissions }}"
+
+  # ===========================================================================
+  # STEP 7: Self-recurse with accumulated synthesis
+  # ===========================================================================
+  - id: self_recurse
+    type: Workflow
+    description: Call THIS phase with synthesis from investigation.
+    depends_on: [investigate]
+    condition: "{{ blocks.investigate.succeeded }}"
+    inputs:
+      workflow: cortex-phase-categorize
+      inputs:
+        prompt: "{{ inputs.prompt }}"
+        system: "{{ inputs.system }}"
+        context: "{{ inputs.context }}"
+        memory: "{{ inputs.memory }}"
+        state: "{{ blocks.register_phase.outputs.state }}"
+        parent_id: "{{ inputs.parent_id }}"
+        profile: "{{ inputs.profile }}"
+        confidence_threshold: "{{ inputs.confidence_threshold }}"
+        capabilities: "{{ inputs.capabilities }}"
+        permissions: "{{ inputs.permissions }}"
+        max_depth: "{{ inputs.max_depth }}"
+        depth: "{{ inputs.depth + 1 }}"
+        synthesis: |
+          {{ inputs.synthesis + [{
+            'query': blocks.attempt.outputs.response.uncertainty.question,
+            'response': blocks.investigate.outputs.response,
+            'synthesis': blocks.investigate.outputs.synthesis
+          }] }}
+
+  # ===========================================================================
+  # STEP 8: Track completion
+  # ===========================================================================
+  - id: track_done
+    type: Workflow
+    description: Mark phase complete.
+    depends_on:
+      - block: attempt
+        required: true
+      - block: lookup_config
+        required: true
+      - block: self_recurse
+        required: false
+    inputs:
+      workflow: agent-state-management
+      inputs:
+        state: "{{ blocks.register_phase.outputs.state }}"
+        task_id: "{{ blocks.register_phase.outputs.task.task_id }}"
+        status: "done"
+        caller: "cortex-phase-categorize"
+        data:
+          depth: "{{ inputs.depth }}"
+          recursed: "{{ blocks.self_recurse.succeeded | default(false) }}"
+
+# =============================================================================
+# OUTPUTS: Category + pipeline_config for downstream phases
+# =============================================================================
+outputs:
+  result:
+    type: dict
+    description: "Categorization result. Child's result passes through unchanged."
+    value: |
+      {{ blocks.self_recurse.outputs.result if blocks.self_recurse.succeeded
+         else blocks.attempt.outputs.response.result }}
+
+  pipeline_config:
+    type: dict
+    description: "Pipeline configuration from mapping table. Drives all phase behavior."
+    value: |
+      {{ blocks.self_recurse.outputs.pipeline_config if blocks.self_recurse.succeeded
+         else (blocks.lookup_config.outputs.stdout | fromjson).pipeline_config }}
+
+  state:
+    type: str
+    description: "Path to state database."
+    value: "{{ blocks.register_phase.outputs.state }}"

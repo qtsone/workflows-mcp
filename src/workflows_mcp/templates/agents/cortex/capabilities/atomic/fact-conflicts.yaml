@@ -1,0 +1,53 @@
+name: cortex-fact-conflicts
+description: |
+  Atomic capability: Detect conflicting facts in semantic memory.
+  Used by REASON phase before storing new facts to identify contradictions.
+
+  Conflict detection uses FTS5 to find similar claims,
+  then returns potential conflicts for human review or automatic resolution.
+
+tags: [cortex, capability, atomic, facts, memory]
+
+inputs:
+  state:
+    type: str
+    description: Path to SQLite state database.
+    required: true
+
+  new_facts:
+    type: str
+    description: JSON array of new facts to check for conflicts.
+    required: true
+
+blocks:
+  - id: detect
+    type: Workflow
+    inputs:
+      workflow: agent-state-management
+      inputs:
+        state: "{{ inputs.state }}"
+        op: facts
+        facts_op: conflicts
+        facts_new_facts: "{{ inputs.new_facts }}"
+        caller: "cortex-fact-conflicts"
+
+outputs:
+  success:
+    value: "{{ blocks.detect.outputs.facts.success | default(false) }}"
+    type: bool
+    description: Whether operation succeeded.
+
+  conflicts:
+    value: "{{ blocks.detect.outputs.facts.conflicts | default([]) }}"
+    type: list
+    description: List of detected conflicts.
+
+  has_conflicts:
+    value: "{{ blocks.detect.outputs.facts.has_conflicts | default(false) }}"
+    type: bool
+    description: Whether any conflicts were found.
+
+  conflict_count:
+    value: "{{ blocks.detect.outputs.facts.conflicts | default([]) | length }}"
+    type: num
+    description: Number of conflicts detected.

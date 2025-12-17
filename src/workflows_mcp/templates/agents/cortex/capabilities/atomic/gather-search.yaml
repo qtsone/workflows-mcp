@@ -1,9 +1,10 @@
 name: cortex-gather-search
 description: |
-  Atomic capability: Search for patterns in codebase.
+  Atomic capability: Search for patterns in codebase and store as evidence.
   Wraps ripgrep via Shell block.
+  Automatically stores search results in episodic memory (evidence table).
 
-tags: [cortex, capability, atomic, gather, search]
+tags: [cortex, capability, atomic, gather, search, evidence]
 
 inputs:
   pattern:
@@ -28,6 +29,18 @@ inputs:
     description: Maximum matches to return.
     required: false
     default: 50
+
+  state:
+    type: str
+    description: Path to SQLite state database (for evidence storage).
+    required: false
+    default: ""
+
+  source_cell:
+    type: str
+    description: Cell ID gathering this evidence.
+    required: false
+    default: ""
 
 blocks:
   - id: search
@@ -85,6 +98,22 @@ blocks:
         FILE_TYPE: "{{ inputs.file_type }}"
         MAX_MATCHES: "{{ inputs.max_matches }}"
 
+  # Store search results as evidence in episodic memory
+  - id: store_evidence
+    type: Workflow
+    description: Store search results as evidence.
+    depends_on: [search]
+    condition: "{{ inputs.state != '' and (blocks.search.outputs.stdout | fromjson).count > 0 }}"
+    inputs:
+      workflow: cortex-evidence-store
+      inputs:
+        state: "{{ inputs.state }}"
+        key: "search:{{ inputs.pattern }}"
+        value: "{{ blocks.search.outputs.stdout }}"
+        evidence_type: "search"
+        source_cell: "{{ inputs.source_cell }}"
+        source_operation: "cortex-gather-search"
+
 outputs:
   matches:
     value: "{{ (blocks.search.outputs.stdout | fromjson).matches }}"
@@ -105,3 +134,8 @@ outputs:
     value: "{{ ['search:' ~ inputs.pattern ~ ':' ~ (blocks.search.outputs.stdout | fromjson).count ~ ' matches'] }}"
     type: list
     description: Evidence reference for findings.
+
+  evidence_stored:
+    value: "{{ blocks.store_evidence.succeeded | default(false) }}"
+    type: bool
+    description: Whether evidence was stored.

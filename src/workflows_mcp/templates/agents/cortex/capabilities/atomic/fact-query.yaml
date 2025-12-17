@@ -1,0 +1,64 @@
+name: cortex-fact-query
+description: |
+  Atomic capability: Query validated facts from semantic memory.
+  Used by REASON phase to recall existing knowledge.
+
+  Supports:
+  - Full-text search via FTS5
+  - Status filtering (active, verified, contested, superseded, refuted)
+
+tags: [cortex, capability, atomic, facts, memory]
+
+inputs:
+  state:
+    type: str
+    description: Path to SQLite state database.
+    required: true
+
+  query:
+    type: str
+    description: FTS query string for semantic search. Leave empty for all facts.
+    required: false
+    default: ""
+
+  status:
+    type: str
+    description: Filter by status (default "active").
+    required: false
+    default: "active"
+
+  limit:
+    type: num
+    description: Maximum results to return.
+    required: false
+    default: 50
+
+blocks:
+  - id: query
+    type: Workflow
+    inputs:
+      workflow: agent-state-management
+      inputs:
+        state: "{{ inputs.state }}"
+        op: facts
+        facts_op: query
+        facts_query: "{{ inputs.query }}"
+        facts_status_filter: "{{ inputs.status }}"
+        facts_limit: "{{ inputs.limit }}"
+        caller: "cortex-fact-query"
+
+outputs:
+  success:
+    value: "{{ blocks.query.outputs.facts.success | default(false) }}"
+    type: bool
+    description: Whether operation succeeded.
+
+  items:
+    value: "{{ blocks.query.outputs.facts.items | default([]) }}"
+    type: list
+    description: List of matching facts.
+
+  count:
+    value: "{{ blocks.query.outputs.facts.count | default(0) }}"
+    type: num
+    description: Number of facts returned.

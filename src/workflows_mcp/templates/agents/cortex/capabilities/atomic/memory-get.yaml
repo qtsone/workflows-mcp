@@ -1,7 +1,7 @@
 name: cortex-memory-get
 description: |
-  Atomic capability: Retrieve value from memory.
-  Used to recall knowledge from previous cells.
+  Atomic capability: Retrieve value from memory using composite key.
+  Used to recall knowledge from specific namespaces.
 
 tags: [cortex, capability, atomic, memory]
 
@@ -11,9 +11,15 @@ inputs:
     description: Path to SQLite state database.
     required: true
 
+  type:
+    type: str
+    description: Memory namespace type (e.g., "findings", "evidence").
+    required: false
+    default: ""
+
   key:
     type: str
-    description: Memory key to retrieve.
+    description: Memory key within namespace.
     required: true
 
   default:
@@ -23,7 +29,7 @@ inputs:
     default: ""
 
 blocks:
-  - id: get
+  - id: retrieve
     type: Workflow
     inputs:
       workflow: agent-state-management
@@ -31,18 +37,19 @@ blocks:
         state: "{{ inputs.state }}"
         op: memory
         memory_op: get
+        memory_type: "{{ inputs.type }}"
         memory_key: "{{ inputs.key }}"
         memory_default: "{{ inputs.default }}"
         caller: "cortex-memory-get"
 
 outputs:
   value:
-    value: "{{ blocks.get.outputs.memory.value }}"
-    type: str
-    description: Retrieved value.
+    value: "{{ blocks.retrieve.outputs.memory.value }}"
+    type: json
+    description: Retrieved value (preserves original type - dict, list, string, etc.).
 
   exists:
-    value: "{{ blocks.get.outputs.memory.exists | default(false) }}"
+    value: "{{ blocks.retrieve.outputs.memory.exists | default(false) }}"
     type: bool
     description: Whether key existed.
 

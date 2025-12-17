@@ -1,14 +1,14 @@
-name: cortex-synthesize
+name: cortex-act
 description: |
-  Cognitive capability: Merge findings into unified conclusions.
-  Invokes cortex-cell in synthesize mode.
+  Cognitive capability: Execute actions or spawn complex investigations.
+  Invokes cortex-cell in act mode.
 
-tags: [cortex, capability, cognitive, synthesize]
+tags: [cortex, capability, cognitive, act]
 
 inputs:
-  query:
+  prompt:
     type: str
-    description: Query to synthesize answer for.
+    description: Prompt requiring action.
     required: true
 
   context:
@@ -41,13 +41,13 @@ inputs:
     default: ""
 
 blocks:
-  - id: synthesize
+  - id: act
     type: Workflow
     inputs:
       workflow: cortex-cell
       inputs:
-        query: "{{ inputs.query }}"
-        mode: "synthesize"
+        prompt: "{{ inputs.prompt }}"
+        mode: "act"
         context: "{{ inputs.context }}"
         state: "{{ inputs.state }}"
         depth: "{{ inputs.depth }}"
@@ -55,17 +55,17 @@ blocks:
         parent_trace: "{{ inputs.parent_trace }}"
 
 outputs:
-  synthesis:
-    value: "{{ blocks.synthesize.outputs.synthesis }}"
-    type: dict
-    description: Synthesized answer with conclusions.
+  actions:
+    value: "{{ blocks.act.outputs.actions }}"
+    type: list
+    description: Actions taken or spawned.
 
-  answer:
-    value: "{{ blocks.synthesize.outputs.answer | default('') }}"
-    type: str
-    description: Final synthesized answer.
+  results:
+    value: "{{ blocks.act.outputs.results | default({}) }}"
+    type: dict
+    description: Action results.
 
   trace_id:
-    value: "{{ blocks.synthesize.outputs.trace_id }}"
+    value: "{{ blocks.act.outputs.trace_id }}"
     type: str
     description: Trace ID for this invocation.

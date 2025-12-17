@@ -1,14 +1,14 @@
-name: cortex-act
+name: cortex-gather
 description: |
-  Cognitive capability: Execute actions or spawn complex investigations.
-  Invokes cortex-cell in act mode.
+  Cognitive capability: Collect evidence for a prompt.
+  Invokes cortex-cell in gather mode.
 
-tags: [cortex, capability, cognitive, act]
+tags: [cortex, capability, cognitive, gather]
 
 inputs:
-  query:
+  prompt:
     type: str
-    description: Query requiring action.
+    description: Prompt to gather evidence for.
     required: true
 
   context:
@@ -41,13 +41,13 @@ inputs:
     default: ""
 
 blocks:
-  - id: act
+  - id: gather
     type: Workflow
     inputs:
       workflow: cortex-cell
       inputs:
-        query: "{{ inputs.query }}"
-        mode: "act"
+        prompt: "{{ inputs.prompt }}"
+        mode: "gather"
         context: "{{ inputs.context }}"
         state: "{{ inputs.state }}"
         depth: "{{ inputs.depth }}"
@@ -55,17 +55,17 @@ blocks:
         parent_trace: "{{ inputs.parent_trace }}"
 
 outputs:
-  actions:
-    value: "{{ blocks.act.outputs.actions }}"
+  evidence:
+    value: "{{ blocks.gather.outputs.evidence }}"
     type: list
-    description: Actions taken or spawned.
+    description: Collected evidence items.
 
-  results:
-    value: "{{ blocks.act.outputs.results | default({}) }}"
-    type: dict
-    description: Action results.
+  sources:
+    value: "{{ blocks.gather.outputs.sources | default([]) }}"
+    type: list
+    description: Sources consulted.
 
   trace_id:
-    value: "{{ blocks.act.outputs.trace_id }}"
+    value: "{{ blocks.gather.outputs.trace_id }}"
     type: str
     description: Trace ID for this invocation.

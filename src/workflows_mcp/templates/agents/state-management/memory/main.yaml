@@ -1,29 +1,29 @@
 name: agent-memory
 description: |
-  Key-value memory storage using SQLite.
+  Key-value memory storage using SQLite with composite key support.
 
-  Provides shared memory across recursive workflow calls with flat key storage
-  and multiple operations. Keys are stored as-is (dot-notation is treated as
-  a string key, not nested path).
+  Provides shared memory across recursive workflow calls. Uses composite
+  primary key (type, key) for namespace isolation between phases/components.
 
   Operations:
-  - set: Store value at key (returns previous value)
-  - get: Retrieve value at key (returns default if missing)
-  - append: Append to list at key (creates list if needed)
-  - merge: Deep merge dict into key (creates dict if needed)
-  - delete: Remove key (returns deleted value)
-  - keys: List keys matching pattern (glob-style)
+  - set: Store value at (type, key)
+  - get: Retrieve value at (type, key)
+  - append: Append to list at (type, key)
+  - merge: Deep merge dict at (type, key)
+  - delete: Remove entry at (type, key)
+  - keys: List keys matching pattern within type
 
   Example:
-    # Store a finding
+    # Store findings for categorize phase
     workflow: agent-memory
     inputs:
       path: "{{state.db_path}}"
       op: append
-      key: cells.root.findings
-      value: {"file": "auth.py", "issue": "Missing validation"}
+      type: findings
+      key: categorize
+      value: {"category": "understanding", "confidence": 0.9}
 
-tags: [agent, memory, state-management, key-value, sqlite]
+tags: [agent, memory, state-management, key-value, sqlite, composite-key]
 
 inputs:
   path:
@@ -35,19 +35,27 @@ inputs:
     type: str
     description: |
       Memory operation to perform:
-      - set: Store value at key
-      - get: Retrieve value at key
-      - append: Append value to list at key
-      - merge: Deep merge dict into key
-      - delete: Remove key
-      - keys: List keys matching pattern
+      - set: Store value at (type, key)
+      - get: Retrieve value at (type, key)
+      - append: Append value to list at (type, key)
+      - merge: Deep merge dict at (type, key)
+      - delete: Remove entry at (type, key)
+      - keys: List keys matching pattern within type
     required: true
+
+  type:
+    type: str
+    description: |
+      Memory namespace type. Forms composite key with 'key'.
+      Examples: "findings", "evidence", "understanding"
+    required: false
+    default: ""
 
   key:
     type: str
     description: |
-      Key for the memory entry.
-      Examples: "context.framework", "findings", "cells.root.evidence"
+      Key within the type namespace.
+      Examples: "categorize", "gather", "synthesize"
     required: true
 
   value:
@@ -70,7 +78,7 @@ inputs:
 
 blocks:
   # ==========================================================================
-  # Execute memory operation using SQLite
+  # Execute memory operation using SQLite with composite key (type, key)
   # ==========================================================================
   - id: execute
     type: Shell
@@ -83,6 +91,7 @@ blocks:
 
         db_path = os.environ['DB_PATH']
         op = os.environ['OP']
+        mem_type = os.environ.get('TYPE', '')
         key = os.environ['KEY']
         value_json = os.environ.get('VALUE', '')
         default_json = os.environ.get('DEFAULT', '')
@@ -108,12 +117,13 @@ blocks:
             'previous': None,
             'keys': [],
             'op': op,
+            'type': mem_type,
             'key': key
         }
 
         if op == 'get':
             row = conn.execute(
-                "SELECT value FROM memory WHERE key=?", (key,)
+                "SELECT value FROM memory WHERE type=? AND key=?", (mem_type, key)
             ).fetchone()
             if row:
                 result['value'] = json.loads(row[0]) if row[0] else None
@@ -125,16 +135,16 @@ blocks:
         elif op == 'set':
             # Get previous value
             row = conn.execute(
-                "SELECT value FROM memory WHERE key=?", (key,)
+                "SELECT value FROM memory WHERE type=? AND key=?", (mem_type, key)
             ).fetchone()
             result['previous'] = json.loads(row[0]) if row and row[0] else None
             result['exists'] = row is not None
 
             # Set new value
             conn.execute('''
-                INSERT OR REPLACE INTO memory (key, value, updated_at)
-                VALUES (?, ?, ?)
-            ''', (key, json.dumps(value), now))
+                INSERT OR REPLACE INTO memory (type, key, value, updated_at)
+                VALUES (?, ?, ?, ?)
+            ''', (mem_type, key, json.dumps(value), now))
             conn.commit()
             result['value'] = value
 
@@ -143,7 +153,7 @@ blocks:
             conn.execute("BEGIN IMMEDIATE")
             try:
                 row = conn.execute(
-                    "SELECT value FROM memory WHERE key=?", (key,)
+                    "SELECT value FROM memory WHERE type=? AND key=?", (mem_type, key)
                 ).fetchone()
 
                 if row and row[0]:
@@ -158,9 +168,9 @@ blocks:
                 current.append(value)
 
                 conn.execute('''
-                    INSERT OR REPLACE INTO memory (key, value, updated_at)
-                    VALUES (?, ?, ?)
-                ''', (key, json.dumps(current), now))
+                    INSERT OR REPLACE INTO memory (type, key, value, updated_at)
+                    VALUES (?, ?, ?, ?)
+                ''', (mem_type, key, json.dumps(current), now))
                 conn.commit()
             except Exception:
                 conn.rollback()
@@ -185,13 +195,13 @@ blocks:
             conn.execute("BEGIN IMMEDIATE")
             try:
                 row = conn.execute(
-                    "SELECT value FROM memory WHERE key=?", (key,)
+                    "SELECT value FROM memory WHERE type=? AND key=?", (mem_type, key)
                 ).fetchone()
 
                 if row and row[0]:
                     current = json.loads(row[0])
                     if not isinstance(current, dict):
-                        raise ValueError(f"Cannot merge into non-dict at key '{key}'")
+                        raise ValueError(f"Cannot merge into non-dict at ({mem_type}, {key})")
                     result['exists'] = True
                 else:
                     current = {}
@@ -200,9 +210,9 @@ blocks:
                 merged = deep_merge(current, value)
 
                 conn.execute('''
-                    INSERT OR REPLACE INTO memory (key, value, updated_at)
-                    VALUES (?, ?, ?)
-                ''', (key, json.dumps(merged), now))
+                    INSERT OR REPLACE INTO memory (type, key, value, updated_at)
+                    VALUES (?, ?, ?, ?)
+                ''', (mem_type, key, json.dumps(merged), now))
                 conn.commit()
             except Exception:
                 conn.rollback()
@@ -211,20 +221,23 @@ blocks:
 
         elif op == 'delete':
             row = conn.execute(
-                "SELECT value FROM memory WHERE key=?", (key,)
+                "SELECT value FROM memory WHERE type=? AND key=?", (mem_type, key)
             ).fetchone()
 
             if row:
                 result['previous'] = json.loads(row[0]) if row[0] else None
                 result['value'] = result['previous']
                 result['exists'] = True
-                conn.execute("DELETE FROM memory WHERE key=?", (key,))
+                conn.execute("DELETE FROM memory WHERE type=? AND key=?", (mem_type, key))
                 conn.commit()
             else:
                 result['exists'] = False
 
         elif op == 'keys':
-            rows = conn.execute("SELECT key FROM memory").fetchall()
+            # List keys within the specified type namespace
+            rows = conn.execute(
+                "SELECT key FROM memory WHERE type=?", (mem_type,)
+            ).fetchall()
             all_keys = [r[0] for r in rows]
 
             # Filter by pattern
@@ -247,6 +260,7 @@ blocks:
       env:
         DB_PATH: "{{inputs.path}}"
         OP: "{{inputs.op}}"
+        TYPE: "{{inputs.type}}"
         KEY: "{{inputs.key}}"
         VALUE: "{{inputs.value}}"
         DEFAULT: "{{inputs.default}}"

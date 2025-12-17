@@ -1,0 +1,225 @@
+name: agent-evidence
+description: |
+  Evidence storage (episodic memory) using SQLite.
+
+  Stores raw gathered content with metadata for efficient retrieval.
+  Evidence types: content (full file), outline (signatures), search (grep results).
+
+  Operations:
+  - store: Store evidence with metadata
+  - query: Query evidence by type/cell
+  - delete: Remove evidence by key
+  - get: Get single evidence by key
+
+tags: [agent, memory, evidence, episodic, sqlite, cortex]
+
+inputs:
+  path:
+    type: str
+    description: Path to SQLite database file.
+    required: true
+
+  op:
+    type: str
+    description: |
+      Evidence operation to perform:
+      - store: Store evidence with metadata
+      - query: Query evidence by type/cell (returns list)
+      - delete: Remove evidence by key
+      - get: Get single evidence by key
+    required: true
+
+  key:
+    type: str
+    description: Evidence key (file path or search identifier).
+    required: false
+    default: ""
+
+  value:
+    type: str
+    description: Evidence content (JSON string).
+    required: false
+    default: ""
+
+  evidence_type:
+    type: str
+    description: Type of evidence (content, outline, search).
+    required: false
+    default: "content"
+
+  source_cell:
+    type: str
+    description: Cell ID that gathered this evidence.
+    required: false
+    default: ""
+
+  source_operation:
+    type: str
+    description: Capability name that produced this evidence.
+    required: false
+    default: ""
+
+  # Query-specific inputs
+  query_type:
+    type: str
+    description: Filter by evidence_type for query op.
+    required: false
+    default: ""
+
+  query_cell:
+    type: str
+    description: Filter by source_cell for query op.
+    required: false
+    default: ""
+
+  limit:
+    type: num
+    description: Max results for query operation.
+    required: false
+    default: 100
+
+blocks:
+  - id: execute
+    type: Shell
+    description: Execute the evidence operation on SQLite evidence table.
+    inputs:
+      command: |
+        python3 << 'EOF'
+        import os, json, sqlite3
+        from datetime import datetime, timezone
+
+        db_path = os.environ['DB_PATH']
+        op = os.environ['OP']
+        key = os.environ.get('KEY', '')
+        value_json = os.environ.get('VALUE', '')
+        evidence_type = os.environ.get('EVIDENCE_TYPE', 'content')
+        source_cell = os.environ.get('SOURCE_CELL', '')
+        source_operation = os.environ.get('SOURCE_OPERATION', '')
+        query_type = os.environ.get('QUERY_TYPE', '')
+        query_cell = os.environ.get('QUERY_CELL', '')
+        limit = int(os.environ.get('LIMIT', '100'))
+
+        conn = sqlite3.connect(db_path)
+        conn.row_factory = sqlite3.Row
+        conn.execute("PRAGMA busy_timeout=30000")
+
+        now = datetime.now(timezone.utc).isoformat()
+        result = {'op': op, 'success': False}
+
+        if op == 'store':
+            byte_size = len(value_json.encode('utf-8')) if value_json else 0
+            conn.execute('''
+                INSERT OR REPLACE INTO evidence
+                (key, value, evidence_type, source_cell, source_operation, byte_size, created_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+            ''', (key, value_json, evidence_type, source_cell, source_operation, byte_size, now))
+            conn.commit()
+            result = {
+                'op': op,
+                'success': True,
+                'key': key,
+                'byte_size': byte_size,
+                'evidence_type': evidence_type
+            }
+
+        elif op == 'get':
+            row = conn.execute(
+                "SELECT * FROM evidence WHERE key = ?", (key,)
+            ).fetchone()
+            if row:
+                result = {
+                    'op': op,
+                    'success': True,
+                    'exists': True,
+                    'key': row['key'],
+                    'value': row['value'],
+                    'evidence_type': row['evidence_type'],
+                    'source_cell': row['source_cell'],
+                    'byte_size': row['byte_size']
+                }
+            else:
+                result = {'op': op, 'success': True, 'exists': False, 'key': key}
+
+        elif op == 'query':
+            sql = "SELECT * FROM evidence WHERE 1=1"
+            params = []
+            if query_type:
+                sql += " AND evidence_type = ?"
+                params.append(query_type)
+            if query_cell:
+                sql += " AND source_cell = ?"
+                params.append(query_cell)
+            sql += f" ORDER BY created_at DESC LIMIT {limit}"
+
+            rows = conn.execute(sql, params).fetchall()
+            items = []
+            total_bytes = 0
+            for row in rows:
+                items.append({
+                    'key': row['key'],
+                    'evidence_type': row['evidence_type'],
+                    'source_cell': row['source_cell'],
+                    'source_operation': row['source_operation'],
+                    'byte_size': row['byte_size'] or 0,
+                    'value': row['value']
+                })
+                total_bytes += row['byte_size'] or 0
+            result = {
+                'op': op,
+                'success': True,
+                'items': items,
+                'count': len(items),
+                'total_bytes': total_bytes
+            }
+
+        elif op == 'delete':
+            row = conn.execute("SELECT key FROM evidence WHERE key = ?", (key,)).fetchone()
+            existed = row is not None
+            if existed:
+                conn.execute("DELETE FROM evidence WHERE key = ?", (key,))
+                conn.commit()
+            result = {'op': op, 'success': True, 'key': key, 'existed': existed}
+
+        else:
+            result = {'op': op, 'success': False, 'error': f'Unknown operation: {op}'}
+
+        conn.close()
+        print(json.dumps(result))
+        EOF
+      env:
+        DB_PATH: "{{inputs.path}}"
+        OP: "{{inputs.op}}"
+        KEY: "{{inputs.key}}"
+        VALUE: "{{inputs.value}}"
+        EVIDENCE_TYPE: "{{inputs.evidence_type}}"
+        SOURCE_CELL: "{{inputs.source_cell}}"
+        SOURCE_OPERATION: "{{inputs.source_operation}}"
+        QUERY_TYPE: "{{inputs.query_type}}"
+        QUERY_CELL: "{{inputs.query_cell}}"
+        LIMIT: "{{inputs.limit}}"
+
+outputs:
+  result:
+    type: dict
+    description: Full operation result.
+    value: "{{blocks.execute.outputs.stdout | fromjson}}"
+
+  success:
+    type: bool
+    description: Whether the operation succeeded.
+    value: "{{(blocks.execute.outputs.stdout | fromjson).success}}"
+
+  items:
+    type: list
+    description: Query results (for query op).
+    value: "{{(blocks.execute.outputs.stdout | fromjson).items | default([])}}"
+
+  count:
+    type: num
+    description: Number of items returned (for query op).
+    value: "{{(blocks.execute.outputs.stdout | fromjson).count | default(0)}}"
+
+  total_bytes:
+    type: num
+    description: Total bytes of evidence (for query op).
+    value: "{{(blocks.execute.outputs.stdout | fromjson).total_bytes | default(0)}}"

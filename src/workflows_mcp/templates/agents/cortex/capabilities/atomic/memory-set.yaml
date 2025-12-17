@@ -1,7 +1,7 @@
 name: cortex-memory-set
 description: |
-  Atomic capability: Store value in memory.
-  Used to persist knowledge across cell invocations.
+  Atomic capability: Store value in memory using composite key.
+  Used to persist large datasets (file contents, schemas) across cells.
 
 tags: [cortex, capability, atomic, memory]
 
@@ -11,9 +11,15 @@ inputs:
     description: Path to SQLite state database.
     required: true
 
+  type:
+    type: str
+    description: Memory namespace (e.g., "file_contents", "schemas", "evidence").
+    required: false
+    default: ""
+
   key:
     type: str
-    description: Memory key (dot-notation supported).
+    description: Memory key within namespace.
     required: true
 
   value:
@@ -30,6 +36,7 @@ blocks:
         state: "{{ inputs.state }}"
         op: memory
         memory_op: set
+        memory_type: "{{ inputs.type }}"
         memory_key: "{{ inputs.key }}"
         memory_value: "{{ inputs.value }}"
         caller: "cortex-memory-set"
