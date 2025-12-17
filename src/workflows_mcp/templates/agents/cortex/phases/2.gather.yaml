@@ -123,6 +123,16 @@ inputs:
     description: Permission flags for capability filtering.
     default: { "read": true, "write": false, "execute": false }
 
+  refine_iteration:
+    type: num
+    description: Current refinement loop iteration (max 2).
+    default: 0
+
+  max_refine:
+    type: num
+    description: Maximum refinement attempts.
+    default: 2
+
 blocks:
   # ===========================================================================
   # STEP 1: Register phase task
@@ -482,7 +492,14 @@ blocks:
     continue_on_error: true
     inputs:
       workflow: "{{ each.value.capability }}"
-      inputs: "{{ {'state': blocks.register_phase.outputs.state, 'base_path': inputs.context.repo_path | default('.')} | combine(each.value.inputs) }}"
+      inputs:
+        state: "{{ blocks.register_phase.outputs.state }}"
+        base_path: "{{ inputs.context.repo_path | default('.') }}"
+        patterns: "{{ each.value.inputs.patterns | default([]) }}"
+        pattern: "{{ each.value.inputs.pattern | default('') }}"
+        query: "{{ each.value.inputs.query | default('') }}"
+        mode: "{{ each.value.inputs.mode | default('') }}"
+        path: "{{ each.value.inputs.path | default('') }}"
 
   # ===========================================================================
   # STEP 7b: Dispatch COGNITIVE spawning via for_each
@@ -517,11 +534,202 @@ blocks:
         permissions: "{{ inputs.permissions }}"
 
   # ===========================================================================
-  # STEP 8: Compile results from for_each dispatch
+  # STEP 8: EVALUATE - Assess if gathered evidence is sufficient
+  # ===========================================================================
+  - id: evaluate_sufficiency
+    type: LLMCall
+    description: Assess if gathered evidence is sufficient for the query.
+    depends_on:
+      - block: dispatch_operations
+        required: false
+      - block: spawn_cells
+        required: false
+    condition: |
+      {{ not (blocks.needs_investigation.outputs.stdout | fromjson).should_investigate
+         and inputs.refine_iteration < inputs.max_refine }}
+    inputs:
+      profile: "{{ inputs.profile }}"
+      timeout: 120
+      system_instructions: |
+        You are evaluating whether gathered evidence is sufficient to answer a query.
+        Be honest about gaps - it's better to gather more than proceed with insufficient data.
+      prompt: |
+        # Evidence Sufficiency Evaluation
+
+        ## Original Query
+        {{ inputs.prompt }}
+
+        ## Gathering Strategy Used
+        {{ blocks.attempt.outputs.response.result.strategy }}
+
+        ## Operations Executed
+        - Total: {{ blocks.dispatch_operations.metadata.count | default(0) }}
+        - Failed: {{ blocks.dispatch_operations.metadata.count_failed | default(0) }}
+
+        ## Child Cells Spawned
+        - Total: {{ blocks.spawn_cells.metadata.count | default(0) }}
+        - Failed: {{ blocks.spawn_cells.metadata.count_failed | default(0) }}
+
+        ## Refinement Status
+        - Current iteration: {{ inputs.refine_iteration }} / {{ inputs.max_refine }}
+
+        ## Available Capabilities for Refinement
+        {% for cap in inputs.capabilities %}
+        - {{ cap.name }}: {{ cap.description }}
+        {% endfor %}
+
+        ---
+
+        **Question**: Is the gathered evidence SUFFICIENT to answer the query?
+
+        If NOT sufficient:
+        1. Identify what SPECIFIC information is still missing
+        2. Suggest targeted operations to fill those gaps
+
+      response_schema:
+        type: object
+        properties:
+          sufficient:
+            type: boolean
+            description: "True if evidence is adequate to answer the query"
+          confidence:
+            type: number
+            minimum: 0
+            maximum: 1
+            description: "Confidence in sufficiency assessment"
+          reasoning:
+            type: string
+            description: "Why evidence is or isn't sufficient"
+          missing:
+            type: string
+            description: "What specific information is still needed (if not sufficient)"
+          suggested_operations:
+            type: array
+            description: "Targeted operations to fill gaps (if not sufficient)"
+            items:
+              type: object
+              properties:
+                capability:
+                  type: string
+                  description: "Capability workflow name (e.g., cortex-gather-files)"
+                inputs:
+                  type: object
+                  description: "Capability-specific inputs"
+                reason:
+                  type: string
+                  description: "Why this operation will help"
+              required: [capability, inputs, reason]
+        required: [sufficient, confidence, reasoning]
+
+  # ===========================================================================
+  # STEP 9: Determine if refinement needed and allowed
+  # ===========================================================================
+  - id: should_refine
+    type: Shell
+    description: Determine if refinement is needed and allowed.
+    depends_on: [evaluate_sufficiency]
+    condition: "{{ blocks.evaluate_sufficiency.succeeded }}"
+    inputs:
+      command: |
+        python3 << 'EOF'
+        import json
+        import os
+
+        sufficient = os.environ.get('SUFFICIENT', 'true').lower() == 'true'
+        confidence = float(os.environ.get('CONFIDENCE', '1'))
+        refine_iteration = int(os.environ.get('REFINE_ITERATION', '0'))
+        max_refine = int(os.environ.get('MAX_REFINE', '2'))
+        has_suggestions = os.environ.get('HAS_SUGGESTIONS', 'false').lower() == 'true'
+
+        should_refine = (
+            not sufficient and
+            refine_iteration < max_refine and
+            has_suggestions
+        )
+
+        if sufficient:
+            reason = 'sufficient'
+        elif refine_iteration >= max_refine:
+            reason = 'max_refine_reached'
+        elif not has_suggestions:
+            reason = 'no_suggestions'
+        else:
+            reason = 'refining'
+
+        print(json.dumps({
+            'should_refine': should_refine,
+            'refine_iteration': refine_iteration,
+            'max_refine': max_refine,
+            'reason': reason,
+            'confidence': confidence
+        }))
+        EOF
+      env:
+        SUFFICIENT: "{{ blocks.evaluate_sufficiency.outputs.response.sufficient }}"
+        CONFIDENCE: "{{ blocks.evaluate_sufficiency.outputs.response.confidence }}"
+        REFINE_ITERATION: "{{ inputs.refine_iteration }}"
+        MAX_REFINE: "{{ inputs.max_refine }}"
+        HAS_SUGGESTIONS: "{{ (blocks.evaluate_sufficiency.outputs.response.suggested_operations | default([]) | length > 0) }}"
+
+  # ===========================================================================
+  # STEP 10: REFINE - Execute targeted operations to fill evidence gaps
+  # ===========================================================================
+  - id: refine_gather
+    type: Workflow
+    description: Execute targeted operations to fill evidence gaps.
+    depends_on: [should_refine]
+    condition: "{{ (blocks.should_refine.outputs.stdout | fromjson).should_refine }}"
+    for_each: "{{ blocks.evaluate_sufficiency.outputs.response.suggested_operations }}"
+    for_each_mode: parallel
+    max_parallel: 3
+    continue_on_error: true
+    inputs:
+      workflow: "{{ each.value.capability }}"
+      inputs:
+        state: "{{ blocks.register_phase.outputs.state }}"
+        base_path: "{{ inputs.context.repo_path | default('.') }}"
+        patterns: "{{ each.value.inputs.patterns | default([]) }}"
+        pattern: "{{ each.value.inputs.pattern | default('') }}"
+        query: "{{ each.value.inputs.query | default('') }}"
+        mode: "{{ each.value.inputs.mode | default('') }}"
+        path: "{{ each.value.inputs.path | default('') }}"
+
+  # ===========================================================================
+  # STEP 11: Recurse for another evaluation round after refinement
+  # ===========================================================================
+  - id: recurse_for_refine
+    type: Workflow
+    description: Recurse to evaluate again after refinement operations.
+    depends_on: [refine_gather]
+    condition: "{{ blocks.refine_gather.succeeded }}"
+    inputs:
+      workflow: cortex-phase-gather
+      inputs:
+        prompt: "{{ inputs.prompt }}"
+        system: "{{ inputs.system }}"
+        context: "{{ inputs.context }}"
+        pipeline_config: "{{ inputs.pipeline_config }}"
+        memory: "{{ inputs.memory }}"
+        synthesis: "{{ inputs.synthesis }}"
+        depth: "{{ inputs.depth }}"
+        max_depth: "{{ inputs.max_depth }}"
+        iterations: "{{ inputs.iterations }}"
+        max_iterations: "{{ inputs.max_iterations }}"
+        confidence_threshold: "{{ inputs.confidence_threshold }}"
+        state: "{{ blocks.register_phase.outputs.state }}"
+        parent_id: "{{ inputs.parent_id }}"
+        profile: "{{ inputs.profile }}"
+        capabilities: "{{ inputs.capabilities }}"
+        permissions: "{{ inputs.permissions }}"
+        refine_iteration: "{{ inputs.refine_iteration + 1 }}"
+        max_refine: "{{ inputs.max_refine }}"
+
+  # ===========================================================================
+  # STEP 12: Compile results from for_each dispatch
   # ===========================================================================
   - id: compile_result
     type: Shell
-    description: Compile gathering results from dispatch operations and spawn cells.
+    description: Compile gathering results from dispatch operations, spawn cells, and refinement.
     depends_on:
       - block: self_recurse
         required: false
@@ -529,22 +737,38 @@ blocks:
         required: false
       - block: spawn_cells
         required: false
+      - block: recurse_for_refine
+        required: false
+      - block: evaluate_sufficiency
+        required: false
     inputs:
       command: |
         python3 << 'EOF'
         import json
         import os
 
+        # Check for various recursion paths
         self_recursed = os.environ.get('SELF_RECURSED', 'false').lower() == 'true'
         self_recurse_result = json.loads(os.environ.get('SELF_RECURSE_RESULT', '{}'))
+        refine_recursed = os.environ.get('REFINE_RECURSED', 'false').lower() == 'true'
+        refine_recurse_result = json.loads(os.environ.get('REFINE_RECURSE_RESULT', '{}'))
+
         strategy = os.environ.get('STRATEGY', '')
         ops_count = int(os.environ.get('OPS_COUNT', '0'))
         ops_failed = int(os.environ.get('OPS_FAILED', '0'))
         spawn_count = int(os.environ.get('SPAWN_COUNT', '0'))
         spawn_failed = int(os.environ.get('SPAWN_FAILED', '0'))
+        refine_count = int(os.environ.get('REFINE_COUNT', '0'))
+        refine_failed = int(os.environ.get('REFINE_FAILED', '0'))
+        refine_iteration = int(os.environ.get('REFINE_ITERATION', '0'))
+        evidence_sufficient = os.environ.get('EVIDENCE_SUFFICIENT', 'true').lower() == 'true'
 
-        if self_recursed and self_recurse_result:
-            # Pass through recursive result
+        # Priority: refine recursion > self recursion > direct result
+        if refine_recursed and refine_recurse_result:
+            # Pass through result from refinement recursion
+            print(json.dumps(refine_recurse_result))
+        elif self_recursed and self_recurse_result:
+            # Pass through result from investigation recursion
             print(json.dumps(self_recurse_result))
         else:
             # Build result from dispatch execution
@@ -553,21 +777,31 @@ blocks:
                 'operations_executed': ops_count,
                 'operations_failed': ops_failed,
                 'cells_spawned': spawn_count,
-                'cells_failed': spawn_failed
+                'cells_failed': spawn_failed,
+                'refine_operations': refine_count,
+                'refine_failed': refine_failed,
+                'refine_iterations': refine_iteration,
+                'evidence_sufficient': evidence_sufficient
             }
             print(json.dumps(result))
         EOF
       env:
         SELF_RECURSED: "{{ 'true' if blocks.self_recurse.succeeded else 'false' }}"
         SELF_RECURSE_RESULT: "{{ blocks.self_recurse.outputs.result | default({}) | tojson }}"
+        REFINE_RECURSED: "{{ 'true' if blocks.recurse_for_refine.succeeded else 'false' }}"
+        REFINE_RECURSE_RESULT: "{{ blocks.recurse_for_refine.outputs.result | default({}) | tojson }}"
         STRATEGY: "{{ blocks.attempt.outputs.response.result.strategy | default('') }}"
         OPS_COUNT: "{{ blocks.dispatch_operations.metadata.count | default(0) }}"
         OPS_FAILED: "{{ blocks.dispatch_operations.metadata.count_failed | default(0) }}"
         SPAWN_COUNT: "{{ blocks.spawn_cells.metadata.count | default(0) }}"
         SPAWN_FAILED: "{{ blocks.spawn_cells.metadata.count_failed | default(0) }}"
+        REFINE_COUNT: "{{ blocks.refine_gather.metadata.count | default(0) }}"
+        REFINE_FAILED: "{{ blocks.refine_gather.metadata.count_failed | default(0) }}"
+        REFINE_ITERATION: "{{ inputs.refine_iteration }}"
+        EVIDENCE_SUFFICIENT: "{{ blocks.evaluate_sufficiency.outputs.response.sufficient | default(true) }}"
 
   # ===========================================================================
-  # STEP 10: Track completion
+  # STEP 13: Track completion
   # ===========================================================================
   - id: track_done
     type: Workflow
@@ -584,6 +818,9 @@ blocks:
           depth: "{{ inputs.depth }}"
           gather_depth: "{{ inputs.pipeline_config.gather.depth | default('focused') }}"
           recursed: "{{ blocks.self_recurse.succeeded | default(false) }}"
+          refined: "{{ blocks.recurse_for_refine.succeeded | default(false) }}"
+          refine_iteration: "{{ inputs.refine_iteration }}"
+          evidence_sufficient: "{{ blocks.evaluate_sufficiency.outputs.response.sufficient | default(true) }}"
 
 # =============================================================================
 # OUTPUTS
