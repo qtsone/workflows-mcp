@@ -147,10 +147,10 @@ blocks:
         parent_id: "{{ inputs.parent_id }}"
         task: "Phase: Gather"
         category: "cortex-gather"
+        depth: "{{ inputs.depth }}"
         status: "in-progress"
         caller: "cortex-phase-gather"
         data:
-          depth: "{{ inputs.depth }}"
           gather_depth: "{{ inputs.pipeline_config.gather.depth | default('focused') }}"
           spawn_policy: "{{ inputs.pipeline_config.gather.spawn | default('complex_only') }}"
 
@@ -815,7 +815,6 @@ blocks:
         status: "done"
         caller: "cortex-phase-gather"
         data:
-          depth: "{{ inputs.depth }}"
           gather_depth: "{{ inputs.pipeline_config.gather.depth | default('focused') }}"
           recursed: "{{ blocks.self_recurse.succeeded | default(false) }}"
           refined: "{{ blocks.recurse_for_refine.succeeded | default(false) }}"

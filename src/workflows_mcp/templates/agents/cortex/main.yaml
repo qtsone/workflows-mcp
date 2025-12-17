@@ -427,7 +427,6 @@ blocks:
         caller: "cortex-cell"
         data:
           prompt: "{{ inputs.prompt }}"
-          depth: "{{ inputs.depth }}"
           iterations: "{{ inputs.iterations }}"
           spawning_phase: "{{ inputs.context.spawning_phase | default('root') }}"
           # CRITICAL: Store response and synthesis so REASON phase can query children

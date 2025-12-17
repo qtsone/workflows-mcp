@@ -114,10 +114,9 @@ blocks:
         parent_id: "{{ inputs.parent_id }}"
         task: "Phase: Categorize"
         category: "cortex-categorize"
+        depth: "{{ inputs.depth }}"
         status: "in-progress"
         caller: "cortex-phase-categorize"
-        data:
-          depth: "{{ inputs.depth }}"
 
   # ===========================================================================
   # STEP 2: Retrieve memory (if requested)
@@ -449,7 +448,6 @@ blocks:
         status: "done"
         caller: "cortex-phase-categorize"
         data:
-          depth: "{{ inputs.depth }}"
           recursed: "{{ blocks.self_recurse.succeeded | default(false) }}"
 
 # =============================================================================

@@ -137,10 +137,10 @@ blocks:
         parent_id: "{{ inputs.parent_id }}"
         task: "Phase: Reason"
         category: "cortex-reason"
+        depth: "{{ inputs.depth }}"
         status: "in-progress"
         caller: "cortex-phase-reason"
         data:
-          depth: "{{ inputs.depth }}"
           goal: "{{ inputs.pipeline_config.reason.goal | default('explain') }}"
 
   # ===========================================================================
@@ -675,7 +675,6 @@ blocks:
         status: "done"
         caller: "cortex-phase-reason"
         data:
-          depth: "{{ inputs.depth }}"
           goal: "{{ inputs.pipeline_config.reason.goal | default('explain') }}"
           recursed: "{{ blocks.self_recurse.succeeded | default(false) }}"
           cells_spawned: "{{ blocks.spawn_cells.metadata.count | default(0) }}"

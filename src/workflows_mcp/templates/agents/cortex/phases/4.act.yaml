@@ -139,10 +139,10 @@ blocks:
         parent_id: "{{ inputs.parent_id }}"
         task: "Phase: Act"
         category: "cortex-act"
+        depth: "{{ inputs.depth }}"
         status: "in-progress"
         caller: "cortex-phase-act"
         data:
-          depth: "{{ inputs.depth }}"
           iterations: "{{ inputs.iterations }}"
           trigger: "{{ inputs.pipeline_config.act.trigger | default('never') }}"
           mode: "{{ inputs.pipeline_config.act.mode | default('null') }}"
@@ -634,7 +634,6 @@ blocks:
         status: "done"
         caller: "cortex-phase-act"
         data:
-          depth: "{{ inputs.depth }}"
           iterations: "{{ inputs.iterations }}"
           recursed: "{{ blocks.self_recurse.succeeded | default(false) }}"
           action_taken: "{{ blocks.attempt.succeeded }}"
