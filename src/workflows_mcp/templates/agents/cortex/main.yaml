@@ -46,7 +46,6 @@ inputs:
       Shared context:
       - repo_path: Working directory
       - parent_prompt: Query that spawned this cell
-      - spawning_phase: Which phase spawned this cell
     default: {}
 
   depth:
@@ -244,23 +243,28 @@ blocks:
 
   - id: register
     type: Workflow
-    description: Register this cell in the task tree.
+    description: Register this cell in the task tree (v1 schema).
     depends_on: [init, filter_capabilities]
     inputs:
       workflow: agent-state-management
       inputs:
         state: "{{ inputs.state }}"
         parent_id: "{{ inputs.parent_id }}"
-        task: "CORTEX Cell (depth={{ inputs.depth }}, iter={{ inputs.iterations }})"
-        category: "cortex-cell"
-        depth: "{{ inputs.depth }}"
-        status: "in-progress"
-        caller: "cortex-cell"
-        data:
+        kind: "cell"
+        name: "cortex-cell"
+        metadata:
+          labels: {}
+          annotations:
+            prompt_hash: "{{ (blocks.init.outputs.stdout | fromjson).hash }}"
+            max_depth: "{{ inputs.max_depth }}"
+            max_iterations: "{{ inputs.max_iterations }}"
+        inputs_data:
           prompt: "{{ inputs.prompt }}"
-          hash: "{{ (blocks.init.outputs.stdout | fromjson).hash }}"
+          context: "{{ inputs.context }}"
           iterations: "{{ inputs.iterations }}"
-          spawning_phase: "{{ inputs.context.spawning_phase | default('root') }}"
+        depth: "{{ inputs.depth }}"
+        status: "running"
+        caller: "cortex-cell"
 
   - id: early_termination
     type: Shell
@@ -323,7 +327,6 @@ blocks:
     type: Workflow
     description: Collect evidence based on pipeline_config.gather settings.
     depends_on: [categorize]
-    condition: "{{ blocks.categorize.succeeded }}"
     inputs:
       workflow: cortex-phase-gather
       inputs:
@@ -406,7 +409,7 @@ blocks:
         permissions: "{{ inputs.permissions }}"
 
   # ===========================================================================
-  # TRACK COMPLETION - store synthesis for child querying
+  # TRACK COMPLETION - store synthesis for child querying (v1 schema)
   # ===========================================================================
   - id: track_done
     type: Workflow
@@ -425,11 +428,9 @@ blocks:
         task_id: "{{ blocks.register.outputs.task.task_id }}"
         status: "done"
         caller: "cortex-cell"
-        data:
-          prompt: "{{ inputs.prompt }}"
-          iterations: "{{ inputs.iterations }}"
-          spawning_phase: "{{ inputs.context.spawning_phase | default('root') }}"
-          # CRITICAL: Store response and synthesis so REASON phase can query children
+        # v1 schema: outputs_data instead of data
+        # CRITICAL: Store response and synthesis so REASON phase can query children
+        outputs_data:
           response: |
             {{ blocks.reason.outputs.response if blocks.reason.succeeded
                else (blocks.early_termination.outputs.stdout | fromjson).response if blocks.early_termination.succeeded
@@ -438,7 +439,6 @@ blocks:
             {{ blocks.reason.outputs.synthesis if blocks.reason.succeeded
                else (blocks.early_termination.outputs.stdout | fromjson).synthesis if blocks.early_termination.succeeded
                else {} }}
-          # Store action completion status for continuation
           complete: "{{ blocks.act.outputs.complete | default(true) }}"
           continuation_needed: "{{ blocks.act.outputs.continuation_needed | default(false) }}"
 

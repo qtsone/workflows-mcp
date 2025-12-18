@@ -127,7 +127,7 @@ inputs:
 
 blocks:
   # ===========================================================================
-  # STEP 1: Register phase task
+  # STEP 1: Register phase task (v1 schema)
   # ===========================================================================
   - id: register_phase
     type: Workflow
@@ -137,15 +137,19 @@ blocks:
       inputs:
         state: "{{ inputs.state }}"
         parent_id: "{{ inputs.parent_id }}"
-        task: "Phase: Act"
-        category: "cortex-act"
-        depth: "{{ inputs.depth }}"
-        status: "in-progress"
-        caller: "cortex-phase-act"
-        data:
+        kind: "phase"
+        name: "act"
+        metadata:
+          labels:
+            phase_order: 4
+            trigger: "{{ inputs.pipeline_config.act.trigger | default('never') }}"
+            mode: "{{ inputs.pipeline_config.act.mode | default('null') }}"
+        inputs_data:
+          prompt: "{{ inputs.prompt }}"
           iterations: "{{ inputs.iterations }}"
-          trigger: "{{ inputs.pipeline_config.act.trigger | default('never') }}"
-          mode: "{{ inputs.pipeline_config.act.mode | default('null') }}"
+        depth: "{{ inputs.depth }}"
+        status: "running"
+        caller: "cortex-phase-act"
 
   # ===========================================================================
   # STEP 2: Check trigger policy
@@ -535,7 +539,6 @@ blocks:
         context:
           repo_path: "{{ inputs.context.repo_path | default('') }}"
           parent_prompt: "{{ inputs.prompt }}"
-          spawning_phase: "act"
         depth: "{{ inputs.depth + 1 }}"
         max_depth: "{{ inputs.max_depth }}"
         iterations: 0
@@ -631,7 +634,7 @@ blocks:
       workflow: cortex-cell
       inputs:
         prompt: "{{ each.value.prompt }}"
-        context: "{{ inputs.context | combine({'parent_prompt': inputs.prompt, 'spawning_phase': 'act', 'spawn_reason': each.value.reason}) }}"
+        context: "{{ inputs.context | combine({'parent_prompt': inputs.prompt, 'spawn_reason': each.value.reason}) }}"
         depth: "{{ inputs.depth + 1 }}"
         max_depth: "{{ inputs.max_depth }}"
         iterations: 0
@@ -644,7 +647,7 @@ blocks:
         permissions: "{{ inputs.permissions }}"
 
   # ===========================================================================
-  # STEP 9: Track completion
+  # STEP 9: Track completion (v1 schema)
   # ===========================================================================
   - id: track_done
     type: Workflow
@@ -667,7 +670,7 @@ blocks:
         task_id: "{{ blocks.register_phase.outputs.task.task_id }}"
         status: "done"
         caller: "cortex-phase-act"
-        data:
+        outputs_data:
           iterations: "{{ inputs.iterations }}"
           recursed: "{{ blocks.self_recurse.succeeded | default(false) }}"
           action_taken: "{{ blocks.attempt.succeeded }}"

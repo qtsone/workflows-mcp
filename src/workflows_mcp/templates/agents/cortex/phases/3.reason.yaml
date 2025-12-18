@@ -125,7 +125,7 @@ inputs:
 
 blocks:
   # ===========================================================================
-  # STEP 1: Register phase task
+  # STEP 1: Register phase task (v1 schema)
   # ===========================================================================
   - id: register_phase
     type: Workflow
@@ -135,13 +135,17 @@ blocks:
       inputs:
         state: "{{ inputs.state }}"
         parent_id: "{{ inputs.parent_id }}"
-        task: "Phase: Reason"
-        category: "cortex-reason"
+        kind: "phase"
+        name: "reason"
+        metadata:
+          labels:
+            phase_order: 3
+            goal: "{{ inputs.pipeline_config.reason.goal | default('explain') }}"
+        inputs_data:
+          prompt: "{{ inputs.prompt }}"
         depth: "{{ inputs.depth }}"
-        status: "in-progress"
+        status: "running"
         caller: "cortex-phase-reason"
-        data:
-          goal: "{{ inputs.pipeline_config.reason.goal | default('explain') }}"
 
   # ===========================================================================
   # STEP 2: Retrieve evidence (outlines) from evidence table
@@ -200,7 +204,7 @@ blocks:
         limit: 30
 
   # ===========================================================================
-  # STEP 4: Query ALL child cells from task tree
+  # STEP 4: Query ALL child cells from task tree (v1 schema)
   # ===========================================================================
   - id: get_child_cells
     type: Workflow
@@ -215,9 +219,10 @@ blocks:
         query:
           relation: children
           where:
-            category: cortex-cell
+            kind: cell
             status: done
-          select: [task_id, data]
+          # v1: select from inputs/outputs instead of data
+          select: [task_id, inputs, outputs]
         caller: "cortex-phase-reason"
 
   # ===========================================================================
@@ -299,14 +304,12 @@ blocks:
         ## Child Cell Syntheses ({{ blocks.get_child_cells.outputs.query.results | length }} cells)
         {% for child in blocks.get_child_cells.outputs.query.results %}
         ### Child Cell {{ loop.index }} ({{ child.task_id }})
-        {% if child.data %}
-        - **Query**: {{ child.data.prompt | default('N/A') }}
-        - **Spawning Phase**: {{ child.data.spawning_phase | default('N/A') }}
-        - **Answer**: {{ child.data.response | default('N/A') }}
-        {% if child.data.synthesis %}
-        - **Synthesis Summary**: {{ child.data.synthesis.summary | default('N/A') }}
-        - **Confidence**: {{ child.data.synthesis.confidence | default('N/A') }}
-        {% endif %}
+        {# v1 schema: prompt in inputs, response/synthesis in outputs #}
+        - **Query**: {{ child.inputs.prompt | default('N/A') }}
+        - **Answer**: {{ child.outputs.response | default('N/A') }}
+        {% if child.outputs.synthesis %}
+        - **Synthesis Summary**: {{ child.outputs.synthesis.summary | default('N/A') }}
+        - **Confidence**: {{ child.outputs.synthesis.confidence | default('N/A') }}
         {% endif %}
         {% endfor %}
         {% endif %}
@@ -571,7 +574,6 @@ blocks:
         context:
           repo_path: "{{ inputs.context.repo_path | default('') }}"
           parent_prompt: "{{ inputs.prompt }}"
-          spawning_phase: "reason"
         depth: "{{ inputs.depth + 1 }}"
         max_depth: "{{ inputs.max_depth }}"
         iterations: 0
@@ -636,7 +638,7 @@ blocks:
       workflow: cortex-cell
       inputs:
         prompt: "{{ each.value.prompt }}"
-        context: "{{ inputs.context | combine({'parent_prompt': inputs.prompt, 'spawning_phase': 'reason', 'spawn_reason': each.value.reason}) }}"
+        context: "{{ inputs.context | combine({'parent_prompt': inputs.prompt, 'spawn_reason': each.value.reason}) }}"
         depth: "{{ inputs.depth + 1 }}"
         max_depth: "{{ inputs.max_depth }}"
         iterations: 0
@@ -649,7 +651,7 @@ blocks:
         permissions: "{{ inputs.permissions }}"
 
   # ===========================================================================
-  # STEP 10: Track completion
+  # STEP 10: Track completion (v1 schema)
   # ===========================================================================
   - id: track_done
     type: Workflow
@@ -672,7 +674,7 @@ blocks:
         task_id: "{{ blocks.register_phase.outputs.task.task_id }}"
         status: "done"
         caller: "cortex-phase-reason"
-        data:
+        outputs_data:
           goal: "{{ inputs.pipeline_config.reason.goal | default('explain') }}"
           recursed: "{{ blocks.self_recurse.succeeded | default(false) }}"
           cells_spawned: "{{ blocks.spawn_cells.metadata.count | default(0) }}"

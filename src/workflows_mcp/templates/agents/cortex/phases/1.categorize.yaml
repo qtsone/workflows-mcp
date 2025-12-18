@@ -47,7 +47,7 @@ inputs:
 
   context:
     type: dict
-    description: Shared context (repo_path, parent_prompt, spawning_phase, etc.).
+    description: Shared context (repo_path, parent_prompt, etc.).
     default: {}
 
   memory:
@@ -102,7 +102,7 @@ inputs:
 
 blocks:
   # ===========================================================================
-  # STEP 1: Register phase task
+  # STEP 1: Register phase task (v1 schema)
   # ===========================================================================
   - id: register_phase
     type: Workflow
@@ -112,10 +112,15 @@ blocks:
       inputs:
         state: "{{ inputs.state }}"
         parent_id: "{{ inputs.parent_id }}"
-        task: "Phase: Categorize"
-        category: "cortex-categorize"
+        kind: "phase"
+        name: "categorize"
+        metadata:
+          labels:
+            phase_order: 1
+        inputs_data:
+          prompt: "{{ inputs.prompt }}"
         depth: "{{ inputs.depth }}"
-        status: "in-progress"
+        status: "running"
         caller: "cortex-phase-categorize"
 
   # ===========================================================================
@@ -387,7 +392,6 @@ blocks:
         context:
           repo_path: "{{ inputs.context.repo_path | default('') }}"
           parent_prompt: "{{ inputs.prompt }}"
-          spawning_phase: "categorize"
         depth: "{{ inputs.depth + 1 }}"
         max_depth: "{{ inputs.max_depth }}"
         state: "{{ blocks.register_phase.outputs.state }}"
@@ -432,7 +436,7 @@ blocks:
   # ===========================================================================
   - id: track_done
     type: Workflow
-    description: Mark phase complete.
+    description: Mark phase complete (v1 schema).
     depends_on:
       - block: attempt
         required: true
@@ -447,8 +451,9 @@ blocks:
         task_id: "{{ blocks.register_phase.outputs.task.task_id }}"
         status: "done"
         caller: "cortex-phase-categorize"
-        data:
-          recursed: "{{ blocks.self_recurse.succeeded | default(false) }}"
+        outputs_data:
+          recursed: "{{ blocks.self_recurse.succeeded }}"
+          category: "{{ get(blocks.attempt.outputs.response.result,'category','understanding') }}"
 
 # =============================================================================
 # OUTPUTS: Category + pipeline_config for downstream phases

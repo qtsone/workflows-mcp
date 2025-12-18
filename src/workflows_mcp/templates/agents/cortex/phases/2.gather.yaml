@@ -1,35 +1,17 @@
-# =============================================================================
-# CORTEX Gather Phase (v2)
-# =============================================================================
-#
-# Evidence Gathering Phase - collects files and data to answer the query.
-# Stores gathered content in memory for use by subsequent phases.
-#
-# v2 Changes:
-#   - Reads pipeline_config.gather.depth and spawn settings
-#   - Depth controls gathering scope: shallow, focused, broad, deep
-#   - Spawn controls child cell creation: never, complex_only, always
-#   - Can output config_override for REASON/ACT phases
-#
-# Depth Levels:
-#   - shallow: One targeted search (existence checks)
-#   - focused: Few searches in specific area (understanding)
-#   - broad: Many searches across codebase (discovery)
-#   - deep: Everything + related context (debugging, action)
-#
-# Spawn Policies:
-#   - never: Use only atomic capabilities
-#   - complex_only: Spawn for complex sub-gathering
-#   - always: Always spawn parallel gatherers
-#
-# Follows universal fractal pattern with memory storage.
-#
-# =============================================================================
-
 name: cortex-phase-gather
-description: "CORTEX Gather Phase - collects evidence with configurable depth"
+description: |
+  CORTEX Gather Phase (ReAct Pattern) - collects evidence with recursive spawning.
 
-tags: [cortex, phase, gather, v2]
+  Industry Standard: ReAct (Reason + Act) + Reflexion Hybrid
+  - RECALL = THINK (query existing evidence + facts from DB)
+  - PLAN   = REASON (LLM plans operations and investigations)
+  - ACT    = dispatch + investigations (execute and store evidence)
+  - Loop via recursion when investigations produce new knowledge
+
+  Quality emerges from recursion - each level adds more evidence to shared DB.
+  No explicit sufficiency check - REASON phase is the true gatekeeper.
+
+tags: [cortex, phase, gather, react]
 
 inputs:
   prompt:
@@ -50,8 +32,7 @@ inputs:
       If you discover something that requires different analysis than expected,
       you can output config_override to adjust REASON/ACT behavior.
 
-      Be honest about your confidence. If you're uncertain about what to gather,
-      set uncertainty.exists = true and provide a specific question.
+      Express ALL sub-questions via investigations, not uncertainty fields.
 
   context:
     type: dict
@@ -62,11 +43,6 @@ inputs:
     type: dict
     description: Pipeline configuration from CATEGORIZE.
     default: {}
-
-  memory:
-    type: list
-    description: List of memory keys to retrieve (file paths already gathered).
-    default: []
 
   synthesis:
     type: list
@@ -96,7 +72,7 @@ inputs:
   confidence_threshold:
     type: num
     description: Minimum confidence to skip investigation.
-    default: 0.7
+    default: 0.9
 
   state:
     type: str
@@ -123,94 +99,75 @@ inputs:
     description: Permission flags for capability filtering.
     default: { "read": true, "write": false, "execute": false }
 
-  refine_iteration:
-    type: num
-    description: Current refinement loop iteration (max 2).
-    default: 0
-
-  max_refine:
-    type: num
-    description: Maximum refinement attempts.
-    default: 2
-
 blocks:
-  # ===========================================================================
-  # STEP 1: Register phase task
-  # ===========================================================================
-  - id: register_phase
-    type: Workflow
+  - id: register
     description: Register this phase in the task tree.
+    type: Workflow
     inputs:
       workflow: agent-state-management
       inputs:
         state: "{{ inputs.state }}"
         parent_id: "{{ inputs.parent_id }}"
-        task: "Phase: Gather"
-        category: "cortex-gather"
+        kind: "phase"
+        name: "gather"
+        metadata:
+          labels:
+            phase_order: 2
+            strategy: "{{ get(inputs.pipeline_config.gather, 'depth', 'focused') }}"
+        inputs_data: "{{ inputs }}"
         depth: "{{ inputs.depth }}"
-        status: "in-progress"
+        status: "running"
         caller: "cortex-phase-gather"
-        data:
-          gather_depth: "{{ inputs.pipeline_config.gather.depth | default('focused') }}"
-          spawn_policy: "{{ inputs.pipeline_config.gather.spawn | default('complex_only') }}"
 
-  # ===========================================================================
-  # STEP 2: Retrieve existing memory (if any)
-  # ===========================================================================
-  - id: retrieve_memory
+  - id: recall
     type: Workflow
-    description: Check what files already exist in memory.
-    depends_on: [register_phase]
-    condition: "{{ inputs.memory | length > 0 }}"
+    description: THINK - Query existing evidence and facts from memory.
+    depends_on: [register]
     inputs:
-      workflow: agent-state-management
+      workflow: cortex-evidence-query
       inputs:
-        state: "{{ blocks.register_phase.outputs.state }}"
-        op: memory
-        memory_op: query
-        memory_type: "content"
+        state: "{{ blocks.register.outputs.state }}"
+        evidence_type: ""
+        limit: 200
 
-  # ===========================================================================
-  # STEP 3: Attempt - Plan gathering strategy
-  # ===========================================================================
-  - id: attempt
+  - id: plan
     type: LLMCall
-    description: Plan evidence gathering strategy based on depth config.
+    description: PLAN - Decide what evidence to gather based on query + existing knowledge.
     depends_on:
-      - block: register_phase
+      - block: register
         required: true
-      - block: retrieve_memory
+      - block: recall
         required: false
     inputs:
       profile: "{{ inputs.profile }}"
       timeout: 600
       system_instructions: "{{ inputs.system }}"
       prompt: |
-        # Evidence Gathering Planning
+        # Evidence Gathering Planning (ReAct Pattern)
 
         ## Query
         {{ inputs.prompt }}
 
-        ## Gather Depth: {{ inputs.pipeline_config.gather.depth | default('focused') | upper }}
+        ## Gather Depth: {{ get(inputs.pipeline_config, 'gather', {}).depth | default('focused') | upper }}
 
         {% if inputs.context %}
         ## Context
         {{ inputs.context | tojson }}
         {% endif %}
 
-        {% if blocks.retrieve_memory.succeeded and blocks.retrieve_memory.outputs.prompt.results | length > 0 %}
-        ## Files Already in Memory
-        {% for file in blocks.retrieve_memory.outputs.prompt.results %}
-        - {{ file.key }}
+        {% if get(blocks.recall.outputs, 'items', []) | length > 0 %}
+        ## Evidence Already Gathered ({{ get(blocks.recall.outputs, 'items', []) | length }} items)
+        {% for item in get(blocks.recall.outputs, 'items', []) %}
+        - [{{ item.evidence_type }}] {{ item.key }}
         {% endfor %}
         {% endif %}
 
         {% if inputs.synthesis | length > 0 %}
-        ## Previous Investigations
+        ## Previous Investigations (Reflexion)
         {% for c in inputs.synthesis %}
         ### Investigation {{ loop.index }}
-        - Question: {{ c.prompt }}
-        - Answer: {{ c.response }}
+        - Prompt: {{ c.prompt }}
+        - Response: {{ c.response }}
         {% if c.synthesis %}
         - Key Findings: {{ c.synthesis.summary | default('N/A') }}
         {% endif %}
@@ -219,22 +176,22 @@ blocks:
 
         ## Depth-Specific Instructions
 
-        {% if inputs.pipeline_config.gather.depth == 'shallow' %}
+        {% if get(inputs.pipeline_config, 'gather', {}).depth == 'shallow' %}
         **SHALLOW DEPTH**: Minimal gathering for quick verification.
         - 1-2 targeted searches only
         - Focus on existence verification
         - Skip broad exploration
-        {% elif inputs.pipeline_config.gather.depth == 'focused' %}
+        {% elif get(inputs.pipeline_config, 'gather', {}).depth == 'focused' %}
         **FOCUSED DEPTH**: Targeted gathering in specific area.
         - 3-5 searches in relevant directories
         - Get key files, not everything
         - Follow obvious connections
-        {% elif inputs.pipeline_config.gather.depth == 'broad' %}
+        {% elif get(inputs.pipeline_config, 'gather', {}).depth == 'broad' %}
         **BROAD DEPTH**: Comprehensive search across codebase.
         - Multiple search patterns
         - Cover all relevant directories
         - Cast a wide net
-        {% elif inputs.pipeline_config.gather.depth == 'deep' %}
+        {% elif get(inputs.pipeline_config, 'gather', {}).depth == 'deep' %}
         **DEEP DEPTH**: Everything relevant + context.
         - Full file contents, not just outlines
         - Include related/dependent code
@@ -246,9 +203,8 @@ blocks:
         ## Available Capabilities (ATOMIC Operations)
 
         Use these capability workflows in your `operations` array:
-        {% if inputs.capabilities %}
+        {% if inputs.capabilities | length > 0 %}
         {% for cap in inputs.capabilities %}
-
         **{{ cap.name }}** - {{ cap.description }}
         Inputs:
         {% for key, desc in cap.inputs.items() %}
@@ -259,16 +215,20 @@ blocks:
         No capabilities available (check permissions).
         {% endif %}
 
-        ## Cognitive Spawning (COGNITIVE Operations)
+        ## Investigations (Sub-Questions or Directives)
 
-        For complex sub-tasks that need full CATEGORIZE→GATHER→REASON→ACT:
+        For tasks requiring full cognitive actions (CATEGORIZE→GATHER→REASON→ACT):
         ```yaml
-        spawn_cells:
+        investigations:
           - prompt: "How does the authentication middleware validate tokens?"
             reason: "Need deep understanding of auth flow"
         ```
 
-        Spawn policy: {{ inputs.pipeline_config.gather.spawn | default('complex_only') }}
+        **DO NOT** use investigations for simple file reads - use operations instead.
+        **DO** use investigations for tasks requiring analysis, synthesis, or complex actions.
+
+        Investigation policy: {{ get(inputs.pipeline_config, 'gather', {}).spawn | default('complex_only') }}
+        Current depth: {{ inputs.depth }} / {{ inputs.max_depth }}
 
         ## Config Override
 
@@ -327,18 +287,18 @@ blocks:
                       type: string
                       description: "Why this operation is needed"
                   required: [capability, reason]
-              spawn_cells:
+              investigations:
                 type: array
-                description: "Child cells for complex sub-gathering (COGNITIVE dispatch)"
+                description: "Sub-questions or directives requiring full cognitive analysis"
                 items:
                   type: object
                   properties:
                     prompt:
                       type: string
-                      description: "What to investigate"
+                      description: "What to investigate (question or directive)"
                     reason:
                       type: string
-                      description: "Why spawning is needed"
+                      description: "Why this investigation is needed"
                   required: [prompt, reason]
             required: [strategy, operations]
           config_override:
@@ -368,176 +328,39 @@ blocks:
             minimum: 0
             maximum: 1
             description: "Confidence in gathering plan (INTERNAL)"
-          uncertainty:
-            type: object
-            description: "What you need to know (INTERNAL)"
-            properties:
-              exists:
-                type: boolean
-              question:
-                type: string
-            required: [exists]
-        required: [result, confidence, uncertainty]
+        required: [result, confidence]
 
-  # ===========================================================================
-  # STEP 4: Check if investigation needed
-  # ===========================================================================
-  - id: needs_investigation
-    type: Shell
-    description: Evaluate whether to spawn investigation cell.
-    depends_on: [attempt]
-    inputs:
-      command: |
-        python3 << 'EOF'
-        import json, os
-
-        confidence = float(os.environ.get('CONFIDENCE', '1'))
-        threshold = float(os.environ.get('THRESHOLD', '0.7'))
-        uncertainty_exists = os.environ.get('UNCERTAINTY_EXISTS', 'false').lower() == 'true'
-        question = os.environ.get('UNCERTAINTY_QUESTION', '').strip()
-        depth = int(os.environ.get('DEPTH', '0'))
-        max_depth = int(os.environ.get('MAX_DEPTH', '5'))
-        spawn_policy = os.environ.get('SPAWN_POLICY', 'complex_only')
-
-        # Spawn policy determines when to investigate
-        # never: Never spawn investigations
-        # complex_only: Spawn only when uncertain AND complex
-        # always: Always spawn for parallel gathering
-        allow_spawn = spawn_policy != 'never'
-
-        should_investigate = (
-            allow_spawn and
-            confidence < threshold and
-            uncertainty_exists and
-            question != '' and
-            depth < max_depth
-        )
-
-        if spawn_policy == 'never':
-            reason = 'spawn_disabled'
-        elif confidence >= threshold:
-            reason = 'confident'
-        elif not uncertainty_exists or not question:
-            reason = 'no_uncertainty'
-        elif depth >= max_depth:
-            reason = 'max_depth_reached'
-        else:
-            reason = 'investigating'
-
-        print(json.dumps({
-            'should_investigate': should_investigate,
-            'reason': reason,
-            'confidence': confidence,
-            'depth': depth,
-            'spawn_policy': spawn_policy
-        }))
-        EOF
-      env:
-        CONFIDENCE: "{{ blocks.attempt.outputs.response.confidence }}"
-        THRESHOLD: "{{ inputs.confidence_threshold }}"
-        UNCERTAINTY_EXISTS: "{{ blocks.attempt.outputs.response.uncertainty.exists | default(false) }}"
-        UNCERTAINTY_QUESTION: "{{ blocks.attempt.outputs.response.uncertainty.question | default('') }}"
-        DEPTH: "{{ inputs.depth }}"
-        MAX_DEPTH: "{{ inputs.max_depth }}"
-        SPAWN_POLICY: "{{ inputs.pipeline_config.gather.spawn | default('complex_only') }}"
-
-  # ===========================================================================
-  # STEP 5: Spawn child cell to investigate (if uncertain)
-  # ===========================================================================
-  - id: investigate
+  - id: dispatch
     type: Workflow
-    description: Spawn cortex-cell to investigate uncertainty.
-    depends_on: [needs_investigation]
-    condition: "{{ (blocks.needs_investigation.outputs.stdout | fromjson).should_investigate }}"
-    inputs:
-      workflow: cortex-cell
-      inputs:
-        prompt: "{{ blocks.attempt.outputs.response.uncertainty.question }}"
-        context:
-          repo_path: "{{ inputs.context.repo_path | default('') }}"
-          parent_prompt: "{{ inputs.prompt }}"
-          spawning_phase: "gather"
-        depth: "{{ inputs.depth + 1 }}"
-        max_depth: "{{ inputs.max_depth }}"
-        iterations: 0
-        max_iterations: "{{ inputs.max_iterations }}"
-        state: "{{ blocks.register_phase.outputs.state }}"
-        parent_id: "{{ blocks.register_phase.outputs.task.task_id }}"
-        profile: "{{ inputs.profile }}"
-        confidence_threshold: "{{ inputs.confidence_threshold }}"
-        capabilities: "{{ inputs.capabilities }}"
-        permissions: "{{ inputs.permissions }}"
-
-  # ===========================================================================
-  # STEP 6: Self-recurse if investigation succeeded
-  # ===========================================================================
-  - id: self_recurse
-    type: Workflow
-    description: Call THIS phase with synthesis from investigation.
-    depends_on: [investigate]
-    condition: "{{ blocks.investigate.succeeded }}"
-    inputs:
-      workflow: cortex-phase-gather
-      inputs:
-        prompt: "{{ inputs.prompt }}"
-        system: "{{ inputs.system }}"
-        context: "{{ inputs.context }}"
-        pipeline_config: "{{ inputs.pipeline_config }}"
-        memory: "{{ inputs.memory }}"
-        state: "{{ blocks.register_phase.outputs.state }}"
-        parent_id: "{{ inputs.parent_id }}"
-        profile: "{{ inputs.profile }}"
-        confidence_threshold: "{{ inputs.confidence_threshold }}"
-        capabilities: "{{ inputs.capabilities }}"
-        max_depth: "{{ inputs.max_depth }}"
-        depth: "{{ inputs.depth + 1 }}"
-        iterations: "{{ inputs.iterations }}"
-        max_iterations: "{{ inputs.max_iterations }}"
-        synthesis: |
-          {{ inputs.synthesis + [{
-            'prompt': blocks.attempt.outputs.response.uncertainty.question,
-            'response': blocks.investigate.outputs.response,
-            'synthesis': blocks.investigate.outputs.synthesis
-          }] }}
-
-  # ===========================================================================
-  # STEP 7: Dispatch ATOMIC operations via for_each
-  # ===========================================================================
-  - id: dispatch_operations
-    type: Workflow
-    description: Execute capability workflows in parallel via for_each.
-    depends_on: [needs_investigation]
+    description: ACT - Execute capability workflows in parallel via for_each.
+    depends_on: [plan]
     condition: |
-      {{ not (blocks.needs_investigation.outputs.stdout | fromjson).should_investigate
-         and (blocks.attempt.outputs.response.result.operations | default([]) | length > 0) }}
-    for_each: "{{ blocks.attempt.outputs.response.result.operations }}"
+      {{ get(blocks.plan.outputs.response.result, 'operations', []) | length > 0 }}
+    for_each: "{{ get(blocks.plan.outputs.response.result, 'operations', []) }}"
     for_each_mode: parallel
     max_parallel: 5
     continue_on_error: true
     inputs:
       workflow: "{{ each.value.capability }}"
       inputs:
-        state: "{{ blocks.register_phase.outputs.state }}"
-        base_path: "{{ inputs.context.repo_path | default('.') }}"
-        patterns: "{{ each.value.inputs.patterns | default([]) }}"
-        pattern: "{{ each.value.inputs.pattern | default('') }}"
-        query: "{{ each.value.inputs.query | default('') }}"
-        mode: "{{ each.value.inputs.mode | default('') }}"
-        path: "{{ each.value.inputs.path | default('') }}"
+        state: "{{ blocks.register.outputs.state }}"
+        source_cell: "{{ blocks.register.outputs.task.task_id }}"
+        base_path: "{{ get(inputs.context, 'repo_path', '.') }}"
+        patterns: "{{ get(each.value.inputs, 'patterns', []) }}"
+        pattern: "{{ get(each.value.inputs, 'pattern', '') }}"
+        query: "{{ get(each.value.inputs, 'query', '') }}"
+        mode: "{{ get(each.value.inputs, 'mode', '') }}"
+        path: "{{ get(each.value.inputs, 'path', '') }}"
 
-  # ===========================================================================
-  # STEP 7b: Dispatch COGNITIVE spawning via for_each
-  # ===========================================================================
-  - id: spawn_cells
+  - id: investigations
     type: Workflow
-    description: Spawn child cortex-cells for complex sub-gathering.
-    depends_on: [needs_investigation]
+    description: ACT - Spawn child cortex-cells for complex investigations.
+    depends_on: [dispatch]
     condition: |
-      {{ not (blocks.needs_investigation.outputs.stdout | fromjson).should_investigate
-         and (blocks.attempt.outputs.response.result.spawn_cells | default([]) | length > 0)
-         and inputs.pipeline_config.gather.spawn != 'never'
+      {{ get(blocks.plan.outputs.response.result, 'investigations', []) | length > 0
+         and get(inputs.pipeline_config.gather, 'spawn', 'complex_only') != 'never'
          and inputs.depth < inputs.max_depth }}
-    for_each: "{{ blocks.attempt.outputs.response.result.spawn_cells }}"
+    for_each: "{{ get(blocks.plan.outputs.response.result, 'investigations', []) }}"
     for_each_mode: parallel
     max_parallel: 3
     continue_on_error: true
@@ -545,205 +368,65 @@ blocks:
       workflow: cortex-cell
       inputs:
         prompt: "{{ each.value.prompt }}"
-        context: "{{ inputs.context | combine({'parent_prompt': inputs.prompt, 'spawning_phase': 'gather', 'spawn_reason': each.value.reason}) }}"
+        context: "{{ inputs.context | combine({'parent_prompt': inputs.prompt, 'spawn_reason': each.value.reason}) }}"
         depth: "{{ inputs.depth + 1 }}"
         max_depth: "{{ inputs.max_depth }}"
-        iterations: 0
+        iterations: "{{ inputs.iterations }}"
         max_iterations: "{{ inputs.max_iterations }}"
-        state: "{{ blocks.register_phase.outputs.state }}"
-        parent_id: "{{ blocks.register_phase.outputs.task.task_id }}"
+        state: "{{ blocks.register.outputs.state }}"
+        parent_id: "{{ blocks.register.outputs.task.task_id }}"
         profile: "{{ inputs.profile }}"
         confidence_threshold: "{{ inputs.confidence_threshold }}"
         capabilities: "{{ inputs.capabilities }}"
         permissions: "{{ inputs.permissions }}"
 
-  # ===========================================================================
-  # STEP 8: EVALUATE - Assess if gathered evidence is sufficient
-  # ===========================================================================
-  - id: evaluate_sufficiency
-    type: LLMCall
-    description: Assess if gathered evidence is sufficient for the query.
-    depends_on:
-      - block: dispatch_operations
-        required: false
-      - block: spawn_cells
-        required: false
-    condition: |
-      {{ not (blocks.needs_investigation.outputs.stdout | fromjson).should_investigate
-         and inputs.refine_iteration < inputs.max_refine }}
-    inputs:
-      profile: "{{ inputs.profile }}"
-      timeout: 120
-      system_instructions: |
-        You are evaluating whether gathered evidence is sufficient to answer a query.
-        Be honest about gaps - it's better to gather more than proceed with insufficient data.
-      prompt: |
-        # Evidence Sufficiency Evaluation
-
-        ## Original Query
-        {{ inputs.prompt }}
-
-        ## Gathering Strategy Used
-        {{ blocks.attempt.outputs.response.result.strategy }}
-
-        ## Operations Executed
-        - Total: {{ blocks.dispatch_operations.metadata.count | default(0) }}
-        - Failed: {{ blocks.dispatch_operations.metadata.count_failed | default(0) }}
-
-        ## Child Cells Spawned
-        - Total: {{ blocks.spawn_cells.metadata.count | default(0) }}
-        - Failed: {{ blocks.spawn_cells.metadata.count_failed | default(0) }}
-
-        ## Refinement Status
-        - Current iteration: {{ inputs.refine_iteration }} / {{ inputs.max_refine }}
-
-        ## Available Capabilities for Refinement
-        {% for cap in inputs.capabilities %}
-        - {{ cap.name }}: {{ cap.description }}
-        {% endfor %}
-
-        ---
-
-        **Question**: Is the gathered evidence SUFFICIENT to answer the query?
-
-        If NOT sufficient:
-        1. Identify what SPECIFIC information is still missing
-        2. Suggest targeted operations to fill those gaps
-
-      response_schema:
-        type: object
-        properties:
-          sufficient:
-            type: boolean
-            description: "True if evidence is adequate to answer the query"
-          confidence:
-            type: number
-            minimum: 0
-            maximum: 1
-            description: "Confidence in sufficiency assessment"
-          reasoning:
-            type: string
-            description: "Why evidence is or isn't sufficient"
-          missing:
-            type: string
-            description: "What specific information is still needed (if not sufficient)"
-          suggested_operations:
-            type: array
-            description: "Targeted operations to fill gaps (if not sufficient)"
-            items:
-              type: object
-              properties:
-                capability:
-                  type: string
-                  description: "Capability workflow name (e.g., cortex-gather-files, cortex-gather-search)"
-                inputs:
-                  type: object
-                  description: "Capability-specific inputs"
-                  properties:
-                    patterns:
-                      type: array
-                      items:
-                        type: string
-                      description: "Glob patterns for cortex-gather-files"
-                    pattern:
-                      type: string
-                      description: "Regex pattern for cortex-gather-search"
-                    path:
-                      type: string
-                      description: "Directory path to search in"
-                    mode:
-                      type: string
-                      description: "Read mode: outline, full, summary"
-                    file_type:
-                      type: string
-                      description: "File extension filter"
-                reason:
-                  type: string
-                  description: "Why this operation will help"
-              required: [capability, reason]
-        required: [sufficient, confidence, reasoning]
-
-  # ===========================================================================
-  # STEP 9: Determine if refinement needed and allowed
-  # ===========================================================================
-  - id: should_refine
+  - id: combine_results
     type: Shell
-    description: Determine if refinement is needed and allowed.
-    depends_on: [evaluate_sufficiency]
-    condition: "{{ blocks.evaluate_sufficiency.succeeded }}"
+    description: Combine investigation prompts with their results for Reflexion.
+    depends_on: [investigations]
+    condition: |
+      {{ blocks.investigations.succeeded
+         and get(blocks.investigations.metadata, 'count', 0) > 0 }}
     inputs:
       command: |
         python3 << 'EOF'
         import json
         import os
 
-        sufficient = os.environ.get('SUFFICIENT', 'true').lower() == 'true'
-        confidence = float(os.environ.get('CONFIDENCE', '1'))
-        refine_iteration = int(os.environ.get('REFINE_ITERATION', '0'))
-        max_refine = int(os.environ.get('MAX_REFINE', '2'))
-        has_suggestions = os.environ.get('HAS_SUGGESTIONS', 'false').lower() == 'true'
+        # Investigation requests (what we asked)
+        requests = json.loads(os.environ.get('REQUESTS', '[]'))
+        # Investigation outputs (what we got back)
+        outputs = json.loads(os.environ.get('OUTPUTS', '[]'))
+        # Previous synthesis (accumulated)
+        previous = json.loads(os.environ.get('PREVIOUS', '[]'))
 
-        should_refine = (
-            not sufficient and
-            refine_iteration < max_refine and
-            has_suggestions
-        )
+        # Combine requests with outputs into Reflexion-compatible format
+        combined = []
+        for i, req in enumerate(requests):
+            result = outputs[i] if i < len(outputs) else {}
+            combined.append({
+                'prompt': req.get('prompt', ''),
+                'reason': req.get('reason', ''),
+                'response': result.get('response', ''),
+                'synthesis': result.get('synthesis', {})
+            })
 
-        if sufficient:
-            reason = 'sufficient'
-        elif refine_iteration >= max_refine:
-            reason = 'max_refine_reached'
-        elif not has_suggestions:
-            reason = 'no_suggestions'
-        else:
-            reason = 'refining'
-
-        print(json.dumps({
-            'should_refine': should_refine,
-            'refine_iteration': refine_iteration,
-            'max_refine': max_refine,
-            'reason': reason,
-            'confidence': confidence
-        }))
+        # Merge with previous synthesis
+        all_synthesis = previous + combined
+        print(json.dumps(all_synthesis))
         EOF
       env:
-        SUFFICIENT: "{{ blocks.evaluate_sufficiency.outputs.response.sufficient }}"
-        CONFIDENCE: "{{ blocks.evaluate_sufficiency.outputs.response.confidence }}"
-        REFINE_ITERATION: "{{ inputs.refine_iteration }}"
-        MAX_REFINE: "{{ inputs.max_refine }}"
-        HAS_SUGGESTIONS: "{{ (blocks.evaluate_sufficiency.outputs.response.suggested_operations | default([]) | length > 0) }}"
+        REQUESTS: "{{ get(blocks.plan.outputs.response.result, 'investigations', []) | tojson }}"
+        OUTPUTS: "{{ blocks.investigations.outputs | default([]) | tojson }}"
+        PREVIOUS: "{{ inputs.synthesis | tojson }}"
 
-  # ===========================================================================
-  # STEP 10: REFINE - Execute targeted operations to fill evidence gaps
-  # ===========================================================================
-  - id: refine_gather
+  - id: recurse
     type: Workflow
-    description: Execute targeted operations to fill evidence gaps.
-    depends_on: [should_refine]
-    condition: "{{ (blocks.should_refine.outputs.stdout | fromjson).should_refine }}"
-    for_each: "{{ blocks.evaluate_sufficiency.outputs.response.suggested_operations }}"
-    for_each_mode: parallel
-    max_parallel: 3
-    continue_on_error: true
-    inputs:
-      workflow: "{{ each.value.capability }}"
-      inputs:
-        state: "{{ blocks.register_phase.outputs.state }}"
-        base_path: "{{ inputs.context.repo_path | default('.') }}"
-        patterns: "{{ each.value.inputs.patterns | default([]) }}"
-        pattern: "{{ each.value.inputs.pattern | default('') }}"
-        query: "{{ each.value.inputs.query | default('') }}"
-        mode: "{{ each.value.inputs.mode | default('') }}"
-        path: "{{ each.value.inputs.path | default('') }}"
-
-  # ===========================================================================
-  # STEP 11: Recurse for another evaluation round after refinement
-  # ===========================================================================
-  - id: recurse_for_refine
-    type: Workflow
-    description: Recurse to evaluate again after refinement operations.
-    depends_on: [refine_gather]
-    condition: "{{ blocks.refine_gather.succeeded }}"
+    description: LOOP - Recurse with accumulated syntheses from investigations.
+    depends_on: [combine_results]
+    condition: |
+      {{ blocks.combine_results.succeeded
+         and inputs.depth < inputs.max_depth }}
     inputs:
       workflow: cortex-phase-gather
       inputs:
@@ -751,140 +434,70 @@ blocks:
         system: "{{ inputs.system }}"
         context: "{{ inputs.context }}"
         pipeline_config: "{{ inputs.pipeline_config }}"
-        memory: "{{ inputs.memory }}"
-        synthesis: "{{ inputs.synthesis }}"
-        depth: "{{ inputs.depth }}"
+        depth: "{{ inputs.depth + 1 }}"
         max_depth: "{{ inputs.max_depth }}"
         iterations: "{{ inputs.iterations }}"
         max_iterations: "{{ inputs.max_iterations }}"
         confidence_threshold: "{{ inputs.confidence_threshold }}"
-        state: "{{ blocks.register_phase.outputs.state }}"
-        parent_id: "{{ inputs.parent_id }}"
+        state: "{{ blocks.register.outputs.state }}"
+        parent_id: "{{ blocks.register.outputs.task.task_id }}"
         profile: "{{ inputs.profile }}"
         capabilities: "{{ inputs.capabilities }}"
         permissions: "{{ inputs.permissions }}"
-        refine_iteration: "{{ inputs.refine_iteration + 1 }}"
-        max_refine: "{{ inputs.max_refine }}"
+        synthesis: "{{ blocks.combine_results.outputs.stdout | fromjson }}"
 
-  # ===========================================================================
-  # STEP 12: Compile results from for_each dispatch
-  # ===========================================================================
-  - id: compile_result
-    type: Shell
-    description: Compile gathering results from dispatch operations, spawn cells, and refinement.
-    depends_on:
-      - block: self_recurse
-        required: false
-      - block: dispatch_operations
-        required: false
-      - block: spawn_cells
-        required: false
-      - block: recurse_for_refine
-        required: false
-      - block: evaluate_sufficiency
-        required: false
-    inputs:
-      command: |
-        python3 << 'EOF'
-        import json
-        import os
-
-        # Check for various recursion paths
-        self_recursed = os.environ.get('SELF_RECURSED', 'false').lower() == 'true'
-        self_recurse_result = json.loads(os.environ.get('SELF_RECURSE_RESULT', '{}'))
-        refine_recursed = os.environ.get('REFINE_RECURSED', 'false').lower() == 'true'
-        refine_recurse_result = json.loads(os.environ.get('REFINE_RECURSE_RESULT', '{}'))
-
-        strategy = os.environ.get('STRATEGY', '')
-        ops_count = int(os.environ.get('OPS_COUNT', '0'))
-        ops_failed = int(os.environ.get('OPS_FAILED', '0'))
-        spawn_count = int(os.environ.get('SPAWN_COUNT', '0'))
-        spawn_failed = int(os.environ.get('SPAWN_FAILED', '0'))
-        refine_count = int(os.environ.get('REFINE_COUNT', '0'))
-        refine_failed = int(os.environ.get('REFINE_FAILED', '0'))
-        refine_iteration = int(os.environ.get('REFINE_ITERATION', '0'))
-        evidence_sufficient = os.environ.get('EVIDENCE_SUFFICIENT', 'true').lower() == 'true'
-
-        # Priority: refine recursion > self recursion > direct result
-        if refine_recursed and refine_recurse_result:
-            # Pass through result from refinement recursion
-            print(json.dumps(refine_recurse_result))
-        elif self_recursed and self_recurse_result:
-            # Pass through result from investigation recursion
-            print(json.dumps(self_recurse_result))
-        else:
-            # Build result from dispatch execution
-            result = {
-                'strategy': strategy,
-                'operations_executed': ops_count,
-                'operations_failed': ops_failed,
-                'cells_spawned': spawn_count,
-                'cells_failed': spawn_failed,
-                'refine_operations': refine_count,
-                'refine_failed': refine_failed,
-                'refine_iterations': refine_iteration,
-                'evidence_sufficient': evidence_sufficient
-            }
-            print(json.dumps(result))
-        EOF
-      env:
-        SELF_RECURSED: "{{ 'true' if blocks.self_recurse.succeeded else 'false' }}"
-        SELF_RECURSE_RESULT: "{{ blocks.self_recurse.outputs.result | default({}) | tojson }}"
-        REFINE_RECURSED: "{{ 'true' if blocks.recurse_for_refine.succeeded else 'false' }}"
-        REFINE_RECURSE_RESULT: "{{ blocks.recurse_for_refine.outputs.result | default({}) | tojson }}"
-        STRATEGY: "{{ blocks.attempt.outputs.response.result.strategy | default('') }}"
-        OPS_COUNT: "{{ blocks.dispatch_operations.metadata.count | default(0) }}"
-        OPS_FAILED: "{{ blocks.dispatch_operations.metadata.count_failed | default(0) }}"
-        SPAWN_COUNT: "{{ blocks.spawn_cells.metadata.count | default(0) }}"
-        SPAWN_FAILED: "{{ blocks.spawn_cells.metadata.count_failed | default(0) }}"
-        REFINE_COUNT: "{{ blocks.refine_gather.metadata.count | default(0) }}"
-        REFINE_FAILED: "{{ blocks.refine_gather.metadata.count_failed | default(0) }}"
-        REFINE_ITERATION: "{{ inputs.refine_iteration }}"
-        EVIDENCE_SUFFICIENT: "{{ blocks.evaluate_sufficiency.outputs.response.sufficient | default(true) }}"
-
-  # ===========================================================================
-  # STEP 13: Track completion
-  # ===========================================================================
   - id: track_done
     type: Workflow
-    description: Mark phase complete.
-    depends_on: [compile_result]
+    description: Mark phase complete and compile result.
+    depends_on:
+      - block: dispatch
+        required: false
+      - block: investigations
+        required: false
+      - block: combine_results
+        required: false
+      - block: recurse
+        required: false
+    condition: "{{ not blocks.recurse.succeeded }}"
     inputs:
       workflow: agent-state-management
       inputs:
-        state: "{{ blocks.register_phase.outputs.state }}"
-        task_id: "{{ blocks.register_phase.outputs.task.task_id }}"
+        state: "{{ blocks.register.outputs.state }}"
+        task_id: "{{ blocks.register.outputs.task.task_id }}"
         status: "done"
         caller: "cortex-phase-gather"
-        data:
-          gather_depth: "{{ inputs.pipeline_config.gather.depth | default('focused') }}"
-          recursed: "{{ blocks.self_recurse.succeeded | default(false) }}"
-          refined: "{{ blocks.recurse_for_refine.succeeded | default(false) }}"
-          refine_iteration: "{{ inputs.refine_iteration }}"
-          evidence_sufficient: "{{ blocks.evaluate_sufficiency.outputs.response.sufficient | default(true) }}"
+        outputs_data:
+          strategy: "{{ blocks.plan.outputs.response.result.strategy | default('') }}"
+          operations_executed: "{{ get(blocks.dispatch.metadata, 'count', 0) }}"
+          operations_failed: "{{ get(blocks.dispatch.metadata, 'count_failed', 0) }}"
+          investigations_spawned: "{{ get(blocks.investigations.metadata, 'count', 0) }}"
+          investigations_failed: "{{ get(blocks.investigations.metadata, 'count_failed', 0) }}"
+          confidence: "{{ blocks.plan.outputs.response.confidence | default(0) }}"
+          depth: "{{ inputs.depth }}"
 
-# =============================================================================
-# OUTPUTS
-# =============================================================================
 outputs:
   result:
     type: dict
-    description: "Gathering result. Child's result passes through unchanged."
-    value: "{{ blocks.compile_result.outputs.stdout | fromjson }}"
+    description: "Gathering result. Recursed result passes through unchanged."
+    value: |
+      {{ blocks.recurse.outputs.result if blocks.recurse.succeeded else {
+        'strategy': blocks.plan.outputs.response.result.strategy | default(''),
+        'operations_executed': get(blocks.dispatch.metadata, 'count', 0),
+        'operations_failed': get(blocks.dispatch.metadata, 'count_failed', 0),
+        'investigations_spawned': get(blocks.investigations.metadata, 'count', 0),
+        'investigations_failed': get(blocks.investigations.metadata, 'count_failed', 0),
+        'confidence': blocks.plan.outputs.response.confidence | default(0),
+        'depth': inputs.depth
+      } }}
 
   config_override:
     type: dict
     description: "Config override for REASON/ACT based on discoveries."
     value: |
-      {{ blocks.self_recurse.outputs.config_override if blocks.self_recurse.succeeded
-         else (blocks.attempt.outputs.response.config_override | default({})) }}
-
-  memories:
-    type: list
-    description: "File paths stored to memory (tracked via state DB, not aggregated here)."
-    value: "{{ blocks.self_recurse.outputs.memories if blocks.self_recurse.succeeded else [] }}"
+      {{ blocks.recurse.outputs.config_override if blocks.recurse.succeeded
+         else (blocks.plan.outputs.response.config_override | default({})) }}
 
   state:
     type: str
     description: "Path to state database."
-    value: "{{ blocks.register_phase.outputs.state }}"
+    value: "{{ blocks.register.outputs.state }}"

@@ -43,54 +43,65 @@ inputs:
     required: false
     default: ""
 
-  task:
+  kind:
     type: str
-    description: Human-readable task description.
+    description: Task type classification
     required: false
     default: ""
 
-  category:
+  name:
     type: str
-    description: Category/type of task (e.g., "investigation", "pr-review"). Optional.
+    description: Task name (typically the workflow name)
     required: false
     default: ""
+
+  metadata:
+    type: dict
+    description: Metadata for additional task info
+    required: false
+    default: {}
+
+  inputs_data:
+    type: dict
+    description: Input data passed to this task
+    required: false
+    default: {}
+
+  outputs_data:
+    type: dict
+    description: Output data produced by this task
+    required: false
+    default: {}
 
   depth:
     type: num
-    description: Task depth in the hierarchy (0 = root, increments for children).
+    description: Task depth in the hierarchy (0 = root, increments for children)
     required: false
     default: 0
 
   caller:
     type: str
-    description: Who/what is making this call (for audit trail).
+    description: Who/what is making this call (for audit trail)
     required: true
-
-  data:
-    type: dict
-    description: Task-specific data to merge into the task's data field.
-    required: false
-    default: {}
 
   status:
     type: str
-    description: Task status (pending, in-progress, done, failed, blocked).
+    description: Task status (pending, running, done, failed)
     required: false
     default: ""
 
   audit:
     type: bool
-    description: Whether to add an audit entry for this operation.
+    description: Whether to add an audit entry for this operation
     required: false
     default: true
 
   ai:
     type: bool
-    description: Whether to use AI for generating audit descriptions.
+    description: Whether to use AI for generating audit descriptions
     required: false
     default: false
 
-  # Operation routing
   op:
     type: str
     description: |
@@ -105,7 +116,6 @@ inputs:
     required: false
     default: "task"
 
-  # Query input (used when op=query)
   query:
     type: dict
     description: |
@@ -128,7 +138,6 @@ inputs:
     required: false
     default: {}
 
-  # Iteration-specific inputs (used when op=iteration)
   iteration_op:
     type: str
     description: |
@@ -159,7 +168,6 @@ inputs:
     required: false
     default: ""
 
-  # Memory-specific inputs (used when op=memory)
   memory_op:
     type: str
     description: |
@@ -202,7 +210,6 @@ inputs:
     required: false
     default: ""
 
-  # Evidence-specific inputs (used when op=evidence)
   evidence_op:
     type: str
     description: |
@@ -456,19 +463,27 @@ blocks:
                     value TEXT NOT NULL
                 );
 
+                -- Tasks table (v1 schema - K8s-inspired)
                 CREATE TABLE IF NOT EXISTS tasks (
                     task_id TEXT PRIMARY KEY,
                     parent_id TEXT REFERENCES tasks(task_id),
-                    task TEXT NOT NULL,
-                    category TEXT DEFAULT '',
-                    depth INTEGER DEFAULT 0,
+                    -- Identity
+                    kind TEXT NOT NULL CHECK(kind IN ('cell', 'phase', 'capability')),
+                    name TEXT NOT NULL,
+                    metadata JSON DEFAULT '{}',
+                    -- Contract
+                    inputs JSON DEFAULT '{}',
+                    outputs JSON DEFAULT '{}',
+                    -- Lifecycle
                     status TEXT DEFAULT 'pending'
-                        CHECK(status IN ('pending', 'in-progress', 'done', 'failed', 'blocked')),
-                    data JSON DEFAULT '{}',
+                        CHECK(status IN ('pending', 'running', 'done', 'failed')),
+                    depth INTEGER DEFAULT 0,
+                    -- Timestamps
                     created_at TEXT NOT NULL,
                     updated_at TEXT NOT NULL
                 );
                 CREATE INDEX IF NOT EXISTS idx_tasks_parent ON tasks(parent_id);
+                CREATE INDEX IF NOT EXISTS idx_tasks_kind ON tasks(kind);
                 CREATE INDEX IF NOT EXISTS idx_tasks_status ON tasks(status);
                 CREATE INDEX IF NOT EXISTS idx_tasks_depth ON tasks(depth);
 
@@ -582,112 +597,28 @@ blocks:
             # Initialize metadata
             conn.execute("INSERT INTO metadata VALUES ('created_at', ?)", (now,))
             conn.execute("INSERT INTO metadata VALUES ('updated_at', ?)", (now,))
-            conn.execute("INSERT INTO metadata VALUES ('schema_version', '3')")
+            conn.execute("INSERT INTO metadata VALUES ('schema_version', '1')")
             conn.commit()
             conn.close()
         else:
-            # Migrate existing database if needed
+            # Verify schema version (v1 required, no migrations)
             conn = sqlite3.connect(db_path)
             conn.execute("PRAGMA busy_timeout=30000")
 
-            # Check schema version
             try:
                 row = conn.execute("SELECT value FROM metadata WHERE key='schema_version'").fetchone()
-                current_version = int(row[0]) if row else 1
+                schema_version = row[0] if row else None
             except:
-                current_version = 1
-
-            if current_version < 2:
-                # Migrate to v2: Add CORTEX memory tables
-                conn.executescript('''
-                    -- Evidence table (episodic memory)
-                    CREATE TABLE IF NOT EXISTS evidence (
-                        key TEXT PRIMARY KEY,
-                        value TEXT NOT NULL,
-                        evidence_type TEXT NOT NULL
-                            CHECK(evidence_type IN ('content', 'outline', 'search')),
-                        source_cell TEXT NOT NULL,
-                        source_operation TEXT,
-                        byte_size INTEGER,
-                        created_at TEXT DEFAULT (datetime('now'))
-                    );
-                    CREATE INDEX IF NOT EXISTS idx_evidence_type ON evidence(evidence_type);
-                    CREATE INDEX IF NOT EXISTS idx_evidence_cell ON evidence(source_cell);
-
-                    -- Facts table (semantic memory)
-                    CREATE TABLE IF NOT EXISTS facts (
-                        id TEXT PRIMARY KEY,
-                        claim TEXT NOT NULL,
-                        evidence_type TEXT NOT NULL
-                            CHECK(evidence_type IN ('direct', 'inferred', 'assumed')),
-                        confidence REAL NOT NULL
-                            CHECK(confidence >= 0 AND confidence <= 1),
-                        grounding TEXT NOT NULL,
-                        scope TEXT,
-                        source_cell TEXT NOT NULL,
-                        source_phase TEXT DEFAULT 'reason',
-                        status TEXT DEFAULT 'active'
-                            CHECK(status IN ('active', 'verified', 'contested', 'superseded', 'refuted')),
-                        superseded_by TEXT,
-                        contested_with TEXT,
-                        created_at TEXT DEFAULT (datetime('now')),
-                        updated_at TEXT DEFAULT (datetime('now'))
-                    );
-                    CREATE INDEX IF NOT EXISTS idx_facts_status ON facts(status);
-                    CREATE INDEX IF NOT EXISTS idx_facts_type ON facts(evidence_type);
-                    CREATE INDEX IF NOT EXISTS idx_facts_cell ON facts(source_cell);
-                    CREATE INDEX IF NOT EXISTS idx_facts_confidence ON facts(confidence DESC);
-
-                    -- FTS5 for fact search
-                    CREATE VIRTUAL TABLE IF NOT EXISTS facts_fts USING fts5(
-                        id, claim, content=facts, content_rowid=rowid
-                    );
-
-                    -- FTS sync triggers
-                    CREATE TRIGGER IF NOT EXISTS facts_ai AFTER INSERT ON facts BEGIN
-                        INSERT INTO facts_fts(rowid, id, claim) VALUES (NEW.rowid, NEW.id, NEW.claim);
-                    END;
-                    CREATE TRIGGER IF NOT EXISTS facts_ad AFTER DELETE ON facts BEGIN
-                        INSERT INTO facts_fts(facts_fts, rowid, id, claim) VALUES('delete', OLD.rowid, OLD.id, OLD.claim);
-                    END;
-                    CREATE TRIGGER IF NOT EXISTS facts_au AFTER UPDATE ON facts BEGIN
-                        INSERT INTO facts_fts(facts_fts, rowid, id, claim) VALUES('delete', OLD.rowid, OLD.id, OLD.claim);
-                        INSERT INTO facts_fts(rowid, id, claim) VALUES (NEW.rowid, NEW.id, NEW.claim);
-                    END;
-
-                    -- Actions table (deduplication)
-                    CREATE TABLE IF NOT EXISTS actions (
-                        id TEXT PRIMARY KEY,
-                        cell_id TEXT NOT NULL,
-                        capability TEXT NOT NULL,
-                        inputs_hash TEXT NOT NULL,
-                        inputs TEXT NOT NULL,
-                        status TEXT DEFAULT 'pending'
-                            CHECK(status IN ('pending', 'completed', 'failed', 'rolled_back')),
-                        result TEXT,
-                        created_at TEXT DEFAULT (datetime('now')),
-                        completed_at TEXT,
-                        UNIQUE(capability, inputs_hash)
-                    );
-                    CREATE INDEX IF NOT EXISTS idx_actions_status ON actions(status);
-                    CREATE INDEX IF NOT EXISTS idx_actions_cell ON actions(cell_id);
-                    CREATE INDEX IF NOT EXISTS idx_actions_capability ON actions(capability);
-                ''')
-                conn.execute("INSERT OR REPLACE INTO metadata VALUES ('schema_version', '2')")
-                conn.commit()
-                current_version = 2
-
-            if current_version < 3:
-                # Migrate to v3: Add depth column to tasks table
-                # Check if depth column already exists
-                columns = [row[1] for row in conn.execute("PRAGMA table_info(tasks)").fetchall()]
-                if 'depth' not in columns:
-                    conn.execute("ALTER TABLE tasks ADD COLUMN depth INTEGER DEFAULT 0")
-                    conn.execute("CREATE INDEX IF NOT EXISTS idx_tasks_depth ON tasks(depth)")
-                conn.execute("INSERT OR REPLACE INTO metadata VALUES ('schema_version', '3')")
-                conn.commit()
+                schema_version = None
 
             conn.close()
+
+            if schema_version != '1':
+                raise ValueError(
+                    f"Incompatible database schema version: {schema_version}. "
+                    f"Expected version '1'. Please delete the database at {db_path} "
+                    f"and start fresh."
+                )
 
         print(json.dumps({
             'trace_id': trace_id,
@@ -739,7 +670,7 @@ blocks:
         default: "{{inputs.memory_default}}"
 
   # ==========================================================================
-  # ROUTING: Handle query operations
+  # ROUTING: Handle query operations (v1 schema)
   # ==========================================================================
   - id: handle_query
     type: Shell
@@ -780,16 +711,19 @@ blocks:
 
         results = []
 
+        # v1 schema columns: task_id, parent_id, kind, name, metadata, inputs, outputs, status, depth
+        base_cols = "task_id, parent_id, kind, name, metadata, inputs, outputs, status, depth"
+
         if relation == 'children':
             # Direct children of task_id
-            sql = "SELECT task_id, parent_id, category, depth, status, data FROM tasks WHERE parent_id = ?"
+            sql = f"SELECT {base_cols} FROM tasks WHERE parent_id = ?"
             params = [task_id]
 
         elif relation == 'parent':
             # Get parent of task_id
             row = conn.execute("SELECT parent_id FROM tasks WHERE task_id = ?", (task_id,)).fetchone()
             if row and row['parent_id']:
-                sql = "SELECT task_id, parent_id, category, depth, status, data FROM tasks WHERE task_id = ?"
+                sql = f"SELECT {base_cols} FROM tasks WHERE task_id = ?"
                 params = [row['parent_id']]
             else:
                 print(json.dumps({'results': [], 'count': 0, 'relation': 'parent'}))
@@ -798,32 +732,34 @@ blocks:
 
         elif relation == 'ancestors':
             # Recursive CTE to get all ancestors
-            sql = """
+            sql = f"""
                 WITH RECURSIVE ancestors AS (
-                    SELECT task_id, parent_id, category, depth, status, data, 1 as traversal_depth
+                    SELECT {base_cols}, 1 as traversal_depth
                     FROM tasks WHERE task_id = (SELECT parent_id FROM tasks WHERE task_id = ?)
                     UNION ALL
-                    SELECT t.task_id, t.parent_id, t.category, t.depth, t.status, t.data, a.traversal_depth + 1
+                    SELECT t.task_id, t.parent_id, t.kind, t.name, t.metadata, t.inputs, t.outputs,
+                           t.status, t.depth, a.traversal_depth + 1
                     FROM tasks t
                     JOIN ancestors a ON t.task_id = a.parent_id
                 )
-                SELECT task_id, parent_id, category, depth, status, data, traversal_depth FROM ancestors
+                SELECT {base_cols}, traversal_depth FROM ancestors
                 ORDER BY traversal_depth
             """
             params = [task_id]
 
         elif relation == 'descendants':
             # Recursive CTE to get all descendants
-            sql = """
+            sql = f"""
                 WITH RECURSIVE descendants AS (
-                    SELECT task_id, parent_id, category, depth, status, data, 1 as traversal_depth
+                    SELECT {base_cols}, 1 as traversal_depth
                     FROM tasks WHERE parent_id = ?
                     UNION ALL
-                    SELECT t.task_id, t.parent_id, t.category, t.depth, t.status, t.data, d.traversal_depth + 1
+                    SELECT t.task_id, t.parent_id, t.kind, t.name, t.metadata, t.inputs, t.outputs,
+                           t.status, t.depth, d.traversal_depth + 1
                     FROM tasks t
                     JOIN descendants d ON t.parent_id = d.task_id
                 )
-                SELECT task_id, parent_id, category, depth, status, data, traversal_depth FROM descendants
+                SELECT {base_cols}, traversal_depth FROM descendants
                 ORDER BY traversal_depth
             """
             params = [task_id]
@@ -838,10 +774,12 @@ blocks:
 
         # Apply where filters and build results
         for row in rows:
-            # Check where conditions
+            # Check where conditions (v1: use kind instead of category)
             match = True
             if where:
-                if 'category' in where and row['category'] != where['category']:
+                if 'kind' in where and row['kind'] != where['kind']:
+                    match = False
+                if 'name' in where and row['name'] != where['name']:
                     match = False
                 if 'status' in where and row['status'] != where['status']:
                     match = False
@@ -849,29 +787,54 @@ blocks:
             if not match:
                 continue
 
-            # Build result object
+            # Parse JSON columns
+            try:
+                metadata = json.loads(row['metadata']) if row['metadata'] else {}
+            except json.JSONDecodeError:
+                metadata = {}
+
+            try:
+                inputs = json.loads(row['inputs']) if row['inputs'] else {}
+            except json.JSONDecodeError:
+                inputs = {}
+
+            try:
+                outputs = json.loads(row['outputs']) if row['outputs'] else {}
+            except json.JSONDecodeError:
+                outputs = {}
+
+            # Build result object (v1 schema)
             result = {
                 'task_id': row['task_id'],
                 'parent_id': row['parent_id'],
-                'category': row['category'],
+                'kind': row['kind'],
+                'name': row['name'],
                 'depth': row['depth'],
                 'status': row['status']
             }
 
-            # Handle data extraction
-            if row['data']:
-                try:
-                    data = json.loads(row['data'])
-                    if select_keys:
-                        # Extract only specified keys
-                        for key in select_keys:
-                            if key in data:
-                                result[key] = data[key]
-                    else:
-                        # Return full data
-                        result['data'] = data
-                except json.JSONDecodeError:
-                    result['data'] = {}
+            # Handle select_keys extraction from inputs/outputs/metadata
+            if select_keys:
+                # Extract only specified keys from inputs, outputs, or metadata
+                for key in select_keys:
+                    # Check inputs first, then outputs, then metadata
+                    if key in inputs:
+                        result[key] = inputs[key]
+                    elif key in outputs:
+                        result[key] = outputs[key]
+                    elif key in metadata:
+                        result[key] = metadata[key]
+                    elif key == 'metadata':
+                        result['metadata'] = metadata
+                    elif key == 'inputs':
+                        result['inputs'] = inputs
+                    elif key == 'outputs':
+                        result['outputs'] = outputs
+            else:
+                # Return full metadata, inputs, outputs
+                result['metadata'] = metadata
+                result['inputs'] = inputs
+                result['outputs'] = outputs
 
             results.append(result)
 
@@ -978,7 +941,7 @@ blocks:
   # ==========================================================================
   - id: build_task
     type: Shell
-    description: Create or update task in SQLite database.
+    description: Create or update task in SQLite database (v1 schema).
     depends_on:
       - paths
       - block: new_task_id
@@ -992,13 +955,15 @@ blocks:
 
         # Load environment
         db_path = os.environ['DB_PATH']
-        task_input = os.environ.get('TASK_INPUT', '')
         task_id_input = os.environ.get('TASK_ID_INPUT', '')
         parent_id_input = os.environ.get('PARENT_ID_INPUT', '')
-        category_input = os.environ.get('TASK_TYPE_INPUT', '')
+        kind_input = os.environ.get('KIND_INPUT', '')
+        name_input = os.environ.get('NAME_INPUT', '')
+        metadata_input = json.loads(os.environ.get('METADATA_INPUT', '{}') or '{}')
+        inputs_data = json.loads(os.environ.get('INPUTS_DATA', '{}') or '{}')
+        outputs_data = json.loads(os.environ.get('OUTPUTS_DATA', '{}') or '{}')
         depth_input = int(os.environ.get('DEPTH_INPUT', '0') or '0')
         status_input = os.environ.get('STATUS_INPUT', '')
-        data_input = json.loads(os.environ.get('DATA_INPUT', '{}') or '{}')
         caller = os.environ.get('CALLER', 'unknown')
         new_task_id = os.environ.get('NEW_TASK_ID', '').strip()
 
@@ -1017,7 +982,9 @@ blocks:
 
         # Determine operation and target task
         changes = {}
-        existing_data = {}
+        existing_metadata = {}
+        existing_inputs = {}
+        existing_outputs = {}
 
         if task_id_input:
             # Update existing task
@@ -1027,7 +994,9 @@ blocks:
             if row:
                 target_task_id = task_id_input
                 operation = 'update'
-                existing_data = json.loads(row['data'] or '{}')
+                existing_metadata = json.loads(row['metadata'] or '{}')
+                existing_inputs = json.loads(row['inputs'] or '{}')
+                existing_outputs = json.loads(row['outputs'] or '{}')
             else:
                 raise ValueError(f"Task {task_id_input} not found")
         elif parent_id_input:
@@ -1050,7 +1019,9 @@ blocks:
                 if row:
                     target_task_id = root_task_id
                     operation = 'update'
-                    existing_data = json.loads(row['data'] or '{}')
+                    existing_metadata = json.loads(row['metadata'] or '{}')
+                    existing_inputs = json.loads(row['inputs'] or '{}')
+                    existing_outputs = json.loads(row['outputs'] or '{}')
                 else:
                     # Root task ID in metadata but task not in table - create it
                     target_task_id = root_task_id
@@ -1065,22 +1036,41 @@ blocks:
                 )
                 root_task_id = target_task_id
 
-        # Merge data
-        merged_data = {**existing_data, **data_input} if data_input else existing_data
+        # Merge JSON fields (deep merge for metadata, simple merge for inputs/outputs)
+        def deep_merge(base, overlay):
+            """Deep merge overlay into base."""
+            result = base.copy()
+            for key, value in overlay.items():
+                if key in result and isinstance(result[key], dict) and isinstance(value, dict):
+                    result[key] = deep_merge(result[key], value)
+                else:
+                    result[key] = value
+            return result
+
+        merged_metadata = deep_merge(existing_metadata, metadata_input) if metadata_input else existing_metadata
+        merged_inputs = {**existing_inputs, **inputs_data} if inputs_data else existing_inputs
+        merged_outputs = {**existing_outputs, **outputs_data} if outputs_data else existing_outputs
 
         # Perform operation
         if operation in ('create_root', 'create_subtask'):
+            if not kind_input:
+                raise ValueError("kind is required when creating a task")
+            if not name_input:
+                raise ValueError("name is required when creating a task")
+
             conn.execute('''
-                INSERT INTO tasks (task_id, parent_id, task, category, depth, status, data, created_at, updated_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                INSERT INTO tasks (task_id, parent_id, kind, name, metadata, inputs, outputs, depth, status, created_at, updated_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ''', (
                 target_task_id,
                 parent_id_input or None,
-                task_input or 'Task',
-                category_input or '',
+                kind_input,
+                name_input,
+                json.dumps(merged_metadata),
+                json.dumps(merged_inputs),
+                json.dumps(merged_outputs),
                 depth_input,
-                status_input or 'in-progress',
-                json.dumps(merged_data),
+                status_input or 'pending',
                 now,
                 now
             ))
@@ -1092,29 +1082,39 @@ blocks:
 
             # Get current values for change tracking
             current_row = conn.execute(
-                "SELECT task, category, status FROM tasks WHERE task_id=?",
+                "SELECT kind, name, status FROM tasks WHERE task_id=?",
                 (target_task_id,)
             ).fetchone()
 
-            if task_input and task_input != (current_row['task'] if current_row else ''):
-                updates.append("task=?")
-                params.append(task_input)
-                changes['task'] = [current_row['task'] if current_row else '', task_input]
+            if kind_input and kind_input != (current_row['kind'] if current_row else ''):
+                updates.append("kind=?")
+                params.append(kind_input)
+                changes['kind'] = [current_row['kind'] if current_row else '', kind_input]
 
-            if category_input and category_input != (current_row['category'] if current_row else ''):
-                updates.append("category=?")
-                params.append(category_input)
-                changes['category'] = [current_row['category'] if current_row else '', category_input]
+            if name_input and name_input != (current_row['name'] if current_row else ''):
+                updates.append("name=?")
+                params.append(name_input)
+                changes['name'] = [current_row['name'] if current_row else '', name_input]
 
             if status_input and status_input != (current_row['status'] if current_row else ''):
                 updates.append("status=?")
                 params.append(status_input)
                 changes['status'] = [current_row['status'] if current_row else '', status_input]
 
-            if data_input:
-                updates.append("data=?")
-                params.append(json.dumps(merged_data))
-                changes['data'] = 'merged'
+            if metadata_input:
+                updates.append("metadata=?")
+                params.append(json.dumps(merged_metadata))
+                changes['metadata'] = 'merged'
+
+            if inputs_data:
+                updates.append("inputs=?")
+                params.append(json.dumps(merged_inputs))
+                changes['inputs'] = 'merged'
+
+            if outputs_data:
+                updates.append("outputs=?")
+                params.append(json.dumps(merged_outputs))
+                changes['outputs'] = 'merged'
 
             updates.append("updated_at=?")
             params.append(now)
@@ -1141,8 +1141,8 @@ blocks:
         # Compute children stats
         children_done = sum(1 for s in child_statuses if s == 'done')
         children_failed = sum(1 for s in child_statuses if s == 'failed')
-        children_in_progress = sum(1 for s in child_statuses if s == 'in-progress')
-        children_pending_count = len(children) - children_done - children_failed - children_in_progress
+        children_running = sum(1 for s in child_statuses if s == 'running')
+        children_pending_count = len(children) - children_done - children_failed - children_running
 
         # Aggregate status helpers
         all_children_done = len(children) > 0 and children_done == len(children)
@@ -1153,7 +1153,7 @@ blocks:
             'total': len(children),
             'done': children_done,
             'failed': children_failed,
-            'in_progress': children_in_progress,
+            'running': children_running,
             'pending': children_pending_count
         }
 
@@ -1174,7 +1174,7 @@ blocks:
 
         # Build audit entry for audit block
         if operation.startswith('create'):
-            audit_desc = f"Created {'root' if operation == 'create_root' else 'sub-'}task: {task_input or target_task_id}"
+            audit_desc = f"Created {kind_input} task: {name_input}"
             action = operation
         elif changes:
             audit_desc = f"Updated: {list(changes.keys())}"
@@ -1195,16 +1195,20 @@ blocks:
         if parent_id_input:
             audit_entry['parent_id'] = parent_id_input
 
-        # Output (matches current interface for callers)
+        # Output (v1 schema)
         print(json.dumps({
             'task_id': target_task_id,
             'root_task_id': root_task_id or target_task_id,
-            'status': row['status'] if row else (status_input or 'in-progress'),
+            'kind': row['kind'] if row else kind_input,
+            'name': row['name'] if row else name_input,
+            'status': row['status'] if row else (status_input or 'pending'),
             'depth': row['depth'] if row else depth_input,
             'parent_id': row['parent_id'] if row else parent_id_input,
+            'metadata': json.loads(row['metadata'] or '{}') if row else merged_metadata,
+            'inputs': json.loads(row['inputs'] or '{}') if row else merged_inputs,
+            'outputs': json.loads(row['outputs'] or '{}') if row else merged_outputs,
             'children': children,
             'pending_children': pending_children,
-            'data': json.loads(row['data'] or '{}') if row else merged_data,
             'all_children_done': all_children_done,
             'any_child_failed': any_child_failed,
             'progress_pct': progress_pct,
@@ -1216,13 +1220,15 @@ blocks:
         EOF
       env:
         DB_PATH: "{{(blocks.paths.outputs.stdout | fromjson).db_path}}"
-        TASK_INPUT: "{{inputs.task}}"
         TASK_ID_INPUT: "{{inputs.task_id}}"
         PARENT_ID_INPUT: "{{inputs.parent_id}}"
-        TASK_TYPE_INPUT: "{{inputs.category}}"
+        KIND_INPUT: "{{inputs.kind}}"
+        NAME_INPUT: "{{inputs.name}}"
+        METADATA_INPUT: "{{inputs.metadata | tojson}}"
+        INPUTS_DATA: "{{inputs.inputs_data | tojson}}"
+        OUTPUTS_DATA: "{{inputs.outputs_data | tojson}}"
         DEPTH_INPUT: "{{inputs.depth}}"
         STATUS_INPUT: "{{inputs.status}}"
-        DATA_INPUT: "{{inputs.data | tojson}}"
         CALLER: "{{inputs.caller}}"
         NEW_TASK_ID: "{{blocks.new_task_id.outputs.stdout if blocks.new_task_id.succeeded else ''}}"
 
@@ -1285,19 +1291,23 @@ outputs:
     value: "{{(blocks.paths.outputs.stdout | fromjson).trace_id}}"
 
   # ==========================================================================
-  # Task outputs (populated when op=task)
+  # Task outputs (populated when op=task) - v1 schema
   # ==========================================================================
   task:
     description: |
       Task operation results (when op=task). Contains:
       - task_id: ID of created/updated task
       - root_task_id: ID of root task in state
-      - status: Current task status
+      - kind: Task type (cell, phase, capability)
+      - name: Task name (workflow name)
+      - metadata: K8s-style metadata {labels: {}, annotations: {}}
+      - inputs: Input data passed to this task
+      - outputs: Output data produced by this task
+      - status: Current task status (pending, running, done, failed)
       - depth: Task depth in hierarchy (0 = root)
       - parent_id: Parent task ID (null for root)
       - children: List of child task IDs
       - pending_children: Children not done/failed
-      - data: Task-specific data field
       - all_children_done: True if all children done
       - any_child_failed: True if any child failed
       - progress_pct: Percentage of children completed
@@ -1337,12 +1347,14 @@ outputs:
     value: "{{blocks.handle_memory.outputs if blocks.handle_memory.succeeded else {}}}"
 
   # ==========================================================================
-  # Query outputs (populated when op=query)
+  # Query outputs (populated when op=query) - v1 schema
   # ==========================================================================
   query:
     description: |
       Query operation results (when op=query). Contains:
-      - results: List of matching tasks with requested data
+      - results: List of matching tasks with:
+        - task_id, parent_id, kind, name, depth, status
+        - metadata, inputs, outputs (or selected keys from them)
       - count: Number of results returned
       - relation: The relation queried (children, parent, ancestors, descendants)
       - reference_task_id: The task_id used as reference point
