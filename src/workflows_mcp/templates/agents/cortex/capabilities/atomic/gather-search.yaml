@@ -59,9 +59,29 @@ blocks:
         file_type = os.environ.get('FILE_TYPE', '')
         max_matches = int(os.environ.get('MAX_MATCHES', '50'))
 
+        # Max line length to prevent mega-line bloat (e.g., minified JSON)
+        MAX_LINE_LEN = 500
+
+        def truncate_line(text, max_len=MAX_LINE_LEN):
+            """Truncate line to prevent mega-lines from bloating results."""
+            text = text.strip()
+            if len(text) > max_len:
+                return text[:max_len] + '...[truncated]'
+            return text
+
         def search_with_ripgrep(pattern, path, file_type, max_matches):
             """Search using ripgrep (preferred - faster)."""
-            cmd = ['rg', '--json', '-e', pattern, path]
+            cmd = [
+                'rg', '--json', '-e', pattern, path,
+                # Exclude hidden directories (e.g., .git, .mypy_cache, .venv)
+                '-g', '!.*',
+                # Also exclude common cache/build directories
+                '-g', '!node_modules',
+                '-g', '!__pycache__',
+                '-g', '!*.pyc',
+                '-g', '!dist',
+                '-g', '!build',
+            ]
             if file_type:
                 cmd.extend(['--type', file_type])
 
@@ -74,10 +94,11 @@ blocks:
                     data = json.loads(line)
                     if data.get('type') == 'match':
                         match_data = data.get('data', {})
+                        line_text = match_data.get('lines', {}).get('text', '').strip()
                         matches.append({
                             'path': match_data.get('path', {}).get('text', ''),
                             'line_number': match_data.get('line_number', 0),
-                            'line_text': match_data.get('lines', {}).get('text', '').strip()
+                            'line_text': truncate_line(line_text)
                         })
                         if len(matches) >= max_matches:
                             break
@@ -88,10 +109,18 @@ blocks:
         def search_with_grep(pattern, path, file_type, max_matches):
             """Fallback search using grep (slower but always available)."""
             # Build grep command with recursive search
-            cmd = ['grep', '-r', '-n', '-E', pattern, path]
+            # Exclude hidden directories and common cache directories
+            exclude_dirs = [
+                '--exclude-dir=.*',      # Hidden directories
+                '--exclude-dir=node_modules',
+                '--exclude-dir=__pycache__',
+                '--exclude-dir=dist',
+                '--exclude-dir=build',
+            ]
+            cmd = ['grep', '-r', '-n', '-E'] + exclude_dirs + [pattern, path]
             if file_type:
                 # Convert file type to include pattern
-                cmd = ['grep', '-r', '-n', '-E', '--include=*.' + file_type, pattern, path]
+                cmd = ['grep', '-r', '-n', '-E', '--include=*.' + file_type] + exclude_dirs + [pattern, path]
 
             result = subprocess.run(cmd, capture_output=True, text=True, timeout=60)
             matches = []
@@ -106,13 +135,13 @@ blocks:
                     matches.append({
                         'path': parts[0],
                         'line_number': int(parts[1]) if parts[1].isdigit() else 0,
-                        'line_text': parts[2].strip()
+                        'line_text': truncate_line(parts[2])
                     })
                 elif len(parts) == 2:
                     matches.append({
                         'path': parts[0],
                         'line_number': 0,
-                        'line_text': parts[1].strip()
+                        'line_text': truncate_line(parts[1])
                     })
                 if len(matches) >= max_matches:
                     break

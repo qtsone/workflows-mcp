@@ -357,7 +357,41 @@ blocks:
                       description: "Capability workflow name: cortex-action-write, cortex-action-edit, cortex-action-execute"
                     inputs:
                       type: object
-                      description: "Capability-specific inputs (path, content, command, etc.)"
+                      description: "Capability-specific inputs. For cortex-action-write: path, content. For cortex-action-edit: path, operations (array of {type, old_string, new_string}). For cortex-action-execute: command, working_dir."
+                      properties:
+                        path:
+                          type: string
+                          description: "File path for write/edit operations"
+                        content:
+                          type: string
+                          description: "File content for write operations"
+                        overwrite:
+                          type: boolean
+                          description: "Allow overwriting existing file for write operations"
+                        operations:
+                          type: array
+                          description: "Edit operations for cortex-action-edit"
+                          items:
+                            type: object
+                            properties:
+                              type:
+                                type: string
+                                description: "Operation type (replace)"
+                              old_string:
+                                type: string
+                                description: "String to find"
+                              new_string:
+                                type: string
+                                description: "String to replace with"
+                        command:
+                          type: string
+                          description: "Shell command for execute operations"
+                        working_dir:
+                          type: string
+                          description: "Working directory for execute operations"
+                        timeout:
+                          type: integer
+                          description: "Timeout in seconds for execute operations"
                     reason:
                       type: string
                       description: "Why this operation is needed"

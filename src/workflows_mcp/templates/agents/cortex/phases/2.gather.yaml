@@ -298,7 +298,31 @@ blocks:
                       description: "Capability workflow name: cortex-gather-files, cortex-gather-search"
                     inputs:
                       type: object
-                      description: "Capability-specific inputs (patterns, query, mode, etc.)"
+                      description: "Capability-specific inputs. For cortex-gather-files: patterns (array), mode (outline|full|summary). For cortex-gather-search: pattern (regex string), path (directory), file_type (extension)."
+                      properties:
+                        patterns:
+                          type: array
+                          items:
+                            type: string
+                          description: "Glob patterns for cortex-gather-files (e.g., ['src/**/*.py', '*.yaml'])"
+                        pattern:
+                          type: string
+                          description: "Regex pattern for cortex-gather-search (e.g., 'async def execute', 'class.*Block')"
+                        path:
+                          type: string
+                          description: "Directory path to search in (e.g., 'src/workflows_mcp')"
+                        mode:
+                          type: string
+                          description: "Read mode for gather-files: outline (structure only), full (complete content), summary"
+                        file_type:
+                          type: string
+                          description: "File extension filter for gather-search (e.g., 'py', 'yaml')"
+                        max_files:
+                          type: integer
+                          description: "Maximum files to read for gather-files"
+                        max_matches:
+                          type: integer
+                          description: "Maximum matches to return for gather-search"
                     reason:
                       type: string
                       description: "Why this operation is needed"
@@ -611,14 +635,32 @@ blocks:
               properties:
                 capability:
                   type: string
-                  description: "Capability workflow name (e.g., cortex-gather-files)"
+                  description: "Capability workflow name (e.g., cortex-gather-files, cortex-gather-search)"
                 inputs:
                   type: object
                   description: "Capability-specific inputs"
+                  properties:
+                    patterns:
+                      type: array
+                      items:
+                        type: string
+                      description: "Glob patterns for cortex-gather-files"
+                    pattern:
+                      type: string
+                      description: "Regex pattern for cortex-gather-search"
+                    path:
+                      type: string
+                      description: "Directory path to search in"
+                    mode:
+                      type: string
+                      description: "Read mode: outline, full, summary"
+                    file_type:
+                      type: string
+                      description: "File extension filter"
                 reason:
                   type: string
                   description: "Why this operation will help"
-              required: [capability, inputs, reason]
+              required: [capability, reason]
         required: [sufficient, confidence, reasoning]
 
   # ===========================================================================

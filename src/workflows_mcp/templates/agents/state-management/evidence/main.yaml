@@ -79,9 +79,23 @@ inputs:
     default: 100
 
 blocks:
+  # Write large values to temp file to avoid env var limits ("Argument list too long")
+  # Uses CreateFile which doesn't have env var size limits
+  - id: write_value_file
+    type: CreateFile
+    description: Write value to temp file if store operation (avoids env var size limits).
+    condition: "{{ inputs.op == 'store' and inputs.value != '' }}"
+    inputs:
+      path: "{{tmp}}/evidence_value.json"
+      content: "{{ inputs.value }}"
+      overwrite: true
+
   - id: execute
     type: Shell
     description: Execute the evidence operation on SQLite evidence table.
+    depends_on:
+      - block: write_value_file
+        required: false
     inputs:
       command: |
         python3 << 'EOF'
@@ -91,13 +105,23 @@ blocks:
         db_path = os.environ['DB_PATH']
         op = os.environ['OP']
         key = os.environ.get('KEY', '')
-        value_json = os.environ.get('VALUE', '')
+        tmp_dir = os.environ.get('TMP_DIR', '')
         evidence_type = os.environ.get('EVIDENCE_TYPE', 'content')
         source_cell = os.environ.get('SOURCE_CELL', '')
         source_operation = os.environ.get('SOURCE_OPERATION', '')
         query_type = os.environ.get('QUERY_TYPE', '')
         query_cell = os.environ.get('QUERY_CELL', '')
         limit = int(os.environ.get('LIMIT', '100'))
+
+        # For store op, read value from temp file to avoid env var limits
+        value_json = ''
+        if op == 'store':
+            value_file = os.path.join(tmp_dir, 'evidence_value.json')
+            if os.path.exists(value_file):
+                with open(value_file, 'r') as f:
+                    value_json = f.read()
+        else:
+            value_json = os.environ.get('VALUE', '')
 
         conn = sqlite3.connect(db_path)
         conn.row_factory = sqlite3.Row
@@ -190,13 +214,15 @@ blocks:
         DB_PATH: "{{inputs.path}}"
         OP: "{{inputs.op}}"
         KEY: "{{inputs.key}}"
-        VALUE: "{{inputs.value}}"
+        # VALUE not passed via env for store op - read from temp file instead
+        VALUE: "{{ '' if inputs.op == 'store' else inputs.value }}"
         EVIDENCE_TYPE: "{{inputs.evidence_type}}"
         SOURCE_CELL: "{{inputs.source_cell}}"
         SOURCE_OPERATION: "{{inputs.source_operation}}"
         QUERY_TYPE: "{{inputs.query_type}}"
         QUERY_CELL: "{{inputs.query_cell}}"
         LIMIT: "{{inputs.limit}}"
+        TMP_DIR: "{{tmp}}"
 
 outputs:
   result:
@@ -212,7 +238,7 @@ outputs:
   items:
     type: list
     description: Query results (for query op).
-    value: "{{(blocks.execute.outputs.stdout | fromjson).items | default([])}}"
+    value: "{{ get(blocks.execute.outputs.stdout | fromjson, 'items', []) }}"
 
   count:
     type: num

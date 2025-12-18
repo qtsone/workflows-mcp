@@ -144,34 +144,32 @@ blocks:
           goal: "{{ inputs.pipeline_config.reason.goal | default('explain') }}"
 
   # ===========================================================================
-  # STEP 2: Retrieve evidence from memory (outlines)
+  # STEP 2: Retrieve evidence (outlines) from evidence table
   # ===========================================================================
   - id: retrieve_outlines
     type: Workflow
-    description: Get gathered outlines from memory.
+    description: Get gathered outlines from episodic memory (evidence table).
     depends_on: [register_phase]
     inputs:
-      workflow: agent-state-management
+      workflow: cortex-evidence-query
       inputs:
         state: "{{ blocks.register_phase.outputs.state }}"
-        op: memory
-        memory_op: query
-        memory_type: "outline"
+        evidence_type: "outline"
+        limit: 100
 
   # ===========================================================================
-  # STEP 3: Retrieve evidence from memory (content)
+  # STEP 3: Retrieve evidence (content) from evidence table
   # ===========================================================================
   - id: retrieve_content
     type: Workflow
-    description: Get gathered file contents from memory.
+    description: Get gathered file contents from episodic memory (evidence table).
     depends_on: [register_phase]
     inputs:
-      workflow: agent-state-management
+      workflow: cortex-evidence-query
       inputs:
         state: "{{ blocks.register_phase.outputs.state }}"
-        op: memory
-        memory_op: query
-        memory_type: "content"
+        evidence_type: "content"
+        limit: 100
 
   # ===========================================================================
   # STEP 3b: Retrieve episodic evidence (gathered files and searches)
@@ -214,7 +212,7 @@ blocks:
         state: "{{ blocks.register_phase.outputs.state }}"
         op: query
         task_id: "{{ inputs.parent_id }}"
-        prompt:
+        query:
           relation: children
           where:
             category: cortex-cell
@@ -258,29 +256,29 @@ blocks:
         {{ inputs.context | tojson }}
         {% endif %}
 
-        {% if blocks.retrieve_outlines.succeeded and blocks.retrieve_outlines.outputs.prompt.results | length > 0 %}
-        ## File Outlines ({{ blocks.retrieve_outlines.outputs.prompt.results | length }} files)
-        {% for file in blocks.retrieve_outlines.outputs.prompt.results %}
-        ### {{ file.key }}
+        {% if blocks.retrieve_outlines.succeeded and blocks.retrieve_outlines.outputs.count > 0 %}
+        ## File Outlines ({{ blocks.retrieve_outlines.outputs.count }} files)
+        {% for item in blocks.retrieve_outlines.outputs['items'] %}
+        ### {{ item.key }}
         ```
-        {{ (file.value | fromjson).content | default(file.value) }}
+        {{ (item.value | fromjson).content | default(item.value) }}
         ```
         {% endfor %}
         {% endif %}
 
-        {% if blocks.retrieve_content.succeeded and blocks.retrieve_content.outputs.prompt.results | length > 0 %}
-        ## File Contents ({{ blocks.retrieve_content.outputs.prompt.results | length }} files)
-        {% for file in blocks.retrieve_content.outputs.prompt.results %}
-        ### {{ file.key }}
+        {% if blocks.retrieve_content.succeeded and blocks.retrieve_content.outputs.count > 0 %}
+        ## File Contents ({{ blocks.retrieve_content.outputs.count }} files)
+        {% for item in blocks.retrieve_content.outputs['items'] %}
+        ### {{ item.key }}
         ```
-        {{ (file.value | fromjson).content | default(file.value) }}
+        {{ (item.value | fromjson).content | default(item.value) }}
         ```
         {% endfor %}
         {% endif %}
 
         {% if blocks.retrieve_evidence.succeeded and blocks.retrieve_evidence.outputs.count > 0 %}
         ## Episodic Evidence ({{ blocks.retrieve_evidence.outputs.count }} items)
-        {% for item in blocks.retrieve_evidence.outputs.items %}
+        {% for item in blocks.retrieve_evidence.outputs['items'] %}
         - **{{ item.key }}** ({{ item.evidence_type }}, {{ item.byte_size }} bytes)
         {% endfor %}
         {% endif %}
@@ -288,7 +286,7 @@ blocks:
         {% if blocks.recall_facts.succeeded and blocks.recall_facts.outputs.count > 0 %}
         ## Known Facts (Semantic Memory - {{ blocks.recall_facts.outputs.count }} facts)
         These facts were validated in previous reasoning sessions:
-        {% for fact in blocks.recall_facts.outputs.items %}
+        {% for fact in blocks.recall_facts.outputs['items'] %}
         - **{{ fact.claim }}**
           - Type: {{ fact.evidence_type }} | Confidence: {{ fact.confidence }}
           {% if fact.grounding %}- Evidence: {{ fact.grounding }}{% endif %}
@@ -297,9 +295,9 @@ blocks:
         NOTE: Build on these facts. If you find contradictions, flag them for conflict resolution.
         {% endif %}
 
-        {% if blocks.get_child_cells.succeeded and blocks.get_child_cells.outputs.prompt.results | length > 0 %}
-        ## Child Cell Syntheses ({{ blocks.get_child_cells.outputs.prompt.results | length }} cells)
-        {% for child in blocks.get_child_cells.outputs.prompt.results %}
+        {% if blocks.get_child_cells.succeeded and blocks.get_child_cells.outputs.query.results | length > 0 %}
+        ## Child Cell Syntheses ({{ blocks.get_child_cells.outputs.query.results | length }} cells)
+        {% for child in blocks.get_child_cells.outputs.query.results %}
         ### Child Cell {{ loop.index }} ({{ child.task_id }})
         {% if child.data %}
         - **Query**: {{ child.data.prompt | default('N/A') }}

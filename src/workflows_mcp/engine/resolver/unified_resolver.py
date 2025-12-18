@@ -167,6 +167,7 @@ class UnifiedVariableResolver:
                 "hash": lambda x, algo="sha256": hashlib.new(algo, x.encode()).hexdigest(),
                 "keys": lambda x: list(x.keys()) if isinstance(x, dict) else [],
                 "values": lambda x: list(x.values()) if isinstance(x, dict) else [],
+                "combine": self._combine_dicts,
             }
         )
 
@@ -210,6 +211,38 @@ class UnifiedVariableResolver:
         if not result.is_success:
             raise ValueError(f"read_file failed for '{path}': {result.error}")
         return result.unwrap()
+
+    @staticmethod
+    def _combine_dicts(base: Any, other: Any, recursive: bool = False) -> dict[str, Any]:
+        """
+        Combine two dictionaries (Ansible-style combine filter).
+
+        Args:
+            base: Base dictionary
+            other: Dictionary to merge in
+            recursive: If True, perform deep merge; if False, shallow merge
+
+        Returns:
+            Merged dictionary
+        """
+        if not isinstance(base, dict):
+            base = {}
+        if not isinstance(other, dict):
+            other = {}
+
+        if not recursive:
+            return {**base, **other}
+
+        # Deep merge
+        result = dict(base)
+        for key, value in other.items():
+            if key in result and isinstance(result[key], dict) and isinstance(value, dict):
+                result[key] = UnifiedVariableResolver._combine_dicts(
+                    result[key], value, recursive=True
+                )
+            else:
+                result[key] = value
+        return result
 
     @staticmethod
     def _generate_id(prefix: str = "task") -> str:

@@ -53,8 +53,9 @@ outputs:
     type: bool
     description: Whether operation succeeded.
 
+  # Note: Use get() to avoid collision with dict.items() method
   items:
-    value: "{{ blocks.query.outputs.evidence.items | default([]) }}"
+    value: "{{ get(blocks.query.outputs.evidence, 'items', []) }}"
     type: list
     description: List of evidence items.
 

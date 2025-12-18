@@ -279,7 +279,7 @@ outputs:
   items:
     type: list
     description: Query results (for query op).
-    value: "{{(blocks.execute.outputs.stdout | fromjson).items | default([])}}"
+    value: "{{ get(blocks.execute.outputs.stdout | fromjson, 'items', []) }}"
 
   count:
     type: num
