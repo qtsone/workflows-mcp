@@ -1,0 +1,315 @@
+name: cortex-internal-schema-operations
+description: |
+  Generates a JSON Schema for LLM response validation from structured capability definitions.
+
+  Capabilities now use structured JSON Schema format for inputs, so this workflow
+  simply combines them into a valid OpenAI-compatible schema (no string parsing needed).
+
+  OpenAI Structured Output Requirements:
+  - ALL properties must be in the "required" array
+  - Use nullable unions (anyOf: [{type: X}, {type: "null"}]) for optional fields
+  - additionalProperties: false everywhere
+
+tags: [cortex, internal, schema]
+
+inputs:
+  capabilities:
+    type: list
+    description: Available capabilities with structured input schemas.
+    required: true
+
+  phase:
+    type: str
+    description: "Phase type: gather, reason, or act. Used for schema description only."
+    default: "act"
+
+  include_spawn:
+    type: bool
+    description: Whether to include questions array for spawning child cells.
+    default: true
+
+  include_completion:
+    type: bool
+    description: Whether to include completion fields (complete, continuation_needed, continuation_prompt).
+    default: false
+
+  include_config_override:
+    type: bool
+    description: Whether to include config_override for downstream phase adjustment.
+    default: false
+
+blocks:
+  - id: build
+    type: Shell
+    description: Generate JSON Schema from structured capability definitions.
+    inputs:
+      command: |
+        python3 << 'EOF'
+        import json
+        import os
+
+        # Parse inputs
+        caps = json.loads(os.environ.get('CAPABILITIES', '[]'))
+        phase = os.environ.get('PHASE', 'act')
+        include_spawn = os.environ.get('INCLUDE_SPAWN', 'true').lower() == 'true'
+        include_completion = os.environ.get('INCLUDE_COMPLETION', 'false').lower() == 'true'
+        include_config_override = os.environ.get('INCLUDE_CONFIG_OVERRIDE', 'false').lower() == 'true'
+
+        # =======================================================================
+        # Convert capability input schema to JSON Schema with nullable wrapper
+        # =======================================================================
+        def to_json_schema(input_def, cap_names):
+            """
+            Convert structured input definition to JSON Schema.
+            Input format: {type, items?, enum?, description, required}
+            """
+            type_map = {
+                'string': 'string',
+                'str': 'string',
+                'integer': 'integer',
+                'int': 'integer',
+                'boolean': 'boolean',
+                'bool': 'boolean',
+                'array': 'array',
+                'list': 'array',
+                'object': 'object',
+                'dict': 'object',
+            }
+
+            input_type = input_def.get('type', 'string')
+            json_type = type_map.get(input_type, 'string')
+            description = input_def.get('description', '')
+
+            # Build base schema
+            if json_type == 'array':
+                items = input_def.get('items', {'type': 'string'})
+                # Normalize items type
+                if isinstance(items, dict) and 'type' in items:
+                    items['type'] = type_map.get(items['type'], items['type'])
+                schema = {'type': 'array', 'items': items}
+            elif 'enum' in input_def:
+                schema = {'type': 'string', 'enum': input_def['enum']}
+            else:
+                schema = {'type': json_type}
+
+            # Wrap in nullable anyOf (OpenAI requires all props in required)
+            cap_prefix = f"[{', '.join(cap_names)}] " if cap_names else ""
+            return {
+                'anyOf': [schema, {'type': 'null'}],
+                'description': f"{cap_prefix}{description}" if description else cap_prefix.strip()
+            }
+
+        # =======================================================================
+        # Collect input properties from all capabilities
+        # =======================================================================
+        all_input_props = {}  # prop_name -> {schema, capabilities}
+
+        for cap in caps:
+            cap_name = cap.get('name', '')
+            inputs = cap.get('inputs', {})
+
+            for prop_name, prop_def in inputs.items():
+                if not isinstance(prop_def, dict):
+                    continue  # Skip malformed inputs
+
+                if prop_name not in all_input_props:
+                    all_input_props[prop_name] = {
+                        'def': prop_def,
+                        'capabilities': []
+                    }
+                all_input_props[prop_name]['capabilities'].append(cap_name)
+
+        # Build inputs schema properties
+        inputs_properties = {}
+        inputs_required = []
+
+        for prop_name, prop_data in all_input_props.items():
+            inputs_properties[prop_name] = to_json_schema(
+                prop_data['def'],
+                prop_data['capabilities']
+            )
+            inputs_required.append(prop_name)
+
+        # =======================================================================
+        # Build operations schema
+        # =======================================================================
+        cap_names = [c.get('name', '') for c in caps if c.get('name')]
+        if not cap_names:
+            cap_names = ['no_capabilities_available']
+
+        # Build inputs schema object
+        if inputs_properties:
+            inputs_schema = {
+                'type': 'object',
+                'description': 'Capability-specific inputs. Set unused properties to null.',
+                'properties': inputs_properties,
+                'required': inputs_required,
+                'additionalProperties': False
+            }
+        else:
+            inputs_schema = {
+                'type': 'object',
+                'description': 'No input properties defined',
+                'properties': {},
+                'required': [],
+                'additionalProperties': False
+            }
+
+        operations_schema = {
+            'type': 'array',
+            'description': f"Operations to execute. Available: {', '.join(cap_names)}",
+            'items': {
+                'type': 'object',
+                'properties': {
+                    'capability': {
+                        'type': 'string',
+                        'description': 'Capability workflow name (MUST be one of enum values)',
+                        'enum': cap_names
+                    },
+                    'inputs': inputs_schema,
+                    'reason': {
+                        'type': 'string',
+                        'description': 'Why this operation is needed'
+                    }
+                },
+                'required': ['capability', 'inputs', 'reason'],
+                'additionalProperties': False
+            }
+        }
+
+        # =======================================================================
+        # Build result schema
+        # =======================================================================
+        result_properties = {
+            'strategy': {
+                'type': 'string',
+                'description': 'High-level strategy description'
+            },
+            'operations': operations_schema
+        }
+        result_required = ['strategy', 'operations']
+
+        # Add questions array for spawning child cells (unified across all phases)
+        if include_spawn:
+            result_properties['questions'] = {
+                'type': 'array',
+                'description': 'Questions requiring child cells to answer. Use when uncertain or need parallel investigation.',
+                'items': {
+                    'type': 'object',
+                    'properties': {
+                        'prompt': {
+                            'type': 'string',
+                            'description': 'What to ask/investigate'
+                        },
+                        'reason': {
+                            'type': 'string',
+                            'description': 'Why this question needs answering'
+                        }
+                    },
+                    'required': ['prompt', 'reason'],
+                    'additionalProperties': False
+                }
+            }
+            result_required.append('questions')
+
+        # =======================================================================
+        # Build full schema
+        # =======================================================================
+        schema = {
+            'type': 'object',
+            'properties': {
+                'result': {
+                    'type': 'object',
+                    'description': f'{phase.upper()} plan output',
+                    'properties': result_properties,
+                    'required': result_required,
+                    'additionalProperties': False
+                },
+                'confidence': {
+                    'type': 'number',
+                    'minimum': 0,
+                    'maximum': 1,
+                    'description': 'Confidence in plan (0.0 to 1.0)'
+                }
+            },
+            'required': ['result', 'confidence'],
+            'additionalProperties': False
+        }
+
+        # Add completion fields (act phase)
+        if include_completion:
+            schema['properties']['complete'] = {
+                'type': 'boolean',
+                'description': 'Is the original request fully satisfied?'
+            }
+            schema['properties']['continuation_needed'] = {
+                'type': 'boolean',
+                'description': 'Should a continuation cell be spawned?'
+            }
+            schema['properties']['continuation_prompt'] = {
+                'anyOf': [{'type': 'string'}, {'type': 'null'}],
+                'description': 'What remains to be done (null if complete)'
+            }
+            schema['required'].extend(['complete', 'continuation_needed', 'continuation_prompt'])
+
+        # Add config_override
+        if include_config_override:
+            schema['properties']['config_override'] = {
+                'anyOf': [
+                    {
+                        'type': 'object',
+                        'properties': {
+                            'reason': {
+                                'anyOf': [
+                                    {
+                                        'type': 'object',
+                                        'properties': {
+                                            'goal': {'type': 'string', 'enum': ['verify', 'explain', 'evaluate', 'plan', 'diagnose', 'enumerate']},
+                                            'spawn': {'type': 'string', 'enum': ['never', 'uncertain_only', 'always']}
+                                        },
+                                        'additionalProperties': False
+                                    },
+                                    {'type': 'null'}
+                                ]
+                            },
+                            'act': {
+                                'anyOf': [
+                                    {
+                                        'type': 'object',
+                                        'properties': {
+                                            'trigger': {'type': 'string', 'enum': ['never', 'findings_require', 'always']},
+                                            'mode': {'type': 'string', 'enum': ['none', 'report', 'implement', 'fix', 'verify']}
+                                        },
+                                        'additionalProperties': False
+                                    },
+                                    {'type': 'null'}
+                                ]
+                            }
+                        },
+                        'additionalProperties': False
+                    },
+                    {'type': 'null'}
+                ],
+                'description': 'Override config for downstream phases (null if no override)'
+            }
+            schema['required'].append('config_override')
+
+        print(json.dumps(schema))
+        EOF
+      env:
+        CAPABILITIES: "{{ inputs.capabilities | tojson }}"
+        PHASE: "{{ inputs.phase }}"
+        INCLUDE_SPAWN: "{{ inputs.include_spawn }}"
+        INCLUDE_COMPLETION: "{{ inputs.include_completion }}"
+        INCLUDE_CONFIG_OVERRIDE: "{{ inputs.include_config_override }}"
+
+outputs:
+  schema:
+    type: dict
+    description: JSON Schema for LLM response validation.
+    value: "{{ blocks.build.outputs.stdout | fromjson }}"
+
+  capability_names:
+    type: list
+    description: List of valid capability names.
+    value: "{{ inputs.capabilities | map(attribute='name') | list }}"

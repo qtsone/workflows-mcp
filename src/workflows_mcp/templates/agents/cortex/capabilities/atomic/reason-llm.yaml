@@ -35,15 +35,74 @@ inputs:
     required: false
     default: 120
 
+  state:
+    type: str
+    description: Path to SQLite state database (for task tracking).
+    required: false
+    default: ""
+
+  parent_id:
+    type: str
+    description: Parent task ID for task tree registration.
+    required: false
+    default: ""
+
 blocks:
+  # ===========================================================================
+  # STEP 1: Register capability in task tree
+  # ===========================================================================
+  - id: register
+    type: Workflow
+    description: Register this capability in the task tree.
+    inputs:
+      workflow: agent-state-management
+      inputs:
+        state: "{{ inputs.state }}"
+        parent_id: "{{ inputs.parent_id }}"
+        kind: "capability"
+        name: "cortex-reason-llm"
+        metadata:
+          labels:
+            capability_type: "reason"
+            side_effects: "false"
+        inputs_data:
+          profile: "{{ inputs.profile }}"
+          has_schema: "{{ inputs.response_schema != {} }}"
+          prompt_length: "{{ inputs.prompt | length }}"
+        status: "running"
+        caller: "cortex-reason-llm"
+
+  # ===========================================================================
+  # STEP 2: Call LLM
+  # ===========================================================================
   - id: call_llm
     type: LLMCall
+    depends_on: [register]
     inputs:
       profile: "{{ inputs.profile }}"
       prompt: "{{ inputs.prompt }}"
       system_instructions: "{{ inputs.system_instructions if inputs.system_instructions else None }}"
       response_schema: "{{ inputs.response_schema if inputs.response_schema else None }}"
       timeout: "{{ inputs.timeout }}"
+
+  # ===========================================================================
+  # STEP 3: Track completion
+  # ===========================================================================
+  - id: track_done
+    type: Workflow
+    description: Mark capability complete in task tree.
+    depends_on: [call_llm]
+    inputs:
+      workflow: agent-state-management
+      inputs:
+        state: "{{ blocks.register.outputs.state }}"
+        task_id: "{{ blocks.register.outputs.task.task_id }}"
+        status: "done"
+        outputs_data:
+          success: "{{ blocks.call_llm.outputs.success }}"
+          model: "{{ blocks.call_llm.outputs.metadata.model | default('unknown') }}"
+          total_tokens: "{{ blocks.call_llm.outputs.metadata.total_tokens | default(0) }}"
+        caller: "cortex-reason-llm"
 
 outputs:
   response:
@@ -65,3 +124,8 @@ outputs:
     value: "{{ ['llm:' ~ inputs.profile ~ ':' ~ (blocks.call_llm.outputs.metadata.model | default('unknown'))] }}"
     type: list
     description: Evidence reference for findings.
+
+  task_id:
+    value: "{{ blocks.register.outputs.task.task_id | default('') }}"
+    type: str
+    description: Task ID of this capability invocation.

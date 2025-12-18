@@ -92,50 +92,126 @@ inputs:
     type: list
     description: |
       Available capabilities registry (flat list).
-      Each capability has: name, description, inputs, requires (permission).
+      Each capability has: name, description, inputs (JSON Schema), requires (permission).
       Capabilities are filtered based on permissions before being passed to phases.
+
+      Input schema format (JSON Schema subset):
+        type: string | integer | boolean | array | object
+        items: { type: ... } for arrays
+        enum: [value1, value2] for string enums
+        description: Human-readable description
+        required: true/false (default: false)
     default:
+      # =========================================================================
+      # GATHER CAPABILITIES (read permission)
+      # =========================================================================
       - name: cortex-gather-files
         description: Read files matching glob patterns
         inputs:
-          patterns: "list[str] - Glob patterns to match (required)"
-          base_path: "str - Base directory (optional)"
-          mode: "str - outline|full|summary (optional)"
-          max_files: "int - Max files to read (optional)"
+          patterns:
+            type: array
+            items: { type: string }
+            description: Glob patterns to match (e.g., ["src/**/*.py", "*.md"])
+            required: true
+          base_path:
+            type: string
+            description: Base directory to search from
+            required: false
+          mode:
+            type: string
+            enum: [outline, full, summary]
+            description: Output mode - outline (structure), full (content), summary (brief)
+            required: false
+          max_files:
+            type: integer
+            description: Maximum number of files to read
+            required: false
         requires: read
 
       - name: cortex-gather-search
-        description: Search codebase with regex
+        description: Search codebase with regex pattern
         inputs:
-          pattern: "str - Regex pattern to search (required)"
-          path: "str - Directory to search (optional)"
-          file_type: "str - File extension filter e.g. py, js (optional)"
-          max_matches: "int - Max results to return (optional)"
+          pattern:
+            type: string
+            description: Regex pattern to search for
+            required: true
+          path:
+            type: string
+            description: Directory to search in
+            required: false
+          file_type:
+            type: string
+            description: File extension filter (e.g., py, js, yaml)
+            required: false
+          max_matches:
+            type: integer
+            description: Maximum number of results to return
+            required: false
         requires: read
 
+      # =========================================================================
+      # ACTION CAPABILITIES (write/execute permissions)
+      # =========================================================================
       - name: cortex-action-write
         description: Create or overwrite a file
         inputs:
-          path: "str - File path to write (required)"
-          content: "str - File content (required)"
-          overwrite: "bool - Allow overwriting existing file (optional)"
+          path:
+            type: string
+            description: File path to write
+            required: true
+          content:
+            type: string
+            description: Content to write to the file
+            required: true
+          overwrite:
+            type: boolean
+            description: Allow overwriting existing file (default false)
+            required: false
         requires: write
 
       - name: cortex-action-edit
-        description: Edit an existing file with operations
+        description: Edit an existing file with multiple operation types
         inputs:
-          path: "str - File path to edit (required)"
-          operations: "list - Edit operations [{type, old_string, new_string}] (required)"
-          backup: "bool - Create backup before editing (optional)"
-          dry_run: "bool - Preview changes without applying (optional)"
+          path:
+            type: string
+            description: File path to edit
+            required: true
+          operations:
+            type: array
+            items: { type: object }
+            description: |
+              Edit operations list. Each operation object needs a "type" field:
+              - replace_text: {type, old_text, new_text, count?}
+              - replace_lines: {type, line_start, line_end, content}
+              - insert_lines: {type, line_start, content}
+              - delete_lines: {type, line_start, line_end}
+              - regex_replace: {type, pattern, replacement, flags?}
+            required: true
+          backup:
+            type: boolean
+            description: Create .bak backup before editing
+            required: false
+          dry_run:
+            type: boolean
+            description: Preview changes without applying
+            required: false
         requires: write
 
       - name: cortex-action-execute
         description: Execute a shell command
         inputs:
-          command: "str - Command to execute (required)"
-          working_dir: "str - Working directory (optional)"
-          timeout: "int - Timeout in seconds (optional)"
+          command:
+            type: string
+            description: Shell command to execute
+            required: true
+          working_dir:
+            type: string
+            description: Working directory for command execution
+            required: false
+          timeout:
+            type: integer
+            description: Timeout in seconds
+            required: false
         requires: execute
 
   permissions:

@@ -13,7 +13,16 @@ inputs:
 
   operations:
     type: list
-    description: List of edit operations.
+    description: |
+      List of edit operations. Each operation needs:
+      - type: replace_text | replace_lines | insert_lines | delete_lines | patch | regex_replace
+
+      For replace_text: {type: "replace_text", old_text: "...", new_text: "...", count: -1}
+      For replace_lines: {type: "replace_lines", line_start: N, line_end: M, content: "..."}
+      For insert_lines: {type: "insert_lines", line_start: N, content: "..."}
+      For delete_lines: {type: "delete_lines", line_start: N, line_end: M}
+      For patch: {type: "patch", patch: "unified diff string"}
+      For regex_replace: {type: "regex_replace", pattern: "...", replacement: "...", flags: [...]}
     required: true
 
   backup:
@@ -28,14 +37,74 @@ inputs:
     required: false
     default: false
 
+  state:
+    type: str
+    description: Path to SQLite state database (for task tracking).
+    required: false
+    default: ""
+
+  parent_id:
+    type: str
+    description: Parent task ID for task tree registration.
+    required: false
+    default: ""
+
 blocks:
+  # ===========================================================================
+  # STEP 1: Register capability in task tree
+  # ===========================================================================
+  - id: register
+    type: Workflow
+    description: Register this capability in the task tree.
+    inputs:
+      workflow: agent-state-management
+      inputs:
+        state: "{{ inputs.state }}"
+        parent_id: "{{ inputs.parent_id }}"
+        kind: "capability"
+        name: "cortex-action-edit"
+        metadata:
+          labels:
+            capability_type: "action"
+            side_effects: "true"
+        inputs_data:
+          path: "{{ inputs.path }}"
+          operation_count: "{{ inputs.operations | length }}"
+          dry_run: "{{ inputs.dry_run }}"
+        status: "running"
+        caller: "cortex-action-edit"
+
+  # ===========================================================================
+  # STEP 2: Execute edit
+  # ===========================================================================
   - id: edit
     type: EditFile
+    depends_on: [register]
     inputs:
       path: "{{ inputs.path }}"
       operations: "{{ inputs.operations }}"
       backup: "{{ inputs.backup }}"
       dry_run: "{{ inputs.dry_run }}"
+
+  # ===========================================================================
+  # STEP 3: Track completion
+  # ===========================================================================
+  - id: track_done
+    type: Workflow
+    description: Mark capability complete in task tree.
+    depends_on: [edit]
+    inputs:
+      workflow: agent-state-management
+      inputs:
+        state: "{{ blocks.register.outputs.state }}"
+        task_id: "{{ blocks.register.outputs.task.task_id }}"
+        status: "done"
+        outputs_data:
+          operations_applied: "{{ blocks.edit.outputs.operations_applied }}"
+          lines_added: "{{ blocks.edit.outputs.lines_added }}"
+          lines_removed: "{{ blocks.edit.outputs.lines_removed }}"
+          success: "{{ blocks.edit.outputs.success }}"
+        caller: "cortex-action-edit"
 
 outputs:
   operations_applied:
@@ -76,3 +145,13 @@ outputs:
       }}
     type: dict
     description: Action record for audit trail.
+
+  task_id:
+    value: "{{ blocks.register.outputs.task.task_id | default('') }}"
+    type: str
+    description: Task ID of this capability invocation.
+
+  state:
+    value: "{{ blocks.register.outputs.state | default(inputs.state) }}"
+    type: str
+    description: Path to state database (passthrough).

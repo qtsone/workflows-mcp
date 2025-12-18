@@ -44,9 +44,43 @@ inputs:
     required: false
     default: ""
 
+  parent_id:
+    type: str
+    description: Parent task ID for task tree registration.
+    required: false
+    default: ""
+
 blocks:
+  # ===========================================================================
+  # STEP 1: Register capability in task tree
+  # ===========================================================================
+  - id: register
+    type: Workflow
+    description: Register this capability in the task tree.
+    inputs:
+      workflow: agent-state-management
+      inputs:
+        state: "{{ inputs.state }}"
+        parent_id: "{{ inputs.parent_id }}"
+        kind: "capability"
+        name: "cortex-evidence-store"
+        metadata:
+          labels:
+            capability_type: "evidence"
+            side_effects: "false"
+        inputs_data:
+          key: "{{ inputs.key }}"
+          evidence_type: "{{ inputs.evidence_type }}"
+          source_operation: "{{ inputs.source_operation }}"
+        status: "running"
+        caller: "cortex-evidence-store"
+
+  # ===========================================================================
+  # STEP 2: Store evidence
+  # ===========================================================================
   - id: store
     type: Workflow
+    depends_on: [register]
     inputs:
       workflow: agent-state-management
       inputs:
@@ -58,6 +92,25 @@ blocks:
         evidence_type: "{{ inputs.evidence_type }}"
         evidence_source_cell: "{{ inputs.source_cell }}"
         evidence_source_operation: "{{ inputs.source_operation }}"
+        caller: "cortex-evidence-store"
+
+  # ===========================================================================
+  # STEP 3: Track completion
+  # ===========================================================================
+  - id: track_done
+    type: Workflow
+    description: Mark capability complete in task tree.
+    depends_on: [store]
+    inputs:
+      workflow: agent-state-management
+      inputs:
+        state: "{{ blocks.register.outputs.state }}"
+        task_id: "{{ blocks.register.outputs.task.task_id }}"
+        status: "done"
+        outputs_data:
+          key: "{{ inputs.key }}"
+          byte_size: "{{ blocks.store.outputs.evidence.result.byte_size | default(0) }}"
+          success: "{{ blocks.store.outputs.evidence.success | default(false) }}"
         caller: "cortex-evidence-store"
 
 outputs:
@@ -75,3 +128,8 @@ outputs:
     value: "{{ blocks.store.outputs.evidence.result.byte_size | default(0) }}"
     type: num
     description: Size of stored evidence in bytes.
+
+  task_id:
+    value: "{{ blocks.register.outputs.task.task_id | default('') }}"
+    type: str
+    description: Task ID of this capability invocation.

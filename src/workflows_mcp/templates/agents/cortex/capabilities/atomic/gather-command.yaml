@@ -23,13 +23,71 @@ inputs:
     required: false
     default: 30
 
+  state:
+    type: str
+    description: Path to SQLite state database (for task tracking).
+    required: false
+    default: ""
+
+  parent_id:
+    type: str
+    description: Parent task ID for task tree registration.
+    required: false
+    default: ""
+
 blocks:
+  # ===========================================================================
+  # STEP 1: Register capability in task tree
+  # ===========================================================================
+  - id: register
+    type: Workflow
+    description: Register this capability in the task tree.
+    inputs:
+      workflow: agent-state-management
+      inputs:
+        state: "{{ inputs.state }}"
+        parent_id: "{{ inputs.parent_id }}"
+        kind: "capability"
+        name: "cortex-gather-command"
+        metadata:
+          labels:
+            capability_type: "gather"
+            side_effects: "false"
+        inputs_data:
+          command: "{{ inputs.command[:100] }}"
+          working_dir: "{{ inputs.working_dir }}"
+          timeout: "{{ inputs.timeout }}"
+        status: "running"
+        caller: "cortex-gather-command"
+
+  # ===========================================================================
+  # STEP 2: Execute command
+  # ===========================================================================
   - id: execute
     type: Shell
+    depends_on: [register]
     inputs:
       command: "{{ inputs.command }}"
       working_dir: "{{ inputs.working_dir }}"
       timeout: "{{ inputs.timeout }}"
+
+  # ===========================================================================
+  # STEP 3: Track completion
+  # ===========================================================================
+  - id: track_done
+    type: Workflow
+    description: Mark capability complete in task tree.
+    depends_on: [execute]
+    inputs:
+      workflow: agent-state-management
+      inputs:
+        state: "{{ blocks.register.outputs.state }}"
+        task_id: "{{ blocks.register.outputs.task.task_id }}"
+        status: "done"
+        outputs_data:
+          exit_code: "{{ blocks.execute.outputs.exit_code }}"
+          success: "{{ blocks.execute.outputs.exit_code == 0 }}"
+        caller: "cortex-gather-command"
 
 outputs:
   stdout:
@@ -56,3 +114,13 @@ outputs:
     value: "{{ ['command:' ~ inputs.command[:50]] }}"
     type: list
     description: Evidence reference for findings.
+
+  task_id:
+    value: "{{ blocks.register.outputs.task.task_id | default('') }}"
+    type: str
+    description: Task ID of this capability invocation.
+
+  state:
+    value: "{{ blocks.register.outputs.state | default(inputs.state) }}"
+    type: str
+    description: Path to state database (passthrough).

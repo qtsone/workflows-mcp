@@ -27,9 +27,42 @@ inputs:
     description: Value to store (JSON string).
     required: true
 
+  parent_id:
+    type: str
+    description: Parent task ID for task tree registration.
+    required: false
+    default: ""
+
 blocks:
+  # ===========================================================================
+  # STEP 1: Register capability in task tree
+  # ===========================================================================
+  - id: register
+    type: Workflow
+    description: Register this capability in the task tree.
+    inputs:
+      workflow: agent-state-management
+      inputs:
+        state: "{{ inputs.state }}"
+        parent_id: "{{ inputs.parent_id }}"
+        kind: "capability"
+        name: "cortex-memory-set"
+        metadata:
+          labels:
+            capability_type: "memory"
+            side_effects: "false"
+        inputs_data:
+          type: "{{ inputs.type }}"
+          key: "{{ inputs.key }}"
+        status: "running"
+        caller: "cortex-memory-set"
+
+  # ===========================================================================
+  # STEP 2: Set memory
+  # ===========================================================================
   - id: set
     type: Workflow
+    depends_on: [register]
     inputs:
       workflow: agent-state-management
       inputs:
@@ -39,6 +72,24 @@ blocks:
         memory_type: "{{ inputs.type }}"
         memory_key: "{{ inputs.key }}"
         memory_value: "{{ inputs.value }}"
+        caller: "cortex-memory-set"
+
+  # ===========================================================================
+  # STEP 3: Track completion
+  # ===========================================================================
+  - id: track_done
+    type: Workflow
+    description: Mark capability complete in task tree.
+    depends_on: [set]
+    inputs:
+      workflow: agent-state-management
+      inputs:
+        state: "{{ blocks.register.outputs.state }}"
+        task_id: "{{ blocks.register.outputs.task.task_id }}"
+        status: "done"
+        outputs_data:
+          success: "{{ blocks.set.succeeded }}"
+          key: "{{ inputs.key }}"
         caller: "cortex-memory-set"
 
 outputs:
@@ -51,3 +102,8 @@ outputs:
     value: "{{ inputs.key }}"
     type: str
     description: Key that was set.
+
+  task_id:
+    value: "{{ blocks.register.outputs.task.task_id | default('') }}"
+    type: str
+    description: Task ID of this capability invocation.

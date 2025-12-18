@@ -32,7 +32,13 @@ inputs:
 
   state:
     type: str
-    description: Path to SQLite state database (for evidence storage).
+    description: Path to SQLite state database (for evidence storage and task tracking).
+    required: false
+    default: ""
+
+  parent_id:
+    type: str
+    description: Parent task ID for task tree registration.
     required: false
     default: ""
 
@@ -43,8 +49,37 @@ inputs:
     default: ""
 
 blocks:
+  # ===========================================================================
+  # STEP 1: Register capability in task tree
+  # ===========================================================================
+  - id: register
+    type: Workflow
+    description: Register this capability in the task tree.
+    inputs:
+      workflow: agent-state-management
+      inputs:
+        state: "{{ inputs.state }}"
+        parent_id: "{{ inputs.parent_id }}"
+        kind: "capability"
+        name: "cortex-gather-search"
+        metadata:
+          labels:
+            capability_type: "gather"
+            side_effects: "false"
+        inputs_data:
+          pattern: "{{ inputs.pattern }}"
+          path: "{{ inputs.path }}"
+          file_type: "{{ inputs.file_type }}"
+          max_matches: "{{ inputs.max_matches }}"
+        status: "running"
+        caller: "cortex-gather-search"
+
+  # ===========================================================================
+  # STEP 2: Execute search
+  # ===========================================================================
   - id: search
     type: Shell
+    depends_on: [register]
     inputs:
       command: |
         python3 << 'EOF'
@@ -175,12 +210,14 @@ blocks:
         FILE_TYPE: "{{ inputs.file_type }}"
         MAX_MATCHES: "{{ inputs.max_matches }}"
 
-  # Store search results as evidence in episodic memory
+  # ===========================================================================
+  # STEP 3: Store search results as evidence in episodic memory
+  # ===========================================================================
   - id: store_evidence
     type: Workflow
     description: Store search results as evidence.
     depends_on: [search]
-    condition: "{{ inputs.state != '' and (blocks.search.outputs.stdout | fromjson).count > 0 }}"
+    condition: "{{ (blocks.search.outputs.stdout | fromjson).count > 0 }}"
     inputs:
       workflow: cortex-evidence-store
       inputs:
@@ -190,6 +227,29 @@ blocks:
         evidence_type: "search"
         source_cell: "{{ inputs.source_cell }}"
         source_operation: "cortex-gather-search"
+
+  # ===========================================================================
+  # STEP 4: Track completion
+  # ===========================================================================
+  - id: track_done
+    type: Workflow
+    description: Mark capability complete in task tree.
+    depends_on:
+      - block: search
+        required: true
+      - block: store_evidence
+        required: false
+    inputs:
+      workflow: agent-state-management
+      inputs:
+        state: "{{ blocks.register.outputs.state }}"
+        task_id: "{{ blocks.register.outputs.task.task_id }}"
+        status: "done"
+        outputs_data:
+          count: "{{ (blocks.search.outputs.stdout | fromjson).count }}"
+          pattern: "{{ inputs.pattern }}"
+          evidence_stored: "{{ blocks.store_evidence.succeeded | default(false) }}"
+        caller: "cortex-gather-search"
 
 outputs:
   matches:
@@ -216,3 +276,13 @@ outputs:
     value: "{{ blocks.store_evidence.succeeded | default(false) }}"
     type: bool
     description: Whether evidence was stored.
+
+  task_id:
+    value: "{{ blocks.register.outputs.task.task_id | default('') }}"
+    type: str
+    description: Task ID of this capability invocation.
+
+  state:
+    value: "{{ blocks.register.outputs.state | default(inputs.state) }}"
+    type: str
+    description: Path to state database (passthrough).

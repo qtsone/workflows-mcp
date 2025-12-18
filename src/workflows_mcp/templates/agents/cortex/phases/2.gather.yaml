@@ -32,7 +32,8 @@ inputs:
       If you discover something that requires different analysis than expected,
       you can output config_override to adjust REASON/ACT behavior.
 
-      Express ALL sub-questions via investigations, not uncertainty fields.
+      Be honest about your confidence.
+      Express ALL questions via investigations.
 
   context:
     type: dict
@@ -119,6 +120,19 @@ blocks:
         status: "running"
         caller: "cortex-phase-gather"
 
+  - id: build_schema
+    type: Workflow
+    description: Generate response schema with enforced capability enum.
+    depends_on: [register]
+    inputs:
+      workflow: cortex-internal-schema-operations
+      inputs:
+        capabilities: "{{ inputs.capabilities }}"
+        phase: "gather"
+        include_spawn: true
+        include_completion: false
+        include_config_override: true
+
   - id: recall
     type: Workflow
     description: THINK - Query existing evidence and facts from memory.
@@ -135,6 +149,8 @@ blocks:
     description: PLAN - Decide what evidence to gather based on query + existing knowledge.
     depends_on:
       - block: register
+        required: true
+      - block: build_schema
         required: true
       - block: recall
         required: false
@@ -206,29 +222,81 @@ blocks:
         {% if inputs.capabilities | length > 0 %}
         {% for cap in inputs.capabilities %}
         **{{ cap.name }}** - {{ cap.description }}
-        Inputs:
-        {% for key, desc in cap.inputs.items() %}
-          - {{ key }}: {{ desc }}
+        {% for key, schema in cap.inputs.items() %}
+          - {{ key }} ({{ schema.type }}{% if schema.required %}, required{% endif %}): {{ schema.description }}
         {% endfor %}
         {% endfor %}
         {% else %}
         No capabilities available (check permissions).
         {% endif %}
 
-        ## Investigations (Sub-Questions or Directives)
+        ## Operation Examples (REQUIRED FORMAT)
 
-        For tasks requiring full cognitive actions (CATEGORIZE→GATHER→REASON→ACT):
-        ```yaml
-        investigations:
-          - prompt: "How does the authentication middleware validate tokens?"
-            reason: "Need deep understanding of auth flow"
+        **IMPORTANT**: Every operation MUST include the `inputs` object with capability-specific fields.
+
+        ```json
+        {
+          "operations": [
+            {
+              "capability": "cortex-gather-files",
+              "inputs": {"patterns": ["src/**/*.yaml", "*.md"]},
+              "reason": "Read workflow definitions and documentation"
+            },
+            {
+              "capability": "cortex-gather-search",
+              "inputs": {"pattern": "def execute", "path": "src/", "file_type": "py"},
+              "reason": "Find execute method implementations"
+            }
+          ]
+        }
         ```
 
-        **DO NOT** use investigations for simple file reads - use operations instead.
-        **DO** use investigations for tasks requiring analysis, synthesis, or complex actions.
+        ## Questions (Spawning Child Cells)
 
-        Investigation policy: {{ get(inputs.pipeline_config, 'gather', {}).spawn | default('complex_only') }}
+        **Questions = How you express uncertainty.** When you don't know something, ASK.
+
+        | Confidence | Expected Action |
+        |------------|-----------------|
+        | 0.9 - 1.0  | Operations only (highly confident) |
+        | 0.7 - 0.9  | Consider targeted questions |
+        | 0.5 - 0.7  | **SHOULD** ask questions to clarify |
+        | < 0.5      | **MUST** ask questions with specific prompts |
+
+        **Example when uncertain:**
+        ```json
+        {
+          "confidence": 0.5,
+          "result": {
+            "strategy": "Need more information",
+            "operations": [],
+            "questions": [
+              {"prompt": "What authentication mechanism does this codebase use?",
+               "reason": "Cannot find auth implementation in src/auth or src/security"}
+            ]
+          }
+        }
+        ```
+
+        **Key rules:**
+        1. If confidence < 0.7 and no useful operations, ASK questions
+        2. Questions spawn SEPARATE cognitive cycles (child cells)
+        3. Only ask DIFFERENT questions (not analysis of what you're already gathering)
+        4. Do NOT guess - if uncertain, express it through questions
+
+        **DO NOT ask:**
+        - "Analyze the files I'm gathering" (REASON phase does this)
+        - Restated versions of the parent prompt
+        - Redundant or duplicate questions
+
+        **DO ask:**
+        - Questions about DIFFERENT sources ("What database schema exists?")
+        - Questions about DIFFERENT domains ("How does frontend handle this?")
+
+        Question policy: {{ get(inputs.pipeline_config, 'gather', {}).spawn | default('complex_only') }}
         Current depth: {{ inputs.depth }} / {{ inputs.max_depth }}
+
+        **REMEMBER**: After gathering, REASON phase will analyze everything. Questions are for
+        getting MORE information, not for analyzing what you already have.
 
         ## Config Override
 
@@ -237,98 +305,7 @@ blocks:
         - Found security issues → reason.goal: evaluate, act.trigger: findings_require
         - Found complex architecture → reason.spawn: uncertain_only
 
-      response_schema:
-        type: object
-        properties:
-          result:
-            type: object
-            description: "Gathering plan (OUTPUT)"
-            properties:
-              strategy:
-                type: string
-                description: "High-level gathering strategy description"
-              operations:
-                type: array
-                description: "Capability workflows to execute (ATOMIC dispatch)"
-                items:
-                  type: object
-                  properties:
-                    capability:
-                      type: string
-                      description: "Capability workflow name: cortex-gather-files, cortex-gather-search"
-                    inputs:
-                      type: object
-                      description: "Capability-specific inputs. For cortex-gather-files: patterns (array), mode (outline|full|summary). For cortex-gather-search: pattern (regex string), path (directory), file_type (extension)."
-                      properties:
-                        patterns:
-                          type: array
-                          items:
-                            type: string
-                          description: "Glob patterns for cortex-gather-files (e.g., ['src/**/*.py', '*.yaml'])"
-                        pattern:
-                          type: string
-                          description: "Regex pattern for cortex-gather-search (e.g., 'async def execute', 'class.*Block')"
-                        path:
-                          type: string
-                          description: "Directory path to search in (e.g., 'src/workflows_mcp')"
-                        mode:
-                          type: string
-                          description: "Read mode for gather-files: outline (structure only), full (complete content), summary"
-                        file_type:
-                          type: string
-                          description: "File extension filter for gather-search (e.g., 'py', 'yaml')"
-                        max_files:
-                          type: integer
-                          description: "Maximum files to read for gather-files"
-                        max_matches:
-                          type: integer
-                          description: "Maximum matches to return for gather-search"
-                    reason:
-                      type: string
-                      description: "Why this operation is needed"
-                  required: [capability, reason]
-              investigations:
-                type: array
-                description: "Sub-questions or directives requiring full cognitive analysis"
-                items:
-                  type: object
-                  properties:
-                    prompt:
-                      type: string
-                      description: "What to investigate (question or directive)"
-                    reason:
-                      type: string
-                      description: "Why this investigation is needed"
-                  required: [prompt, reason]
-            required: [strategy, operations]
-          config_override:
-            type: object
-            description: "Override config for REASON/ACT based on discoveries (OUTPUT)"
-            properties:
-              reason:
-                type: object
-                properties:
-                  goal:
-                    type: string
-                    enum: [verify, explain, evaluate, plan, diagnose, enumerate]
-                  spawn:
-                    type: string
-                    enum: [never, uncertain_only, always]
-              act:
-                type: object
-                properties:
-                  trigger:
-                    type: string
-                    enum: [never, findings_require, always]
-                  mode:
-                    type: string
-                    enum: [none, report, implement, fix, verify]
-          confidence:
-            type: number
-            minimum: 0
-            maximum: 1
-            description: "Confidence in gathering plan (INTERNAL)"
-        required: [result, confidence]
+      response_schema: "{{ blocks.build_schema.outputs.schema }}"
 
   - id: dispatch
     type: Workflow
@@ -349,18 +326,18 @@ blocks:
         patterns: "{{ get(each.value.inputs, 'patterns', []) }}"
         pattern: "{{ get(each.value.inputs, 'pattern', '') }}"
         query: "{{ get(each.value.inputs, 'query', '') }}"
-        mode: "{{ get(each.value.inputs, 'mode', '') }}"
+        mode: "{{ get(each.value.inputs, 'mode', 'outline') }}"
         path: "{{ get(each.value.inputs, 'path', '') }}"
 
-  - id: investigations
+  - id: questions
     type: Workflow
-    description: ACT - Spawn child cortex-cells for complex investigations.
+    description: ACT - Spawn child cortex-cells to answer questions.
     depends_on: [dispatch]
     condition: |
-      {{ get(blocks.plan.outputs.response.result, 'investigations', []) | length > 0
+      {{ get(blocks.plan.outputs.response.result, 'questions', []) | length > 0
          and get(inputs.pipeline_config.gather, 'spawn', 'complex_only') != 'never'
          and inputs.depth < inputs.max_depth }}
-    for_each: "{{ get(blocks.plan.outputs.response.result, 'investigations', []) }}"
+    for_each: "{{ get(blocks.plan.outputs.response.result, 'questions', []) }}"
     for_each_mode: parallel
     max_parallel: 3
     continue_on_error: true
@@ -382,20 +359,20 @@ blocks:
 
   - id: combine_results
     type: Shell
-    description: Combine investigation prompts with their results for Reflexion.
-    depends_on: [investigations]
+    description: Combine question prompts with their results for Reflexion.
+    depends_on: [questions]
     condition: |
-      {{ blocks.investigations.succeeded
-         and get(blocks.investigations.metadata, 'count', 0) > 0 }}
+      {{ blocks.questions.succeeded
+         and get(blocks.questions.metadata, 'count', 0) > 0 }}
     inputs:
       command: |
         python3 << 'EOF'
         import json
         import os
 
-        # Investigation requests (what we asked)
+        # Question requests (what we asked)
         requests = json.loads(os.environ.get('REQUESTS', '[]'))
-        # Investigation outputs (what we got back)
+        # Question outputs (what we got back)
         outputs = json.loads(os.environ.get('OUTPUTS', '[]'))
         # Previous synthesis (accumulated)
         previous = json.loads(os.environ.get('PREVIOUS', '[]'))
@@ -416,8 +393,8 @@ blocks:
         print(json.dumps(all_synthesis))
         EOF
       env:
-        REQUESTS: "{{ get(blocks.plan.outputs.response.result, 'investigations', []) | tojson }}"
-        OUTPUTS: "{{ blocks.investigations.outputs | default([]) | tojson }}"
+        REQUESTS: "{{ get(blocks.plan.outputs.response.result, 'questions', []) | tojson }}"
+        OUTPUTS: "{{ blocks.questions.outputs | default([]) | tojson }}"
         PREVIOUS: "{{ inputs.synthesis | tojson }}"
 
   - id: recurse
@@ -452,7 +429,7 @@ blocks:
     depends_on:
       - block: dispatch
         required: false
-      - block: investigations
+      - block: questions
         required: false
       - block: combine_results
         required: false
@@ -470,8 +447,8 @@ blocks:
           strategy: "{{ blocks.plan.outputs.response.result.strategy | default('') }}"
           operations_executed: "{{ get(blocks.dispatch.metadata, 'count', 0) }}"
           operations_failed: "{{ get(blocks.dispatch.metadata, 'count_failed', 0) }}"
-          investigations_spawned: "{{ get(blocks.investigations.metadata, 'count', 0) }}"
-          investigations_failed: "{{ get(blocks.investigations.metadata, 'count_failed', 0) }}"
+          questions_spawned: "{{ get(blocks.questions.metadata, 'count', 0) }}"
+          questions_failed: "{{ get(blocks.questions.metadata, 'count_failed', 0) }}"
           confidence: "{{ blocks.plan.outputs.response.confidence | default(0) }}"
           depth: "{{ inputs.depth }}"
 
@@ -484,8 +461,8 @@ outputs:
         'strategy': blocks.plan.outputs.response.result.strategy | default(''),
         'operations_executed': get(blocks.dispatch.metadata, 'count', 0),
         'operations_failed': get(blocks.dispatch.metadata, 'count_failed', 0),
-        'investigations_spawned': get(blocks.investigations.metadata, 'count', 0),
-        'investigations_failed': get(blocks.investigations.metadata, 'count_failed', 0),
+        'questions_spawned': get(blocks.questions.metadata, 'count', 0),
+        'questions_failed': get(blocks.questions.metadata, 'count_failed', 0),
         'confidence': blocks.plan.outputs.response.confidence | default(0),
         'depth': inputs.depth
       } }}

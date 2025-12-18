@@ -38,7 +38,13 @@ inputs:
 
   state:
     type: str
-    description: Path to SQLite state database (for evidence storage).
+    description: Path to SQLite state database (for evidence storage and task tracking).
+    required: false
+    default: ""
+
+  parent_id:
+    type: str
+    description: Parent task ID for task tree registration.
     required: false
     default: ""
 
@@ -49,8 +55,37 @@ inputs:
     default: ""
 
 blocks:
+  # ===========================================================================
+  # STEP 1: Register capability in task tree
+  # ===========================================================================
+  - id: register
+    type: Workflow
+    description: Register this capability in the task tree.
+    inputs:
+      workflow: agent-state-management
+      inputs:
+        state: "{{ inputs.state }}"
+        parent_id: "{{ inputs.parent_id }}"
+        kind: "capability"
+        name: "cortex-gather-files"
+        metadata:
+          labels:
+            capability_type: "gather"
+            side_effects: "false"
+        inputs_data:
+          patterns: "{{ inputs.patterns }}"
+          base_path: "{{ inputs.base_path }}"
+          mode: "{{ inputs.mode }}"
+          max_files: "{{ inputs.max_files }}"
+        status: "running"
+        caller: "cortex-gather-files"
+
+  # ===========================================================================
+  # STEP 2: Read files
+  # ===========================================================================
   - id: read
     type: ReadFiles
+    depends_on: [register]
     inputs:
       patterns: "{{ inputs.patterns }}"
       base_path: "{{ inputs.base_path }}"
@@ -58,12 +93,14 @@ blocks:
       max_files: "{{ inputs.max_files }}"
       max_file_size_kb: "{{ inputs.max_file_size_kb }}"
 
-  # Store each file as evidence in episodic memory
+  # ===========================================================================
+  # STEP 3: Store each file as evidence in episodic memory
+  # ===========================================================================
   - id: store_evidence
     type: Workflow
     description: Store gathered files as evidence.
     depends_on: [read]
-    condition: "{{ inputs.state != '' and blocks.read.outputs.files | length > 0 }}"
+    condition: "{{ blocks.read.outputs.files | length > 0 }}"
     for_each: "{{ blocks.read.outputs.files }}"
     for_each_mode: parallel
     max_parallel: 10
@@ -77,6 +114,29 @@ blocks:
         evidence_type: "{{ 'outline' if inputs.mode == 'outline' else 'content' }}"
         source_cell: "{{ inputs.source_cell }}"
         source_operation: "cortex-gather-files"
+
+  # ===========================================================================
+  # STEP 4: Track completion
+  # ===========================================================================
+  - id: track_done
+    type: Workflow
+    description: Mark capability complete in task tree.
+    depends_on:
+      - block: read
+        required: true
+      - block: store_evidence
+        required: false
+    inputs:
+      workflow: agent-state-management
+      inputs:
+        state: "{{ blocks.register.outputs.state }}"
+        task_id: "{{ blocks.register.outputs.task.task_id }}"
+        status: "done"
+        outputs_data:
+          total_files: "{{ blocks.read.outputs.total_files }}"
+          total_size_kb: "{{ blocks.read.outputs.total_size_kb }}"
+          evidence_stored: "{{ blocks.store_evidence.metadata.count | default(0) }}"
+        caller: "cortex-gather-files"
 
 outputs:
   files:
@@ -106,3 +166,13 @@ outputs:
     value: "{{ blocks.store_evidence.metadata.count | default(0) }}"
     type: num
     description: Number of files stored as evidence.
+
+  task_id:
+    value: "{{ blocks.register.outputs.task.task_id | default('') }}"
+    type: str
+    description: Task ID of this capability invocation.
+
+  state:
+    value: "{{ blocks.register.outputs.state | default(inputs.state) }}"
+    type: str
+    description: Path to state database (passthrough).

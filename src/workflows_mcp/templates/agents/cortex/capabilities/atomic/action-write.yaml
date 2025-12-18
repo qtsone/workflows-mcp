@@ -22,13 +22,73 @@ inputs:
     required: false
     default: false
 
+  state:
+    type: str
+    description: Path to SQLite state database (for task tracking).
+    required: false
+    default: ""
+
+  parent_id:
+    type: str
+    description: Parent task ID for task tree registration.
+    required: false
+    default: ""
+
 blocks:
+  # ===========================================================================
+  # STEP 1: Register capability in task tree
+  # ===========================================================================
+  - id: register
+    type: Workflow
+    description: Register this capability in the task tree.
+    inputs:
+      workflow: agent-state-management
+      inputs:
+        state: "{{ inputs.state }}"
+        parent_id: "{{ inputs.parent_id }}"
+        kind: "capability"
+        name: "cortex-action-write"
+        metadata:
+          labels:
+            capability_type: "action"
+            side_effects: "true"
+        inputs_data:
+          path: "{{ inputs.path }}"
+          overwrite: "{{ inputs.overwrite }}"
+          content_length: "{{ inputs.content | length }}"
+        status: "running"
+        caller: "cortex-action-write"
+
+  # ===========================================================================
+  # STEP 2: Write file
+  # ===========================================================================
   - id: write
     type: CreateFile
+    depends_on: [register]
     inputs:
       path: "{{ inputs.path }}"
       content: "{{ inputs.content }}"
       overwrite: "{{ inputs.overwrite }}"
+
+  # ===========================================================================
+  # STEP 3: Track completion
+  # ===========================================================================
+  - id: track_done
+    type: Workflow
+    description: Mark capability complete in task tree.
+    depends_on: [write]
+    inputs:
+      workflow: agent-state-management
+      inputs:
+        state: "{{ blocks.register.outputs.state }}"
+        task_id: "{{ blocks.register.outputs.task.task_id }}"
+        status: "done"
+        outputs_data:
+          path: "{{ blocks.write.outputs.path }}"
+          size_bytes: "{{ blocks.write.outputs.size_bytes }}"
+          created: "{{ blocks.write.outputs.created }}"
+          success: "{{ blocks.write.succeeded }}"
+        caller: "cortex-action-write"
 
 outputs:
   path:
@@ -63,3 +123,13 @@ outputs:
       }}
     type: dict
     description: Action record for audit trail.
+
+  task_id:
+    value: "{{ blocks.register.outputs.task.task_id | default('') }}"
+    type: str
+    description: Task ID of this capability invocation.
+
+  state:
+    value: "{{ blocks.register.outputs.state | default(inputs.state) }}"
+    type: str
+    description: Path to state database (passthrough).

@@ -261,6 +261,16 @@ blocks:
         {{ inputs.context | tojson }}
         {% endif %}
 
+        {% if inputs.context.gather_result %}
+        ## Gather Phase Summary
+        - **Confidence**: {{ inputs.context.gather_result.confidence | default('N/A') }}
+        - **Operations executed**: {{ inputs.context.gather_result.operations_executed | default(0) }}
+        - **Questions spawned**: {{ inputs.context.gather_result.questions_spawned | default(0) }}
+        {% if inputs.context.gather_result.confidence is defined and inputs.context.gather_result.confidence < 0.7 %}
+        **⚠️ WARNING: Low gather confidence. Evidence may be incomplete.**
+        {% endif %}
+        {% endif %}
+
         {% if blocks.retrieve_outlines.succeeded and blocks.retrieve_outlines.outputs.count > 0 %}
         ## File Outlines ({{ blocks.retrieve_outlines.outputs.count }} files)
         {% for item in blocks.retrieve_outlines.outputs['items'] %}
@@ -365,16 +375,30 @@ blocks:
         2. **Determine if actions are needed** based on your synthesis
         3. **Set config_override** if you discover ACT needs different settings
 
-        ## Cognitive Spawning (Parallel Sub-Investigations)
+        ## Questions (Parallel Sub-Investigations)
 
-        For complex analysis that needs additional investigation:
+        **Questions = How you express uncertainty.** When analysis reveals gaps, ASK:
+
+        | Confidence | Expected Action |
+        |------------|-----------------|
+        | 0.9 - 1.0  | Proceed with synthesis only |
+        | 0.7 - 0.9  | Consider targeted questions |
+        | 0.5 - 0.7  | **SHOULD** ask questions to clarify |
+        | < 0.5      | **MUST** ask questions before concluding |
+
+        Example:
         ```yaml
-        spawn_cells:
+        questions:
           - prompt: "What are the security implications of this pattern?"
             reason: "Need deeper security analysis"
           - prompt: "How does this interact with the authentication system?"
             reason: "Potential cross-cutting concern"
         ```
+
+        **Key rules:**
+        1. Questions spawn SEPARATE cognitive cycles (child cells)
+        2. Only ask questions about DIFFERENT aspects than current analysis
+        3. Do NOT restate the parent prompt
 
         Spawn policy: {{ inputs.pipeline_config.reason.spawn | default('uncertain_only') }}
 
@@ -417,18 +441,18 @@ blocks:
           response:
             type: string
             description: "Direct response to the query (OUTPUT)"
-          spawn_cells:
+          questions:
             type: array
-            description: "Child cells for parallel sub-investigations (COGNITIVE dispatch)"
+            description: "Questions requiring child cells to answer (spawns parallel investigations)"
             items:
               type: object
               properties:
                 prompt:
                   type: string
-                  description: "What to investigate"
+                  description: "What to ask/investigate"
                 reason:
                   type: string
-                  description: "Why spawning is needed"
+                  description: "Why this question needs answering"
               required: [prompt, reason]
           config_override:
             type: object
@@ -619,18 +643,18 @@ blocks:
           }] }}
 
   # ===========================================================================
-  # STEP 8b: Dispatch COGNITIVE spawning via for_each
+  # STEP 8b: Dispatch questions via for_each (parallel sub-investigations)
   # ===========================================================================
-  - id: spawn_cells
+  - id: questions
     type: Workflow
-    description: Spawn child cortex-cells for parallel sub-investigations.
+    description: Spawn child cortex-cells to answer questions.
     depends_on: [needs_investigation]
     condition: |
       {{ not (blocks.needs_investigation.outputs.stdout | fromjson).should_investigate
-         and (blocks.attempt.outputs.response.spawn_cells | default([]) | length > 0)
+         and (blocks.attempt.outputs.response.questions | default([]) | length > 0)
          and inputs.pipeline_config.reason.spawn != 'never'
          and inputs.depth < inputs.max_depth }}
-    for_each: "{{ blocks.attempt.outputs.response.spawn_cells }}"
+    for_each: "{{ blocks.attempt.outputs.response.questions }}"
     for_each_mode: parallel
     max_parallel: 3
     continue_on_error: true
@@ -665,7 +689,7 @@ blocks:
         required: false
       - block: self_recurse
         required: false
-      - block: spawn_cells
+      - block: questions
         required: false
     inputs:
       workflow: agent-state-management
@@ -677,8 +701,8 @@ blocks:
         outputs_data:
           goal: "{{ inputs.pipeline_config.reason.goal | default('explain') }}"
           recursed: "{{ blocks.self_recurse.succeeded | default(false) }}"
-          cells_spawned: "{{ blocks.spawn_cells.metadata.count | default(0) }}"
-          cells_failed: "{{ blocks.spawn_cells.metadata.count_failed | default(0) }}"
+          questions_spawned: "{{ blocks.questions.metadata.count | default(0) }}"
+          questions_failed: "{{ blocks.questions.metadata.count_failed | default(0) }}"
           facts_stored: "{{ blocks.store_facts.metadata.count | default(0) }}"
           facts_recalled: "{{ blocks.recall_facts.outputs.count | default(0) }}"
           has_conflicts: "{{ blocks.check_conflicts.outputs.has_conflicts | default(false) }}"

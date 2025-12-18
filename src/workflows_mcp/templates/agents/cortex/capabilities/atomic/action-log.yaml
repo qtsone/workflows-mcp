@@ -35,9 +35,42 @@ inputs:
     description: Action inputs as JSON string (used for deduplication hash).
     required: true
 
+  parent_id:
+    type: str
+    description: Parent task ID for task tree registration.
+    required: false
+    default: ""
+
 blocks:
+  # ===========================================================================
+  # STEP 1: Register capability in task tree
+  # ===========================================================================
+  - id: register
+    type: Workflow
+    description: Register this capability in the task tree.
+    inputs:
+      workflow: agent-state-management
+      inputs:
+        state: "{{ inputs.state }}"
+        parent_id: "{{ inputs.parent_id }}"
+        kind: "capability"
+        name: "cortex-action-log"
+        metadata:
+          labels:
+            capability_type: "action"
+            side_effects: "false"
+        inputs_data:
+          capability: "{{ inputs.capability }}"
+          cell_id: "{{ inputs.cell_id }}"
+        status: "running"
+        caller: "cortex-action-log"
+
+  # ===========================================================================
+  # STEP 2: Log action for deduplication
+  # ===========================================================================
   - id: log
     type: Workflow
+    depends_on: [register]
     inputs:
       workflow: agent-state-management
       inputs:
@@ -47,6 +80,25 @@ blocks:
         actions_cell_id: "{{ inputs.cell_id }}"
         actions_capability: "{{ inputs.capability }}"
         actions_inputs_json: "{{ inputs.inputs_json }}"
+        caller: "cortex-action-log"
+
+  # ===========================================================================
+  # STEP 3: Track completion
+  # ===========================================================================
+  - id: track_done
+    type: Workflow
+    description: Mark capability complete in task tree.
+    depends_on: [log]
+    inputs:
+      workflow: agent-state-management
+      inputs:
+        state: "{{ blocks.register.outputs.state }}"
+        task_id: "{{ blocks.register.outputs.task.task_id }}"
+        status: "done"
+        outputs_data:
+          action_id: "{{ blocks.log.outputs.actions.action_id | default('') }}"
+          already_exists: "{{ blocks.log.outputs.actions.already_exists | default(false) }}"
+          status: "{{ blocks.log.outputs.actions.status | default('') }}"
         caller: "cortex-action-log"
 
 outputs:
@@ -74,3 +126,8 @@ outputs:
     value: "{{ blocks.log.outputs.actions.result.result | default(none) }}"
     type: dict
     description: Cached result if action was already completed.
+
+  task_id:
+    value: "{{ blocks.register.outputs.task.task_id | default('') }}"
+    type: str
+    description: Task ID of this capability invocation.

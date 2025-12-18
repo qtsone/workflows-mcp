@@ -59,13 +59,44 @@ inputs:
     required: false
     default: { "read": true, "write": false, "execute": false }
 
+  parent_id:
+    type: str
+    description: Parent task ID for task tree registration.
+    required: false
+    default: ""
+
 blocks:
+  # ===========================================================================
+  # STEP 0: Register capability in task tree
+  # ===========================================================================
+  - id: register
+    type: Workflow
+    description: Register this capability in the task tree.
+    inputs:
+      workflow: agent-state-management
+      inputs:
+        state: "{{ inputs.state }}"
+        parent_id: "{{ inputs.parent_id }}"
+        kind: "capability"
+        name: "cortex-action-dispatch"
+        metadata:
+          labels:
+            capability_type: "action"
+            side_effects: "true"
+        inputs_data:
+          capability: "{{ inputs.capability }}"
+          cell_id: "{{ inputs.cell_id }}"
+          reason: "{{ inputs.reason }}"
+        status: "running"
+        caller: "cortex-action-dispatch"
+
   # ===========================================================================
   # STEP 1: Log action for deduplication
   # ===========================================================================
   - id: log_action
     type: Workflow
     description: Log action and check for duplicates.
+    depends_on: [register]
     inputs:
       workflow: cortex-action-log
       inputs:
@@ -183,6 +214,26 @@ blocks:
         actions_result_json: "{{ {'error': blocks.execute_capability.metadata.error_message | default('Unknown error')} | tojson }}"
         caller: "cortex-action-dispatch"
 
+  # ===========================================================================
+  # STEP 6: Track completion
+  # ===========================================================================
+  - id: track_done
+    type: Workflow
+    description: Mark capability complete in task tree.
+    depends_on: [complete_action, fail_action]
+    inputs:
+      workflow: agent-state-management
+      inputs:
+        state: "{{ blocks.register.outputs.state }}"
+        task_id: "{{ blocks.register.outputs.task.task_id }}"
+        status: "done"
+        outputs_data:
+          action_id: "{{ (blocks.check_execute.outputs.stdout | fromjson).action_id }}"
+          executed: "{{ (blocks.check_execute.outputs.stdout | fromjson).should_execute }}"
+          cached: "{{ not (blocks.check_execute.outputs.stdout | fromjson).should_execute }}"
+          success: "{{ blocks.execute_capability.succeeded or (not (blocks.check_execute.outputs.stdout | fromjson).should_execute) }}"
+        caller: "cortex-action-dispatch"
+
 outputs:
   success:
     value: |
@@ -222,3 +273,8 @@ outputs:
     value: "{{ blocks.execute_capability.metadata.error_message | default('') if blocks.execute_capability.failed else '' }}"
     type: str
     description: Error message if action failed.
+
+  task_id:
+    value: "{{ blocks.register.outputs.task.task_id | default('') }}"
+    type: str
+    description: Task ID of this capability invocation.

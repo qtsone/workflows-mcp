@@ -51,9 +51,43 @@ inputs:
     required: false
     default: ""
 
+  parent_id:
+    type: str
+    description: Parent task ID for task tree registration.
+    required: false
+    default: ""
+
 blocks:
+  # ===========================================================================
+  # STEP 1: Register capability in task tree
+  # ===========================================================================
+  - id: register
+    type: Workflow
+    description: Register this capability in the task tree.
+    inputs:
+      workflow: agent-state-management
+      inputs:
+        state: "{{ inputs.state }}"
+        parent_id: "{{ inputs.parent_id }}"
+        kind: "capability"
+        name: "cortex-fact-store"
+        metadata:
+          labels:
+            capability_type: "fact"
+            side_effects: "false"
+        inputs_data:
+          evidence_type: "{{ inputs.evidence_type }}"
+          confidence: "{{ inputs.confidence }}"
+          scope: "{{ inputs.scope }}"
+        status: "running"
+        caller: "cortex-fact-store"
+
+  # ===========================================================================
+  # STEP 2: Store fact
+  # ===========================================================================
   - id: store
     type: Workflow
+    depends_on: [register]
     inputs:
       workflow: agent-state-management
       inputs:
@@ -66,6 +100,24 @@ blocks:
         facts_grounding: "{{ inputs.grounding }}"
         facts_scope: "{{ inputs.scope }}"
         facts_source_cell: "{{ inputs.source_cell }}"
+        caller: "cortex-fact-store"
+
+  # ===========================================================================
+  # STEP 3: Track completion
+  # ===========================================================================
+  - id: track_done
+    type: Workflow
+    description: Mark capability complete in task tree.
+    depends_on: [store]
+    inputs:
+      workflow: agent-state-management
+      inputs:
+        state: "{{ blocks.register.outputs.state }}"
+        task_id: "{{ blocks.register.outputs.task.task_id }}"
+        status: "done"
+        outputs_data:
+          fact_id: "{{ blocks.store.outputs.facts.fact_id | default('') }}"
+          success: "{{ blocks.store.outputs.facts.success | default(false) }}"
         caller: "cortex-fact-store"
 
 outputs:
@@ -83,3 +135,8 @@ outputs:
     value: "{{ inputs.claim }}"
     type: str
     description: The fact statement that was stored.
+
+  task_id:
+    value: "{{ blocks.register.outputs.task.task_id | default('') }}"
+    type: str
+    description: Task ID of this capability invocation.

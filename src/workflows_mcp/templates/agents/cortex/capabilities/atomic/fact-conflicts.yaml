@@ -19,9 +19,41 @@ inputs:
     description: JSON array of new facts to check for conflicts.
     required: true
 
+  parent_id:
+    type: str
+    description: Parent task ID for task tree registration.
+    required: false
+    default: ""
+
 blocks:
+  # ===========================================================================
+  # STEP 1: Register capability in task tree
+  # ===========================================================================
+  - id: register
+    type: Workflow
+    description: Register this capability in the task tree.
+    inputs:
+      workflow: agent-state-management
+      inputs:
+        state: "{{ inputs.state }}"
+        parent_id: "{{ inputs.parent_id }}"
+        kind: "capability"
+        name: "cortex-fact-conflicts"
+        metadata:
+          labels:
+            capability_type: "fact"
+            side_effects: "false"
+        inputs_data:
+          new_facts_count: "{{ (inputs.new_facts | fromjson | default([])) | length }}"
+        status: "running"
+        caller: "cortex-fact-conflicts"
+
+  # ===========================================================================
+  # STEP 2: Detect conflicts
+  # ===========================================================================
   - id: detect
     type: Workflow
+    depends_on: [register]
     inputs:
       workflow: agent-state-management
       inputs:
@@ -29,6 +61,25 @@ blocks:
         op: facts
         facts_op: conflicts
         facts_new_facts: "{{ inputs.new_facts }}"
+        caller: "cortex-fact-conflicts"
+
+  # ===========================================================================
+  # STEP 3: Track completion
+  # ===========================================================================
+  - id: track_done
+    type: Workflow
+    description: Mark capability complete in task tree.
+    depends_on: [detect]
+    inputs:
+      workflow: agent-state-management
+      inputs:
+        state: "{{ blocks.register.outputs.state }}"
+        task_id: "{{ blocks.register.outputs.task.task_id }}"
+        status: "done"
+        outputs_data:
+          has_conflicts: "{{ blocks.detect.outputs.facts.has_conflicts | default(false) }}"
+          conflict_count: "{{ blocks.detect.outputs.facts.conflicts | default([]) | length }}"
+          success: "{{ blocks.detect.outputs.facts.success | default(false) }}"
         caller: "cortex-fact-conflicts"
 
 outputs:
@@ -51,3 +102,8 @@ outputs:
     value: "{{ blocks.detect.outputs.facts.conflicts | default([]) | length }}"
     type: num
     description: Number of conflicts detected.
+
+  task_id:
+    value: "{{ blocks.register.outputs.task.task_id | default('') }}"
+    type: str
+    description: Task ID of this capability invocation.
