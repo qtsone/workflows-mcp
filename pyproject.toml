@@ -46,6 +46,9 @@ dev = [
     "mypy>=1.8",
     "ruff>=0.1.0",
 ]
+postgresql = ["asyncpg>=0.29.0"]
+mariadb = ["aiomysql>=0.2.0"]
+sql-all = ["asyncpg>=0.29.0", "aiomysql>=0.2.0"]
 
 [build-system]
 requires = ["hatchling>=1.26", "uv-dynamic-versioning"]

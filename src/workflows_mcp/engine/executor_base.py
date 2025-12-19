@@ -636,6 +636,7 @@ def create_default_registry() -> ExecutorRegistry:
     from .executors_image import ImageGenExecutor
     from .executors_interactive import PromptExecutor
     from .executors_llm import LLMCallExecutor
+    from .executors_sql import SqlExecutor
     from .executors_state import (
         MergeJSONStateExecutor,
         ReadJSONStateExecutor,
@@ -670,5 +671,8 @@ def create_default_registry() -> ExecutorRegistry:
     registry.register(ReadJSONStateExecutor())
     registry.register(WriteJSONStateExecutor())
     registry.register(MergeJSONStateExecutor())
+
+    # Register SQL executor
+    registry.register(SqlExecutor())
 
     return registry

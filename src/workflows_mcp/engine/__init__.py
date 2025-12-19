@@ -39,6 +39,7 @@ from . import (  # noqa: F401
     executors_image,  # Image generation executor
     executors_interactive,  # Interactive executors
     executors_llm,  # LLM call executor
+    executors_sql,  # SQL database executor
     executors_state,  # JSON state executors
     executors_workflow,  # Workflow executor (ADR-008)
 )
@@ -79,6 +80,11 @@ from .executors_interactive import (
     PromptExecutor,
     PromptInput,
     PromptOutput,
+)
+from .executors_sql import (
+    SqlExecutor,
+    SqlInput,
+    SqlOutput,
 )
 from .executors_state import (
     MergeJSONStateExecutor,
@@ -157,4 +163,8 @@ __all__ = [
     "MergeJSONStateExecutor",
     "MergeJSONStateInput",
     "MergeJSONStateOutput",
+    # SQL Executors
+    "SqlExecutor",
+    "SqlInput",
+    "SqlOutput",
 ]
