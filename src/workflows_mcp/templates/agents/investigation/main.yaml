@@ -75,24 +75,35 @@ inputs:
 
 blocks:
   # ==========================================================================
-  # STEP 1: Register task in state tree
+  # STEP 0: Generate Task ID
+  # ==========================================================================
+  - id: gen_task_id
+    type: Shell
+    description: Generate UUID for this task.
+    inputs:
+      command: python3 -c "import uuid; print(str(uuid.uuid4())[:8])"
+
+  # ==========================================================================
+  # STEP 1: Register task in state tree (direct Sql)
   # ==========================================================================
   - id: register_task
-    type: Workflow
+    type: Sql
     description: Create task in state tree for this investigation.
+    depends_on: [gen_task_id]
     inputs:
-      workflow: agent-state-management
-      inputs:
-        state: "{{ inputs.state }}"
-        parent_id: "{{ inputs.parent_task_id }}"
-        task: "Investigation (depth={{ inputs.depth }})"
-        task_type: "investigation"
-        status: "in-progress"
-        caller: "investigation-agent"
-        data:
-          depth: "{{ inputs.depth }}"
-          scope_type: "{{ inputs.scope.type | default('files') }}"
-          targets_count: "{{ inputs.scope.targets | length }}"
+      engine: sqlite
+      path: "{{ inputs.state }}"
+      sql: |
+        INSERT INTO tasks (id, parent_id, kind, name, metadata, inputs, status, depth)
+        VALUES (?, ?, 'investigation', ?, ?, ?, 'running', ?)
+        RETURNING id, parent_id, kind, name, status, depth, created_at
+      params:
+        - "task-{{ blocks.gen_task_id.outputs.stdout | trim }}"
+        - "{{ inputs.parent_task_id if inputs.parent_task_id else none }}"
+        - "Investigation (depth={{ inputs.depth }})"
+        - "{{ {'depth': inputs.depth, 'scope_type': inputs.scope.type | default('files'), 'targets_count': inputs.scope.targets | length} | tojson }}"
+        - "{{ inputs.scope | tojson }}"
+        - "{{ inputs.depth }}"
 
   # ==========================================================================
   # STEP 2: Determine read mode based on depth
@@ -357,31 +368,23 @@ blocks:
         required: [summary, findings, confidence, needs_deeper_analysis]
 
   # ==========================================================================
-  # STEP 5: Store findings in memory immediately
+  # STEP 5: Store findings in memory immediately (direct Sql)
   # ==========================================================================
   - id: store_findings
-    type: Workflow
+    type: Sql
     description: Store findings in memory for accumulation across recursion.
     depends_on: [analyze, register_task]
     inputs:
-      workflow: agent-state-management
-      inputs:
-        state: "{{ inputs.state }}"
-        op: memory
-        memory_op: append
-        memory_key: "investigations"
-        memory_value: |
-          {
-            "task_id": "{{ blocks.register_task.outputs.task.task_id }}",
-            "depth": {{ inputs.depth }},
-            "targets": {{ inputs.scope.targets | tojson }},
-            "mode": "{{ (blocks.determine_mode.outputs.stdout | fromjson).mode }}",
-            "summary": {{ blocks.analyze.outputs.response.summary | tojson }},
-            "findings": {{ blocks.analyze.outputs.response.findings | tojson }},
-            "confidence": {{ blocks.analyze.outputs.response.confidence }},
-            "files_analyzed": {{ blocks.gather.outputs.total_files }}
-          }
-        caller: "investigation-agent"
+      engine: sqlite
+      path: "{{ inputs.state }}"
+      sql: |
+        INSERT INTO memory (namespace, key, value, metadata, task_id)
+        VALUES ('investigations', ?, ?, ?, ?)
+      params:
+        - "{{ blocks.register_task.outputs.rows[0].id }}"
+        - "{{ {'task_id': blocks.register_task.outputs.rows[0].id, 'depth': inputs.depth, 'targets': inputs.scope.targets, 'mode': (blocks.determine_mode.outputs.stdout | fromjson).mode, 'summary': blocks.analyze.outputs.response.summary, 'findings': blocks.analyze.outputs.response.findings, 'confidence': blocks.analyze.outputs.response.confidence, 'files_analyzed': blocks.gather.outputs.total_files} | tojson }}"
+        - "{{ {'depth': inputs.depth} | tojson }}"
+        - "{{ blocks.register_task.outputs.rows[0].id }}"
 
   # ==========================================================================
   # STEP 6: Check if recursion is needed and allowed
@@ -460,7 +463,7 @@ blocks:
         depth: "{{ inputs.depth + 1 }}"
         max_depth: "{{ inputs.max_depth }}"
         state: "{{ inputs.state }}"
-        parent_task_id: "{{ blocks.register_task.outputs.task.task_id }}"
+        parent_task_id: "{{ blocks.register_task.outputs.rows[0].id }}"
 
   # ==========================================================================
   # STEP 8: Synthesize - only at depth=0, merge all findings
@@ -479,15 +482,15 @@ blocks:
       workflow: investigation-synthesize
       inputs:
         state: "{{ inputs.state }}"
-        parent_task_id: "{{ blocks.register_task.outputs.task.task_id }}"
+        parent_task_id: "{{ blocks.register_task.outputs.rows[0].id }}"
         context: "{{ inputs.context }}"
         root_findings: "{{ blocks.analyze.outputs.response.findings }}"
 
   # ==========================================================================
-  # STEP 9: Mark task complete
+  # STEP 9: Mark task complete (direct Sql)
   # ==========================================================================
   - id: track_done
-    type: Workflow
+    type: Sql
     description: Mark investigation task as complete with summary data.
     depends_on:
       - store_findings
@@ -496,16 +499,17 @@ blocks:
       - block: synthesize
         required: false
     inputs:
-      workflow: agent-state-management
-      inputs:
-        state: "{{ inputs.state }}"
-        task_id: "{{ blocks.register_task.outputs.task.task_id }}"
-        status: "done"
-        caller: "investigation-agent"
-        data:
-          findings_count: "{{ blocks.analyze.outputs.response.findings | length }}"
-          confidence: "{{ blocks.analyze.outputs.response.confidence }}"
-          recursed: "{{ (blocks.check_recurse.outputs.stdout | fromjson).should_recurse }}"
+      engine: sqlite
+      path: "{{ inputs.state }}"
+      sql: |
+        UPDATE tasks
+        SET status = 'done',
+            outputs = ?,
+            updated_at = datetime('now')
+        WHERE id = ?
+      params:
+        - "{{ {'findings_count': blocks.analyze.outputs.response.findings | length, 'confidence': blocks.analyze.outputs.response.confidence, 'recursed': (blocks.check_recurse.outputs.stdout | fromjson).should_recurse} | tojson }}"
+        - "{{ blocks.register_task.outputs.rows[0].id }}"
 
 outputs:
   findings:
@@ -529,7 +533,7 @@ outputs:
     description: "Synthesis results (only populated at depth=0)."
 
   task_id:
-    value: "{{ blocks.register_task.outputs.task.task_id }}"
+    value: "{{ blocks.register_task.outputs.rows[0].id }}"
     type: str
     description: "Task ID for this investigation in the state tree."
 

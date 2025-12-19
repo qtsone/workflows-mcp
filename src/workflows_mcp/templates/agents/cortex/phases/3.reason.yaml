@@ -103,6 +103,11 @@ inputs:
     description: Path to SQLite state database.
     default: ""
 
+  models:
+    type: dict
+    description: Model definitions for CRUD operations.
+    default: {}
+
   parent_id:
     type: str
     description: Parent cell's task ID (for child querying).
@@ -125,105 +130,129 @@ inputs:
 
 blocks:
   # ===========================================================================
-  # STEP 1: Register phase task (v1 schema)
+  # Generate Phase Task ID
+  # ===========================================================================
+  - id: gen_phase_id
+    type: Shell
+    description: Generate UUID for this phase task.
+    inputs:
+      command: python3 -c "import uuid; print(str(uuid.uuid4())[:8])"
+
+  # ===========================================================================
+  # STEP 1: Register Phase Task (direct Sql)
   # ===========================================================================
   - id: register_phase
-    type: Workflow
+    type: Sql
     description: Register this phase in the task tree.
+    depends_on: [gen_phase_id]
     inputs:
-      workflow: agent-state-management
-      inputs:
-        state: "{{ inputs.state }}"
-        parent_id: "{{ inputs.parent_id }}"
-        kind: "phase"
-        name: "reason"
-        metadata:
-          labels:
-            phase_order: 3
-            goal: "{{ inputs.pipeline_config.reason.goal | default('explain') }}"
-        inputs_data:
-          prompt: "{{ inputs.prompt }}"
-        depth: "{{ inputs.depth }}"
-        status: "running"
-        caller: "cortex-phase-reason"
+      engine: sqlite
+      path: "{{ inputs.state }}"
+      sql: |
+        INSERT INTO tasks (id, parent_id, kind, name, metadata, inputs, status, depth)
+        VALUES (?, ?, 'phase', 'reason', ?, ?, 'running', ?)
+        RETURNING id, parent_id, kind, name, status, depth, created_at
+      params:
+        - "task-{{ blocks.gen_phase_id.outputs.stdout | trim }}"
+        - "{{ inputs.parent_id if inputs.parent_id else none }}"
+        - "{{ {'labels': {'phase_order': 3, 'goal': inputs.pipeline_config.reason.goal | default('explain')}} | tojson }}"
+        - "{{ {'prompt': inputs.prompt} | tojson }}"
+        - "{{ inputs.depth }}"
 
   # ===========================================================================
-  # STEP 2: Retrieve evidence (outlines) from evidence table
+  # STEP 2: Retrieve evidence (outlines) from memory table
   # ===========================================================================
   - id: retrieve_outlines
-    type: Workflow
-    description: Get gathered outlines from episodic memory (evidence table).
+    type: Sql
+    description: Get gathered outlines from memory (namespace=outline).
     depends_on: [register_phase]
     inputs:
-      workflow: cortex-evidence-query
-      inputs:
-        state: "{{ blocks.register_phase.outputs.state }}"
-        evidence_type: "outline"
-        limit: 100
+      engine: sqlite
+      path: "{{ inputs.state }}"
+      sql: |
+        SELECT namespace as evidence_type, key, value, metadata,
+               json_extract(metadata, '$.byte_size') as byte_size
+        FROM memory
+        WHERE namespace = 'outline'
+        ORDER BY key
+        LIMIT 100
 
   # ===========================================================================
-  # STEP 3: Retrieve evidence (content) from evidence table
+  # STEP 3: Retrieve evidence (content) from memory table
   # ===========================================================================
   - id: retrieve_content
-    type: Workflow
-    description: Get gathered file contents from episodic memory (evidence table).
+    type: Sql
+    description: Get gathered file contents from memory (namespace=content).
     depends_on: [register_phase]
     inputs:
-      workflow: cortex-evidence-query
-      inputs:
-        state: "{{ blocks.register_phase.outputs.state }}"
-        evidence_type: "content"
-        limit: 100
+      engine: sqlite
+      path: "{{ inputs.state }}"
+      sql: |
+        SELECT namespace as evidence_type, key, value, metadata,
+               json_extract(metadata, '$.byte_size') as byte_size
+        FROM memory
+        WHERE namespace = 'content'
+        ORDER BY key
+        LIMIT 100
 
   # ===========================================================================
-  # STEP 3b: Retrieve episodic evidence (gathered files and searches)
+  # STEP 3b: Retrieve all episodic evidence from memory
   # ===========================================================================
   - id: retrieve_evidence
-    type: Workflow
-    description: Query episodic memory for gathered evidence.
+    type: Sql
+    description: Query all gathered evidence from memory.
     depends_on: [register_phase]
     inputs:
-      workflow: cortex-evidence-query
-      inputs:
-        state: "{{ blocks.register_phase.outputs.state }}"
-        limit: 100
+      engine: sqlite
+      path: "{{ inputs.state }}"
+      sql: |
+        SELECT namespace as evidence_type, key, value, metadata,
+               json_extract(metadata, '$.byte_size') as byte_size
+        FROM memory
+        WHERE namespace IN ('content', 'outline', 'search')
+        ORDER BY namespace, key
+        LIMIT 100
 
   # ===========================================================================
-  # STEP 3c: Recall existing facts from semantic memory
+  # STEP 3c: Recall existing facts from semantic memory (FTS5)
   # ===========================================================================
   - id: recall_facts
-    type: Workflow
+    type: Sql
     description: Query semantic memory for relevant existing facts.
     depends_on: [register_phase]
     inputs:
-      workflow: cortex-fact-query
-      inputs:
-        state: "{{ blocks.register_phase.outputs.state }}"
-        query: "{{ inputs.prompt | truncate(100, True, '') }}"
-        status: "active"
-        limit: 30
+      engine: sqlite
+      path: "{{ inputs.state }}"
+      sql: |
+        SELECT f.id, f.claim, f.evidence_type, f.confidence, f.grounding, f.task_id
+        FROM facts f
+        JOIN facts_fts fts ON f.id = fts.id
+        WHERE facts_fts MATCH ?
+          AND f.status = 'active'
+        ORDER BY f.confidence DESC
+        LIMIT 30
+      params:
+        - "{{ inputs.prompt | truncate(100, True, '') }}"
 
   # ===========================================================================
-  # STEP 4: Query ALL child cells from task tree (v1 schema)
+  # STEP 4: Query ALL child cells from task tree (direct Sql)
   # ===========================================================================
   - id: get_child_cells
-    type: Workflow
+    type: Sql
     description: Query all child cortex-cell syntheses from DB.
     depends_on: [register_phase]
     inputs:
-      workflow: agent-state-management
-      inputs:
-        state: "{{ blocks.register_phase.outputs.state }}"
-        op: query
-        task_id: "{{ inputs.parent_id }}"
-        query:
-          relation: children
-          where:
-            kind: cell
-            status: done
-          # v1: select from inputs/outputs instead of data
-          select: [task_id, inputs, outputs]
-        caller: "cortex-phase-reason"
+      engine: sqlite
+      path: "{{ inputs.state }}"
+      sql: |
+        SELECT id as task_id, inputs, outputs
+        FROM tasks
+        WHERE parent_id = ?
+          AND kind = 'cell'
+          AND status = 'done'
+        ORDER BY created_at
+      params:
+        - "{{ inputs.parent_id }}"
 
   # ===========================================================================
   # STEP 5: Attempt - Analyze and synthesize
@@ -271,9 +300,9 @@ blocks:
         {% endif %}
         {% endif %}
 
-        {% if blocks.retrieve_outlines.succeeded and blocks.retrieve_outlines.outputs.count > 0 %}
-        ## File Outlines ({{ blocks.retrieve_outlines.outputs.count }} files)
-        {% for item in blocks.retrieve_outlines.outputs['items'] %}
+        {% if blocks.retrieve_outlines.succeeded and blocks.retrieve_outlines.outputs.row_count > 0 %}
+        ## File Outlines ({{ blocks.retrieve_outlines.outputs.row_count }} files)
+        {% for item in blocks.retrieve_outlines.outputs.rows %}
         ### {{ item.key }}
         ```
         {{ (item.value | fromjson).content | default(item.value) }}
@@ -281,9 +310,9 @@ blocks:
         {% endfor %}
         {% endif %}
 
-        {% if blocks.retrieve_content.succeeded and blocks.retrieve_content.outputs.count > 0 %}
-        ## File Contents ({{ blocks.retrieve_content.outputs.count }} files)
-        {% for item in blocks.retrieve_content.outputs['items'] %}
+        {% if blocks.retrieve_content.succeeded and blocks.retrieve_content.outputs.row_count > 0 %}
+        ## File Contents ({{ blocks.retrieve_content.outputs.row_count }} files)
+        {% for item in blocks.retrieve_content.outputs.rows %}
         ### {{ item.key }}
         ```
         {{ (item.value | fromjson).content | default(item.value) }}
@@ -291,17 +320,17 @@ blocks:
         {% endfor %}
         {% endif %}
 
-        {% if blocks.retrieve_evidence.succeeded and blocks.retrieve_evidence.outputs.count > 0 %}
-        ## Episodic Evidence ({{ blocks.retrieve_evidence.outputs.count }} items)
-        {% for item in blocks.retrieve_evidence.outputs['items'] %}
+        {% if blocks.retrieve_evidence.succeeded and blocks.retrieve_evidence.outputs.row_count > 0 %}
+        ## Episodic Evidence ({{ blocks.retrieve_evidence.outputs.row_count }} items)
+        {% for item in blocks.retrieve_evidence.outputs.rows %}
         - **{{ item.key }}** ({{ item.evidence_type }}, {{ item.byte_size }} bytes)
         {% endfor %}
         {% endif %}
 
-        {% if blocks.recall_facts.succeeded and blocks.recall_facts.outputs.count > 0 %}
-        ## Known Facts (Semantic Memory - {{ blocks.recall_facts.outputs.count }} facts)
+        {% if blocks.recall_facts.succeeded and blocks.recall_facts.outputs.row_count > 0 %}
+        ## Known Facts (Semantic Memory - {{ blocks.recall_facts.outputs.row_count }} facts)
         These facts were validated in previous reasoning sessions:
-        {% for fact in blocks.recall_facts.outputs['items'] %}
+        {% for fact in blocks.recall_facts.outputs.rows %}
         - **{{ fact.claim }}**
           - Type: {{ fact.evidence_type }} | Confidence: {{ fact.confidence }}
           {% if fact.grounding %}- Evidence: {{ fact.grounding }}{% endif %}
@@ -310,9 +339,9 @@ blocks:
         NOTE: Build on these facts. If you find contradictions, flag them for conflict resolution.
         {% endif %}
 
-        {% if blocks.get_child_cells.succeeded and blocks.get_child_cells.outputs.query.results | length > 0 %}
-        ## Child Cell Syntheses ({{ blocks.get_child_cells.outputs.query.results | length }} cells)
-        {% for child in blocks.get_child_cells.outputs.query.results %}
+        {% if blocks.get_child_cells.succeeded and blocks.get_child_cells.outputs.rows | length > 0 %}
+        ## Child Cell Syntheses ({{ blocks.get_child_cells.outputs.rows | length }} cells)
+        {% for child in blocks.get_child_cells.outputs.rows %}
         ### Child Cell {{ loop.index }} ({{ child.task_id }})
         {# v1 schema: prompt in inputs, response/synthesis in outputs #}
         - **Query**: {{ child.inputs.prompt | default('N/A') }}
@@ -546,10 +575,10 @@ blocks:
         SPAWN_POLICY: "{{ inputs.pipeline_config.reason.spawn | default('uncertain_only') }}"
 
   # ===========================================================================
-  # STEP 6b: Store findings as facts in semantic memory
+  # STEP 6b: Store findings as facts in semantic memory (direct Sql INSERT)
   # ===========================================================================
   - id: store_facts
-    type: Workflow
+    type: Sql
     description: Store synthesized findings as facts.
     depends_on: [needs_investigation]
     condition: |
@@ -560,28 +589,51 @@ blocks:
     max_parallel: 10
     continue_on_error: true
     inputs:
-      workflow: cortex-fact-store
-      inputs:
-        state: "{{ blocks.register_phase.outputs.state }}"
-        claim: "{{ each.value.claim }}"
-        evidence_type: "{{ 'direct' if each.value.confidence >= 0.9 else ('inferred' if each.value.confidence >= 0.7 else 'assumed') }}"
-        confidence: "{{ each.value.confidence }}"
-        grounding: "{{ each.value.evidence_chain | default([]) | tojson }}"
-        source_cell: "{{ blocks.register_phase.outputs.task.task_id }}"
+      engine: sqlite
+      path: "{{ inputs.state }}"
+      sql: |
+        INSERT INTO facts (id, claim, evidence_type, confidence, grounding, task_id, status)
+        VALUES (
+          lower(hex(randomblob(16))),
+          ?,
+          ?,
+          ?,
+          ?,
+          ?,
+          'active'
+        )
+        RETURNING id, claim, confidence
+      params:
+        - "{{ each.value.claim }}"
+        - "{{ 'direct' if each.value.confidence >= 0.9 else ('inferred' if each.value.confidence >= 0.7 else 'assumed') }}"
+        - "{{ each.value.confidence }}"
+        - "{{ each.value.evidence_chain | default([]) | tojson }}"
+        - "{{ blocks.register_phase.outputs.rows[0].id }}"
 
   # ===========================================================================
-  # STEP 6c: Check for conflicting facts
+  # STEP 6c: Check for conflicting facts (direct Sql with FTS5)
   # ===========================================================================
   - id: check_conflicts
-    type: Workflow
+    type: Sql
     description: Detect conflicts between new findings and existing facts.
     depends_on: [store_facts]
     condition: "{{ blocks.store_facts.succeeded and blocks.store_facts.metadata.count > 0 }}"
     inputs:
-      workflow: cortex-fact-conflicts
-      inputs:
-        state: "{{ blocks.register_phase.outputs.state }}"
-        new_facts: "{{ blocks.attempt.outputs.response.synthesis.findings | tojson }}"
+      engine: sqlite
+      path: "{{ inputs.state }}"
+      sql: |
+        -- Find potentially conflicting facts using FTS5
+        -- A conflict is a fact with similar claim but different status or source
+        SELECT f.id, f.claim, f.confidence, f.task_id,
+               (f.task_id != ?) as potential_conflict
+        FROM facts f
+        WHERE f.status = 'active'
+          AND f.task_id != ?
+        ORDER BY f.confidence DESC
+        LIMIT 20
+      params:
+        - "{{ blocks.register_phase.outputs.rows[0].id }}"
+        - "{{ blocks.register_phase.outputs.rows[0].id }}"
 
   # ===========================================================================
   # STEP 7: Spawn child cell to investigate
@@ -602,8 +654,8 @@ blocks:
         max_depth: "{{ inputs.max_depth }}"
         iterations: 0
         max_iterations: "{{ inputs.max_iterations }}"
-        state: "{{ blocks.register_phase.outputs.state }}"
-        parent_id: "{{ blocks.register_phase.outputs.task.task_id }}"
+        state: "{{ inputs.state }}"
+        parent_id: "{{ blocks.register_phase.outputs.rows[0].id }}"
         profile: "{{ inputs.profile }}"
         confidence_threshold: "{{ inputs.confidence_threshold }}"
         capabilities: "{{ inputs.capabilities }}"
@@ -625,7 +677,7 @@ blocks:
         context: "{{ inputs.context }}"
         pipeline_config: "{{ inputs.pipeline_config }}"
         memory: "{{ inputs.memory }}"
-        state: "{{ blocks.register_phase.outputs.state }}"
+        state: "{{ inputs.state }}"
         parent_id: "{{ inputs.parent_id }}"
         profile: "{{ inputs.profile }}"
         confidence_threshold: "{{ inputs.confidence_threshold }}"
@@ -667,18 +719,18 @@ blocks:
         max_depth: "{{ inputs.max_depth }}"
         iterations: 0
         max_iterations: "{{ inputs.max_iterations }}"
-        state: "{{ blocks.register_phase.outputs.state }}"
-        parent_id: "{{ blocks.register_phase.outputs.task.task_id }}"
+        state: "{{ inputs.state }}"
+        parent_id: "{{ blocks.register_phase.outputs.rows[0].id }}"
         profile: "{{ inputs.profile }}"
         confidence_threshold: "{{ inputs.confidence_threshold }}"
         capabilities: "{{ inputs.capabilities }}"
         permissions: "{{ inputs.permissions }}"
 
   # ===========================================================================
-  # STEP 10: Track completion (v1 schema)
+  # STEP 10: Track completion (direct Sql UPDATE)
   # ===========================================================================
   - id: track_done
-    type: Workflow
+    type: Sql
     description: Mark phase complete.
     depends_on:
       - block: attempt
@@ -692,20 +744,17 @@ blocks:
       - block: questions
         required: false
     inputs:
-      workflow: agent-state-management
-      inputs:
-        state: "{{ blocks.register_phase.outputs.state }}"
-        task_id: "{{ blocks.register_phase.outputs.task.task_id }}"
-        status: "done"
-        caller: "cortex-phase-reason"
-        outputs_data:
-          goal: "{{ inputs.pipeline_config.reason.goal | default('explain') }}"
-          recursed: "{{ blocks.self_recurse.succeeded | default(false) }}"
-          questions_spawned: "{{ blocks.questions.metadata.count | default(0) }}"
-          questions_failed: "{{ blocks.questions.metadata.count_failed | default(0) }}"
-          facts_stored: "{{ blocks.store_facts.metadata.count | default(0) }}"
-          facts_recalled: "{{ blocks.recall_facts.outputs.count | default(0) }}"
-          has_conflicts: "{{ blocks.check_conflicts.outputs.has_conflicts | default(false) }}"
+      engine: sqlite
+      path: "{{ inputs.state }}"
+      sql: |
+        UPDATE tasks
+        SET status = 'done',
+            outputs = ?,
+            updated_at = datetime('now')
+        WHERE id = ?
+      params:
+        - "{{ {'goal': inputs.pipeline_config.reason.goal | default('explain'), 'recursed': blocks.self_recurse.succeeded | default(false), 'questions_spawned': blocks.questions.metadata.count | default(0), 'questions_failed': blocks.questions.metadata.count_failed | default(0), 'facts_stored': blocks.store_facts.metadata.count | default(0), 'facts_recalled': blocks.recall_facts.outputs.row_count | default(0), 'has_conflicts': blocks.check_conflicts.outputs.row_count | default(0) > 0} | tojson }}"
+        - "{{ blocks.register_phase.outputs.rows[0].id }}"
 
 # =============================================================================
 # OUTPUTS: synthesis + response + config_override
@@ -735,4 +784,4 @@ outputs:
   state:
     type: str
     description: "Path to state database."
-    value: "{{ blocks.register_phase.outputs.state }}"
+    value: "{{ inputs.state }}"

@@ -22,6 +22,7 @@ Field names are **exact** - use them precisely in your workflows.
 | ReadJSONState | path |
 | WriteJSONState | path, data |
 | MergeJSONState | path, updates |
+| Sql | engine |
 
 ### Common Field Name Mistakes
 
@@ -480,6 +481,145 @@ Without this, execution fails with configuration error.
     path: "{{tmp}}/state.json"
     updates:
       last_updated: "{{now()}}"
+```
+
+---
+
+## Sql
+
+**Description**: SQL executor for database operations.
+
+### Required Inputs
+
+- **`engine`** (string): Database engine. Required.
+
+### Optional Inputs
+
+- **`path`** (any): SQLite: Database file path. Use ':memory:' for in-memory DB.
+- **`host`** (any): Database host
+- **`port`** (any): Database port (default: 5432 for PostgreSQL, 3306 for MariaDB)
+- **`database`** (any): Database name
+- **`username`** (any): Database username
+- **`password`** (any): Database password. Use {{secrets.DB_PASSWORD}} for security.
+- **`sql`** (any): 
+        SQL statement(s) to execute (Raw SQL mode).
+        - Use ? for positional params (SQLite) or $1, $2 for PostgreSQL
+        - MariaDB uses %s for positional params
+        - Multi-statement scripts: separate with semicolons
+        Mutually exclusive with 'model' field.
+        
+- **`params`** (any): 
+        Query parameters for raw SQL (prevents SQL injection).
+        - List for positional: [value1, value2]
+        - Dict for named: {"name": value} (PostgreSQL/MariaDB)
+        
+- **`model`** (any): 
+        Model schema for CRUD operations (Model mode).
+        Defines table structure with columns, types, indexes.
+        Mutually exclusive with 'sql' field.
+        Example:
+          model:
+            table: tasks
+            columns:
+              id: {type: text, primary: true, auto: uuid}
+              name: {type: text, required: true}
+            indexes:
+              - columns: [name]
+        
+- **`op`** (any): 
+        CRUD operation (required when using model mode).
+        - schema: Create table + indexes
+        - insert: Insert row (requires data)
+        - select: Query rows (optional where, order, limit, offset)
+        - update: Update rows (requires where and data)
+        - delete: Delete rows (requires where)
+        - upsert: Insert or update on conflict (requires data and conflict)
+        
+- **`data`** (any): Row data for insert/update/upsert operations.
+- **`where`** (any): 
+        Filter conditions for select/update/delete.
+        - Simple equality: {status: running}
+        - Operators: {priority: {">": 5}}
+        - IN: {type: {in: [a, b, c]}}
+        - IS NULL: {deleted_at: {is: null}}
+        
+- **`order`** (any): Sort order for select. Format: ["column:asc", "column:desc"]
+- **`limit`** (any): Maximum rows to return (select).
+- **`offset`** (any): Rows to skip (select).
+- **`conflict`** (any): Conflict columns for upsert (usually primary key).
+- **`init_sql`** (any): 
+        DDL to execute before the main operation (idempotent).
+        Use CREATE TABLE IF NOT EXISTS, CREATE INDEX IF NOT EXISTS, etc.
+        
+- **`isolation_level`** (any): 
+        Transaction isolation level.
+        - PostgreSQL/MariaDB: read_uncommitted, read_committed, repeatable_read, serializable
+        - SQLite: immediate (recommended for writes), exclusive, or default (deferred)
+        
+- **`ssl`** (any) *(default: `False`)*: Enable SSL/TLS. Boolean or sslmode string (require, verify-ca, verify-full)
+- **`timeout`** (any) *(default: `30`)*: Query execution timeout in seconds
+- **`connect_timeout`** (any) *(default: `10`)*: Connection establishment timeout in seconds
+- **`pool_size`** (any) *(default: `5`)*: Connection pool size (PostgreSQL/MariaDB only)
+- **`sqlite_pragmas`** (any): 
+        SQLite PRAGMA settings applied on connection.
+        Defaults: journal_mode=WAL, busy_timeout=30000, synchronous=NORMAL, foreign_keys=ON
+        
+
+### Outputs
+
+- **`meta`** (object): Executor-specific metadata fields (exit_code, tokens_used, etc.)
+- **`rows`** (array): Result rows as list of dicts
+- **`columns`** (array): Column names from result set
+- **`row_count`** (integer): Number of rows returned (select) or affected (insert/update/delete)
+- **`affected_rows`** (integer): Rows affected by INSERT/UPDATE/DELETE
+- **`last_insert_id`** (any): Last inserted row ID (auto-increment)
+- **`success`** (boolean): Operation completed successfully
+- **`engine`** (string): Database engine used
+- **`execution_time_ms`** (number): Query execution time in milliseconds
+
+### Example
+
+```yaml
+# Raw SQL mode - SQLite query
+- id: get_users
+  type: Sql
+  inputs:
+    engine: sqlite
+    path: "/data/app.db"
+    sql: "SELECT * FROM users WHERE status = ?"
+    params: ["active"]
+
+# Model mode - Create table and insert
+- id: create_task
+  type: Sql
+  inputs:
+    engine: sqlite
+    path: "{{state.db_path}}"
+    model:
+      table: tasks
+      columns:
+        task_id: {type: text, primary: true, auto: uuid}
+        name: {type: text, required: true}
+        status: {type: text, default: pending}
+        created_at: {type: timestamp, auto: created}
+      indexes:
+        - columns: [status]
+    op: insert
+    data:
+      name: "My Task"
+
+# Model mode - Select with filters
+- id: find_tasks
+  type: Sql
+  inputs:
+    engine: sqlite
+    path: "{{state.db_path}}"
+    model: "{{inputs.models.task}}"
+    op: select
+    where:
+      status: running
+    order: [created_at:desc]
+    limit: 10
 ```
 
 ---

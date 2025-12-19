@@ -19,7 +19,7 @@ import sqlite3
 from pathlib import Path
 from typing import Any
 
-from .backend import ConnectionConfig, DatabaseBackendBase, DatabaseDialect, Params, QueryResult
+from .backend import ConnectionConfig, DatabaseBackendBase, DatabaseEngine, Params, QueryResult
 
 logger = logging.getLogger(__name__)
 
@@ -32,20 +32,20 @@ class SqliteBackend(DatabaseBackendBase):
     for optimal performance with WAL mode and appropriate timeouts.
 
     Attributes:
-        dialect: DatabaseDialect.SQLITE
+        dialect: DatabaseEngine.SQLITE
         DEFAULT_PRAGMAS: Default PRAGMA settings applied on connection
 
     Example:
         backend = SqliteBackend()
         await backend.connect(ConnectionConfig(
-            dialect=DatabaseDialect.SQLITE,
+            dialect=DatabaseEngine.SQLITE,
             path="/data/app.db"
         ))
         result = await backend.query("SELECT * FROM users WHERE id = ?", (42,))
         await backend.disconnect()
     """
 
-    dialect = DatabaseDialect.SQLITE
+    dialect = DatabaseEngine.SQLITE
 
     DEFAULT_PRAGMAS: dict[str, str | int] = {
         "journal_mode": "WAL",
@@ -167,13 +167,14 @@ class SqliteBackend(DatabaseBackendBase):
         """Execute INSERT/UPDATE/DELETE statement.
 
         Auto-commits unless in an explicit transaction.
+        Handles RETURNING clause by fetching result rows.
 
         Args:
             sql: SQL statement
             params: Query parameters
 
         Returns:
-            QueryResult with affected_rows and last_insert_id
+            QueryResult with affected_rows, last_insert_id, and rows (if RETURNING)
 
         Raises:
             SqlQueryError: If execution fails
@@ -184,14 +185,23 @@ class SqliteBackend(DatabaseBackendBase):
             assert self._conn is not None
             cursor = self._conn.execute(sql, self._normalize_params(params))
 
+            # Check for RETURNING clause - fetch rows if present
+            has_returning = "RETURNING" in sql.upper()
+            if has_returning and cursor.description:
+                rows = [dict(row) for row in cursor.fetchall()]
+                columns = [desc[0] for desc in cursor.description]
+            else:
+                rows = []
+                columns = []
+
             # Auto-commit if not in transaction
             if not self._in_transaction:
                 self._conn.commit()
 
             return QueryResult(
-                rows=[],
-                row_count=cursor.rowcount,
-                columns=[],
+                rows=rows,
+                row_count=len(rows) if rows else cursor.rowcount,
+                columns=columns,
                 last_insert_id=cursor.lastrowid,
                 affected_rows=cursor.rowcount,
             )

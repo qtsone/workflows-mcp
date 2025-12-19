@@ -17,7 +17,7 @@ from __future__ import annotations
 import re
 from typing import Any
 
-from .backend import DatabaseDialect
+from .backend import DatabaseEngine
 
 # Regex patterns for detecting placeholder formats
 QMARK_PATTERN = re.compile(r"(?<![:%$])\?(?!\?)")  # ? but not ?? or :? or %? or $?
@@ -34,13 +34,13 @@ class ParamConverter:
     target database dialect.
 
     Example:
-        converter = ParamConverter(DatabaseDialect.POSTGRESQL)
+        converter = ParamConverter(DatabaseEngine.POSTGRESQL)
         sql = "SELECT * FROM users WHERE id = ? AND status = ?"
         converted_sql = converter.convert(sql)
         # Result: "SELECT * FROM users WHERE id = $1 AND status = $2"
     """
 
-    def __init__(self, target_dialect: DatabaseDialect):
+    def __init__(self, target_dialect: DatabaseEngine):
         """Initialize converter for target dialect.
 
         Args:
@@ -89,11 +89,11 @@ class ParamConverter:
 
         if isinstance(params, dict):
             # Named parameters - convert to positional for PostgreSQL
-            if self.target_dialect == DatabaseDialect.POSTGRESQL:
+            if self.target_dialect == DatabaseEngine.POSTGRESQL:
                 # PostgreSQL uses $1, $2 which are positional
                 # Named params need to be extracted in order
                 return tuple(params.values())
-            elif self.target_dialect == DatabaseDialect.MARIADB:
+            elif self.target_dialect == DatabaseEngine.MARIADB:
                 # MariaDB supports %(name)s format
                 return params
             else:
@@ -123,11 +123,11 @@ class ParamConverter:
 
     def _target_format(self) -> str:
         """Get the native placeholder format for target dialect."""
-        if self.target_dialect == DatabaseDialect.SQLITE:
+        if self.target_dialect == DatabaseEngine.SQLITE:
             return "qmark"
-        elif self.target_dialect == DatabaseDialect.POSTGRESQL:
+        elif self.target_dialect == DatabaseEngine.POSTGRESQL:
             return "numeric"
-        elif self.target_dialect == DatabaseDialect.MARIADB:
+        elif self.target_dialect == DatabaseEngine.MARIADB:
             return "format"
         return "qmark"
 
@@ -234,7 +234,7 @@ class ParamConverter:
         return sql
 
 
-def convert_sql_for_dialect(sql: str, dialect: DatabaseDialect) -> str:
+def convert_sql_for_dialect(sql: str, dialect: DatabaseEngine) -> str:
     """Convenience function to convert SQL placeholders for a dialect.
 
     Args:
@@ -245,7 +245,7 @@ def convert_sql_for_dialect(sql: str, dialect: DatabaseDialect) -> str:
         SQL with placeholders converted to dialect's native format
 
     Example:
-        >>> convert_sql_for_dialect("SELECT * FROM users WHERE id = ?", DatabaseDialect.POSTGRESQL)
+        >>> convert_sql_for_dialect("SELECT * FROM users WHERE id = ?", DatabaseEngine.POSTGRESQL)
         "SELECT * FROM users WHERE id = $1"
     """
     return ParamConverter(dialect).convert(sql)

@@ -19,7 +19,7 @@ from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING, Any
 
-from .backend import ConnectionConfig, DatabaseBackendBase, DatabaseDialect, Params, QueryResult
+from .backend import ConnectionConfig, DatabaseBackendBase, DatabaseEngine, Params, QueryResult
 
 if TYPE_CHECKING:
     import aiomysql  # type: ignore[import-not-found]
@@ -48,12 +48,12 @@ class MariaDBBackend(DatabaseBackendBase):
     access compatible with both MariaDB and MySQL servers.
 
     Attributes:
-        dialect: DatabaseDialect.MARIADB
+        dialect: DatabaseEngine.MARIADB
 
     Example:
         backend = MariaDBBackend()
         await backend.connect(ConnectionConfig(
-            dialect=DatabaseDialect.MARIADB,
+            dialect=DatabaseEngine.MARIADB,
             host="localhost",
             port=3306,
             database="mydb",
@@ -64,7 +64,7 @@ class MariaDBBackend(DatabaseBackendBase):
         await backend.disconnect()
     """
 
-    dialect = DatabaseDialect.MARIADB
+    dialect = DatabaseEngine.MARIADB
 
     def __init__(self) -> None:
         """Initialize MariaDB backend."""

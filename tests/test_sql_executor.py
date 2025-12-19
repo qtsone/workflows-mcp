@@ -18,7 +18,7 @@ from workflows_mcp.engine.execution import Execution
 from workflows_mcp.engine.executors_sql import SqlExecutor, SqlInput
 from workflows_mcp.engine.sql import (
     ConnectionConfig,
-    DatabaseDialect,
+    DatabaseEngine,
     ParamConverter,
     QueryResult,
     SqliteBackend,
@@ -35,70 +35,70 @@ class TestParamConverter:
 
     def test_qmark_to_numeric(self) -> None:
         """Convert ? placeholders to $1, $2 for PostgreSQL."""
-        converter = ParamConverter(DatabaseDialect.POSTGRESQL)
+        converter = ParamConverter(DatabaseEngine.POSTGRESQL)
         sql = "SELECT * FROM users WHERE id = ? AND status = ?"
         result = converter.convert(sql)
         assert result == "SELECT * FROM users WHERE id = $1 AND status = $2"
 
     def test_qmark_to_format(self) -> None:
         """Convert ? placeholders to %s for MariaDB."""
-        converter = ParamConverter(DatabaseDialect.MARIADB)
+        converter = ParamConverter(DatabaseEngine.MARIADB)
         sql = "SELECT * FROM users WHERE id = ? AND status = ?"
         result = converter.convert(sql)
         assert result == "SELECT * FROM users WHERE id = %s AND status = %s"
 
     def test_numeric_to_qmark(self) -> None:
         """Convert $1, $2 placeholders to ? for SQLite."""
-        converter = ParamConverter(DatabaseDialect.SQLITE)
+        converter = ParamConverter(DatabaseEngine.SQLITE)
         sql = "SELECT * FROM users WHERE id = $1 AND status = $2"
         result = converter.convert(sql)
         assert result == "SELECT * FROM users WHERE id = ? AND status = ?"
 
     def test_format_to_numeric(self) -> None:
         """Convert %s placeholders to $1, $2 for PostgreSQL."""
-        converter = ParamConverter(DatabaseDialect.POSTGRESQL)
+        converter = ParamConverter(DatabaseEngine.POSTGRESQL)
         sql = "SELECT * FROM users WHERE id = %s AND status = %s"
         result = converter.convert(sql)
         assert result == "SELECT * FROM users WHERE id = $1 AND status = $2"
 
     def test_no_placeholders(self) -> None:
         """SQL without placeholders should pass through unchanged."""
-        converter = ParamConverter(DatabaseDialect.POSTGRESQL)
+        converter = ParamConverter(DatabaseEngine.POSTGRESQL)
         sql = "SELECT * FROM users"
         result = converter.convert(sql)
         assert result == sql
 
     def test_same_dialect_passthrough(self) -> None:
         """SQL already in target dialect should pass through unchanged."""
-        converter = ParamConverter(DatabaseDialect.POSTGRESQL)
+        converter = ParamConverter(DatabaseEngine.POSTGRESQL)
         sql = "SELECT * FROM users WHERE id = $1"
         result = converter.convert(sql)
         assert result == sql
 
     def test_convert_params_dict_to_tuple(self) -> None:
         """Dict params should be converted to tuple for PostgreSQL."""
-        converter = ParamConverter(DatabaseDialect.POSTGRESQL)
+        converter = ParamConverter(DatabaseEngine.POSTGRESQL)
         params = {"name": "Alice", "status": "active"}
         result = converter.convert_params(params)
         assert result == ("Alice", "active")
 
     def test_convert_params_list_to_tuple(self) -> None:
         """List params should be converted to tuple."""
-        converter = ParamConverter(DatabaseDialect.POSTGRESQL)
+        converter = ParamConverter(DatabaseEngine.POSTGRESQL)
         params = ["Alice", "active"]
         result = converter.convert_params(params)
         assert result == ("Alice", "active")
 
     def test_convert_params_none(self) -> None:
         """None params should return None."""
-        converter = ParamConverter(DatabaseDialect.POSTGRESQL)
+        converter = ParamConverter(DatabaseEngine.POSTGRESQL)
         result = converter.convert_params(None)
         assert result is None
 
     def test_convenience_function(self) -> None:
         """Test the convenience function for SQL conversion."""
         sql = "SELECT * FROM users WHERE id = ?"
-        result = convert_sql_for_dialect(sql, DatabaseDialect.POSTGRESQL)
+        result = convert_sql_for_dialect(sql, DatabaseEngine.POSTGRESQL)
         assert result == "SELECT * FROM users WHERE id = $1"
 
 
@@ -120,7 +120,7 @@ class TestSqliteBackend:
     async def backend(self, db_path: str) -> AsyncGenerator[SqliteBackend, None]:
         """Create a connected SQLite backend."""
         backend = SqliteBackend()
-        config = ConnectionConfig(dialect=DatabaseDialect.SQLITE, path=db_path)
+        config = ConnectionConfig(dialect=DatabaseEngine.SQLITE, path=db_path)
         await backend.connect(config)
         yield backend
         await backend.disconnect()
@@ -128,7 +128,7 @@ class TestSqliteBackend:
     async def test_connect_disconnect(self, db_path: str) -> None:
         """Test basic connection and disconnection."""
         backend = SqliteBackend()
-        config = ConnectionConfig(dialect=DatabaseDialect.SQLITE, path=db_path)
+        config = ConnectionConfig(dialect=DatabaseEngine.SQLITE, path=db_path)
 
         await backend.connect(config)
         assert backend._conn is not None
@@ -142,7 +142,7 @@ class TestSqliteBackend:
             nested_path = Path(tmpdir) / "subdir" / "nested" / "test.db"
 
             backend = SqliteBackend()
-            config = ConnectionConfig(dialect=DatabaseDialect.SQLITE, path=str(nested_path))
+            config = ConnectionConfig(dialect=DatabaseEngine.SQLITE, path=str(nested_path))
             await backend.connect(config)
 
             assert nested_path.parent.exists()
@@ -151,7 +151,7 @@ class TestSqliteBackend:
     async def test_memory_database(self) -> None:
         """Test in-memory database connection."""
         backend = SqliteBackend()
-        config = ConnectionConfig(dialect=DatabaseDialect.SQLITE, path=":memory:")
+        config = ConnectionConfig(dialect=DatabaseEngine.SQLITE, path=":memory:")
         await backend.connect(config)
 
         # Create table and insert data
@@ -334,13 +334,13 @@ class TestConnectionConfig:
     def test_sqlite_requires_path(self) -> None:
         """SQLite config requires path."""
         with pytest.raises(ValueError, match="SQLite requires 'path'"):
-            ConnectionConfig(dialect=DatabaseDialect.SQLITE)
+            ConnectionConfig(dialect=DatabaseEngine.SQLITE)
 
     def test_postgresql_requires_host(self) -> None:
         """PostgreSQL config requires host."""
         with pytest.raises(ValueError, match="postgresql requires 'host'"):
             ConnectionConfig(
-                dialect=DatabaseDialect.POSTGRESQL,
+                dialect=DatabaseEngine.POSTGRESQL,
                 database="mydb",
             )
 
@@ -348,14 +348,14 @@ class TestConnectionConfig:
         """PostgreSQL config requires database."""
         with pytest.raises(ValueError, match="postgresql requires 'database'"):
             ConnectionConfig(
-                dialect=DatabaseDialect.POSTGRESQL,
+                dialect=DatabaseEngine.POSTGRESQL,
                 host="localhost",
             )
 
     def test_postgresql_default_port(self) -> None:
         """PostgreSQL gets default port 5432."""
         config = ConnectionConfig(
-            dialect=DatabaseDialect.POSTGRESQL,
+            dialect=DatabaseEngine.POSTGRESQL,
             host="localhost",
             database="mydb",
         )
@@ -364,7 +364,7 @@ class TestConnectionConfig:
     def test_mariadb_default_port(self) -> None:
         """MariaDB gets default port 3306."""
         config = ConnectionConfig(
-            dialect=DatabaseDialect.MARIADB,
+            dialect=DatabaseEngine.MARIADB,
             host="localhost",
             database="mydb",
         )
@@ -373,7 +373,7 @@ class TestConnectionConfig:
     def test_sqlite_valid_config(self) -> None:
         """Valid SQLite config should work."""
         config = ConnectionConfig(
-            dialect=DatabaseDialect.SQLITE,
+            dialect=DatabaseEngine.SQLITE,
             path="/data/test.db",
         )
         assert config.path == "/data/test.db"
@@ -381,7 +381,7 @@ class TestConnectionConfig:
     def test_custom_options(self) -> None:
         """Custom options should be preserved."""
         config = ConnectionConfig(
-            dialect=DatabaseDialect.SQLITE,
+            dialect=DatabaseEngine.SQLITE,
             path=":memory:",
             options={"sqlite_pragmas": {"cache_size": -64000}},
         )
@@ -405,9 +405,8 @@ class TestSqlExecutorIntegration:
 
         # First, create schema and insert data
         inputs = SqlInput(
-            dialect="sqlite",
+            engine="sqlite",
             path=db_path,
-            operation="script",
             sql="""
                 CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT);
                 INSERT INTO users (name) VALUES ('Alice');
@@ -419,9 +418,8 @@ class TestSqlExecutorIntegration:
 
         # Then query
         inputs = SqlInput(
-            dialect="sqlite",
+            engine="sqlite",
             path=db_path,
-            operation="query",
             sql="SELECT * FROM users ORDER BY name",
         )
         result = await executor.execute(inputs, context)
@@ -429,7 +427,7 @@ class TestSqlExecutorIntegration:
         assert result.success
         assert result.row_count == 2
         assert result.rows[0]["name"] == "Alice"
-        assert result.dialect == "sqlite"
+        assert result.engine == "sqlite"
 
     async def test_sqlite_execute_operation(self) -> None:
         """Test SQLite execute through executor."""
@@ -440,9 +438,8 @@ class TestSqlExecutorIntegration:
 
         # Create schema
         inputs = SqlInput(
-            dialect="sqlite",
+            engine="sqlite",
             path=db_path,
-            operation="script",
             sql="CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT)",
         )
         context = Execution()
@@ -450,9 +447,8 @@ class TestSqlExecutorIntegration:
 
         # Insert data
         inputs = SqlInput(
-            dialect="sqlite",
+            engine="sqlite",
             path=db_path,
-            operation="execute",
             sql="INSERT INTO users (name) VALUES (?)",
             params=["Alice"],
         )
@@ -471,9 +467,8 @@ class TestSqlExecutorIntegration:
 
         # Query with init_sql that creates the table
         inputs = SqlInput(
-            dialect="sqlite",
+            engine="sqlite",
             path=db_path,
-            operation="query",
             init_sql="""
                 CREATE TABLE IF NOT EXISTS users (
                     id INTEGER PRIMARY KEY,
@@ -498,40 +493,43 @@ class TestSqlExecutorIntegration:
 
         # Create schema first
         setup_inputs = SqlInput(
-            dialect="sqlite",
+            engine="sqlite",
             path=db_path,
-            operation="script",
             sql="CREATE TABLE counter (id INTEGER PRIMARY KEY, value INTEGER)",
         )
         context = Execution()
         await executor.execute(setup_inputs, context)
 
-        # Transaction with multiple statements
+        # Transaction with multiple statements (execute_script returns empty result)
         inputs = SqlInput(
-            dialect="sqlite",
+            engine="sqlite",
             path=db_path,
-            operation="transaction",
             isolation_level="immediate",
             sql="""
                 INSERT INTO counter (id, value) VALUES (1, 100);
-                UPDATE counter SET value = value + 50 WHERE id = 1;
-                SELECT value FROM counter WHERE id = 1
+                UPDATE counter SET value = value + 50 WHERE id = 1
             """,
         )
         result = await executor.execute(inputs, context)
-
         assert result.success
-        # Last statement is SELECT, so we should have rows
-        assert len(result.rows) == 1
-        assert result.rows[0]["value"] == 150
+
+        # Verify transaction result with separate SELECT
+        verify_inputs = SqlInput(
+            engine="sqlite",
+            path=db_path,
+            sql="SELECT value FROM counter WHERE id = 1",
+        )
+        verify_result = await executor.execute(verify_inputs, context)
+        assert verify_result.success
+        assert len(verify_result.rows) == 1
+        assert verify_result.rows[0]["value"] == 150
 
     async def test_invalid_dialect_error(self) -> None:
         """Test that invalid dialect raises error."""
         with pytest.raises(ValidationError):
             SqlInput(
-                dialect="invalid",  # type: ignore[arg-type]
+                engine="invalid",  # type: ignore[arg-type]
                 path="/data/test.db",
-                operation="query",
                 sql="SELECT 1",
             )
 
@@ -539,8 +537,7 @@ class TestSqlExecutorIntegration:
         """Test that SQLite without path raises error."""
         with pytest.raises(ValidationError, match="SQLite requires 'path'"):
             SqlInput(
-                dialect="sqlite",
-                operation="query",
+                engine="sqlite",
                 sql="SELECT 1",
             )
 
@@ -548,8 +545,7 @@ class TestSqlExecutorIntegration:
         """Test that PostgreSQL without host raises error."""
         with pytest.raises(ValidationError, match="postgresql requires 'host'"):
             SqlInput(
-                dialect="postgresql",
+                engine="postgresql",
                 database="mydb",
-                operation="query",
                 sql="SELECT 1",
             )

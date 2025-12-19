@@ -19,6 +19,12 @@ inputs:
     description: JSON array of new facts to check for conflicts.
     required: true
 
+  models:
+    type: dict
+    description: Model definitions for CRUD operations.
+    required: false
+    default: {}
+
   parent_id:
     type: str
     description: Parent task ID for task tree registration.
@@ -30,80 +36,130 @@ blocks:
   # STEP 1: Register capability in task tree
   # ===========================================================================
   - id: register
-    type: Workflow
+    type: Sql
     description: Register this capability in the task tree.
+    condition: "{{ inputs.state | trim != '' }}"
     inputs:
-      workflow: agent-state-management
-      inputs:
-        state: "{{ inputs.state }}"
-        parent_id: "{{ inputs.parent_id }}"
-        kind: "capability"
-        name: "cortex-fact-conflicts"
-        metadata:
-          labels:
-            capability_type: "fact"
-            side_effects: "false"
-        inputs_data:
-          new_facts_count: "{{ (inputs.new_facts | fromjson | default([])) | length }}"
-        status: "running"
-        caller: "cortex-fact-conflicts"
+      engine: sqlite
+      path: "{{ inputs.state }}"
+      model: "{{ inputs.models.task }}"
+      op: insert
+      data:
+        parent_id: "{{ inputs.parent_id if inputs.parent_id else none }}"
+        kind: capability
+        name: cortex-fact-conflicts
+        metadata: "{{ {'labels': {'capability_type': 'fact', 'side_effects': 'false'}} }}"
+        inputs: "{{ {'new_facts_count': (inputs.new_facts | fromjson | default([])) | length} }}"
+        status: running
+        depth: 2
 
   # ===========================================================================
-  # STEP 2: Detect conflicts
+  # STEP 2: Detect conflicts (FTS5 search for similar claims)
   # ===========================================================================
   - id: detect
-    type: Workflow
-    depends_on: [register]
+    type: Shell
+    depends_on:
+      - block: register
+        required: false
     inputs:
-      workflow: agent-state-management
-      inputs:
-        state: "{{ inputs.state }}"
-        op: facts
-        facts_op: conflicts
-        facts_new_facts: "{{ inputs.new_facts }}"
-        caller: "cortex-fact-conflicts"
+      command: |
+        python3 << 'EOF'
+        import json
+        import os
+        import sqlite3
+
+        state = os.environ.get('STATE', '')
+        new_facts_json = os.environ.get('NEW_FACTS', '[]')
+
+        try:
+            new_facts = json.loads(new_facts_json)
+        except json.JSONDecodeError:
+            new_facts = []
+
+        conflicts = []
+
+        if state and new_facts:
+            conn = sqlite3.connect(state)
+            conn.row_factory = sqlite3.Row
+            cursor = conn.cursor()
+
+            for fact in new_facts:
+                claim = fact.get('claim', '')
+                if claim:
+                    # Search for similar claims using FTS5
+                    try:
+                        cursor.execute('''
+                            SELECT f.id, f.claim, f.confidence, f.evidence_type
+                            FROM facts f
+                            JOIN facts_fts fts ON f.id = fts.id
+                            WHERE facts_fts MATCH ? AND f.status = 'active'
+                            LIMIT 5
+                        ''', (claim[:50],))  # Use first 50 chars for FTS match
+                        rows = cursor.fetchall()
+                        for row in rows:
+                            conflicts.append({
+                                'new_claim': claim,
+                                'existing_id': row['id'],
+                                'existing_claim': row['claim'],
+                                'existing_confidence': row['confidence']
+                            })
+                    except sqlite3.OperationalError:
+                        # FTS table might not exist yet
+                        pass
+
+            conn.close()
+
+        print(json.dumps({
+            'success': True,
+            'conflicts': conflicts,
+            'has_conflicts': len(conflicts) > 0
+        }))
+        EOF
+      env:
+        STATE: "{{ inputs.state }}"
+        NEW_FACTS: "{{ inputs.new_facts }}"
 
   # ===========================================================================
   # STEP 3: Track completion
   # ===========================================================================
   - id: track_done
-    type: Workflow
+    type: Sql
     description: Mark capability complete in task tree.
+    condition: "{{ inputs.state | trim != '' }}"
     depends_on: [detect]
     inputs:
-      workflow: agent-state-management
-      inputs:
-        state: "{{ blocks.register.outputs.state }}"
-        task_id: "{{ blocks.register.outputs.task.task_id }}"
-        status: "done"
-        outputs_data:
-          has_conflicts: "{{ blocks.detect.outputs.facts.has_conflicts | default(false) }}"
-          conflict_count: "{{ blocks.detect.outputs.facts.conflicts | default([]) | length }}"
-          success: "{{ blocks.detect.outputs.facts.success | default(false) }}"
-        caller: "cortex-fact-conflicts"
+      engine: sqlite
+      path: "{{ inputs.state }}"
+      model: "{{ inputs.models.task }}"
+      op: update
+      where:
+        id: "{{ blocks.register.outputs.rows[0].id }}"
+      data:
+        status: done
+        outputs: "{{ {'has_conflicts': (blocks.detect.outputs.stdout | fromjson).has_conflicts | default(false), 'conflict_count': (blocks.detect.outputs.stdout | fromjson).conflicts | default([]) | length, 'success': (blocks.detect.outputs.stdout | fromjson).success | default(false)} }}"
 
 outputs:
   success:
-    value: "{{ blocks.detect.outputs.facts.success | default(false) }}"
+    value: "{{ (blocks.detect.outputs.stdout | fromjson).success | default(false) }}"
     type: bool
     description: Whether operation succeeded.
 
   conflicts:
-    value: "{{ blocks.detect.outputs.facts.conflicts | default([]) }}"
+    value: "{{ (blocks.detect.outputs.stdout | fromjson).conflicts | default([]) }}"
     type: list
     description: List of detected conflicts.
 
   has_conflicts:
-    value: "{{ blocks.detect.outputs.facts.has_conflicts | default(false) }}"
+    value: "{{ (blocks.detect.outputs.stdout | fromjson).has_conflicts | default(false) }}"
     type: bool
     description: Whether any conflicts were found.
 
   conflict_count:
-    value: "{{ blocks.detect.outputs.facts.conflicts | default([]) | length }}"
+    value: "{{ (blocks.detect.outputs.stdout | fromjson).conflicts | default([]) | length }}"
     type: num
     description: Number of conflicts detected.
 
   task_id:
-    value: "{{ blocks.register.outputs.task.task_id | default('') }}"
+    value: "{{ blocks.register.outputs.rows[0].id | default('') }}"
     type: str
     description: Task ID of this capability invocation.

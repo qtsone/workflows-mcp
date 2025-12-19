@@ -12,8 +12,8 @@ from enum import Enum
 from typing import Any, Protocol, runtime_checkable
 
 
-class DatabaseDialect(Enum):
-    """Supported database dialects."""
+class DatabaseEngine(Enum):
+    """Supported database engines."""
 
     SQLITE = "sqlite"
     POSTGRESQL = "postgresql"
@@ -40,7 +40,7 @@ class ConnectionConfig:
         options: Backend-specific options (e.g., sqlite_pragmas)
     """
 
-    dialect: DatabaseDialect
+    dialect: DatabaseEngine
     path: str | None = None
     host: str | None = None
     port: int | None = None
@@ -56,7 +56,7 @@ class ConnectionConfig:
 
     def __post_init__(self) -> None:
         """Validate configuration based on dialect."""
-        if self.dialect == DatabaseDialect.SQLITE:
+        if self.dialect == DatabaseEngine.SQLITE:
             if not self.path:
                 raise ValueError("SQLite requires 'path' parameter")
         else:
@@ -67,9 +67,9 @@ class ConnectionConfig:
 
             # Set default ports
             if self.port is None:
-                if self.dialect == DatabaseDialect.POSTGRESQL:
+                if self.dialect == DatabaseEngine.POSTGRESQL:
                     self.port = 5432
-                elif self.dialect == DatabaseDialect.MARIADB:
+                elif self.dialect == DatabaseEngine.MARIADB:
                     self.port = 3306
 
 
@@ -106,7 +106,7 @@ class DatabaseBackend(Protocol):
 
     Example implementation:
         class SqliteBackend:
-            dialect = DatabaseDialect.SQLITE
+            dialect = DatabaseEngine.SQLITE
 
             async def connect(self, config: ConnectionConfig) -> None:
                 self._conn = sqlite3.connect(config.path)
@@ -117,7 +117,7 @@ class DatabaseBackend(Protocol):
                 return QueryResult(rows=rows, row_count=len(rows))
     """
 
-    dialect: DatabaseDialect
+    dialect: DatabaseEngine
 
     async def connect(self, config: ConnectionConfig) -> None:
         """Establish database connection or create connection pool.
@@ -242,7 +242,7 @@ class DatabaseBackendBase(ABC):
     Subclasses must implement all abstract methods.
     """
 
-    dialect: DatabaseDialect
+    dialect: DatabaseEngine
     _in_transaction: bool = False
 
     @abstractmethod

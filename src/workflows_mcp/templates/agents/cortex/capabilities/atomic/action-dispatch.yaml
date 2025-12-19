@@ -3,10 +3,10 @@ description: |
   Atomic capability: Dispatch action with deduplication.
 
   This is a wrapper that provides transparent action deduplication:
-  1. Logs the action (creates hash from capability + inputs)
+  1. Logs the action (checks for existing action with same capability+inputs)
   2. If action already completed, returns cached result (skip execution)
   3. If new or pending, executes the capability workflow
-  4. Marks action complete with result
+  4. Marks action complete/failed with result
   5. Returns result (cached or fresh)
 
   Use this wrapper instead of calling capability workflows directly
@@ -59,6 +59,12 @@ inputs:
     required: false
     default: { "read": true, "write": false, "execute": false }
 
+  models:
+    type: dict
+    description: Model definitions for CRUD operations.
+    required: false
+    default: {}
+
   parent_id:
     type: str
     description: Parent task ID for task tree registration.
@@ -67,46 +73,46 @@ inputs:
 
 blocks:
   # ===========================================================================
-  # STEP 0: Register capability in task tree
+  # STEP 1: Register capability in task tree
   # ===========================================================================
   - id: register
-    type: Workflow
+    type: Sql
     description: Register this capability in the task tree.
+    condition: "{{ inputs.state | trim != '' }}"
     inputs:
-      workflow: agent-state-management
-      inputs:
-        state: "{{ inputs.state }}"
-        parent_id: "{{ inputs.parent_id }}"
-        kind: "capability"
-        name: "cortex-action-dispatch"
-        metadata:
-          labels:
-            capability_type: "action"
-            side_effects: "true"
-        inputs_data:
-          capability: "{{ inputs.capability }}"
-          cell_id: "{{ inputs.cell_id }}"
-          reason: "{{ inputs.reason }}"
-        status: "running"
-        caller: "cortex-action-dispatch"
+      engine: sqlite
+      path: "{{ inputs.state }}"
+      model: "{{ inputs.models.task }}"
+      op: insert
+      data:
+        parent_id: "{{ inputs.parent_id if inputs.parent_id else none }}"
+        kind: capability
+        name: cortex-action-dispatch
+        metadata: "{{ {'labels': {'capability_type': 'action', 'side_effects': 'true'}} }}"
+        inputs: "{{ {'capability': inputs.capability, 'cell_id': inputs.cell_id, 'reason': inputs.reason} }}"
+        status: running
+        depth: 2
 
   # ===========================================================================
-  # STEP 1: Log action for deduplication
+  # STEP 2: Log action for deduplication
   # ===========================================================================
   - id: log_action
     type: Workflow
     description: Log action and check for duplicates.
-    depends_on: [register]
+    depends_on:
+      - block: register
+        required: false
     inputs:
       workflow: cortex-action-log
       inputs:
         state: "{{ inputs.state }}"
+        models: "{{ inputs.models }}"
         cell_id: "{{ inputs.cell_id }}"
         capability: "{{ inputs.capability }}"
         inputs_json: "{{ inputs.inputs | tojson }}"
 
   # ===========================================================================
-  # STEP 2: Check if should execute
+  # STEP 3: Check if should execute (based on action status)
   # ===========================================================================
   - id: check_execute
     type: Shell
@@ -118,7 +124,6 @@ blocks:
         import json
         import os
 
-        already_exists = os.environ.get('ALREADY_EXISTS', 'false').lower() == 'true'
         status = os.environ.get('STATUS', 'pending')
         cached_result = os.environ.get('CACHED_RESULT', '')
         action_id = os.environ.get('ACTION_ID', '')
@@ -127,49 +132,46 @@ blocks:
         result = None
         reason = 'new_action'
 
-        if already_exists:
-            if status == 'completed':
-                # Action already completed - use cached result
-                should_execute = False
-                reason = 'cached_completed'
-                try:
-                    result = json.loads(cached_result) if cached_result else {}
-                except json.JSONDecodeError:
-                    result = {'raw': cached_result}
-            elif status == 'failed':
-                # Previous attempt failed - retry
-                should_execute = True
-                reason = 'retry_failed'
-            elif status == 'pending':
-                # Action logged but not completed - execute
-                should_execute = True
-                reason = 'pending'
-            elif status == 'rolled_back':
-                # Action was rolled back - re-execute
-                should_execute = True
-                reason = 'retry_rolled_back'
-            else:
-                # Unknown status - execute to be safe
-                should_execute = True
-                reason = f'unknown_status:{status}'
+        if status == 'completed':
+            # Action already completed - use cached result
+            should_execute = False
+            reason = 'cached_completed'
+            try:
+                result = json.loads(cached_result) if cached_result else {}
+            except json.JSONDecodeError:
+                result = {'raw': cached_result}
+        elif status == 'failed':
+            # Previous attempt failed - retry
+            should_execute = True
+            reason = 'retry_failed'
+        elif status == 'pending':
+            # Action logged but not completed - execute
+            should_execute = True
+            reason = 'pending'
+        elif status == 'rolled_back':
+            # Action was rolled back - re-execute
+            should_execute = True
+            reason = 'retry_rolled_back'
+        else:
+            # Unknown status - execute to be safe
+            should_execute = True
+            reason = f'unknown_status:{status}'
 
         print(json.dumps({
             'should_execute': should_execute,
             'reason': reason,
             'action_id': action_id,
             'cached_result': result,
-            'already_exists': already_exists,
             'status': status
         }))
         EOF
       env:
-        ALREADY_EXISTS: "{{ blocks.log_action.outputs.already_exists | default(false) }}"
         STATUS: "{{ blocks.log_action.outputs.status | default('pending') }}"
         CACHED_RESULT: "{{ blocks.log_action.outputs.cached_result | default({}) | tojson }}"
         ACTION_ID: "{{ blocks.log_action.outputs.action_id | default('') }}"
 
   # ===========================================================================
-  # STEP 3: Execute capability (if not cached)
+  # STEP 4: Execute capability (if not cached)
   # ===========================================================================
   - id: execute_capability
     type: Workflow
@@ -179,60 +181,68 @@ blocks:
     continue_on_error: true
     inputs:
       workflow: "{{ inputs.capability }}"
-      inputs: "{{ {'state': inputs.state, 'base_path': inputs.base_path, 'permissions': inputs.permissions} | combine(inputs.inputs) }}"
+      inputs: "{{ {'state': inputs.state, 'models': inputs.models, 'base_path': inputs.base_path, 'permissions': inputs.permissions} | combine(inputs.inputs) }}"
 
   # ===========================================================================
-  # STEP 4: Mark action complete (on success)
+  # STEP 5: Mark action complete (on success) - inlined from action-complete
   # ===========================================================================
   - id: complete_action
-    type: Workflow
+    type: Sql
     description: Mark action as completed with result.
     depends_on: [execute_capability]
     condition: "{{ blocks.execute_capability.succeeded }}"
     inputs:
-      workflow: cortex-action-complete
-      inputs:
-        state: "{{ inputs.state }}"
-        action_id: "{{ (blocks.check_execute.outputs.stdout | fromjson).action_id }}"
-        result_json: "{{ blocks.execute_capability.outputs | tojson }}"
+      engine: sqlite
+      path: "{{ inputs.state }}"
+      model: "{{ inputs.models.action }}"
+      op: update
+      where:
+        id: "{{ (blocks.check_execute.outputs.stdout | fromjson).action_id }}"
+      data:
+        status: completed
+        result: "{{ blocks.execute_capability.outputs }}"
 
   # ===========================================================================
-  # STEP 5: Mark action failed (on failure)
+  # STEP 6: Mark action failed (on failure)
   # ===========================================================================
   - id: fail_action
-    type: Workflow
+    type: Sql
     description: Mark action as failed.
     depends_on: [execute_capability]
     condition: "{{ blocks.execute_capability.failed and (blocks.check_execute.outputs.stdout | fromjson).should_execute }}"
     inputs:
-      workflow: agent-state-management
-      inputs:
-        state: "{{ inputs.state }}"
-        op: actions
-        actions_op: fail
-        actions_action_id: "{{ (blocks.check_execute.outputs.stdout | fromjson).action_id }}"
-        actions_result_json: "{{ {'error': blocks.execute_capability.metadata.error_message | default('Unknown error')} | tojson }}"
-        caller: "cortex-action-dispatch"
+      engine: sqlite
+      path: "{{ inputs.state }}"
+      model: "{{ inputs.models.action }}"
+      op: update
+      where:
+        id: "{{ (blocks.check_execute.outputs.stdout | fromjson).action_id }}"
+      data:
+        status: failed
+        result: "{{ {'error': blocks.execute_capability.metadata.error_message | default('Unknown error')} }}"
 
   # ===========================================================================
-  # STEP 6: Track completion
+  # STEP 7: Track completion
   # ===========================================================================
   - id: track_done
-    type: Workflow
+    type: Sql
     description: Mark capability complete in task tree.
-    depends_on: [complete_action, fail_action]
+    condition: "{{ inputs.state | trim != '' }}"
+    depends_on:
+      - block: complete_action
+        required: false
+      - block: fail_action
+        required: false
     inputs:
-      workflow: agent-state-management
-      inputs:
-        state: "{{ blocks.register.outputs.state }}"
-        task_id: "{{ blocks.register.outputs.task.task_id }}"
-        status: "done"
-        outputs_data:
-          action_id: "{{ (blocks.check_execute.outputs.stdout | fromjson).action_id }}"
-          executed: "{{ (blocks.check_execute.outputs.stdout | fromjson).should_execute }}"
-          cached: "{{ not (blocks.check_execute.outputs.stdout | fromjson).should_execute }}"
-          success: "{{ blocks.execute_capability.succeeded or (not (blocks.check_execute.outputs.stdout | fromjson).should_execute) }}"
-        caller: "cortex-action-dispatch"
+      engine: sqlite
+      path: "{{ inputs.state }}"
+      model: "{{ inputs.models.task }}"
+      op: update
+      where:
+        id: "{{ blocks.register.outputs.rows[0].id }}"
+      data:
+        status: done
+        outputs: "{{ {'action_id': (blocks.check_execute.outputs.stdout | fromjson).action_id, 'executed': (blocks.check_execute.outputs.stdout | fromjson).should_execute, 'cached': (not (blocks.check_execute.outputs.stdout | fromjson).should_execute), 'success': (blocks.execute_capability.succeeded or (not (blocks.check_execute.outputs.stdout | fromjson).should_execute))} }}"
 
 outputs:
   success:
@@ -275,6 +285,6 @@ outputs:
     description: Error message if action failed.
 
   task_id:
-    value: "{{ blocks.register.outputs.task.task_id | default('') }}"
+    value: "{{ blocks.register.outputs.rows[0].id | default('') }}"
     type: str
     description: Task ID of this capability invocation.

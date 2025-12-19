@@ -80,6 +80,11 @@ inputs:
     description: Path to SQLite state database.
     default: ""
 
+  models:
+    type: dict
+    description: Model definitions for CRUD operations.
+    default: {}
+
   parent_id:
     type: str
     description: Parent task ID for task tree.
@@ -101,24 +106,35 @@ inputs:
     default: { "read": true, "write": false, "execute": false }
 
 blocks:
+  # ===========================================================================
+  # Generate Phase Task ID
+  # ===========================================================================
+  - id: gen_phase_id
+    type: Shell
+    description: Generate UUID for this phase task.
+    inputs:
+      command: python3 -c "import uuid; print(str(uuid.uuid4())[:8])"
+
+  # ===========================================================================
+  # Register Phase Task (direct Sql)
+  # ===========================================================================
   - id: register
     description: Register this phase in the task tree.
-    type: Workflow
+    type: Sql
+    depends_on: [gen_phase_id]
     inputs:
-      workflow: agent-state-management
-      inputs:
-        state: "{{ inputs.state }}"
-        parent_id: "{{ inputs.parent_id }}"
-        kind: "phase"
-        name: "gather"
-        metadata:
-          labels:
-            phase_order: 2
-            strategy: "{{ get(inputs.pipeline_config.gather, 'depth', 'focused') }}"
-        inputs_data: "{{ inputs }}"
-        depth: "{{ inputs.depth }}"
-        status: "running"
-        caller: "cortex-phase-gather"
+      engine: sqlite
+      path: "{{ inputs.state }}"
+      sql: |
+        INSERT INTO tasks (id, parent_id, kind, name, metadata, inputs, status, depth)
+        VALUES (?, ?, 'phase', 'gather', ?, ?, 'running', ?)
+        RETURNING id, parent_id, kind, name, status, depth, created_at
+      params:
+        - "task-{{ blocks.gen_phase_id.outputs.stdout | trim }}"
+        - "{{ inputs.parent_id if inputs.parent_id else none }}"
+        - "{{ {'labels': {'phase_order': 2, 'strategy': inputs.pipeline_config.gather.depth | default('focused')}} | tojson }}"
+        - "{{ inputs | tojson }}"
+        - "{{ inputs.depth }}"
 
   - id: build_schema
     type: Workflow
@@ -134,15 +150,19 @@ blocks:
         include_config_override: true
 
   - id: recall
-    type: Workflow
+    type: Sql
     description: THINK - Query existing evidence and facts from memory.
     depends_on: [register]
     inputs:
-      workflow: cortex-evidence-query
-      inputs:
-        state: "{{ blocks.register.outputs.state }}"
-        evidence_type: ""
-        limit: 200
+      engine: sqlite
+      path: "{{ inputs.state }}"
+      sql: |
+        SELECT namespace as evidence_type, key, value, metadata,
+               json_extract(metadata, '$.byte_size') as byte_size
+        FROM memory
+        WHERE namespace IN ('content', 'outline', 'search')
+        ORDER BY namespace, key
+        LIMIT 200
 
   - id: plan
     type: LLMCall
@@ -171,9 +191,9 @@ blocks:
         {{ inputs.context | tojson }}
         {% endif %}
 
-        {% if get(blocks.recall.outputs, 'items', []) | length > 0 %}
-        ## Evidence Already Gathered ({{ get(blocks.recall.outputs, 'items', []) | length }} items)
-        {% for item in get(blocks.recall.outputs, 'items', []) %}
+        {% if get(blocks.recall.outputs, 'rows', []) | length > 0 %}
+        ## Evidence Already Gathered ({{ get(blocks.recall.outputs, 'rows', []) | length }} items)
+        {% for item in get(blocks.recall.outputs, 'rows', []) %}
         - [{{ item.evidence_type }}] {{ item.key }}
         {% endfor %}
         {% endif %}
@@ -320,8 +340,9 @@ blocks:
     inputs:
       workflow: "{{ each.value.capability }}"
       inputs:
-        state: "{{ blocks.register.outputs.state }}"
-        task_id: "{{ blocks.register.outputs.task.task_id }}"
+        state: "{{ inputs.state }}"
+        models: "{{ inputs.models }}"
+        task_id: "{{ blocks.register.outputs.rows[0].id }}"
         base_path: "{{ get(inputs.context, 'repo_path', '.') }}"
         patterns: "{{ get(each.value.inputs, 'patterns', []) }}"
         pattern: "{{ get(each.value.inputs, 'pattern', '') }}"
@@ -350,8 +371,8 @@ blocks:
         max_depth: "{{ inputs.max_depth }}"
         iterations: "{{ inputs.iterations }}"
         max_iterations: "{{ inputs.max_iterations }}"
-        state: "{{ blocks.register.outputs.state }}"
-        parent_id: "{{ blocks.register.outputs.task.task_id }}"
+        state: "{{ inputs.state }}"
+        parent_id: "{{ blocks.register.outputs.rows[0].id }}"
         profile: "{{ inputs.profile }}"
         confidence_threshold: "{{ inputs.confidence_threshold }}"
         capabilities: "{{ inputs.capabilities }}"
@@ -416,15 +437,18 @@ blocks:
         iterations: "{{ inputs.iterations }}"
         max_iterations: "{{ inputs.max_iterations }}"
         confidence_threshold: "{{ inputs.confidence_threshold }}"
-        state: "{{ blocks.register.outputs.state }}"
-        parent_id: "{{ blocks.register.outputs.task.task_id }}"
+        state: "{{ inputs.state }}"
+        parent_id: "{{ blocks.register.outputs.rows[0].id }}"
         profile: "{{ inputs.profile }}"
         capabilities: "{{ inputs.capabilities }}"
         permissions: "{{ inputs.permissions }}"
         synthesis: "{{ blocks.combine_results.outputs.stdout | fromjson }}"
 
+  # ===========================================================================
+  # Track Completion (direct Sql UPDATE)
+  # ===========================================================================
   - id: track_done
-    type: Workflow
+    type: Sql
     description: Mark phase complete and compile result.
     depends_on:
       - block: dispatch
@@ -437,20 +461,17 @@ blocks:
         required: false
     condition: "{{ not blocks.recurse.succeeded }}"
     inputs:
-      workflow: agent-state-management
-      inputs:
-        state: "{{ blocks.register.outputs.state }}"
-        task_id: "{{ blocks.register.outputs.task.task_id }}"
-        status: "done"
-        caller: "cortex-phase-gather"
-        outputs_data:
-          strategy: "{{ blocks.plan.outputs.response.result.strategy | default('') }}"
-          operations_executed: "{{ get(blocks.dispatch.metadata, 'count', 0) }}"
-          operations_failed: "{{ get(blocks.dispatch.metadata, 'count_failed', 0) }}"
-          questions_spawned: "{{ get(blocks.questions.metadata, 'count', 0) }}"
-          questions_failed: "{{ get(blocks.questions.metadata, 'count_failed', 0) }}"
-          confidence: "{{ blocks.plan.outputs.response.confidence | default(0) }}"
-          depth: "{{ inputs.depth }}"
+      engine: sqlite
+      path: "{{ inputs.state }}"
+      sql: |
+        UPDATE tasks
+        SET status = 'done',
+            outputs = ?,
+            updated_at = datetime('now')
+        WHERE id = ?
+      params:
+        - "{{ {'strategy': blocks.plan.outputs.response.result.strategy | default(''), 'operations_executed': blocks.dispatch.metadata.count | default(0), 'operations_failed': blocks.dispatch.metadata.count_failed | default(0), 'questions_spawned': blocks.questions.metadata.count | default(0), 'questions_failed': blocks.questions.metadata.count_failed | default(0), 'confidence': blocks.plan.outputs.response.confidence | default(0), 'depth': inputs.depth} | tojson }}"
+        - "{{ blocks.register.outputs.rows[0].id }}"
 
 outputs:
   result:
@@ -459,10 +480,10 @@ outputs:
     value: |
       {{ blocks.recurse.outputs.result if blocks.recurse.succeeded else {
         'strategy': blocks.plan.outputs.response.result.strategy | default(''),
-        'operations_executed': get(blocks.dispatch.metadata, 'count', 0),
-        'operations_failed': get(blocks.dispatch.metadata, 'count_failed', 0),
-        'questions_spawned': get(blocks.questions.metadata, 'count', 0),
-        'questions_failed': get(blocks.questions.metadata, 'count_failed', 0),
+        'operations_executed': blocks.dispatch.metadata.count | default(0),
+        'operations_failed': blocks.dispatch.metadata.count_failed | default(0),
+        'questions_spawned': blocks.questions.metadata.count | default(0),
+        'questions_failed': blocks.questions.metadata.count_failed | default(0),
         'confidence': blocks.plan.outputs.response.confidence | default(0),
         'depth': inputs.depth
       } }}
@@ -477,4 +498,4 @@ outputs:
   state:
     type: str
     description: "Path to state database."
-    value: "{{ blocks.register.outputs.state }}"
+    value: "{{ inputs.state }}"

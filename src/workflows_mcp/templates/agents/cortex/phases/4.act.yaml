@@ -95,6 +95,11 @@ inputs:
     description: Path to SQLite state database.
     default: ""
 
+  models:
+    type: dict
+    description: Model definitions for CRUD operations.
+    default: {}
+
   parent_id:
     type: str
     description: Parent task ID for task tree.
@@ -116,40 +121,50 @@ inputs:
     default: { "read": true, "write": false, "execute": false }
 
 blocks:
-  - id: register
-    type: Workflow
-    description: Register this phase in the task tree.
+  # ===========================================================================
+  # Generate Phase Task ID
+  # ===========================================================================
+  - id: gen_phase_id
+    type: Shell
+    description: Generate UUID for this phase task.
     inputs:
-      workflow: agent-state-management
-      inputs:
-        state: "{{ inputs.state }}"
-        parent_id: "{{ inputs.parent_id }}"
-        kind: "phase"
-        name: "act"
-        metadata:
-          labels:
-            phase_order: 4
-            trigger: "{{ inputs.pipeline_config.act.trigger | default('never') }}"
-            mode: "{{ inputs.pipeline_config.act.mode | default('null') }}"
-        inputs_data:
-          prompt: "{{ inputs.prompt }}"
-          iterations: "{{ inputs.iterations }}"
-        depth: "{{ inputs.depth }}"
-        status: "running"
-        caller: "cortex-phase-act"
+      command: python3 -c "import uuid; print(str(uuid.uuid4())[:8])"
+
+  # ===========================================================================
+  # Register Phase Task (direct Sql)
+  # ===========================================================================
+  - id: register
+    type: Sql
+    description: Register this phase in the task tree.
+    depends_on: [gen_phase_id]
+    inputs:
+      engine: sqlite
+      path: "{{ inputs.state }}"
+      sql: |
+        INSERT INTO tasks (id, parent_id, kind, name, metadata, inputs, status, depth)
+        VALUES (?, ?, 'phase', 'act', ?, ?, 'running', ?)
+        RETURNING id, parent_id, kind, name, status, depth, created_at
+      params:
+        - "task-{{ blocks.gen_phase_id.outputs.stdout | trim }}"
+        - "{{ inputs.parent_id if inputs.parent_id else none }}"
+        - "{{ {'labels': {'phase_order': 4, 'trigger': inputs.pipeline_config.act.trigger | default('never'), 'mode': inputs.pipeline_config.act.mode | default('null')}} | tojson }}"
+        - "{{ {'prompt': inputs.prompt, 'iterations': inputs.iterations} | tojson }}"
+        - "{{ inputs.depth }}"
 
   - id: recall
-    type: Workflow
+    type: Sql
     description: THINK - Retrieve memory and context for action planning.
     depends_on: [register]
     condition: "{{ inputs.memory | length > 0 }}"
     inputs:
-      workflow: agent-state-management
-      inputs:
-        state: "{{ blocks.register.outputs.state }}"
-        op: memory
-        memory_op: query
-        memory_type: "content"
+      engine: sqlite
+      path: "{{ inputs.state }}"
+      sql: |
+        SELECT namespace, key, value, metadata
+        FROM memory
+        WHERE namespace = 'content'
+        ORDER BY key
+        LIMIT 100
 
   - id: build_schema
     type: Workflow
@@ -365,8 +380,9 @@ blocks:
     inputs:
       workflow: cortex-action-dispatch
       inputs:
-        state: "{{ blocks.register.outputs.state }}"
-        cell_id: "{{ blocks.register.outputs.task.task_id }}"
+        state: "{{ inputs.state }}"
+        models: "{{ inputs.models }}"
+        cell_id: "{{ blocks.register.outputs.rows[0].id }}"
         capability: "{{ each.value.capability }}"
         inputs: "{{ each.value.inputs }}"
         reason: "{{ each.value.reason | default('') }}"
@@ -395,8 +411,8 @@ blocks:
         max_depth: "{{ inputs.max_depth }}"
         iterations: 0
         max_iterations: "{{ inputs.max_iterations }}"
-        state: "{{ blocks.register.outputs.state }}"
-        parent_id: "{{ blocks.register.outputs.task.task_id }}"
+        state: "{{ inputs.state }}"
+        parent_id: "{{ blocks.register.outputs.rows[0].id }}"
         profile: "{{ inputs.profile }}"
         confidence_threshold: "{{ inputs.confidence_threshold }}"
         capabilities: "{{ inputs.capabilities }}"
@@ -423,8 +439,8 @@ blocks:
         max_depth: "{{ inputs.max_depth }}"
         iterations: 0
         max_iterations: "{{ inputs.max_iterations }}"
-        state: "{{ blocks.register.outputs.state }}"
-        parent_id: "{{ blocks.register.outputs.task.task_id }}"
+        state: "{{ inputs.state }}"
+        parent_id: "{{ blocks.register.outputs.rows[0].id }}"
         profile: "{{ inputs.profile }}"
         confidence_threshold: "{{ inputs.confidence_threshold }}"
         capabilities: "{{ inputs.capabilities }}"
@@ -443,7 +459,7 @@ blocks:
         context: "{{ inputs.context }}"
         pipeline_config: "{{ inputs.pipeline_config }}"
         memory: "{{ inputs.memory }}"
-        state: "{{ blocks.register.outputs.state }}"
+        state: "{{ inputs.state }}"
         parent_id: "{{ inputs.parent_id }}"
         profile: "{{ inputs.profile }}"
         confidence_threshold: "{{ inputs.confidence_threshold }}"
@@ -460,8 +476,11 @@ blocks:
             'synthesis': blocks.investigate.outputs.synthesis
           }] }}
 
+  # ===========================================================================
+  # Track completion (direct Sql UPDATE)
+  # ===========================================================================
   - id: track_done
-    type: Workflow
+    type: Sql
     description: Mark phase complete and compile result.
     depends_on:
       - block: plan
@@ -474,21 +493,17 @@ blocks:
         required: false
     condition: "{{ not blocks.recurse.succeeded }}"
     inputs:
-      workflow: agent-state-management
-      inputs:
-        state: "{{ blocks.register.outputs.state }}"
-        task_id: "{{ blocks.register.outputs.task.task_id }}"
-        status: "done"
-        caller: "cortex-phase-act"
-        outputs_data:
-          iterations: "{{ inputs.iterations }}"
-          recursed: "{{ blocks.recurse.succeeded | default(false) }}"
-          action_taken: "{{ blocks.plan.succeeded }}"
-          operations_dispatched: "{{ get(blocks.dispatch.metadata, 'count', 0) }}"
-          operations_failed: "{{ get(blocks.dispatch.metadata, 'count_failed', 0) }}"
-          questions_spawned: "{{ get(blocks.questions.metadata, 'count', 0) }}"
-          questions_failed: "{{ get(blocks.questions.metadata, 'count_failed', 0) }}"
-          confidence: "{{ blocks.plan.outputs.response.confidence | default(0) }}"
+      engine: sqlite
+      path: "{{ inputs.state }}"
+      sql: |
+        UPDATE tasks
+        SET status = 'done',
+            outputs = ?,
+            updated_at = datetime('now')
+        WHERE id = ?
+      params:
+        - "{{ {'iterations': inputs.iterations, 'recursed': blocks.recurse.succeeded | default(false), 'action_taken': blocks.plan.succeeded, 'operations_dispatched': get(blocks.dispatch.metadata, 'count', 0), 'operations_failed': get(blocks.dispatch.metadata, 'count_failed', 0), 'questions_spawned': get(blocks.questions.metadata, 'count', 0), 'questions_failed': get(blocks.questions.metadata, 'count_failed', 0), 'confidence': blocks.plan.outputs.response.confidence | default(0)} | tojson }}"
+        - "{{ blocks.register.outputs.rows[0].id }}"
 
 outputs:
   result:
@@ -526,4 +541,4 @@ outputs:
   state:
     type: str
     description: "Path to state database."
-    value: "{{ blocks.register.outputs.state }}"
+    value: "{{ inputs.state }}"

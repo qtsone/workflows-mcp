@@ -1,0 +1,16 @@
+{
+  "outputs": {
+    "all_tests_passed": true,
+    "delete_verified": true,
+    "insert_count": 3,
+    "raw_sql_total": 3,
+    "schema_created": true,
+    "select_all_count": 3,
+    "select_filtered_count": 2,
+    "select_operator_count": 2,
+    "select_ordered_first": "Second Task",
+    "update_verified": true,
+    "upsert_verified": true
+  },
+  "status": "success"
+}

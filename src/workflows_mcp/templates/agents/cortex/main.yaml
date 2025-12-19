@@ -88,6 +88,104 @@ inputs:
     description: LLM profile to use.
     default: "default"
 
+  # ===========================================================================
+  # STATE MODELS - ActiveRecord-style table definitions
+  # ===========================================================================
+  models:
+    type: dict
+    description: |
+      Table model definitions for state management.
+      Defined once here, passed to all child phases.
+    default:
+      task:
+        table: tasks
+        columns:
+          id: { type: text, primary: true, auto: uuid }
+          parent_id: { type: text }
+          kind: { type: text, required: true }
+          name: { type: text, required: true }
+          metadata: { type: json, default: "{}" }
+          inputs: { type: json, default: "{}" }
+          outputs: { type: json, default: "{}" }
+          status: { type: text, default: "pending" }
+          depth: { type: integer, default: 0 }
+          iteration: { type: integer, default: 0 }
+          created_at: { type: timestamp, auto: created }
+          updated_at: { type: timestamp, auto: updated }
+        indexes:
+          - columns: [parent_id]
+          - columns: [status]
+          - columns: [kind]
+
+      memory:
+        table: memory
+        columns:
+          namespace: { type: text, required: true }
+          key: { type: text, required: true }
+          value: { type: json }
+          metadata: { type: json, default: "{}" }
+          task_id: { type: text }
+          created_at: { type: timestamp, auto: created }
+          updated_at: { type: timestamp, auto: updated }
+        indexes:
+          - columns: [namespace, key]
+            unique: true
+          - columns: [task_id]
+
+      fact:
+        table: facts
+        columns:
+          id: { type: text, primary: true, auto: uuid }
+          claim: { type: text, required: true }
+          evidence_type: { type: text, default: "inferred" }
+          confidence: { type: real, required: true }
+          grounding: { type: json, default: "[]" }
+          scope: { type: text }
+          task_id: { type: text, required: true }
+          status: { type: text, default: "active" }
+          created_at: { type: timestamp, auto: created }
+          updated_at: { type: timestamp, auto: updated }
+        indexes:
+          - columns: [status]
+          - columns: [task_id]
+
+      action:
+        table: actions
+        columns:
+          id: { type: text, primary: true, auto: uuid }
+          task_id: { type: text, required: true }
+          capability: { type: text, required: true }
+          inputs: { type: text, required: true }
+          status: { type: text, default: "pending" }
+          result: { type: json }
+          created_at: { type: timestamp, auto: created }
+          completed_at: { type: timestamp }
+        indexes:
+          - columns: [capability, inputs]
+            unique: true
+          - columns: [task_id]
+
+      audit:
+        table: audit
+        columns:
+          id: { type: integer, primary: true }
+          timestamp: { type: timestamp, auto: created }
+          task_id: { type: text }
+          table_name: { type: text, required: true }
+          operation: { type: text, required: true }
+          old_data: { type: json }
+          new_data: { type: json }
+        indexes:
+          - columns: [task_id]
+          - columns: [timestamp]
+
+      # Simple key-value metadata store for workflow-level data
+      metadata:
+        table: metadata
+        columns:
+          key: { type: text, primary: true }
+          value: { type: text }
+
   capabilities:
     type: list
     description: |
@@ -270,13 +368,22 @@ blocks:
         else:
             reason = None
 
+        # Compute state path
+        state_input = os.environ.get('STATE', '')
+        if state_input:
+            state_path = state_input
+        else:
+            import os.path
+            state_path = os.path.expanduser(f'~/.workflows/tasks/{hash}.db')
+
         result = {
             'hash': hash,
             'depth': depth,
             'iterations': iterations,
             'terminate': terminate,
             'reason': reason,
-            'prompt_history': new_history
+            'prompt_history': new_history,
+            'state_path': state_path
         }
 
         print(json.dumps(result))
@@ -288,6 +395,79 @@ blocks:
         ITERATIONS: "{{ inputs.iterations }}"
         MAX_ITERATIONS: "{{ inputs.max_iterations }}"
         PROMPT_HISTORY: "{{ inputs.prompt_history | tojson }}"
+        STATE: "{{ inputs.state }}"
+
+  # ===========================================================================
+  # Initialize Database Schema - Model-based table creation (only at root level)
+  # ===========================================================================
+  - id: init_tables
+    type: Sql
+    description: Create all tables from model definitions using op:schema.
+    condition: "{{ inputs.state == '' }}"
+    depends_on: [init]
+    for_each: "{{ inputs.models | dictsort }}"
+    for_each_mode: sequential
+    inputs:
+      engine: sqlite
+      path: "{{ (blocks.init.outputs.stdout | fromjson).state_path }}"
+      model: "{{ each.value }}"
+      op: schema
+
+  # ===========================================================================
+  # Initialize FTS5 and Triggers (only at root level)
+  # ===========================================================================
+  - id: init_db
+    type: Sql
+    description: Create FTS5 virtual table and triggers (not supported by model system).
+    condition: "{{ inputs.state == '' }}"
+    depends_on: [init_tables]
+    inputs:
+      engine: sqlite
+      path: "{{ (blocks.init.outputs.stdout | fromjson).state_path }}"
+      init_sql: |
+        -- =========================================================================
+        -- CORTEX FTS5 + TRIGGERS (model system doesn't support these)
+        -- =========================================================================
+
+        -- FACTS FTS5: Full-text search on claim
+        CREATE VIRTUAL TABLE IF NOT EXISTS "facts_fts" USING fts5(
+            id UNINDEXED,
+            claim,
+            content="facts",
+            content_rowid="rowid"
+        );
+
+        -- FTS5 Sync Triggers
+        CREATE TRIGGER IF NOT EXISTS facts_ai AFTER INSERT ON facts BEGIN
+            INSERT INTO facts_fts(rowid, id, claim)
+            VALUES (NEW.rowid, NEW.id, NEW.claim);
+        END;
+        CREATE TRIGGER IF NOT EXISTS facts_ad AFTER DELETE ON facts BEGIN
+            INSERT INTO facts_fts(facts_fts, rowid, id, claim)
+            VALUES('delete', OLD.rowid, OLD.id, OLD.claim);
+        END;
+        CREATE TRIGGER IF NOT EXISTS facts_au AFTER UPDATE ON facts BEGIN
+            INSERT INTO facts_fts(facts_fts, rowid, id, claim)
+            VALUES('delete', OLD.rowid, OLD.id, OLD.claim);
+            INSERT INTO facts_fts(rowid, id, claim)
+            VALUES (NEW.rowid, NEW.id, NEW.claim);
+        END;
+
+        -- Audit Triggers for tasks table
+        CREATE TRIGGER IF NOT EXISTS tasks_audit_insert AFTER INSERT ON tasks BEGIN
+            INSERT INTO audit (task_id, table_name, operation, new_data)
+            VALUES (NEW.id, 'tasks', 'INSERT', json_object(
+                'id', NEW.id, 'kind', NEW.kind, 'name', NEW.name, 'status', NEW.status
+            ));
+        END;
+        CREATE TRIGGER IF NOT EXISTS tasks_audit_update AFTER UPDATE ON tasks BEGIN
+            INSERT INTO audit (task_id, table_name, operation, old_data, new_data)
+            VALUES (NEW.id, 'tasks', 'UPDATE',
+                json_object('status', OLD.status, 'outputs', OLD.outputs),
+                json_object('status', NEW.status, 'outputs', NEW.outputs)
+            );
+        END;
+      sql: "SELECT 1 as initialized"
 
   # ===========================================================================
   # Filter capabilities based on permissions
@@ -317,30 +497,48 @@ blocks:
         CAPABILITIES: "{{ inputs.capabilities | tojson }}"
         PERMISSIONS: "{{ inputs.permissions | tojson }}"
 
+  # ===========================================================================
+  # Register Task in Database (model-based insert with auto-generated UUID)
+  # ===========================================================================
   - id: register
-    type: Workflow
-    description: Register this cell in the task tree (v1 schema).
-    depends_on: [init, filter_capabilities]
+    type: Sql
+    description: Register this cell in the task tree. ID auto-generated via model's auto:uuid.
+    depends_on:
+      - block: init_db
+        required: false
+      - block: filter_capabilities
     inputs:
-      workflow: agent-state-management
-      inputs:
-        state: "{{ inputs.state }}"
-        parent_id: "{{ inputs.parent_id }}"
+      engine: sqlite
+      path: "{{ (blocks.init.outputs.stdout | fromjson).state_path }}"
+      model: "{{ inputs.models.task }}"
+      op: insert
+      data:
+        # id: omitted - auto-generated by model's "auto: uuid"
+        parent_id: "{{ inputs.parent_id if inputs.parent_id else none }}"
         kind: "cell"
         name: "cortex-cell"
-        metadata:
-          labels: {}
-          annotations:
-            prompt_hash: "{{ (blocks.init.outputs.stdout | fromjson).hash }}"
-            max_depth: "{{ inputs.max_depth }}"
-            max_iterations: "{{ inputs.max_iterations }}"
-        inputs_data:
-          prompt: "{{ inputs.prompt }}"
-          context: "{{ inputs.context }}"
-          iterations: "{{ inputs.iterations }}"
-        depth: "{{ inputs.depth }}"
+        metadata: "{{ {'labels': {}, 'annotations': {'prompt_hash': (blocks.init.outputs.stdout | fromjson).hash, 'max_depth': inputs.max_depth, 'max_iterations': inputs.max_iterations}} | tojson }}"
+        inputs: "{{ {'prompt': inputs.prompt, 'context': inputs.context, 'iterations': inputs.iterations} | tojson }}"
         status: "running"
-        caller: "cortex-cell"
+        depth: "{{ inputs.depth }}"
+        iteration: "{{ inputs.iterations }}"
+
+  # ===========================================================================
+  # Store Root Task ID in Metadata (only for root cell)
+  # ===========================================================================
+  - id: register_root_meta
+    type: Sql
+    description: Store root_task_id in metadata table for child cell lookups.
+    condition: "{{ inputs.parent_id == '' }}"
+    depends_on: [register]
+    inputs:
+      engine: sqlite
+      path: "{{ (blocks.init.outputs.stdout | fromjson).state_path }}"
+      sql: |
+        INSERT OR REPLACE INTO metadata (key, value)
+        VALUES ('root_task_id', ?), ('created_at', datetime('now'))
+      params:
+        - "{{ blocks.register.outputs.rows[0].id }}"
 
   - id: early_termination
     type: Shell
@@ -390,8 +588,9 @@ blocks:
         iterations: "{{ inputs.iterations }}"
         max_iterations: "{{ inputs.max_iterations }}"
         confidence_threshold: "{{ inputs.confidence_threshold }}"
-        state: "{{ blocks.register.outputs.state }}"
-        parent_id: "{{ blocks.register.outputs.task.task_id }}"
+        state: "{{ (blocks.init.outputs.stdout | fromjson).state_path }}"
+        models: "{{ inputs.models }}"
+        parent_id: "{{ blocks.register.outputs.rows[0].id }}"
         profile: "{{ inputs.profile }}"
         capabilities: "{{ blocks.filter_capabilities.outputs.stdout | fromjson }}"
         permissions: "{{ inputs.permissions }}"
@@ -418,7 +617,8 @@ blocks:
         max_iterations: "{{ inputs.max_iterations }}"
         confidence_threshold: "{{ inputs.confidence_threshold }}"
         state: "{{ blocks.categorize.outputs.state }}"
-        parent_id: "{{ blocks.register.outputs.task.task_id }}"
+        models: "{{ inputs.models }}"
+        parent_id: "{{ blocks.register.outputs.rows[0].id }}"
         profile: "{{ inputs.profile }}"
         capabilities: "{{ blocks.filter_capabilities.outputs.stdout | fromjson }}"
         permissions: "{{ inputs.permissions }}"
@@ -448,7 +648,8 @@ blocks:
         max_iterations: "{{ inputs.max_iterations }}"
         confidence_threshold: "{{ inputs.confidence_threshold }}"
         state: "{{ blocks.gather.outputs.state }}"
-        parent_id: "{{ blocks.register.outputs.task.task_id }}"
+        models: "{{ inputs.models }}"
+        parent_id: "{{ blocks.register.outputs.rows[0].id }}"
         profile: "{{ inputs.profile }}"
         capabilities: "{{ blocks.filter_capabilities.outputs.stdout | fromjson }}"
         permissions: "{{ inputs.permissions }}"
@@ -479,16 +680,17 @@ blocks:
         max_iterations: "{{ inputs.max_iterations }}"
         confidence_threshold: "{{ inputs.confidence_threshold }}"
         state: "{{ blocks.reason.outputs.state }}"
-        parent_id: "{{ blocks.register.outputs.task.task_id }}"
+        models: "{{ inputs.models }}"
+        parent_id: "{{ blocks.register.outputs.rows[0].id }}"
         profile: "{{ inputs.profile }}"
         capabilities: "{{ blocks.filter_capabilities.outputs.stdout | fromjson }}"
         permissions: "{{ inputs.permissions }}"
 
   # ===========================================================================
-  # TRACK COMPLETION - store synthesis for child querying (v1 schema)
+  # TRACK COMPLETION - store synthesis for child querying (model-based update)
   # ===========================================================================
   - id: track_done
-    type: Workflow
+    type: Sql
     description: Mark cell complete and store synthesis for child querying.
     depends_on:
       - block: early_termination
@@ -498,25 +700,25 @@ blocks:
       - block: act
         required: false
     inputs:
-      workflow: agent-state-management
-      inputs:
-        state: "{{ blocks.register.outputs.state }}"
-        task_id: "{{ blocks.register.outputs.task.task_id }}"
+      engine: sqlite
+      path: "{{ (blocks.init.outputs.stdout | fromjson).state_path }}"
+      model: "{{ inputs.models.task }}"
+      op: update
+      where:
+        id: "{{ blocks.register.outputs.rows[0].id }}"
+      data:
         status: "done"
-        caller: "cortex-cell"
-        # v1 schema: outputs_data instead of data
-        # CRITICAL: Store response and synthesis so REASON phase can query children
-        outputs_data:
-          response: |
-            {{ blocks.reason.outputs.response if blocks.reason.succeeded
-               else (blocks.early_termination.outputs.stdout | fromjson).response if blocks.early_termination.succeeded
-               else 'No response produced' }}
-          synthesis: |
-            {{ blocks.reason.outputs.synthesis if blocks.reason.succeeded
-               else (blocks.early_termination.outputs.stdout | fromjson).synthesis if blocks.early_termination.succeeded
-               else {} }}
-          complete: "{{ blocks.act.outputs.complete | default(true) }}"
-          continuation_needed: "{{ blocks.act.outputs.continuation_needed | default(false) }}"
+        outputs: >-
+          {{ {
+            'response': blocks.reason.outputs.response if blocks.reason.succeeded
+                        else (blocks.early_termination.outputs.stdout | fromjson).response if blocks.early_termination.succeeded
+                        else 'No response produced',
+            'synthesis': blocks.reason.outputs.synthesis if blocks.reason.succeeded
+                         else (blocks.early_termination.outputs.stdout | fromjson).synthesis if blocks.early_termination.succeeded
+                         else {},
+            'complete': blocks.act.outputs.complete | default(true),
+            'continuation_needed': blocks.act.outputs.continuation_needed | default(false)
+          } | tojson }}
 
 # =============================================================================
 # OUTPUTS
@@ -572,9 +774,9 @@ outputs:
   task_id:
     type: str
     description: "This cell's task ID."
-    value: "{{ blocks.register.outputs.task.task_id }}"
+    value: "{{ blocks.register.outputs.rows[0].id }}"
 
   state:
     type: str
     description: "Path to state database."
-    value: "{{ blocks.register.outputs.state }}"
+    value: "{{ (blocks.init.outputs.stdout | fromjson).state_path }}"

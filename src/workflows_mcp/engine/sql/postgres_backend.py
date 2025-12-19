@@ -19,7 +19,7 @@ from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING, Any
 
-from .backend import ConnectionConfig, DatabaseBackendBase, DatabaseDialect, Params, QueryResult
+from .backend import ConnectionConfig, DatabaseBackendBase, DatabaseEngine, Params, QueryResult
 
 if TYPE_CHECKING:
     import asyncpg  # type: ignore[import-not-found]
@@ -48,12 +48,12 @@ class PostgresBackend(DatabaseBackendBase):
     database access using PostgreSQL's binary protocol.
 
     Attributes:
-        dialect: DatabaseDialect.POSTGRESQL
+        dialect: DatabaseEngine.POSTGRESQL
 
     Example:
         backend = PostgresBackend()
         await backend.connect(ConnectionConfig(
-            dialect=DatabaseDialect.POSTGRESQL,
+            dialect=DatabaseEngine.POSTGRESQL,
             host="localhost",
             port=5432,
             database="mydb",
@@ -64,7 +64,7 @@ class PostgresBackend(DatabaseBackendBase):
         await backend.disconnect()
     """
 
-    dialect = DatabaseDialect.POSTGRESQL
+    dialect = DatabaseEngine.POSTGRESQL
 
     def __init__(self) -> None:
         """Initialize PostgreSQL backend."""

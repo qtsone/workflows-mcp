@@ -83,46 +83,137 @@ inputs:
 
 blocks:
   # ==========================================================================
-  # STATE MANAGEMENT: Initialize state for the PR review
+  # STEP 0: Generate trace ID and state path
   # ==========================================================================
-  - id: state_management
-    type: Workflow
-    description: |
-      Manage state for the PR review.
+  - id: init_state
+    type: Shell
+    description: Generate trace ID and compute state database path.
     inputs:
-      workflow: agent-state-management
-      inputs:
-        task: "PR review"
-        caller: "pr-review"
-        data: "{{ inputs }}"
-        ai: true
-        audit: true
+      command: |
+        python3 << 'EOF'
+        import json
+        import os
+        import uuid
+
+        trace_id = str(uuid.uuid4())[:8]
+        home = os.path.expanduser("~")
+        state_dir = os.path.join(home, ".workflows", "tasks")
+        os.makedirs(state_dir, exist_ok=True)
+        state_path = os.path.join(state_dir, f"{trace_id}.db")
+
+        print(json.dumps({
+            "trace_id": trace_id,
+            "state_path": state_path
+        }))
+        EOF
 
   # ==========================================================================
-  # MEMORY INITIALIZATION: Clear memory for fresh review
+  # STEP 1: Initialize state database with schema
+  # ==========================================================================
+  - id: init_db
+    type: Sql
+    description: Create state database with required tables.
+    depends_on: [init_state]
+    inputs:
+      engine: sqlite
+      path: "{{ (blocks.init_state.outputs.stdout | fromjson).state_path }}"
+      init_sql: |
+        -- Core tables for state management
+        CREATE TABLE IF NOT EXISTS tasks (
+          id TEXT PRIMARY KEY,
+          parent_id TEXT REFERENCES tasks(id),
+          kind TEXT NOT NULL,
+          name TEXT NOT NULL,
+          metadata JSON DEFAULT '{}',
+          inputs JSON DEFAULT '{}',
+          outputs JSON DEFAULT '{}',
+          status TEXT DEFAULT 'pending',
+          depth INTEGER DEFAULT 0,
+          created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+          updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        );
+
+        CREATE TABLE IF NOT EXISTS memory (
+          namespace TEXT NOT NULL,
+          key TEXT NOT NULL,
+          value JSON,
+          metadata JSON DEFAULT '{}',
+          task_id TEXT,
+          created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+          updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+          PRIMARY KEY (namespace, key)
+        );
+
+        CREATE TABLE IF NOT EXISTS metadata (
+          key TEXT PRIMARY KEY,
+          value TEXT
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_tasks_parent ON tasks(parent_id);
+        CREATE INDEX IF NOT EXISTS idx_tasks_status ON tasks(status);
+        CREATE INDEX IF NOT EXISTS idx_memory_task ON memory(task_id);
+      sql: "SELECT 1"
+
+  # ==========================================================================
+  # STEP 2: Generate root task ID
+  # ==========================================================================
+  - id: gen_task_id
+    type: Shell
+    description: Generate UUID for root task.
+    depends_on: [init_db]
+    inputs:
+      command: python3 -c "import uuid; print(str(uuid.uuid4())[:8])"
+
+  # ==========================================================================
+  # STEP 3: Register root task
+  # ==========================================================================
+  - id: register_root
+    type: Sql
+    description: Register root PR review task.
+    depends_on: [gen_task_id]
+    inputs:
+      engine: sqlite
+      path: "{{ (blocks.init_state.outputs.stdout | fromjson).state_path }}"
+      sql: |
+        INSERT INTO tasks (id, parent_id, kind, name, metadata, inputs, status, depth)
+        VALUES (?, NULL, 'pr-review', 'PR Review', ?, ?, 'running', 0)
+        RETURNING id, kind, name, status, depth, created_at
+      params:
+        - "task-{{ blocks.gen_task_id.outputs.stdout | trim }}"
+        - "{{ {'caller': 'pr-review'} | tojson }}"
+        - "{{ inputs | tojson }}"
+
+  # ==========================================================================
+  # STEP 4: Store root task ID in metadata
+  # ==========================================================================
+  - id: store_root_meta
+    type: Sql
+    description: Store root task ID for later retrieval.
+    depends_on: [register_root]
+    inputs:
+      engine: sqlite
+      path: "{{ (blocks.init_state.outputs.stdout | fromjson).state_path }}"
+      sql: |
+        INSERT OR REPLACE INTO metadata (key, value) VALUES ('root_task_id', ?)
+      params:
+        - "{{ blocks.register_root.outputs.rows[0].id }}"
+
+  # ==========================================================================
+  # STEP 5: Initialize memory marker
   # ==========================================================================
   - id: init_memory
-    type: Workflow
-    description: |
-      Initialize/clear memory for this PR review execution.
-      Creates fresh memory file to avoid cross-review contamination.
-    depends_on:
-      - state_management
-    condition: "{{ blocks.state_management.outputs.state | trim != '' }}"
+    type: Sql
+    description: Initialize memory with startup marker.
+    depends_on: [store_root_meta]
     inputs:
-      workflow: agent-state-management
-      inputs:
-        state: "{{ blocks.state_management.outputs.state }}"
-        op: memory
-        memory_op: set
-        memory_key: "_initialized"
-        memory_value: |
-          {
-            "trace_id": "{{ blocks.state_management.outputs.trace_id }}",
-            "started_at": "{{ now() }}",
-            "version": 2
-          }
-        caller: "pr-review:main"
+      engine: sqlite
+      path: "{{ (blocks.init_state.outputs.stdout | fromjson).state_path }}"
+      sql: |
+        INSERT OR REPLACE INTO memory (namespace, key, value, metadata, task_id)
+        VALUES ('system', '_initialized', ?, '{}', ?)
+      params:
+        - "{{ {'trace_id': (blocks.init_state.outputs.stdout | fromjson).trace_id, 'started_at': now(), 'version': 2} | tojson }}"
+        - "{{ blocks.register_root.outputs.rows[0].id }}"
 
   # ==========================================================================
   # PHASE 1: Context Gathering
@@ -134,7 +225,7 @@ blocks:
       Gather and validate context for the PR review.
       Outputs normalized repo_path regardless of input source.
     depends_on:
-      - state_management
+      - register_root
       - block: init_memory
         required: false
     inputs:
@@ -145,8 +236,8 @@ blocks:
         base_branch: "{{ inputs.base_branch }}"
         head_branch: "{{ inputs.head_branch }}"
         workspace: "{{ tmp }}/pr-review-repo"
-        state: "{{ blocks.state_management.outputs.state }}"
-        parent_task_id: "{{ get(blocks.state_management.outputs.task, 'task_id', '') }}"
+        state: "{{ (blocks.init_state.outputs.stdout | fromjson).state_path }}"
+        parent_task_id: "{{ blocks.register_root.outputs.rows[0].id }}"
 
   # ==========================================================================
   # PHASE 2: CORTEX Cognitive Investigation
@@ -316,8 +407,8 @@ blocks:
         iterations: 0
         max_iterations: 3
         confidence_threshold: 0.7
-        state: "{{ blocks.state_management.outputs.state }}"
-        parent_id: "{{ get(blocks.state_management.outputs.task, 'task_id', '') }}"
+        state: "{{ (blocks.init_state.outputs.stdout | fromjson).state_path }}"
+        parent_id: "{{ blocks.register_root.outputs.rows[0].id }}"
         profile: "default"
         permissions:
           read: true
@@ -512,8 +603,8 @@ blocks:
         comment: "{{ inputs.comment }}"
         report: "{{ blocks.generate_report.outputs.report }}"
         approve: "{{ (blocks.transform_synthesis.outputs.stdout | fromjson).approve | default(false) }}"
-        state: "{{ blocks.state_management.outputs.state }}"
-        parent_task_id: "{{ get(blocks.state_management.outputs.task, 'task_id', '') }}"
+        state: "{{ (blocks.init_state.outputs.stdout | fromjson).state_path }}"
+        parent_task_id: "{{ blocks.register_root.outputs.rows[0].id }}"
 
 outputs:
   report:

@@ -62,37 +62,47 @@ inputs:
 
 blocks:
   # ==========================================================================
-  # STEP 1: Register synthesis task
+  # STEP 0: Generate Task ID
   # ==========================================================================
-  - id: register_task
-    type: Workflow
-    description: Create task in state tree for synthesis phase.
+  - id: gen_task_id
+    type: Shell
+    description: Generate UUID for this task.
     inputs:
-      workflow: agent-state-management
-      inputs:
-        state: "{{ inputs.state }}"
-        parent_id: "{{ inputs.parent_task_id }}"
-        task: "Phase: Synthesis"
-        task_type: "synthesis"
-        status: "in-progress"
-        caller: "investigation-synthesize"
+      command: python3 -c "import uuid; print(str(uuid.uuid4())[:8])"
 
   # ==========================================================================
-  # STEP 2: Retrieve all findings from memory
+  # STEP 1: Register synthesis task (direct Sql)
+  # ==========================================================================
+  - id: register_task
+    type: Sql
+    description: Create task in state tree for synthesis phase.
+    depends_on: [gen_task_id]
+    inputs:
+      engine: sqlite
+      path: "{{ inputs.state }}"
+      sql: |
+        INSERT INTO tasks (id, parent_id, kind, name, metadata, inputs, status, depth)
+        VALUES (?, ?, 'synthesis', 'Phase: Synthesis', '{}', '{}', 'running', 0)
+        RETURNING id, parent_id, kind, name, status, depth, created_at
+      params:
+        - "task-{{ blocks.gen_task_id.outputs.stdout | trim }}"
+        - "{{ inputs.parent_task_id if inputs.parent_task_id else none }}"
+
+  # ==========================================================================
+  # STEP 2: Retrieve all findings from memory (direct Sql)
   # ==========================================================================
   - id: retrieve_findings
-    type: Workflow
+    type: Sql
     description: Get all accumulated investigation findings from memory.
     depends_on: [register_task]
     inputs:
-      workflow: agent-state-management
-      inputs:
-        state: "{{ inputs.state }}"
-        op: memory
-        memory_op: get
-        memory_key: "investigations"
-        memory_default: "[]"
-        caller: "investigation-synthesize"
+      engine: sqlite
+      path: "{{ inputs.state }}"
+      sql: |
+        SELECT key, value, metadata
+        FROM memory
+        WHERE namespace = 'investigations'
+        ORDER BY key
 
   # ==========================================================================
   # STEP 3: Merge and deduplicate findings
@@ -276,7 +286,7 @@ blocks:
         print(json.dumps(result))
         EOF
       env:
-        INVESTIGATIONS: "{{ blocks.retrieve_findings.outputs.memory.value | default([]) | tojson }}"
+        INVESTIGATIONS: "{{ blocks.retrieve_findings.outputs.rows | map(attribute='value') | list | tojson }}"
         ROOT_FINDINGS: "{{ inputs.root_findings | tojson }}"
 
   # ==========================================================================
@@ -488,54 +498,44 @@ blocks:
           ]
 
   # ==========================================================================
-  # STEP 6: Store synthesis results in memory
+  # STEP 6: Store synthesis results in memory (direct Sql)
   # ==========================================================================
   - id: store_synthesis
-    type: Workflow
+    type: Sql
     description: Store final synthesis results in memory.
     depends_on: [llm_synthesis, filter_by_threshold]
     inputs:
-      workflow: agent-state-management
-      inputs:
-        state: "{{ inputs.state }}"
-        op: memory
-        memory_op: set
-        memory_key: "synthesis"
-        memory_value: |
-          {
-            "executive_summary": {{ blocks.llm_synthesis.outputs.response.executive_summary | tojson }},
-            "risk_level": "{{ blocks.llm_synthesis.outputs.response.risk_level }}",
-            "approve": {{ blocks.llm_synthesis.outputs.response.approve | tojson }},
-            "top_issues": {{ blocks.llm_synthesis.outputs.response.top_issues | tojson }},
-            "action_items": {{ blocks.llm_synthesis.outputs.response.action_items | default([]) | tojson }},
-            "findings_count": {{ (blocks.filter_by_threshold.outputs.stdout | fromjson).findings_count }},
-            "filtered_out_count": {{ (blocks.filter_by_threshold.outputs.stdout | fromjson).filtered_out_count }},
-            "files_analyzed": {{ (blocks.filter_by_threshold.outputs.stdout | fromjson).files_count }},
-            "threshold": "{{ inputs.threshold }}"
-          }
-        caller: "investigation-synthesize"
+      engine: sqlite
+      path: "{{ inputs.state }}"
+      sql: |
+        INSERT OR REPLACE INTO memory (namespace, key, value, metadata, task_id)
+        VALUES ('synthesis', 'result', ?, ?, ?)
+      params:
+        - "{{ {'executive_summary': blocks.llm_synthesis.outputs.response.executive_summary, 'risk_level': blocks.llm_synthesis.outputs.response.risk_level, 'approve': blocks.llm_synthesis.outputs.response.approve, 'top_issues': blocks.llm_synthesis.outputs.response.top_issues, 'action_items': blocks.llm_synthesis.outputs.response.action_items | default([]), 'findings_count': (blocks.filter_by_threshold.outputs.stdout | fromjson).findings_count, 'filtered_out_count': (blocks.filter_by_threshold.outputs.stdout | fromjson).filtered_out_count, 'files_analyzed': (blocks.filter_by_threshold.outputs.stdout | fromjson).files_count, 'threshold': inputs.threshold} | tojson }}"
+        - "{{ {'threshold': inputs.threshold} | tojson }}"
+        - "{{ blocks.register_task.outputs.rows[0].id }}"
 
   # ==========================================================================
-  # STEP 7: Mark synthesis complete
+  # STEP 7: Mark synthesis complete (direct Sql)
   # ==========================================================================
   - id: track_done
-    type: Workflow
+    type: Sql
     description: Mark synthesis task as complete.
     depends_on:
       - llm_synthesis
       - store_synthesis
     inputs:
-      workflow: agent-state-management
-      inputs:
-        state: "{{ inputs.state }}"
-        task_id: "{{ blocks.register_task.outputs.task.task_id }}"
-        status: "done"
-        caller: "investigation-synthesize"
-        data:
-          risk_level: "{{ blocks.llm_synthesis.outputs.response.risk_level }}"
-          approve: "{{ blocks.llm_synthesis.outputs.response.approve }}"
-          findings_count: "{{ (blocks.filter_by_threshold.outputs.stdout | fromjson).findings_count }}"
-          threshold: "{{ inputs.threshold }}"
+      engine: sqlite
+      path: "{{ inputs.state }}"
+      sql: |
+        UPDATE tasks
+        SET status = 'done',
+            outputs = ?,
+            updated_at = datetime('now')
+        WHERE id = ?
+      params:
+        - "{{ {'risk_level': blocks.llm_synthesis.outputs.response.risk_level, 'approve': blocks.llm_synthesis.outputs.response.approve, 'findings_count': (blocks.filter_by_threshold.outputs.stdout | fromjson).findings_count, 'threshold': inputs.threshold} | tojson }}"
+        - "{{ blocks.register_task.outputs.rows[0].id }}"
 
 outputs:
   executive_summary:

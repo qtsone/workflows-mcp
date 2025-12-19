@@ -41,6 +41,12 @@ inputs:
     required: false
     default: ""
 
+  models:
+    type: dict
+    description: Model definitions for CRUD operations.
+    required: false
+    default: {}
+
   parent_id:
     type: str
     description: Parent task ID for task tree registration.
@@ -52,32 +58,31 @@ blocks:
   # STEP 1: Register capability in task tree
   # ===========================================================================
   - id: register
-    type: Workflow
+    type: Sql
     description: Register this capability in the task tree.
+    condition: "{{ inputs.state | trim != '' }}"
     inputs:
-      workflow: agent-state-management
-      inputs:
-        state: "{{ inputs.state }}"
-        parent_id: "{{ inputs.parent_id }}"
-        kind: "capability"
-        name: "cortex-reason-llm"
-        metadata:
-          labels:
-            capability_type: "reason"
-            side_effects: "false"
-        inputs_data:
-          profile: "{{ inputs.profile }}"
-          has_schema: "{{ inputs.response_schema != {} }}"
-          prompt_length: "{{ inputs.prompt | length }}"
-        status: "running"
-        caller: "cortex-reason-llm"
+      engine: sqlite
+      path: "{{ inputs.state }}"
+      model: "{{ inputs.models.task }}"
+      op: insert
+      data:
+        parent_id: "{{ inputs.parent_id if inputs.parent_id else none }}"
+        kind: capability
+        name: cortex-reason-llm
+        metadata: "{{ {'labels': {'capability_type': 'reason', 'side_effects': 'false'}} }}"
+        inputs: "{{ {'profile': inputs.profile, 'has_schema': (inputs.response_schema != {}), 'prompt_length': inputs.prompt | length} }}"
+        status: running
+        depth: 2
 
   # ===========================================================================
   # STEP 2: Call LLM
   # ===========================================================================
   - id: call_llm
     type: LLMCall
-    depends_on: [register]
+    depends_on:
+      - block: register
+        required: false
     inputs:
       profile: "{{ inputs.profile }}"
       prompt: "{{ inputs.prompt }}"
@@ -89,20 +94,20 @@ blocks:
   # STEP 3: Track completion
   # ===========================================================================
   - id: track_done
-    type: Workflow
+    type: Sql
     description: Mark capability complete in task tree.
+    condition: "{{ inputs.state | trim != '' }}"
     depends_on: [call_llm]
     inputs:
-      workflow: agent-state-management
-      inputs:
-        state: "{{ blocks.register.outputs.state }}"
-        task_id: "{{ blocks.register.outputs.task.task_id }}"
-        status: "done"
-        outputs_data:
-          success: "{{ blocks.call_llm.outputs.success }}"
-          model: "{{ blocks.call_llm.outputs.metadata.model | default('unknown') }}"
-          total_tokens: "{{ blocks.call_llm.outputs.metadata.total_tokens | default(0) }}"
-        caller: "cortex-reason-llm"
+      engine: sqlite
+      path: "{{ inputs.state }}"
+      model: "{{ inputs.models.task }}"
+      op: update
+      where:
+        id: "{{ blocks.register.outputs.rows[0].id }}"
+      data:
+        status: done
+        outputs: "{{ {'success': blocks.call_llm.outputs.success, 'model': blocks.call_llm.outputs.metadata.model | default('unknown'), 'total_tokens': blocks.call_llm.outputs.metadata.total_tokens | default(0)} }}"
 
 outputs:
   response:
@@ -126,6 +131,6 @@ outputs:
     description: Evidence reference for findings.
 
   task_id:
-    value: "{{ blocks.register.outputs.task.task_id | default('') }}"
+    value: "{{ blocks.register.outputs.rows[0].id | default('') }}"
     type: str
     description: Task ID of this capability invocation.

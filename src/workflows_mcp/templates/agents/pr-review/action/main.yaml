@@ -65,23 +65,30 @@ blocks:
   # ============================================================================
   # STATE TRACKING: Create sub-task at phase start
   # ============================================================================
-  - id: track_start
-    type: Workflow
-    description: Create sub-task for action phase in state tree.
+  - id: gen_phase_id
+    type: Shell
+    description: Generate UUID for this phase task.
     condition: "{{ inputs.state | trim != '' }}"
     inputs:
-      workflow: agent-state-management
-      inputs:
-        state: "{{ inputs.state }}"
-        parent_id: "{{ inputs.parent_task_id }}"
-        task: "Phase: Action"
-        task_type: "phase"
-        status: "in-progress"
-        caller: "pr-review:action"
-        data:
-          platform: "{{ inputs.platform }}"
-          comment_requested: "{{ inputs.comment }}"
-          approve: "{{ inputs.approve }}"
+      command: python3 -c "import uuid; print(str(uuid.uuid4())[:8])"
+
+  - id: track_start
+    type: Sql
+    description: Create sub-task for action phase in state tree.
+    condition: "{{ inputs.state | trim != '' }}"
+    depends_on: [gen_phase_id]
+    inputs:
+      engine: sqlite
+      path: "{{ inputs.state }}"
+      sql: |
+        INSERT INTO tasks (id, parent_id, kind, name, metadata, inputs, status, depth)
+        VALUES (?, ?, 'phase', 'action', ?, ?, 'running', 1)
+        RETURNING id, parent_id, kind, name, status, depth, created_at
+      params:
+        - "task-{{ blocks.gen_phase_id.outputs.stdout | trim }}"
+        - "{{ inputs.parent_task_id if inputs.parent_task_id else none }}"
+        - "{{ {'caller': 'pr-review:action', 'platform': inputs.platform, 'comment_requested': inputs.comment, 'approve': inputs.approve} | tojson }}"
+        - "{}"
 
   # Only parse URL when we actually need to post comments
   - id: parse_url_for_api
@@ -167,7 +174,7 @@ blocks:
   # STATE TRACKING: Mark phase complete with captured data
   # ============================================================================
   - id: track_done
-    type: Workflow
+    type: Sql
     description: Mark action phase as complete with captured data.
     condition: "{{ inputs.state | trim != '' and blocks.track_start.succeeded }}"
     depends_on:
@@ -176,16 +183,17 @@ blocks:
       - block: post_gitlab_comment
         required: false
     inputs:
-      workflow: agent-state-management
-      inputs:
-        state: "{{ inputs.state }}"
-        task_id: "{{ get(blocks.track_start.outputs.task, 'task_id', '') }}"
-        status: "done"
-        caller: "pr-review:action"
-        data:
-          action_taken: "{{ blocks.post_github_comment.succeeded or blocks.post_gitlab_comment.succeeded }}"
-          platform: "{{ inputs.platform }}"
-          approve: "{{ inputs.approve }}"
+      engine: sqlite
+      path: "{{ inputs.state }}"
+      sql: |
+        UPDATE tasks
+        SET status = 'done',
+            outputs = ?,
+            updated_at = datetime('now')
+        WHERE id = ?
+      params:
+        - "{{ {'action_taken': (blocks.post_github_comment.succeeded or blocks.post_gitlab_comment.succeeded), 'platform': inputs.platform, 'approve': inputs.approve} | tojson }}"
+        - "{{ blocks.track_start.outputs.rows[0].id }}"
 
   # ============================================================================
   # VISUALIZATION: Generate ASCII tree of task hierarchy

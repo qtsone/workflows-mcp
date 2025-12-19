@@ -43,6 +43,12 @@ inputs:
     required: false
     default: ""
 
+  models:
+    type: dict
+    description: Model definitions for CRUD operations.
+    required: false
+    default: {}
+
   parent_id:
     type: str
     description: Parent task ID for task tree registration.
@@ -54,32 +60,31 @@ blocks:
   # STEP 1: Register capability in task tree
   # ===========================================================================
   - id: register
-    type: Workflow
+    type: Sql
     description: Register this capability in the task tree.
+    condition: "{{ inputs.state | trim != '' }}"
     inputs:
-      workflow: agent-state-management
-      inputs:
-        state: "{{ inputs.state }}"
-        parent_id: "{{ inputs.parent_id }}"
-        kind: "capability"
-        name: "cortex-action-edit"
-        metadata:
-          labels:
-            capability_type: "action"
-            side_effects: "true"
-        inputs_data:
-          path: "{{ inputs.path }}"
-          operation_count: "{{ inputs.operations | length }}"
-          dry_run: "{{ inputs.dry_run }}"
-        status: "running"
-        caller: "cortex-action-edit"
+      engine: sqlite
+      path: "{{ inputs.state }}"
+      model: "{{ inputs.models.task }}"
+      op: insert
+      data:
+        parent_id: "{{ inputs.parent_id if inputs.parent_id else none }}"
+        kind: capability
+        name: cortex-action-edit
+        metadata: "{{ {'labels': {'capability_type': 'action', 'side_effects': 'true'}} }}"
+        inputs: "{{ {'path': inputs.path, 'operation_count': inputs.operations | length, 'dry_run': inputs.dry_run} }}"
+        status: running
+        depth: 2
 
   # ===========================================================================
   # STEP 2: Execute edit
   # ===========================================================================
   - id: edit
     type: EditFile
-    depends_on: [register]
+    depends_on:
+      - block: register
+        required: false
     inputs:
       path: "{{ inputs.path }}"
       operations: "{{ inputs.operations }}"
@@ -90,21 +95,20 @@ blocks:
   # STEP 3: Track completion
   # ===========================================================================
   - id: track_done
-    type: Workflow
+    type: Sql
     description: Mark capability complete in task tree.
+    condition: "{{ inputs.state | trim != '' }}"
     depends_on: [edit]
     inputs:
-      workflow: agent-state-management
-      inputs:
-        state: "{{ blocks.register.outputs.state }}"
-        task_id: "{{ blocks.register.outputs.task.task_id }}"
-        status: "done"
-        outputs_data:
-          operations_applied: "{{ blocks.edit.outputs.operations_applied }}"
-          lines_added: "{{ blocks.edit.outputs.lines_added }}"
-          lines_removed: "{{ blocks.edit.outputs.lines_removed }}"
-          success: "{{ blocks.edit.outputs.success }}"
-        caller: "cortex-action-edit"
+      engine: sqlite
+      path: "{{ inputs.state }}"
+      model: "{{ inputs.models.task }}"
+      op: update
+      where:
+        id: "{{ blocks.register.outputs.rows[0].id }}"
+      data:
+        status: done
+        outputs: "{{ {'operations_applied': blocks.edit.outputs.operations_applied, 'lines_added': blocks.edit.outputs.lines_added, 'lines_removed': blocks.edit.outputs.lines_removed, 'success': blocks.edit.outputs.success} }}"
 
 outputs:
   operations_applied:
@@ -147,11 +151,11 @@ outputs:
     description: Action record for audit trail.
 
   task_id:
-    value: "{{ blocks.register.outputs.task.task_id | default('') }}"
+    value: "{{ blocks.register.outputs.rows[0].id | default('') }}"
     type: str
     description: Task ID of this capability invocation.
 
   state:
-    value: "{{ blocks.register.outputs.state | default(inputs.state) }}"
+    value: "{{ inputs.state }}"
     type: str
     description: Path to state database (passthrough).

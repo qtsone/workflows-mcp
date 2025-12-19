@@ -80,6 +80,11 @@ inputs:
     description: Path to SQLite state database. Created if empty.
     default: ""
 
+  models:
+    type: dict
+    description: Model definitions for CRUD operations.
+    default: {}
+
   parent_id:
     type: str
     description: Parent task ID for task tree.
@@ -102,42 +107,51 @@ inputs:
 
 blocks:
   # ===========================================================================
-  # STEP 1: Register phase task (v1 schema)
+  # STEP 1: Generate Phase Task ID
   # ===========================================================================
-  - id: register_phase
-    type: Workflow
-    description: Register this phase in the task tree.
+  - id: gen_phase_id
+    type: Shell
+    description: Generate UUID for this phase task.
     inputs:
-      workflow: agent-state-management
-      inputs:
-        state: "{{ inputs.state }}"
-        parent_id: "{{ inputs.parent_id }}"
-        kind: "phase"
-        name: "categorize"
-        metadata:
-          labels:
-            phase_order: 1
-        inputs_data:
-          prompt: "{{ inputs.prompt }}"
-        depth: "{{ inputs.depth }}"
-        status: "running"
-        caller: "cortex-phase-categorize"
+      command: python3 -c "import uuid; print(str(uuid.uuid4())[:8])"
 
   # ===========================================================================
-  # STEP 2: Retrieve memory (if requested)
+  # STEP 2: Register Phase Task (direct Sql)
+  # ===========================================================================
+  - id: register_phase
+    type: Sql
+    description: Register this phase in the task tree.
+    depends_on: [gen_phase_id]
+    inputs:
+      engine: sqlite
+      path: "{{ inputs.state }}"
+      sql: |
+        INSERT INTO tasks (id, parent_id, kind, name, metadata, inputs, status, depth)
+        VALUES (?, ?, 'phase', 'categorize', ?, ?, 'running', ?)
+        RETURNING id, parent_id, kind, name, status, depth, created_at
+      params:
+        - "task-{{ blocks.gen_phase_id.outputs.stdout | trim }}"
+        - "{{ inputs.parent_id if inputs.parent_id else none }}"
+        - "{{ {'labels': {'phase_order': 1}} | tojson }}"
+        - "{{ {'prompt': inputs.prompt} | tojson }}"
+        - "{{ inputs.depth }}"
+
+  # ===========================================================================
+  # STEP 3: Retrieve memory (direct Sql query)
   # ===========================================================================
   - id: retrieve_memory
-    type: Workflow
-    description: Get files from memory.
+    type: Sql
+    description: Get files from memory by namespace.
     depends_on: [register_phase]
     condition: "{{ inputs.memory | length > 0 }}"
     inputs:
-      workflow: agent-state-management
-      inputs:
-        state: "{{ blocks.register_phase.outputs.state }}"
-        op: memory
-        memory_op: query
-        memory_type: "content"
+      engine: sqlite
+      path: "{{ inputs.state }}"
+      sql: |
+        SELECT key, value, metadata
+        FROM memory
+        WHERE namespace = 'content'
+        ORDER BY key
 
   # ===========================================================================
   # STEP 3: Attempt categorization
@@ -432,11 +446,11 @@ blocks:
           }] }}
 
   # ===========================================================================
-  # STEP 8: Track completion
+  # STEP 8: Track completion (direct Sql UPDATE)
   # ===========================================================================
   - id: track_done
-    type: Workflow
-    description: Mark phase complete (v1 schema).
+    type: Sql
+    description: Mark phase complete.
     depends_on:
       - block: attempt
         required: true
@@ -445,15 +459,17 @@ blocks:
       - block: self_recurse
         required: false
     inputs:
-      workflow: agent-state-management
-      inputs:
-        state: "{{ blocks.register_phase.outputs.state }}"
-        task_id: "{{ blocks.register_phase.outputs.task.task_id }}"
-        status: "done"
-        caller: "cortex-phase-categorize"
-        outputs_data:
-          recursed: "{{ blocks.self_recurse.succeeded }}"
-          category: "{{ get(blocks.attempt.outputs.response.result,'category','understanding') }}"
+      engine: sqlite
+      path: "{{ inputs.state }}"
+      sql: |
+        UPDATE tasks
+        SET status = 'done',
+            outputs = ?,
+            updated_at = datetime('now')
+        WHERE id = ?
+      params:
+        - "{{ {'recursed': blocks.self_recurse.succeeded, 'category': blocks.attempt.outputs.response.result.category | default('understanding')} | tojson }}"
+        - "{{ blocks.register_phase.outputs.rows[0].id }}"
 
 # =============================================================================
 # OUTPUTS: Category + pipeline_config for downstream phases
@@ -476,4 +492,4 @@ outputs:
   state:
     type: str
     description: "Path to state database."
-    value: "{{ blocks.register_phase.outputs.state }}"
+    value: "{{ inputs.state }}"

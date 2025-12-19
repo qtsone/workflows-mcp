@@ -38,10 +38,12 @@ from .interpolation import (
 from .sql import (
     ConnectionConfig,
     DatabaseBackendBase,
-    DatabaseDialect,
+    DatabaseEngine,
     MariaDBBackend,
+    ModelSchema,
     ParamConverter,
     PostgresBackend,
+    QueryBuilder,
     QueryResult,
     SqliteBackend,
 )
@@ -90,14 +92,20 @@ class SqlTimeoutError(SqlError):
 
 
 class SqlInput(BlockInput):
-    """Input schema for SQL executor."""
+    """Input schema for SQL executor.
+
+    Two operating modes (mutually exclusive):
+
+    **Mode A: Raw SQL** - Provide `sql` field to execute SQL directly
+    **Mode B: Model-based CRUD** - Provide `model` + `op` for Active Record-style operations
+    """
 
     # ═══════════════════════════════════════════════════════════════════
-    # Connection (structured parameters)
+    # CONNECTION (required)
     # ═══════════════════════════════════════════════════════════════════
 
-    dialect: Literal["sqlite", "postgresql", "mariadb"] = Field(
-        description="Database dialect. Required."
+    engine: Literal["sqlite", "postgresql", "mariadb"] = Field(
+        description="Database engine. Required."
     )
 
     # SQLite-specific
@@ -117,60 +125,101 @@ class SqlInput(BlockInput):
     )
 
     # ═══════════════════════════════════════════════════════════════════
-    # Connection Options
+    # MODE A: Raw SQL (mutually exclusive with model)
     # ═══════════════════════════════════════════════════════════════════
 
-    ssl: bool | str = Field(
-        default=False,
-        description="Enable SSL/TLS. Boolean or sslmode string (require, verify-ca, verify-full)",
-    )
-    timeout: int | str = Field(
-        default=30,
-        description="Query execution timeout in seconds",
-    )
-    connect_timeout: int | str = Field(
-        default=10,
-        description="Connection establishment timeout in seconds",
-    )
-    pool_size: int | str = Field(
-        default=5,
-        description="Connection pool size (PostgreSQL/MariaDB only)",
-    )
-
-    # ═══════════════════════════════════════════════════════════════════
-    # Operation
-    # ═══════════════════════════════════════════════════════════════════
-
-    operation: Literal[
-        "query",  # SELECT - returns rows
-        "execute",  # INSERT/UPDATE/DELETE - returns affected count
-        "execute_many",  # Batch execute with multiple param sets
-        "transaction",  # Multiple statements in atomic transaction
-        "script",  # Execute multi-statement SQL script
-    ] = Field(description="SQL operation type")
-
-    sql: str = Field(
+    sql: str | None = Field(
+        default=None,
         description="""
-        SQL statement(s) to execute.
+        SQL statement(s) to execute (Raw SQL mode).
         - Use ? for positional params (SQLite) or $1, $2 for PostgreSQL
         - MariaDB uses %s for positional params
-        - For 'transaction' and 'script': separate statements with semicolons
-        """
+        - Multi-statement scripts: separate with semicolons
+        Mutually exclusive with 'model' field.
+        """,
     )
 
     params: list[Any] | dict[str, Any] | None = Field(
         default=None,
         description="""
-        Query parameters (prevents SQL injection).
+        Query parameters for raw SQL (prevents SQL injection).
         - List for positional: [value1, value2]
         - Dict for named: {"name": value} (PostgreSQL/MariaDB)
-        - For execute_many: list of param lists [[v1, v2], [v3, v4]]
-        - For transaction: list of param lists, one per statement
         """,
     )
 
     # ═══════════════════════════════════════════════════════════════════
-    # Schema Management
+    # MODE B: Model-based CRUD (mutually exclusive with sql)
+    # ═══════════════════════════════════════════════════════════════════
+
+    model: dict[str, Any] | None = Field(
+        default=None,
+        description="""
+        Model schema for CRUD operations (Model mode).
+        Defines table structure with columns, types, indexes.
+        Mutually exclusive with 'sql' field.
+        Example:
+          model:
+            table: tasks
+            columns:
+              id: {type: text, primary: true, auto: uuid}
+              name: {type: text, required: true}
+            indexes:
+              - columns: [name]
+        """,
+    )
+
+    op: Literal["schema", "insert", "select", "update", "delete", "upsert"] | None = Field(
+        default=None,
+        description="""
+        CRUD operation (required when using model mode).
+        - schema: Create table + indexes
+        - insert: Insert row (requires data)
+        - select: Query rows (optional where, order, limit, offset)
+        - update: Update rows (requires where and data)
+        - delete: Delete rows (requires where)
+        - upsert: Insert or update on conflict (requires data and conflict)
+        """,
+    )
+
+    data: dict[str, Any] | None = Field(
+        default=None,
+        description="Row data for insert/update/upsert operations.",
+    )
+
+    where: dict[str, Any] | None = Field(
+        default=None,
+        description="""
+        Filter conditions for select/update/delete.
+        - Simple equality: {status: running}
+        - Operators: {priority: {">": 5}}
+        - IN: {type: {in: [a, b, c]}}
+        - IS NULL: {deleted_at: {is: null}}
+        """,
+    )
+
+    order: list[str] | None = Field(
+        default=None,
+        description='Sort order for select. Format: ["column:asc", "column:desc"]',
+    )
+
+    limit: int | str | None = Field(
+        default=None,
+        description="Maximum rows to return (select).",
+    )
+
+    offset: int | str | None = Field(
+        default=None,
+        description="Rows to skip (select).",
+    )
+
+    conflict: list[str] | None = Field(
+        default=None,
+        description="Conflict columns for upsert (usually primary key).",
+    )
+
+    # ═══════════════════════════════════════════════════════════════════
+    # OPTIONS (both modes)
     # ═══════════════════════════════════════════════════════════════════
 
     init_sql: str | None = Field(
@@ -178,13 +227,8 @@ class SqlInput(BlockInput):
         description="""
         DDL to execute before the main operation (idempotent).
         Use CREATE TABLE IF NOT EXISTS, CREATE INDEX IF NOT EXISTS, etc.
-        Executed once per connection, before the main SQL.
         """,
     )
-
-    # ═══════════════════════════════════════════════════════════════════
-    # Transaction Options
-    # ═══════════════════════════════════════════════════════════════════
 
     isolation_level: (
         Literal[
@@ -207,6 +251,27 @@ class SqlInput(BlockInput):
     )
 
     # ═══════════════════════════════════════════════════════════════════
+    # CONNECTION OPTIONS
+    # ═══════════════════════════════════════════════════════════════════
+
+    ssl: bool | str = Field(
+        default=False,
+        description="Enable SSL/TLS. Boolean or sslmode string (require, verify-ca, verify-full)",
+    )
+    timeout: int | str = Field(
+        default=30,
+        description="Query execution timeout in seconds",
+    )
+    connect_timeout: int | str = Field(
+        default=10,
+        description="Connection establishment timeout in seconds",
+    )
+    pool_size: int | str = Field(
+        default=5,
+        description="Connection pool size (PostgreSQL/MariaDB only)",
+    )
+
+    # ═══════════════════════════════════════════════════════════════════
     # SQLite-Specific Options
     # ═══════════════════════════════════════════════════════════════════
 
@@ -214,12 +279,7 @@ class SqlInput(BlockInput):
         default=None,
         description="""
         SQLite PRAGMA settings applied on connection.
-        Defaults (if not specified):
-          journal_mode: WAL
-          busy_timeout: 30000
-          synchronous: NORMAL
-          foreign_keys: ON
-        Example: {"cache_size": -64000, "temp_store": "MEMORY"}
+        Defaults: journal_mode=WAL, busy_timeout=30000, synchronous=NORMAL, foreign_keys=ON
         """,
     )
 
@@ -250,17 +310,57 @@ class SqlInput(BlockInput):
         except (ValueError, TypeError) as e:
             raise ValueError(f"Invalid port value: {v}") from e
 
+    @field_validator("limit", "offset", mode="before")
+    @classmethod
+    def _validate_limit_offset(cls, v: Any) -> int | str | None:
+        """Validate limit/offset, allowing interpolation."""
+        if v is None:
+            return None
+        if isinstance(v, str) and "{{" in v:
+            return v
+        try:
+            return int(v)
+        except (ValueError, TypeError) as e:
+            raise ValueError(f"Invalid value: {v}") from e
+
     @model_validator(mode="after")
-    def validate_connection_params(self) -> Self:
-        """Validate connection parameters based on dialect."""
-        if self.dialect == "sqlite":
+    def validate_inputs(self) -> Self:
+        """Validate connection and mode parameters."""
+        # Connection validation
+        if self.engine == "sqlite":
             if not self.path:
                 raise ValueError("SQLite requires 'path' parameter")
         else:
             if not self.host:
-                raise ValueError(f"{self.dialect} requires 'host' parameter")
+                raise ValueError(f"{self.engine} requires 'host' parameter")
             if not self.database:
-                raise ValueError(f"{self.dialect} requires 'database' parameter")
+                raise ValueError(f"{self.engine} requires 'database' parameter")
+
+        # Mode validation: sql XOR model
+        has_sql = self.sql is not None
+        has_model = self.model is not None
+
+        if has_sql and has_model:
+            raise ValueError("Cannot specify both 'sql' and 'model' - choose one mode")
+        if not has_sql and not has_model:
+            raise ValueError("Must specify either 'sql' (raw SQL mode) or 'model' (model mode)")
+
+        # Model mode validation
+        if has_model:
+            if not self.op:
+                raise ValueError(
+                    "Model mode requires 'op' field (schema/insert/select/update/delete/upsert)"
+                )
+
+            if self.op == "insert" and not self.data:
+                raise ValueError("insert operation requires 'data'")
+            if self.op == "update" and (not self.where or not self.data):
+                raise ValueError("update operation requires 'where' and 'data'")
+            if self.op == "delete" and not self.where:
+                raise ValueError("delete operation requires 'where'")
+            if self.op == "upsert" and (not self.data or not self.conflict):
+                raise ValueError("upsert operation requires 'data' and 'conflict'")
+
         return self
 
 
@@ -269,13 +369,13 @@ class SqlOutput(BlockOutput):
 
     # Query results
     rows: list[dict[str, Any]] = Field(
-        default_factory=list, description="Result rows as list of dicts (query operation)"
+        default_factory=list, description="Result rows as list of dicts"
     )
     columns: list[str] = Field(default_factory=list, description="Column names from result set")
 
     # Counts
     row_count: int = Field(
-        default=0, description="Number of rows returned (query) or total affected (execute)"
+        default=0, description="Number of rows returned (select) or affected (insert/update/delete)"
     )
     affected_rows: int = Field(default=0, description="Rows affected by INSERT/UPDATE/DELETE")
 
@@ -286,7 +386,7 @@ class SqlOutput(BlockOutput):
 
     # Metadata
     success: bool = Field(default=True, description="Operation completed successfully")
-    dialect: str = Field(default="", description="Database dialect used")
+    engine: str = Field(default="", description="Database engine used")
     execution_time_ms: float = Field(
         default=0.0, description="Query execution time in milliseconds"
     )
@@ -300,6 +400,10 @@ class SqlOutput(BlockOutput):
 class SqlExecutor(BlockExecutor):
     """SQL executor for database operations.
 
+    Two operating modes:
+    - **Raw SQL mode**: Provide `sql` field to execute SQL directly
+    - **Model mode**: Provide `model` + `op` for Active Record-style CRUD
+
     Architecture (ADR-006):
     - Returns SqlOutput directly
     - Raises exceptions for database failures
@@ -310,12 +414,11 @@ class SqlExecutor(BlockExecutor):
     - Automatic parameter placeholder conversion
     - Connection pooling for remote databases
     - Transaction support with isolation levels
-    - Schema management (CREATE TABLE IF NOT EXISTS)
+    - Model-based CRUD with auto-generated SQL
 
     Security:
     - All queries use parameterized statements (no SQL injection)
     - Passwords via {{secrets.VAR}} are never logged
-    - Connection strings in error messages redact credentials
     - SSL/TLS support for remote databases
     """
 
@@ -323,33 +426,46 @@ class SqlExecutor(BlockExecutor):
     input_type: ClassVar[type[BlockInput]] = SqlInput
     output_type: ClassVar[type[BlockOutput]] = SqlOutput
     examples: ClassVar[str] = """```yaml
-# SQLite query
+# Raw SQL mode - SQLite query
 - id: get_users
   type: Sql
   inputs:
-    dialect: sqlite
+    engine: sqlite
     path: "/data/app.db"
-    operation: query
     sql: "SELECT * FROM users WHERE status = ?"
     params: ["active"]
 
-# PostgreSQL with init_sql for schema setup
-- id: setup_and_query
+# Model mode - Create table and insert
+- id: create_task
   type: Sql
   inputs:
-    dialect: postgresql
-    host: "{{secrets.DB_HOST}}"
-    database: mydb
-    username: "{{secrets.DB_USER}}"
-    password: "{{secrets.DB_PASS}}"
-    operation: query
-    init_sql: |
-      CREATE TABLE IF NOT EXISTS users (
-        id SERIAL PRIMARY KEY,
-        name TEXT NOT NULL
-      )
-    sql: "SELECT * FROM users LIMIT $1"
-    params: [10]
+    engine: sqlite
+    path: "{{state.db_path}}"
+    model:
+      table: tasks
+      columns:
+        task_id: {type: text, primary: true, auto: uuid}
+        name: {type: text, required: true}
+        status: {type: text, default: pending}
+        created_at: {type: timestamp, auto: created}
+      indexes:
+        - columns: [status]
+    op: insert
+    data:
+      name: "My Task"
+
+# Model mode - Select with filters
+- id: find_tasks
+  type: Sql
+  inputs:
+    engine: sqlite
+    path: "{{state.db_path}}"
+    model: "{{inputs.models.task}}"
+    op: select
+    where:
+      status: running
+    order: [created_at:desc]
+    limit: 10
 ```"""
 
     security_level: ClassVar[ExecutorSecurityLevel] = ExecutorSecurityLevel.TRUSTED
@@ -382,9 +498,9 @@ class SqlExecutor(BlockExecutor):
         port = int(inputs.port) if inputs.port is not None else None
 
         # Create backend and config
-        backend = self._create_backend(inputs.dialect)
+        backend = self._create_backend(inputs.engine)
         config = self._create_config(
-            dialect=inputs.dialect,
+            engine=inputs.engine,
             path=inputs.path,
             host=inputs.host,
             port=port,
@@ -398,11 +514,6 @@ class SqlExecutor(BlockExecutor):
             sqlite_pragmas=inputs.sqlite_pragmas,
         )
 
-        # Convert SQL placeholders for target dialect
-        converter = ParamConverter(backend.dialect)
-        converted_sql = converter.convert(inputs.sql)
-        converted_params = converter.convert_params(inputs.params)
-
         try:
             await backend.connect(config)
 
@@ -413,14 +524,13 @@ class SqlExecutor(BlockExecutor):
                 except Exception as e:
                     raise SqlSchemaError(f"Schema execution failed: {e}") from e
 
-            # Execute the main operation
-            result = await self._execute_operation(
-                backend=backend,
-                operation=inputs.operation,
-                sql=converted_sql,
-                params=converted_params,
-                isolation_level=inputs.isolation_level,
-            )
+            # Route to appropriate mode
+            if inputs.sql is not None:
+                # Raw SQL mode
+                result = await self._execute_raw_sql(backend, inputs)
+            else:
+                # Model mode
+                result = await self._execute_model_op(backend, inputs)
 
             execution_time = (time.perf_counter() - start_time) * 1000
 
@@ -431,7 +541,7 @@ class SqlExecutor(BlockExecutor):
                 affected_rows=result.affected_rows,
                 last_insert_id=result.last_insert_id,
                 success=True,
-                dialect=inputs.dialect,
+                engine=inputs.engine,
                 execution_time_ms=execution_time,
             )
 
@@ -443,18 +553,95 @@ class SqlExecutor(BlockExecutor):
         finally:
             await backend.disconnect()
 
-    def _create_backend(self, dialect: str) -> DatabaseBackendBase:
-        """Create appropriate backend for dialect."""
-        if dialect == "sqlite":
+    async def _execute_raw_sql(self, backend: DatabaseBackendBase, inputs: SqlInput) -> QueryResult:
+        """Execute raw SQL mode."""
+        assert inputs.sql is not None
+
+        # Convert SQL placeholders for target engine
+        converter = ParamConverter(backend.dialect)
+        converted_sql = converter.convert(inputs.sql)
+        converted_params = converter.convert_params(inputs.params)
+
+        # Detect operation type from SQL
+        sql_upper = inputs.sql.strip().upper()
+        if sql_upper.startswith("SELECT"):
+            return await backend.query(converted_sql, converted_params)
+        elif ";" in inputs.sql:
+            # Multi-statement script
+            await backend.execute_script(inputs.sql)
+            return QueryResult()
+        else:
+            return await backend.execute(converted_sql, converted_params)
+
+    async def _execute_model_op(
+        self, backend: DatabaseBackendBase, inputs: SqlInput
+    ) -> QueryResult:
+        """Execute model-based CRUD operation."""
+        assert inputs.model is not None
+        assert inputs.op is not None
+
+        # Parse model schema
+        schema = ModelSchema.from_dict(inputs.model)
+        engine_enum = DatabaseEngine(inputs.engine)
+        builder = QueryBuilder(schema, engine_enum)
+
+        if inputs.op == "schema":
+            # Create table and indexes
+            ddl = schema.to_create_sql(engine_enum)
+            await backend.execute_script(ddl)
+            for index_sql in schema.to_index_sql(engine_enum):
+                await backend.execute_script(index_sql)
+            return QueryResult(row_count=1, affected_rows=0)
+
+        elif inputs.op == "insert":
+            assert inputs.data is not None
+            sql, params = builder.insert(inputs.data)
+            return await backend.execute(sql, params)
+
+        elif inputs.op == "select":
+            # Resolve limit/offset if they're strings
+            limit = int(inputs.limit) if inputs.limit is not None else None
+            offset = int(inputs.offset) if inputs.offset is not None else None
+            sql, params = builder.select(
+                where=inputs.where,
+                order=inputs.order,
+                limit=limit,
+                offset=offset,
+            )
+            return await backend.query(sql, params)
+
+        elif inputs.op == "update":
+            assert inputs.where is not None
+            assert inputs.data is not None
+            sql, params = builder.update(where=inputs.where, data=inputs.data)
+            return await backend.execute(sql, params)
+
+        elif inputs.op == "delete":
+            assert inputs.where is not None
+            sql, params = builder.delete(where=inputs.where)
+            return await backend.execute(sql, params)
+
+        elif inputs.op == "upsert":
+            assert inputs.data is not None
+            assert inputs.conflict is not None
+            sql, params = builder.upsert(data=inputs.data, conflict=inputs.conflict)
+            return await backend.execute(sql, params)
+
+        else:
+            raise ValueError(f"Unknown operation: {inputs.op}")
+
+    def _create_backend(self, engine: str) -> DatabaseBackendBase:
+        """Create appropriate backend for engine."""
+        if engine == "sqlite":
             return SqliteBackend()
-        elif dialect == "postgresql":
+        elif engine == "postgresql":
             if PostgresBackend is None:
                 raise ImportError(
                     "PostgreSQL backend requires 'asyncpg' package. "
                     "Install with: pip install workflows-mcp[postgresql]"
                 )
             return PostgresBackend()
-        elif dialect == "mariadb":
+        elif engine == "mariadb":
             if MariaDBBackend is None:
                 raise ImportError(
                     "MariaDB backend requires 'aiomysql' package. "
@@ -462,11 +649,11 @@ class SqlExecutor(BlockExecutor):
                 )
             return MariaDBBackend()
         else:
-            raise ValueError(f"Unsupported dialect: {dialect}")
+            raise ValueError(f"Unsupported engine: {engine}")
 
     def _create_config(
         self,
-        dialect: str,
+        engine: str,
         path: str | None,
         host: str | None,
         port: int | None,
@@ -480,14 +667,14 @@ class SqlExecutor(BlockExecutor):
         sqlite_pragmas: dict[str, str | int | bool] | None,
     ) -> ConnectionConfig:
         """Create connection configuration."""
-        dialect_enum = DatabaseDialect(dialect)
+        engine_enum = DatabaseEngine(engine)
 
         options: dict[str, Any] = {}
         if sqlite_pragmas:
             options["sqlite_pragmas"] = sqlite_pragmas
 
         return ConnectionConfig(
-            dialect=dialect_enum,
+            dialect=engine_enum,
             path=path,
             host=host,
             port=port,
@@ -499,87 +686,4 @@ class SqlExecutor(BlockExecutor):
             connect_timeout=connect_timeout,
             pool_size=pool_size,
             options=options,
-        )
-
-    async def _execute_operation(
-        self,
-        backend: DatabaseBackendBase,
-        operation: str,
-        sql: str,
-        params: Any,
-        isolation_level: str | None,
-    ) -> QueryResult:
-        """Execute the SQL operation based on operation type."""
-        if operation == "query":
-            return await backend.query(sql, params)
-
-        elif operation == "execute":
-            return await backend.execute(sql, params)
-
-        elif operation == "execute_many":
-            if not isinstance(params, list):
-                raise ValueError("execute_many requires params to be a list of parameter sets")
-            return await backend.execute_many(sql, params)
-
-        elif operation == "transaction":
-            return await self._execute_transaction(backend, sql, params, isolation_level)
-
-        elif operation == "script":
-            await backend.execute_script(sql)
-            return QueryResult()
-
-        else:
-            raise ValueError(f"Unknown operation: {operation}")
-
-    async def _execute_transaction(
-        self,
-        backend: DatabaseBackendBase,
-        sql: str,
-        params: Any,
-        isolation_level: str | None,
-    ) -> QueryResult:
-        """Execute multiple statements in a transaction."""
-        # Split SQL into statements
-        statements = [s.strip() for s in sql.split(";") if s.strip()]
-
-        # Prepare params for each statement
-        if params is None:
-            params_list = [None] * len(statements)
-        elif isinstance(params, list) and len(params) == len(statements):
-            params_list = params
-        else:
-            # Use same params for all statements
-            params_list = [params] * len(statements)
-
-        # Determine effective isolation level
-        effective_isolation = None
-        if isolation_level and isolation_level != "default":
-            effective_isolation = isolation_level
-
-        total_affected = 0
-        last_result = QueryResult()
-
-        await backend.begin_transaction(effective_isolation)
-        try:
-            for stmt, stmt_params in zip(statements, params_list):
-                # Detect if SELECT
-                if stmt.strip().upper().startswith("SELECT"):
-                    last_result = await backend.query(stmt, stmt_params)
-                else:
-                    result = await backend.execute(stmt, stmt_params)
-                    total_affected += result.affected_rows
-                    if result.last_insert_id is not None:
-                        last_result = result
-
-            await backend.commit()
-        except Exception:
-            await backend.rollback()
-            raise
-
-        return QueryResult(
-            rows=last_result.rows,
-            columns=last_result.columns,
-            row_count=last_result.row_count or total_affected,
-            affected_rows=total_affected,
-            last_insert_id=last_result.last_insert_id,
         )
