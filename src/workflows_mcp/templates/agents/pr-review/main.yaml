@@ -1,23 +1,23 @@
 name: agent-pr-review
 description: |
-  AI Autonomous agent for in-depth PR/MR review using fractal investigation.
+  AI Autonomous agent for in-depth PR/MR review using CORTEX cognitive architecture.
 
   This agent performs comprehensive code review by:
   1. Gathering context (cloning repo if URL provided, or using local repo)
-  2. Fractal investigation with recursive depth-based analysis
-  3. Automatic synthesis of all findings from memory tree
+  2. CORTEX cognitive cycle (CATEGORIZE → GATHER → REASON → ACT)
+  3. Synthesis of findings with evidence-based reasoning
   4. Optional posting of review comments to GitHub/GitLab
 
   Architecture:
-  - Uses investigation-agent for recursive, self-similar analysis
-  - Memory-centric: all findings accumulated in shared memory
-  - Parallel execution of sibling sub-investigations
-  - Progressive detail: outline at depth=0, full content at depth>0
+  - Uses cortex-cell for recursive cognitive processing
+  - Memory-first retrieval with facts (semantic) and evidence (episodic) memory
+  - "quality" category drives pipeline config: gather=focused, reason=evaluate, act=report
+  - Parallel child cell spawning for complex sub-investigations
 
   The workflow normalizes input early - regardless of whether you provide a URL
   or local repo path, all downstream processing uses a consistent local path.
 
-tags: ["agent", "review", "fractal", "investigation"]
+tags: ["agent", "review", "cortex", "cognitive"]
 
 inputs:
   url:
@@ -149,14 +149,15 @@ blocks:
         parent_task_id: "{{ get(blocks.state_management.outputs.task, 'task_id', '') }}"
 
   # ==========================================================================
-  # PHASE 2: Fractal Investigation
-  # Recursive investigation using investigation-agent (replaces initial_assessment,
-  # agent_investigation_loop, and synthesis)
+  # PHASE 2: CORTEX Cognitive Investigation
+  # Uses cortex-cell for recursive cognitive processing with 4-phase cycle:
+  # CATEGORIZE → GATHER → REASON → ACT
   # ==========================================================================
-  - id: extract_file_targets
+  - id: build_review_prompt
     type: Shell
     description: |
-      Extract file paths from changed_files categories for investigation scope.
+      Build a comprehensive PR review prompt for cortex-cell.
+      Includes changed files, diff excerpt, and focus area.
     depends_on:
       - context_gathering
     inputs:
@@ -165,68 +166,309 @@ blocks:
         import json
         import os
 
+        # Load context
         changed_files_json = os.environ.get('CHANGED_FILES', '{}')
+        pr_metadata_json = os.environ.get('PR_METADATA', '{}')
+        diff = os.environ.get('DIFF', '')
+        focus = os.environ.get('FOCUS', 'general')
+        threshold = os.environ.get('THRESHOLD', 'low')
 
-        try:
-            changed_files = json.loads(changed_files_json)
-        except json.JSONDecodeError:
-            changed_files = {}
+        def safe_json_loads(val, default={}):
+            """Handle potentially double-encoded JSON strings."""
+            if not val:
+                return default
+            try:
+                result = json.loads(val)
+                # If result is still a string, it was double-encoded - decode again
+                if isinstance(result, str):
+                    result = json.loads(result)
+                return result
+            except (json.JSONDecodeError, TypeError):
+                return default
 
-        # Extract all file paths from categories
+        changed_files = safe_json_loads(changed_files_json, {})
+        pr_metadata = safe_json_loads(pr_metadata_json, {})
+
+        # Extract file list
         targets = []
         categories = changed_files.get('categories', [])
         for cat in categories:
             files = cat.get('files', [])
             targets.extend(files)
 
-        # Deduplicate while preserving order
-        seen = set()
-        unique_targets = []
-        for t in targets:
-            if t not in seen:
-                seen.add(t)
-                unique_targets.append(t)
+        # Deduplicate
+        targets = list(dict.fromkeys(targets))
 
-        # If no files found, use a wildcard pattern for common source files
-        if not unique_targets:
-            unique_targets = ["**/*.py", "**/*.ts", "**/*.js", "**/*.go", "**/*.rs"]
+        # Build focus-specific instructions
+        focus_instructions = {
+            'security': 'Focus on security vulnerabilities: SQL injection, XSS, auth issues, secrets exposure, input validation.',
+            'performance': 'Focus on performance issues: inefficient algorithms, N+1 queries, memory leaks, unnecessary operations.',
+            'architecture': 'Focus on architectural concerns: coupling, cohesion, design patterns, modularity, maintainability.',
+            'tests': 'Focus on test quality: coverage, edge cases, test isolation, assertions, mocking practices.',
+            'general': 'Perform a comprehensive review covering code quality, best practices, potential bugs, and maintainability.'
+        }.get(focus, 'Perform a comprehensive review covering code quality, best practices, potential bugs, and maintainability.')
 
-        print(json.dumps({
-            'targets': unique_targets,
-            'count': len(unique_targets)
-        }))
+        # Truncate diff if too long (keep first 6000 chars for context)
+        diff_excerpt = diff[:6000] if len(diff) > 6000 else diff
+        diff_truncated = len(diff) > 6000
+
+        # Build the prompt
+        prompt_parts = [
+            "# PR Review Task",
+            "",
+            f"Review this pull request for **{focus}** issues.",
+            "",
+            focus_instructions,
+            "",
+            f"**Severity threshold:** Only report issues at **{threshold}** level or higher.",
+            "",
+        ]
+
+        if pr_metadata:
+            prompt_parts.extend([
+                "## PR Metadata",
+                f"- **Title:** {pr_metadata.get('title', 'N/A')}",
+                f"- **Author:** {pr_metadata.get('author', 'N/A')}",
+                f"- **Description:** {pr_metadata.get('description', 'N/A')[:500]}",
+                "",
+            ])
+
+        prompt_parts.extend([
+            "## Changed Files",
+            f"Total: {len(targets)} files",
+            "",
+        ])
+
+        for cat in categories:
+            cat_name = cat.get('category', 'other')
+            cat_files = cat.get('files', [])
+            if cat_files:
+                prompt_parts.append(f"**{cat_name}:** {', '.join(cat_files[:10])}" + ("..." if len(cat_files) > 10 else ""))
+
+        prompt_parts.extend([
+            "",
+            "## Diff Excerpt",
+            "```diff",
+            diff_excerpt,
+            "```",
+        ])
+
+        if diff_truncated:
+            prompt_parts.append(f"*(Diff truncated. Full diff is {len(diff)} characters)*")
+
+        prompt_parts.extend([
+            "",
+            "## Instructions",
+            "",
+            "1. Read the changed files to understand the modifications",
+            "2. Analyze for issues based on the focus area",
+            "3. For each finding, provide:",
+            "   - Specific file path and line number",
+            "   - Severity: critical, high, medium, low, or info",
+            "   - Clear description of the issue",
+            "   - Suggested fix or improvement",
+            "4. Be evidence-based - only report issues you can verify from the code",
+        ])
+
+        prompt = '\n'.join(prompt_parts)
+
+        result = {
+            'prompt': prompt,
+            'targets': targets,
+            'target_count': len(targets)
+        }
+
+        print(json.dumps(result))
         EOF
       env:
-        CHANGED_FILES: "{{ blocks.context_gathering.outputs.changed_files }}"
+        CHANGED_FILES: "{{ blocks.context_gathering.outputs.changed_files | tojson }}"
+        PR_METADATA: "{{ blocks.context_gathering.outputs.pr_metadata | tojson }}"
+        DIFF: "{{ blocks.context_gathering.outputs.diff }}"
+        FOCUS: "{{ inputs.focus | default('general') }}"
+        THRESHOLD: "{{ inputs.threshold }}"
 
   - id: investigation
     type: Workflow
     description: |
-      Fractal investigation using investigation-agent.
-      - At depth=0: reads file outlines, identifies areas for deep investigation
-      - Recurses in parallel for sub-investigations
-      - Synthesizes all findings from memory at root level
+      CORTEX cognitive investigation using cortex-cell.
+      The "quality" category will be auto-detected, providing:
+      - gather: {depth: focused, spawn: complex_only}
+      - reason: {goal: evaluate, spawn: uncertain_only}
+      - act: {trigger: findings_require, mode: report}
     depends_on:
       - context_gathering
-      - extract_file_targets
+      - build_review_prompt
     inputs:
-      workflow: investigation-agent
+      workflow: cortex-cell
       inputs:
-        scope:
-          type: "files"
-          targets: "{{ (blocks.extract_file_targets.outputs.stdout | fromjson).targets }}"
-          focus: "{{ inputs.focus | default('general') }}"
+        prompt: "{{ (blocks.build_review_prompt.outputs.stdout | fromjson).prompt }}"
         context:
           repo_path: "{{ blocks.context_gathering.outputs.repo_path }}"
           diff: "{{ blocks.context_gathering.outputs.diff }}"
+          pr_metadata: "{{ blocks.context_gathering.outputs.pr_metadata }}"
+          changed_files: "{{ blocks.context_gathering.outputs.changed_files }}"
           base_branch: "{{ blocks.context_gathering.outputs.base_branch }}"
           head_branch: "{{ blocks.context_gathering.outputs.head_branch }}"
-          pr_metadata: "{{ blocks.context_gathering.outputs.pr_metadata }}"
           focus: "{{ inputs.focus | default('general') }}"
+          threshold: "{{ inputs.threshold }}"
         depth: 0
         max_depth: "{{ inputs.max_depth }}"
+        iterations: 0
+        max_iterations: 3
+        confidence_threshold: 0.7
         state: "{{ blocks.state_management.outputs.state }}"
-        parent_task_id: "{{ get(blocks.state_management.outputs.task, 'task_id', '') }}"
+        parent_id: "{{ get(blocks.state_management.outputs.task, 'task_id', '') }}"
+        profile: "default"
+        permissions:
+          read: true
+          write: false
+          execute: false
+
+  # ==========================================================================
+  # PHASE 2b: Transform CORTEX synthesis to generate-report format
+  # Bridges the format difference between cortex-cell output and generate-report input
+  # ==========================================================================
+  - id: transform_synthesis
+    type: Shell
+    description: |
+      Transform CORTEX synthesis format to the format expected by generate-report.
+      Maps: findings→all_findings, summary→executive_summary, recommendations→action_items
+    depends_on:
+      - investigation
+    inputs:
+      command: |
+        python3 << 'EOF'
+        import json
+        import os
+
+        # Load CORTEX synthesis
+        synthesis_json = os.environ.get('CORTEX_SYNTHESIS', '{}')
+        threshold = os.environ.get('THRESHOLD', 'low').lower()
+
+        def safe_json_loads(val, default={}):
+            """Handle potentially double-encoded JSON strings."""
+            if not val:
+                return default
+            try:
+                result = json.loads(val)
+                # If result is still a string, it was double-encoded - decode again
+                if isinstance(result, str):
+                    result = json.loads(result)
+                return result
+            except (json.JSONDecodeError, TypeError):
+                return default
+
+        cortex_synthesis = safe_json_loads(synthesis_json, {})
+
+        # Severity order for filtering and risk assessment
+        SEVERITY_ORDER = ['critical', 'high', 'medium', 'low', 'info']
+
+        # Get threshold index
+        try:
+            threshold_idx = SEVERITY_ORDER.index(threshold)
+        except ValueError:
+            threshold_idx = 3  # Default to 'low'
+
+        # Extract CORTEX fields
+        cortex_findings = cortex_synthesis.get('findings', [])
+        summary = cortex_synthesis.get('summary', 'No synthesis available.')
+        risk_level = cortex_synthesis.get('risk_level', 'info')
+        recommendations = cortex_synthesis.get('recommendations', [])
+        actions_needed = cortex_synthesis.get('actions_needed', False)
+
+        # Transform findings from CORTEX format to generate-report format
+        all_findings = []
+        severity_counts = {s: 0 for s in SEVERITY_ORDER}
+
+        for f in cortex_findings:
+            severity = f.get('severity', 'info').lower()
+            if severity not in SEVERITY_ORDER:
+                severity = 'info'
+
+            # Filter by threshold
+            severity_idx = SEVERITY_ORDER.index(severity)
+            if severity_idx > threshold_idx:
+                continue
+
+            severity_counts[severity] += 1
+
+            # Parse evidence chain for file_path and line_number
+            evidence_chain = f.get('evidence_chain', [])
+            file_path = ''
+            line_number = None
+
+            for ev in evidence_chain:
+                if isinstance(ev, str) and ':' in ev:
+                    parts = ev.split(':')
+                    file_path = parts[0]
+                    if len(parts) > 1 and parts[1].isdigit():
+                        line_number = int(parts[1])
+                    break
+
+            # Transform finding
+            transformed = {
+                'title': f.get('claim', 'Finding'),
+                'description': f.get('claim', ''),
+                'severity': severity,
+                'type': 'quality',  # Default type for CORTEX findings
+                'file_path': file_path,
+                'line_number': line_number,
+                'suggestion': '',  # CORTEX doesn't provide separate suggestions
+                'evidence_type': 'direct' if f.get('confidence', 0) >= 0.9 else 'inferred',
+                'confidence': f.get('confidence', 0.7),
+                'evidence_chain': evidence_chain,
+                'verified': f.get('confidence', 0) >= 0.7
+            }
+            all_findings.append(transformed)
+
+        # Calculate filtered out count
+        total_cortex_findings = len(cortex_findings)
+        filtered_out_count = total_cortex_findings - len(all_findings)
+
+        # Generate top issues (up to 5, highest severity first)
+        sorted_findings = sorted(all_findings, key=lambda x: SEVERITY_ORDER.index(x['severity']))
+        top_issues = []
+        for f in sorted_findings[:5]:
+            top_issues.append({
+                'title': f['title'],
+                'severity': f['severity'],
+                'description': f['description'],
+                'action_required': f['severity'] in ['critical', 'high']
+            })
+
+        # Determine approval (inverse of actions_needed, unless critical/high issues exist)
+        has_blocking = severity_counts['critical'] > 0 or severity_counts['high'] > 0
+        approve = not actions_needed and not has_blocking
+
+        # Build statistics
+        statistics = {
+            'findings_count': len(all_findings),
+            'files_analyzed': len(set(f['file_path'] for f in all_findings if f['file_path'])),
+            'severity_counts': {k: v for k, v in severity_counts.items() if v > 0},
+            'threshold_applied': threshold,
+            'investigations_count': 1,  # CORTEX handles internally
+            'depth_distribution': {'0': 1}  # Placeholder
+        }
+
+        # Build transformed synthesis in generate-report format
+        transformed_synthesis = {
+            'executive_summary': summary,
+            'risk_level': risk_level,
+            'approve': approve,
+            'approval_rationale': f"{'Approved: No blocking issues found.' if approve else 'Changes requested: ' + str(severity_counts['critical']) + ' critical and ' + str(severity_counts['high']) + ' high severity issues found.'}",
+            'top_issues': top_issues,
+            'action_items': recommendations,
+            'all_findings': all_findings,
+            'filtered_out_count': filtered_out_count,
+            'statistics': statistics,
+            'acknowledgments': []
+        }
+
+        print(json.dumps(transformed_synthesis))
+        EOF
+      env:
+        CORTEX_SYNTHESIS: "{{ blocks.investigation.outputs.synthesis | tojson }}"
+        THRESHOLD: "{{ inputs.threshold }}"
 
   # ==========================================================================
   # PHASE 3: Generate Report
@@ -235,15 +477,15 @@ blocks:
   - id: generate_report
     type: Workflow
     description: |
-      Generate markdown report from investigation synthesis.
+      Generate markdown report from transformed CORTEX synthesis.
       Formats findings, risk assessment, and approval decision.
     depends_on:
-      - investigation
+      - transform_synthesis
       - context_gathering
     inputs:
       workflow: generate-report
       inputs:
-        synthesis: "{{ blocks.investigation.outputs.synthesis | default({}) }}"
+        synthesis: "{{ blocks.transform_synthesis.outputs.stdout | fromjson }}"
         pr_metadata: "{{ blocks.context_gathering.outputs.pr_metadata | default({}) }}"
         focus: "{{ inputs.focus | default('general') }}"
         threshold: "{{ inputs.threshold }}"
@@ -258,7 +500,7 @@ blocks:
       Post review comments to the PR/MR if conditions are met.
       Uses platform info from context_gathering to determine API to use.
     depends_on:
-      - investigation
+      - transform_synthesis
       - generate_report
     inputs:
       workflow: post-review-comments
@@ -269,7 +511,7 @@ blocks:
         platform: "{{ blocks.context_gathering.outputs.platform }}"
         comment: "{{ inputs.comment }}"
         report: "{{ blocks.generate_report.outputs.report }}"
-        approve: "{{ blocks.investigation.outputs.synthesis.approve | default(false) }}"
+        approve: "{{ (blocks.transform_synthesis.outputs.stdout | fromjson).approve | default(false) }}"
         state: "{{ blocks.state_management.outputs.state }}"
         parent_task_id: "{{ get(blocks.state_management.outputs.task, 'task_id', '') }}"
 
@@ -300,7 +542,7 @@ outputs:
     description: "Local path where the repository is located."
 
   risk_level:
-    value: "{{ blocks.investigation.outputs.synthesis.risk_level | default('unknown') }}"
+    value: "{{ (blocks.transform_synthesis.outputs.stdout | fromjson).risk_level | default('unknown') }}"
     type: str
     description: "Overall risk level assessment: critical, high, medium, low, info."
 
@@ -315,11 +557,11 @@ outputs:
     description: "Task statistics (total_tasks, done, failed, total_duration, etc.)."
 
   synthesis:
-    value: "{{ blocks.investigation.outputs.synthesis | default({}) }}"
+    value: "{{ blocks.transform_synthesis.outputs.stdout | fromjson }}"
     type: dict
-    description: "Full synthesis results from investigation-agent."
+    description: "Full synthesis results from CORTEX cognitive investigation."
 
   investigation_stats:
-    value: "{{ blocks.investigation.outputs.synthesis.statistics | default({}) }}"
+    value: "{{ (blocks.transform_synthesis.outputs.stdout | fromjson).statistics | default({}) }}"
     type: dict
-    description: "Statistics from the fractal investigation."
+    description: "Statistics from the CORTEX cognitive investigation."

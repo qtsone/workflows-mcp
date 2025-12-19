@@ -32,15 +32,9 @@ inputs:
     required: false
     default: "content"
 
-  source_cell:
+  task_id:
     type: str
-    description: Cell ID that gathered this evidence.
-    required: false
-    default: ""
-
-  source_operation:
-    type: str
-    description: Capability name that produced this evidence.
+    description: Task ID for evidence tracking.
     required: false
     default: ""
 
@@ -71,7 +65,6 @@ blocks:
         inputs_data:
           key: "{{ inputs.key }}"
           evidence_type: "{{ inputs.evidence_type }}"
-          source_operation: "{{ inputs.source_operation }}"
         status: "running"
         caller: "cortex-evidence-store"
 
@@ -90,8 +83,7 @@ blocks:
         evidence_key: "{{ inputs.key }}"
         evidence_value: "{{ inputs.value }}"
         evidence_type: "{{ inputs.evidence_type }}"
-        evidence_source_cell: "{{ inputs.source_cell }}"
-        evidence_source_operation: "{{ inputs.source_operation }}"
+        task_id: "{{ inputs.task_id }}"
         caller: "cortex-evidence-store"
 
   # ===========================================================================

@@ -321,7 +321,7 @@ blocks:
       workflow: "{{ each.value.capability }}"
       inputs:
         state: "{{ blocks.register.outputs.state }}"
-        source_cell: "{{ blocks.register.outputs.task.task_id }}"
+        task_id: "{{ blocks.register.outputs.task.task_id }}"
         base_path: "{{ get(inputs.context, 'repo_path', '.') }}"
         patterns: "{{ get(each.value.inputs, 'patterns', []) }}"
         pattern: "{{ get(each.value.inputs, 'pattern', '') }}"

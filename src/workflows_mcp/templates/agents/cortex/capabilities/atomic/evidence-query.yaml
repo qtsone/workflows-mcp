@@ -5,7 +5,7 @@ description: |
 
   Supports filtering by:
   - evidence_type: content, outline, search
-  - source_cell: Cell that gathered the evidence
+  - task_id: Task that gathered the evidence
 
 tags: [cortex, capability, atomic, evidence, memory]
 
@@ -21,9 +21,9 @@ inputs:
     required: false
     default: ""
 
-  source_cell:
+  task_id:
     type: str
-    description: Filter by source cell ID.
+    description: Filter by task ID.
     required: false
     default: ""
 
@@ -59,7 +59,7 @@ blocks:
             side_effects: "false"
         inputs_data:
           evidence_type: "{{ inputs.evidence_type }}"
-          source_cell: "{{ inputs.source_cell }}"
+          task_id: "{{ inputs.task_id }}"
           limit: "{{ inputs.limit }}"
         status: "running"
         caller: "cortex-evidence-query"
@@ -77,7 +77,7 @@ blocks:
         op: evidence
         evidence_op: query
         evidence_query_type: "{{ inputs.evidence_type }}"
-        evidence_query_cell: "{{ inputs.source_cell }}"
+        task_id: "{{ inputs.task_id }}"
         evidence_limit: "{{ inputs.limit }}"
         caller: "cortex-evidence-query"
 

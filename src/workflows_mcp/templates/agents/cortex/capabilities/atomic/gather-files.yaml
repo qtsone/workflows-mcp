@@ -48,9 +48,9 @@ inputs:
     required: false
     default: ""
 
-  source_cell:
+  task_id:
     type: str
-    description: Cell ID gathering this evidence.
+    description: Task ID for evidence tracking.
     required: false
     default: ""
 
@@ -112,8 +112,7 @@ blocks:
         key: "{{ each.value.path }}"
         value: "{{ each.value | tojson }}"
         evidence_type: "{{ 'outline' if inputs.mode == 'outline' else 'content' }}"
-        source_cell: "{{ inputs.source_cell }}"
-        source_operation: "cortex-gather-files"
+        task_id: "{{ inputs.task_id }}"
 
   # ===========================================================================
   # STEP 4: Track completion

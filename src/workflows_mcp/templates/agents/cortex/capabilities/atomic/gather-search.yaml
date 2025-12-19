@@ -28,7 +28,7 @@ inputs:
     type: num
     description: Maximum matches to return.
     required: false
-    default: 50
+    default: 100
 
   state:
     type: str
@@ -42,9 +42,9 @@ inputs:
     required: false
     default: ""
 
-  source_cell:
+  task_id:
     type: str
-    description: Cell ID gathering this evidence.
+    description: Task ID for evidence tracking.
     required: false
     default: ""
 
@@ -225,8 +225,7 @@ blocks:
         key: "search:{{ inputs.pattern }}"
         value: "{{ blocks.search.outputs.stdout }}"
         evidence_type: "search"
-        source_cell: "{{ inputs.source_cell }}"
-        source_operation: "cortex-gather-search"
+        task_id: "{{ inputs.task_id }}"
 
   # ===========================================================================
   # STEP 4: Track completion

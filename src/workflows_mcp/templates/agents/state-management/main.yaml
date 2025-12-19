@@ -239,27 +239,9 @@ inputs:
     required: false
     default: "content"
 
-  evidence_source_cell:
-    type: str
-    description: Cell ID that gathered this evidence.
-    required: false
-    default: ""
-
-  evidence_source_operation:
-    type: str
-    description: Capability name that produced this evidence.
-    required: false
-    default: ""
-
   evidence_query_type:
     type: str
     description: Filter by evidence_type for query op.
-    required: false
-    default: ""
-
-  evidence_query_cell:
-    type: str
-    description: Filter by source_cell for query op.
     required: false
     default: ""
 
@@ -526,13 +508,12 @@ blocks:
                     value TEXT NOT NULL,
                     evidence_type TEXT NOT NULL
                         CHECK(evidence_type IN ('content', 'outline', 'search')),
-                    source_cell TEXT NOT NULL,
-                    source_operation TEXT,
+                    task_id TEXT NOT NULL,
                     byte_size INTEGER,
                     created_at TEXT DEFAULT (datetime('now'))
                 );
                 CREATE INDEX IF NOT EXISTS idx_evidence_type ON evidence(evidence_type);
-                CREATE INDEX IF NOT EXISTS idx_evidence_cell ON evidence(source_cell);
+                CREATE INDEX IF NOT EXISTS idx_evidence_task ON evidence(task_id);
 
                 -- Facts table (semantic memory)
                 CREATE TABLE IF NOT EXISTS facts (
@@ -871,10 +852,8 @@ blocks:
         key: "{{inputs.evidence_key}}"
         value: "{{inputs.evidence_value}}"
         evidence_type: "{{inputs.evidence_type}}"
-        source_cell: "{{inputs.evidence_source_cell}}"
-        source_operation: "{{inputs.evidence_source_operation}}"
+        task_id: "{{inputs.task_id}}"
         query_type: "{{inputs.evidence_query_type}}"
-        query_cell: "{{inputs.evidence_query_cell}}"
         limit: "{{inputs.evidence_limit}}"
 
   # ==========================================================================

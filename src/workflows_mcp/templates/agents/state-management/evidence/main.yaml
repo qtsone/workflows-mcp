@@ -47,15 +47,9 @@ inputs:
     required: false
     default: "content"
 
-  source_cell:
+  task_id:
     type: str
-    description: Cell ID that gathered this evidence.
-    required: false
-    default: ""
-
-  source_operation:
-    type: str
-    description: Capability name that produced this evidence.
+    description: Task ID
     required: false
     default: ""
 
@@ -63,12 +57,6 @@ inputs:
   query_type:
     type: str
     description: Filter by evidence_type for query op.
-    required: false
-    default: ""
-
-  query_cell:
-    type: str
-    description: Filter by source_cell for query op.
     required: false
     default: ""
 
@@ -87,7 +75,8 @@ blocks:
     condition: "{{ inputs.op == 'store' and inputs.value != '' }}"
     inputs:
       path: "{{tmp}}/evidence_value.json"
-      content: "{{ inputs.value }}"
+      content: |
+        {{ inputs.value }}
       overwrite: true
 
   - id: execute
@@ -97,6 +86,16 @@ blocks:
       - block: write_value_file
         required: false
     inputs:
+      env:
+        DB_PATH: "{{inputs.path}}"
+        OP: "{{inputs.op}}"
+        KEY: "{{inputs.key}}"
+        VALUE: "{{ '' if inputs.op == 'store' else inputs.value }}"
+        EVIDENCE_TYPE: "{{inputs.evidence_type}}"
+        TASK_ID: "{{inputs.task_id}}"
+        QUERY_TYPE: "{{inputs.query_type}}"
+        LIMIT: "{{inputs.limit}}"
+        TMP_DIR: "{{tmp}}"
       command: |
         python3 << 'EOF'
         import os, json, sqlite3
@@ -107,10 +106,8 @@ blocks:
         key = os.environ.get('KEY', '')
         tmp_dir = os.environ.get('TMP_DIR', '')
         evidence_type = os.environ.get('EVIDENCE_TYPE', 'content')
-        source_cell = os.environ.get('SOURCE_CELL', '')
-        source_operation = os.environ.get('SOURCE_OPERATION', '')
+        task_id = os.environ.get('TASK_ID', '')
         query_type = os.environ.get('QUERY_TYPE', '')
-        query_cell = os.environ.get('QUERY_CELL', '')
         limit = int(os.environ.get('LIMIT', '100'))
 
         # For store op, read value from temp file to avoid env var limits
@@ -134,9 +131,9 @@ blocks:
             byte_size = len(value_json.encode('utf-8')) if value_json else 0
             conn.execute('''
                 INSERT OR REPLACE INTO evidence
-                (key, value, evidence_type, source_cell, source_operation, byte_size, created_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?)
-            ''', (key, value_json, evidence_type, source_cell, source_operation, byte_size, now))
+                (key, value, evidence_type, task_id, byte_size, created_at)
+                VALUES (?, ?, ?, ?, ?, ?)
+            ''', (key, value_json, evidence_type, task_id, byte_size, now))
             conn.commit()
             result = {
                 'op': op,
@@ -158,7 +155,7 @@ blocks:
                     'key': row['key'],
                     'value': row['value'],
                     'evidence_type': row['evidence_type'],
-                    'source_cell': row['source_cell'],
+                    'task_id': row['task_id'],
                     'byte_size': row['byte_size']
                 }
             else:
@@ -170,9 +167,9 @@ blocks:
             if query_type:
                 sql += " AND evidence_type = ?"
                 params.append(query_type)
-            if query_cell:
-                sql += " AND source_cell = ?"
-                params.append(query_cell)
+            if task_id:
+                sql += " AND task_id = ?"
+                params.append(task_id)
             sql += f" ORDER BY created_at DESC LIMIT {limit}"
 
             rows = conn.execute(sql, params).fetchall()
@@ -182,8 +179,7 @@ blocks:
                 items.append({
                     'key': row['key'],
                     'evidence_type': row['evidence_type'],
-                    'source_cell': row['source_cell'],
-                    'source_operation': row['source_operation'],
+                    'task_id': row['task_id'],
                     'byte_size': row['byte_size'] or 0,
                     'value': row['value']
                 })
@@ -210,19 +206,6 @@ blocks:
         conn.close()
         print(json.dumps(result))
         EOF
-      env:
-        DB_PATH: "{{inputs.path}}"
-        OP: "{{inputs.op}}"
-        KEY: "{{inputs.key}}"
-        # VALUE not passed via env for store op - read from temp file instead
-        VALUE: "{{ '' if inputs.op == 'store' else inputs.value }}"
-        EVIDENCE_TYPE: "{{inputs.evidence_type}}"
-        SOURCE_CELL: "{{inputs.source_cell}}"
-        SOURCE_OPERATION: "{{inputs.source_operation}}"
-        QUERY_TYPE: "{{inputs.query_type}}"
-        QUERY_CELL: "{{inputs.query_cell}}"
-        LIMIT: "{{inputs.limit}}"
-        TMP_DIR: "{{tmp}}"
 
 outputs:
   result:
