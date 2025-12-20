@@ -299,8 +299,9 @@ blocks:
         prompt: "{{ inputs.prompt }}"
         response: "{{ blocks.attempt.outputs.response }}"
         model: "{{ blocks.attempt.outputs.metadata.model | default('unknown') }}"
-        tokens_prompt: "{{ blocks.attempt.outputs.metadata.usage.prompt_tokens | default(0) }}"
-        tokens_completion: "{{ blocks.attempt.outputs.metadata.usage.completion_tokens | default(0) }}"
+        prompt_tokens: "{{ blocks.attempt.outputs.metadata.usage.prompt_tokens | default(0) }}"
+        completion_tokens: "{{ blocks.attempt.outputs.metadata.usage.completion_tokens | default(0) }}"
+        duration_ms: "{{ blocks.attempt.metadata.duration_ms | default(0) }}"
 
   # ===========================================================================
   # STEP 4: Check if investigation needed

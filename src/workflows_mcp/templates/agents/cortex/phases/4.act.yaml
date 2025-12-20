@@ -386,8 +386,9 @@ blocks:
         prompt: "{{ inputs.prompt }}"
         response: "{{ blocks.plan.outputs.response }}"
         model: "{{ blocks.plan.outputs.metadata.model | default('unknown') }}"
-        tokens_prompt: "{{ blocks.plan.outputs.metadata.usage.prompt_tokens | default(0) }}"
-        tokens_completion: "{{ blocks.plan.outputs.metadata.usage.completion_tokens | default(0) }}"
+        prompt_tokens: "{{ blocks.plan.outputs.metadata.usage.prompt_tokens | default(0) }}"
+        completion_tokens: "{{ blocks.plan.outputs.metadata.usage.completion_tokens | default(0) }}"
+        duration_ms: "{{ blocks.plan.metadata.duration_ms | default(0) }}"
 
   - id: dispatch
     type: Workflow

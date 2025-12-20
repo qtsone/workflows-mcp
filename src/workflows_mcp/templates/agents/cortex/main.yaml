@@ -162,8 +162,8 @@ inputs:
           prompt: { type: text, required: true }
           response: { type: json }
           model: { type: text }
-          tokens_prompt: { type: integer }
-          tokens_completion: { type: integer }
+          prompt_tokens: { type: integer }
+          completion_tokens: { type: integer }
           duration_ms: { type: real }
           created_at: { type: timestamp, auto: created }
         indexes:
@@ -708,6 +708,31 @@ blocks:
         permissions: "{{ inputs.permissions }}"
 
   # ===========================================================================
+  # AGGREGATE TOKEN USAGE - Sum up all LLM calls for this cell
+  # ===========================================================================
+  - id: aggregate_tokens
+    type: Sql
+    description: Aggregate token usage from all LLM calls for this cell.
+    depends_on:
+      - block: early_termination
+        required: false
+      - block: reason
+        required: false
+      - block: act
+        required: false
+    inputs:
+      engine: sqlite
+      path: "{{ (blocks.init.outputs.stdout | fromjson).state_path }}"
+      sql: |
+        SELECT
+          COALESCE(SUM(prompt_tokens), 0) as total_prompt_tokens,
+          COALESCE(SUM(completion_tokens), 0) as total_completion_tokens,
+          COALESCE(SUM(prompt_tokens), 0) + COALESCE(SUM(completion_tokens), 0) as total_tokens,
+          COALESCE(SUM(duration_ms), 0) as total_duration_ms,
+          COUNT(*) as call_count
+        FROM llm_calls
+
+  # ===========================================================================
   # TRACK COMPLETION - store synthesis for child querying (model-based update)
   # ===========================================================================
   - id: track_done
@@ -719,6 +744,8 @@ blocks:
       - block: reason
         required: false
       - block: act
+        required: false
+      - block: aggregate_tokens
         required: false
     inputs:
       engine: sqlite
@@ -801,3 +828,15 @@ outputs:
     type: str
     description: "Path to state database."
     value: "{{ (blocks.init.outputs.stdout | fromjson).state_path }}"
+
+  token_usage:
+    type: dict
+    description: "Aggregated token usage across all LLM calls in this cell."
+    value: |
+      {{ {
+        'prompt_tokens': (blocks.aggregate_tokens.outputs.rows | default([{}]))[0].total_prompt_tokens | default(0),
+        'completion_tokens': (blocks.aggregate_tokens.outputs.rows | default([{}]))[0].total_completion_tokens | default(0),
+        'total_tokens': (blocks.aggregate_tokens.outputs.rows | default([{}]))[0].total_tokens | default(0),
+        'total_duration_ms': (blocks.aggregate_tokens.outputs.rows | default([{}]))[0].total_duration_ms | default(0),
+        'call_count': (blocks.aggregate_tokens.outputs.rows | default([{}]))[0].call_count | default(0)
+      } if blocks.aggregate_tokens.succeeded else {'prompt_tokens': 0, 'completion_tokens': 0, 'total_tokens': 0, 'total_duration_ms': 0, 'call_count': 0} }}
