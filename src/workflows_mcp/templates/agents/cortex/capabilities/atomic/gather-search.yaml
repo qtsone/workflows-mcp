@@ -232,7 +232,7 @@ blocks:
         key: "search:{{ inputs.pattern }}"
         value: "{{ blocks.search.outputs.stdout | fromjson }}"
         metadata: "{{ {'count': (blocks.search.outputs.stdout | fromjson).count, 'pattern': inputs.pattern} }}"
-        task_id: "{{ inputs.task_id if inputs.task_id else blocks.register.outputs.rows[0].id }}"
+        task_id: "{{ inputs.task_id if inputs.task_id else (blocks.register.outputs.rows | default([{}]))[0].id | default('') }}"
       conflict: [namespace, key]
 
   # ===========================================================================
@@ -241,10 +241,11 @@ blocks:
   - id: track_done
     type: Sql
     description: Mark capability complete in task tree.
-    condition: "{{ inputs.state | trim != '' }}"
     depends_on:
-      - block: search
+      - block: register
         required: true
+      - block: search
+        required: false
       - block: store_evidence
         required: false
     inputs:
@@ -253,10 +254,10 @@ blocks:
       model: "{{ inputs.models.task }}"
       op: update
       where:
-        id: "{{ blocks.register.outputs.rows[0].id }}"
+        id: "{{ (blocks.register.outputs.rows | default([{}]))[0].id | default('') }}"
       data:
-        status: done
-        outputs: "{{ {'count': (blocks.search.outputs.stdout | fromjson).count, 'pattern': inputs.pattern, 'evidence_stored': blocks.store_evidence.succeeded | default(false)} }}"
+        status: "{{ 'done' if blocks.search.succeeded else 'failed' }}"
+        outputs: "{{ {'count': (blocks.search.outputs.stdout | fromjson).count if blocks.search.succeeded else 0, 'pattern': inputs.pattern, 'evidence_stored': blocks.store_evidence.succeeded | default(false), 'error': blocks.search.metadata.message | default('')} }}"
 
 outputs:
   matches:
@@ -285,7 +286,7 @@ outputs:
     description: Whether evidence was stored.
 
   task_id:
-    value: "{{ blocks.register.outputs.rows[0].id | default('') }}"
+    value: "{{ (blocks.register.outputs.rows | default([{}]))[0].id | default('') }}"
     type: str
     description: Task ID of this capability invocation.
 

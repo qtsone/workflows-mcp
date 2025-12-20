@@ -41,6 +41,18 @@ inputs:
       You are the categorization module of a recursive cognitive system (CORTEX).
       Your role is to classify prompts to determine the optimal processing strategy.
 
+      ## Critical Mindset
+      Before committing to high confidence, ask yourself:
+      - "Do I actually have evidence for this classification?"
+      - If the query mentions specific files, code, or implementation details - you likely need investigation
+      - Express uncertainty generously - it's better to investigate than to guess
+
+      ## When to Express Uncertainty
+      - References to specific code, files, or implementation details
+      - Questions about "how" something works internally
+      - Any technical claims that require reading actual code
+      - Planning or architectural questions
+
       Be honest about your confidence. If you're uncertain about the category,
       set uncertainty.exists = true and provide a specific question that would
       help clarify the classification.
@@ -107,34 +119,24 @@ inputs:
 
 blocks:
   # ===========================================================================
-  # STEP 1: Generate Phase Task ID
-  # ===========================================================================
-  - id: gen_phase_id
-    type: Shell
-    description: Generate UUID for this phase task.
-    inputs:
-      command: python3 -c "import uuid; print(str(uuid.uuid4())[:8])"
-
-  # ===========================================================================
-  # STEP 2: Register Phase Task (direct Sql)
+  # STEP 1: Register Phase Task (model-based insert with auto UUID)
   # ===========================================================================
   - id: register_phase
     type: Sql
     description: Register this phase in the task tree.
-    depends_on: [gen_phase_id]
     inputs:
       engine: sqlite
       path: "{{ inputs.state }}"
-      sql: |
-        INSERT INTO tasks (id, parent_id, kind, name, metadata, inputs, status, depth)
-        VALUES (?, ?, 'phase', 'categorize', ?, ?, 'running', ?)
-        RETURNING id, parent_id, kind, name, status, depth, created_at
-      params:
-        - "task-{{ blocks.gen_phase_id.outputs.stdout | trim }}"
-        - "{{ inputs.parent_id if inputs.parent_id else none }}"
-        - "{{ {'labels': {'phase_order': 1}} | tojson }}"
-        - "{{ {'prompt': inputs.prompt} | tojson }}"
-        - "{{ inputs.depth }}"
+      model: "{{ inputs.models.task }}"
+      op: insert
+      data:
+        parent_id: "{{ inputs.parent_id if inputs.parent_id else none }}"
+        kind: phase
+        name: categorize
+        metadata: "{{ {'labels': {'phase_order': 1}} }}"
+        inputs: "{{ {'prompt': inputs.prompt} }}"
+        status: running
+        depth: "{{ inputs.depth }}"
 
   # ===========================================================================
   # STEP 3: Retrieve memory (direct Sql query)
@@ -206,22 +208,32 @@ blocks:
 
         Classify into ONE category:
 
-        | Category | Description | Examples |
-        |----------|-------------|----------|
-        | existence | Check if something exists | "Does file X exist?", "Is there a config for Y?" |
-        | understanding | Learn about something | "What does X do?", "How does Y work?" |
-        | discovery | Find all instances | "Find all security issues", "List all API endpoints" |
-        | quality | Evaluate something | "Is this code good?", "Are there any bugs?" |
-        | planning | Create a plan | "How do I implement X?", "Plan the migration" |
-        | debugging | Find root cause | "Why does X fail?", "What causes the error?" |
-        | action | Execute something | "Fix the bug", "Implement feature X" |
+        | Category | Description | Evidence Needed? | Examples |
+        |----------|-------------|------------------|----------|
+        | existence | Check if something exists | Low | "Does file X exist?", "Is there a config for Y?" |
+        | understanding | Learn about something | **HIGH** | "What does X do?", "How does Y work?" |
+        | discovery | Find all instances | Medium | "Find all security issues", "List all API endpoints" |
+        | quality | Evaluate something | **HIGH** | "Is this code good?", "Are there any bugs?" |
+        | planning | Create a plan | **HIGH** | "How do I implement X?", "Plan the migration" |
+        | debugging | Find root cause | **HIGH** | "Why does X fail?", "What causes the error?" |
+        | action | Execute something | **HIGH** | "Fix the bug", "Implement feature X" |
+
+        **Categories marked HIGH almost always require investigation to gather evidence.**
+        If classifying as understanding, quality, planning, debugging, or action without
+        having specific files/code in context, you should express uncertainty.
 
         ## Assessment
 
         Determine:
         1. **category**: Which category best fits this query?
-        2. **confidence**: How confident are you? (0.0-1.0)
-        3. **uncertainty**: If confidence < {{ inputs.confidence_threshold }}, what would help?
+        2. **confidence**: How confident are you? (0.0-1.0) - Be honest, lower is okay
+        3. **uncertainty**: If you have ANY uncertainty about the classification, describe what would help clarify it
+
+        **Confidence Guidelines:**
+        - 0.9-1.0: Absolutely certain, clear-cut classification
+        - 0.7-0.9: Fairly confident, minor ambiguity
+        - 0.5-0.7: Moderate uncertainty, would benefit from investigation
+        - Below 0.5: Significant uncertainty, investigation strongly recommended
 
         Note: ALL phases always run in CORTEX v2. Category determines HOW each phase
         behaves via pipeline_config, not WHICH phases run.
@@ -264,6 +276,31 @@ blocks:
                 type: string
             required: [exists]
         required: [result, confidence, uncertainty]
+
+  # ===========================================================================
+  # STEP 3b: Store LLM call for debugging
+  # ===========================================================================
+  - id: store_llm_call
+    type: Sql
+    description: Store LLM call details for debugging and analysis.
+    depends_on:
+      - block: attempt
+        required: false
+    condition: "{{ inputs.state | trim != '' and blocks.attempt.succeeded }}"
+    inputs:
+      engine: sqlite
+      path: "{{ inputs.state }}"
+      model: "{{ inputs.models.llm_call }}"
+      op: insert
+      data:
+        task_id: "{{ (blocks.register_phase.outputs.rows | default([{}]))[0].id | default('') }}"
+        phase: categorize
+        system_instructions: "{{ inputs.system | default('') }}"
+        prompt: "{{ inputs.prompt }}"
+        response: "{{ blocks.attempt.outputs.response }}"
+        model: "{{ blocks.attempt.outputs.metadata.model | default('unknown') }}"
+        tokens_prompt: "{{ blocks.attempt.outputs.metadata.usage.prompt_tokens | default(0) }}"
+        tokens_completion: "{{ blocks.attempt.outputs.metadata.usage.completion_tokens | default(0) }}"
 
   # ===========================================================================
   # STEP 4: Check if investigation needed
@@ -452,12 +489,15 @@ blocks:
     type: Sql
     description: Mark phase complete.
     depends_on:
+      - block: register_phase
+        required: true
       - block: attempt
         required: true
       - block: lookup_config
         required: true
       - block: self_recurse
         required: false
+    condition: "{{ blocks.register_phase.succeeded }}"
     inputs:
       engine: sqlite
       path: "{{ inputs.state }}"
@@ -469,7 +509,7 @@ blocks:
         WHERE id = ?
       params:
         - "{{ {'recursed': blocks.self_recurse.succeeded, 'category': blocks.attempt.outputs.response.result.category | default('understanding')} | tojson }}"
-        - "{{ blocks.register_phase.outputs.rows[0].id }}"
+        - "{{ (blocks.register_phase.outputs.rows | default([{}]))[0].id | default('') }}"
 
 # =============================================================================
 # OUTPUTS: Category + pipeline_config for downstream phases

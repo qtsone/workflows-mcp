@@ -181,7 +181,7 @@ blocks:
     continue_on_error: true
     inputs:
       workflow: "{{ inputs.capability }}"
-      inputs: "{{ {'state': inputs.state, 'models': inputs.models, 'base_path': inputs.base_path, 'permissions': inputs.permissions} | combine(inputs.inputs) }}"
+      inputs: "{{ {'state': inputs.state, 'models': inputs.models, 'parent_id': (blocks.register.outputs.rows | default([{}]))[0].id | default(''), 'base_path': inputs.base_path, 'permissions': inputs.permissions} | combine(inputs.inputs) }}"
 
   # ===========================================================================
   # STEP 5: Mark action complete (on success) - inlined from action-complete
@@ -227,8 +227,10 @@ blocks:
   - id: track_done
     type: Sql
     description: Mark capability complete in task tree.
-    condition: "{{ inputs.state | trim != '' }}"
+    condition: "{{ blocks.register.succeeded }}"
     depends_on:
+      - block: register
+        required: true
       - block: complete_action
         required: false
       - block: fail_action
@@ -239,7 +241,7 @@ blocks:
       model: "{{ inputs.models.task }}"
       op: update
       where:
-        id: "{{ blocks.register.outputs.rows[0].id }}"
+        id: "{{ (blocks.register.outputs.rows | default([{}]))[0].id | default('') }}"
       data:
         status: done
         outputs: "{{ {'action_id': (blocks.check_execute.outputs.stdout | fromjson).action_id, 'executed': (blocks.check_execute.outputs.stdout | fromjson).should_execute, 'cached': (not (blocks.check_execute.outputs.stdout | fromjson).should_execute), 'success': (blocks.execute_capability.succeeded or (not (blocks.check_execute.outputs.stdout | fromjson).should_execute))} }}"
@@ -285,6 +287,6 @@ outputs:
     description: Error message if action failed.
 
   task_id:
-    value: "{{ blocks.register.outputs.rows[0].id | default('') }}"
+    value: "{{ (blocks.register.outputs.rows | default([{}]))[0].id | default('') }}"
     type: str
     description: Task ID of this capability invocation.

@@ -85,7 +85,7 @@ blocks:
       data:
         task_id: "{{ inputs.cell_id }}"
         capability: "{{ inputs.capability }}"
-        inputs: "{{ inputs.inputs_json | fromjson }}"
+        inputs: "{{ inputs.inputs_json }}"
         status: pending
       conflict: [capability, inputs]
 
@@ -95,18 +95,21 @@ blocks:
   - id: track_done
     type: Sql
     description: Mark capability complete in task tree.
-    condition: "{{ inputs.state | trim != '' }}"
-    depends_on: [log]
+    depends_on:
+      - block: register
+        required: true
+      - block: log
+        required: false
     inputs:
       engine: sqlite
       path: "{{ inputs.state }}"
       model: "{{ inputs.models.task }}"
       op: update
       where:
-        id: "{{ blocks.register.outputs.rows[0].id }}"
+        id: "{{ (blocks.register.outputs.rows | default([{}]))[0].id | default('') }}"
       data:
-        status: done
-        outputs: "{{ {'action_id': blocks.log.outputs.rows[0].id | default(''), 'status': blocks.log.outputs.rows[0].status | default('')} }}"
+        status: "{{ 'done' if blocks.log.succeeded else 'failed' }}"
+        outputs: "{{ {'action_id': (blocks.log.outputs.rows | default([{}]))[0].id | default(''), 'status': (blocks.log.outputs.rows | default([{}]))[0].status | default(''), 'error': blocks.log.metadata.message | default('')} }}"
 
 outputs:
   success:
@@ -115,21 +118,21 @@ outputs:
     description: Whether operation succeeded.
 
   action_id:
-    value: "{{ blocks.log.outputs.rows[0].id | default('') }}"
+    value: "{{ (blocks.log.outputs.rows | default([{}]))[0].id | default('') }}"
     type: str
     description: ID of the logged action.
 
   status:
-    value: "{{ blocks.log.outputs.rows[0].status | default('') }}"
+    value: "{{ (blocks.log.outputs.rows | default([{}]))[0].status | default('') }}"
     type: str
     description: Current status of the action (pending=new, completed=cached).
 
   cached_result:
-    value: "{{ blocks.log.outputs.rows[0].result | default(none) | fromjson if blocks.log.outputs.rows[0].result else none }}"
+    value: "{{ (blocks.log.outputs.rows | default([{}]))[0].result | default(none) | fromjson if (blocks.log.outputs.rows | default([{}]))[0].result else none }}"
     type: dict
     description: Cached result if action was already completed.
 
   task_id:
-    value: "{{ blocks.register.outputs.rows[0].id | default('') }}"
+    value: "{{ (blocks.register.outputs.rows | default([{}]))[0].id | default('') }}"
     type: str
     description: Task ID of this capability invocation.

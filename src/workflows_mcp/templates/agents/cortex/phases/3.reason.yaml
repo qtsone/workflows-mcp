@@ -130,34 +130,24 @@ inputs:
 
 blocks:
   # ===========================================================================
-  # Generate Phase Task ID
-  # ===========================================================================
-  - id: gen_phase_id
-    type: Shell
-    description: Generate UUID for this phase task.
-    inputs:
-      command: python3 -c "import uuid; print(str(uuid.uuid4())[:8])"
-
-  # ===========================================================================
-  # STEP 1: Register Phase Task (direct Sql)
+  # STEP 1: Register Phase Task (model-based insert with auto UUID)
   # ===========================================================================
   - id: register_phase
     type: Sql
     description: Register this phase in the task tree.
-    depends_on: [gen_phase_id]
     inputs:
       engine: sqlite
       path: "{{ inputs.state }}"
-      sql: |
-        INSERT INTO tasks (id, parent_id, kind, name, metadata, inputs, status, depth)
-        VALUES (?, ?, 'phase', 'reason', ?, ?, 'running', ?)
-        RETURNING id, parent_id, kind, name, status, depth, created_at
-      params:
-        - "task-{{ blocks.gen_phase_id.outputs.stdout | trim }}"
-        - "{{ inputs.parent_id if inputs.parent_id else none }}"
-        - "{{ {'labels': {'phase_order': 3, 'goal': inputs.pipeline_config.reason.goal | default('explain')}} | tojson }}"
-        - "{{ {'prompt': inputs.prompt} | tojson }}"
-        - "{{ inputs.depth }}"
+      model: "{{ inputs.models.task }}"
+      op: insert
+      data:
+        parent_id: "{{ inputs.parent_id if inputs.parent_id else none }}"
+        kind: phase
+        name: reason
+        metadata: "{{ {'labels': {'phase_order': 3, 'goal': inputs.pipeline_config.reason.goal | default('explain')}} }}"
+        inputs: "{{ {'prompt': inputs.prompt} }}"
+        status: running
+        depth: "{{ inputs.depth }}"
 
   # ===========================================================================
   # STEP 2: Retrieve evidence (outlines) from memory table
@@ -305,7 +295,7 @@ blocks:
         {% for item in blocks.retrieve_outlines.outputs.rows %}
         ### {{ item.key }}
         ```
-        {{ (item.value | fromjson).content | default(item.value) }}
+        {{ item.value }}
         ```
         {% endfor %}
         {% endif %}
@@ -315,7 +305,7 @@ blocks:
         {% for item in blocks.retrieve_content.outputs.rows %}
         ### {{ item.key }}
         ```
-        {{ (item.value | fromjson).content | default(item.value) }}
+        {{ item.value }}
         ```
         {% endfor %}
         {% endif %}
@@ -513,6 +503,31 @@ blocks:
         required: [synthesis, response, confidence, uncertainty]
 
   # ===========================================================================
+  # STEP 5b: Store LLM call for debugging
+  # ===========================================================================
+  - id: store_llm_call
+    type: Sql
+    description: Store LLM call details for debugging and analysis.
+    depends_on:
+      - block: attempt
+        required: false
+    condition: "{{ inputs.state | trim != '' and blocks.attempt.succeeded }}"
+    inputs:
+      engine: sqlite
+      path: "{{ inputs.state }}"
+      model: "{{ inputs.models.llm_call }}"
+      op: insert
+      data:
+        task_id: "{{ (blocks.register_phase.outputs.rows | default([{}]))[0].id | default('') }}"
+        phase: reason
+        system_instructions: "{{ inputs.system | default('') }}"
+        prompt: "{{ inputs.prompt }}"
+        response: "{{ blocks.attempt.outputs.response }}"
+        model: "{{ blocks.attempt.outputs.metadata.model | default('unknown') }}"
+        tokens_prompt: "{{ blocks.attempt.outputs.metadata.usage.prompt_tokens | default(0) }}"
+        tokens_completion: "{{ blocks.attempt.outputs.metadata.usage.completion_tokens | default(0) }}"
+
+  # ===========================================================================
   # STEP 6: Check if investigation needed
   # ===========================================================================
   - id: needs_investigation
@@ -592,7 +607,7 @@ blocks:
       engine: sqlite
       path: "{{ inputs.state }}"
       sql: |
-        INSERT INTO facts (id, claim, evidence_type, confidence, grounding, task_id, status)
+        INSERT INTO facts (id, claim, evidence_type, severity, confidence, grounding, task_id, status)
         VALUES (
           lower(hex(randomblob(16))),
           ?,
@@ -600,15 +615,17 @@ blocks:
           ?,
           ?,
           ?,
+          ?,
           'active'
         )
-        RETURNING id, claim, confidence
+        RETURNING id, claim, severity, confidence
       params:
         - "{{ each.value.claim }}"
         - "{{ 'direct' if each.value.confidence >= 0.9 else ('inferred' if each.value.confidence >= 0.7 else 'assumed') }}"
+        - "{{ each.value.severity | default('info') }}"
         - "{{ each.value.confidence }}"
         - "{{ each.value.evidence_chain | default([]) | tojson }}"
-        - "{{ blocks.register_phase.outputs.rows[0].id }}"
+        - "{{ (blocks.register_phase.outputs.rows | default([{}]))[0].id | default('') }}"
 
   # ===========================================================================
   # STEP 6c: Check for conflicting facts (direct Sql with FTS5)
@@ -632,8 +649,8 @@ blocks:
         ORDER BY f.confidence DESC
         LIMIT 20
       params:
-        - "{{ blocks.register_phase.outputs.rows[0].id }}"
-        - "{{ blocks.register_phase.outputs.rows[0].id }}"
+        - "{{ (blocks.register_phase.outputs.rows | default([{}]))[0].id | default('') }}"
+        - "{{ (blocks.register_phase.outputs.rows | default([{}]))[0].id | default('') }}"
 
   # ===========================================================================
   # STEP 7: Spawn child cell to investigate
@@ -655,7 +672,7 @@ blocks:
         iterations: 0
         max_iterations: "{{ inputs.max_iterations }}"
         state: "{{ inputs.state }}"
-        parent_id: "{{ blocks.register_phase.outputs.rows[0].id }}"
+        parent_id: "{{ (blocks.register_phase.outputs.rows | default([{}]))[0].id | default('') }}"
         profile: "{{ inputs.profile }}"
         confidence_threshold: "{{ inputs.confidence_threshold }}"
         capabilities: "{{ inputs.capabilities }}"
@@ -720,7 +737,7 @@ blocks:
         iterations: 0
         max_iterations: "{{ inputs.max_iterations }}"
         state: "{{ inputs.state }}"
-        parent_id: "{{ blocks.register_phase.outputs.rows[0].id }}"
+        parent_id: "{{ (blocks.register_phase.outputs.rows | default([{}]))[0].id | default('') }}"
         profile: "{{ inputs.profile }}"
         confidence_threshold: "{{ inputs.confidence_threshold }}"
         capabilities: "{{ inputs.capabilities }}"
@@ -733,8 +750,10 @@ blocks:
     type: Sql
     description: Mark phase complete.
     depends_on:
-      - block: attempt
+      - block: register_phase
         required: true
+      - block: attempt
+        required: false
       - block: store_facts
         required: false
       - block: check_conflicts
@@ -748,13 +767,14 @@ blocks:
       path: "{{ inputs.state }}"
       sql: |
         UPDATE tasks
-        SET status = 'done',
+        SET status = ?,
             outputs = ?,
             updated_at = datetime('now')
         WHERE id = ?
       params:
-        - "{{ {'goal': inputs.pipeline_config.reason.goal | default('explain'), 'recursed': blocks.self_recurse.succeeded | default(false), 'questions_spawned': blocks.questions.metadata.count | default(0), 'questions_failed': blocks.questions.metadata.count_failed | default(0), 'facts_stored': blocks.store_facts.metadata.count | default(0), 'facts_recalled': blocks.recall_facts.outputs.row_count | default(0), 'has_conflicts': blocks.check_conflicts.outputs.row_count | default(0) > 0} | tojson }}"
-        - "{{ blocks.register_phase.outputs.rows[0].id }}"
+        - "{{ 'done' if blocks.attempt.succeeded else 'failed' }}"
+        - "{{ {'goal': inputs.pipeline_config.reason.goal | default('explain'), 'success': blocks.attempt.succeeded, 'recursed': blocks.self_recurse.succeeded | default(false), 'questions_spawned': blocks.questions.metadata.count | default(0), 'questions_failed': blocks.questions.metadata.count_failed | default(0), 'facts_stored': blocks.store_facts.metadata.count | default(0), 'facts_recalled': blocks.recall_facts.outputs.row_count | default(0), 'has_conflicts': blocks.check_conflicts.outputs.row_count | default(0) > 0, 'error': blocks.attempt.metadata.message | default('')} | tojson }}"
+        - "{{ (blocks.register_phase.outputs.rows | default([{}]))[0].id | default('') }}"
 
 # =============================================================================
 # OUTPUTS: synthesis + response + config_override

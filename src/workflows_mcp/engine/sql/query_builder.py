@@ -20,6 +20,7 @@ Example:
 
 from __future__ import annotations
 
+import json
 import secrets
 from datetime import UTC, datetime
 from typing import Any
@@ -104,6 +105,30 @@ class QueryBuilder:
 
         return result
 
+    def _serialize_json_columns(self, data: dict[str, Any]) -> dict[str, Any]:
+        """Serialize dict/list values for JSON columns.
+
+        SQLite and other databases can't bind Python dicts/lists directly.
+        This method JSON-serializes values for columns with type='json'.
+
+        Args:
+            data: Row data with potentially non-serialized values
+
+        Returns:
+            Data with JSON columns serialized to strings
+        """
+        result = dict(data)
+
+        # Build a lookup of column types
+        col_types = {col.name: col.type for col in self.schema.columns}
+
+        for key, value in result.items():
+            # Serialize dicts and lists for JSON columns
+            if col_types.get(key) == "json" and isinstance(value, (dict, list)):
+                result[key] = json.dumps(value)
+
+        return result
+
     def insert(self, data: dict[str, Any]) -> tuple[str, list[Any]]:
         """Generate INSERT statement.
 
@@ -116,6 +141,7 @@ class QueryBuilder:
         # Apply defaults and auto-generated values
         row = self._apply_defaults(data)
         row = self._generate_auto_values(row, is_insert=True)
+        row = self._serialize_json_columns(row)
 
         columns = list(row.keys())
         values = list(row.values())
@@ -200,8 +226,9 @@ class QueryBuilder:
         if not data:
             raise ValueError("UPDATE requires data to update")
 
-        # Apply auto-updated values
+        # Apply auto-updated values and serialize JSON columns
         row = self._generate_auto_values(data, is_insert=False)
+        row = self._serialize_json_columns(row)
 
         # Build SET clause
         set_parts = []
@@ -250,9 +277,10 @@ class QueryBuilder:
         if not conflict:
             raise ValueError("UPSERT requires conflict columns")
 
-        # Apply defaults and auto-generated values
+        # Apply defaults, auto-generated values, and serialize JSON columns
         row = self._apply_defaults(data)
         row = self._generate_auto_values(row, is_insert=True)
+        row = self._serialize_json_columns(row)
 
         columns = list(row.keys())
         values = list(row.values())

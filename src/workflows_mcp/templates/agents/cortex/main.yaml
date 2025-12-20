@@ -138,6 +138,7 @@ inputs:
           id: { type: text, primary: true, auto: uuid }
           claim: { type: text, required: true }
           evidence_type: { type: text, default: "inferred" }
+          severity: { type: text, default: "info" }
           confidence: { type: real, required: true }
           grounding: { type: json, default: "[]" }
           scope: { type: text }
@@ -148,6 +149,26 @@ inputs:
         indexes:
           - columns: [status]
           - columns: [task_id]
+          - columns: [severity]
+
+      # LLM Call Tracking - stores full prompts and responses for debugging
+      llm_call:
+        table: llm_calls
+        columns:
+          id: { type: text, primary: true, auto: uuid }
+          task_id: { type: text, required: true }
+          phase: { type: text, required: true }
+          system_instructions: { type: text }
+          prompt: { type: text, required: true }
+          response: { type: json }
+          model: { type: text }
+          tokens_prompt: { type: integer }
+          tokens_completion: { type: integer }
+          duration_ms: { type: real }
+          created_at: { type: timestamp, auto: created }
+        indexes:
+          - columns: [task_id]
+          - columns: [phase]
 
       action:
         table: actions
@@ -410,7 +431,7 @@ blocks:
     inputs:
       engine: sqlite
       path: "{{ (blocks.init.outputs.stdout | fromjson).state_path }}"
-      model: "{{ each.value }}"
+      model: "{{ each.value[1] }}"
       op: schema
 
   # ===========================================================================
@@ -538,7 +559,7 @@ blocks:
         INSERT OR REPLACE INTO metadata (key, value)
         VALUES ('root_task_id', ?), ('created_at', datetime('now'))
       params:
-        - "{{ blocks.register.outputs.rows[0].id }}"
+        - "{{ (blocks.register.outputs.rows | default([{}]))[0].id | default('') }}"
 
   - id: early_termination
     type: Shell
@@ -590,7 +611,7 @@ blocks:
         confidence_threshold: "{{ inputs.confidence_threshold }}"
         state: "{{ (blocks.init.outputs.stdout | fromjson).state_path }}"
         models: "{{ inputs.models }}"
-        parent_id: "{{ blocks.register.outputs.rows[0].id }}"
+        parent_id: "{{ (blocks.register.outputs.rows | default([{}]))[0].id | default('') }}"
         profile: "{{ inputs.profile }}"
         capabilities: "{{ blocks.filter_capabilities.outputs.stdout | fromjson }}"
         permissions: "{{ inputs.permissions }}"
@@ -618,7 +639,7 @@ blocks:
         confidence_threshold: "{{ inputs.confidence_threshold }}"
         state: "{{ blocks.categorize.outputs.state }}"
         models: "{{ inputs.models }}"
-        parent_id: "{{ blocks.register.outputs.rows[0].id }}"
+        parent_id: "{{ (blocks.register.outputs.rows | default([{}]))[0].id | default('') }}"
         profile: "{{ inputs.profile }}"
         capabilities: "{{ blocks.filter_capabilities.outputs.stdout | fromjson }}"
         permissions: "{{ inputs.permissions }}"
@@ -649,7 +670,7 @@ blocks:
         confidence_threshold: "{{ inputs.confidence_threshold }}"
         state: "{{ blocks.gather.outputs.state }}"
         models: "{{ inputs.models }}"
-        parent_id: "{{ blocks.register.outputs.rows[0].id }}"
+        parent_id: "{{ (blocks.register.outputs.rows | default([{}]))[0].id | default('') }}"
         profile: "{{ inputs.profile }}"
         capabilities: "{{ blocks.filter_capabilities.outputs.stdout | fromjson }}"
         permissions: "{{ inputs.permissions }}"
@@ -681,7 +702,7 @@ blocks:
         confidence_threshold: "{{ inputs.confidence_threshold }}"
         state: "{{ blocks.reason.outputs.state }}"
         models: "{{ inputs.models }}"
-        parent_id: "{{ blocks.register.outputs.rows[0].id }}"
+        parent_id: "{{ (blocks.register.outputs.rows | default([{}]))[0].id | default('') }}"
         profile: "{{ inputs.profile }}"
         capabilities: "{{ blocks.filter_capabilities.outputs.stdout | fromjson }}"
         permissions: "{{ inputs.permissions }}"
@@ -705,7 +726,7 @@ blocks:
       model: "{{ inputs.models.task }}"
       op: update
       where:
-        id: "{{ blocks.register.outputs.rows[0].id }}"
+        id: "{{ (blocks.register.outputs.rows | default([{}]))[0].id | default('') }}"
       data:
         status: "done"
         outputs: >-
@@ -774,7 +795,7 @@ outputs:
   task_id:
     type: str
     description: "This cell's task ID."
-    value: "{{ blocks.register.outputs.rows[0].id }}"
+    value: "{{ (blocks.register.outputs.rows | default([{}]))[0].id | default('') }}"
 
   state:
     type: str

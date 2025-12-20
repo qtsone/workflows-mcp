@@ -107,34 +107,24 @@ inputs:
 
 blocks:
   # ===========================================================================
-  # Generate Phase Task ID
-  # ===========================================================================
-  - id: gen_phase_id
-    type: Shell
-    description: Generate UUID for this phase task.
-    inputs:
-      command: python3 -c "import uuid; print(str(uuid.uuid4())[:8])"
-
-  # ===========================================================================
-  # Register Phase Task (direct Sql)
+  # STEP 1: Register Phase Task (model-based insert with auto UUID)
   # ===========================================================================
   - id: register
-    description: Register this phase in the task tree.
     type: Sql
-    depends_on: [gen_phase_id]
+    description: Register this phase in the task tree.
     inputs:
       engine: sqlite
       path: "{{ inputs.state }}"
-      sql: |
-        INSERT INTO tasks (id, parent_id, kind, name, metadata, inputs, status, depth)
-        VALUES (?, ?, 'phase', 'gather', ?, ?, 'running', ?)
-        RETURNING id, parent_id, kind, name, status, depth, created_at
-      params:
-        - "task-{{ blocks.gen_phase_id.outputs.stdout | trim }}"
-        - "{{ inputs.parent_id if inputs.parent_id else none }}"
-        - "{{ {'labels': {'phase_order': 2, 'strategy': inputs.pipeline_config.gather.depth | default('focused')}} | tojson }}"
-        - "{{ inputs | tojson }}"
-        - "{{ inputs.depth }}"
+      model: "{{ inputs.models.task }}"
+      op: insert
+      data:
+        parent_id: "{{ inputs.parent_id if inputs.parent_id else none }}"
+        kind: phase
+        name: gather
+        metadata: "{{ {'labels': {'phase_order': 2, 'strategy': inputs.pipeline_config.gather.depth | default('focused')}} }}"
+        inputs: "{{ inputs }}"
+        status: running
+        depth: "{{ inputs.depth }}"
 
   - id: build_schema
     type: Workflow
@@ -327,6 +317,31 @@ blocks:
 
       response_schema: "{{ blocks.build_schema.outputs.schema }}"
 
+  # ===========================================================================
+  # STEP 3b: Store LLM call for debugging
+  # ===========================================================================
+  - id: store_llm_call
+    type: Sql
+    description: Store LLM call details for debugging and analysis.
+    depends_on:
+      - block: plan
+        required: false
+    condition: "{{ inputs.state | trim != '' and blocks.plan.succeeded }}"
+    inputs:
+      engine: sqlite
+      path: "{{ inputs.state }}"
+      model: "{{ inputs.models.llm_call }}"
+      op: insert
+      data:
+        task_id: "{{ (blocks.register.outputs.rows | default([{}]))[0].id | default('') }}"
+        phase: gather
+        system_instructions: "{{ inputs.system | default('') }}"
+        prompt: "{{ inputs.prompt }}"
+        response: "{{ blocks.plan.outputs.response }}"
+        model: "{{ blocks.plan.outputs.metadata.model | default('unknown') }}"
+        tokens_prompt: "{{ blocks.plan.outputs.metadata.usage.prompt_tokens | default(0) }}"
+        tokens_completion: "{{ blocks.plan.outputs.metadata.usage.completion_tokens | default(0) }}"
+
   - id: dispatch
     type: Workflow
     description: ACT - Execute capability workflows in parallel via for_each.
@@ -342,7 +357,8 @@ blocks:
       inputs:
         state: "{{ inputs.state }}"
         models: "{{ inputs.models }}"
-        task_id: "{{ blocks.register.outputs.rows[0].id }}"
+        parent_id: "{{ (blocks.register.outputs.rows | default([{}]))[0].id | default('') }}"
+        task_id: "{{ (blocks.register.outputs.rows | default([{}]))[0].id | default('') }}"
         base_path: "{{ get(inputs.context, 'repo_path', '.') }}"
         patterns: "{{ get(each.value.inputs, 'patterns', []) }}"
         pattern: "{{ get(each.value.inputs, 'pattern', '') }}"
@@ -372,7 +388,7 @@ blocks:
         iterations: "{{ inputs.iterations }}"
         max_iterations: "{{ inputs.max_iterations }}"
         state: "{{ inputs.state }}"
-        parent_id: "{{ blocks.register.outputs.rows[0].id }}"
+        parent_id: "{{ (blocks.register.outputs.rows | default([{}]))[0].id | default('') }}"
         profile: "{{ inputs.profile }}"
         confidence_threshold: "{{ inputs.confidence_threshold }}"
         capabilities: "{{ inputs.capabilities }}"
@@ -438,7 +454,7 @@ blocks:
         max_iterations: "{{ inputs.max_iterations }}"
         confidence_threshold: "{{ inputs.confidence_threshold }}"
         state: "{{ inputs.state }}"
-        parent_id: "{{ blocks.register.outputs.rows[0].id }}"
+        parent_id: "{{ (blocks.register.outputs.rows | default([{}]))[0].id | default('') }}"
         profile: "{{ inputs.profile }}"
         capabilities: "{{ inputs.capabilities }}"
         permissions: "{{ inputs.permissions }}"
@@ -451,6 +467,8 @@ blocks:
     type: Sql
     description: Mark phase complete and compile result.
     depends_on:
+      - block: register
+        required: true
       - block: dispatch
         required: false
       - block: questions
@@ -459,7 +477,7 @@ blocks:
         required: false
       - block: recurse
         required: false
-    condition: "{{ not blocks.recurse.succeeded }}"
+    condition: "{{ blocks.register.succeeded }}"
     inputs:
       engine: sqlite
       path: "{{ inputs.state }}"
@@ -470,8 +488,18 @@ blocks:
             updated_at = datetime('now')
         WHERE id = ?
       params:
-        - "{{ {'strategy': blocks.plan.outputs.response.result.strategy | default(''), 'operations_executed': blocks.dispatch.metadata.count | default(0), 'operations_failed': blocks.dispatch.metadata.count_failed | default(0), 'questions_spawned': blocks.questions.metadata.count | default(0), 'questions_failed': blocks.questions.metadata.count_failed | default(0), 'confidence': blocks.plan.outputs.response.confidence | default(0), 'depth': inputs.depth} | tojson }}"
-        - "{{ blocks.register.outputs.rows[0].id }}"
+        - >-
+          {{ {
+            'strategy': blocks.plan.outputs.response.result.strategy | default(''),
+            'operations_executed': blocks.dispatch.metadata.count | default(0),
+            'operations_failed': blocks.dispatch.metadata.count_failed | default(0),
+            'questions_spawned': blocks.questions.metadata.count | default(0),
+            'questions_failed': blocks.questions.metadata.count_failed | default(0),
+            'confidence': blocks.plan.outputs.response.confidence | default(0),
+            'depth': inputs.depth,
+            'errors': blocks.dispatch.metadata.errors | default([])
+          } | tojson }}
+        - "{{ (blocks.register.outputs.rows | default([{}]))[0].id | default('') }}"
 
 outputs:
   result:

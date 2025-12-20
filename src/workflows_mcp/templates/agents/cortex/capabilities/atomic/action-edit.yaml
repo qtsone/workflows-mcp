@@ -97,18 +97,21 @@ blocks:
   - id: track_done
     type: Sql
     description: Mark capability complete in task tree.
-    condition: "{{ inputs.state | trim != '' }}"
-    depends_on: [edit]
+    depends_on:
+      - block: register
+        required: true
+      - block: edit
+        required: false
     inputs:
       engine: sqlite
       path: "{{ inputs.state }}"
       model: "{{ inputs.models.task }}"
       op: update
       where:
-        id: "{{ blocks.register.outputs.rows[0].id }}"
+        id: "{{ (blocks.register.outputs.rows | default([{}]))[0].id | default('') }}"
       data:
-        status: done
-        outputs: "{{ {'operations_applied': blocks.edit.outputs.operations_applied, 'lines_added': blocks.edit.outputs.lines_added, 'lines_removed': blocks.edit.outputs.lines_removed, 'success': blocks.edit.outputs.success} }}"
+        status: "{{ 'done' if blocks.edit.succeeded else 'failed' }}"
+        outputs: "{{ {'operations_applied': blocks.edit.outputs.operations_applied | default(0), 'lines_added': blocks.edit.outputs.lines_added | default(0), 'lines_removed': blocks.edit.outputs.lines_removed | default(0), 'success': blocks.edit.succeeded, 'error': blocks.edit.metadata.message | default('')} }}"
 
 outputs:
   operations_applied:
@@ -151,7 +154,7 @@ outputs:
     description: Action record for audit trail.
 
   task_id:
-    value: "{{ blocks.register.outputs.rows[0].id | default('') }}"
+    value: "{{ (blocks.register.outputs.rows | default([{}]))[0].id | default('') }}"
     type: str
     description: Task ID of this capability invocation.
 

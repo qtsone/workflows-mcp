@@ -96,18 +96,21 @@ blocks:
   - id: track_done
     type: Sql
     description: Mark capability complete in task tree.
-    condition: "{{ inputs.state | trim != '' }}"
-    depends_on: [call_llm]
+    depends_on:
+      - block: register
+        required: true
+      - block: call_llm
+        required: false
     inputs:
       engine: sqlite
       path: "{{ inputs.state }}"
       model: "{{ inputs.models.task }}"
       op: update
       where:
-        id: "{{ blocks.register.outputs.rows[0].id }}"
+        id: "{{ (blocks.register.outputs.rows | default([{}]))[0].id | default('') }}"
       data:
-        status: done
-        outputs: "{{ {'success': blocks.call_llm.outputs.success, 'model': blocks.call_llm.outputs.metadata.model | default('unknown'), 'total_tokens': blocks.call_llm.outputs.metadata.total_tokens | default(0)} }}"
+        status: "{{ 'done' if blocks.call_llm.succeeded else 'failed' }}"
+        outputs: "{{ {'success': blocks.call_llm.succeeded, 'model': blocks.call_llm.outputs.metadata.model | default('unknown') if blocks.call_llm.succeeded else 'N/A', 'total_tokens': blocks.call_llm.outputs.metadata.total_tokens | default(0), 'error': blocks.call_llm.metadata.message | default('')} }}"
 
 outputs:
   response:
@@ -131,6 +134,6 @@ outputs:
     description: Evidence reference for findings.
 
   task_id:
-    value: "{{ blocks.register.outputs.rows[0].id | default('') }}"
+    value: "{{ (blocks.register.outputs.rows | default([{}]))[0].id | default('') }}"
     type: str
     description: Task ID of this capability invocation.

@@ -125,18 +125,21 @@ blocks:
   - id: track_done
     type: Sql
     description: Mark capability complete in task tree.
-    condition: "{{ inputs.state | trim != '' }}"
-    depends_on: [detect]
+    depends_on:
+      - block: register
+        required: true
+      - block: detect
+        required: false
     inputs:
       engine: sqlite
       path: "{{ inputs.state }}"
       model: "{{ inputs.models.task }}"
       op: update
       where:
-        id: "{{ blocks.register.outputs.rows[0].id }}"
+        id: "{{ (blocks.register.outputs.rows | default([{}]))[0].id | default('') }}"
       data:
-        status: done
-        outputs: "{{ {'has_conflicts': (blocks.detect.outputs.stdout | fromjson).has_conflicts | default(false), 'conflict_count': (blocks.detect.outputs.stdout | fromjson).conflicts | default([]) | length, 'success': (blocks.detect.outputs.stdout | fromjson).success | default(false)} }}"
+        status: "{{ 'done' if blocks.detect.succeeded else 'failed' }}"
+        outputs: "{{ {'has_conflicts': (blocks.detect.outputs.stdout | fromjson).has_conflicts | default(false) if blocks.detect.succeeded else false, 'conflict_count': (blocks.detect.outputs.stdout | fromjson).conflicts | default([]) | length if blocks.detect.succeeded else 0, 'success': blocks.detect.succeeded, 'error': blocks.detect.metadata.message | default('')} }}"
 
 outputs:
   success:
@@ -160,6 +163,6 @@ outputs:
     description: Number of conflicts detected.
 
   task_id:
-    value: "{{ blocks.register.outputs.rows[0].id | default('') }}"
+    value: "{{ (blocks.register.outputs.rows | default([{}]))[0].id | default('') }}"
     type: str
     description: Task ID of this capability invocation.

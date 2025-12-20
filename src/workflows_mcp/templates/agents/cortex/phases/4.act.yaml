@@ -122,34 +122,24 @@ inputs:
 
 blocks:
   # ===========================================================================
-  # Generate Phase Task ID
-  # ===========================================================================
-  - id: gen_phase_id
-    type: Shell
-    description: Generate UUID for this phase task.
-    inputs:
-      command: python3 -c "import uuid; print(str(uuid.uuid4())[:8])"
-
-  # ===========================================================================
-  # Register Phase Task (direct Sql)
+  # STEP 1: Register Phase Task (model-based insert with auto UUID)
   # ===========================================================================
   - id: register
     type: Sql
     description: Register this phase in the task tree.
-    depends_on: [gen_phase_id]
     inputs:
       engine: sqlite
       path: "{{ inputs.state }}"
-      sql: |
-        INSERT INTO tasks (id, parent_id, kind, name, metadata, inputs, status, depth)
-        VALUES (?, ?, 'phase', 'act', ?, ?, 'running', ?)
-        RETURNING id, parent_id, kind, name, status, depth, created_at
-      params:
-        - "task-{{ blocks.gen_phase_id.outputs.stdout | trim }}"
-        - "{{ inputs.parent_id if inputs.parent_id else none }}"
-        - "{{ {'labels': {'phase_order': 4, 'trigger': inputs.pipeline_config.act.trigger | default('never'), 'mode': inputs.pipeline_config.act.mode | default('null')}} | tojson }}"
-        - "{{ {'prompt': inputs.prompt, 'iterations': inputs.iterations} | tojson }}"
-        - "{{ inputs.depth }}"
+      model: "{{ inputs.models.task }}"
+      op: insert
+      data:
+        parent_id: "{{ inputs.parent_id if inputs.parent_id else none }}"
+        kind: phase
+        name: act
+        metadata: "{{ {'labels': {'phase_order': 4, 'trigger': inputs.pipeline_config.act.trigger | default('never'), 'mode': inputs.pipeline_config.act.mode | default('null')}} }}"
+        inputs: "{{ {'prompt': inputs.prompt, 'iterations': inputs.iterations} }}"
+        status: running
+        depth: "{{ inputs.depth }}"
 
   - id: recall
     type: Sql
@@ -290,7 +280,15 @@ blocks:
         {% endfor %}
         {% endfor %}
         {% else %}
-        No capabilities available (check permissions).
+        **⚠️ NO WRITE/EXECUTE CAPABILITIES AVAILABLE**
+
+        This task appears to require file modifications or command execution, but:
+        - write permission: {{ inputs.permissions.write | default(false) }}
+        - execute permission: {{ inputs.permissions.execute | default(false) }}
+
+        If this task requires writing files or executing commands, you cannot proceed.
+        Set `complete: true` and explain in your response what permissions would be needed.
+        Only gather/read operations are available with current permissions.
         {% endif %}
 
         ## Edit Operation Examples (cortex-action-edit)
@@ -366,6 +364,31 @@ blocks:
 
       response_schema: "{{ blocks.build_schema.outputs.schema }}"
 
+  # ===========================================================================
+  # STEP 3b: Store LLM call for debugging
+  # ===========================================================================
+  - id: store_llm_call
+    type: Sql
+    description: Store LLM call details for debugging and analysis.
+    depends_on:
+      - block: plan
+        required: false
+    condition: "{{ inputs.state | trim != '' and blocks.plan.succeeded }}"
+    inputs:
+      engine: sqlite
+      path: "{{ inputs.state }}"
+      model: "{{ inputs.models.llm_call }}"
+      op: insert
+      data:
+        task_id: "{{ (blocks.register.outputs.rows | default([{}]))[0].id | default('') }}"
+        phase: act
+        system_instructions: "{{ inputs.system | default('') }}"
+        prompt: "{{ inputs.prompt }}"
+        response: "{{ blocks.plan.outputs.response }}"
+        model: "{{ blocks.plan.outputs.metadata.model | default('unknown') }}"
+        tokens_prompt: "{{ blocks.plan.outputs.metadata.usage.prompt_tokens | default(0) }}"
+        tokens_completion: "{{ blocks.plan.outputs.metadata.usage.completion_tokens | default(0) }}"
+
   - id: dispatch
     type: Workflow
     description: ACT - Execute capability workflows SEQUENTIALLY with deduplication.
@@ -382,7 +405,8 @@ blocks:
       inputs:
         state: "{{ inputs.state }}"
         models: "{{ inputs.models }}"
-        cell_id: "{{ blocks.register.outputs.rows[0].id }}"
+        parent_id: "{{ (blocks.register.outputs.rows | default([{}]))[0].id | default('') }}"
+        cell_id: "{{ (blocks.register.outputs.rows | default([{}]))[0].id | default('') }}"
         capability: "{{ each.value.capability }}"
         inputs: "{{ each.value.inputs }}"
         reason: "{{ each.value.reason | default('') }}"
@@ -412,7 +436,7 @@ blocks:
         iterations: 0
         max_iterations: "{{ inputs.max_iterations }}"
         state: "{{ inputs.state }}"
-        parent_id: "{{ blocks.register.outputs.rows[0].id }}"
+        parent_id: "{{ (blocks.register.outputs.rows | default([{}]))[0].id | default('') }}"
         profile: "{{ inputs.profile }}"
         confidence_threshold: "{{ inputs.confidence_threshold }}"
         capabilities: "{{ inputs.capabilities }}"
@@ -440,7 +464,7 @@ blocks:
         iterations: 0
         max_iterations: "{{ inputs.max_iterations }}"
         state: "{{ inputs.state }}"
-        parent_id: "{{ blocks.register.outputs.rows[0].id }}"
+        parent_id: "{{ (blocks.register.outputs.rows | default([{}]))[0].id | default('') }}"
         profile: "{{ inputs.profile }}"
         confidence_threshold: "{{ inputs.confidence_threshold }}"
         capabilities: "{{ inputs.capabilities }}"
@@ -483,6 +507,8 @@ blocks:
     type: Sql
     description: Mark phase complete and compile result.
     depends_on:
+      - block: register
+        required: true
       - block: plan
         required: false
       - block: dispatch
@@ -491,7 +517,7 @@ blocks:
         required: false
       - block: recurse
         required: false
-    condition: "{{ not blocks.recurse.succeeded }}"
+    condition: "{{ blocks.register.succeeded }}"
     inputs:
       engine: sqlite
       path: "{{ inputs.state }}"
@@ -503,7 +529,7 @@ blocks:
         WHERE id = ?
       params:
         - "{{ {'iterations': inputs.iterations, 'recursed': blocks.recurse.succeeded | default(false), 'action_taken': blocks.plan.succeeded, 'operations_dispatched': get(blocks.dispatch.metadata, 'count', 0), 'operations_failed': get(blocks.dispatch.metadata, 'count_failed', 0), 'questions_spawned': get(blocks.questions.metadata, 'count', 0), 'questions_failed': get(blocks.questions.metadata, 'count_failed', 0), 'confidence': blocks.plan.outputs.response.confidence | default(0)} | tojson }}"
-        - "{{ blocks.register.outputs.rows[0].id }}"
+        - "{{ (blocks.register.outputs.rows | default([{}]))[0].id | default('') }}"
 
 outputs:
   result:

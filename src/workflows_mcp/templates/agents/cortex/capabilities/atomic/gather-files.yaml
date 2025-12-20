@@ -117,9 +117,9 @@ blocks:
       data:
         namespace: "{{ 'outline' if inputs.mode == 'outline' else 'content' }}"
         key: "{{ each.value.path }}"
-        value: "{{ each.value }}"
-        metadata: "{{ {'byte_size': each.value.content | default('') | length, 'type': inputs.mode} }}"
-        task_id: "{{ inputs.task_id if inputs.task_id else blocks.register.outputs.rows[0].id }}"
+        value: "{{ each.value.content | default('') }}"
+        metadata: "{{ {'path': each.value.path, 'size_bytes': each.value.size_bytes | default(0), 'type': inputs.mode} }}"
+        task_id: "{{ inputs.task_id if inputs.task_id else (blocks.register.outputs.rows | default([{}]))[0].id | default('') }}"
       conflict: [namespace, key]
 
   # ===========================================================================
@@ -128,10 +128,11 @@ blocks:
   - id: track_done
     type: Sql
     description: Mark capability complete in task tree.
-    condition: "{{ inputs.state | trim != '' }}"
     depends_on:
-      - block: read
+      - block: register
         required: true
+      - block: read
+        required: false
       - block: store_evidence
         required: false
     inputs:
@@ -140,10 +141,10 @@ blocks:
       model: "{{ inputs.models.task }}"
       op: update
       where:
-        id: "{{ blocks.register.outputs.rows[0].id }}"
+        id: "{{ (blocks.register.outputs.rows | default([{}]))[0].id | default('') }}"
       data:
-        status: done
-        outputs: "{{ {'total_files': blocks.read.outputs.total_files, 'total_size_kb': blocks.read.outputs.total_size_kb, 'evidence_stored': blocks.store_evidence.metadata.count | default(0)} }}"
+        status: "{{ 'done' if blocks.read.succeeded else 'failed' }}"
+        outputs: "{{ {'total_files': blocks.read.outputs.total_files | default(0), 'total_size_kb': blocks.read.outputs.total_size_kb | default(0), 'evidence_stored': blocks.store_evidence.metadata.count | default(0), 'error': blocks.read.metadata.message | default('')} }}"
 
 outputs:
   files:
@@ -175,7 +176,7 @@ outputs:
     description: Number of files stored as evidence.
 
   task_id:
-    value: "{{ blocks.register.outputs.rows[0].id | default('') }}"
+    value: "{{ (blocks.register.outputs.rows | default([{}]))[0].id | default('') }}"
     type: str
     description: Task ID of this capability invocation.
 
