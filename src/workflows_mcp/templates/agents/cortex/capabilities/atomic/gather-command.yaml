@@ -3,7 +3,7 @@ description: |
   Atomic capability: Execute shell command for information gathering.
   Read-only operations only - no side effects.
 
-tags: [cortex, capability, atomic, gather, command]
+tags: [cortex, capability, atomic, gather, command, v2]
 
 inputs:
   command:

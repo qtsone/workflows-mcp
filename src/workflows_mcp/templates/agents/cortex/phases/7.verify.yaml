@@ -1,0 +1,369 @@
+# =============================================================================
+# CORTEX v2 Verify Phase
+# =============================================================================
+#
+# Re-runs the original command to verify that the fix worked.
+# If verification fails, triggers rollback and iteration.
+#
+# Flow:
+#   1. Re-run the same command from EXECUTE phase
+#   2. Compare results with original execution
+#   3. If passed → proceed to SYNTHESIZE
+#   4. If failed → rollback changes and iterate (if retries remaining)
+#
+# =============================================================================
+
+name: cortex-phase-verify
+description: "CORTEX v2 Verify Phase - re-run command to verify fix"
+
+tags: [cortex, phase, verify, v2]
+
+inputs:
+  prompt:
+    type: str
+    description: The original prompt.
+    required: true
+
+  context:
+    type: dict
+    description: Context including original execution and act result.
+    default: {}
+
+  pipeline_config:
+    type: dict
+    description: Pipeline configuration.
+    default: {}
+
+  state:
+    type: str
+    description: Path to SQLite state database.
+    required: true
+
+  models:
+    type: dict
+    description: Model definitions.
+    default: {}
+
+  parent_id:
+    type: str
+    description: Parent task ID.
+    default: ""
+
+  iterations:
+    type: num
+    description: Current iteration count.
+    default: 0
+
+  max_iterations:
+    type: num
+    description: Maximum verification retries.
+    default: 3
+
+blocks:
+  # ===========================================================================
+  # STEP 1: Register Phase Task
+  # ===========================================================================
+  - id: register_phase
+    type: Sql
+    description: Register this phase in the task tree.
+    inputs:
+      engine: sqlite
+      path: "{{ inputs.state }}"
+      model: "{{ inputs.models.task }}"
+      op: insert
+      data:
+        parent_id: "{{ inputs.parent_id if inputs.parent_id else none }}"
+        kind: phase
+        name: verify
+        metadata: "{{ {'labels': {'phase_order': 7}} }}"
+        inputs: "{{ {'prompt': inputs.prompt, 'iteration': inputs.iterations} }}"
+        status: running
+        iteration: "{{ inputs.iterations }}"
+
+  # ===========================================================================
+  # STEP 2: Get Original Command from Execution
+  # ===========================================================================
+  - id: get_original_command
+    type: Shell
+    description: Extract original command from execution context.
+    depends_on: [register_phase]
+    inputs:
+      command: |
+        python3 << 'EOF'
+        import json
+        import os
+
+        execution_json = os.environ.get('ORIGINAL_EXECUTION', '{}')
+
+        try:
+            execution = json.loads(execution_json) if execution_json else {}
+        except:
+            execution = {}
+
+        command = execution.get('command')
+        working_dir = execution.get('working_dir', '.')
+        command_type = execution.get('command_type', 'unknown')
+
+        has_command = command is not None and command.strip() != ''
+
+        print(json.dumps({
+            'has_command': has_command,
+            'command': command,
+            'working_dir': working_dir,
+            'command_type': command_type
+        }))
+        EOF
+      env:
+        ORIGINAL_EXECUTION: "{{ inputs.context.original_execution | tojson }}"
+
+  # ===========================================================================
+  # STEP 3: Re-run Command
+  # ===========================================================================
+  - id: run_verification
+    type: Shell
+    description: Re-run the original command.
+    depends_on: [get_original_command]
+    condition: "{{ (blocks.get_original_command.outputs.stdout | fromjson).has_command }}"
+    inputs:
+      command: |
+        cd "{{ (blocks.get_original_command.outputs.stdout | fromjson).working_dir | default('.') }}"
+
+        # Capture start time
+        START_MS=$(python3 -c "import time; print(int(time.time() * 1000))")
+
+        # Run the command
+        {{ (blocks.get_original_command.outputs.stdout | fromjson).command }} 2>&1
+        EXIT_CODE=$?
+
+        # Capture end time
+        END_MS=$(python3 -c "import time; print(int(time.time() * 1000))")
+        DURATION_MS=$((END_MS - START_MS))
+
+        echo "___EXIT_CODE___:$EXIT_CODE"
+        echo "___DURATION_MS___:$DURATION_MS"
+      timeout: 300 # 5 minute timeout (seconds)
+
+  # ===========================================================================
+  # STEP 4: Parse and Compare Results
+  # ===========================================================================
+  - id: parse_result
+    type: Shell
+    description: Parse verification result and compare with original.
+    depends_on:
+      - block: get_original_command
+        required: true
+      - block: run_verification
+        required: false
+    inputs:
+      command: |
+        python3 << 'EOF'
+        import json
+        import os
+        import re
+
+        has_command = os.environ.get('HAS_COMMAND', 'false').lower() == 'true'
+
+        if not has_command:
+            print(json.dumps({
+                'verified': True,
+                'passed': True,
+                'reason': 'no_command_to_verify',
+                'comparison': {}
+            }))
+            exit(0)
+
+        command = os.environ.get('COMMAND', '')
+        command_type = os.environ.get('COMMAND_TYPE', 'unknown')
+        raw_output = os.environ.get('RAW_OUTPUT', '')
+        original_json = os.environ.get('ORIGINAL_EXECUTION', '{}')
+
+        try:
+            original = json.loads(original_json) if original_json else {}
+        except:
+            original = {}
+
+        # Parse exit code and duration
+        lines = raw_output.split('\n')
+        exit_code = 1
+        duration_ms = 0
+        output_lines = []
+
+        for line in lines:
+            if line.startswith('___EXIT_CODE___:'):
+                try:
+                    exit_code = int(line.split(':')[1])
+                except:
+                    pass
+            elif line.startswith('___DURATION_MS___:'):
+                try:
+                    duration_ms = int(line.split(':')[1])
+                except:
+                    pass
+            else:
+                output_lines.append(line)
+
+        stdout = '\n'.join(output_lines)
+        success = exit_code == 0
+
+        # Extract summary based on command type
+        summary = {}
+        if command_type == 'test':
+            passed_match = re.search(r'(\d+) passed', stdout)
+            failed_match = re.search(r'(\d+) failed', stdout)
+            error_match = re.search(r'(\d+) error', stdout)
+
+            summary = {
+                'passed': int(passed_match.group(1)) if passed_match else 0,
+                'failed': int(failed_match.group(1)) if failed_match else 0,
+                'errors': int(error_match.group(1)) if error_match else 0
+            }
+        elif command_type in ['lint', 'lint_and_test']:
+            error_count = len(re.findall(r'^\S+:\d+:\d+:', stdout, re.MULTILINE))
+            summary = {'issues': error_count}
+
+        # Compare with original
+        original_summary = original.get('summary', {})
+        comparison = {
+            'exit_code': {
+                'before': original.get('exit_code'),
+                'after': exit_code,
+                'improved': exit_code == 0 and original.get('exit_code', 0) != 0
+            }
+        }
+
+        if command_type == 'test':
+            comparison['tests'] = {
+                'before': {
+                    'passed': original_summary.get('passed', 0),
+                    'failed': original_summary.get('failed', 0)
+                },
+                'after': {
+                    'passed': summary.get('passed', 0),
+                    'failed': summary.get('failed', 0)
+                },
+                'fixed': original_summary.get('failed', 0) - summary.get('failed', 0)
+            }
+
+        # Determine if verification passed
+        passed = success and summary.get('failed', 0) == 0 and summary.get('errors', 0) == 0
+
+        result = {
+            'verified': True,
+            'passed': passed,
+            'success': success,
+            'exit_code': exit_code,
+            'stdout': stdout[:50000],
+            'duration_ms': duration_ms,
+            'summary': summary,
+            'comparison': comparison,
+            'reason': 'all_tests_passing' if passed else f"verification_failed: {summary}"
+        }
+
+        print(json.dumps(result))
+        EOF
+      env:
+        HAS_COMMAND: "{{ (blocks.get_original_command.outputs.stdout | fromjson).has_command }}"
+        COMMAND: "{{ (blocks.get_original_command.outputs.stdout | fromjson).command | default('') }}"
+        COMMAND_TYPE: "{{ (blocks.get_original_command.outputs.stdout | fromjson).command_type | default('unknown') }}"
+        RAW_OUTPUT: "{{ blocks.run_verification.outputs.stdout | default('') }}"
+        ORIGINAL_EXECUTION: "{{ inputs.context.original_execution | tojson }}"
+
+  # ===========================================================================
+  # STEP 5: Store Verification in Database
+  # ===========================================================================
+  - id: store_verification
+    type: Sql
+    description: Store verification result.
+    depends_on: [parse_result]
+    inputs:
+      engine: sqlite
+      path: "{{ inputs.state }}"
+      model: "{{ inputs.models.verification }}"
+      op: insert
+      data:
+        task_id: "{{ (blocks.register_phase.outputs.rows | default([{}]))[0].id | default('') }}"
+        iteration: "{{ inputs.iterations }}"
+        passed: "{{ (blocks.parse_result.outputs.stdout | fromjson).passed }}"
+        criteria: "{{ {'exit_code': 0, 'no_failures': true} | tojson }}"
+        results: "{{ blocks.parse_result.outputs.stdout }}"
+
+  # ===========================================================================
+  # STEP 6: Store Execution Record
+  # ===========================================================================
+  - id: store_execution
+    type: Sql
+    description: Store verification execution in executions table.
+    depends_on: [parse_result]
+    condition: "{{ (blocks.parse_result.outputs.stdout | fromjson).verified }}"
+    inputs:
+      engine: sqlite
+      path: "{{ inputs.state }}"
+      model: "{{ inputs.models.execution }}"
+      op: insert
+      data:
+        task_id: "{{ (blocks.register_phase.outputs.rows | default([{}]))[0].id | default('') }}"
+        command: "{{ (blocks.get_original_command.outputs.stdout | fromjson).command | default('') }}"
+        working_dir: "{{ (blocks.get_original_command.outputs.stdout | fromjson).working_dir | default('.') }}"
+        exit_code: "{{ (blocks.parse_result.outputs.stdout | fromjson).exit_code | default(0) }}"
+        stdout: "{{ (blocks.parse_result.outputs.stdout | fromjson).stdout | default('') }}"
+        stderr: ""
+        duration_ms: "{{ (blocks.parse_result.outputs.stdout | fromjson).duration_ms | default(0) }}"
+        phase: "verify"
+        iteration: "{{ inputs.iterations }}"
+
+  # ===========================================================================
+  # STEP 7: Mark Phase Complete
+  # ===========================================================================
+  - id: track_done
+    type: Sql
+    description: Mark phase complete.
+    depends_on:
+      - block: register_phase
+        required: true
+      - block: parse_result
+        required: true
+      - block: store_verification
+        required: false
+      - block: store_execution
+        required: false
+    inputs:
+      engine: sqlite
+      path: "{{ inputs.state }}"
+      sql: |
+        UPDATE tasks
+        SET status = 'done',
+            outputs = ?,
+            updated_at = datetime('now')
+        WHERE id = ?
+      params:
+        - "{{ blocks.parse_result.outputs.stdout }}"
+        - "{{ (blocks.register_phase.outputs.rows | default([{}]))[0].id | default('') }}"
+
+# =============================================================================
+# OUTPUTS
+# =============================================================================
+outputs:
+  passed:
+    type: bool
+    description: "Whether verification passed."
+    value: "{{ (blocks.parse_result.outputs.stdout | fromjson).passed | default(false) }}"
+
+  comparison:
+    type: dict
+    description: "Comparison between original and verification runs."
+    value: "{{ (blocks.parse_result.outputs.stdout | fromjson).comparison | default({}) }}"
+
+  reason:
+    type: str
+    description: "Explanation for pass/fail."
+    value: "{{ (blocks.parse_result.outputs.stdout | fromjson).reason | default('unknown') }}"
+
+  needs_rollback:
+    type: bool
+    description: "Whether rollback is needed (verification failed)."
+    value: "{{ not (blocks.parse_result.outputs.stdout | fromjson).passed }}"
+
+  state:
+    type: str
+    description: "Path to state database."
+    value: "{{ inputs.state }}"

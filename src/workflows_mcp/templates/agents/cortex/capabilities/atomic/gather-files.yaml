@@ -4,7 +4,7 @@ description: |
   Wraps ReadFiles block with cortex-compatible interface.
   Automatically stores gathered content in episodic memory (evidence table).
 
-tags: [cortex, capability, atomic, gather, evidence]
+tags: [cortex, capability, atomic, gather, evidence, v2]
 
 inputs:
   patterns:

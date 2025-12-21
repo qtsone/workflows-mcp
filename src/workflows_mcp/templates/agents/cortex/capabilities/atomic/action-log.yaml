@@ -12,7 +12,7 @@ description: |
   - failed: Execution failed
   - rolled_back: Action was reversed
 
-tags: [cortex, capability, atomic, actions, deduplication]
+tags: [cortex, capability, atomic, actions, deduplication, v2]
 
 inputs:
   state:

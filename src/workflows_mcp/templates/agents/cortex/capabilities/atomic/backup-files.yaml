@@ -1,0 +1,127 @@
+# =============================================================================
+# CORTEX v2 Atomic Capability: Backup Files
+# =============================================================================
+#
+# Backs up files before modification for rollback support.
+# Stores file content in the backups table with hash for verification.
+#
+# =============================================================================
+
+name: cortex-backup-files
+description: "Backup files before modification for rollback support"
+
+tags: [cortex, capability, backup, atomic, v2]
+
+inputs:
+  files:
+    type: list
+    description: List of file paths to backup.
+    required: true
+
+  state:
+    type: str
+    description: Path to SQLite state database.
+    required: true
+
+  models:
+    type: dict
+    description: Model definitions.
+    default: {}
+
+  task_id:
+    type: str
+    description: Parent task ID for associating backups.
+    required: true
+
+  base_path:
+    type: str
+    description: Base path for relative file paths.
+    default: "."
+
+blocks:
+  - id: backup_files
+    type: Shell
+    description: Read and hash files for backup.
+    for_each: "{{ inputs.files }}"
+    for_each_mode: sequential
+    continue_on_error: true
+    inputs:
+      command: |
+        python3 << 'EOF'
+        import json
+        import os
+        import hashlib
+
+        file_path = os.environ.get('FILE_PATH', '')
+        base_path = os.environ.get('BASE_PATH', '.')
+
+        # Resolve full path
+        if not os.path.isabs(file_path):
+            full_path = os.path.join(base_path, file_path)
+        else:
+            full_path = file_path
+
+        result = {
+            'file_path': file_path,
+            'full_path': full_path,
+            'exists': False,
+            'content': None,
+            'hash': None,
+            'error': None
+        }
+
+        try:
+            if os.path.exists(full_path):
+                with open(full_path, 'r', encoding='utf-8', errors='replace') as f:
+                    content = f.read()
+                result['exists'] = True
+                result['content'] = content
+                result['hash'] = hashlib.sha256(content.encode()).hexdigest()
+            else:
+                result['exists'] = False
+                result['error'] = 'File does not exist'
+        except Exception as e:
+            result['error'] = str(e)
+
+        print(json.dumps(result))
+        EOF
+      env:
+        FILE_PATH: "{{ each.value }}"
+        BASE_PATH: "{{ inputs.base_path }}"
+
+  - id: store_backups
+    type: Sql
+    description: Store backups in database.
+    depends_on: [backup_files]
+    condition: "{{ blocks.backup_files.succeeded }}"
+    for_each: "{{ blocks.backup_files.outputs }}"
+    for_each_mode: sequential
+    continue_on_error: true
+    inputs:
+      engine: sqlite
+      path: "{{ inputs.state }}"
+      sql: |
+        INSERT INTO backups (id, task_id, file_path, content, hash)
+        VALUES (
+          lower(hex(randomblob(16))),
+          ?,
+          ?,
+          ?,
+          ?
+        )
+      params:
+        - "{{ inputs.task_id }}"
+        - "{{ (each.value.stdout | fromjson).file_path }}"
+        - "{{ (each.value.stdout | fromjson).content | default('') }}"
+        - "{{ (each.value.stdout | fromjson).hash | default('') }}"
+
+outputs:
+  backed_up:
+    type: num
+    description: "Number of files backed up."
+    value: "{{ blocks.store_backups.metadata.count | default(0) }}"
+
+  files:
+    type: list
+    description: "List of backed up files."
+    value: "{{ inputs.files }}"

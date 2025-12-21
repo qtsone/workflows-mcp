@@ -30,6 +30,7 @@ dependencies = [
     "openai>=1.68.0",
     "pathspec>=0.12.0",
     "tree-sitter-languages>=1.10.0",
+    "sqlite-vec>=0.1.6",
 ]
 [project.urls]
 Homepage = "https://github.com/qtsone/workflows-mcp"

@@ -1,0 +1,395 @@
+# =============================================================================
+# CORTEX v2 Execute Phase
+# =============================================================================
+#
+# The KEY architectural change in v2: Execute commands BEFORE reasoning.
+# This ensures REASON phase has actual command output, not just file contents.
+#
+# Example difference:
+#   v1: GATHER reads test files → REASON says "tests look good" → ACT runs pytest → 5 failures
+#   v2: GATHER reads test files → EXECUTE runs pytest → REASON says "5 tests failed in auth.py"
+#
+# This phase is PURE EXECUTION - no LLM reasoning:
+#   1. Infer appropriate command based on category + context
+#   2. Execute command
+#   3. Store results in executions table
+#   4. Pass results to REASON phase
+#
+# =============================================================================
+
+name: cortex-phase-execute
+description: "CORTEX v2 Execute Phase - runs commands BEFORE reasoning"
+
+tags: [cortex, phase, execute, v2]
+
+inputs:
+  prompt:
+    type: str
+    description: The original prompt.
+    required: true
+
+  context:
+    type: dict
+    description: Context including repo_path, category, gather_result.
+    default: {}
+
+  pipeline_config:
+    type: dict
+    description: Pipeline configuration from CATEGORIZE.
+    default: {}
+
+  state:
+    type: str
+    description: Path to SQLite state database.
+    required: true
+
+  models:
+    type: dict
+    description: Model definitions for CRUD operations.
+    default: {}
+
+  parent_id:
+    type: str
+    description: Parent task ID for task tree.
+    default: ""
+
+  profile:
+    type: str
+    description: LLM profile to use.
+    default: "default"
+
+  capabilities:
+    type: list
+    description: Available capabilities.
+    default: []
+
+  permissions:
+    type: dict
+    description: Permission flags.
+    default: { "read": true, "write": false, "execute": false }
+
+blocks:
+  # ===========================================================================
+  # STEP 1: Register Phase Task
+  # ===========================================================================
+  - id: register_phase
+    type: Sql
+    description: Register this phase in the task tree.
+    inputs:
+      engine: sqlite
+      path: "{{ inputs.state }}"
+      model: "{{ inputs.models.task }}"
+      op: insert
+      data:
+        parent_id: "{{ inputs.parent_id if inputs.parent_id else none }}"
+        kind: phase
+        name: execute
+        metadata: "{{ {'labels': {'phase_order': 3}} }}"
+        inputs: "{{ {'prompt': inputs.prompt} }}"
+        status: running
+        depth: 0
+
+  # ===========================================================================
+  # STEP 2: Infer Command to Execute
+  # ===========================================================================
+  - id: infer_command
+    type: Shell
+    description: Infer appropriate command based on category and context.
+    depends_on: [register_phase]
+    inputs:
+      command: |
+        python3 << 'EOF'
+        import json
+        import os
+
+        category = os.environ.get('CATEGORY', 'understanding')
+        repo_path = os.environ.get('REPO_PATH', '.')
+        prompt = os.environ.get('PROMPT', '').lower()
+        execute_type = os.environ.get('EXECUTE_TYPE', 'inferred')
+        execute_enabled = os.environ.get('EXECUTE_ENABLED', 'false').lower() == 'true'
+
+        if not execute_enabled:
+            print(json.dumps({
+                'should_execute': False,
+                'reason': 'execute_disabled',
+                'command': None
+            }))
+            exit(0)
+
+        # Infer command based on category and prompt keywords
+        command = None
+        command_type = None
+
+        # Check for explicit command type
+        if execute_type == 'lint_and_test':
+            # For quality category, run both lint and test
+            command = 'uv run ruff check . && uv run pytest -v'
+            command_type = 'lint_and_test'
+        elif execute_type == 'test':
+            command = 'uv run pytest -v'
+            command_type = 'test'
+        elif execute_type == 'lint':
+            command = 'uv run ruff check .'
+            command_type = 'lint'
+        elif execute_type == 'build':
+            command = 'uv run python -m build'
+            command_type = 'build'
+        elif execute_type == 'inferred':
+            # Infer from prompt keywords
+            # Priority 1: Specific tool names (unambiguous)
+            if any(kw in prompt for kw in ['ruff', 'flake8', 'pylint', 'eslint']):
+                command = 'uv run ruff check .'
+                command_type = 'lint'
+            elif any(kw in prompt for kw in ['pytest', 'unittest', 'jest', 'vitest']):
+                command = 'uv run pytest -v --tb=short'
+                command_type = 'test'
+            elif any(kw in prompt for kw in ['mypy', 'pyright', 'tsc']):
+                command = 'uv run mypy .'
+                command_type = 'typecheck'
+            # Priority 2: Action words (may be ambiguous)
+            elif any(kw in prompt for kw in ['lint', 'linter', 'linting', 'check style']):
+                command = 'uv run ruff check .'
+                command_type = 'lint'
+            elif any(kw in prompt for kw in ['test', 'tests', 'spec', 'specs']):
+                command = 'uv run pytest -v --tb=short'
+                command_type = 'test'
+            elif any(kw in prompt for kw in ['typecheck', 'type check', 'type-check', 'typing']):
+                command = 'uv run mypy .'
+                command_type = 'typecheck'
+            elif any(kw in prompt for kw in ['build', 'compile', 'package']):
+                command = 'uv run python -m build'
+                command_type = 'build'
+            elif any(kw in prompt for kw in ['install', 'setup', 'deps', 'dependencies']):
+                command = 'uv sync'
+                command_type = 'install'
+            # Priority 3: Category-based fallbacks
+            elif category == 'debugging':
+                command = 'uv run pytest -v --tb=long 2>&1 | head -200'
+                command_type = 'test'
+            elif category == 'quality':
+                command = 'uv run ruff check . && uv run pytest -v --tb=short'
+                command_type = 'lint_and_test'
+            elif category == 'action':
+                # No specific command detected, skip execution
+                pass
+
+        should_execute = command is not None
+
+        print(json.dumps({
+            'should_execute': should_execute,
+            'command': command,
+            'command_type': command_type,
+            'working_dir': repo_path,
+            'reason': 'command_inferred' if should_execute else 'no_command_detected'
+        }))
+        EOF
+      env:
+        CATEGORY: "{{ inputs.context.category | default('understanding') }}"
+        REPO_PATH: "{{ inputs.context.repo_path | default('.') }}"
+        PROMPT: "{{ inputs.prompt }}"
+        EXECUTE_TYPE: "{{ inputs.pipeline_config.execute.type | default('inferred') }}"
+        EXECUTE_ENABLED: "{{ inputs.pipeline_config.execute.enabled | default(false) }}"
+
+  # ===========================================================================
+  # STEP 3: Execute Command
+  # ===========================================================================
+  - id: run_command
+    type: Shell
+    description: Execute the inferred command.
+    depends_on: [infer_command]
+    condition: "{{ (blocks.infer_command.outputs.stdout | fromjson).should_execute }}"
+    inputs:
+      command: |
+        cd "{{ (blocks.infer_command.outputs.stdout | fromjson).working_dir | default('.') }}"
+
+        # Capture start time
+        START_MS=$(python3 -c "import time; print(int(time.time() * 1000))")
+
+        # Run the command, capturing stdout and stderr
+        {{ (blocks.infer_command.outputs.stdout | fromjson).command }} 2>&1
+        EXIT_CODE=$?
+
+        # Capture end time
+        END_MS=$(python3 -c "import time; print(int(time.time() * 1000))")
+        DURATION_MS=$((END_MS - START_MS))
+
+        # Output exit code and duration as final lines for parsing
+        echo "___EXIT_CODE___:$EXIT_CODE"
+        echo "___DURATION_MS___:$DURATION_MS"
+      timeout: 300 # 5 minute timeout (seconds)
+
+  # ===========================================================================
+  # STEP 4: Parse and Store Execution Result
+  # ===========================================================================
+  - id: parse_result
+    type: Shell
+    description: Parse command output into structured result.
+    depends_on:
+      - block: infer_command
+        required: true
+      - block: run_command
+        required: false
+    inputs:
+      command: |
+        python3 << 'EOF'
+        import json
+        import os
+        import re
+
+        should_execute = os.environ.get('SHOULD_EXECUTE', 'false').lower() == 'true'
+
+        if not should_execute:
+            print(json.dumps({
+                'executed': False,
+                'reason': os.environ.get('SKIP_REASON', 'execution_disabled'),
+                'command': None,
+                'exit_code': None,
+                'stdout': None,
+                'stderr': None,
+                'duration_ms': 0
+            }))
+            exit(0)
+
+        command = os.environ.get('COMMAND', '')
+        command_type = os.environ.get('COMMAND_TYPE', 'unknown')
+        working_dir = os.environ.get('WORKING_DIR', '.')
+        raw_output = os.environ.get('RAW_OUTPUT', '')
+
+        # Parse exit code and duration from output
+        lines = raw_output.split('\n')
+        exit_code = 1  # default to failure
+        duration_ms = 0
+        output_lines = []
+
+        for line in lines:
+            if line.startswith('___EXIT_CODE___:'):
+                try:
+                    exit_code = int(line.split(':')[1])
+                except:
+                    pass
+            elif line.startswith('___DURATION_MS___:'):
+                try:
+                    duration_ms = int(line.split(':')[1])
+                except:
+                    pass
+            else:
+                output_lines.append(line)
+
+        stdout = '\n'.join(output_lines)
+
+        # Determine success based on exit code
+        success = exit_code == 0
+
+        # Extract key information based on command type
+        summary = {}
+        if command_type == 'test':
+            # Parse pytest output
+            passed_match = re.search(r'(\d+) passed', stdout)
+            failed_match = re.search(r'(\d+) failed', stdout)
+            error_match = re.search(r'(\d+) error', stdout)
+
+            summary = {
+                'passed': int(passed_match.group(1)) if passed_match else 0,
+                'failed': int(failed_match.group(1)) if failed_match else 0,
+                'errors': int(error_match.group(1)) if error_match else 0
+            }
+        elif command_type in ['lint', 'lint_and_test']:
+            # Parse ruff/lint output
+            error_count = len(re.findall(r'^\S+:\d+:\d+:', stdout, re.MULTILINE))
+            summary = {'issues': error_count}
+
+        result = {
+            'executed': True,
+            'success': success,
+            'command': command,
+            'command_type': command_type,
+            'working_dir': working_dir,
+            'exit_code': exit_code,
+            'stdout': stdout[:50000],  # Limit to 50KB
+            'duration_ms': duration_ms,
+            'summary': summary
+        }
+
+        print(json.dumps(result))
+        EOF
+      env:
+        SHOULD_EXECUTE: "{{ (blocks.infer_command.outputs.stdout | fromjson).should_execute }}"
+        SKIP_REASON: "{{ (blocks.infer_command.outputs.stdout | fromjson).reason | default('unknown') }}"
+        COMMAND: "{{ (blocks.infer_command.outputs.stdout | fromjson).command | default('') }}"
+        COMMAND_TYPE: "{{ (blocks.infer_command.outputs.stdout | fromjson).command_type | default('unknown') }}"
+        WORKING_DIR: "{{ (blocks.infer_command.outputs.stdout | fromjson).working_dir | default('.') }}"
+        RAW_OUTPUT: "{{ blocks.run_command.outputs.stdout | default('') }}"
+
+  # ===========================================================================
+  # STEP 5: Store Execution in Database
+  # ===========================================================================
+  - id: store_execution
+    type: Sql
+    description: Store execution results in executions table.
+    depends_on: [parse_result]
+    condition: "{{ (blocks.parse_result.outputs.stdout | fromjson).executed }}"
+    inputs:
+      engine: sqlite
+      path: "{{ inputs.state }}"
+      model: "{{ inputs.models.execution }}"
+      op: insert
+      data:
+        task_id: "{{ (blocks.register_phase.outputs.rows | default([{}]))[0].id | default('') }}"
+        command: "{{ (blocks.parse_result.outputs.stdout | fromjson).command }}"
+        working_dir: "{{ (blocks.parse_result.outputs.stdout | fromjson).working_dir }}"
+        exit_code: "{{ (blocks.parse_result.outputs.stdout | fromjson).exit_code }}"
+        stdout: "{{ (blocks.parse_result.outputs.stdout | fromjson).stdout }}"
+        stderr: ""
+        duration_ms: "{{ (blocks.parse_result.outputs.stdout | fromjson).duration_ms }}"
+        phase: "execute"
+        iteration: 0
+
+  # ===========================================================================
+  # STEP 6: Mark Phase Complete
+  # ===========================================================================
+  - id: track_done
+    type: Sql
+    description: Mark phase complete.
+    depends_on:
+      - block: register_phase
+        required: true
+      - block: parse_result
+        required: true
+      - block: store_execution
+        required: false
+    inputs:
+      engine: sqlite
+      path: "{{ inputs.state }}"
+      sql: |
+        UPDATE tasks
+        SET status = 'done',
+            outputs = ?,
+            updated_at = datetime('now')
+        WHERE id = ?
+      params:
+        - "{{ blocks.parse_result.outputs.stdout }}"
+        - "{{ (blocks.register_phase.outputs.rows | default([{}]))[0].id | default('') }}"
+
+# =============================================================================
+# OUTPUTS
+# =============================================================================
+outputs:
+  result:
+    type: dict
+    description: "Execution result with command, exit_code, stdout, etc."
+    value: "{{ blocks.parse_result.outputs.stdout | fromjson }}"
+
+  executed:
+    type: bool
+    description: "Whether a command was executed."
+    value: "{{ (blocks.parse_result.outputs.stdout | fromjson).executed | default(false) }}"
+
+  success:
+    type: bool
+    description: "Whether the command succeeded (exit_code == 0)."
+    value: "{{ (blocks.parse_result.outputs.stdout | fromjson).success | default(false) }}"
+
+  state:
+    type: str
+    description: "Path to state database."
+    value: "{{ inputs.state }}"

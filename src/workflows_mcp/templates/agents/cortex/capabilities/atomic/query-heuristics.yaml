@@ -1,0 +1,475 @@
+# =============================================================================
+# CORTEX Query Heuristics Capability
+# =============================================================================
+#
+# Queries the heuristics table to find applicable learned rules.
+#
+# Uses a hybrid approach for matching:
+# 1. SQLite FTS5 for text-based keyword matching (BM25 ranking)
+# 2. sqlite-vec for semantic vector similarity (cosine distance)
+# 3. RRF fusion to combine both rankings
+#
+# Heuristics are filtered by:
+#   - confidence >= min_confidence (default 0.7)
+#   - times_applied >= min_applications (default 3)
+#   - status = 'active'
+#   - Optional: category_filter matches task category
+#
+# =============================================================================
+
+name: cortex-query-heuristics
+description: "Query learned heuristics using hybrid FTS5 + vector search"
+
+tags: [cortex, capability, heuristics, memory, fts5, vector]
+
+inputs:
+  query:
+    type: str
+    description: The query to match against heuristic rules.
+    required: true
+
+  category:
+    type: str
+    description: Task category to filter heuristics by (optional).
+    default: ""
+
+  min_confidence:
+    type: num
+    description: Minimum confidence threshold for heuristics.
+    default: 0.7
+
+  min_applications:
+    type: num
+    description: Minimum times applied to trust a heuristic.
+    default: 3
+
+  max_results:
+    type: num
+    description: Maximum number of heuristics to return.
+    default: 5
+
+  semantic_enabled:
+    type: bool
+    description: Enable semantic vector search (requires embedding profile).
+    default: true
+
+  profile:
+    type: str
+    description: LLM profile for embedding generation.
+    default: "embedding"
+
+  state:
+    type: str
+    description: Path to SQLite state database.
+    required: true
+
+  models:
+    type: dict
+    description: Model definitions for CRUD operations.
+    default: {}
+
+  parent_id:
+    type: str
+    description: Parent task ID for task tree.
+    default: ""
+
+  task_id:
+    type: str
+    description: Task ID for tracking.
+    default: ""
+
+blocks:
+  # ===========================================================================
+  # STEP 1: Register capability in task tree
+  # ===========================================================================
+  - id: register
+    type: Sql
+    description: Register this capability in the task tree.
+    condition: "{{ inputs.state | trim != '' }}"
+    inputs:
+      engine: sqlite
+      path: "{{ inputs.state }}"
+      model: "{{ inputs.models.task }}"
+      op: insert
+      data:
+        parent_id: "{{ inputs.parent_id if inputs.parent_id else none }}"
+        kind: capability
+        name: cortex-query-heuristics
+        metadata: "{{ {'labels': {'capability_type': 'memory', 'algorithm': 'fts5'}} }}"
+        inputs: "{{ {'query': inputs.query[:100], 'category': inputs.category, 'max_results': inputs.max_results} }}"
+        status: running
+        depth: 2
+
+  # ===========================================================================
+  # STEP 2: Extract keywords from query
+  # ===========================================================================
+  - id: extract_keywords
+    type: Shell
+    depends_on:
+      - block: register
+        required: false
+    inputs:
+      command: |
+        python3 << 'EOF'
+        import json
+        import os
+        import re
+
+        query = os.environ.get('QUERY', '')
+
+        # Common stop words to filter out
+        STOP_WORDS = {
+            'the', 'a', 'an', 'and', 'or', 'but', 'in', 'on', 'at', 'to', 'for',
+            'of', 'with', 'by', 'is', 'are', 'was', 'were', 'be', 'been', 'being',
+            'have', 'has', 'had', 'do', 'does', 'did', 'will', 'would', 'could',
+            'should', 'may', 'might', 'must', 'shall', 'can', 'this', 'that',
+            'these', 'those', 'it', 'its', 'what', 'which', 'who', 'whom', 'how',
+            'when', 'where', 'why', 'all', 'any', 'both', 'each', 'few', 'more',
+            'most', 'other', 'some', 'such', 'no', 'not', 'only', 'same', 'so',
+            'than', 'too', 'very', 'just', 'also', 'now', 'here', 'there', 'i',
+            'me', 'my', 'you', 'your', 'we', 'our', 'they', 'them', 'their'
+        }
+
+        # Extract words (alphanumeric + underscore)
+        words = re.findall(r'[a-zA-Z_][a-zA-Z0-9_]*', query.lower())
+
+        # Filter out stop words and short words
+        keywords = [w for w in words if w not in STOP_WORDS and len(w) > 2]
+
+        # Remove duplicates while preserving order
+        seen = set()
+        unique_keywords = []
+        for kw in keywords:
+            if kw not in seen:
+                seen.add(kw)
+                unique_keywords.append(kw)
+
+        # Build FTS5 query: OR together keywords for broad matching
+        # Use * suffix for prefix matching
+        fts_terms = [f'"{kw}"*' for kw in unique_keywords[:10]]
+        fts_query = ' OR '.join(fts_terms) if fts_terms else '""'
+
+        result = {
+            'keywords': unique_keywords[:10],
+            'fts_query': fts_query,
+            'keyword_count': len(unique_keywords)
+        }
+
+        print(json.dumps(result))
+        EOF
+      env:
+        QUERY: "{{ inputs.query }}"
+
+  # ===========================================================================
+  # STEP 3: Generate query embedding for vector search
+  # ===========================================================================
+  - id: query_embedding
+    type: Workflow
+    description: Generate embedding for semantic similarity search.
+    condition: "{{ inputs.semantic_enabled }}"
+    depends_on: [extract_keywords]
+    inputs:
+      workflow: cortex-generate-embedding
+      inputs:
+        text: "{{ inputs.query }}"
+        profile: "{{ inputs.profile }}"
+        state: "{{ inputs.state }}"
+        models: "{{ inputs.models }}"
+        parent_id: "{{ inputs.parent_id }}"
+
+  # ===========================================================================
+  # STEP 4: Query heuristics via FTS5
+  # ===========================================================================
+  - id: fts_search
+    type: Sql
+    description: Search heuristics using FTS5 full-text search.
+    depends_on: [extract_keywords]
+    condition: "{{ blocks.extract_keywords.succeeded and (blocks.extract_keywords.outputs.stdout | fromjson).keyword_count > 0 }}"
+    inputs:
+      engine: sqlite
+      path: "{{ inputs.state }}"
+      sql: |
+        SELECT
+          h.id,
+          h.rule,
+          h.confidence,
+          h.times_applied,
+          h.times_succeeded,
+          h.category_filter,
+          h.status,
+          h.source_episodes,
+          h.created_at,
+          -- Calculate effective confidence based on success rate
+          CASE
+            WHEN h.times_applied = 0 THEN h.confidence
+            ELSE h.confidence * (CAST(h.times_succeeded AS REAL) / h.times_applied)
+          END as effective_confidence,
+          -- FTS5 rank (lower = better match)
+          bm25(heuristics_fts) as fts_rank
+        FROM heuristics_fts
+        JOIN heuristics h ON h.id = heuristics_fts.id
+        WHERE
+          heuristics_fts MATCH ?
+          AND h.status = 'active'
+          AND h.confidence >= ?
+          AND h.times_applied >= ?
+          AND (h.category_filter IS NULL OR h.category_filter = '' OR h.category_filter = ?)
+        ORDER BY fts_rank ASC, effective_confidence DESC
+        LIMIT ?
+      params:
+        - "{{ (blocks.extract_keywords.outputs.stdout | fromjson).fts_query }}"
+        - "{{ inputs.min_confidence }}"
+        - "{{ inputs.min_applications }}"
+        - "{{ inputs.category }}"
+        - "{{ inputs.max_results }}"
+
+  # ===========================================================================
+  # STEP 5: Vector similarity search on heuristics
+  # ===========================================================================
+  - id: vector_search
+    type: Sql
+    description: Search heuristics using vector similarity.
+    depends_on: [query_embedding]
+    condition: "{{ inputs.semantic_enabled and blocks.query_embedding.succeeded and blocks.query_embedding.outputs.success }}"
+    inputs:
+      engine: sqlite
+      path: "{{ inputs.state }}"
+      sql: |
+        SELECT
+          h.id,
+          h.rule,
+          h.confidence,
+          h.times_applied,
+          h.times_succeeded,
+          h.category_filter,
+          h.status,
+          h.source_episodes,
+          h.created_at,
+          CASE
+            WHEN h.times_applied = 0 THEN h.confidence
+            ELSE h.confidence * (CAST(h.times_succeeded AS REAL) / h.times_applied)
+          END as effective_confidence,
+          vec_distance_cosine(h.embedding, ?) as vec_distance
+        FROM heuristics h
+        WHERE
+          h.status = 'active'
+          AND h.embedding IS NOT NULL
+          AND h.confidence >= ?
+          AND h.times_applied >= ?
+          AND (h.category_filter IS NULL OR h.category_filter = '' OR h.category_filter = ?)
+        ORDER BY vec_distance ASC
+        LIMIT ?
+      params:
+        - "{{ blocks.query_embedding.outputs.embedding | tojson }}"
+        - "{{ inputs.min_confidence }}"
+        - "{{ inputs.min_applications }}"
+        - "{{ inputs.category }}"
+        - "{{ inputs.max_results * 2 }}"
+
+  # ===========================================================================
+  # STEP 6: Fallback - Query by category if FTS returns nothing
+  # ===========================================================================
+  - id: category_fallback
+    type: Sql
+    description: Fallback to category-based query if FTS fails.
+    depends_on: [fts_search]
+    condition: "{{ not blocks.fts_search.succeeded or (blocks.fts_search.outputs.rows | default([]) | length) == 0 }}"
+    inputs:
+      engine: sqlite
+      path: "{{ inputs.state }}"
+      sql: |
+        SELECT
+          h.id,
+          h.rule,
+          h.confidence,
+          h.times_applied,
+          h.times_succeeded,
+          h.category_filter,
+          h.status,
+          h.source_episodes,
+          h.created_at,
+          CASE
+            WHEN h.times_applied = 0 THEN h.confidence
+            ELSE h.confidence * (CAST(h.times_succeeded AS REAL) / h.times_applied)
+          END as effective_confidence
+        FROM heuristics h
+        WHERE
+          h.status = 'active'
+          AND h.confidence >= ?
+          AND h.times_applied >= ?
+          AND (h.category_filter IS NULL OR h.category_filter = '' OR h.category_filter = ?)
+        ORDER BY effective_confidence DESC
+        LIMIT ?
+      params:
+        - "{{ inputs.min_confidence }}"
+        - "{{ inputs.min_applications }}"
+        - "{{ inputs.category }}"
+        - "{{ inputs.max_results }}"
+
+  # ===========================================================================
+  # STEP 7: Format results with RRF fusion
+  # ===========================================================================
+  - id: format_results
+    type: Shell
+    description: Merge FTS and vector results using RRF fusion.
+    depends_on:
+      - block: fts_search
+        required: false
+      - block: vector_search
+        required: false
+      - block: category_fallback
+        required: false
+    inputs:
+      command: |
+        python3 << 'EOF'
+        import json
+        import os
+
+        fts_rows_json = os.environ.get('FTS_ROWS', '[]')
+        vector_rows_json = os.environ.get('VECTOR_ROWS', '[]')
+        fallback_rows_json = os.environ.get('FALLBACK_ROWS', '[]')
+        max_results = int(os.environ.get('MAX_RESULTS', '5'))
+
+        try:
+            fts_rows = json.loads(fts_rows_json) if fts_rows_json else []
+        except:
+            fts_rows = []
+
+        try:
+            vector_rows = json.loads(vector_rows_json) if vector_rows_json else []
+        except:
+            vector_rows = []
+
+        try:
+            fallback_rows = json.loads(fallback_rows_json) if fallback_rows_json else []
+        except:
+            fallback_rows = []
+
+        # RRF fusion: combine FTS and vector rankings
+        # Formula: RRF_score = sum(1 / (k + rank)) where k=60
+        K = 60
+        rrf_scores = {}
+        heuristic_data = {}
+
+        # Add FTS rankings
+        for rank, row in enumerate(fts_rows, 1):
+            hid = row.get('id', '')
+            if hid:
+                rrf_scores[hid] = rrf_scores.get(hid, 0) + 1.0 / (K + rank)
+                heuristic_data[hid] = row
+
+        # Add vector rankings (weighted same as FTS)
+        for rank, row in enumerate(vector_rows, 1):
+            hid = row.get('id', '')
+            if hid:
+                rrf_scores[hid] = rrf_scores.get(hid, 0) + 1.0 / (K + rank)
+                if hid not in heuristic_data:
+                    heuristic_data[hid] = row
+
+        # If no hybrid results, use fallback
+        if not rrf_scores and fallback_rows:
+            for row in fallback_rows:
+                hid = row.get('id', '')
+                if hid:
+                    heuristic_data[hid] = row
+                    rrf_scores[hid] = row.get('effective_confidence', 0)
+
+        # Sort by RRF score and take top results
+        sorted_ids = sorted(rrf_scores.keys(), key=lambda x: rrf_scores[x], reverse=True)[:max_results]
+
+        # Determine source
+        if fts_rows and vector_rows:
+            source = 'hybrid_rrf'
+        elif fts_rows:
+            source = 'fts5'
+        elif vector_rows:
+            source = 'vector'
+        elif fallback_rows:
+            source = 'category_fallback'
+        else:
+            source = 'none'
+
+        heuristics = []
+        for hid in sorted_ids:
+            row = heuristic_data.get(hid, {})
+            heuristics.append({
+                'id': hid,
+                'rule': row.get('rule', ''),
+                'confidence': row.get('confidence', 0),
+                'effective_confidence': row.get('effective_confidence', row.get('confidence', 0)),
+                'times_applied': row.get('times_applied', 0),
+                'times_succeeded': row.get('times_succeeded', 0),
+                'success_rate': (
+                    row['times_succeeded'] / row['times_applied']
+                    if row.get('times_applied', 0) > 0 else 0
+                ),
+                'category_filter': row.get('category_filter', ''),
+                'source_episodes': row.get('source_episodes', []),
+                'rrf_score': rrf_scores.get(hid, 0)
+            })
+
+        result = {
+            'heuristics': heuristics,
+            'count': len(heuristics),
+            'source': source,
+            'has_results': len(heuristics) > 0
+        }
+
+        print(json.dumps(result))
+        EOF
+      env:
+        FTS_ROWS: "{{ blocks.fts_search.outputs.rows | default([]) | tojson }}"
+        VECTOR_ROWS: "{{ blocks.vector_search.outputs.rows | default([]) | tojson }}"
+        FALLBACK_ROWS: "{{ blocks.category_fallback.outputs.rows | default([]) | tojson }}"
+        MAX_RESULTS: "{{ inputs.max_results }}"
+
+  # ===========================================================================
+  # STEP 8: Track completion
+  # ===========================================================================
+  - id: track_done
+    type: Sql
+    description: Mark capability complete.
+    depends_on:
+      - block: register
+        required: true
+      - block: format_results
+        required: true
+    inputs:
+      engine: sqlite
+      path: "{{ inputs.state }}"
+      model: "{{ inputs.models.task }}"
+      op: update
+      where:
+        id: "{{ (blocks.register.outputs.rows | default([{}]))[0].id | default('') }}"
+      data:
+        status: "{{ 'done' if blocks.format_results.succeeded else 'failed' }}"
+        outputs: "{{ {'count': (blocks.format_results.outputs.stdout | fromjson).count if blocks.format_results.succeeded else 0, 'source': (blocks.format_results.outputs.stdout | fromjson).source if blocks.format_results.succeeded else 'none'} }}"
+
+# =============================================================================
+# OUTPUTS
+# =============================================================================
+outputs:
+  heuristics:
+    type: list
+    description: "Matched heuristics with confidence and success rate."
+    value: "{{ (blocks.format_results.outputs.stdout | fromjson).heuristics if blocks.format_results.succeeded else [] }}"
+
+  count:
+    type: num
+    description: "Number of heuristics found."
+    value: "{{ (blocks.format_results.outputs.stdout | fromjson).count if blocks.format_results.succeeded else 0 }}"
+
+  has_results:
+    type: bool
+    description: "Whether any heuristics were found."
+    value: "{{ (blocks.format_results.outputs.stdout | fromjson).has_results if blocks.format_results.succeeded else false }}"
+
+  source:
+    type: str
+    description: "Search method used (fts5, category_fallback, none)."
+    value: "{{ (blocks.format_results.outputs.stdout | fromjson).source if blocks.format_results.succeeded else 'none' }}"
+
+  state:
+    type: str
+    description: "Path to state database (passthrough)."
+    value: "{{ inputs.state }}"

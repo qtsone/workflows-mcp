@@ -1,0 +1,341 @@
+# =============================================================================
+# CORTEX Keyword Search Capability (BM25 Ranking)
+# =============================================================================
+#
+# Implements BM25-style keyword ranking for salience filtering.
+# BM25 (Best Matching 25) is a probabilistic ranking function that scores
+# documents based on:
+#   - Term frequency in the document
+#   - Document length normalization
+#   - Inverse document frequency (how rare the term is)
+#
+# Formula: score = IDF * (tf * (k1 + 1)) / (tf + k1 * (1 - b + b * dl/avgdl))
+#   where: k1=1.5 (term saturation), b=0.75 (length normalization)
+#
+# =============================================================================
+
+name: cortex-keyword-search
+description: "BM25-style keyword search for salience filtering"
+
+tags: [cortex, capability, salience, bm25, search]
+
+inputs:
+  query:
+    type: str
+    description: The search query to extract keywords from.
+    required: true
+
+  base_path:
+    type: str
+    description: Base directory to search in.
+    default: "."
+
+  file_patterns:
+    type: list
+    description: Glob patterns to include (e.g., ["*.py", "*.js"]).
+    default: []
+
+  max_results:
+    type: num
+    description: Maximum number of ranked results to return.
+    default: 50
+
+  state:
+    type: str
+    description: Path to SQLite state database.
+    default: ""
+
+  models:
+    type: dict
+    description: Model definitions for CRUD operations.
+    default: {}
+
+  parent_id:
+    type: str
+    description: Parent task ID for task tree.
+    default: ""
+
+  task_id:
+    type: str
+    description: Task ID for evidence tracking.
+    default: ""
+
+blocks:
+  # ===========================================================================
+  # STEP 1: Register capability in task tree
+  # ===========================================================================
+  - id: register
+    type: Sql
+    description: Register this capability in the task tree.
+    condition: "{{ inputs.state | trim != '' }}"
+    inputs:
+      engine: sqlite
+      path: "{{ inputs.state }}"
+      model: "{{ inputs.models.task }}"
+      op: insert
+      data:
+        parent_id: "{{ inputs.parent_id if inputs.parent_id else none }}"
+        kind: capability
+        name: cortex-keyword-search
+        metadata: "{{ {'labels': {'capability_type': 'salience', 'ranking': 'bm25'}} }}"
+        inputs: "{{ {'query': inputs.query, 'base_path': inputs.base_path, 'max_results': inputs.max_results} }}"
+        status: running
+        depth: 2
+
+  # ===========================================================================
+  # STEP 2: Execute BM25 search
+  # ===========================================================================
+  - id: search
+    type: Shell
+    depends_on:
+      - block: register
+        required: false
+    inputs:
+      command: |
+        python3 << 'EOF'
+        import json
+        import os
+        import subprocess
+        import re
+        import math
+        from collections import defaultdict
+        from pathlib import Path
+
+        query = os.environ.get('QUERY', '')
+        base_path = os.environ.get('BASE_PATH', '.')
+        patterns_json = os.environ.get('PATTERNS', '[]')
+        max_results = int(os.environ.get('MAX_RESULTS', '50'))
+
+        try:
+            patterns = json.loads(patterns_json)
+        except:
+            patterns = []
+
+        # BM25 parameters
+        K1 = 1.5  # Term saturation parameter
+        B = 0.75  # Length normalization parameter
+
+        def extract_keywords(query):
+            """Extract meaningful keywords from query."""
+            # Remove common stop words
+            stop_words = {
+                'the', 'a', 'an', 'and', 'or', 'but', 'in', 'on', 'at', 'to', 'for',
+                'of', 'with', 'by', 'is', 'are', 'was', 'were', 'be', 'been', 'being',
+                'have', 'has', 'had', 'do', 'does', 'did', 'will', 'would', 'could',
+                'should', 'may', 'might', 'must', 'shall', 'can', 'this', 'that',
+                'these', 'those', 'it', 'its', 'what', 'which', 'who', 'whom', 'how',
+                'when', 'where', 'why', 'all', 'any', 'both', 'each', 'few', 'more',
+                'most', 'other', 'some', 'such', 'no', 'not', 'only', 'same', 'so',
+                'than', 'too', 'very', 'just', 'also', 'now', 'here', 'there'
+            }
+
+            # Extract words (alphanumeric + underscore)
+            words = re.findall(r'[a-zA-Z_][a-zA-Z0-9_]*', query.lower())
+
+            # Filter out stop words and short words
+            keywords = [w for w in words if w not in stop_words and len(w) > 2]
+
+            return list(set(keywords))
+
+        def find_files(base_path, patterns):
+            """Find all candidate files."""
+            files = []
+            base = Path(base_path)
+
+            # Directories to exclude
+            exclude_dirs = {'.git', '.svn', '.hg', 'node_modules', '__pycache__',
+                           '.mypy_cache', '.pytest_cache', 'dist', 'build', '.venv', 'venv'}
+
+            if patterns:
+                for pattern in patterns:
+                    for f in base.rglob(pattern):
+                        if f.is_file() and not any(ex in f.parts for ex in exclude_dirs):
+                            files.append(f)
+            else:
+                # Default: common code file extensions
+                default_exts = {'.py', '.js', '.ts', '.tsx', '.jsx', '.yaml', '.yml',
+                               '.json', '.md', '.go', '.rs', '.java', '.c', '.cpp', '.h'}
+                for f in base.rglob('*'):
+                    if f.is_file() and f.suffix in default_exts:
+                        if not any(ex in f.parts for ex in exclude_dirs):
+                            files.append(f)
+
+            return files[:1000]  # Cap at 1000 files
+
+        def count_terms_in_file(file_path, keywords):
+            """Count keyword occurrences in a file."""
+            try:
+                with open(file_path, 'r', encoding='utf-8', errors='ignore') as f:
+                    content = f.read().lower()
+                    doc_length = len(content.split())
+
+                    term_counts = {}
+                    for kw in keywords:
+                        # Count occurrences (word boundary aware)
+                        count = len(re.findall(rf'\b{re.escape(kw)}\b', content))
+                        if count > 0:
+                            term_counts[kw] = count
+
+                    return term_counts, doc_length
+            except:
+                return {}, 0
+
+        def compute_bm25_scores(files, keywords):
+            """Compute BM25 scores for all files."""
+            # First pass: collect document stats
+            doc_data = []
+            total_doc_length = 0
+            doc_freq = defaultdict(int)  # How many docs contain each term
+
+            for f in files:
+                term_counts, doc_length = count_terms_in_file(f, keywords)
+                if term_counts:  # Only include files with matches
+                    doc_data.append({
+                        'path': str(f),
+                        'term_counts': term_counts,
+                        'doc_length': doc_length
+                    })
+                    total_doc_length += doc_length
+                    for term in term_counts:
+                        doc_freq[term] += 1
+
+            if not doc_data:
+                return []
+
+            N = len(doc_data)  # Number of documents with matches
+            avgdl = total_doc_length / N if N > 0 else 1
+
+            # Second pass: compute BM25 scores
+            scored_docs = []
+            for doc in doc_data:
+                score = 0.0
+                term_details = []
+
+                for term, tf in doc['term_counts'].items():
+                    # IDF: log((N - n + 0.5) / (n + 0.5) + 1)
+                    n = doc_freq[term]
+                    idf = math.log((N - n + 0.5) / (n + 0.5) + 1)
+
+                    # BM25 term score
+                    dl = doc['doc_length']
+                    numerator = tf * (K1 + 1)
+                    denominator = tf + K1 * (1 - B + B * dl / avgdl)
+                    term_score = idf * numerator / denominator
+
+                    score += term_score
+                    term_details.append({'term': term, 'tf': tf, 'score': round(term_score, 3)})
+
+                scored_docs.append({
+                    'path': doc['path'],
+                    'bm25_score': round(score, 3),
+                    'terms_matched': len(doc['term_counts']),
+                    'term_details': sorted(term_details, key=lambda x: -x['score'])[:5]
+                })
+
+            # Sort by BM25 score descending
+            scored_docs.sort(key=lambda x: -x['bm25_score'])
+            return scored_docs
+
+        # Execute
+        keywords = extract_keywords(query)
+        if not keywords:
+            print(json.dumps({
+                'ranked_files': [],
+                'keywords': [],
+                'count': 0,
+                'query': query,
+                'error': 'no_keywords_extracted'
+            }))
+        else:
+            files = find_files(base_path, patterns)
+            ranked = compute_bm25_scores(files, keywords)[:max_results]
+
+            # Add rank position
+            for i, doc in enumerate(ranked):
+                doc['rank'] = i + 1
+
+            print(json.dumps({
+                'ranked_files': ranked,
+                'keywords': keywords,
+                'count': len(ranked),
+                'files_scanned': len(files),
+                'query': query
+            }))
+        EOF
+      env:
+        QUERY: "{{ inputs.query }}"
+        BASE_PATH: "{{ inputs.base_path }}"
+        PATTERNS: "{{ inputs.file_patterns | tojson }}"
+        MAX_RESULTS: "{{ inputs.max_results }}"
+
+  # ===========================================================================
+  # STEP 3: Store ranking in salience cache
+  # ===========================================================================
+  - id: store_ranking
+    type: Sql
+    description: Store keyword ranking in salience cache.
+    depends_on: [search]
+    condition: "{{ inputs.state | trim != '' and blocks.search.succeeded }}"
+    inputs:
+      engine: sqlite
+      path: "{{ inputs.state }}"
+      sql: |
+        INSERT INTO salience_cache (task_id, ranking_type, query, results, created_at)
+        VALUES (?, 'keyword', ?, ?, datetime('now'))
+      params:
+        - "{{ inputs.task_id | default(inputs.parent_id) }}"
+        - "{{ inputs.query }}"
+        - "{{ blocks.search.outputs.stdout }}"
+
+  # ===========================================================================
+  # STEP 4: Track completion
+  # ===========================================================================
+  - id: track_done
+    type: Sql
+    description: Mark capability complete.
+    depends_on:
+      - block: register
+        required: true
+      - block: search
+        required: false
+      - block: store_ranking
+        required: false
+    inputs:
+      engine: sqlite
+      path: "{{ inputs.state }}"
+      model: "{{ inputs.models.task }}"
+      op: update
+      where:
+        id: "{{ (blocks.register.outputs.rows | default([{}]))[0].id | default('') }}"
+      data:
+        status: "{{ 'done' if blocks.search.succeeded else 'failed' }}"
+        outputs: "{{ {'count': (blocks.search.outputs.stdout | fromjson).count if blocks.search.succeeded else 0, 'keywords': (blocks.search.outputs.stdout | fromjson).keywords if blocks.search.succeeded else []} }}"
+
+# =============================================================================
+# OUTPUTS
+# =============================================================================
+outputs:
+  ranked_files:
+    type: list
+    description: "Files ranked by BM25 score."
+    value: "{{ (blocks.search.outputs.stdout | fromjson).ranked_files if blocks.search.succeeded else [] }}"
+
+  keywords:
+    type: list
+    description: "Keywords extracted from query."
+    value: "{{ (blocks.search.outputs.stdout | fromjson).keywords if blocks.search.succeeded else [] }}"
+
+  count:
+    type: num
+    description: "Number of files with matches."
+    value: "{{ (blocks.search.outputs.stdout | fromjson).count if blocks.search.succeeded else 0 }}"
+
+  files_scanned:
+    type: num
+    description: "Total files scanned."
+    value: "{{ (blocks.search.outputs.stdout | fromjson).files_scanned if blocks.search.succeeded else 0 }}"
+
+  state:
+    type: str
+    description: "Path to state database (passthrough)."
+    value: "{{ inputs.state }}"

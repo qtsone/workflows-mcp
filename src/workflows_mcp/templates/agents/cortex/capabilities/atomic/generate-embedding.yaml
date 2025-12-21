@@ -1,0 +1,145 @@
+# =============================================================================
+# CORTEX Generate Embedding Capability
+# =============================================================================
+#
+# Generates a vector embedding for text using the configured embedding model.
+# Uses the Embedding block type which supports any OpenAI-compatible server
+# (OpenAI, LMStudio, Ollama, LocalAI, vLLM, etc.).
+#
+# The embedding profile is loaded from ~/.workflows/llm-config.yml, defaulting
+# to the "embedding" profile. Example configuration:
+#
+#   providers:
+#     local-embeddings:
+#       type: openai
+#       api_url: http://localhost:1234/v1
+#
+#   profiles:
+#     embedding:
+#       provider: local-embeddings
+#       model: text-embedding-3-small
+#
+# =============================================================================
+
+name: cortex-generate-embedding
+description: "Generate vector embedding for text using LLM embedding model"
+
+tags: [cortex, capability, embedding, vector]
+
+inputs:
+  text:
+    type: str
+    description: Text to generate embedding for.
+    required: true
+
+  profile:
+    type: str
+    description: LLM profile name for embedding model.
+    default: "embedding"
+
+  state:
+    type: str
+    description: Path to SQLite state database.
+    required: true
+
+  models:
+    type: dict
+    description: Model definitions for CRUD operations.
+    default: {}
+
+  parent_id:
+    type: str
+    description: Parent task ID for task tree.
+    default: ""
+
+  task_id:
+    type: str
+    description: Task ID for tracking.
+    default: ""
+
+blocks:
+  # ===========================================================================
+  # STEP 1: Register capability in task tree
+  # ===========================================================================
+  - id: register
+    type: Sql
+    description: Register this capability in the task tree.
+    condition: "{{ inputs.state | trim != '' and inputs.parent_id | trim != '' }}"
+    inputs:
+      engine: sqlite
+      path: "{{ inputs.state }}"
+      model: "{{ inputs.models.task }}"
+      op: insert
+      data:
+        parent_id: "{{ inputs.parent_id if inputs.parent_id else none }}"
+        kind: capability
+        name: cortex-generate-embedding
+        metadata: "{{ {'labels': {'capability_type': 'embedding'}} }}"
+        inputs: "{{ {'text_length': inputs.text | length, 'profile': inputs.profile} }}"
+        status: running
+        depth: 2
+
+  # ===========================================================================
+  # STEP 2: Generate embedding
+  # ===========================================================================
+  - id: embed
+    type: Embedding
+    description: Generate vector embedding using OpenAI-compatible API.
+    depends_on:
+      - block: register
+        required: false
+    inputs:
+      text: "{{ inputs.text }}"
+      profile: "{{ inputs.profile }}"
+
+  # ===========================================================================
+  # STEP 3: Track completion
+  # ===========================================================================
+  - id: track_done
+    type: Sql
+    description: Mark capability complete.
+    condition: "{{ inputs.state | trim != '' and inputs.parent_id | trim != '' }}"
+    depends_on:
+      - block: register
+        required: true
+      - block: embed
+        required: true
+    inputs:
+      engine: sqlite
+      path: "{{ inputs.state }}"
+      model: "{{ inputs.models.task }}"
+      op: update
+      where:
+        id: "{{ (blocks.register.outputs.rows | default([{}]))[0].id | default('') }}"
+      data:
+        status: "{{ 'done' if blocks.embed.succeeded else 'failed' }}"
+        outputs: "{{ {'dimensions': blocks.embed.outputs.dimensions, 'success': blocks.embed.outputs.success} if blocks.embed.succeeded else {'error': 'embedding failed'} }}"
+
+# =============================================================================
+# OUTPUTS
+# =============================================================================
+outputs:
+  embedding:
+    type: list
+    description: "Vector embedding as list of floats."
+    value: "{{ blocks.embed.outputs.embedding if blocks.embed.succeeded else [] }}"
+
+  dimensions:
+    type: num
+    description: "Number of dimensions in the embedding."
+    value: "{{ blocks.embed.outputs.dimensions if blocks.embed.succeeded else 0 }}"
+
+  success:
+    type: bool
+    description: "Whether embedding generation succeeded."
+    value: "{{ blocks.embed.outputs.success if blocks.embed.succeeded else false }}"
+
+  metadata:
+    type: dict
+    description: "Embedding metadata (model, usage, etc.)."
+    value: "{{ blocks.embed.outputs.metadata if blocks.embed.succeeded else {} }}"
+
+  state:
+    type: str
+    description: "Path to state database (passthrough)."
+    value: "{{ inputs.state }}"

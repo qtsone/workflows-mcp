@@ -230,3 +230,4 @@ src/workflows_mcp/templates/agents/*
 !src/workflows_mcp/templates/agents/iteration/
 !src/workflows_mcp/templates/agents/investigation/
 !src/workflows_mcp/templates/agents/cortex/
+!src/workflows_mcp/templates/agents/cortex-cell-v2/

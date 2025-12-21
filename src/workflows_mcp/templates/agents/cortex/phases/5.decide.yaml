@@ -1,0 +1,360 @@
+# =============================================================================
+# CORTEX Decide Phase
+# =============================================================================
+#
+# The CONTROL HUB - determines what happens next based on REASON output.
+#
+# Possible actions:
+#   - DONE: High confidence answer, no action needed → Output response
+#   - ACT: Fix identified → Proceed to implementation
+#   - SPAWN: Hypothesis needs testing → Create child cell
+#   - REFINE: Evidence gaps identified → Loop back to GATHER
+#   - DIAGNOSE: High surprisal detected → Investigate why prediction failed
+#
+# Decision matrix:
+#   | Condition                          | Action   | Effect                      |
+#   |------------------------------------|----------|-----------------------------|
+#   | High confidence, no action needed  | done     | Output response             |
+#   | High surprisal (>2 bits)           | diagnose | Investigate prediction error|
+#   | Evidence gaps identified           | refine   | Loop to GATHER with targets |
+#   | Hypothesis needs testing           | spawn    | Create child cell           |
+#   | Fix identified                     | act      | Proceed to implementation   |
+#
+# Priority order: diagnose > refine > spawn > act > done (when triggered)
+#
+# =============================================================================
+
+name: cortex-phase-decide
+description: "CORTEX Decide Phase - control point with DIAGNOSE action"
+
+tags: [cortex, phase, decide, control, diagnose]
+
+inputs:
+  prompt:
+    type: str
+    description: The original prompt.
+    required: true
+
+  context:
+    type: dict
+    description: Context including synthesis and execution results.
+    default: {}
+
+  pipeline_config:
+    type: dict
+    description: Pipeline configuration.
+    default: {}
+
+  depth:
+    type: num
+    description: Current cell depth.
+    default: 0
+
+  max_depth:
+    type: num
+    description: Maximum investigation depth.
+    default: 5
+
+  iterations:
+    type: num
+    description: Current iteration count.
+    default: 0
+
+  max_iterations:
+    type: num
+    description: Maximum iterations.
+    default: 3
+
+  state:
+    type: str
+    description: Path to SQLite state database.
+    required: true
+
+  models:
+    type: dict
+    description: Model definitions.
+    default: {}
+
+  parent_id:
+    type: str
+    description: Parent task ID.
+    default: ""
+
+  profile:
+    type: str
+    description: LLM profile to use.
+    default: "default"
+
+  # ===========================================================================
+  # INPUTS - Surprisal and Diagnosis
+  # ===========================================================================
+  features:
+    type: dict
+    description: Feature toggles.
+    default:
+      expectations_enabled: false
+
+  trigger_diagnose:
+    type: bool
+    description: Whether REASON phase flagged high surprisal.
+    default: false
+
+  surprisal_bits:
+    type: num
+    description: Surprisal in bits from REASON phase.
+    default: 0
+
+  diagnosis_questions:
+    type: list
+    description: Questions to investigate if diagnosing.
+    default: []
+
+  surprise_explanation:
+    type: str
+    description: Explanation of what was surprising.
+    default: ""
+
+blocks:
+  # ===========================================================================
+  # STEP 1: Register Phase Task
+  # ===========================================================================
+  - id: register_phase
+    type: Sql
+    description: Register this phase in the task tree.
+    inputs:
+      engine: sqlite
+      path: "{{ inputs.state }}"
+      model: "{{ inputs.models.task }}"
+      op: insert
+      data:
+        parent_id: "{{ inputs.parent_id if inputs.parent_id else none }}"
+        kind: phase
+        name: decide
+        metadata: "{{ {'labels': {'phase_order': 5}} }}"
+        inputs: "{{ {'prompt': inputs.prompt} }}"
+        status: running
+        depth: "{{ inputs.depth }}"
+
+  # ===========================================================================
+  # STEP 2: Evaluate Decision Criteria
+  # ===========================================================================
+  - id: evaluate
+    type: Shell
+    description: Evaluate synthesis and determine next action (including DIAGNOSE action).
+    depends_on: [register_phase]
+    inputs:
+      command: |
+        python3 << 'EOF'
+        import json
+        import os
+
+        # Load inputs
+        synthesis_json = os.environ.get('SYNTHESIS', '{}')
+        execution_json = os.environ.get('EXECUTION_RESULT', '{}')
+        category = os.environ.get('CATEGORY', 'understanding')
+        act_trigger = os.environ.get('ACT_TRIGGER', 'never')
+        verify_required = os.environ.get('VERIFY_REQUIRED', 'false').lower() == 'true'
+        depth = int(os.environ.get('DEPTH', '0'))
+        max_depth = int(os.environ.get('MAX_DEPTH', '5'))
+        iterations = int(os.environ.get('ITERATIONS', '0'))
+        max_iterations = int(os.environ.get('MAX_ITERATIONS', '3'))
+
+        # Surprisal/diagnosis inputs
+        trigger_diagnose = os.environ.get('TRIGGER_DIAGNOSE', 'false').lower() == 'true'
+        surprisal_bits = float(os.environ.get('SURPRISAL_BITS', '0'))
+        diagnosis_questions_json = os.environ.get('DIAGNOSIS_QUESTIONS', '[]')
+        surprise_explanation = os.environ.get('SURPRISE_EXPLANATION', '')
+        expectations_enabled = os.environ.get('EXPECTATIONS_ENABLED', 'false').lower() == 'true'
+
+        try:
+            synthesis = json.loads(synthesis_json) if synthesis_json else {}
+        except:
+            synthesis = {}
+
+        try:
+            execution = json.loads(execution_json) if execution_json else {}
+        except:
+            execution = {}
+
+        try:
+            diagnosis_questions = json.loads(diagnosis_questions_json) if diagnosis_questions_json else []
+        except:
+            diagnosis_questions = []
+
+        # Extract key decision factors
+        actions_needed = synthesis.get('actions_needed', False)
+        evidence_gaps = synthesis.get('evidence_needed', [])
+        hypotheses = synthesis.get('hypotheses', [])
+        confidence = synthesis.get('confidence', 0.5)
+        findings = synthesis.get('findings', [])
+
+        # Check execution status
+        execution_failed = execution.get('executed', False) and not execution.get('success', True)
+        has_test_failures = False
+        if execution.get('summary'):
+            summary = execution.get('summary', {})
+            has_test_failures = summary.get('failed', 0) > 0 or summary.get('errors', 0) > 0
+
+        # Decision logic
+        # Priority: diagnose > refine > spawn > act > done
+        action = 'done'  # Default
+        reason = ''
+        next_prompt = None
+        evidence_targets = []
+        diagnosis_context = {}
+
+        # 0. Check if DIAGNOSE is triggered (highest priority when enabled)
+        if expectations_enabled and trigger_diagnose and depth < max_depth:
+            action = 'diagnose'
+            reason = f"High surprisal ({surprisal_bits:.2f} bits) - investigating prediction failure"
+            if diagnosis_questions:
+                next_prompt = diagnosis_questions[0]
+            diagnosis_context = {
+                'surprisal_bits': surprisal_bits,
+                'surprise_explanation': surprise_explanation,
+                'diagnosis_questions': diagnosis_questions
+            }
+
+        # 1. Check if we need more evidence
+        elif evidence_gaps and depth < max_depth and iterations < max_iterations:
+            action = 'refine'
+            reason = f"Evidence gaps identified: {evidence_gaps[:3]}"
+            evidence_targets = evidence_gaps[:5]
+
+        # 2. Check if we should spawn child for hypothesis testing
+        elif hypotheses and depth < max_depth:
+            # Only spawn if we have untested hypotheses
+            untested = [h for h in hypotheses if h.get('status', 'active') == 'active']
+            if untested and untested[0].get('evidence_needed'):
+                action = 'spawn'
+                reason = f"Testing hypothesis: {untested[0].get('claim', 'unknown')}"
+                next_prompt = untested[0].get('evidence_needed', [{}])[0] if untested[0].get('evidence_needed') else None
+
+        # 3. Check if action is needed based on trigger policy
+        elif actions_needed or (act_trigger == 'always' and category in ['action', 'debugging']):
+            if execution_failed or has_test_failures:
+                # Execution failed - we should fix it
+                action = 'act'
+                reason = f"Execution failed with {execution.get('summary', {})} - fix needed"
+            elif findings:
+                # We have findings that need action
+                action = 'act'
+                reason = f"Action needed based on {len(findings)} findings"
+            else:
+                action = 'act'
+                reason = "Action required by category policy"
+
+        # 4. Check act_trigger policy
+        elif act_trigger == 'findings_require':
+            actionable = [f for f in findings if f.get('severity') in ['error', 'warning', 'critical']]
+            if actionable:
+                action = 'act'
+                reason = f"Found {len(actionable)} actionable findings"
+
+        # 5. Default to done if nothing else
+        else:
+            action = 'done'
+            if confidence >= 0.9:
+                reason = f"High confidence ({confidence:.0%}) response ready"
+            else:
+                reason = "Response ready (no action required)"
+
+        result = {
+            'action': action,
+            'reason': reason,
+            'confidence': confidence,
+            'next_prompt': next_prompt,
+            'evidence_targets': evidence_targets,
+            'execution_status': {
+                'executed': execution.get('executed', False),
+                'success': execution.get('success', True),
+                'has_failures': has_test_failures
+            },
+            'iteration_info': {
+                'depth': depth,
+                'max_depth': max_depth,
+                'iterations': iterations,
+                'max_iterations': max_iterations
+            },
+            # Diagnosis context
+            'diagnosis_context': diagnosis_context,
+            'surprisal_bits': surprisal_bits
+        }
+
+        print(json.dumps(result))
+        EOF
+      env:
+        SYNTHESIS: "{{ inputs.context.synthesis | tojson }}"
+        EXECUTION_RESULT: "{{ inputs.context.execution_result | tojson }}"
+        CATEGORY: "{{ inputs.context.category | default('understanding') }}"
+        ACT_TRIGGER: "{{ inputs.pipeline_config.act.trigger | default('never') }}"
+        VERIFY_REQUIRED: "{{ inputs.pipeline_config.decide.verify_required | default(false) }}"
+        DEPTH: "{{ inputs.depth }}"
+        MAX_DEPTH: "{{ inputs.max_depth }}"
+        ITERATIONS: "{{ inputs.iterations }}"
+        MAX_ITERATIONS: "{{ inputs.max_iterations }}"
+        TRIGGER_DIAGNOSE: "{{ inputs.trigger_diagnose | default(false) }}"
+        SURPRISAL_BITS: "{{ inputs.surprisal_bits | default(0) }}"
+        DIAGNOSIS_QUESTIONS: "{{ inputs.diagnosis_questions | default([]) | tojson }}"
+        SURPRISE_EXPLANATION: "{{ inputs.surprise_explanation | default('') }}"
+        EXPECTATIONS_ENABLED: "{{ inputs.features.expectations_enabled | default(false) }}"
+
+  # ===========================================================================
+  # STEP 3: Mark Phase Complete
+  # ===========================================================================
+  - id: track_done
+    type: Sql
+    description: Mark phase complete with decision.
+    depends_on: [evaluate]
+    inputs:
+      engine: sqlite
+      path: "{{ inputs.state }}"
+      sql: |
+        UPDATE tasks
+        SET status = 'done',
+            outputs = ?,
+            updated_at = datetime('now')
+        WHERE id = ?
+      params:
+        - "{{ blocks.evaluate.outputs.stdout }}"
+        - "{{ (blocks.register_phase.outputs.rows | default([{}]))[0].id | default('') }}"
+
+# =============================================================================
+# OUTPUTS
+# =============================================================================
+outputs:
+  action:
+    type: str
+    description: "Next action: done, act, spawn, refine, diagnose"
+    value: "{{ (blocks.evaluate.outputs.stdout | fromjson).action }}"
+
+  reason:
+    type: str
+    description: "Explanation for the decision."
+    value: "{{ (blocks.evaluate.outputs.stdout | fromjson).reason }}"
+
+  next_prompt:
+    type: str
+    description: "Prompt for child cell if spawning, or diagnosis question if diagnosing."
+    value: "{{ (blocks.evaluate.outputs.stdout | fromjson).next_prompt | default('') }}"
+
+  evidence_targets:
+    type: list
+    description: "Evidence to gather if refining."
+    value: "{{ (blocks.evaluate.outputs.stdout | fromjson).evidence_targets | default([]) }}"
+
+  # Diagnosis context
+  diagnosis_context:
+    type: dict
+    description: "Context for DIAGNOSE phase (predictive coding)."
+    value: "{{ (blocks.evaluate.outputs.stdout | fromjson).diagnosis_context | default({}) }}"
+
+  surprisal_bits:
+    type: num
+    description: "Surprisal in bits that triggered the decision."
+    value: "{{ (blocks.evaluate.outputs.stdout | fromjson).surprisal_bits | default(0) }}"
+
+  state:
+    type: str
+    description: "Path to state database."
+    value: "{{ inputs.state }}"

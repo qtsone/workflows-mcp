@@ -1,0 +1,326 @@
+# =============================================================================
+# CORTEX PID Controller for Homeostatic Regulation
+# =============================================================================
+#
+# Implements a discrete PID controller for self-regulating CORTEX behavior.
+#
+# The controller adjusts the "caution level" based on the error rate:
+#   - Target error rate: 10% (configurable)
+#   - Caution output: 0.5 (relaxed) to 2.0 (paranoid)
+#
+# When error rate exceeds target:
+#   → Increase caution (lower G-Score thresholds, stricter verification)
+#
+# When error rate is below target:
+#   → Decrease caution (higher thresholds, faster processing)
+#
+# PID Formula:
+#   error = actual_error_rate - target_error_rate
+#   caution = Kp * error + Ki * integral + Kd * derivative
+#
+# Default gains (tuned for stability):
+#   Kp = 0.5  (proportional: immediate response to error)
+#   Ki = 0.1  (integral: eliminates steady-state error)
+#   Kd = 0.2  (derivative: dampens oscillations)
+#
+# =============================================================================
+
+name: cortex-pid-controller
+description: "PID controller for homeostatic regulation of caution level"
+
+tags: [cortex, internal, homeostatic, pid, control]
+
+inputs:
+  state:
+    type: str
+    description: Path to SQLite state database.
+    required: true
+
+  models:
+    type: dict
+    description: Model definitions.
+    default: {}
+
+  parent_id:
+    type: str
+    description: Parent task ID.
+    default: ""
+
+  task_id:
+    type: str
+    description: Current task ID.
+    default: ""
+
+  # PID parameters (from features.homeostatic config)
+  target_error_rate:
+    type: num
+    description: Target error rate (default 10%).
+    default: 0.10
+
+  pid_kp:
+    type: num
+    description: Proportional gain.
+    default: 0.5
+
+  pid_ki:
+    type: num
+    description: Integral gain.
+    default: 0.1
+
+  pid_kd:
+    type: num
+    description: Derivative gain.
+    default: 0.2
+
+  caution_min:
+    type: num
+    description: Minimum caution level.
+    default: 0.5
+
+  caution_max:
+    type: num
+    description: Maximum caution level.
+    default: 2.0
+
+  # Current task outcome (to update metrics)
+  task_succeeded:
+    type: bool
+    description: Whether the current task succeeded.
+    default: true
+
+  current_surprisal:
+    type: num
+    description: Surprisal from current task (for averaging).
+    default: 0
+
+blocks:
+  # ===========================================================================
+  # STEP 1: Get current metrics from rolling window
+  # ===========================================================================
+  - id: get_current_metrics
+    type: Sql
+    description: Get rolling 24-hour error rate and PID state.
+    inputs:
+      engine: sqlite
+      path: "{{ inputs.state }}"
+      sql: |
+        -- Query current error rate view and latest PID state
+        SELECT
+          cer.total_failed,
+          cer.total_completed,
+          cer.error_rate,
+          cer.mean_surprisal,
+          cer.current_caution,
+          (SELECT pid_state FROM health_metrics
+           ORDER BY created_at DESC LIMIT 1) as last_pid_state
+        FROM current_error_rate cer
+
+  # ===========================================================================
+  # STEP 2: Compute PID output
+  # ===========================================================================
+  - id: compute_pid
+    type: Shell
+    description: Calculate new caution level using PID algorithm.
+    depends_on: [get_current_metrics]
+    inputs:
+      command: |
+        python3 << 'EOF'
+        import json
+        import os
+
+        # Load inputs
+        target = float(os.environ.get('TARGET_ERROR_RATE', '0.1'))
+        kp = float(os.environ.get('KP', '0.5'))
+        ki = float(os.environ.get('KI', '0.1'))
+        kd = float(os.environ.get('KD', '0.2'))
+        caution_min = float(os.environ.get('CAUTION_MIN', '0.5'))
+        caution_max = float(os.environ.get('CAUTION_MAX', '2.0'))
+
+        task_succeeded = os.environ.get('TASK_SUCCEEDED', 'true').lower() == 'true'
+        current_surprisal = float(os.environ.get('CURRENT_SURPRISAL', '0'))
+
+        metrics_json = os.environ.get('METRICS', '[]')
+
+        try:
+            metrics_rows = json.loads(metrics_json)
+            metrics = metrics_rows[0] if metrics_rows else {}
+        except:
+            metrics = {}
+
+        # Get current state
+        current_error_rate = float(metrics.get('error_rate', 0) or 0)
+        total_completed = int(metrics.get('total_completed', 0) or 0)
+        total_failed = int(metrics.get('total_failed', 0) or 0)
+        current_caution = float(metrics.get('current_caution', 1.0) or 1.0)
+        mean_surprisal = float(metrics.get('mean_surprisal', 0) or 0)
+
+        # Parse previous PID state
+        last_pid_state_json = metrics.get('last_pid_state')
+        if last_pid_state_json and isinstance(last_pid_state_json, str):
+            try:
+                pid_state = json.loads(last_pid_state_json)
+            except:
+                pid_state = {}
+        elif isinstance(last_pid_state_json, dict):
+            pid_state = last_pid_state_json
+        else:
+            pid_state = {}
+
+        integral = float(pid_state.get('integral', 0))
+        last_error = float(pid_state.get('last_error', 0))
+
+        # =======================================================================
+        # PID CALCULATION
+        # =======================================================================
+        # Error = actual - target (positive means too many failures)
+        error = current_error_rate - target
+
+        # Integral: accumulate error over time (with anti-windup)
+        integral = integral + error
+        # Anti-windup: clamp integral to prevent runaway accumulation
+        integral_max = 5.0  # Limit integral contribution
+        integral = max(-integral_max, min(integral_max, integral))
+
+        # Derivative: rate of change of error
+        derivative = error - last_error
+
+        # PID output
+        pid_output = kp * error + ki * integral + kd * derivative
+
+        # =======================================================================
+        # CAUTION LEVEL ADJUSTMENT
+        # =======================================================================
+        # Base caution is 1.0; PID adjusts it up (more cautious) or down
+        new_caution = 1.0 + pid_output
+
+        # Clamp to allowed range
+        new_caution = max(caution_min, min(caution_max, new_caution))
+
+        # Round to 2 decimal places for readability
+        new_caution = round(new_caution, 2)
+
+        # =======================================================================
+        # UPDATED METRICS FOR CURRENT TASK
+        # =======================================================================
+        # Increment counters based on task outcome
+        new_completed = total_completed + 1
+        new_failed = total_failed + (0 if task_succeeded else 1)
+
+        # Update running average of surprisal
+        if total_completed > 0:
+            new_mean_surprisal = (mean_surprisal * total_completed + current_surprisal) / new_completed
+        else:
+            new_mean_surprisal = current_surprisal
+
+        result = {
+            'caution_level': new_caution,
+            'pid_output': round(pid_output, 4),
+            'error': round(error, 4),
+            'integral': round(integral, 4),
+            'derivative': round(derivative, 4),
+            'pid_state': {
+                'integral': round(integral, 4),
+                'last_error': round(error, 4)
+            },
+            'metrics': {
+                'error_rate': round(current_error_rate, 4),
+                'target_rate': target,
+                'total_completed': new_completed,
+                'total_failed': new_failed,
+                'mean_surprisal': round(new_mean_surprisal, 4)
+            },
+            'adjustment': {
+                'previous_caution': current_caution,
+                'new_caution': new_caution,
+                'delta': round(new_caution - current_caution, 4)
+            }
+        }
+
+        print(json.dumps(result))
+        EOF
+      env:
+        TARGET_ERROR_RATE: "{{ inputs.target_error_rate }}"
+        KP: "{{ inputs.pid_kp }}"
+        KI: "{{ inputs.pid_ki }}"
+        KD: "{{ inputs.pid_kd }}"
+        CAUTION_MIN: "{{ inputs.caution_min }}"
+        CAUTION_MAX: "{{ inputs.caution_max }}"
+        TASK_SUCCEEDED: "{{ inputs.task_succeeded }}"
+        CURRENT_SURPRISAL: "{{ inputs.current_surprisal }}"
+        METRICS: "{{ blocks.get_current_metrics.outputs.rows | default([]) | tojson }}"
+
+  # ===========================================================================
+  # STEP 3: Store updated health metrics
+  # ===========================================================================
+  - id: store_metrics
+    type: Sql
+    description: Store updated health metrics with PID state.
+    depends_on: [compute_pid]
+    condition: "{{ blocks.compute_pid.succeeded }}"
+    inputs:
+      engine: sqlite
+      path: "{{ inputs.state }}"
+      sql: |
+        -- Insert or update health metrics for current hour window
+        INSERT INTO health_metrics (
+          id, window_start, window_end,
+          tasks_completed, tasks_failed,
+          avg_surprisal, caution_level, pid_state
+        ) VALUES (
+          lower(hex(randomblob(16))),
+          datetime('now', 'start of hour'),
+          datetime('now', 'start of hour', '+1 hour'),
+          ?, ?, ?, ?, ?
+        )
+        ON CONFLICT(window_start) DO UPDATE SET
+          tasks_completed = tasks_completed + 1,
+          tasks_failed = tasks_failed + CASE WHEN ? THEN 0 ELSE 1 END,
+          avg_surprisal = ?,
+          caution_level = ?,
+          pid_state = ?
+      params:
+        # Insert values
+        - "{{ (blocks.compute_pid.outputs.stdout | fromjson).metrics.total_completed }}"
+        - "{{ (blocks.compute_pid.outputs.stdout | fromjson).metrics.total_failed }}"
+        - "{{ (blocks.compute_pid.outputs.stdout | fromjson).metrics.mean_surprisal }}"
+        - "{{ (blocks.compute_pid.outputs.stdout | fromjson).caution_level }}"
+        - "{{ (blocks.compute_pid.outputs.stdout | fromjson).pid_state | tojson }}"
+        # Update values
+        - "{{ inputs.task_succeeded }}"
+        - "{{ (blocks.compute_pid.outputs.stdout | fromjson).metrics.mean_surprisal }}"
+        - "{{ (blocks.compute_pid.outputs.stdout | fromjson).caution_level }}"
+        - "{{ (blocks.compute_pid.outputs.stdout | fromjson).pid_state | tojson }}"
+
+# =============================================================================
+# OUTPUTS
+# =============================================================================
+outputs:
+  caution_level:
+    type: num
+    description: "New caution level (0.5 to 2.0)."
+    value: "{{ (blocks.compute_pid.outputs.stdout | fromjson).caution_level if blocks.compute_pid.succeeded else 1.0 }}"
+
+  pid_output:
+    type: num
+    description: "Raw PID controller output."
+    value: "{{ (blocks.compute_pid.outputs.stdout | fromjson).pid_output if blocks.compute_pid.succeeded else 0 }}"
+
+  pid_state:
+    type: dict
+    description: "PID state for next iteration."
+    value: "{{ (blocks.compute_pid.outputs.stdout | fromjson).pid_state if blocks.compute_pid.succeeded else {} }}"
+
+  metrics:
+    type: dict
+    description: "Updated health metrics."
+    value: "{{ (blocks.compute_pid.outputs.stdout | fromjson).metrics if blocks.compute_pid.succeeded else {} }}"
+
+  adjustment:
+    type: dict
+    description: "Caution level adjustment details."
+    value: "{{ (blocks.compute_pid.outputs.stdout | fromjson).adjustment if blocks.compute_pid.succeeded else {} }}"
+
+  state:
+    type: str
+    description: "Path to state database (passthrough)."
+    value: "{{ inputs.state }}"

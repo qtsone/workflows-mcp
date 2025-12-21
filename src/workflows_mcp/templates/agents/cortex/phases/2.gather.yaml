@@ -1,17 +1,28 @@
+# =============================================================================
+# CORTEX Gather Phase
+# =============================================================================
+#
+# Enhancements:
+#   - RRF salience filtering for context budget
+#   - BM25 keyword search for file ranking
+#   - Semantic vector search for embedding-based similarity
+#   - Context budget enforcement (default 60% of context window)
+#   - References to workflows (cortex-cell, cortex-phase-gather)
+#   - Iteration support for DECIDE → REFINE loop
+#
+# When salience_enabled=true:
+#   1. Run keyword search (BM25) to rank files by query relevance
+#   2. Run semantic search (embeddings) to rank files by semantic similarity
+#   3. Apply RRF fusion to combine both rankings
+#   4. Enforce context budget - include only top-ranked files
+#   5. Pass prioritized file list to LLM for focused gathering
+#
+# =============================================================================
+
 name: cortex-phase-gather
-description: |
-  CORTEX Gather Phase (ReAct Pattern) - collects evidence with recursive spawning.
+description: "CORTEX Gather Phase - collects evidence with RRF salience filtering and cell spawning"
 
-  Industry Standard: ReAct (Reason + Act) + Reflexion Hybrid
-  - RECALL = THINK (query existing evidence + facts from DB)
-  - PLAN   = REASON (LLM plans operations and investigations)
-  - ACT    = dispatch + investigations (execute and store evidence)
-  - Loop via recursion when investigations produce new knowledge
-
-  Quality emerges from recursion - each level adds more evidence to shared DB.
-  No explicit sufficiency check - REASON phase is the true gatekeeper.
-
-tags: [cortex, phase, gather, react]
+tags: [cortex, phase, gather, salience]
 
 inputs:
   prompt:
@@ -28,12 +39,6 @@ inputs:
 
       Be efficient - gather only what's needed based on the configured depth level.
       Store important files to memory for use by later phases.
-
-      If you discover something that requires different analysis than expected,
-      you can output config_override to adjust REASON/ACT behavior.
-
-      Be honest about your confidence.
-      Express ALL questions via investigations.
 
   context:
     type: dict
@@ -97,17 +102,40 @@ inputs:
 
   capabilities:
     type: list
-    description: Available capabilities registry (filtered by permissions).
+    description: Available capabilities registry.
     default: []
 
   permissions:
     type: dict
-    description: Permission flags for capability filtering.
+    description: Permission flags.
     default: { "read": true, "write": false, "execute": false }
+
+  # v2 addition: evidence targets from DECIDE → REFINE loop
+  evidence_targets:
+    type: list
+    description: Specific evidence to gather (from DECIDE refine action).
+    default: []
+
+  # Embedding profile for semantic search
+  embedding_profile:
+    type: str
+    description: LLM profile for embedding generation.
+    default: "embedding"
+
+  # addition: feature toggles
+  features:
+    type: dict
+    description: feature toggles.
+    default:
+      salience_enabled: false
+      semantic_enabled: true  # Enable semantic vector search when salience is enabled
+      context_budget:
+        max_tokens: 60000 # ~60% of 100k context window
+        max_files: 50 # Maximum files to include
 
 blocks:
   # ===========================================================================
-  # STEP 1: Register Phase Task (model-based insert with auto UUID)
+  # STEP 1: Register Phase Task
   # ===========================================================================
   - id: register
     type: Sql
@@ -121,10 +149,85 @@ blocks:
         parent_id: "{{ inputs.parent_id if inputs.parent_id else none }}"
         kind: phase
         name: gather
-        metadata: "{{ {'labels': {'phase_order': 2, 'strategy': inputs.pipeline_config.gather.depth | default('focused')}} }}"
+        metadata: "{{ {'labels': {'phase_order': 2, 'strategy': inputs.pipeline_config.gather.depth | default('focused'), 'version': 'v2'}} }}"
         inputs: "{{ inputs }}"
         status: running
         depth: "{{ inputs.depth }}"
+
+  # ===========================================================================
+  # STEP 2: Salience Filtering (when salience_enabled=true)
+  # ===========================================================================
+  # Runs BM25 keyword search to rank files by relevance to the query.
+  # Future: Add semantic search and other ranking signals.
+  # RRF fusion combines rankings into a unified priority list.
+  # Context budget limits included files to fit within LLM context window.
+  # ===========================================================================
+
+  - id: keyword_search
+    type: Workflow
+    description: "Salience: BM25 keyword search for file ranking."
+    depends_on: [register]
+    condition: "{{ inputs.features.salience_enabled | default(false) }}"
+    inputs:
+      workflow: cortex-keyword-search
+      inputs:
+        query: "{{ inputs.prompt }}"
+        base_path: "{{ inputs.context.repo_path | default('.') }}"
+        max_results: "{{ inputs.features.context_budget.max_files | default(50) }}"
+        state: "{{ inputs.state }}"
+        models: "{{ inputs.models }}"
+        parent_id: "{{ (blocks.register.outputs.rows | default([{}]))[0].id | default('') }}"
+        task_id: "{{ (blocks.register.outputs.rows | default([{}]))[0].id | default('') }}"
+
+  - id: semantic_search
+    type: Workflow
+    description: "Salience: Semantic vector search for embedding-based similarity."
+    depends_on: [keyword_search]
+    condition: "{{ inputs.features.salience_enabled | default(false) and inputs.features.semantic_enabled | default(true) and blocks.keyword_search.succeeded }}"
+    inputs:
+      workflow: cortex-semantic-search
+      inputs:
+        query: "{{ inputs.prompt }}"
+        files: "{{ blocks.keyword_search.outputs.ranked_files | map(attribute='path') | list }}"
+        profile: "{{ inputs.embedding_profile }}"
+        max_results: "{{ inputs.features.context_budget.max_files | default(50) }}"
+        state: "{{ inputs.state }}"
+        models: "{{ inputs.models }}"
+        parent_id: "{{ (blocks.register.outputs.rows | default([{}]))[0].id | default('') }}"
+
+  - id: rrf_fusion
+    type: Workflow
+    description: "Salience: RRF fusion to combine keyword and semantic rankings."
+    depends_on:
+      - block: keyword_search
+        required: true
+      - block: semantic_search
+        required: false
+    condition: "{{ blocks.keyword_search.succeeded }}"
+    inputs:
+      workflow: cortex-rrf-fusion
+      inputs:
+        rankings: >-
+          {{
+            [
+              {'source': 'keyword', 'weight': 1.0, 'files': blocks.keyword_search.outputs.ranked_files | default([])},
+              {'source': 'semantic', 'weight': 1.0, 'files': blocks.semantic_search.outputs.rankings | default([])}
+            ] if blocks.semantic_search.succeeded
+            else [
+              {'source': 'keyword', 'weight': 1.0, 'files': blocks.keyword_search.outputs.ranked_files | default([])}
+            ]
+          }}
+        k: 60
+        context_budget: "{{ inputs.features.context_budget.max_tokens | default(60000) }}"
+        max_results: "{{ inputs.features.context_budget.max_files | default(50) }}"
+        state: "{{ inputs.state }}"
+        models: "{{ inputs.models }}"
+        parent_id: "{{ (blocks.register.outputs.rows | default([{}]))[0].id | default('') }}"
+        task_id: "{{ (blocks.register.outputs.rows | default([{}]))[0].id | default('') }}"
+
+  # ===========================================================================
+  # STEP 3: Build Schema & Recall
+  # ===========================================================================
 
   - id: build_schema
     type: Workflow
@@ -141,7 +244,7 @@ blocks:
 
   - id: recall
     type: Sql
-    description: THINK - Query existing evidence and facts from memory.
+    description: Query existing evidence from memory.
     depends_on: [register]
     inputs:
       engine: sqlite
@@ -154,9 +257,13 @@ blocks:
         ORDER BY namespace, key
         LIMIT 200
 
+  # ===========================================================================
+  # STEP 4: Plan Evidence Gathering
+  # ===========================================================================
+
   - id: plan
     type: LLMCall
-    description: PLAN - Decide what evidence to gather based on query + existing knowledge.
+    description: Decide what evidence to gather.
     depends_on:
       - block: register
         required: true
@@ -164,21 +271,57 @@ blocks:
         required: true
       - block: recall
         required: false
+      - block: keyword_search
+        required: false
+      - block: semantic_search
+        required: false
+      - block: rrf_fusion
+        required: false
     inputs:
       profile: "{{ inputs.profile }}"
       timeout: 600
       system_instructions: "{{ inputs.system }}"
       prompt: |
-        # Evidence Gathering Planning (ReAct Pattern)
+        # Evidence Gathering (CORTEX)
 
         ## Query
         {{ inputs.prompt }}
 
         ## Gather Depth: {{ get(inputs.pipeline_config, 'gather', {}).depth | default('focused') | upper }}
 
+        {% if inputs.evidence_targets | length > 0 %}
+        ## Specific Evidence Targets (from DECIDE refine)
+        These are specific pieces of evidence that were requested:
+        {% for target in inputs.evidence_targets %}
+        - {{ target }}
+        {% endfor %}
+        **Focus on gathering these specific items.**
+        {% endif %}
+
         {% if inputs.context %}
         ## Context
         {{ inputs.context | tojson }}
+        {% endif %}
+
+        {% if blocks.rrf_fusion.succeeded %}
+        ## Salience Prioritized Files (RRF ranked)
+        These files have been ranked by relevance to your query. Prioritize reading these:
+
+        **Context Budget**: {{ blocks.rrf_fusion.outputs.tokens_used | default(0) }} / {{ inputs.features.context_budget.max_tokens | default(60000) }} tokens
+
+        {% for file in blocks.rrf_fusion.outputs.fused_ranking[:20] %}
+        {{ loop.index }}. `{{ file.path }}` (RRF: {{ file.rrf_score }}, sources: {{ file.sources | join(', ') }})
+        {% endfor %}
+        {% if blocks.rrf_fusion.outputs.count > 20 %}
+        ... and {{ blocks.rrf_fusion.outputs.count - 20 }} more files
+        {% endif %}
+
+        **IMPORTANT**: Focus on these prioritized files. They have been ranked by relevance using {{ 'BM25 keyword matching + semantic embeddings (RRF fusion)' if blocks.semantic_search.succeeded else 'BM25 keyword matching' }}.
+        {% elif blocks.keyword_search.succeeded %}
+        ## Keyword-Matched Files (BM25 ranked)
+        {% for file in blocks.keyword_search.outputs.ranked_files[:15] %}
+        {{ loop.index }}. `{{ file.path }}` (BM25: {{ file.bm25_score }}, terms: {{ file.terms_matched }})
+        {% endfor %}
         {% endif %}
 
         {% if get(blocks.recall.outputs, 'rows', []) | length > 0 %}
@@ -189,46 +332,28 @@ blocks:
         {% endif %}
 
         {% if inputs.synthesis | length > 0 %}
-        ## Previous Investigations (Reflexion)
+        ## Previous Investigations
         {% for c in inputs.synthesis %}
         ### Investigation {{ loop.index }}
         - Prompt: {{ c.prompt }}
         - Response: {{ c.response }}
-        {% if c.synthesis %}
-        - Key Findings: {{ c.synthesis.summary | default('N/A') }}
-        {% endif %}
         {% endfor %}
         {% endif %}
 
-        ## Depth-Specific Instructions
+        ## Depth Instructions
 
         {% if get(inputs.pipeline_config, 'gather', {}).depth == 'shallow' %}
-        **SHALLOW DEPTH**: Minimal gathering for quick verification.
-        - 1-2 targeted searches only
-        - Focus on existence verification
-        - Skip broad exploration
+        **SHALLOW**: 1-2 targeted searches, existence verification only
         {% elif get(inputs.pipeline_config, 'gather', {}).depth == 'focused' %}
-        **FOCUSED DEPTH**: Targeted gathering in specific area.
-        - 3-5 searches in relevant directories
-        - Get key files, not everything
-        - Follow obvious connections
+        **FOCUSED**: 3-5 searches in relevant directories, key files only
         {% elif get(inputs.pipeline_config, 'gather', {}).depth == 'broad' %}
-        **BROAD DEPTH**: Comprehensive search across codebase.
-        - Multiple search patterns
-        - Cover all relevant directories
-        - Cast a wide net
+        **BROAD**: Multiple search patterns, cover all relevant directories
         {% elif get(inputs.pipeline_config, 'gather', {}).depth == 'deep' %}
-        **DEEP DEPTH**: Everything relevant + context.
-        - Full file contents, not just outlines
-        - Include related/dependent code
-        - Get tests, configs, documentation
-        {% else %}
-        **DEFAULT**: Use focused gathering strategy.
+        **DEEP**: Full file contents, related code, tests, configs, docs
         {% endif %}
 
-        ## Available Capabilities (ATOMIC Operations)
+        ## Available Capabilities
 
-        Use these capability workflows in your `operations` array:
         {% if inputs.capabilities | length > 0 %}
         {% for cap in inputs.capabilities %}
         **{{ cap.name }}** - {{ cap.description }}
@@ -237,92 +362,21 @@ blocks:
         {% endfor %}
         {% endfor %}
         {% else %}
-        No capabilities available (check permissions).
+        No capabilities available.
         {% endif %}
 
-        ## Operation Examples (REQUIRED FORMAT)
+        ## Output
 
-        **IMPORTANT**: Every operation MUST include the `inputs` object with capability-specific fields.
-
-        ```json
-        {
-          "operations": [
-            {
-              "capability": "cortex-gather-files",
-              "inputs": {"patterns": ["src/**/*.yaml", "*.md"]},
-              "reason": "Read workflow definitions and documentation"
-            },
-            {
-              "capability": "cortex-gather-search",
-              "inputs": {"pattern": "def execute", "path": "src/", "file_type": "py"},
-              "reason": "Find execute method implementations"
-            }
-          ]
-        }
-        ```
-
-        ## Questions (Spawning Child Cells)
-
-        **Questions = How you express uncertainty.** When you don't know something, ASK.
-
-        | Confidence | Expected Action |
-        |------------|-----------------|
-        | 0.9 - 1.0  | Operations only (highly confident) |
-        | 0.7 - 0.9  | Consider targeted questions |
-        | 0.5 - 0.7  | **SHOULD** ask questions to clarify |
-        | < 0.5      | **MUST** ask questions with specific prompts |
-
-        **Example when uncertain:**
-        ```json
-        {
-          "confidence": 0.5,
-          "result": {
-            "strategy": "Need more information",
-            "operations": [],
-            "questions": [
-              {"prompt": "What authentication mechanism does this codebase use?",
-               "reason": "Cannot find auth implementation in src/auth or src/security"}
-            ]
-          }
-        }
-        ```
-
-        **Key rules:**
-        1. If confidence < 0.7 and no useful operations, ASK questions
-        2. Questions spawn SEPARATE cognitive cycles (child cells)
-        3. Only ask DIFFERENT questions (not analysis of what you're already gathering)
-        4. Do NOT guess - if uncertain, express it through questions
-
-        **DO NOT ask:**
-        - "Analyze the files I'm gathering" (REASON phase does this)
-        - Restated versions of the parent prompt
-        - Redundant or duplicate questions
-
-        **DO ask:**
-        - Questions about DIFFERENT sources ("What database schema exists?")
-        - Questions about DIFFERENT domains ("How does frontend handle this?")
-
-        Question policy: {{ get(inputs.pipeline_config, 'gather', {}).spawn | default('complex_only') }}
-        Current depth: {{ inputs.depth }} / {{ inputs.max_depth }}
-
-        **REMEMBER**: After gathering, REASON phase will analyze everything. Questions are for
-        getting MORE information, not for analyzing what you already have.
-
-        ## Config Override
-
-        If you discover something unexpected that should change how REASON or ACT
-        behaves, output config_override. For example:
-        - Found security issues → reason.goal: evaluate, act.trigger: findings_require
-        - Found complex architecture → reason.spawn: uncertain_only
+        Provide operations to gather evidence and questions for uncertainty.
 
       response_schema: "{{ blocks.build_schema.outputs.schema }}"
 
   # ===========================================================================
-  # STEP 3b: Store LLM call for debugging
+  # Store LLM call
   # ===========================================================================
   - id: store_llm_call
     type: Sql
-    description: Store LLM call details for debugging and analysis.
+    description: Store LLM call details.
     depends_on:
       - block: plan
         required: false
@@ -345,7 +399,7 @@ blocks:
 
   - id: dispatch
     type: Workflow
-    description: ACT - Execute capability workflows in parallel via for_each.
+    description: Execute capability workflows in parallel.
     depends_on: [plan]
     condition: |
       {{ get(blocks.plan.outputs.response.result, 'operations', []) | length > 0 }}
@@ -369,7 +423,7 @@ blocks:
 
   - id: questions
     type: Workflow
-    description: ACT - Spawn child cortex-cells to answer questions.
+    description: Spawn child cortex-cell to answer questions.
     depends_on: [dispatch]
     condition: |
       {{ get(blocks.plan.outputs.response.result, 'questions', []) | length > 0
@@ -397,7 +451,7 @@ blocks:
 
   - id: combine_results
     type: Shell
-    description: Combine question prompts with their results for Reflexion.
+    description: Combine question results for recursion.
     depends_on: [questions]
     condition: |
       {{ blocks.questions.succeeded
@@ -408,14 +462,10 @@ blocks:
         import json
         import os
 
-        # Question requests (what we asked)
         requests = json.loads(os.environ.get('REQUESTS', '[]'))
-        # Question outputs (what we got back)
         outputs = json.loads(os.environ.get('OUTPUTS', '[]'))
-        # Previous synthesis (accumulated)
         previous = json.loads(os.environ.get('PREVIOUS', '[]'))
 
-        # Combine requests with outputs into Reflexion-compatible format
         combined = []
         for i, req in enumerate(requests):
             result = outputs[i] if i < len(outputs) else {}
@@ -426,7 +476,6 @@ blocks:
                 'synthesis': result.get('synthesis', {})
             })
 
-        # Merge with previous synthesis
         all_synthesis = previous + combined
         print(json.dumps(all_synthesis))
         EOF
@@ -437,7 +486,7 @@ blocks:
 
   - id: recurse
     type: Workflow
-    description: LOOP - Recurse with accumulated syntheses from investigations.
+    description: Recurse with accumulated syntheses.
     depends_on: [combine_results]
     condition: |
       {{ blocks.combine_results.succeeded
@@ -460,13 +509,14 @@ blocks:
         capabilities: "{{ inputs.capabilities }}"
         permissions: "{{ inputs.permissions }}"
         synthesis: "{{ blocks.combine_results.outputs.stdout | fromjson }}"
+        features: "{{ inputs.features }}"
 
   # ===========================================================================
-  # Track Completion (direct Sql UPDATE)
+  # Track Completion
   # ===========================================================================
   - id: track_done
     type: Sql
-    description: Mark phase complete and compile result.
+    description: Mark phase complete.
     depends_on:
       - block: register
         required: true
@@ -477,6 +527,12 @@ blocks:
       - block: combine_results
         required: false
       - block: recurse
+        required: false
+      - block: keyword_search
+        required: false
+      - block: semantic_search
+        required: false
+      - block: rrf_fusion
         required: false
     condition: "{{ blocks.register.succeeded }}"
     inputs:
@@ -495,34 +551,58 @@ blocks:
             'operations_executed': blocks.dispatch.metadata.count | default(0),
             'operations_failed': blocks.dispatch.metadata.count_failed | default(0),
             'questions_spawned': blocks.questions.metadata.count | default(0),
-            'questions_failed': blocks.questions.metadata.count_failed | default(0),
             'confidence': blocks.plan.outputs.response.confidence | default(0),
             'depth': inputs.depth,
-            'errors': blocks.dispatch.metadata.errors | default([])
+            'salience_enabled': inputs.features.salience_enabled | default(false),
+            'files_ranked': blocks.rrf_fusion.outputs.count | default(0) if blocks.rrf_fusion.succeeded else (blocks.keyword_search.outputs.count | default(0) if blocks.keyword_search.succeeded else 0),
+            'context_tokens_used': blocks.rrf_fusion.outputs.tokens_used | default(0) if blocks.rrf_fusion.succeeded else 0
           } | tojson }}
         - "{{ (blocks.register.outputs.rows | default([{}]))[0].id | default('') }}"
 
+# =============================================================================
+# OUTPUTS
+# =============================================================================
 outputs:
   result:
     type: dict
-    description: "Gathering result. Recursed result passes through unchanged."
+    description: "Gathering result."
     value: |
       {{ blocks.recurse.outputs.result if blocks.recurse.succeeded else {
         'strategy': blocks.plan.outputs.response.result.strategy | default(''),
         'operations_executed': blocks.dispatch.metadata.count | default(0),
-        'operations_failed': blocks.dispatch.metadata.count_failed | default(0),
         'questions_spawned': blocks.questions.metadata.count | default(0),
-        'questions_failed': blocks.questions.metadata.count_failed | default(0),
         'confidence': blocks.plan.outputs.response.confidence | default(0),
         'depth': inputs.depth
       } }}
 
   config_override:
     type: dict
-    description: "Config override for REASON/ACT based on discoveries."
+    description: "Config override for downstream phases."
     value: |
       {{ blocks.recurse.outputs.config_override if blocks.recurse.succeeded
          else (blocks.plan.outputs.response.config_override | default({})) }}
+
+  # Salience filtering outputs
+  salience:
+    type: dict
+    description: "Salience filtering results."
+    value: |
+      {{ {
+        'enabled': inputs.features.salience_enabled | default(false),
+        'semantic_enabled': inputs.features.semantic_enabled | default(true),
+        'semantic_used': blocks.semantic_search.succeeded | default(false),
+        'files_ranked': blocks.rrf_fusion.outputs.count if blocks.rrf_fusion.succeeded else (blocks.keyword_search.outputs.count if blocks.keyword_search.succeeded else 0),
+        'files_excluded': blocks.rrf_fusion.outputs.excluded | length if blocks.rrf_fusion.succeeded else 0,
+        'tokens_used': blocks.rrf_fusion.outputs.tokens_used if blocks.rrf_fusion.succeeded else 0,
+        'tokens_remaining': blocks.rrf_fusion.outputs.tokens_remaining if blocks.rrf_fusion.succeeded else 0,
+        'keywords': blocks.keyword_search.outputs.keywords if blocks.keyword_search.succeeded else [],
+        'sources_fused': blocks.rrf_fusion.outputs.sources_fused if blocks.rrf_fusion.succeeded else []
+      } }}
+
+  prioritized_files:
+    type: list
+    description: "Top prioritized files from salience filtering."
+    value: "{{ blocks.rrf_fusion.outputs.fused_ranking if blocks.rrf_fusion.succeeded else (blocks.keyword_search.outputs.ranked_files if blocks.keyword_search.succeeded else []) }}"
 
   state:
     type: str

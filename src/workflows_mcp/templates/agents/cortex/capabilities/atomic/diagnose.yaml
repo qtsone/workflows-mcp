@@ -1,0 +1,442 @@
+# =============================================================================
+# CORTEX Diagnose Capability
+# =============================================================================
+#
+# Deep investigation when surprisal is high (>2 bits).
+#
+# When the model's prediction significantly fails, this capability:
+#   1. Queries historical episodes with similar context
+#   2. Analyzes the prediction error pattern
+#   3. Generates hypotheses for why the model was wrong
+#   4. Proposes model updates (learnings) to prevent future errors
+#
+# This is the "learning trigger" in the predictive coding framework:
+# High surprisal → Diagnosis → Model Update → Better future predictions
+#
+# =============================================================================
+
+name: cortex-diagnose
+description: "Investigate high-surprisal prediction failures"
+
+tags: [cortex, capability, diagnose, learning, predictive-coding]
+
+inputs:
+  state:
+    type: str
+    description: Path to SQLite state database.
+    required: true
+
+  models:
+    type: dict
+    description: Model definitions.
+    default: {}
+
+  parent_id:
+    type: str
+    description: Parent task ID.
+    default: ""
+
+  task_id:
+    type: str
+    description: Current task ID for tracking.
+    default: ""
+
+  # Diagnosis context from DECIDE phase
+  diagnosis_context:
+    type: dict
+    description: |
+      Context for diagnosis including:
+        - surprisal_bits: How surprising the outcome was
+        - surprise_explanation: What was unexpected
+        - diagnosis_questions: Questions to investigate
+    required: true
+
+  # Original expectation and outcome
+  expectation_id:
+    type: str
+    description: ID of the failed expectation.
+    default: ""
+
+  category:
+    type: str
+    description: Task category for similarity matching.
+    default: ""
+
+  context_hash:
+    type: str
+    description: Context hash for similarity matching.
+    default: ""
+
+  profile:
+    type: str
+    description: LLM profile to use.
+    default: "default"
+
+  # Control parameters
+  max_similar_episodes:
+    type: num
+    description: Maximum similar episodes to retrieve.
+    default: 10
+
+blocks:
+  # ===========================================================================
+  # STEP 1: Register capability in task tree
+  # ===========================================================================
+  - id: register
+    type: Sql
+    description: Register this capability in the task tree.
+    condition: "{{ inputs.state | trim != '' }}"
+    inputs:
+      engine: sqlite
+      path: "{{ inputs.state }}"
+      model: "{{ inputs.models.task }}"
+      op: insert
+      data:
+        parent_id: "{{ inputs.parent_id if inputs.parent_id else none }}"
+        kind: capability
+        name: cortex-diagnose
+        metadata: "{{ {'labels': {'capability_type': 'diagnosis', 'surprisal_bits': inputs.diagnosis_context.surprisal_bits | default(0)}} }}"
+        inputs: "{{ {'expectation_id': inputs.expectation_id, 'category': inputs.category} }}"
+        status: running
+        depth: 2
+
+  # ===========================================================================
+  # STEP 2: Get the failed expectation
+  # ===========================================================================
+  - id: get_expectation
+    type: Sql
+    description: Retrieve the expectation that failed.
+    depends_on: [register]
+    condition: "{{ inputs.expectation_id | trim != '' }}"
+    inputs:
+      engine: sqlite
+      path: "{{ inputs.state }}"
+      sql: |
+        SELECT
+          e.id,
+          e.task_id,
+          e.phase,
+          e.prediction,
+          e.basis,
+          eo.actual_outcome,
+          eo.matched_prediction,
+          eo.surprisal_bits
+        FROM expectations e
+        LEFT JOIN expectation_outcomes eo ON e.id = eo.expectation_id
+        WHERE e.id = ?
+      params:
+        - "{{ inputs.expectation_id }}"
+
+  # ===========================================================================
+  # STEP 3: Query similar historical episodes (using context_hash similarity)
+  # ===========================================================================
+  - id: query_similar_episodes
+    type: Sql
+    description: Find episodes with similar category and context_hash.
+    depends_on: [register]
+    inputs:
+      engine: sqlite
+      path: "{{ inputs.state }}"
+      sql: |
+        SELECT
+          ep.id,
+          ep.query_hash,
+          ep.category,
+          ep.context_hash,
+          ep.context_features,
+          ep.actions_taken,
+          ep.outcome,
+          ep.surprisal_bits,
+          ep.learnings,
+          ep.created_at,
+          -- Compute relevance score based on category and context_hash similarity
+          CASE
+            WHEN ep.category = ? THEN 2  -- Exact category match
+            ELSE 0
+          END +
+          CASE
+            -- Context hash prefix match (first 8 chars = high similarity)
+            WHEN SUBSTR(ep.context_hash, 1, 8) = SUBSTR(?, 1, 8) THEN 4
+            -- Context hash prefix match (first 4 chars = moderate similarity)
+            WHEN SUBSTR(ep.context_hash, 1, 4) = SUBSTR(?, 1, 4) THEN 2
+            ELSE 0
+          END as relevance_score
+        FROM episodes ep
+        WHERE
+          -- Match either by category OR by context_hash prefix
+          ep.category = ?
+          OR (? != '' AND SUBSTR(ep.context_hash, 1, 4) = SUBSTR(?, 1, 4))
+        ORDER BY
+          -- Prioritize by relevance score
+          relevance_score DESC,
+          -- Then by failure episodes (more informative for diagnosis)
+          CASE WHEN ep.outcome = 'failure' THEN 0 ELSE 1 END,
+          -- Then by surprisal (higher surprisal = more relevant for learning)
+          ep.surprisal_bits DESC,
+          -- Then by recency
+          ep.created_at DESC
+        LIMIT ?
+      params:
+        - "{{ inputs.category }}"
+        - "{{ inputs.context_hash }}"
+        - "{{ inputs.context_hash }}"
+        - "{{ inputs.category }}"
+        - "{{ inputs.context_hash }}"
+        - "{{ inputs.context_hash }}"
+        - "{{ inputs.max_similar_episodes }}"
+
+  # ===========================================================================
+  # STEP 4: Analyze prediction error with LLM
+  # ===========================================================================
+  - id: analyze
+    type: LLMCall
+    description: Analyze why the prediction failed and what can be learned.
+    depends_on:
+      - block: get_expectation
+        required: false
+      - block: query_similar_episodes
+        required: false
+    inputs:
+      profile: "{{ inputs.profile }}"
+      timeout: 600
+      system_instructions: |
+        You are the diagnostic module of CORTEX, responsible for learning from prediction failures.
+
+        When the cognitive system's predictions don't match reality (high surprisal), you analyze:
+        1. What was predicted vs what actually happened
+        2. Why the prediction was wrong (root cause)
+        3. What patterns from similar past episodes might explain this
+        4. What should be learned to improve future predictions
+
+        Your goal is to generate actionable learnings that can be stored as heuristics.
+      prompt: |
+        # Diagnosis Request
+
+        ## Prediction Failure Summary
+        - **Surprisal**: {{ inputs.diagnosis_context.surprisal_bits | default(0) | round(2) }} bits
+        - **Category**: {{ inputs.category | default('unknown') }}
+        - **Context Hash**: {{ inputs.context_hash[:16] if inputs.context_hash else 'not available' }}
+        - **Surprise Explanation**: {{ inputs.diagnosis_context.surprise_explanation | default('Not provided') }}
+
+        {% if blocks.get_expectation.succeeded and blocks.get_expectation.outputs.rows | length > 0 %}
+        ## Failed Expectation
+        {% set exp = blocks.get_expectation.outputs.rows[0] %}
+        - **Predicted**: {{ exp.prediction | default('unknown') }}
+        - **Actual**: {{ exp.actual_outcome | default('unknown') }}
+        - **Basis**: {{ exp.basis | default('No basis recorded') }}
+        {% endif %}
+
+        {% if inputs.diagnosis_context.diagnosis_questions %}
+        ## Questions to Investigate
+        {% for q in inputs.diagnosis_context.diagnosis_questions %}
+        {{ loop.index }}. {{ q }}
+        {% endfor %}
+        {% endif %}
+
+        {% if blocks.query_similar_episodes.succeeded and blocks.query_similar_episodes.outputs.rows | length > 0 %}
+        ## Similar Historical Episodes ({{ blocks.query_similar_episodes.outputs.rows | length }} found)
+        Episodes are ranked by relevance (category match + context_hash similarity).
+
+        {% for ep in blocks.query_similar_episodes.outputs.rows[:5] %}
+        ### Episode {{ loop.index }} (Relevance: {{ ep.relevance_score | default(0) }}/6)
+        - **Category**: {{ ep.category }} | **Context Hash**: {{ ep.context_hash[:8] if ep.context_hash else 'n/a' }}
+        - **Outcome**: {{ ep.outcome }}
+        - **Surprisal**: {{ ep.surprisal_bits | default(0) | round(2) }} bits
+        - **Actions**: {{ ep.actions_taken | truncate(200) }}
+        - **Learnings**: {{ ep.learnings | truncate(200) }}
+        {% endfor %}
+        {% else %}
+        ## Historical Episodes
+        No similar episodes found for comparison (searched by category: {{ inputs.category }}, context_hash prefix: {{ inputs.context_hash[:4] if inputs.context_hash else 'n/a' }}).
+        {% endif %}
+
+        ## Instructions
+
+        Analyze this prediction failure and provide:
+        1. **Root Cause Analysis**: Why did the prediction fail?
+        2. **Pattern Recognition**: What patterns from history might explain this?
+        3. **Model Updates**: What should the system learn to predict better next time?
+        4. **Recommendations**: Concrete actions to take now
+
+      response_schema:
+        type: object
+        properties:
+          diagnosis:
+            type: object
+            properties:
+              root_cause:
+                type: string
+                description: Primary reason the prediction failed
+              contributing_factors:
+                type: array
+                items:
+                  type: string
+                description: Secondary factors that contributed to the error
+              pattern_match:
+                type: object
+                properties:
+                  found_pattern:
+                    type: boolean
+                  pattern_description:
+                    type: string
+                  similar_episode_ids:
+                    type: array
+                    items:
+                      type: string
+              confidence:
+                type: number
+                minimum: 0
+                maximum: 1
+            required: [root_cause, confidence]
+          model_updates:
+            type: array
+            items:
+              type: object
+              properties:
+                learning:
+                  type: string
+                  description: What should be learned from this failure
+                category_filter:
+                  type: string
+                  description: Which category this learning applies to
+                confidence:
+                  type: number
+                  minimum: 0
+                  maximum: 1
+              required: [learning, confidence]
+            description: Proposed updates to the predictive model
+          recommendations:
+            type: array
+            items:
+              type: string
+            description: Concrete actions to take now
+          requires_action:
+            type: boolean
+            description: Whether immediate action is needed
+        required: [diagnosis, model_updates, recommendations, requires_action]
+
+  # ===========================================================================
+  # STEP 5: Store diagnosis result
+  # ===========================================================================
+  - id: store_diagnosis
+    type: Sql
+    description: Store the diagnosis as a fact for learning.
+    depends_on: [analyze]
+    condition: "{{ blocks.analyze.succeeded }}"
+    inputs:
+      engine: sqlite
+      path: "{{ inputs.state }}"
+      sql: |
+        INSERT INTO facts (id, claim, evidence_type, severity, confidence, grounding, task_id, status)
+        VALUES (
+          lower(hex(randomblob(16))),
+          ?,
+          'diagnosis',
+          'info',
+          ?,
+          ?,
+          ?,
+          'active'
+        )
+      params:
+        - "{{ 'Diagnosis: ' ~ blocks.analyze.outputs.response.diagnosis.root_cause[:200] }}"
+        - "{{ blocks.analyze.outputs.response.diagnosis.confidence }}"
+        - "{{ {'diagnosis': blocks.analyze.outputs.response.diagnosis, 'model_updates': blocks.analyze.outputs.response.model_updates} | tojson }}"
+        - "{{ inputs.task_id | default(inputs.parent_id) }}"
+
+  # ===========================================================================
+  # STEP 6: Store LLM call
+  # ===========================================================================
+  - id: store_llm_call
+    type: Sql
+    description: Store LLM call details.
+    depends_on: [analyze]
+    condition: "{{ blocks.analyze.succeeded }}"
+    inputs:
+      engine: sqlite
+      path: "{{ inputs.state }}"
+      model: "{{ inputs.models.llm_call }}"
+      op: insert
+      data:
+        task_id: "{{ (blocks.register.outputs.rows | default([{}]))[0].id | default('') }}"
+        phase: diagnose
+        system_instructions: "CORTEX Diagnosis Module"
+        prompt: "Diagnosis for surprisal {{ inputs.diagnosis_context.surprisal_bits | default(0) }} bits"
+        response: "{{ blocks.analyze.outputs.response }}"
+        model: "{{ blocks.analyze.outputs.metadata.model | default('unknown') }}"
+        prompt_tokens: "{{ blocks.analyze.outputs.metadata.usage.prompt_tokens | default(0) }}"
+        completion_tokens: "{{ blocks.analyze.outputs.metadata.usage.completion_tokens | default(0) }}"
+        duration_ms: "{{ blocks.analyze.metadata.duration_ms | default(0) }}"
+
+  # ===========================================================================
+  # STEP 7: Track completion
+  # ===========================================================================
+  - id: track_done
+    type: Sql
+    description: Mark capability complete.
+    depends_on:
+      - block: register
+        required: true
+      - block: analyze
+        required: true
+      - block: store_diagnosis
+        required: false
+    inputs:
+      engine: sqlite
+      path: "{{ inputs.state }}"
+      model: "{{ inputs.models.task }}"
+      op: update
+      where:
+        id: "{{ (blocks.register.outputs.rows | default([{}]))[0].id | default('') }}"
+      data:
+        status: "{{ 'done' if blocks.analyze.succeeded else 'failed' }}"
+        outputs: "{{ {'root_cause': blocks.analyze.outputs.response.diagnosis.root_cause, 'model_updates_count': blocks.analyze.outputs.response.model_updates | length, 'requires_action': blocks.analyze.outputs.response.requires_action} if blocks.analyze.succeeded else {} }}"
+
+# =============================================================================
+# OUTPUTS
+# =============================================================================
+outputs:
+  diagnosis:
+    type: dict
+    description: "Complete diagnosis result."
+    value: "{{ blocks.analyze.outputs.response.diagnosis if blocks.analyze.succeeded else {} }}"
+
+  root_cause:
+    type: str
+    description: "Primary reason the prediction failed."
+    value: "{{ blocks.analyze.outputs.response.diagnosis.root_cause if blocks.analyze.succeeded else '' }}"
+
+  model_updates:
+    type: list
+    description: "Proposed updates to improve future predictions."
+    value: "{{ blocks.analyze.outputs.response.model_updates if blocks.analyze.succeeded else [] }}"
+
+  recommendations:
+    type: list
+    description: "Concrete actions to take now."
+    value: "{{ blocks.analyze.outputs.response.recommendations if blocks.analyze.succeeded else [] }}"
+
+  requires_action:
+    type: bool
+    description: "Whether immediate action is needed."
+    value: "{{ blocks.analyze.outputs.response.requires_action if blocks.analyze.succeeded else false }}"
+
+  similar_episodes_count:
+    type: num
+    description: "Number of similar historical episodes found."
+    value: "{{ blocks.query_similar_episodes.outputs.rows | length if blocks.query_similar_episodes.succeeded else 0 }}"
+
+  similar_episodes:
+    type: list
+    description: "Similar episodes with relevance scores."
+    value: "{{ blocks.query_similar_episodes.outputs.rows if blocks.query_similar_episodes.succeeded else [] }}"
+
+  context_hash_matched:
+    type: bool
+    description: "Whether episodes were found using context_hash similarity."
+    value: "{{ (blocks.query_similar_episodes.outputs.rows | selectattr('relevance_score', 'ge', 2) | list | length > 0) if blocks.query_similar_episodes.succeeded else false }}"
+
+  state:
+    type: str
+    description: "Path to state database (passthrough)."
+    value: "{{ inputs.state }}"

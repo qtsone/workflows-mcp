@@ -3,7 +3,7 @@ description: |
   Atomic capability: Create a new file.
   Use for generating reports, creating new code files, etc.
 
-tags: [cortex, capability, atomic, action, write]
+tags: [cortex, capability, atomic, action, write, v2]
 
 inputs:
   path:

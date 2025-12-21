@@ -9,6 +9,7 @@ Features:
     - Foreign key enforcement enabled
     - Path validation and parent directory creation
     - PRAGMA configuration via options
+    - sqlite-vec extension for vector similarity search
 """
 
 from __future__ import annotations
@@ -18,6 +19,8 @@ import logging
 import sqlite3
 from pathlib import Path
 from typing import Any
+
+import sqlite_vec  # type: ignore[import-untyped]
 
 from .backend import ConnectionConfig, DatabaseBackendBase, DatabaseEngine, Params, QueryResult
 
@@ -88,6 +91,16 @@ class SqliteBackend(DatabaseBackendBase):
             # Connect with check_same_thread=False for async usage
             conn = sqlite3.connect(path, check_same_thread=False)
             conn.row_factory = sqlite3.Row
+
+            # Load sqlite-vec extension for vector similarity search
+            # This must be done before any PRAGMA settings
+            try:
+                conn.enable_load_extension(True)
+                sqlite_vec.load(conn)
+                conn.enable_load_extension(False)  # Disable for security
+                logger.debug("Loaded sqlite-vec extension")
+            except Exception as e:
+                logger.warning(f"Failed to load sqlite-vec extension: {e}")
 
             # Get PRAGMA settings from options or use defaults
             pragmas = {**self.DEFAULT_PRAGMAS}

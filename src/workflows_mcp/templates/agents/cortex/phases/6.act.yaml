@@ -1,0 +1,382 @@
+# =============================================================================
+# CORTEX v2 Act Phase
+# =============================================================================
+#
+# Enhanced from v1 with:
+#   - Backup files before changes (stored in backups table)
+#   - Receives execution_result from EXECUTE phase
+#   - Completion evaluation moved to DECIDE phase
+#   - References v2 workflows
+#
+# =============================================================================
+
+name: cortex-phase-act
+description: "CORTEX v2 Act Phase - executes actions with backup support"
+
+tags: [cortex, phase, act, v2]
+
+inputs:
+  prompt:
+    type: str
+    description: The original query.
+    required: true
+
+  system:
+    type: str
+    description: System prompt override.
+    default: |
+      You are the action module of a recursive cognitive system (CORTEX v2).
+      Your role is to execute actions based on synthesis results.
+
+      KEY v2 FEATURE: You have access to execution results showing what commands produced.
+      Use this to inform your actions (e.g., fix the specific test that failed).
+
+      Be conservative - prefer reporting over direct changes unless explicitly requested.
+      Never execute destructive actions without high confidence.
+
+  context:
+    type: dict
+    description: Context including synthesis, execution_result, category.
+    default: {}
+
+  pipeline_config:
+    type: dict
+    description: Pipeline configuration.
+    default: {}
+
+  memory:
+    type: list
+    description: List of memory keys to retrieve.
+    default: []
+
+  synthesis:
+    type: list
+    description: Accumulated synthesis from previous investigations.
+    default: []
+
+  depth:
+    type: num
+    description: Current recursion depth.
+    default: 0
+
+  max_depth:
+    type: num
+    description: Maximum recursion depth.
+    default: 5
+
+  iterations:
+    type: num
+    description: Current task completion iteration.
+    default: 0
+
+  max_iterations:
+    type: num
+    description: Maximum continuation attempts.
+    default: 3
+
+  confidence_threshold:
+    type: num
+    description: Minimum confidence to proceed.
+    default: 0.7
+
+  state:
+    type: str
+    description: Path to SQLite state database.
+    default: ""
+
+  models:
+    type: dict
+    description: Model definitions for CRUD operations.
+    default: {}
+
+  parent_id:
+    type: str
+    description: Parent task ID for task tree.
+    default: ""
+
+  profile:
+    type: str
+    description: LLM profile to use.
+    default: "default"
+
+  capabilities:
+    type: list
+    description: Available capabilities registry.
+    default: []
+
+  permissions:
+    type: dict
+    description: Available permissions.
+    default: { "read": true, "write": false, "execute": false }
+
+blocks:
+  # ===========================================================================
+  # STEP 1: Register Phase Task
+  # ===========================================================================
+  - id: register
+    type: Sql
+    description: Register this phase in the task tree.
+    inputs:
+      engine: sqlite
+      path: "{{ inputs.state }}"
+      model: "{{ inputs.models.task }}"
+      op: insert
+      data:
+        parent_id: "{{ inputs.parent_id if inputs.parent_id else none }}"
+        kind: phase
+        name: act
+        metadata: "{{ {'labels': {'phase_order': 6, 'trigger': inputs.pipeline_config.act.trigger | default('never'), 'mode': inputs.pipeline_config.act.mode | default('null'), 'version': 'v2'}} }}"
+        inputs: "{{ {'prompt': inputs.prompt, 'iterations': inputs.iterations} }}"
+        status: running
+        depth: "{{ inputs.depth }}"
+
+  - id: build_schema
+    type: Workflow
+    description: Generate response schema with enforced capability enum.
+    depends_on: [register]
+    condition: |
+      {{ inputs.pipeline_config.act.trigger | default('never') != 'never'
+         and inputs.pipeline_config.act.mode | default('null') != 'null'
+         and (inputs.pipeline_config.act.trigger == 'always'
+              or inputs.context.synthesis.actions_needed | default(false)) }}
+    inputs:
+      workflow: cortex-internal-schema-operations
+      inputs:
+        capabilities: "{{ inputs.capabilities }}"
+        phase: "act"
+        include_spawn: true
+        include_completion: false
+        include_config_override: false
+
+  - id: plan
+    type: LLMCall
+    description: Decide what action to take.
+    depends_on:
+      - block: register
+        required: true
+      - block: build_schema
+        required: true
+    condition: "{{ blocks.build_schema.succeeded }}"
+    inputs:
+      profile: "{{ inputs.profile }}"
+      timeout: 600
+      system_instructions: "{{ inputs.system }}"
+      prompt: |
+        # Action Phase (CORTEX v2)
+
+        ## Original Query
+        {{ inputs.prompt }}
+
+        ## Action Mode: {{ inputs.pipeline_config.act.mode | default('report') | upper }}
+
+        {% if inputs.context.execution_result and inputs.context.execution_result.executed %}
+        ## ⚡ EXECUTION RESULTS (from EXECUTE phase)
+
+        **Use this to understand what needs fixing:**
+
+        - **Command**: `{{ inputs.context.execution_result.command }}`
+        - **Exit Code**: {{ inputs.context.execution_result.exit_code }}
+        - **Success**: {{ inputs.context.execution_result.success }}
+        {% if inputs.context.execution_result.summary %}
+        - **Summary**: {{ inputs.context.execution_result.summary | tojson }}
+        {% endif %}
+
+        {% if not inputs.context.execution_result.success %}
+        ### Failing Output (relevant portion)
+        ```
+        {{ inputs.context.execution_result.stdout | truncate(5000) }}
+        ```
+        {% endif %}
+        {% endif %}
+
+        {% if inputs.context.synthesis %}
+        ## Synthesis from REASON Phase
+        - Summary: {{ inputs.context.synthesis.summary | default('N/A') }}
+        - Risk Level: {{ inputs.context.synthesis.risk_level | default('N/A') }}
+        - Actions Needed: {{ inputs.context.synthesis.actions_needed | default(false) }}
+        {% if inputs.context.synthesis.recommendations %}
+        - Recommendations:
+        {% for rec in inputs.context.synthesis.recommendations %}
+          - {{ rec }}
+        {% endfor %}
+        {% endif %}
+        {% endif %}
+
+        ## Permissions
+        - Read: {{ inputs.permissions.read | default(true) }}
+        - Write: {{ inputs.permissions.write | default(false) }}
+        - Execute: {{ inputs.permissions.execute | default(false) }}
+
+        ## Mode Instructions
+
+        {% if inputs.pipeline_config.act.mode == 'fix' %}
+        **FIX MODE**: Apply fix to the identified issue.
+        - Target the root cause from REASON synthesis
+        - Make minimal, focused changes
+        - Changes will be verified by VERIFY phase
+        {% elif inputs.pipeline_config.act.mode == 'implement' %}
+        **IMPLEMENT MODE**: Create or modify code.
+        - Follow the plan from synthesis
+        - Create/edit files as needed
+        {% elif inputs.pipeline_config.act.mode == 'report' %}
+        **REPORT MODE**: Generate report only, no file changes.
+        {% endif %}
+
+        ## Available Capabilities
+
+        {% if inputs.capabilities %}
+        {% for cap in inputs.capabilities %}
+        **{{ cap.name }}** - {{ cap.description }}
+        {% for key, schema in cap.inputs.items() %}
+          - {{ key }} ({{ schema.type }}{% if schema.required %}, required{% endif %}): {{ schema.description }}
+        {% endfor %}
+        {% endfor %}
+        {% else %}
+        **No write/execute capabilities available.**
+        {% endif %}
+
+        ## Output
+
+        Provide operations to execute. Operations run SEQUENTIALLY.
+        Note: Files will be backed up before changes for rollback support.
+
+      response_schema: "{{ blocks.build_schema.outputs.schema }}"
+
+  # ===========================================================================
+  # Store LLM call
+  # ===========================================================================
+  - id: store_llm_call
+    type: Sql
+    description: Store LLM call details.
+    depends_on:
+      - block: plan
+        required: false
+    condition: "{{ inputs.state | trim != '' and blocks.plan.succeeded }}"
+    inputs:
+      engine: sqlite
+      path: "{{ inputs.state }}"
+      model: "{{ inputs.models.llm_call }}"
+      op: insert
+      data:
+        task_id: "{{ (blocks.register.outputs.rows | default([{}]))[0].id | default('') }}"
+        phase: act
+        system_instructions: "{{ inputs.system | default('') }}"
+        prompt: "{{ inputs.prompt }}"
+        response: "{{ blocks.plan.outputs.response }}"
+        model: "{{ blocks.plan.outputs.metadata.model | default('unknown') }}"
+        prompt_tokens: "{{ blocks.plan.outputs.metadata.usage.prompt_tokens | default(0) }}"
+        completion_tokens: "{{ blocks.plan.outputs.metadata.usage.completion_tokens | default(0) }}"
+        duration_ms: "{{ blocks.plan.metadata.duration_ms | default(0) }}"
+
+  # ===========================================================================
+  # Execute operations
+  # ===========================================================================
+  - id: dispatch
+    type: Workflow
+    description: Execute capability workflows SEQUENTIALLY.
+    depends_on: [plan]
+    condition: |
+      {{ blocks.plan.succeeded
+         and get(blocks.plan.outputs.response.result, 'operations', []) | length > 0
+         and blocks.plan.outputs.response.confidence >= inputs.confidence_threshold }}
+    for_each: "{{ blocks.plan.outputs.response.result.operations }}"
+    for_each_mode: sequential
+    continue_on_error: true
+    inputs:
+      workflow: cortex-action-dispatch
+      inputs:
+        state: "{{ inputs.state }}"
+        models: "{{ inputs.models }}"
+        parent_id: "{{ (blocks.register.outputs.rows | default([{}]))[0].id | default('') }}"
+        cell_id: "{{ (blocks.register.outputs.rows | default([{}]))[0].id | default('') }}"
+        capability: "{{ each.value.capability }}"
+        inputs: "{{ each.value.inputs }}"
+        reason: "{{ each.value.reason | default('') }}"
+        base_path: "{{ inputs.context.repo_path | default('.') }}"
+        permissions: "{{ inputs.permissions }}"
+        # v2: Enable backup for all file operations
+        backup_enabled: true
+
+  # ===========================================================================
+  # Spawn child cells for questions
+  # ===========================================================================
+  - id: questions
+    type: Workflow
+    description: Spawn child cortex-cell to answer questions.
+    depends_on: [plan]
+    condition: |
+      {{ blocks.plan.succeeded
+         and get(blocks.plan.outputs.response.result, 'questions', []) | length > 0
+         and blocks.plan.outputs.response.confidence >= inputs.confidence_threshold
+         and inputs.depth < inputs.max_depth }}
+    for_each: "{{ blocks.plan.outputs.response.result.questions }}"
+    for_each_mode: parallel
+    max_parallel: 3
+    continue_on_error: true
+    inputs:
+      workflow: cortex-cell
+      inputs:
+        prompt: "{{ each.value.prompt }}"
+        context: "{{ inputs.context | combine({'parent_prompt': inputs.prompt, 'spawn_reason': each.value.reason}) }}"
+        depth: "{{ inputs.depth + 1 }}"
+        max_depth: "{{ inputs.max_depth }}"
+        iterations: 0
+        max_iterations: "{{ inputs.max_iterations }}"
+        state: "{{ inputs.state }}"
+        parent_id: "{{ (blocks.register.outputs.rows | default([{}]))[0].id | default('') }}"
+        profile: "{{ inputs.profile }}"
+        confidence_threshold: "{{ inputs.confidence_threshold }}"
+        capabilities: "{{ inputs.capabilities }}"
+        permissions: "{{ inputs.permissions }}"
+
+  # ===========================================================================
+  # Track completion
+  # ===========================================================================
+  - id: track_done
+    type: Sql
+    description: Mark phase complete.
+    depends_on:
+      - block: register
+        required: true
+      - block: plan
+        required: false
+      - block: dispatch
+        required: false
+      - block: questions
+        required: false
+    condition: "{{ blocks.register.succeeded }}"
+    inputs:
+      engine: sqlite
+      path: "{{ inputs.state }}"
+      sql: |
+        UPDATE tasks
+        SET status = 'done',
+            outputs = ?,
+            updated_at = datetime('now')
+        WHERE id = ?
+      params:
+        - "{{ {'iterations': inputs.iterations, 'action_taken': blocks.plan.succeeded, 'operations_dispatched': get(blocks.dispatch.metadata, 'count', 0), 'operations_failed': get(blocks.dispatch.metadata, 'count_failed', 0), 'questions_spawned': get(blocks.questions.metadata, 'count', 0), 'confidence': blocks.plan.outputs.response.confidence | default(0)} | tojson }}"
+        - "{{ (blocks.register.outputs.rows | default([{}]))[0].id | default('') }}"
+
+outputs:
+  result:
+    type: dict
+    description: "Action result."
+    value: |
+      {{ blocks.plan.outputs.response.result if blocks.plan.succeeded
+         else {'action_type': 'none', 'action_reason': 'trigger_disabled'} }}
+
+  operations_executed:
+    type: num
+    description: "Number of operations executed."
+    value: "{{ get(blocks.dispatch.metadata, 'count', 0) }}"
+
+  operations_failed:
+    type: num
+    description: "Number of operations that failed."
+    value: "{{ get(blocks.dispatch.metadata, 'count_failed', 0) }}"
+
+  state:
+    type: str
+    description: "Path to state database."
+    value: "{{ inputs.state }}"

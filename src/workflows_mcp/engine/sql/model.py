@@ -54,7 +54,7 @@ TYPE_MAPPING: dict[str, dict[DatabaseEngine, str]] = {
         DatabaseEngine.MARIADB: "TINYINT(1)",
     },
     "json": {
-        DatabaseEngine.SQLITE: "TEXT",
+        DatabaseEngine.SQLITE: "JSON TEXT",
         DatabaseEngine.POSTGRESQL: "JSONB",
         DatabaseEngine.MARIADB: "JSON",
     },

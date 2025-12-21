@@ -18,7 +18,10 @@ description: |
   - failed: Re-execute (retry failed action)
   - rolled_back: Re-execute (action was undone)
 
-tags: [cortex, capability, atomic, actions, deduplication, wrapper]
+  v2 enhancements:
+  - backup_enabled: When true, backs up files before modification
+
+tags: [cortex, capability, atomic, actions, deduplication, wrapper, v2]
 
 inputs:
   state:
@@ -71,6 +74,12 @@ inputs:
     required: false
     default: ""
 
+  backup_enabled:
+    type: bool
+    description: Whether to backup files before modification (v2 feature).
+    required: false
+    default: false
+
 blocks:
   # ===========================================================================
   # STEP 1: Register capability in task tree
@@ -88,7 +97,7 @@ blocks:
         parent_id: "{{ inputs.parent_id if inputs.parent_id else none }}"
         kind: capability
         name: cortex-action-dispatch
-        metadata: "{{ {'labels': {'capability_type': 'action', 'side_effects': 'true'}} }}"
+        metadata: "{{ {'labels': {'capability_type': 'action', 'side_effects': 'true', 'backup_enabled': inputs.backup_enabled}} }}"
         inputs: "{{ {'capability': inputs.capability, 'cell_id': inputs.cell_id, 'reason': inputs.reason} }}"
         status: running
         depth: 2
@@ -171,12 +180,36 @@ blocks:
         ACTION_ID: "{{ blocks.log_action.outputs.action_id | default('') }}"
 
   # ===========================================================================
+  # STEP 3.5: Backup files if enabled (v2 feature)
+  # ===========================================================================
+  - id: backup_files
+    type: Workflow
+    description: Backup files before modification.
+    depends_on: [check_execute]
+    condition: |
+      {{ inputs.backup_enabled
+         and (blocks.check_execute.outputs.stdout | fromjson).should_execute
+         and inputs.inputs.path is defined }}
+    inputs:
+      workflow: cortex-backup-files
+      inputs:
+        state: "{{ inputs.state }}"
+        models: "{{ inputs.models }}"
+        task_id: "{{ inputs.cell_id }}"
+        files: "{{ [inputs.inputs.path] if inputs.inputs.path is string else inputs.inputs.path | default([]) }}"
+        base_path: "{{ inputs.base_path }}"
+
+  # ===========================================================================
   # STEP 4: Execute capability (if not cached)
   # ===========================================================================
   - id: execute_capability
     type: Workflow
     description: Execute the actual capability workflow.
-    depends_on: [check_execute]
+    depends_on:
+      - block: check_execute
+        required: true
+      - block: backup_files
+        required: false
     condition: "{{ (blocks.check_execute.outputs.stdout | fromjson).should_execute }}"
     continue_on_error: true
     inputs:
@@ -244,7 +277,7 @@ blocks:
         id: "{{ (blocks.register.outputs.rows | default([{}]))[0].id | default('') }}"
       data:
         status: done
-        outputs: "{{ {'action_id': (blocks.check_execute.outputs.stdout | fromjson).action_id, 'executed': (blocks.check_execute.outputs.stdout | fromjson).should_execute, 'cached': (not (blocks.check_execute.outputs.stdout | fromjson).should_execute), 'success': (blocks.execute_capability.succeeded or (not (blocks.check_execute.outputs.stdout | fromjson).should_execute))} }}"
+        outputs: "{{ {'action_id': (blocks.check_execute.outputs.stdout | fromjson).action_id, 'executed': (blocks.check_execute.outputs.stdout | fromjson).should_execute, 'cached': (not (blocks.check_execute.outputs.stdout | fromjson).should_execute), 'success': (blocks.execute_capability.succeeded or (not (blocks.check_execute.outputs.stdout | fromjson).should_execute)), 'backup_created': blocks.backup_files.succeeded | default(false)} }}"
 
 outputs:
   success:
@@ -290,3 +323,8 @@ outputs:
     value: "{{ (blocks.register.outputs.rows | default([{}]))[0].id | default('') }}"
     type: str
     description: Task ID of this capability invocation.
+
+  backup_created:
+    value: "{{ blocks.backup_files.succeeded | default(false) }}"
+    type: bool
+    description: Whether backup was created before execution.

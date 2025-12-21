@@ -59,6 +59,26 @@ class TestColumnDef:
         assert 'FOREIGN KEY ("parent_id") REFERENCES "tasks"("task_id")' in fk_sql
         assert "ON DELETE CASCADE" in fk_sql
 
+    def test_json_column_sqlite(self) -> None:
+        """Test JSON column uses 'JSON TEXT' type for SQLite (official pattern)."""
+        col = ColumnDef.from_dict("metadata", {"type": "json", "default": "{}"})
+        sql = col.to_sql(DatabaseEngine.SQLITE)
+        # SQLite pattern: JSON prefix documents intent, TEXT suffix gives TEXT affinity
+        assert '"metadata" JSON TEXT' in sql
+        assert "DEFAULT '{}'" in sql
+
+    def test_json_column_postgresql(self) -> None:
+        """Test JSON column uses JSONB for PostgreSQL."""
+        col = ColumnDef.from_dict("metadata", {"type": "json"})
+        sql = col.to_sql(DatabaseEngine.POSTGRESQL)
+        assert '"metadata" JSONB' in sql
+
+    def test_json_column_mariadb(self) -> None:
+        """Test JSON column uses JSON for MariaDB."""
+        col = ColumnDef.from_dict("metadata", {"type": "json"})
+        sql = col.to_sql(DatabaseEngine.MARIADB)
+        assert '"metadata" JSON' in sql
+
 
 class TestIndexDef:
     """Tests for IndexDef class."""

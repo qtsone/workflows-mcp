@@ -3,7 +3,7 @@ description: |
   Atomic capability: Modify an existing file.
   Supports multiple edit operations with atomic rollback.
 
-tags: [cortex, capability, atomic, action, edit]
+tags: [cortex, capability, atomic, action, edit, v2]
 
 inputs:
   path:

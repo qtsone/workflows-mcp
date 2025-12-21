@@ -4,7 +4,7 @@ description: |
   Wraps ripgrep via Shell block.
   Automatically stores search results in episodic memory (evidence table).
 
-tags: [cortex, capability, atomic, gather, search, evidence]
+tags: [cortex, capability, atomic, gather, search, evidence, v2]
 
 inputs:
   pattern:

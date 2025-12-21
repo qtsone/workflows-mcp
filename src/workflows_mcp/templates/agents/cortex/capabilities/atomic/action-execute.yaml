@@ -3,7 +3,7 @@ description: |
   Atomic capability: Execute command with side effects.
   Use for running tests, builds, deployments, etc.
 
-tags: [cortex, capability, atomic, action, execute]
+tags: [cortex, capability, atomic, action, execute, v2]
 
 inputs:
   command:
