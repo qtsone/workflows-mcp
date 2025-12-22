@@ -14,9 +14,10 @@ Field names are **exact** - use them precisely in your workflows.
 | Workflow | workflow |
 | CreateFile | path, content |
 | EditFile | path, operations |
-| ReadFiles | patterns |
+| ReadFiles | (none) |
 | HttpCall | url |
 | LLMCall | prompt; **profile OR provider** |
+| Embedding | text |
 | ImageGen | **profile OR provider** |
 | Prompt | prompt |
 | ReadJSONState | path |
@@ -179,13 +180,11 @@ Field names are **exact** - use them precisely in your workflows.
 
 **Description**: File reading executor with multi-file and outline support.
 
-### Required Inputs
-
-- **`patterns`** (array): Glob patterns for files to read (e.g., ['*.py', '**/*.ts', 'docs/**/*.md'])
-
 ### Optional Inputs
 
-- **`base_path`** (string) *(default: `.`)*: Base directory to search from (relative or absolute)
+- **`path`** (any): Single file path to read (absolute or relative). Mutually exclusive with patterns. Use for single-file reads.
+- **`patterns`** (array): Glob patterns for files to read (e.g., ['*.py', '**/*.ts', 'docs/**/*.md'])
+- **`base_path`** (string) *(default: `.`)*: Base directory to search from (relative or absolute). Used with patterns.
 - **`mode`** (any) *(default: `full`)*: Output mode: 'full' (complete content), 'outline' (symbol tree with line ranges), 'summary' (outline + docstrings)
 - **`exclude_patterns`** (array): Additional patterns to exclude beyond defaults (e.g., ['*test*', '*.min.js'])
 - **`max_files`** (any) *(default: `20`)*: Maximum number of files to read (1-100, supports interpolation)
@@ -308,6 +307,41 @@ Please provide a valid response that conforms to the schema.`)*: Template for va
   inputs:
     profile: default
     prompt: "Summarize this text: {{inputs.text}}"
+```
+
+---
+
+## Embedding
+
+**Description**: Executor for generating text embeddings using OpenAI-compatible API.
+
+### Required Inputs
+
+- **`text`** (string): Text to generate embedding for
+
+### Optional Inputs
+
+- **`profile`** (string) *(default: `embedding`)*: Profile name from ~/.workflows/llm-config.yml (defaults to 'embedding')
+- **`model`** (any): Override embedding model (uses profile model if not specified)
+- **`api_key`** (any): Override API key (uses profile api_key_secret if not specified)
+- **`api_url`** (any): Override API endpoint URL (uses profile api_url if not specified)
+- **`timeout`** (any) *(default: `30`)*: Request timeout in seconds
+
+### Outputs
+
+- **`meta`** (object): Executor-specific metadata fields (exit_code, tokens_used, etc.)
+- **`embedding`** (array): Embedding vector (list of floats)
+- **`dimensions`** (integer): Number of dimensions in the embedding
+- **`success`** (boolean): Whether the embedding generation succeeded
+- **`metadata`** (object): Execution metadata (model, usage, etc.)
+
+### Example
+
+```yaml
+- id: embed_text
+  type: Embedding
+  inputs:
+    text: "Search for authentication bugs"
 ```
 
 ---
@@ -546,6 +580,7 @@ Without this, execution fails with configuration error.
 - **`order`** (any): Sort order for select. Format: ["column:asc", "column:desc"]
 - **`limit`** (any): Maximum rows to return (select).
 - **`offset`** (any): Rows to skip (select).
+- **`columns`** (any): Specific columns to select (default: all columns).
 - **`conflict`** (any): Conflict columns for upsert (usually primary key).
 - **`init_sql`** (any): 
         DDL to execute before the main operation (idempotent).

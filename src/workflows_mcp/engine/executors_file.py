@@ -15,7 +15,7 @@ from pathlib import Path
 from typing import Any, ClassVar, Literal
 
 import yaml
-from pydantic import BaseModel, Field, computed_field, field_validator
+from pydantic import BaseModel, Field, computed_field, field_validator, model_validator
 
 from .block import BlockInput, BlockOutput
 from .block_utils import FileOperations, PathResolver
@@ -216,17 +216,32 @@ class SkippedFileInfo(BaseModel):
 
 
 class ReadFilesInput(BlockInput):
-    """Input model for ReadFiles executor with full interpolation support."""
+    """Input model for ReadFiles executor with full interpolation support.
+
+    Two modes of operation:
+    1. Single file: Use `path` for reading one file directly (absolute or relative)
+    2. Multiple files: Use `patterns` + `base_path` for glob-based file discovery
+
+    These are mutually exclusive - provide either `path` OR `patterns`, not both.
+    """
+
+    path: str | None = Field(
+        default=None,
+        description=(
+            "Single file path to read (absolute or relative). "
+            "Mutually exclusive with patterns. Use for single-file reads."
+        ),
+    )
 
     patterns: list[str] = Field(
+        default_factory=list,
         description="Glob patterns for files to read (e.g., ['*.py', '**/*.ts', 'docs/**/*.md'])",
-        min_length=1,
         max_length=50,
     )
 
     base_path: str = Field(
         default=".",
-        description="Base directory to search from (relative or absolute)",
+        description="Base directory to search from (relative or absolute). Used with patterns.",
     )
 
     mode: Literal["full", "outline", "summary"] | str = Field(
@@ -276,6 +291,25 @@ class ReadFilesInput(BlockInput):
     _validate_respect_gitignore = field_validator("respect_gitignore", mode="before")(
         interpolatable_boolean_validator()
     )
+
+    @model_validator(mode="after")
+    def validate_path_or_patterns(self) -> ReadFilesInput:
+        """Ensure either path OR patterns is provided, not both or neither."""
+        has_path = self.path is not None
+        has_patterns = len(self.patterns) > 0
+
+        if has_path and has_patterns:
+            raise ValueError(
+                "Cannot specify both 'path' and 'patterns'. "
+                "Use 'path' for single file, 'patterns' for glob matching."
+            )
+
+        if not has_path and not has_patterns:
+            raise ValueError(
+                "Must specify either 'path' (single file) or 'patterns' (glob matching)."
+            )
+
+        return self
 
 
 class ReadFilesOutput(BlockOutput):
@@ -417,17 +451,23 @@ class ReadFilesExecutor(BlockExecutor):
             matches_pattern,
         )
 
-        # 1. Resolve interpolatable fields
+        # 1. Resolve interpolatable fields (common to both modes)
         mode = resolve_interpolatable_literal(inputs.mode, ("full", "outline", "summary"), "mode")
-        max_files = resolve_interpolatable_numeric(inputs.max_files, int, "max_files", ge=1, le=100)
         max_file_size_kb = resolve_interpolatable_numeric(
             inputs.max_file_size_kb, int, "max_file_size_kb", ge=1, le=10240
         )
+
+        # 2. Handle single-file path mode (fast path)
+        if inputs.path is not None:
+            return await self._execute_single_file(inputs.path, mode, max_file_size_kb)
+
+        # 3. Handle multi-file patterns mode
+        max_files = resolve_interpolatable_numeric(inputs.max_files, int, "max_files", ge=1, le=100)
         respect_gitignore = resolve_interpolatable_boolean(
             inputs.respect_gitignore, "respect_gitignore"
         )
 
-        # 2. Resolve and validate base_path
+        # 4. Resolve and validate base_path
         base_path_result = PathResolver.resolve_and_validate(inputs.base_path, allow_traversal=True)
         if not base_path_result.is_success:
             raise ValueError(f"Invalid base_path: {base_path_result.error}")
@@ -572,6 +612,105 @@ class ReadFilesExecutor(BlockExecutor):
             total_size_kb=total_size_kb,
             skipped_files=skipped_files,
             patterns_matched=patterns_matched,
+        )
+
+    async def _execute_single_file(
+        self,
+        file_path_str: str,
+        mode: Literal["full", "outline", "summary"],
+        max_file_size_kb: int,
+    ) -> ReadFilesOutput:
+        """Fast path for reading a single file directly by path.
+
+        Skips glob matching, gitignore checks, and exclusion filters.
+        Used when `path` parameter is provided instead of `patterns`.
+        """
+        from .file_outline import (
+            BASE64_ENCODE_EXTENSIONS,
+            generate_file_outline,
+            is_binary,
+        )
+
+        # Resolve and validate path
+        path_result = PathResolver.resolve_and_validate(file_path_str, allow_traversal=True)
+        if not path_result.is_success:
+            raise ValueError(f"Invalid path: {path_result.error}")
+
+        assert path_result.value is not None
+        file_path = path_result.value
+
+        if not file_path.exists():
+            raise FileNotFoundError(f"File not found: {file_path}")
+
+        if not file_path.is_file():
+            raise ValueError(f"Path is not a file: {file_path}")
+
+        # Check file size
+        file_size_kb = file_path.stat().st_size // 1024
+        if file_size_kb > max_file_size_kb:
+            return ReadFilesOutput(
+                files=[],
+                total_files=0,
+                total_size_kb=0,
+                skipped_files=[
+                    SkippedFileInfo(
+                        path=str(file_path),
+                        reason="too_large",
+                        details=f"size: {file_size_kb}KB > {max_file_size_kb}KB",
+                    )
+                ],
+                patterns_matched=1,
+            )
+
+        # Read file content based on mode
+        file_ext = file_path.suffix.lower()
+        file_content: str
+
+        if mode == "outline" or mode == "summary":
+            file_content = generate_file_outline(file_path, mode)
+
+        elif file_ext in BASE64_ENCODE_EXTENSIONS:
+            import base64
+
+            with open(file_path, "rb") as f:
+                file_content = base64.b64encode(f.read()).decode("ascii")
+
+        elif is_binary(file_path):
+            return ReadFilesOutput(
+                files=[],
+                total_files=0,
+                total_size_kb=0,
+                skipped_files=[
+                    SkippedFileInfo(
+                        path=str(file_path),
+                        reason="binary",
+                        details="Binary file detected (contains null bytes)",
+                    )
+                ],
+                patterns_matched=1,
+            )
+
+        else:
+            # Read as text
+            read_result = FileOperations.read_text(path=file_path, encoding="utf-8")
+            if not read_result.is_success:
+                raise OSError(read_result.error)
+
+            assert read_result.value is not None
+            file_content = read_result.value
+
+        return ReadFilesOutput(
+            files=[
+                FileInfo(
+                    path=str(file_path),
+                    content=file_content,
+                    size_bytes=file_path.stat().st_size,
+                )
+            ],
+            total_files=1,
+            total_size_kb=file_size_kb,
+            skipped_files=[],
+            patterns_matched=1,
         )
 
 

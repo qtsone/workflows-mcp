@@ -133,6 +133,10 @@ class ColumnDef:
         if self.default is not None:
             default_value = self._format_default(self.default, engine)
             parts.append(f"DEFAULT {default_value}")
+        elif self.auto in ("created", "updated"):
+            # Auto-timestamped columns get DEFAULT CURRENT_TIMESTAMP
+            # This ensures triggers and raw SQL inserts also get timestamps
+            parts.append("DEFAULT CURRENT_TIMESTAMP")
 
         # CHECK constraint
         if self.check:

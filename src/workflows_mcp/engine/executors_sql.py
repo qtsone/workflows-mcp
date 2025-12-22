@@ -152,7 +152,7 @@ class SqlInput(BlockInput):
     # MODE B: Model-based CRUD (mutually exclusive with sql)
     # ═══════════════════════════════════════════════════════════════════
 
-    model: dict[str, Any] | None = Field(
+    model: dict[str, Any] | str | None = Field(
         default=None,
         description="""
         Model schema for CRUD operations (Model mode).
@@ -198,7 +198,7 @@ class SqlInput(BlockInput):
         """,
     )
 
-    order: list[str] | None = Field(
+    order: list[str] | str | None = Field(
         default=None,
         description='Sort order for select. Format: ["column:asc", "column:desc"]',
     )
@@ -211,6 +211,11 @@ class SqlInput(BlockInput):
     offset: int | str | None = Field(
         default=None,
         description="Rows to skip (select).",
+    )
+
+    columns: list[str] | str | None = Field(
+        default=None,
+        description="Specific columns to select (default: all columns).",
     )
 
     conflict: list[str] | None = Field(
@@ -580,7 +585,9 @@ class SqlExecutor(BlockExecutor):
         assert inputs.model is not None
         assert inputs.op is not None
 
-        # Parse model schema
+        # Parse model schema - after Jinja2 interpolation, str templates become dicts
+        if not isinstance(inputs.model, dict):
+            raise SqlError(f"Model must be a dict after interpolation, got {type(inputs.model)}")
         schema = ModelSchema.from_dict(inputs.model)
         engine_enum = DatabaseEngine(inputs.engine)
         builder = QueryBuilder(schema, engine_enum)
@@ -602,11 +609,15 @@ class SqlExecutor(BlockExecutor):
             # Resolve limit/offset if they're strings
             limit = int(inputs.limit) if inputs.limit is not None else None
             offset = int(inputs.offset) if inputs.offset is not None else None
+            # Resolve list fields - after Jinja2 interpolation, str templates become lists
+            order: list[str] | None = inputs.order if isinstance(inputs.order, list) else None
+            columns: list[str] | None = inputs.columns if isinstance(inputs.columns, list) else None
             sql, params = builder.select(
                 where=inputs.where,
-                order=inputs.order,
+                order=order,
                 limit=limit,
                 offset=offset,
+                columns=columns,
             )
             return await backend.query(sql, params)
 

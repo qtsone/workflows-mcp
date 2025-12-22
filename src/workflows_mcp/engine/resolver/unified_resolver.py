@@ -274,48 +274,100 @@ class UnifiedVariableResolver:
         return f"{prefix}-{ts}-{random_hex}"
 
     @staticmethod
-    def _get(obj: Any, key: int | str, default: Any = None) -> Any:
+    def _get(obj: Any, path: int | str, default: Any = None) -> Any:
         """
-        Unified safe accessor for dicts, lists, and attributes.
+        Safe deep accessor with JSON auto-parsing.
 
-        Similar to dict.get() but works for:
-        - Dict key access: get(mydict, 'key', default)
-        - List index access: get(mylist, 1, default)
-        - Attribute access: get(myobj, 'attr', default)
+        Features:
+        - Dotted paths: get(obj, 'a.b.c', default)
+        - Array indices in paths: get(obj, 'items.0.name', default)
+        - JSON auto-parse: get('{"a":1}', 'a', 0) → 1
+        - None-safe: Returns default if any part is None/missing
+        - Exception-safe: Never throws, always returns default
 
         Returns default if:
-        - Key/index/attribute doesn't exist or is out of bounds
+        - Path doesn't exist or any part is out of bounds
         - Value is None/null (unlike Python's dict.get which returns None)
+        - JSON string fails to parse
 
         This null-handling behavior is important for LLM responses where
         optional fields may be explicitly set to null rather than omitted.
 
         Examples:
-            {{get(files, 1, {})}}                      # List index
-            {{get(files, 1, {}).content | default('')}} # Chained access
-            {{get(block, 'outputs', {})}}              # Dict key
-            {{get(obj, 'missing_attr', None)}}         # Attribute
-            {{get(response, 'sub_queries', [])}}       # Returns [] if null
+            {{get(data, 'user.profile.name', 'Unknown')}}  # Dotted path
+            {{get(items, 0, {})}}                          # List index
+            {{get(data, 'results.0.id', none)}}            # Index in path
+            {{get(json_string, 'status', 'error')}}        # Auto-parses JSON
+            {{get(response, 'sub_queries', [])}}           # Returns [] if null
         """
         try:
-            # List/tuple index access
-            if isinstance(key, int) and isinstance(obj, (list, tuple)):
-                if -len(obj) <= key < len(obj):
-                    return obj[key]
+            if obj is None:
                 return default
 
-            # Dict key access
-            if isinstance(obj, dict):
-                value = obj.get(key, default)
-                # Return default if value is None (handles JSON null)
-                return value if value is not None else default
+            # Auto-parse JSON strings
+            if isinstance(obj, str):
+                obj = obj.strip()
+                if not obj:
+                    return default
+                if obj[0] in "{[":
+                    try:
+                        obj = json.loads(obj)
+                    except (json.JSONDecodeError, TypeError, ValueError):
+                        return default
+                else:
+                    return default  # Plain string can't be traversed
 
-            # Attribute access
-            if isinstance(key, str) and hasattr(obj, key):
-                return getattr(obj, key, default)
+            # Integer path: direct index access
+            if isinstance(path, int):
+                if isinstance(obj, (list, tuple)) and -len(obj) <= path < len(obj):
+                    value = obj[path]
+                    return default if value is None else value
+                return default
 
-            return default
-        except (TypeError, KeyError, IndexError, AttributeError):
+            # String path (may contain dots)
+            if not isinstance(path, str):
+                return default
+
+            parts = path.split(".") if "." in path else [path]
+            current = obj
+
+            for part in parts:
+                if current is None:
+                    return default
+
+                # Numeric index in path (e.g., "items.0.name")
+                if part.lstrip("-").isdigit():
+                    try:
+                        idx = int(part)
+                        if isinstance(current, (list, tuple)) and -len(current) <= idx < len(
+                            current
+                        ):
+                            current = current[idx]
+                            continue
+                    except (ValueError, TypeError):
+                        pass
+                    return default
+
+                # Dict key access
+                if isinstance(current, dict):
+                    if part in current:
+                        current = current[part]
+                        continue
+                    return default
+
+                # Attribute access (for BlockProxy, etc.)
+                if hasattr(current, part):
+                    try:
+                        current = getattr(current, part)
+                        continue
+                    except AttributeError:
+                        pass
+
+                return default
+
+            return default if current is None else current
+
+        except Exception:
             return default
 
     @staticmethod

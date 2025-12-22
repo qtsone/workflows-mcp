@@ -110,6 +110,7 @@
               "ReadFiles",
               "HttpCall",
               "LLMCall",
+              "Embedding",
               "ImageGen",
               "Prompt",
               "ReadJSONState",
@@ -509,19 +510,31 @@
                   "additionalProperties": false,
                   "description": "Inputs for ReadFiles block",
                   "properties": {
+                    "path": {
+                      "anyOf": [
+                        {
+                          "type": "string"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ],
+                      "default": null,
+                      "description": "Single file path to read (absolute or relative). Mutually exclusive with patterns. Use for single-file reads.",
+                      "title": "Path"
+                    },
                     "patterns": {
                       "description": "Glob patterns for files to read (e.g., ['*.py', '**/*.ts', 'docs/**/*.md'])",
                       "items": {
                         "type": "string"
                       },
                       "maxItems": 50,
-                      "minItems": 1,
                       "title": "Patterns",
                       "type": "array"
                     },
                     "base_path": {
                       "default": ".",
-                      "description": "Base directory to search from (relative or absolute)",
+                      "description": "Base directory to search from (relative or absolute). Used with patterns.",
                       "title": "Base Path",
                       "type": "string"
                     },
@@ -597,9 +610,6 @@
                       "type": "string"
                     }
                   },
-                  "required": [
-                    "patterns"
-                  ],
                   "title": "ReadFilesInput",
                   "type": "object"
                 }
@@ -918,6 +928,93 @@
                     "prompt"
                   ],
                   "title": "LLMCallInput",
+                  "type": "object"
+                }
+              }
+            }
+          },
+          {
+            "if": {
+              "properties": {
+                "type": {
+                  "const": "Embedding"
+                }
+              }
+            },
+            "then": {
+              "properties": {
+                "inputs": {
+                  "additionalProperties": false,
+                  "description": "Inputs for Embedding block",
+                  "properties": {
+                    "profile": {
+                      "default": "embedding",
+                      "description": "Profile name from ~/.workflows/llm-config.yml (defaults to 'embedding')",
+                      "title": "Profile",
+                      "type": "string"
+                    },
+                    "model": {
+                      "anyOf": [
+                        {
+                          "type": "string"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ],
+                      "default": null,
+                      "description": "Override embedding model (uses profile model if not specified)",
+                      "title": "Model"
+                    },
+                    "text": {
+                      "description": "Text to generate embedding for",
+                      "title": "Text",
+                      "type": "string"
+                    },
+                    "api_key": {
+                      "anyOf": [
+                        {
+                          "type": "string"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ],
+                      "default": null,
+                      "description": "Override API key (uses profile api_key_secret if not specified)",
+                      "title": "Api Key"
+                    },
+                    "api_url": {
+                      "anyOf": [
+                        {
+                          "type": "string"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ],
+                      "default": null,
+                      "description": "Override API endpoint URL (uses profile api_url if not specified)",
+                      "title": "Api Url"
+                    },
+                    "timeout": {
+                      "anyOf": [
+                        {
+                          "type": "integer"
+                        },
+                        {
+                          "type": "string"
+                        }
+                      ],
+                      "default": 30,
+                      "description": "Request timeout in seconds",
+                      "title": "Timeout"
+                    }
+                  },
+                  "required": [
+                    "text"
+                  ],
+                  "title": "EmbeddingInput",
                   "type": "object"
                 }
               }
@@ -1463,6 +1560,9 @@
                           "type": "object"
                         },
                         {
+                          "type": "string"
+                        },
+                        {
                           "type": "null"
                         }
                       ],
@@ -1528,6 +1628,9 @@
                           "type": "array"
                         },
                         {
+                          "type": "string"
+                        },
+                        {
                           "type": "null"
                         }
                       ],
@@ -1566,6 +1669,25 @@
                       "default": null,
                       "description": "Rows to skip (select).",
                       "title": "Offset"
+                    },
+                    "columns": {
+                      "anyOf": [
+                        {
+                          "items": {
+                            "type": "string"
+                          },
+                          "type": "array"
+                        },
+                        {
+                          "type": "string"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ],
+                      "default": null,
+                      "description": "Specific columns to select (default: all columns).",
+                      "title": "Columns"
                     },
                     "conflict": {
                       "anyOf": [
@@ -2128,21 +2250,33 @@
     },
     "ReadFilesInput": {
       "additionalProperties": false,
-      "description": "Input model for ReadFiles executor with full interpolation support.",
+      "description": "Input model for ReadFiles executor with full interpolation support.\n\nTwo modes of operation:\n1. Single file: Use `path` for reading one file directly (absolute or relative)\n2. Multiple files: Use `patterns` + `base_path` for glob-based file discovery\n\nThese are mutually exclusive - provide either `path` OR `patterns`, not both.",
       "properties": {
+        "path": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Single file path to read (absolute or relative). Mutually exclusive with patterns. Use for single-file reads.",
+          "title": "Path"
+        },
         "patterns": {
           "description": "Glob patterns for files to read (e.g., ['*.py', '**/*.ts', 'docs/**/*.md'])",
           "items": {
             "type": "string"
           },
           "maxItems": 50,
-          "minItems": 1,
           "title": "Patterns",
           "type": "array"
         },
         "base_path": {
           "default": ".",
-          "description": "Base directory to search from (relative or absolute)",
+          "description": "Base directory to search from (relative or absolute). Used with patterns.",
           "title": "Base Path",
           "type": "string"
         },
@@ -2218,9 +2352,6 @@
           "type": "string"
         }
       },
-      "required": [
-        "patterns"
-      ],
       "title": "ReadFilesInput",
       "type": "object"
     },
@@ -2524,6 +2655,80 @@
         "prompt"
       ],
       "title": "LLMCallInput",
+      "type": "object"
+    },
+    "EmbeddingInput": {
+      "additionalProperties": false,
+      "description": "Input schema for Embedding block.\n\nGenerates vector embeddings for text using OpenAI-compatible embedding API.\nWorks with OpenAI, LMStudio, Ollama (--api-compat), LocalAI, vLLM, and other\nservers implementing the /v1/embeddings endpoint.\n\nDefaults to 'embedding' profile from ~/.workflows/llm-config.yml.",
+      "properties": {
+        "profile": {
+          "default": "embedding",
+          "description": "Profile name from ~/.workflows/llm-config.yml (defaults to 'embedding')",
+          "title": "Profile",
+          "type": "string"
+        },
+        "model": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Override embedding model (uses profile model if not specified)",
+          "title": "Model"
+        },
+        "text": {
+          "description": "Text to generate embedding for",
+          "title": "Text",
+          "type": "string"
+        },
+        "api_key": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Override API key (uses profile api_key_secret if not specified)",
+          "title": "Api Key"
+        },
+        "api_url": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Override API endpoint URL (uses profile api_url if not specified)",
+          "title": "Api Url"
+        },
+        "timeout": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "string"
+            }
+          ],
+          "default": 30,
+          "description": "Request timeout in seconds",
+          "title": "Timeout"
+        }
+      },
+      "required": [
+        "text"
+      ],
+      "title": "EmbeddingInput",
       "type": "object"
     },
     "ImageProvider": {
@@ -3000,6 +3205,9 @@
               "type": "object"
             },
             {
+              "type": "string"
+            },
+            {
               "type": "null"
             }
           ],
@@ -3065,6 +3273,9 @@
               "type": "array"
             },
             {
+              "type": "string"
+            },
+            {
               "type": "null"
             }
           ],
@@ -3103,6 +3314,25 @@
           "default": null,
           "description": "Rows to skip (select).",
           "title": "Offset"
+        },
+        "columns": {
+          "anyOf": [
+            {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Specific columns to select (default: all columns).",
+          "title": "Columns"
         },
         "conflict": {
           "anyOf": [
