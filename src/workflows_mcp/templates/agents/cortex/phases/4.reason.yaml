@@ -548,7 +548,7 @@ blocks:
         state: "{{ inputs.state }}"
         models: "{{ inputs.models }}"
         expectation_id: "{{ inputs.expectation_id }}"
-        actual_outcome: "{{ blocks.determine_outcome.outputs.stdout }}"
+        actual_outcome: "{{ blocks.determine_outcome.outputs.stdout | fromjson }}"
         context_hash: "{{ inputs.context_hash }}"
 
   - id: track_done
@@ -575,17 +575,18 @@ blocks:
       data:
         status: "{{ 'done' if blocks.attempt.succeeded else 'failed' }}"
         outputs: |
-          {
-            'goal': {{ get(inputs.pipeline_config, 'reason.goal', 'explain') }},
-            'success': {{ blocks.attempt.succeeded }},
-            'had_execution_results': {{ get(inputs.context, 'execution_result.executed', false) }},
-            'facts_stored': {{ get(blocks.store_facts.metadata, 'count', 0) }},
-            {% if blocks.log_ungrounded.succeeded %}
-              'ungrounded_findings': {{ get(blocks.log_ungrounded.outputs.stdout, 'ungrounded_count', 0) }}
-            {% else %}
-              'ungrounded_findings': 0
-            {% endif %}
-          }
+          {{
+            {
+              'goal': get(inputs.pipeline_config, 'reason.goal', 'explain'),
+              'success': blocks.attempt.succeeded,
+              'had_execution_results': get(inputs.context, 'execution_result.executed', false),
+              'facts_stored': get(blocks.store_facts.metadata, 'count', 0),
+              'ungrounded_findings': get(blocks.log_ungrounded.outputs.stdout, 'ungrounded_count', 0) if blocks.log_ungrounded.succeeded else 0,
+              'surprisal_bits': blocks.compute_surprisal.outputs.surprisal_bits if blocks.compute_surprisal.succeeded else 0,
+              'trigger_diagnose': blocks.compute_surprisal.outputs.trigger_diagnose if blocks.compute_surprisal.succeeded else false,
+              'matched_prediction': blocks.compute_surprisal.outputs.matched if blocks.compute_surprisal.succeeded else none
+            } | tojson
+          }}
 
 outputs:
   synthesis:

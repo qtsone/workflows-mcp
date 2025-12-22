@@ -1153,7 +1153,12 @@ blocks:
         parent_id: "{{ get(blocks.register.outputs, 'rows.0.id', '') }}"
         features: "{{ inputs.features }}"
         expectation_id: "{{ blocks.categorize.outputs.expectation_id | default('') }}"
-        surprisal: {}
+        surprisal:
+          surprisal_bits: 0
+          interpretation: "expected"
+          processing_path: "system1"
+          matched_prediction: true
+          note: "System 1 fast path - no deep prediction comparison performed"
         context_hash: "{{ blocks.categorize.outputs.context_hash | default('') }}"
         category: "{{ blocks.categorize.outputs.result.category | default('understanding') }}"
         actions_taken: []

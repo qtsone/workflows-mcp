@@ -782,6 +782,14 @@ blocks:
         required: true
       - block: self_recurse
         required: false
+      - block: form_expectation
+        required: false
+      - block: store_expectation
+        required: false
+      - block: compute_g_score
+        required: false
+      - block: query_heuristics
+        required: false
     condition: "{{ blocks.register_phase.succeeded }}"
     inputs:
       engine: sqlite
@@ -792,7 +800,19 @@ blocks:
         id: "{{ get(blocks.register_phase.outputs, 'rows.0.id', '') }}"
       data:
         status: done
-        outputs: "{'recursed': {{ blocks.self_recurse.succeeded }}, 'category': {{ get(blocks.attempt.outputs.response.result,'category','understanding') }}}"
+        outputs: |
+          {{
+            {
+              'recursed': blocks.self_recurse.succeeded,
+              'category': get(blocks.attempt.outputs.response.result, 'category', 'understanding'),
+              'g_score': get(blocks.compute_g_score.outputs.stdout, 'g_score', 25) if blocks.compute_g_score.succeeded else 25,
+              'processing_path': get(blocks.compute_g_score.outputs.stdout, 'processing_path', 'system2') if blocks.compute_g_score.succeeded else 'system2',
+              'expectation_id': get(blocks.store_expectation.outputs, 'rows.0.id', '') if blocks.store_expectation.succeeded else '',
+              'context_hash': get(blocks.form_expectation.outputs.stdout, 'context_hash', '') if blocks.form_expectation.succeeded else '',
+              'heuristics_count': blocks.query_heuristics.outputs.count if blocks.query_heuristics.succeeded else 0,
+              'routing': blocks.compute_g_score.outputs.stdout if blocks.compute_g_score.succeeded else {}
+            } | tojson
+          }}
 
 outputs:
   result:
