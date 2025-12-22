@@ -60,10 +60,12 @@ inputs:
     description: Task ID for evidence tracking.
     default: ""
 
+  depth:
+    type: num
+    description: Task depth for task tree registration.
+    default: 0
+
 blocks:
-  # ===========================================================================
-  # STEP 1: Register capability in task tree
-  # ===========================================================================
   - id: register
     type: Sql
     description: Register this capability in the task tree.
@@ -78,13 +80,10 @@ blocks:
         kind: capability
         name: cortex-keyword-search
         metadata: "{{ {'labels': {'capability_type': 'salience', 'ranking': 'bm25'}} }}"
-        inputs: "{{ {'query': inputs.query, 'base_path': inputs.base_path, 'max_results': inputs.max_results} }}"
+        inputs: "{{ inputs.depth }}"
         status: running
-        depth: 2
+        depth: "{{ inputs.depth }}"
 
-  # ===========================================================================
-  # STEP 2: Execute BM25 search
-  # ===========================================================================
   - id: search
     type: Shell
     depends_on:
@@ -268,14 +267,11 @@ blocks:
         PATTERNS: "{{ inputs.file_patterns | tojson }}"
         MAX_RESULTS: "{{ inputs.max_results }}"
 
-  # ===========================================================================
-  # STEP 3: Store ranking in salience cache
-  # ===========================================================================
   - id: store_ranking
     type: Sql
     description: Store keyword ranking in salience cache.
     depends_on: [search]
-    condition: "{{ inputs.state | trim != '' and blocks.search.succeeded }}"
+    condition: "{{ blocks.search.succeeded }}"
     inputs:
       engine: sqlite
       path: "{{ inputs.state }}"
@@ -287,9 +283,6 @@ blocks:
         - "{{ inputs.query }}"
         - "{{ blocks.search.outputs.stdout }}"
 
-  # ===========================================================================
-  # STEP 4: Track completion
-  # ===========================================================================
   - id: track_done
     type: Sql
     description: Mark capability complete.
@@ -306,34 +299,31 @@ blocks:
       model: "{{ inputs.models.task }}"
       op: update
       where:
-        id: "{{ (blocks.register.outputs.rows | default([{}]))[0].id | default('') }}"
+        id: "{{ get(blocks.register.outputs, 'rows.0.id', '') }}"
       data:
         status: "{{ 'done' if blocks.search.succeeded else 'failed' }}"
-        outputs: "{{ {'count': (blocks.search.outputs.stdout | fromjson).count if blocks.search.succeeded else 0, 'keywords': (blocks.search.outputs.stdout | fromjson).keywords if blocks.search.succeeded else []} }}"
+        outputs: "{'count': {{ get(blocks.search.outputs.stdout, 'count', 0) if blocks.search.succeeded else 0 }}, 'keywords': {{ get(blocks.search.outputs.stdout, 'keywords', []) if blocks.search.succeeded else [] }}}"
 
-# =============================================================================
-# OUTPUTS
-# =============================================================================
 outputs:
   ranked_files:
     type: list
     description: "Files ranked by BM25 score."
-    value: "{{ (blocks.search.outputs.stdout | fromjson).ranked_files if blocks.search.succeeded else [] }}"
+    value: "{{ get(blocks.search.outputs.stdout, 'ranked_files', []) if blocks.search.succeeded else [] }}"
 
   keywords:
     type: list
     description: "Keywords extracted from query."
-    value: "{{ (blocks.search.outputs.stdout | fromjson).keywords if blocks.search.succeeded else [] }}"
+    value: "{{ get(blocks.search.outputs.stdout, 'keywords', []) if blocks.search.succeeded else [] }}"
 
   count:
     type: num
     description: "Number of files with matches."
-    value: "{{ (blocks.search.outputs.stdout | fromjson).count if blocks.search.succeeded else 0 }}"
+    value: "{{ get(blocks.search.outputs.stdout, 'count', 0) if blocks.search.succeeded else 0 }}"
 
   files_scanned:
     type: num
     description: "Total files scanned."
-    value: "{{ (blocks.search.outputs.stdout | fromjson).files_scanned if blocks.search.succeeded else 0 }}"
+    value: "{{ get(blocks.search.outputs.stdout, 'files_scanned', 0) if blocks.search.succeeded else 0 }}"
 
   state:
     type: str

@@ -81,9 +81,6 @@ inputs:
     default: false
 
 blocks:
-  # ===========================================================================
-  # STEP 1: Register capability in task tree
-  # ===========================================================================
   - id: register
     type: Sql
     description: Register this capability in the task tree.
@@ -97,14 +94,11 @@ blocks:
         parent_id: "{{ inputs.parent_id if inputs.parent_id else none }}"
         kind: capability
         name: cortex-action-dispatch
-        metadata: "{{ {'labels': {'capability_type': 'action', 'side_effects': 'true', 'backup_enabled': inputs.backup_enabled}} }}"
-        inputs: "{{ {'capability': inputs.capability, 'cell_id': inputs.cell_id, 'reason': inputs.reason} }}"
+        metadata: "{'labels': {'capability_type': 'action', 'side_effects': 'true', 'backup_enabled': {{inputs.backup_enabled}}}}"
+        inputs: "{{ inputs }}"
         status: running
-        depth: 2
+        depth: "{{ inputs.depth }}"
 
-  # ===========================================================================
-  # STEP 2: Log action for deduplication
-  # ===========================================================================
   - id: log_action
     type: Workflow
     description: Log action and check for duplicates.
@@ -120,9 +114,6 @@ blocks:
         capability: "{{ inputs.capability }}"
         inputs_json: "{{ inputs.inputs | tojson }}"
 
-  # ===========================================================================
-  # STEP 3: Check if should execute (based on action status)
-  # ===========================================================================
   - id: check_execute
     type: Shell
     description: Determine if action should be executed or use cached result.
@@ -142,7 +133,6 @@ blocks:
         reason = 'new_action'
 
         if status == 'completed':
-            # Action already completed - use cached result
             should_execute = False
             reason = 'cached_completed'
             try:
@@ -150,19 +140,15 @@ blocks:
             except json.JSONDecodeError:
                 result = {'raw': cached_result}
         elif status == 'failed':
-            # Previous attempt failed - retry
             should_execute = True
             reason = 'retry_failed'
         elif status == 'pending':
-            # Action logged but not completed - execute
             should_execute = True
             reason = 'pending'
         elif status == 'rolled_back':
-            # Action was rolled back - re-execute
             should_execute = True
             reason = 'retry_rolled_back'
         else:
-            # Unknown status - execute to be safe
             should_execute = True
             reason = f'unknown_status:{status}'
 
@@ -179,16 +165,13 @@ blocks:
         CACHED_RESULT: "{{ blocks.log_action.outputs.cached_result | default({}) | tojson }}"
         ACTION_ID: "{{ blocks.log_action.outputs.action_id | default('') }}"
 
-  # ===========================================================================
-  # STEP 3.5: Backup files if enabled (v2 feature)
-  # ===========================================================================
   - id: backup_files
     type: Workflow
     description: Backup files before modification.
     depends_on: [check_execute]
     condition: |
       {{ inputs.backup_enabled
-         and (blocks.check_execute.outputs.stdout | fromjson).should_execute
+         and get(blocks.check_execute.outputs.stdout, 'should_execute', false)
          and inputs.inputs.path is defined }}
     inputs:
       workflow: cortex-backup-files
@@ -199,9 +182,6 @@ blocks:
         files: "{{ [inputs.inputs.path] if inputs.inputs.path is string else inputs.inputs.path | default([]) }}"
         base_path: "{{ inputs.base_path }}"
 
-  # ===========================================================================
-  # STEP 4: Execute capability (if not cached)
-  # ===========================================================================
   - id: execute_capability
     type: Workflow
     description: Execute the actual capability workflow.
@@ -210,15 +190,12 @@ blocks:
         required: true
       - block: backup_files
         required: false
-    condition: "{{ (blocks.check_execute.outputs.stdout | fromjson).should_execute }}"
+    condition: "{{ get(blocks.check_execute.outputs.stdout, 'should_execute', false) }}"
     continue_on_error: true
     inputs:
       workflow: "{{ inputs.capability }}"
-      inputs: "{{ {'state': inputs.state, 'models': inputs.models, 'parent_id': (blocks.register.outputs.rows | default([{}]))[0].id | default(''), 'base_path': inputs.base_path, 'permissions': inputs.permissions} | combine(inputs.inputs) }}"
+      inputs: "{{ {'state': inputs.state, 'models': inputs.models, 'parent_id': get(blocks.register.outputs, 'rows.0.id', ''), 'base_path': inputs.base_path, 'permissions': inputs.permissions} | combine(inputs.inputs) }}"
 
-  # ===========================================================================
-  # STEP 5: Mark action complete (on success) - inlined from action-complete
-  # ===========================================================================
   - id: complete_action
     type: Sql
     description: Mark action as completed with result.
@@ -230,33 +207,27 @@ blocks:
       model: "{{ inputs.models.action }}"
       op: update
       where:
-        id: "{{ (blocks.check_execute.outputs.stdout | fromjson).action_id }}"
+        id: "{{ get(blocks.check_execute.outputs.stdout, 'action_id', '') }}"
       data:
         status: completed
         result: "{{ blocks.execute_capability.outputs }}"
 
-  # ===========================================================================
-  # STEP 6: Mark action failed (on failure)
-  # ===========================================================================
   - id: fail_action
     type: Sql
     description: Mark action as failed.
     depends_on: [execute_capability]
-    condition: "{{ blocks.execute_capability.failed and (blocks.check_execute.outputs.stdout | fromjson).should_execute }}"
+    condition: "{{ blocks.execute_capability.failed and get(blocks.check_execute.outputs.stdout, 'should_execute', false) }}"
     inputs:
       engine: sqlite
       path: "{{ inputs.state }}"
       model: "{{ inputs.models.action }}"
       op: update
       where:
-        id: "{{ (blocks.check_execute.outputs.stdout | fromjson).action_id }}"
+        id: "{{ get(blocks.check_execute.outputs.stdout, 'action_id', '') }}"
       data:
         status: failed
-        result: "{{ {'error': blocks.execute_capability.metadata.error_message | default('Unknown error')} }}"
+        result: "{'error': {{ get(blocks.execute_capability.metadata, 'error_message', 'Unknown error') }} }"
 
-  # ===========================================================================
-  # STEP 7: Track completion
-  # ===========================================================================
   - id: track_done
     type: Sql
     description: Mark capability complete in task tree.
@@ -274,43 +245,43 @@ blocks:
       model: "{{ inputs.models.task }}"
       op: update
       where:
-        id: "{{ (blocks.register.outputs.rows | default([{}]))[0].id | default('') }}"
+        id: "{{ get(blocks.register.outputs, 'rows.0.id', '') }}"
       data:
         status: done
-        outputs: "{{ {'action_id': (blocks.check_execute.outputs.stdout | fromjson).action_id, 'executed': (blocks.check_execute.outputs.stdout | fromjson).should_execute, 'cached': (not (blocks.check_execute.outputs.stdout | fromjson).should_execute), 'success': (blocks.execute_capability.succeeded or (not (blocks.check_execute.outputs.stdout | fromjson).should_execute)), 'backup_created': blocks.backup_files.succeeded | default(false)} }}"
+        outputs: "{'action_id': {{ get(blocks.check_execute.outputs.stdout, 'action_id', ''), 'executed': get(blocks.check_execute.outputs.stdout, 'should_execute', false) }}, 'cached': {{ (not get(blocks.check_execute.outputs.stdout, 'should_execute', false)) }}, 'success': {{ (blocks.execute_capability.succeeded or (not get(blocks.check_execute.outputs.stdout, 'should_execute', false)))}}, 'backup_created': {{ blocks.backup_files.succeeded | default(false) }}}"
 
 outputs:
   success:
     value: |
       {{ blocks.execute_capability.succeeded
-         or (not (blocks.check_execute.outputs.stdout | fromjson).should_execute) }}
+         or (not get(blocks.check_execute.outputs.stdout, 'should_execute', false)) }}
     type: bool
     description: Whether action succeeded (executed or cached).
 
   executed:
-    value: "{{ (blocks.check_execute.outputs.stdout | fromjson).should_execute }}"
+    value: "{{ get(blocks.check_execute.outputs.stdout, 'should_execute', false) }}"
     type: bool
     description: Whether action was actually executed (vs cached).
 
   cached:
-    value: "{{ not (blocks.check_execute.outputs.stdout | fromjson).should_execute }}"
+    value: "{{ not get(blocks.check_execute.outputs.stdout, 'should_execute', false) }}"
     type: bool
     description: Whether cached result was used.
 
   action_id:
-    value: "{{ (blocks.check_execute.outputs.stdout | fromjson).action_id }}"
+    value: "{{ get(blocks.check_execute.outputs.stdout, 'action_id', '') }}"
     type: str
     description: ID of the logged action.
 
   reason:
-    value: "{{ (blocks.check_execute.outputs.stdout | fromjson).reason }}"
+    value: "{{ get(blocks.check_execute.outputs.stdout, 'reason', '') }}"
     type: str
     description: Why execution decision was made.
 
   result:
     value: |
       {{ blocks.execute_capability.outputs if blocks.execute_capability.succeeded
-         else ((blocks.check_execute.outputs.stdout | fromjson).cached_result | default({})) }}
+         else get(blocks.check_execute.outputs.stdout, 'cached_result', {}) }}
     type: dict
     description: Action result (fresh or cached).
 
@@ -320,7 +291,7 @@ outputs:
     description: Error message if action failed.
 
   task_id:
-    value: "{{ (blocks.register.outputs.rows | default([{}]))[0].id | default('') }}"
+    value: "{{ get(blocks.register.outputs, 'rows.0.id', '') }}"
     type: str
     description: Task ID of this capability invocation.
 

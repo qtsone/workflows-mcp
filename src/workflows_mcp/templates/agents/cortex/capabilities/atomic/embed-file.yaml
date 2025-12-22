@@ -1,6 +1,4 @@
-# =============================================================================
 # CORTEX Embed File Capability
-# =============================================================================
 #
 # Generates and caches an embedding for a single file. Uses lazy generation:
 # embeddings are only generated if not already cached with the same content_hash.
@@ -11,8 +9,6 @@
 #
 # This capability is designed for use with semantic-search.yaml which calls
 # it in parallel for multiple files.
-#
-# =============================================================================
 
 name: cortex-embed-file
 description: "Generate and cache embedding for a single file (lazy generation)"
@@ -50,61 +46,48 @@ inputs:
     description: Parent task ID for task tree.
     default: ""
 
-  max_file_size:
+  max_file_size_kb:
     type: num
-    description: Maximum file size to embed (bytes).
-    default: 50000
+    description: Maximum file size to embed (KB).
+    default: 50
 
 blocks:
-  # ===========================================================================
-  # STEP 1: Check if already cached with same hash
-  # ===========================================================================
   - id: check_cache
     type: Sql
     description: Check if embedding is already cached for this file+hash.
     inputs:
       engine: sqlite
       path: "{{ inputs.state }}"
-      sql: |
-        SELECT id, embedding, dimensions, model
-        FROM file_embeddings
-        WHERE path = ? AND content_hash = ?
-      params:
-        - "{{ inputs.path }}"
-        - "{{ inputs.content_hash }}"
+      model: "{{ inputs.models.file_embedding }}"
+      op: select
+      where:
+        path: "{{ inputs.path }}"
+        content_hash: "{{ inputs.content_hash }}"
 
-  # ===========================================================================
-  # STEP 2: Read file content if not cached
-  # ===========================================================================
   - id: read_file
-    type: Shell
+    type: ReadFiles
     description: Read file content for embedding (only if not cached).
-    condition: "{{ (blocks.check_cache.outputs.rows | default([])) | length == 0 }}"
+    condition: "{{ get(blocks.check_cache.outputs, 'rows', []) | length == 0 }}"
     depends_on: [check_cache]
     inputs:
-      command: |
-        head -c {{ inputs.max_file_size }} '{{ inputs.path }}' 2>/dev/null || echo ''
+      path: "{{ inputs.path }}"
+      mode: full
+      max_file_size_kb: "{{ inputs.max_file_size_kb }}"
 
-  # ===========================================================================
-  # STEP 3: Generate embedding if not cached
-  # ===========================================================================
   - id: generate
     type: Workflow
     description: Generate embedding for file content.
-    condition: "{{ blocks.read_file.succeeded and (blocks.read_file.outputs.stdout | trim) != '' }}"
+    condition: "{{ blocks.read_file.succeeded and blocks.read_file.outputs.total_files > 0 }}"
     depends_on: [read_file]
     inputs:
       workflow: cortex-generate-embedding
       inputs:
-        text: "{{ blocks.read_file.outputs.stdout[:10000] }}"
+        text: "{{ blocks.read_file.outputs.files[0].content[:10000] }}"
         profile: "{{ inputs.profile }}"
         state: "{{ inputs.state }}"
         models: "{{ inputs.models }}"
         parent_id: "{{ inputs.parent_id }}"
 
-  # ===========================================================================
-  # STEP 4: Store embedding in cache (upsert)
-  # ===========================================================================
   - id: store_cache
     type: Sql
     description: Store generated embedding in cache.
@@ -113,36 +96,18 @@ blocks:
     inputs:
       engine: sqlite
       path: "{{ inputs.state }}"
-      sql: |
-        INSERT INTO file_embeddings (id, path, content_hash, embedding, dimensions, model, token_count, created_at)
-        VALUES (
-          lower(hex(randomblob(16))),
-          ?,
-          ?,
-          ?,
-          ?,
-          ?,
-          ?,
-          datetime('now')
-        )
-        ON CONFLICT(path) DO UPDATE SET
-          content_hash = excluded.content_hash,
-          embedding = excluded.embedding,
-          dimensions = excluded.dimensions,
-          model = excluded.model,
-          token_count = excluded.token_count,
-          created_at = excluded.created_at
-      params:
-        - "{{ inputs.path }}"
-        - "{{ inputs.content_hash }}"
-        - "{{ blocks.generate.outputs.embedding | tojson }}"
-        - "{{ blocks.generate.outputs.dimensions }}"
-        - "{{ (blocks.generate.outputs.metadata | default({})).model | default('') }}"
-        - "{{ (blocks.read_file.outputs.stdout | length) // 4 }}"
+      model: "{{ inputs.models.file_embedding }}"
+      op: upsert
+      conflict:
+        - path
+      data:
+        path: "{{ inputs.path }}"
+        content_hash: "{{ inputs.content_hash }}"
+        embedding: "{{ blocks.generate.outputs.embedding | tojson }}"
+        dimensions: "{{ blocks.generate.outputs.dimensions }}"
+        model: "{{ get(blocks.generate.outputs.metadata, 'model', '') }}"
+        token_count: "{{ (blocks.read_file.outputs.files[0].content | length) // 4 }}"
 
-# =============================================================================
-# OUTPUTS
-# =============================================================================
 outputs:
   embedding:
     type: list
@@ -151,7 +116,7 @@ outputs:
       {{
         blocks.generate.outputs.embedding
         if blocks.generate.succeeded and blocks.generate.outputs.success
-        else (blocks.check_cache.outputs.rows[0].embedding | fromjson)
+        else get(blocks.check_cache.outputs, 'rows.0.embedding', [])
         if (blocks.check_cache.outputs.rows | default([])) | length > 0
         else []
       }}
@@ -163,7 +128,7 @@ outputs:
       {{
         blocks.generate.outputs.dimensions
         if blocks.generate.succeeded and blocks.generate.outputs.success
-        else blocks.check_cache.outputs.rows[0].dimensions
+        else get(blocks.check_cache.outputs, 'rows.0.dimensions', 0)
         if (blocks.check_cache.outputs.rows | default([])) | length > 0
         else 0
       }}

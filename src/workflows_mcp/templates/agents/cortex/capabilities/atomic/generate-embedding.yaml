@@ -57,6 +57,11 @@ inputs:
     description: Task ID for tracking.
     default: ""
 
+  depth:
+    type: num
+    description: Task depth for tracking.
+    default: 0
+
 blocks:
   # ===========================================================================
   # STEP 1: Register capability in task tree
@@ -77,7 +82,7 @@ blocks:
         metadata: "{{ {'labels': {'capability_type': 'embedding'}} }}"
         inputs: "{{ {'text_length': inputs.text | length, 'profile': inputs.profile} }}"
         status: running
-        depth: 2
+        depth: "{{ inputs.depth }}"
 
   # ===========================================================================
   # STEP 2: Generate embedding
@@ -110,10 +115,18 @@ blocks:
       model: "{{ inputs.models.task }}"
       op: update
       where:
-        id: "{{ (blocks.register.outputs.rows | default([{}]))[0].id | default('') }}"
+        id: "{{ get(blocks.register.outputs, 'rows.0.id', '') }}"
       data:
         status: "{{ 'done' if blocks.embed.succeeded else 'failed' }}"
-        outputs: "{{ {'dimensions': blocks.embed.outputs.dimensions, 'success': blocks.embed.outputs.success} if blocks.embed.succeeded else {'error': 'embedding failed'} }}"
+        outputs: |
+          {
+            'dimensions': {{ blocks.embed.outputs.dimensions }},
+          {%- if blocks.embed.succeeded -%}
+            'success': {{ blocks.embed.outputs.success }}
+          {%- else -%}
+            'error': 'embedding failed'
+          {%- endif -%}
+          }
 
 # =============================================================================
 # OUTPUTS

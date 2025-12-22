@@ -1,6 +1,4 @@
-# =============================================================================
 # CORTEX Semantic Search Capability
-# =============================================================================
 #
 # Searches files by semantic similarity using vector embeddings. This capability:
 #
@@ -15,8 +13,6 @@
 # - Limits to 50 files per search to control embedding costs
 #
 # The output can be fed into rrf-fusion.yaml as the semantic_rankings input.
-#
-# =============================================================================
 
 name: cortex-semantic-search
 description: "Search files by semantic similarity using vector embeddings"
@@ -59,6 +55,11 @@ inputs:
     description: Maximum number of results to return.
     default: 50
 
+  depth:
+    type: num
+    description: Depth of task tree.
+    default: 0
+
 blocks:
   # ===========================================================================
   # STEP 1: Register capability in task tree
@@ -76,14 +77,11 @@ blocks:
         parent_id: "{{ inputs.parent_id if inputs.parent_id else none }}"
         kind: capability
         name: cortex-semantic-search
-        metadata: "{{ {'labels': {'capability_type': 'semantic_search'}} }}"
-        inputs: "{{ {'query_length': inputs.query | length, 'file_count': inputs.files | length} }}"
+        metadata: "{'labels': {'capability_type': 'semantic_search'}}"
+        inputs: "{'query_length': {{ inputs.query | length }}, 'file_count': {{ inputs.files | length }}}"
         status: running
-        depth: 2
+        depth: "{{ inputs.depth}}"
 
-  # ===========================================================================
-  # STEP 2: Generate query embedding
-  # ===========================================================================
   - id: query_embed
     type: Workflow
     description: Generate embedding for search query.
@@ -99,14 +97,11 @@ blocks:
         models: "{{ inputs.models }}"
         parent_id: "{{ inputs.parent_id }}"
 
-  # ===========================================================================
-  # STEP 3: Compute file hashes to check cache
-  # ===========================================================================
   - id: compute_hashes
     type: Shell
     description: Compute content hashes for candidate files.
     depends_on: [query_embed]
-    condition: "{{ blocks.query_embed.succeeded and blocks.query_embed.outputs.success }}"
+    condition: "{{ blocks.query_embed.outputs.success }}"
     inputs:
       command: |
         python3 << 'EOF'
@@ -142,13 +137,10 @@ blocks:
         FILES: "{{ inputs.files | tojson }}"
         MAX_FILES: "{{ inputs.max_results }}"
 
-  # ===========================================================================
-  # STEP 4: Generate embeddings for files (parallel, lazy)
-  # ===========================================================================
   - id: embed_files
     type: Workflow
     description: Generate embeddings for each file (cached).
-    for_each: "{{ (blocks.compute_hashes.outputs.stdout | fromjson).files }}"
+    for_each: "{{ get(blocks.compute_hashes.outputs.stdout, 'files', []) }}"
     for_each_mode: parallel
     depends_on: [compute_hashes]
     condition: "{{ blocks.compute_hashes.succeeded }}"
@@ -161,10 +153,8 @@ blocks:
         state: "{{ inputs.state }}"
         models: "{{ inputs.models }}"
         parent_id: "{{ inputs.parent_id }}"
+        depth: "{{ inputs.depth }}"
 
-  # ===========================================================================
-  # STEP 5: Search file embeddings by vector similarity
-  # ===========================================================================
   - id: vector_search
     type: Sql
     description: Search cached file embeddings using cosine distance.
@@ -186,9 +176,6 @@ blocks:
         - "{{ blocks.query_embed.outputs.embedding | tojson }}"
         - "{{ inputs.max_results }}"
 
-  # ===========================================================================
-  # STEP 6: Format rankings for RRF fusion
-  # ===========================================================================
   - id: format_rankings
     type: Shell
     description: Format results as rankings for RRF fusion.
@@ -226,13 +213,10 @@ blocks:
       env:
         ROWS: "{{ blocks.vector_search.outputs.rows | default([]) | tojson }}"
 
-  # ===========================================================================
-  # STEP 7: Track completion
-  # ===========================================================================
   - id: track_done
     type: Sql
     description: Mark capability complete.
-    condition: "{{ inputs.state | trim != '' and inputs.parent_id | trim != '' }}"
+    condition: "{{ inputs.parent_id | trim != '' }}"
     depends_on:
       - block: register
         required: true
@@ -244,29 +228,26 @@ blocks:
       model: "{{ inputs.models.task }}"
       op: update
       where:
-        id: "{{ (blocks.register.outputs.rows | default([{}]))[0].id | default('') }}"
+        id: "{{ get(blocks.register.outputs, 'rows.0.id', '') }}"
       data:
         status: "{{ 'done' if blocks.format_rankings.succeeded else 'failed' }}"
-        outputs: "{{ {'count': (blocks.format_rankings.outputs.stdout | fromjson).count if blocks.format_rankings.succeeded else 0} }}"
+        outputs: "{'count': {{ get(blocks.format_rankings.outputs.stdout, 'count', 0) if blocks.format_rankings.succeeded else 0 }}}"
 
-# =============================================================================
-# OUTPUTS
-# =============================================================================
 outputs:
   rankings:
     type: list
     description: "Files ranked by semantic similarity (for RRF fusion)."
-    value: "{{ (blocks.format_rankings.outputs.stdout | fromjson).rankings if blocks.format_rankings.succeeded else [] }}"
+    value: "{{ get(blocks.format_rankings.outputs.stdout, 'rankings', []) if blocks.format_rankings.succeeded else [] }}"
 
   count:
     type: num
     description: "Number of files in rankings."
-    value: "{{ (blocks.format_rankings.outputs.stdout | fromjson).count if blocks.format_rankings.succeeded else 0 }}"
+    value: "{{ get(blocks.format_rankings.outputs.stdout, 'count', 0) if blocks.format_rankings.succeeded else 0 }}"
 
   has_results:
     type: bool
     description: "Whether any results were found."
-    value: "{{ (blocks.format_rankings.outputs.stdout | fromjson).has_results if blocks.format_rankings.succeeded else false }}"
+    value: "{{ get(blocks.format_rankings.outputs.stdout, 'has_results', false) if blocks.format_rankings.succeeded else false }}"
 
   query_embedding:
     type: list

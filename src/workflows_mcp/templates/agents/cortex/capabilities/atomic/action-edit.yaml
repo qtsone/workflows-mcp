@@ -55,6 +55,12 @@ inputs:
     required: false
     default: ""
 
+  depth:
+    type: num
+    description: Task depth for task tree registration.
+    required: false
+    default: 0
+
 blocks:
   # ===========================================================================
   # STEP 1: Register capability in task tree
@@ -72,10 +78,10 @@ blocks:
         parent_id: "{{ inputs.parent_id if inputs.parent_id else none }}"
         kind: capability
         name: cortex-action-edit
-        metadata: "{{ {'labels': {'capability_type': 'action', 'side_effects': 'true'}} }}"
-        inputs: "{{ {'path': inputs.path, 'operation_count': inputs.operations | length, 'dry_run': inputs.dry_run} }}"
+        metadata: "{'labels': {'capability_type': 'action', 'side_effects': 'true'}}"
+        inputs: "{{ inputs }}"
         status: running
-        depth: 2
+        depth: "{{ inputs.depth }}"
 
   # ===========================================================================
   # STEP 2: Execute edit
@@ -111,7 +117,7 @@ blocks:
         id: "{{ (blocks.register.outputs.rows | default([{}]))[0].id | default('') }}"
       data:
         status: "{{ 'done' if blocks.edit.succeeded else 'failed' }}"
-        outputs: "{{ {'operations_applied': blocks.edit.outputs.operations_applied | default(0), 'lines_added': blocks.edit.outputs.lines_added | default(0), 'lines_removed': blocks.edit.outputs.lines_removed | default(0), 'success': blocks.edit.succeeded, 'error': blocks.edit.metadata.message | default('')} }}"
+        outputs: "{'operations_applied': {{ blocks.edit.outputs.operations_applied | default(0) }}, 'lines_added': {{ blocks.edit.outputs.lines_added | default(0) }}, 'lines_removed': {{ blocks.edit.outputs.lines_removed | default(0) }}, 'success': {{ blocks.edit.succeeded }}, 'error': {{ blocks.edit.metadata.message | default('') }}}"
 
 outputs:
   operations_applied:

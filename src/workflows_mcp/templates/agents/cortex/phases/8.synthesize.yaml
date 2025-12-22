@@ -1,7 +1,4 @@
-# =============================================================================
 # CORTEX Synthesize Phase
-# =============================================================================
-#
 # Captures learnings when verification succeeds (or for done actions).
 # This is the terminal phase that documents:
 #   - Root cause analysis
@@ -10,8 +7,6 @@
 #
 # Enhancement: Records episodes for memory consolidation.
 # Episodes are later processed by CONSOLIDATE phase to generate heuristics.
-#
-# =============================================================================
 
 name: cortex-phase-synthesize
 description: "CORTEX Synthesize Phase - capture learnings and record episodes"
@@ -76,9 +71,6 @@ inputs:
     default: []
 
 blocks:
-  # ===========================================================================
-  # STEP 1: Register Phase Task
-  # ===========================================================================
   - id: register_phase
     type: Sql
     description: Register this phase in the task tree.
@@ -91,13 +83,10 @@ blocks:
         parent_id: "{{ inputs.parent_id if inputs.parent_id else none }}"
         kind: phase
         name: synthesize
-        metadata: "{{ {'labels': {'phase_order': 8}} }}"
-        inputs: "{{ {'prompt': inputs.prompt} }}"
+        metadata: "{'labels': {'phase_order': 8}}"
+        inputs: "{'prompt': {{ inputs.prompt }}}"
         status: running
 
-  # ===========================================================================
-  # STEP 2: Generate Learning Summary
-  # ===========================================================================
   - id: generate_learnings
     type: Shell
     description: Generate learning summary from the session.
@@ -165,9 +154,6 @@ blocks:
         VERIFICATION: "{{ inputs.context.verification | tojson }}"
         CATEGORY: "{{ inputs.context.category | default('understanding') }}"
 
-  # ===========================================================================
-  # STEP 3: Store Learnings in Memory
-  # ===========================================================================
   - id: store_learnings
     type: Sql
     description: Store learnings in memory table for future reference.
@@ -175,17 +161,16 @@ blocks:
     inputs:
       engine: sqlite
       path: "{{ inputs.state }}"
-      sql: |
-        INSERT OR REPLACE INTO memory (namespace, key, value, metadata, task_id)
-        VALUES ('learnings', ?, ?, '{}', ?)
-      params:
-        - "session_{{ (blocks.register_phase.outputs.rows | default([{}]))[0].id | default('unknown') }}"
-        - "{{ blocks.generate_learnings.outputs.stdout }}"
-        - "{{ inputs.parent_id }}"
+      model: "{{ inputs.models.memory }}"
+      op: upsert
+      data:
+        namespace: learnings
+        key: "session_{{ get(blocks.register_phase.outputs, 'rows.0.id', 'unknown') }}"
+        value: "{{ get(blocks.generate_learnings.outputs, 'stdout', '{}') }}"
+        metadata: "{'labels': {'block_id': 'store_learnings'}}"
+        task_id: "{{ inputs.parent_id }}"
+      conflict: [namespace, key]
 
-  # ===========================================================================
-  # STEP 4: Record Episode (Memory Consolidation)
-  # ===========================================================================
   - id: build_episode
     type: Shell
     description: Build episode record for memory consolidation.
@@ -281,17 +266,14 @@ blocks:
       model: "{{ inputs.models.episode }}"
       op: insert
       data:
-        query_hash: "{{ (blocks.build_episode.outputs.stdout | fromjson).query_hash }}"
-        category: "{{ (blocks.build_episode.outputs.stdout | fromjson).category }}"
-        context_features: "{{ (blocks.build_episode.outputs.stdout | fromjson).context_features }}"
-        actions_taken: "{{ (blocks.build_episode.outputs.stdout | fromjson).actions_taken }}"
-        outcome: "{{ (blocks.build_episode.outputs.stdout | fromjson).outcome }}"
-        surprisal_bits: "{{ (blocks.build_episode.outputs.stdout | fromjson).surprisal_bits }}"
-        learnings: "{{ (blocks.build_episode.outputs.stdout | fromjson).learnings }}"
+        query_hash: "{{ get(blocks.build_episode.outputs.stdout, 'query_hash', '') }}"
+        category: "{{ get(blocks.build_episode.outputs.stdout, 'category', '') }}"
+        context_features: "{{ get(blocks.build_episode.outputs.stdout, 'context_features', []) }}"
+        actions_taken: "{{ get(blocks.build_episode.outputs.stdout, 'actions_taken', []) }}"
+        outcome: "{{ get(blocks.build_episode.outputs.stdout, 'outcome', '') }}"
+        surprisal_bits: "{{ get(blocks.build_episode.outputs.stdout, 'surprisal_bits', 0) }}"
+        learnings: "{{ get(blocks.build_episode.outputs.stdout, 'learnings', {}) }}"
 
-  # ===========================================================================
-  # STEP 5: Mark Phase Complete
-  # ===========================================================================
   - id: track_done
     type: Sql
     description: Mark phase complete.
@@ -307,39 +289,34 @@ blocks:
     inputs:
       engine: sqlite
       path: "{{ inputs.state }}"
-      sql: |
-        UPDATE tasks
-        SET status = 'done',
-            outputs = ?,
-            updated_at = datetime('now')
-        WHERE id = ?
-      params:
-        - "{{ blocks.generate_learnings.outputs.stdout }}"
-        - "{{ (blocks.register_phase.outputs.rows | default([{}]))[0].id | default('') }}"
+      model: "{{ inputs.models.task }}"
+      op: update
+      where:
+        id: "{{ get(blocks.register_phase.outputs, 'rows.0.id', 'unknown') }}"
+      data:
+        status: done
+        outputs: "{{ get(blocks.generate_learnings.outputs.stdout, 'success', true) }}"
 
-# =============================================================================
-# OUTPUTS
-# =============================================================================
 outputs:
   learnings:
     type: dict
     description: "Captured learnings from the session."
-    value: "{{ blocks.generate_learnings.outputs.stdout | fromjson }}"
+    value: "{{ get(blocks.generate_learnings.outputs.stdout, 'learnings', {}) }}"
 
   success:
     type: bool
     description: "Whether the overall task succeeded."
-    value: "{{ (blocks.generate_learnings.outputs.stdout | fromjson).success | default(true) }}"
+    value: "{{ get(blocks.generate_learnings.outputs.stdout, 'success', true) }}"
 
   episode_id:
     type: str
     description: "ID of the episode recorded (memory consolidation)."
-    value: "{{ (blocks.store_episode.outputs.rows | default([{}]))[0].id | default('') }}"
+    value: "{{ get(blocks.store_episode.outputs, 'rows.0.id', 'unknown') }}"
 
   episode:
     type: dict
     description: "Episode data recorded for consolidation."
-    value: "{{ blocks.build_episode.outputs.stdout | fromjson if blocks.build_episode.succeeded else {} }}"
+    value: "{{ get(blocks.build_episode.outputs.stdout, 'learnings', {}) }}"
 
   state:
     type: str

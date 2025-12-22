@@ -1,6 +1,4 @@
-# =============================================================================
 # CORTEX PID Controller for Homeostatic Regulation
-# =============================================================================
 #
 # Implements a discrete PID controller for self-regulating CORTEX behavior.
 #
@@ -22,8 +20,6 @@
 #   Kp = 0.5  (proportional: immediate response to error)
 #   Ki = 0.1  (integral: eliminates steady-state error)
 #   Kd = 0.2  (derivative: dampens oscillations)
-#
-# =============================================================================
 
 name: cortex-pid-controller
 description: "PID controller for homeostatic regulation of caution level"
@@ -51,7 +47,6 @@ inputs:
     description: Current task ID.
     default: ""
 
-  # PID parameters (from features.homeostatic config)
   target_error_rate:
     type: num
     description: Target error rate (default 10%).
@@ -82,7 +77,6 @@ inputs:
     description: Maximum caution level.
     default: 2.0
 
-  # Current task outcome (to update metrics)
   task_succeeded:
     type: bool
     description: Whether the current task succeeded.
@@ -94,9 +88,6 @@ inputs:
     default: 0
 
 blocks:
-  # ===========================================================================
-  # STEP 1: Get current metrics from rolling window
-  # ===========================================================================
   - id: get_current_metrics
     type: Sql
     description: Get rolling 24-hour error rate and PID state.
@@ -115,9 +106,6 @@ blocks:
            ORDER BY created_at DESC LIMIT 1) as last_pid_state
         FROM current_error_rate cer
 
-  # ===========================================================================
-  # STEP 2: Compute PID output
-  # ===========================================================================
   - id: compute_pid
     type: Shell
     description: Calculate new caution level using PID algorithm.
@@ -249,9 +237,6 @@ blocks:
         CURRENT_SURPRISAL: "{{ inputs.current_surprisal }}"
         METRICS: "{{ blocks.get_current_metrics.outputs.rows | default([]) | tojson }}"
 
-  # ===========================================================================
-  # STEP 3: Store updated health metrics
-  # ===========================================================================
   - id: store_metrics
     type: Sql
     description: Store updated health metrics with PID state.
@@ -279,46 +264,41 @@ blocks:
           caution_level = ?,
           pid_state = ?
       params:
-        # Insert values
-        - "{{ (blocks.compute_pid.outputs.stdout | fromjson).metrics.total_completed }}"
-        - "{{ (blocks.compute_pid.outputs.stdout | fromjson).metrics.total_failed }}"
-        - "{{ (blocks.compute_pid.outputs.stdout | fromjson).metrics.mean_surprisal }}"
-        - "{{ (blocks.compute_pid.outputs.stdout | fromjson).caution_level }}"
-        - "{{ (blocks.compute_pid.outputs.stdout | fromjson).pid_state | tojson }}"
-        # Update values
+        - "{{ get(blocks.compute_pid.outputs.stdout, 'metrics.total_completed', 0) }}"
+        - "{{ get(blocks.compute_pid.outputs.stdout, 'metrics.total_failed', 0) }}"
+        - "{{ get(blocks.compute_pid.outputs.stdout, 'metrics.mean_surprisal', 0) }}"
+        - "{{ get(blocks.compute_pid.outputs.stdout, 'caution_level', 1.0) }}"
+        - "{{ get(blocks.compute_pid.outputs.stdout, 'pid_state', {}) | tojson }}"
         - "{{ inputs.task_succeeded }}"
-        - "{{ (blocks.compute_pid.outputs.stdout | fromjson).metrics.mean_surprisal }}"
-        - "{{ (blocks.compute_pid.outputs.stdout | fromjson).caution_level }}"
-        - "{{ (blocks.compute_pid.outputs.stdout | fromjson).pid_state | tojson }}"
+        - "{{ get(blocks.compute_pid.outputs.stdout, 'metrics.mean_surprisal', 0) }}"
+        - "{{ get(blocks.compute_pid.outputs.stdout, 'caution_level', 1.0) }}"
+        - "{{ get(blocks.compute_pid.outputs.stdout, 'pid_state', {}) | tojson }}"
 
-# =============================================================================
-# OUTPUTS
-# =============================================================================
 outputs:
   caution_level:
     type: num
     description: "New caution level (0.5 to 2.0)."
-    value: "{{ (blocks.compute_pid.outputs.stdout | fromjson).caution_level if blocks.compute_pid.succeeded else 1.0 }}"
+    value: "{{ get(blocks.compute_pid.outputs.stdout, 'caution_level', 1.0) if blocks.compute_pid.succeeded else 1.0 }}"
 
   pid_output:
     type: num
     description: "Raw PID controller output."
-    value: "{{ (blocks.compute_pid.outputs.stdout | fromjson).pid_output if blocks.compute_pid.succeeded else 0 }}"
+    value: "{{ get(blocks.compute_pid.outputs.stdout, 'pid_output', 0) if blocks.compute_pid.succeeded else 0 }}"
 
   pid_state:
     type: dict
     description: "PID state for next iteration."
-    value: "{{ (blocks.compute_pid.outputs.stdout | fromjson).pid_state if blocks.compute_pid.succeeded else {} }}"
+    value: "{{ get(blocks.compute_pid.outputs.stdout, 'pid_state', {}) if blocks.compute_pid.succeeded else {} }}"
 
   metrics:
     type: dict
     description: "Updated health metrics."
-    value: "{{ (blocks.compute_pid.outputs.stdout | fromjson).metrics if blocks.compute_pid.succeeded else {} }}"
+    value: "{{ get(blocks.compute_pid.outputs.stdout, 'metrics', {}) if blocks.compute_pid.succeeded else {} }}"
 
   adjustment:
     type: dict
     description: "Caution level adjustment details."
-    value: "{{ (blocks.compute_pid.outputs.stdout | fromjson).adjustment if blocks.compute_pid.succeeded else {} }}"
+    value: "{{ get(blocks.compute_pid.outputs.stdout, 'adjustment', {}) if blocks.compute_pid.succeeded else {} }}"
 
   state:
     type: str

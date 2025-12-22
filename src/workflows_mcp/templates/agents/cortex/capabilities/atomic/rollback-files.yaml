@@ -40,13 +40,12 @@ blocks:
     inputs:
       engine: sqlite
       path: "{{ inputs.state }}"
-      sql: |
-        SELECT id, file_path, content, hash
-        FROM backups
-        WHERE task_id = ?
-        ORDER BY created_at DESC
-      params:
-        - "{{ inputs.task_id }}"
+      model: "{{ inputs.models.backup }}"
+      op: select
+      where:
+        task_id: "{{ inputs.task_id }}"
+      order:
+        - created_at:desc
 
   - id: restore_files
     type: Shell
@@ -102,8 +101,8 @@ blocks:
         EOF
       env:
         FILE_PATH: "{{ each.value.file_path }}"
-        CONTENT: "{{ each.value.content | default('') }}"
-        BACKUP_HASH: "{{ each.value.hash | default('') }}"
+        CONTENT: "{{ get(each.value, 'content', '') }}"
+        BACKUP_HASH: "{{ get(each.value, 'hash', '') }}"
         BASE_PATH: "{{ inputs.base_path }}"
 
   - id: mark_backups_used
@@ -125,9 +124,9 @@ outputs:
   restored:
     type: num
     description: "Number of files restored."
-    value: "{{ blocks.restore_files.metadata.count | default(0) }}"
+    value: "{{ get(blocks.restore_files.metadata, 'count', 0) }}"
 
   success:
     type: bool
     description: "Whether rollback succeeded."
-    value: "{{ blocks.restore_files.succeeded and blocks.restore_files.metadata.count_failed == 0 }}"
+    value: "{{ blocks.restore_files.succeeded and get(blocks.restore_files.metadata, 'count_failed', 0) == 0 }}"

@@ -1,14 +1,10 @@
-# =============================================================================
 # CORTEX Categorize Phase
-# =============================================================================
 #
 # Enhanced with predictive coding:
 #   - execute: { enabled: bool, type: str } - Pre-reasoning command execution
 #   - decide: { verify_required: bool } - Verification requirements
 #   - verify: { enabled: bool, max_retries: int } - Verification loop settings
 #   - Expectation formation for surprisal tracking
-#
-# =============================================================================
 
 name: cortex-phase-categorize
 description: "CORTEX Categorize Phase - classifies prompt with expectation formation"
@@ -76,11 +72,13 @@ inputs:
     type: str
     description: Path to SQLite state database.
     default: ""
+    required: true
 
   models:
     type: dict
     description: Model definitions for CRUD operations.
     default: {}
+    required: true
 
   parent_id:
     type: str
@@ -135,9 +133,6 @@ inputs:
     default: 1.0
 
 blocks:
-  # ===========================================================================
-  # STEP 1: Register Phase Task
-  # ===========================================================================
   - id: register_phase
     type: Sql
     description: Register this phase in the task tree.
@@ -150,14 +145,11 @@ blocks:
         parent_id: "{{ inputs.parent_id if inputs.parent_id else none }}"
         kind: phase
         name: categorize
-        metadata: "{{ {'labels': {'phase_order': 1, 'version': 'v1'}} }}"
-        inputs: "{{ {'prompt': inputs.prompt} }}"
+        metadata: "{'labels': {'phase_order': 1, 'version': 'v1'}}"
+        inputs: "{'prompt': {{ inputs.prompt }} }"
         status: running
         depth: "{{ inputs.depth }}"
 
-  # ===========================================================================
-  # STEP 2: Query learned heuristics
-  # ===========================================================================
   - id: query_heuristics
     type: Workflow
     description: "Query learned heuristics to inform categorization."
@@ -176,9 +168,6 @@ blocks:
         parent_id: "{{ (blocks.register_phase.outputs.rows | default([{}]))[0].id | default('') }}"
         task_id: "{{ inputs.parent_id }}"
 
-  # ===========================================================================
-  # STEP 3: Retrieve memory
-  # ===========================================================================
   - id: retrieve_memory
     type: Sql
     description: Get files from memory by namespace.
@@ -191,15 +180,17 @@ blocks:
     inputs:
       engine: sqlite
       path: "{{ inputs.state }}"
-      sql: |
-        SELECT key, value, metadata
-        FROM memory
-        WHERE namespace = 'content'
-        ORDER BY key
+      model: "{{ inputs.models.memory }}"
+      op: select
+      where:
+        namespace: content
+      order:
+        - key
+      columns:
+        - key
+        - value
+        - metadata
 
-  # ===========================================================================
-  # STEP 4: Attempt categorization
-  # ===========================================================================
   - id: attempt
     type: LLMCall
     description: Classify the prompt.
@@ -215,7 +206,7 @@ blocks:
       timeout: 600
       system_instructions: "{{ inputs.system }}"
       prompt: |
-        # Prompt Categorization (CORTEX)
+        # Prompt Categorization
 
         ## Prompt
         {{ inputs.prompt }}
@@ -325,16 +316,10 @@ blocks:
             required: [exists]
         required: [result, confidence, uncertainty]
 
-  # ===========================================================================
-  # STEP 4: Store LLM call for debugging
-  # ===========================================================================
   - id: store_llm_call
     type: Sql
     description: Store LLM call details.
-    depends_on:
-      - block: attempt
-        required: false
-    condition: "{{ inputs.state | trim != '' and blocks.attempt.succeeded }}"
+    depends_on: [attempt]
     inputs:
       engine: sqlite
       path: "{{ inputs.state }}"
@@ -349,11 +334,8 @@ blocks:
         model: "{{ blocks.attempt.outputs.metadata.model | default('unknown') }}"
         prompt_tokens: "{{ blocks.attempt.outputs.metadata.usage.prompt_tokens | default(0) }}"
         completion_tokens: "{{ blocks.attempt.outputs.metadata.usage.completion_tokens | default(0) }}"
-        duration_ms: "{{ blocks.attempt.metadata.duration_ms | default(0) }}"
+        duration_ms: "{{ get(blocks.attempt.metadata, 'duration_ms', 0) }}"
 
-  # ===========================================================================
-  # STEP 5: Form Initial Expectation (Predictive Coding)
-  # ===========================================================================
   - id: form_expectation
     type: Shell
     description: Generate expectation based on category (predicts what will happen).
@@ -375,12 +357,6 @@ blocks:
             pipeline_config = json.loads(pipeline_config_json)
         except:
             pipeline_config = {}
-
-        # =======================================================================
-        # CATEGORY → EXPECTED OUTCOME MAPPING
-        # =======================================================================
-        # Based on category and confidence, predict what will happen
-        # =======================================================================
 
         OUTCOME_PREDICTIONS = {
             "existence": {
@@ -451,7 +427,7 @@ blocks:
         CATEGORY: "{{ blocks.attempt.outputs.response.result.category }}"
         CONFIDENCE: "{{ blocks.attempt.outputs.response.confidence }}"
         PROMPT: "{{ inputs.prompt }}"
-        PIPELINE_CONFIG: "{{ (blocks.lookup_config.outputs.stdout | fromjson).pipeline_config | tojson }}"
+        PIPELINE_CONFIG: "{{ get(blocks.lookup_config.outputs.stdout, 'pipeline_config', {}) | tojson }}"
 
   - id: store_expectation
     type: Sql
@@ -466,12 +442,10 @@ blocks:
       data:
         task_id: "{{ inputs.parent_id }}"
         phase: categorize
-        prediction: "{{ (blocks.form_expectation.outputs.stdout | fromjson).prediction }}"
-        basis: "{{ (blocks.form_expectation.outputs.stdout | fromjson).basis }}"
+        prediction: "{{ get(blocks.form_expectation.outputs.stdout, 'prediction', '') }}"
+        basis: "{{ get(blocks.form_expectation.outputs.stdout, 'basis', '') }}"
 
-  # ===========================================================================
   # STEP 6: Calculate G-Score for Dual-Track Routing
-  # ===========================================================================
   # G-Score = Impact × Uncertainty
   #
   # Impact factors (based on scope):
@@ -499,7 +473,6 @@ blocks:
   #     - Caution 1.0: thresholds × 1 (normal, e.g., 10)
   #     - Caution 1.5: thresholds / 1.5 (cautious, e.g., 10 → 7)
   #     - Caution 2.0: thresholds / 2 (paranoid, e.g., 10 → 5)
-  # ===========================================================================
   - id: compute_g_score
     type: Shell
     description: Calculate G-Score for dual-track routing with caution adjustment.
@@ -527,13 +500,10 @@ blocks:
         base_system1_max = thresholds.get('system1_max', 10)
         base_confirm_above = thresholds.get('confirm_above', 50)
 
-        # =======================================================================
         # CAUTION-ADJUSTED THRESHOLDS (Homeostatic Control)
-        # =======================================================================
         # Formula: adjusted_threshold = base_threshold / caution_level
         # Higher caution → lower thresholds → more conservative routing
         # Lower caution → higher thresholds → more aggressive routing
-        # =======================================================================
         if homeostatic_enabled and caution_level > 0:
             system1_max = int(base_system1_max / caution_level)
             confirm_above = int(base_confirm_above / caution_level)
@@ -544,9 +514,7 @@ blocks:
             system1_max = base_system1_max
             confirm_above = base_confirm_above
 
-        # =======================================================================
         # IMPACT SCORE MAPPING
-        # =======================================================================
         IMPACT_SCORES = {
             'none': 1,       # Just reading/understanding
             'single': 3,     # 1-5 files
@@ -556,9 +524,7 @@ blocks:
         }
         impact_score = IMPACT_SCORES.get(impact_scope, 5)
 
-        # =======================================================================
         # UNCERTAINTY SCORE MAPPING
-        # =======================================================================
         # Lower confidence = higher uncertainty score
         if confidence >= 0.9:
             uncertainty_score = 1
@@ -571,14 +537,10 @@ blocks:
         else:
             uncertainty_score = 9
 
-        # =======================================================================
         # G-SCORE CALCULATION
-        # =======================================================================
         g_score = impact_score * uncertainty_score
 
-        # =======================================================================
         # ROUTING DECISION
-        # =======================================================================
         if g_score <= system1_max:
             processing_path = 'system1'
             confirmation_required = False
@@ -630,9 +592,6 @@ blocks:
         CAUTION_LEVEL: "{{ inputs.caution_level | default(1.0) }}"
         HOMEOSTATIC_ENABLED: "{{ inputs.features.homeostatic_enabled | default(false) }}"
 
-  # ===========================================================================
-  # STEP 7: Check if investigation needed
-  # ===========================================================================
   - id: needs_investigation
     type: Shell
     description: Evaluate whether to spawn investigation cell.
@@ -680,9 +639,6 @@ blocks:
         DEPTH: "{{ inputs.depth }}"
         MAX_DEPTH: "{{ inputs.max_depth }}"
 
-  # ===========================================================================
-  # STEP 6: Look up v2 pipeline_config from mapping table
-  # ===========================================================================
   - id: lookup_config
     type: Shell
     description: Map category to v2 pipeline_config (includes execute/decide/verify).
@@ -692,15 +648,6 @@ blocks:
         python3 << 'EOF'
         import json
         import os
-
-        # =======================================================================
-        # CORTEX v2 CATEGORY → PIPELINE CONFIG MAPPING TABLE
-        # =======================================================================
-        # Key v2 additions:
-        #   - execute: { enabled, type } - Pre-reasoning command execution
-        #   - decide: { verify_required } - Whether VERIFY phase is mandatory
-        #   - verify: { enabled, max_retries } - Verification loop settings
-        # =======================================================================
 
         MAPPING = {
             "existence": {
@@ -772,14 +719,11 @@ blocks:
       env:
         CATEGORY: "{{ blocks.attempt.outputs.response.result.category }}"
 
-  # ===========================================================================
-  # STEP 7: Spawn child cell to investigate
-  # ===========================================================================
   - id: investigate
     type: Workflow
     description: Spawn cortex-cell to investigate uncertainty.
     depends_on: [needs_investigation, lookup_config]
-    condition: "{{ (blocks.needs_investigation.outputs.stdout | fromjson).should_investigate }}"
+    condition: "{{ get(blocks.needs_investigation.outputs.stdout, 'should_investigate', false) }}"
     inputs:
       workflow: cortex-cell
       inputs:
@@ -790,15 +734,13 @@ blocks:
         depth: "{{ inputs.depth + 1 }}"
         max_depth: "{{ inputs.max_depth }}"
         state: "{{ inputs.state }}"
-        parent_id: "{{ (blocks.register_phase.outputs.rows | default([{}]))[0].id | default('') }}"
+        parent_id: "{{ get(blocks.register_phase.outputs, 'rows.0.id', '') }}"
         profile: "{{ inputs.profile }}"
         confidence_threshold: "{{ inputs.confidence_threshold }}"
         capabilities: "{{ inputs.capabilities }}"
         permissions: "{{ inputs.permissions }}"
+        features: "{{ inputs.features }}"
 
-  # ===========================================================================
-  # STEP 9: Self-recurse with accumulated synthesis
-  # ===========================================================================
   - id: self_recurse
     type: Workflow
     description: Call THIS phase with synthesis from investigation.
@@ -828,9 +770,6 @@ blocks:
             'synthesis': blocks.investigate.outputs.synthesis
           }] }}
 
-  # ===========================================================================
-  # STEP 10: Track completion
-  # ===========================================================================
   - id: track_done
     type: Sql
     description: Mark phase complete.
@@ -847,19 +786,14 @@ blocks:
     inputs:
       engine: sqlite
       path: "{{ inputs.state }}"
-      sql: |
-        UPDATE tasks
-        SET status = 'done',
-            outputs = ?,
-            updated_at = datetime('now')
-        WHERE id = ?
-      params:
-        - "{{ {'recursed': blocks.self_recurse.succeeded, 'category': blocks.attempt.outputs.response.result.category | default('understanding')} | tojson }}"
-        - "{{ (blocks.register_phase.outputs.rows | default([{}]))[0].id | default('') }}"
+      model: "{{ inputs.models.task }}"
+      op: update
+      where:
+        id: "{{ get(blocks.register_phase.outputs, 'rows.0.id', '') }}"
+      data:
+        status: done
+        outputs: "{'recursed': {{ blocks.self_recurse.succeeded }}, 'category': {{ get(blocks.attempt.outputs.response.result,'category','understanding') }}}"
 
-# =============================================================================
-# OUTPUTS
-# =============================================================================
 outputs:
   result:
     type: dict
@@ -873,28 +807,27 @@ outputs:
     description: "Pipeline configuration with execute/decide/verify fields."
     value: |
       {{ blocks.self_recurse.outputs.pipeline_config if blocks.self_recurse.succeeded
-         else (blocks.lookup_config.outputs.stdout | fromjson).pipeline_config }}
+         else get(blocks.lookup_config.outputs.stdout, 'pipeline_config', {}) }}
 
   expectation_id:
     type: str
     description: "ID of the expectation formed (predictive coding)."
     value: |
       {{ blocks.self_recurse.outputs.expectation_id if blocks.self_recurse.succeeded
-         else ((blocks.store_expectation.outputs.rows | default([{}]))[0].id | default('')) }}
+         else get(blocks.store_expectation.outputs, 'rows.0.id', '') }}
 
   context_hash:
     type: str
     description: "Context hash for clustering similar situations."
     value: |
-      {{ (blocks.form_expectation.outputs.stdout | fromjson).context_hash | default('') }}
+      {{ get(blocks.form_expectation.outputs.stdout, 'context_hash', '') }}
 
   expectation:
     type: dict
     description: "Full expectation object for REASON phase context."
     value: |
-      {{ blocks.form_expectation.outputs.stdout | fromjson if blocks.form_expectation.succeeded else {} }}
+      {{ blocks.form_expectation.outputs.stdout if blocks.form_expectation.succeeded else {} }}
 
-  # Heuristics Outputs
   matched_heuristics:
     type: list
     description: "Heuristics matched for this query (memory consolidation)."
@@ -907,18 +840,17 @@ outputs:
     value: |
       {{ blocks.query_heuristics.outputs.count if blocks.query_heuristics.succeeded else 0 }}
 
-  # Dual-Track Routing Outputs
   g_score:
     type: num
     description: "G-Score for dual-track routing (Impact * Uncertainty)."
     value: |
-      {{ (blocks.compute_g_score.outputs.stdout | fromjson).g_score | default(25) if blocks.compute_g_score.succeeded else 25 }}
+      {{ get(blocks.compute_g_score.outputs.stdout, 'g_score', 25) if blocks.compute_g_score.succeeded else 25 }}
 
   routing:
     type: dict
     description: "Dual-track routing decision."
     value: |
-      {{ blocks.compute_g_score.outputs.stdout | fromjson if blocks.compute_g_score.succeeded else {
+      {{ blocks.compute_g_score.outputs.stdout if blocks.compute_g_score.succeeded else {
         'processing_path': 'system2',
         'g_score': 25,
         'confirmation_required': false
@@ -928,13 +860,13 @@ outputs:
     type: str
     description: "Processing path: system1 (fast) or system2 (full)."
     value: |
-      {{ (blocks.compute_g_score.outputs.stdout | fromjson).processing_path | default('system2') if blocks.compute_g_score.succeeded else 'system2' }}
+      {{ get(blocks.compute_g_score.outputs.stdout, 'processing_path', 'system2') if blocks.compute_g_score.succeeded else 'system2' }}
 
   confirmation_required:
     type: bool
     description: "Whether user confirmation is required (G-Score > 50)."
     value: |
-      {{ (blocks.compute_g_score.outputs.stdout | fromjson).confirmation_required | default(false) if blocks.compute_g_score.succeeded else false }}
+      {{ get(blocks.compute_g_score.outputs.stdout, 'confirmation_required', false) if blocks.compute_g_score.succeeded else false }}
 
   state:
     type: str

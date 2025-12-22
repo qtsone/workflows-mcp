@@ -1,11 +1,8 @@
-# =============================================================================
 # CORTEX Reason Phase
-# =============================================================================
-#
-# KEY v2 ENHANCEMENT: Receives execution_result from EXECUTE phase.
+# Receives execution_result from EXECUTE phase.
 # This means REASON now analyzes ACTUAL command output, not just file contents.
 #
-# KEY ENHANCEMENT: Compares actual outcome against prediction (expectation).
+# Compares actual outcome against prediction (expectation).
 # Calculates surprisal to determine if learning is needed (DIAGNOSE action).
 #
 # Example flow:
@@ -13,8 +10,6 @@
 #   2. EXECUTE: runs `pytest`, captures "5 tests failed in auth.py"
 #   3. REASON: analyzes output, compares to expectation
 #   4. Result: surprisal = 0.74 bits (expected), or 2.3 bits (surprising!)
-#
-# =============================================================================
 
 name: cortex-phase-reason
 description: "CORTEX Reason Phase - analyzes evidence with surprisal calculation"
@@ -144,9 +139,6 @@ inputs:
     default: {}
 
 blocks:
-  # ===========================================================================
-  # STEP 1: Register Phase Task
-  # ===========================================================================
   - id: register_phase
     type: Sql
     description: Register this phase in the task tree.
@@ -159,14 +151,18 @@ blocks:
         parent_id: "{{ inputs.parent_id if inputs.parent_id else none }}"
         kind: phase
         name: reason
-        metadata: "{{ {'labels': {'phase_order': 4, 'goal': inputs.pipeline_config.reason.goal | default('explain'), 'version': 'v1'}} }}"
+        metadata: |
+          {
+            'labels': {
+              'phase_order': 4,
+              'goal': {{ get(inputs.pipeline_config.reason, 'goal', 'explain') }},
+              'version': 'v1'
+            }
+          }
         inputs: "{{ {'prompt': inputs.prompt} }}"
         status: running
         depth: "{{ inputs.depth }}"
 
-  # ===========================================================================
-  # STEP 2: Retrieve evidence from memory
-  # ===========================================================================
   - id: retrieve_evidence
     type: Sql
     description: Query all gathered evidence from memory.
@@ -174,17 +170,14 @@ blocks:
     inputs:
       engine: sqlite
       path: "{{ inputs.state }}"
-      sql: |
-        SELECT namespace as evidence_type, key, value, metadata,
-               json_extract(metadata, '$.byte_size') as byte_size
-        FROM memory
-        WHERE namespace IN ('content', 'outline', 'search')
-        ORDER BY namespace, key
-        LIMIT 100
+      model: "{{ inputs.models.memory }}"
+      op: select
+      columns: [namespace, key, value, metadata]
+      where:
+        namespace: { in: [content, outline, search] }
+      order: [namespace:asc, key:asc]
+      limit: 100
 
-  # ===========================================================================
-  # STEP 3: Query child cells
-  # ===========================================================================
   - id: get_child_cells
     type: Sql
     description: Query all child cortex-cell syntheses from DB.
@@ -192,19 +185,15 @@ blocks:
     inputs:
       engine: sqlite
       path: "{{ inputs.state }}"
-      sql: |
-        SELECT id as task_id, inputs, outputs
-        FROM tasks
-        WHERE parent_id = ?
-          AND kind = 'cell'
-          AND status = 'done'
-        ORDER BY created_at
-      params:
-        - "{{ inputs.parent_id }}"
+      model: "{{ inputs.models.task }}"
+      op: select
+      columns: [id, inputs, outputs]
+      where:
+        parent_id: "{{ inputs.parent_id }}"
+        kind: cell
+        status: done
+      order: [created_at:asc]
 
-  # ===========================================================================
-  # STEP 4: Analyze with execution results
-  # ===========================================================================
   - id: attempt
     type: LLMCall
     description: Analyze evidence AND execution results.
@@ -276,7 +265,7 @@ blocks:
         {% if blocks.retrieve_evidence.succeeded and blocks.retrieve_evidence.outputs.row_count > 0 %}
         ## Evidence ({{ blocks.retrieve_evidence.outputs.row_count }} items)
         {% for item in blocks.retrieve_evidence.outputs.rows %}
-        - **{{ item.key }}** ({{ item.evidence_type }})
+        - **{{ item.key }}** ({{ item.namespace }})
         {% endfor %}
         {% endif %}
 
@@ -397,9 +386,6 @@ blocks:
             required: [exists]
         required: [synthesis, response, confidence, uncertainty]
 
-  # ===========================================================================
-  # Store LLM call
-  # ===========================================================================
   - id: store_llm_call
     type: Sql
     description: Store LLM call details.
@@ -413,56 +399,69 @@ blocks:
       model: "{{ inputs.models.llm_call }}"
       op: insert
       data:
-        task_id: "{{ (blocks.register_phase.outputs.rows | default([{}]))[0].id | default('') }}"
+        task_id: "{{ get(blocks.register_phase.outputs, 'rows.0.id', '') }}"
         phase: reason
         system_instructions: "{{ inputs.system | default('') }}"
         prompt: "{{ inputs.prompt }}"
         response: "{{ blocks.attempt.outputs.response }}"
-        model: "{{ blocks.attempt.outputs.metadata.model | default('unknown') }}"
-        prompt_tokens: "{{ blocks.attempt.outputs.metadata.usage.prompt_tokens | default(0) }}"
-        completion_tokens: "{{ blocks.attempt.outputs.metadata.usage.completion_tokens | default(0) }}"
-        duration_ms: "{{ blocks.attempt.metadata.duration_ms | default(0) }}"
+        model: "{{ get(blocks.attempt.outputs.metadata, 'model', 'unknown') }}"
+        prompt_tokens: "{{ get(blocks.attempt.outputs, 'metadata.usage.prompt_tokens', 0) }}"
+        completion_tokens: "{{ get(blocks.attempt.outputs, 'metadata.usage.completion_tokens', 0) }}"
+        duration_ms: "{{ get(blocks.attempt.metadata, 'duration_ms', 0) }}"
 
-  # ===========================================================================
-  # Store findings as facts
-  # ===========================================================================
   - id: store_facts
     type: Sql
-    description: Store synthesized findings as facts.
+    description: Store synthesized findings as facts (requires non-empty evidence).
     depends_on: [attempt]
     condition: |
-      {{ blocks.attempt.succeeded
-         and (blocks.attempt.outputs.response.synthesis.findings | default([]) | length > 0) }}
-    for_each: "{{ blocks.attempt.outputs.response.synthesis.findings }}"
+      {{ get(blocks.attempt.outputs.response.synthesis, 'findings', []) | length > 0 }}
+    for_each: "{{ blocks.attempt.outputs.response.synthesis.findings | selectattr('evidence_chain') | list }}"
     for_each_mode: parallel
     max_parallel: 10
     continue_on_error: true
     inputs:
       engine: sqlite
       path: "{{ inputs.state }}"
-      sql: |
-        INSERT INTO facts (id, claim, evidence_type, severity, confidence, grounding, task_id, status)
-        VALUES (
-          lower(hex(randomblob(16))),
-          ?,
-          ?,
-          ?,
-          ?,
-          ?,
-          ?,
-          'active'
-        )
-      params:
-        - "{{ each.value.claim }}"
-        - "{{ 'direct' if each.value.confidence >= 0.9 else 'inferred' }}"
-        - "{{ each.value.severity | default('info') }}"
-        - "{{ each.value.confidence }}"
-        - "{{ each.value.evidence_chain | default([]) | tojson }}"
-        - "{{ (blocks.register_phase.outputs.rows | default([{}]))[0].id | default('') }}"
+      model: "{{ inputs.models.fact }}"
+      op: insert
+      data:
+        claim: "{{ each.value.claim }}"
+        evidence_type: "{{ 'direct' if each.value.confidence >= 0.9 else 'inferred' }}"
+        severity: "{{ each.value.severity | default('info') }}"
+        confidence: "{{ each.value.confidence }}"
+        grounding: "{{ each.value.evidence_chain | tojson }}"
+        task_id: "{{ get(blocks.register_phase.outputs, 'rows.0.id', '') }}"
+        status: active
 
-  # ===========================================================================
-  # STEP 6: Determine Actual Outcome (Predictive Coding)
-  # ===========================================================================
+  - id: log_ungrounded
+    type: Shell
+    description: Log findings that lack evidence grounding.
+    depends_on: [attempt]
+    condition: "{{ get(blocks.attempt.outputs.response.synthesis, 'findings', []) | rejectattr('evidence_chain') | list | length > 0 }}"
+    inputs:
+      command: |
+        python3 << 'EOF'
+        import json
+        import os
+        import sys
+
+        findings_json = os.environ.get('FINDINGS', '[]')
+        try:
+            findings = json.loads(findings_json)
+        except:
+            findings = []
+
+        ungrounded = [f for f in findings if not f.get('evidence_chain')]
+        if ungrounded:
+            print(f"WARNING: {len(ungrounded)} finding(s) without evidence grounding (not stored as facts):", file=sys.stderr)
+            for f in ungrounded:
+                print(f"  - {f.get('claim', 'N/A')[:100]}...", file=sys.stderr)
+
+        print(json.dumps({'ungrounded_count': len(ungrounded), 'claims': [f.get('claim', '') for f in ungrounded]}))
+        EOF
+      env:
+        FINDINGS: "{{ get(blocks.attempt.outputs.response.synthesis, 'findings', []) | tojson }}"
+
   - id: determine_outcome
     type: Shell
     description: Determine actual outcome for surprisal calculation.
@@ -535,12 +534,9 @@ blocks:
         EOF
       env:
         SYNTHESIS: "{{ blocks.attempt.outputs.response.synthesis | tojson }}"
-        EXECUTION: "{{ inputs.context.execution_result | default({}) | tojson }}"
-        CATEGORY: "{{ inputs.context.category | default('understanding') }}"
+        EXECUTION: "{{ get(inputs.context, 'execution_result', {}) | tojson }}"
+        CATEGORY: "{{ get(inputs.context, 'category', 'understanding') }}"
 
-  # ===========================================================================
-  # STEP 7: Calculate Surprisal (Predictive Coding)
-  # ===========================================================================
   - id: compute_surprisal
     type: Workflow
     description: Calculate surprisal by comparing prediction to actual outcome.
@@ -552,12 +548,9 @@ blocks:
         state: "{{ inputs.state }}"
         models: "{{ inputs.models }}"
         expectation_id: "{{ inputs.expectation_id }}"
-        actual_outcome: "{{ blocks.determine_outcome.outputs.stdout | fromjson }}"
+        actual_outcome: "{{ blocks.determine_outcome.outputs.stdout }}"
         context_hash: "{{ inputs.context_hash }}"
 
-  # ===========================================================================
-  # STEP 8: Track completion
-  # ===========================================================================
   - id: track_done
     type: Sql
     description: Mark phase complete.
@@ -568,25 +561,32 @@ blocks:
         required: false
       - block: store_facts
         required: false
+      - block: log_ungrounded
+        required: false
       - block: compute_surprisal
         required: false
     inputs:
       engine: sqlite
       path: "{{ inputs.state }}"
-      sql: |
-        UPDATE tasks
-        SET status = ?,
-            outputs = ?,
-            updated_at = datetime('now')
-        WHERE id = ?
-      params:
-        - "{{ 'done' if blocks.attempt.succeeded else 'failed' }}"
-        - "{{ {'goal': inputs.pipeline_config.reason.goal | default('explain'), 'success': blocks.attempt.succeeded, 'had_execution_results': inputs.context.execution_result.executed | default(false)} | tojson }}"
-        - "{{ (blocks.register_phase.outputs.rows | default([{}]))[0].id | default('') }}"
+      model: "{{ inputs.models.task }}"
+      op: update
+      where:
+        id: "{{ get(blocks.register_phase.outputs, 'rows.0.id', '') }}"
+      data:
+        status: "{{ 'done' if blocks.attempt.succeeded else 'failed' }}"
+        outputs: |
+          {
+            'goal': {{ get(inputs.pipeline_config, 'reason.goal', 'explain') }},
+            'success': {{ blocks.attempt.succeeded }},
+            'had_execution_results': {{ get(inputs.context, 'execution_result.executed', false) }},
+            'facts_stored': {{ get(blocks.store_facts.metadata, 'count', 0) }},
+            {% if blocks.log_ungrounded.succeeded %}
+              'ungrounded_findings': {{ get(blocks.log_ungrounded.outputs.stdout, 'ungrounded_count', 0) }}
+            {% else %}
+              'ungrounded_findings': 0
+            {% endif %}
+          }
 
-# =============================================================================
-# OUTPUTS
-# =============================================================================
 outputs:
   synthesis:
     type: dict

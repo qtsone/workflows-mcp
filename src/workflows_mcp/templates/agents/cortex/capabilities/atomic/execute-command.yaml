@@ -1,16 +1,12 @@
-# =============================================================================
-# CORTEX v2 Atomic Capability: Execute Command
-# =============================================================================
+# CORTEX Atomic Capability: Execute Command
 #
 # Pure command execution capability for the EXECUTE and VERIFY phases.
 # Returns structured output with exit_code, stdout, stderr, duration.
-#
-# =============================================================================
 
 name: cortex-execute-command
 description: "Execute a shell command and capture structured output"
 
-tags: [cortex, capability, execute, atomic, v2]
+tags: [cortex, capability, execute, atomic]
 
 inputs:
   command:
@@ -58,9 +54,9 @@ blocks:
     type: Shell
     description: Execute the command.
     inputs:
+      timeout: "{{ inputs.timeout }}"
+      working_dir: "{{ inputs.working_dir }}"
       command: |
-        cd "{{ inputs.working_dir }}"
-
         # Capture start time
         START_MS=$(python3 -c "import time; print(int(time.time() * 1000))")
 
@@ -74,7 +70,6 @@ blocks:
 
         echo "___EXIT_CODE___:$EXIT_CODE"
         echo "___DURATION_MS___:$DURATION_MS"
-      timeout: "{{ inputs.timeout }}" # Shell block expects seconds
 
   - id: parse_output
     type: Shell
@@ -144,10 +139,10 @@ blocks:
         task_id: "{{ inputs.task_id }}"
         command: "{{ inputs.command }}"
         working_dir: "{{ inputs.working_dir }}"
-        exit_code: "{{ (blocks.parse_output.outputs.stdout | fromjson).exit_code }}"
-        stdout: "{{ (blocks.parse_output.outputs.stdout | fromjson).stdout }}"
+        exit_code: "{{ get(blocks.parse_output.outputs.stdout, 'exit_code', 1) }}"
+        stdout: "{{ get(blocks.parse_output.outputs.stdout, 'stdout', '') }}"
         stderr: ""
-        duration_ms: "{{ (blocks.parse_output.outputs.stdout | fromjson).duration_ms }}"
+        duration_ms: "{{ get(blocks.parse_output.outputs.stdout, 'duration_ms', 0) }}"
         phase: "{{ inputs.phase }}"
         iteration: "{{ inputs.iteration }}"
 
@@ -155,14 +150,14 @@ outputs:
   result:
     type: dict
     description: "Execution result with exit_code, stdout, duration."
-    value: "{{ blocks.parse_output.outputs.stdout | fromjson }}"
+    value: "{{ blocks.parse_output.outputs.stdout }}"
 
   success:
     type: bool
     description: "Whether command succeeded (exit_code == 0)."
-    value: "{{ (blocks.parse_output.outputs.stdout | fromjson).success }}"
+    value: "{{ get(blocks.parse_output.outputs.stdout, 'success', false) }}"
 
   exit_code:
     type: num
     description: "Command exit code."
-    value: "{{ (blocks.parse_output.outputs.stdout | fromjson).exit_code }}"
+    value: "{{ get(blocks.parse_output.outputs.stdout, 'exit_code', 1) }}"

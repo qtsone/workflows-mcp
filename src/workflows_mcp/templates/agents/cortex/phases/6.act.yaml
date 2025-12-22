@@ -1,19 +1,14 @@
-# =============================================================================
-# CORTEX v2 Act Phase
-# =============================================================================
-#
+# CORTEX Act Phase
 # Enhanced from v1 with:
 #   - Backup files before changes (stored in backups table)
 #   - Receives execution_result from EXECUTE phase
 #   - Completion evaluation moved to DECIDE phase
 #   - References v2 workflows
-#
-# =============================================================================
 
 name: cortex-phase-act
-description: "CORTEX v2 Act Phase - executes actions with backup support"
+description: "CORTEX Act Phase - executes actions with backup support"
 
-tags: [cortex, phase, act, v2]
+tags: [cortex, phase, act]
 
 inputs:
   prompt:
@@ -110,9 +105,6 @@ inputs:
     default: { "read": true, "write": false, "execute": false }
 
 blocks:
-  # ===========================================================================
-  # STEP 1: Register Phase Task
-  # ===========================================================================
   - id: register
     type: Sql
     description: Register this phase in the task tree.
@@ -125,8 +117,8 @@ blocks:
         parent_id: "{{ inputs.parent_id if inputs.parent_id else none }}"
         kind: phase
         name: act
-        metadata: "{{ {'labels': {'phase_order': 6, 'trigger': inputs.pipeline_config.act.trigger | default('never'), 'mode': inputs.pipeline_config.act.mode | default('null'), 'version': 'v2'}} }}"
-        inputs: "{{ {'prompt': inputs.prompt, 'iterations': inputs.iterations} }}"
+        metadata: "{'labels': {'phase_order': 6, 'trigger': {{ get(inputs.pipeline_config, 'act.trigger', 'never') }}, 'mode': {{ get(inputs.pipeline_config, 'act.mode', 'null') }}, 'version': 'v1'}}"
+        inputs: "{'prompt': {{ inputs.prompt }}, 'iterations': {{ inputs.iterations }}}"
         status: running
         depth: "{{ inputs.depth }}"
 
@@ -134,11 +126,11 @@ blocks:
     type: Workflow
     description: Generate response schema with enforced capability enum.
     depends_on: [register]
-    condition: |
-      {{ inputs.pipeline_config.act.trigger | default('never') != 'never'
-         and inputs.pipeline_config.act.mode | default('null') != 'null'
-         and (inputs.pipeline_config.act.trigger == 'always'
-              or inputs.context.synthesis.actions_needed | default(false)) }}
+    condition: >-
+      {{ get(inputs.pipeline_config, 'act.trigger', 'never') != 'never'
+         and get(inputs.pipeline_config, 'act.mode', 'null') != 'null'
+         and (get(inputs.pipeline_config, 'act.trigger', 'never') == 'always'
+              or get(inputs.context, 'synthesis.actions_needed', false)) }}
     inputs:
       workflow: cortex-internal-schema-operations
       inputs:
@@ -156,7 +148,6 @@ blocks:
         required: true
       - block: build_schema
         required: true
-    condition: "{{ blocks.build_schema.succeeded }}"
     inputs:
       profile: "{{ inputs.profile }}"
       timeout: 600
@@ -242,9 +233,6 @@ blocks:
 
       response_schema: "{{ blocks.build_schema.outputs.schema }}"
 
-  # ===========================================================================
-  # Store LLM call
-  # ===========================================================================
   - id: store_llm_call
     type: Sql
     description: Store LLM call details.
@@ -268,9 +256,6 @@ blocks:
         completion_tokens: "{{ blocks.plan.outputs.metadata.usage.completion_tokens | default(0) }}"
         duration_ms: "{{ blocks.plan.metadata.duration_ms | default(0) }}"
 
-  # ===========================================================================
-  # Execute operations
-  # ===========================================================================
   - id: dispatch
     type: Workflow
     description: Execute capability workflows SEQUENTIALLY.
@@ -296,10 +281,8 @@ blocks:
         permissions: "{{ inputs.permissions }}"
         # v2: Enable backup for all file operations
         backup_enabled: true
+        depth: "{{ inputs.depth }}"
 
-  # ===========================================================================
-  # Spawn child cells for questions
-  # ===========================================================================
   - id: questions
     type: Workflow
     description: Spawn child cortex-cell to answer questions.
@@ -329,9 +312,6 @@ blocks:
         capabilities: "{{ inputs.capabilities }}"
         permissions: "{{ inputs.permissions }}"
 
-  # ===========================================================================
-  # Track completion
-  # ===========================================================================
   - id: track_done
     type: Sql
     description: Mark phase complete.
@@ -348,23 +328,32 @@ blocks:
     inputs:
       engine: sqlite
       path: "{{ inputs.state }}"
-      sql: |
-        UPDATE tasks
-        SET status = 'done',
-            outputs = ?,
-            updated_at = datetime('now')
-        WHERE id = ?
-      params:
-        - "{{ {'iterations': inputs.iterations, 'action_taken': blocks.plan.succeeded, 'operations_dispatched': get(blocks.dispatch.metadata, 'count', 0), 'operations_failed': get(blocks.dispatch.metadata, 'count_failed', 0), 'questions_spawned': get(blocks.questions.metadata, 'count', 0), 'confidence': blocks.plan.outputs.response.confidence | default(0)} | tojson }}"
-        - "{{ (blocks.register.outputs.rows | default([{}]))[0].id | default('') }}"
+      model: "{{ inputs.models.task }}"
+      op: update
+      where:
+        id: "{{ get(blocks.register.outputs, 'rows.0.id', '') }}"
+      data:
+        status: done
+        outputs: |
+          {
+            'iterations': {{ inputs.iterations }},
+            'action_taken': {{ blocks.plan.succeeded }},
+            'operations_dispatched': {{ get(blocks.dispatch.metadata, 'count', 0) }},
+            'operations_failed': {{ get(blocks.dispatch.metadata, 'count_failed', 0) }},
+            'questions_spawned': {{ get(blocks.questions.metadata, 'count', 0) }},
+            'confidence': {{ get(blocks.plan.outputs.response, 'confidence', 0) }}
+          }
 
 outputs:
   result:
     type: dict
     description: "Action result."
-    value: |
-      {{ blocks.plan.outputs.response.result if blocks.plan.succeeded
-         else {'action_type': 'none', 'action_reason': 'trigger_disabled'} }}
+    value: >-
+      {%- if blocks.plan.succeeded -%}
+        {{ blocks.plan.outputs.response.result }}
+      {%- else -%}
+        {'action_type': 'none', 'action_reason': 'trigger_disabled'}
+      {%- endif -%}
 
   operations_executed:
     type: num

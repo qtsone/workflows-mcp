@@ -307,7 +307,7 @@ outputs:
     schema:
         type: dict
         description: JSON Schema for LLM response validation.
-        value: "{{ blocks.build.outputs.stdout | fromjson }}"
+        value: "{{ blocks.build.outputs.stdout }}"
 
     capability_names:
         type: list

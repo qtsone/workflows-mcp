@@ -1,26 +1,17 @@
-# =============================================================================
-# CORTEX v2 Execute Phase
-# =============================================================================
+# CORTEX Execute Phase
+# Runs commands between GATHER and REASON so the reasoning phase receives
+# actual command output (test results, lint errors) rather than just file contents.
 #
-# The KEY architectural change in v2: Execute commands BEFORE reasoning.
-# This ensures REASON phase has actual command output, not just file contents.
-#
-# Example difference:
-#   v1: GATHER reads test files → REASON says "tests look good" → ACT runs pytest → 5 failures
-#   v2: GATHER reads test files → EXECUTE runs pytest → REASON says "5 tests failed in auth.py"
-#
-# This phase is PURE EXECUTION - no LLM reasoning:
-#   1. Infer appropriate command based on category + context
-#   2. Execute command
+# Pure execution - no LLM reasoning:
+#   1. Infer command from category + prompt keywords
+#   2. Execute command with timeout
 #   3. Store results in executions table
-#   4. Pass results to REASON phase
-#
-# =============================================================================
+#   4. Pass structured output to REASON phase
 
 name: cortex-phase-execute
-description: "CORTEX v2 Execute Phase - runs commands BEFORE reasoning"
+description: "Execute inferred commands and store results for reasoning"
 
-tags: [cortex, phase, execute, v2]
+tags: [cortex, phase, execute]
 
 inputs:
   prompt:
@@ -68,10 +59,12 @@ inputs:
     description: Permission flags.
     default: { "read": true, "write": false, "execute": false }
 
+  depth:
+    type: num
+    description: Task depth in the tree.
+    default: 0
+
 blocks:
-  # ===========================================================================
-  # STEP 1: Register Phase Task
-  # ===========================================================================
   - id: register_phase
     type: Sql
     description: Register this phase in the task tree.
@@ -84,14 +77,11 @@ blocks:
         parent_id: "{{ inputs.parent_id if inputs.parent_id else none }}"
         kind: phase
         name: execute
-        metadata: "{{ {'labels': {'phase_order': 3}} }}"
-        inputs: "{{ {'prompt': inputs.prompt} }}"
+        metadata: "{'labels': {'phase_order': 3}}"
+        inputs: "{'prompt': inputs.prompt}"
         status: running
-        depth: 0
+        depth: "{{ inputs.depth }}"
 
-  # ===========================================================================
-  # STEP 2: Infer Command to Execute
-  # ===========================================================================
   - id: infer_command
     type: Shell
     description: Infer appropriate command based on category and context.
@@ -190,23 +180,20 @@ blocks:
         EXECUTE_TYPE: "{{ inputs.pipeline_config.execute.type | default('inferred') }}"
         EXECUTE_ENABLED: "{{ inputs.pipeline_config.execute.enabled | default(false) }}"
 
-  # ===========================================================================
-  # STEP 3: Execute Command
-  # ===========================================================================
   - id: run_command
     type: Shell
     description: Execute the inferred command.
     depends_on: [infer_command]
-    condition: "{{ (blocks.infer_command.outputs.stdout | fromjson).should_execute }}"
+    condition: "{{ get(blocks.infer_command.outputs.stdout, 'should_execute', false) }}"
     inputs:
       command: |
-        cd "{{ (blocks.infer_command.outputs.stdout | fromjson).working_dir | default('.') }}"
+        cd "{{ get(blocks.infer_command.outputs.stdout, 'working_dir', '.') }}"
 
         # Capture start time
         START_MS=$(python3 -c "import time; print(int(time.time() * 1000))")
 
         # Run the command, capturing stdout and stderr
-        {{ (blocks.infer_command.outputs.stdout | fromjson).command }} 2>&1
+        {{ get(blocks.infer_command.outputs.stdout, 'command', '') }} 2>&1
         EXIT_CODE=$?
 
         # Capture end time
@@ -218,9 +205,6 @@ blocks:
         echo "___DURATION_MS___:$DURATION_MS"
       timeout: 300 # 5 minute timeout (seconds)
 
-  # ===========================================================================
-  # STEP 4: Parse and Store Execution Result
-  # ===========================================================================
   - id: parse_result
     type: Shell
     description: Parse command output into structured result.
@@ -313,40 +297,34 @@ blocks:
         print(json.dumps(result))
         EOF
       env:
-        SHOULD_EXECUTE: "{{ (blocks.infer_command.outputs.stdout | fromjson).should_execute }}"
-        SKIP_REASON: "{{ (blocks.infer_command.outputs.stdout | fromjson).reason | default('unknown') }}"
-        COMMAND: "{{ (blocks.infer_command.outputs.stdout | fromjson).command | default('') }}"
-        COMMAND_TYPE: "{{ (blocks.infer_command.outputs.stdout | fromjson).command_type | default('unknown') }}"
-        WORKING_DIR: "{{ (blocks.infer_command.outputs.stdout | fromjson).working_dir | default('.') }}"
+        SHOULD_EXECUTE: "{{ get(blocks.infer_command.outputs.stdout, 'should_execute', false) }}"
+        SKIP_REASON: "{{ get(blocks.infer_command.outputs.stdout, 'reason', 'unknown') }}"
+        COMMAND: "{{ get(blocks.infer_command.outputs.stdout, 'command', '') }}"
+        COMMAND_TYPE: "{{ get(blocks.infer_command.outputs.stdout, 'command_type', 'unknown') }}"
+        WORKING_DIR: "{{ get(blocks.infer_command.outputs.stdout, 'working_dir', '.') }}"
         RAW_OUTPUT: "{{ blocks.run_command.outputs.stdout | default('') }}"
 
-  # ===========================================================================
-  # STEP 5: Store Execution in Database
-  # ===========================================================================
   - id: store_execution
     type: Sql
     description: Store execution results in executions table.
     depends_on: [parse_result]
-    condition: "{{ (blocks.parse_result.outputs.stdout | fromjson).executed }}"
+    condition: "{{ get(blocks.parse_result.outputs.stdout, 'executed', false) }}"
     inputs:
       engine: sqlite
       path: "{{ inputs.state }}"
       model: "{{ inputs.models.execution }}"
       op: insert
       data:
-        task_id: "{{ (blocks.register_phase.outputs.rows | default([{}]))[0].id | default('') }}"
-        command: "{{ (blocks.parse_result.outputs.stdout | fromjson).command }}"
-        working_dir: "{{ (blocks.parse_result.outputs.stdout | fromjson).working_dir }}"
-        exit_code: "{{ (blocks.parse_result.outputs.stdout | fromjson).exit_code }}"
-        stdout: "{{ (blocks.parse_result.outputs.stdout | fromjson).stdout }}"
+        task_id: "{{ get(blocks.register_phase.outputs, 'rows.0.id', '') }}"
+        command: "{{ get(blocks.parse_result.outputs.stdout, 'command', '') }}"
+        working_dir: "{{ get(blocks.parse_result.outputs.stdout, 'working_dir', '.') }}"
+        exit_code: "{{ get(blocks.parse_result.outputs.stdout, 'exit_code', 1) }}"
+        stdout: "{{ get(blocks.parse_result.outputs.stdout, 'stdout', '') }}"
         stderr: ""
-        duration_ms: "{{ (blocks.parse_result.outputs.stdout | fromjson).duration_ms }}"
+        duration_ms: "{{ get(blocks.parse_result.outputs.stdout, 'duration_ms', 0) }}"
         phase: "execute"
         iteration: 0
 
-  # ===========================================================================
-  # STEP 6: Mark Phase Complete
-  # ===========================================================================
   - id: track_done
     type: Sql
     description: Mark phase complete.
@@ -360,34 +338,29 @@ blocks:
     inputs:
       engine: sqlite
       path: "{{ inputs.state }}"
-      sql: |
-        UPDATE tasks
-        SET status = 'done',
-            outputs = ?,
-            updated_at = datetime('now')
-        WHERE id = ?
-      params:
-        - "{{ blocks.parse_result.outputs.stdout }}"
-        - "{{ (blocks.register_phase.outputs.rows | default([{}]))[0].id | default('') }}"
+      model: "{{ inputs.models.task }}"
+      op: update
+      where:
+        id: "{{ get(blocks.register_phase.outputs, 'rows.0.id', '') }}"
+      data:
+        status: done
+        outputs: "{{ blocks.parse_result.outputs.stdout }}"
 
-# =============================================================================
-# OUTPUTS
-# =============================================================================
 outputs:
   result:
     type: dict
     description: "Execution result with command, exit_code, stdout, etc."
-    value: "{{ blocks.parse_result.outputs.stdout | fromjson }}"
+    value: "{{ blocks.parse_result.outputs.stdout }}"
 
   executed:
     type: bool
     description: "Whether a command was executed."
-    value: "{{ (blocks.parse_result.outputs.stdout | fromjson).executed | default(false) }}"
+    value: "{{ get(blocks.parse_result.outputs.stdout, 'executed', false) }}"
 
   success:
     type: bool
     description: "Whether the command succeeded (exit_code == 0)."
-    value: "{{ (blocks.parse_result.outputs.stdout | fromjson).success | default(false) }}"
+    value: "{{ get(blocks.parse_result.outputs.stdout, 'success', false) }}"
 
   state:
     type: str

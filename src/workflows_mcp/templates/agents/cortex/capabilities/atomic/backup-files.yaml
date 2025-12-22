@@ -93,27 +93,19 @@ blocks:
     type: Sql
     description: Store backups in database.
     depends_on: [backup_files]
-    condition: "{{ blocks.backup_files.succeeded }}"
     for_each: "{{ blocks.backup_files.outputs }}"
     for_each_mode: sequential
     continue_on_error: true
     inputs:
       engine: sqlite
       path: "{{ inputs.state }}"
-      sql: |
-        INSERT INTO backups (id, task_id, file_path, content, hash)
-        VALUES (
-          lower(hex(randomblob(16))),
-          ?,
-          ?,
-          ?,
-          ?
-        )
-      params:
-        - "{{ inputs.task_id }}"
-        - "{{ (each.value.stdout | fromjson).file_path }}"
-        - "{{ (each.value.stdout | fromjson).content | default('') }}"
-        - "{{ (each.value.stdout | fromjson).hash | default('') }}"
+      model: "{{ inputs.models.backup }}"
+      op: insert
+      data:
+        task_id: "{{ inputs.task_id }}"
+        file_path: "{{ get(each.value.stdout, 'file_path', '') }}"
+        content: "{{ get(each.value.stdout, 'content', '') }}"
+        hash: "{{ get(each.value.stdout, 'hash', '') }}"
 
 outputs:
   backed_up:

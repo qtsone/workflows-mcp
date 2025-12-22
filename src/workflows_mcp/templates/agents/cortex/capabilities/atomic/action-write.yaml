@@ -57,8 +57,8 @@ blocks:
         parent_id: "{{ inputs.parent_id if inputs.parent_id else none }}"
         kind: capability
         name: cortex-action-write
-        metadata: "{{ {'labels': {'capability_type': 'action', 'side_effects': 'true'}} }}"
-        inputs: "{{ {'path': inputs.path, 'overwrite': inputs.overwrite, 'content_length': inputs.content | length} }}"
+        metadata: "{'labels': {'capability_type': 'action', 'side_effects': 'true'}}"
+        inputs: "{'path': {{ inputs.path }}, 'overwrite': {{ inputs.overwrite }}, 'content_length': {{ inputs.content | length }}}"
         status: running
         depth: 2
 
@@ -95,7 +95,7 @@ blocks:
         id: "{{ (blocks.register.outputs.rows | default([{}]))[0].id | default('') }}"
       data:
         status: "{{ 'done' if blocks.write.succeeded else 'failed' }}"
-        outputs: "{{ {'path': blocks.write.outputs.path | default(''), 'size_bytes': blocks.write.outputs.size_bytes | default(0), 'created': blocks.write.outputs.created | default(false), 'success': blocks.write.succeeded, 'error': blocks.write.metadata.message | default('')} }}"
+        outputs: "{'path': {{ get(blocks.write.outputs, 'path', '') }}, 'size_bytes': {{ get(blocks.write.outputs, 'size_bytes', 0) }}, 'created': {{ get(blocks.write.outputs, 'created', false) }}, 'success': {{ blocks.write.succeeded }}, 'error': {{ get(blocks.write.metadata, 'message', '') }}} }"
 
 outputs:
   path:

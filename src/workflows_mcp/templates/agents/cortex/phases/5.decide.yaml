@@ -1,9 +1,5 @@
-# =============================================================================
 # CORTEX Decide Phase
-# =============================================================================
-#
 # The CONTROL HUB - determines what happens next based on REASON output.
-#
 # Possible actions:
 #   - DONE: High confidence answer, no action needed → Output response
 #   - ACT: Fix identified → Proceed to implementation
@@ -21,8 +17,6 @@
 #   | Fix identified                     | act      | Proceed to implementation   |
 #
 # Priority order: diagnose > refine > spawn > act > done (when triggered)
-#
-# =============================================================================
 
 name: cortex-phase-decide
 description: "CORTEX Decide Phase - control point with DIAGNOSE action"
@@ -85,9 +79,6 @@ inputs:
     description: LLM profile to use.
     default: "default"
 
-  # ===========================================================================
-  # INPUTS - Surprisal and Diagnosis
-  # ===========================================================================
   features:
     type: dict
     description: Feature toggles.
@@ -115,9 +106,6 @@ inputs:
     default: ""
 
 blocks:
-  # ===========================================================================
-  # STEP 1: Register Phase Task
-  # ===========================================================================
   - id: register_phase
     type: Sql
     description: Register this phase in the task tree.
@@ -135,9 +123,6 @@ blocks:
         status: running
         depth: "{{ inputs.depth }}"
 
-  # ===========================================================================
-  # STEP 2: Evaluate Decision Criteria
-  # ===========================================================================
   - id: evaluate
     type: Shell
     description: Evaluate synthesis and determine next action (including DIAGNOSE action).
@@ -299,9 +284,6 @@ blocks:
         SURPRISE_EXPLANATION: "{{ inputs.surprise_explanation | default('') }}"
         EXPECTATIONS_ENABLED: "{{ inputs.features.expectations_enabled | default(false) }}"
 
-  # ===========================================================================
-  # STEP 3: Mark Phase Complete
-  # ===========================================================================
   - id: track_done
     type: Sql
     description: Mark phase complete with decision.
@@ -309,50 +291,44 @@ blocks:
     inputs:
       engine: sqlite
       path: "{{ inputs.state }}"
-      sql: |
-        UPDATE tasks
-        SET status = 'done',
-            outputs = ?,
-            updated_at = datetime('now')
-        WHERE id = ?
-      params:
-        - "{{ blocks.evaluate.outputs.stdout }}"
-        - "{{ (blocks.register_phase.outputs.rows | default([{}]))[0].id | default('') }}"
+      model: "{{ inputs.models.task }}"
+      op: update
+      where:
+        id: "{{ get(blocks.register_phase.outputs, 'rows.0.id', '') }}"
+      data:
+        status: done
+        outputs: "{{ blocks.evaluate.outputs.stdout }}"
 
-# =============================================================================
-# OUTPUTS
-# =============================================================================
 outputs:
   action:
     type: str
     description: "Next action: done, act, spawn, refine, diagnose"
-    value: "{{ (blocks.evaluate.outputs.stdout | fromjson).action }}"
+    value: "{{ get(blocks.evaluate.outputs.stdout, 'action', 'done') }}"
 
   reason:
     type: str
     description: "Explanation for the decision."
-    value: "{{ (blocks.evaluate.outputs.stdout | fromjson).reason }}"
+    value: "{{ get(blocks.evaluate.outputs.stdout, 'reason', '') }}"
 
   next_prompt:
     type: str
     description: "Prompt for child cell if spawning, or diagnosis question if diagnosing."
-    value: "{{ (blocks.evaluate.outputs.stdout | fromjson).next_prompt | default('') }}"
+    value: "{{ get(blocks.evaluate.outputs.stdout, 'next_prompt', '') }}"
 
   evidence_targets:
     type: list
     description: "Evidence to gather if refining."
-    value: "{{ (blocks.evaluate.outputs.stdout | fromjson).evidence_targets | default([]) }}"
+    value: "{{ get(blocks.evaluate.outputs.stdout, 'evidence_targets', []) }}"
 
-  # Diagnosis context
   diagnosis_context:
     type: dict
     description: "Context for DIAGNOSE phase (predictive coding)."
-    value: "{{ (blocks.evaluate.outputs.stdout | fromjson).diagnosis_context | default({}) }}"
+    value: "{{ get(blocks.evaluate.outputs.stdout, 'diagnosis_context', {}) }}"
 
   surprisal_bits:
     type: num
     description: "Surprisal in bits that triggered the decision."
-    value: "{{ (blocks.evaluate.outputs.stdout | fromjson).surprisal_bits | default(0) }}"
+    value: "{{ get(blocks.evaluate.outputs.stdout, 'surprisal_bits', 0) }}"
 
   state:
     type: str

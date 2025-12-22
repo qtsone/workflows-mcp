@@ -3,19 +3,22 @@
 # =============================================================================
 #
 # Enhancements:
+#   - Directory tree discovery: Auto-scans repo structure BEFORE planning
+#   - Tree stored in memory: Available to LLM for informed pattern generation
 #   - RRF salience filtering for context budget
 #   - BM25 keyword search for file ranking
 #   - Semantic vector search for embedding-based similarity
 #   - Context budget enforcement (default 60% of context window)
-#   - References to workflows (cortex-cell, cortex-phase-gather)
 #   - Iteration support for DECIDE → REFINE loop
 #
-# When salience_enabled=true:
-#   1. Run keyword search (BM25) to rank files by query relevance
-#   2. Run semantic search (embeddings) to rank files by semantic similarity
-#   3. Apply RRF fusion to combine both rankings
-#   4. Enforce context budget - include only top-ranked files
-#   5. Pass prioritized file list to LLM for focused gathering
+# Execution Order:
+#   1. Register phase
+#   2. Discover tree structure (stores in memory.structure namespace)
+#   3. Salience filtering (keyword + semantic + RRF fusion)
+#   4. Recall existing evidence from memory
+#   5. Plan LLM (now has tree context for smart pattern generation)
+#   6. Dispatch capability operations
+#   7. Handle questions/recursion
 #
 # =============================================================================
 
@@ -128,15 +131,12 @@ inputs:
     description: feature toggles.
     default:
       salience_enabled: false
-      semantic_enabled: true  # Enable semantic vector search when salience is enabled
+      semantic_enabled: true
       context_budget:
         max_tokens: 60000 # ~60% of 100k context window
         max_files: 50 # Maximum files to include
 
 blocks:
-  # ===========================================================================
-  # STEP 1: Register Phase Task
-  # ===========================================================================
   - id: register
     type: Sql
     description: Register this phase in the task tree.
@@ -149,35 +149,41 @@ blocks:
         parent_id: "{{ inputs.parent_id if inputs.parent_id else none }}"
         kind: phase
         name: gather
-        metadata: "{{ {'labels': {'phase_order': 2, 'strategy': inputs.pipeline_config.gather.depth | default('focused'), 'version': 'v2'}} }}"
+        metadata: "{'labels': {'phase_order': 2, 'strategy': {{ get(inputs.pipeline_config, 'gather.depth', 'focused') }}, 'version': 'v1'}}"
         inputs: "{{ inputs }}"
         status: running
         depth: "{{ inputs.depth }}"
 
-  # ===========================================================================
-  # STEP 2: Salience Filtering (when salience_enabled=true)
-  # ===========================================================================
-  # Runs BM25 keyword search to rank files by relevance to the query.
-  # Future: Add semantic search and other ranking signals.
-  # RRF fusion combines rankings into a unified priority list.
-  # Context budget limits included files to fit within LLM context window.
-  # ===========================================================================
+  - id: discover_tree
+    type: Workflow
+    description: "Discover directory structure before planning."
+    depends_on: [register]
+    inputs:
+      workflow: cortex-gather-tree
+      inputs:
+        base_path: "{{ inputs.context.repo_path | default('.') }}"
+        max_depth: 4
+        max_files: 500
+        state: "{{ inputs.state }}"
+        models: "{{ inputs.models }}"
+        parent_id: "{{ get(blocks.register.outputs, 'rows.0.id', '') }}"
+        task_id: "{{ get(blocks.register.outputs, 'rows.0.id', '') }}"
 
   - id: keyword_search
     type: Workflow
     description: "Salience: BM25 keyword search for file ranking."
-    depends_on: [register]
+    depends_on: [register, discover_tree]
     condition: "{{ inputs.features.salience_enabled | default(false) }}"
     inputs:
       workflow: cortex-keyword-search
       inputs:
         query: "{{ inputs.prompt }}"
         base_path: "{{ inputs.context.repo_path | default('.') }}"
-        max_results: "{{ inputs.features.context_budget.max_files | default(50) }}"
+        max_results: "{{ get(inputs.features, 'context_budget.max_files', 50) }}"
         state: "{{ inputs.state }}"
         models: "{{ inputs.models }}"
-        parent_id: "{{ (blocks.register.outputs.rows | default([{}]))[0].id | default('') }}"
-        task_id: "{{ (blocks.register.outputs.rows | default([{}]))[0].id | default('') }}"
+        parent_id: "{{ get(blocks.register.outputs, 'rows.0.id', '') }}"
+        task_id: "{{ get(blocks.register.outputs, 'rows.0.id', '') }}"
 
   - id: semantic_search
     type: Workflow
@@ -190,10 +196,10 @@ blocks:
         query: "{{ inputs.prompt }}"
         files: "{{ blocks.keyword_search.outputs.ranked_files | map(attribute='path') | list }}"
         profile: "{{ inputs.embedding_profile }}"
-        max_results: "{{ inputs.features.context_budget.max_files | default(50) }}"
+        max_results: "{{ get(inputs.features, 'context_budget.max_files', 50) }}"
         state: "{{ inputs.state }}"
         models: "{{ inputs.models }}"
-        parent_id: "{{ (blocks.register.outputs.rows | default([{}]))[0].id | default('') }}"
+        parent_id: "{{ get(blocks.register.outputs, 'rows.0.id', '') }}"
 
   - id: rrf_fusion
     type: Workflow
@@ -218,16 +224,12 @@ blocks:
             ]
           }}
         k: 60
-        context_budget: "{{ inputs.features.context_budget.max_tokens | default(60000) }}"
-        max_results: "{{ inputs.features.context_budget.max_files | default(50) }}"
+        context_budget: "{{ get(inputs.features, 'context_budget.max_tokens', 60000) }}"
+        max_results: "{{ get(inputs.features, 'context_budget.max_files', 50) }}"
         state: "{{ inputs.state }}"
         models: "{{ inputs.models }}"
-        parent_id: "{{ (blocks.register.outputs.rows | default([{}]))[0].id | default('') }}"
-        task_id: "{{ (blocks.register.outputs.rows | default([{}]))[0].id | default('') }}"
-
-  # ===========================================================================
-  # STEP 3: Build Schema & Recall
-  # ===========================================================================
+        parent_id: "{{ get(blocks.register.outputs, 'rows.0.id', '') }}"
+        task_id: "{{ get(blocks.register.outputs, 'rows.0.id', '') }}"
 
   - id: build_schema
     type: Workflow
@@ -244,8 +246,8 @@ blocks:
 
   - id: recall
     type: Sql
-    description: Query existing evidence from memory.
-    depends_on: [register]
+    description: Query existing evidence from memory (includes structure from tree discovery).
+    depends_on: [register, discover_tree]
     inputs:
       engine: sqlite
       path: "{{ inputs.state }}"
@@ -253,13 +255,9 @@ blocks:
         SELECT namespace as evidence_type, key, value, metadata,
                json_extract(metadata, '$.byte_size') as byte_size
         FROM memory
-        WHERE namespace IN ('content', 'outline', 'search')
+        WHERE namespace IN ('content', 'outline', 'search', 'structure')
         ORDER BY namespace, key
         LIMIT 200
-
-  # ===========================================================================
-  # STEP 4: Plan Evidence Gathering
-  # ===========================================================================
 
   - id: plan
     type: LLMCall
@@ -270,6 +268,8 @@ blocks:
       - block: build_schema
         required: true
       - block: recall
+        required: false
+      - block: discover_tree
         required: false
       - block: keyword_search
         required: false
@@ -287,7 +287,23 @@ blocks:
         ## Query
         {{ inputs.prompt }}
 
-        ## Gather Depth: {{ get(inputs.pipeline_config, 'gather', {}).depth | default('focused') | upper }}
+        ## Gather Depth: {{ get(inputs.pipeline_config, 'gather.depth', 'focused') | upper }}
+
+        {% if blocks.discover_tree.succeeded %}
+        ## 📁 Directory Structure ({{ blocks.discover_tree.outputs.file_count }} files, {{ blocks.discover_tree.outputs.dir_count }} dirs)
+
+        **Use this to generate precise glob patterns. These files actually exist.**
+
+        Type breakdown: {{ blocks.discover_tree.outputs.type_summary }}
+
+        ```
+        {{ blocks.discover_tree.outputs.tree_text | truncate(3000) }}
+        ```
+        {% if blocks.discover_tree.outputs.truncated %}
+        *(Tree truncated - {{ blocks.discover_tree.outputs.file_count }} total files)*
+        {% endif %}
+
+        {% endif %}
 
         {% if inputs.evidence_targets | length > 0 %}
         ## Specific Evidence Targets (from DECIDE refine)
@@ -342,13 +358,13 @@ blocks:
 
         ## Depth Instructions
 
-        {% if get(inputs.pipeline_config, 'gather', {}).depth == 'shallow' %}
+        {% if get(inputs.pipeline_config, 'gather.depth', '') == 'shallow' %}
         **SHALLOW**: 1-2 targeted searches, existence verification only
-        {% elif get(inputs.pipeline_config, 'gather', {}).depth == 'focused' %}
+        {% elif get(inputs.pipeline_config, 'gather.depth', 'focused') == 'focused' %}
         **FOCUSED**: 3-5 searches in relevant directories, key files only
-        {% elif get(inputs.pipeline_config, 'gather', {}).depth == 'broad' %}
+        {% elif get(inputs.pipeline_config, 'gather.depth', '') == 'broad' %}
         **BROAD**: Multiple search patterns, cover all relevant directories
-        {% elif get(inputs.pipeline_config, 'gather', {}).depth == 'deep' %}
+        {% elif get(inputs.pipeline_config, 'gather.depth', '') == 'deep' %}
         **DEEP**: Full file contents, related code, tests, configs, docs
         {% endif %}
 
@@ -371,9 +387,6 @@ blocks:
 
       response_schema: "{{ blocks.build_schema.outputs.schema }}"
 
-  # ===========================================================================
-  # Store LLM call
-  # ===========================================================================
   - id: store_llm_call
     type: Sql
     description: Store LLM call details.
@@ -387,15 +400,15 @@ blocks:
       model: "{{ inputs.models.llm_call }}"
       op: insert
       data:
-        task_id: "{{ (blocks.register.outputs.rows | default([{}]))[0].id | default('') }}"
+        task_id: "{{ get(blocks.register.outputs, 'rows.0.id', '') }}"
         phase: gather
         system_instructions: "{{ inputs.system | default('') }}"
         prompt: "{{ inputs.prompt }}"
         response: "{{ blocks.plan.outputs.response }}"
-        model: "{{ blocks.plan.outputs.metadata.model | default('unknown') }}"
-        prompt_tokens: "{{ blocks.plan.outputs.metadata.usage.prompt_tokens | default(0) }}"
-        completion_tokens: "{{ blocks.plan.outputs.metadata.usage.completion_tokens | default(0) }}"
-        duration_ms: "{{ blocks.plan.metadata.duration_ms | default(0) }}"
+        model: "{{ get(blocks.plan.outputs.metadata, 'model', 'unknown') }}"
+        prompt_tokens: "{{ get(blocks.plan.outputs, 'metadata.usage.prompt_tokens', 0) }}"
+        completion_tokens: "{{ get(blocks.plan.outputs, 'metadata.usage.completion_tokens', 0) }}"
+        duration_ms: "{{ get(blocks.plan.metadata, 'duration_ms', 0) }}"
 
   - id: dispatch
     type: Workflow
@@ -412,8 +425,8 @@ blocks:
       inputs:
         state: "{{ inputs.state }}"
         models: "{{ inputs.models }}"
-        parent_id: "{{ (blocks.register.outputs.rows | default([{}]))[0].id | default('') }}"
-        task_id: "{{ (blocks.register.outputs.rows | default([{}]))[0].id | default('') }}"
+        parent_id: "{{ get(blocks.register.outputs, 'rows.0.id', '') }}"
+        task_id: "{{ get(blocks.register.outputs, 'rows.0.id', '') }}"
         base_path: "{{ get(inputs.context, 'repo_path', '.') }}"
         patterns: "{{ get(each.value.inputs, 'patterns', []) }}"
         pattern: "{{ get(each.value.inputs, 'pattern', '') }}"
@@ -427,7 +440,7 @@ blocks:
     depends_on: [dispatch]
     condition: |
       {{ get(blocks.plan.outputs.response.result, 'questions', []) | length > 0
-         and get(inputs.pipeline_config.gather, 'spawn', 'complex_only') != 'never'
+         and get(inputs.pipeline_config, 'gather.spawn', 'complex_only') != 'never'
          and inputs.depth < inputs.max_depth }}
     for_each: "{{ get(blocks.plan.outputs.response.result, 'questions', []) }}"
     for_each_mode: parallel
@@ -443,7 +456,7 @@ blocks:
         iterations: "{{ inputs.iterations }}"
         max_iterations: "{{ inputs.max_iterations }}"
         state: "{{ inputs.state }}"
-        parent_id: "{{ (blocks.register.outputs.rows | default([{}]))[0].id | default('') }}"
+        parent_id: "{{ get(blocks.register.outputs, 'rows.0.id', '') }}"
         profile: "{{ inputs.profile }}"
         confidence_threshold: "{{ inputs.confidence_threshold }}"
         capabilities: "{{ inputs.capabilities }}"
@@ -504,22 +517,21 @@ blocks:
         max_iterations: "{{ inputs.max_iterations }}"
         confidence_threshold: "{{ inputs.confidence_threshold }}"
         state: "{{ inputs.state }}"
-        parent_id: "{{ (blocks.register.outputs.rows | default([{}]))[0].id | default('') }}"
+        parent_id: "{{ get(blocks.register.outputs, 'rows.0.id', '') }}"
         profile: "{{ inputs.profile }}"
         capabilities: "{{ inputs.capabilities }}"
         permissions: "{{ inputs.permissions }}"
-        synthesis: "{{ blocks.combine_results.outputs.stdout | fromjson }}"
+        synthesis: "{{ blocks.combine_results.outputs.stdout }}"
         features: "{{ inputs.features }}"
 
-  # ===========================================================================
-  # Track Completion
-  # ===========================================================================
   - id: track_done
     type: Sql
     description: Mark phase complete.
     depends_on:
       - block: register
         required: true
+      - block: discover_tree
+        required: false
       - block: dispatch
         required: false
       - block: questions
@@ -538,71 +550,129 @@ blocks:
     inputs:
       engine: sqlite
       path: "{{ inputs.state }}"
-      sql: |
-        UPDATE tasks
-        SET status = 'done',
-            outputs = ?,
-            updated_at = datetime('now')
-        WHERE id = ?
-      params:
-        - >-
-          {{ {
-            'strategy': blocks.plan.outputs.response.result.strategy | default(''),
-            'operations_executed': blocks.dispatch.metadata.count | default(0),
-            'operations_failed': blocks.dispatch.metadata.count_failed | default(0),
-            'questions_spawned': blocks.questions.metadata.count | default(0),
-            'confidence': blocks.plan.outputs.response.confidence | default(0),
-            'depth': inputs.depth,
-            'salience_enabled': inputs.features.salience_enabled | default(false),
-            'files_ranked': blocks.rrf_fusion.outputs.count | default(0) if blocks.rrf_fusion.succeeded else (blocks.keyword_search.outputs.count | default(0) if blocks.keyword_search.succeeded else 0),
-            'context_tokens_used': blocks.rrf_fusion.outputs.tokens_used | default(0) if blocks.rrf_fusion.succeeded else 0
-          } | tojson }}
-        - "{{ (blocks.register.outputs.rows | default([{}]))[0].id | default('') }}"
+      model: "{{ inputs.models.task }}"
+      op: update
+      where:
+        id: "{{ (blocks.register.outputs.rows | default([{}]))[0].id | default('') }}"
+      data:
+        status: done
+        outputs: |
+          {
+            'strategy': {{ blocks.plan.outputs.response.result.strategy | default('') }},
+            'operations_executed': {{ blocks.dispatch.metadata.count | default(0) }},
+            'operations_failed': {{ blocks.dispatch.metadata.count_failed | default(0) }},
+            'questions_spawned': {{ blocks.questions.metadata.count | default(0) }},
+            'confidence': {{ blocks.plan.outputs.response.confidence | default(0) }},
+            'depth': {{ inputs.depth }},
+            'tree_discovered': {{ blocks.discover_tree.succeeded | default(false) }},
+            'tree_file_count': {{ blocks.discover_tree.outputs.file_count | default(0) if blocks.discover_tree.succeeded else 0 }},
+            'tree_dir_count': {{ blocks.discover_tree.outputs.dir_count | default(0) if blocks.discover_tree.succeeded else 0 }},
+            'salience_enabled': {{ inputs.features.salience_enabled | default(false) }},
+            'files_ranked': {{ blocks.rrf_fusion.outputs.count | default(0) if blocks.rrf_fusion.succeeded else (blocks.keyword_search.outputs.count | default(0) if blocks.keyword_search.succeeded else 0) }},
+            'context_tokens_used': {{ blocks.rrf_fusion.outputs.tokens_used | default(0) if blocks.rrf_fusion.succeeded else 0 }}
+          }"
 
-# =============================================================================
-# OUTPUTS
-# =============================================================================
 outputs:
   result:
     type: dict
     description: "Gathering result."
-    value: |
-      {{ blocks.recurse.outputs.result if blocks.recurse.succeeded else {
+    value: |-
+      {%- if blocks.recurse.succeeded -%}
+      {{ blocks.recurse.outputs.result }}
+      {%- else -%}
+      {
         'strategy': blocks.plan.outputs.response.result.strategy | default(''),
         'operations_executed': blocks.dispatch.metadata.count | default(0),
         'questions_spawned': blocks.questions.metadata.count | default(0),
         'confidence': blocks.plan.outputs.response.confidence | default(0),
         'depth': inputs.depth
-      } }}
+      }
+      {%- endif %}
 
   config_override:
     type: dict
     description: "Config override for downstream phases."
-    value: |
-      {{ blocks.recurse.outputs.config_override if blocks.recurse.succeeded
-         else (blocks.plan.outputs.response.config_override | default({})) }}
+    value: |-
+      {%- if blocks.recurse.succeeded -%}
+      {{ blocks.recurse.outputs.config_override }}
+      {%- else -%}
+      {{ get(blocks.plan.outputs.response, 'config_override', {}) }}
+      {%- endif -%}
 
-  # Salience filtering outputs
   salience:
     type: dict
     description: "Salience filtering results."
-    value: |
-      {{ {
-        'enabled': inputs.features.salience_enabled | default(false),
-        'semantic_enabled': inputs.features.semantic_enabled | default(true),
-        'semantic_used': blocks.semantic_search.succeeded | default(false),
-        'files_ranked': blocks.rrf_fusion.outputs.count if blocks.rrf_fusion.succeeded else (blocks.keyword_search.outputs.count if blocks.keyword_search.succeeded else 0),
-        'files_excluded': blocks.rrf_fusion.outputs.excluded | length if blocks.rrf_fusion.succeeded else 0,
-        'tokens_used': blocks.rrf_fusion.outputs.tokens_used if blocks.rrf_fusion.succeeded else 0,
-        'tokens_remaining': blocks.rrf_fusion.outputs.tokens_remaining if blocks.rrf_fusion.succeeded else 0,
-        'keywords': blocks.keyword_search.outputs.keywords if blocks.keyword_search.succeeded else [],
-        'sources_fused': blocks.rrf_fusion.outputs.sources_fused if blocks.rrf_fusion.succeeded else []
-      } }}
+    value: |-
+      {%- if blocks.recurse.succeeded -%}
+      {{ blocks.recurse.outputs.salience }}
+      {%- else -%}
+      {#- Pre-compute source block (RRF takes precedence over keyword search) -#}
+      {%- set rrf = blocks.rrf_fusion -%}
+      {%- set kw = blocks.keyword_search -%}
+      {%- set sem = blocks.semantic_search -%}
+
+      {#- Determine which source provides the ranking data -#}
+      {%- set has_rrf = rrf.succeeded -%}
+      {%- set has_kw = kw.succeeded -%}
+      {%- set has_sem = sem.succeeded | default(false) -%}
+
+      {#- Extract values from the best available source -#}
+      {%- if has_rrf -%}
+        {%- set files_ranked = rrf.outputs.count -%}
+        {%- set files_excluded = rrf.outputs.excluded | length -%}
+        {%- set tokens_used = rrf.outputs.tokens_used -%}
+        {%- set tokens_remaining = rrf.outputs.tokens_remaining -%}
+      {%- elif has_kw -%}
+        {%- set files_ranked = kw.outputs.count -%}
+        {%- set files_excluded = kw.outputs.excluded | length -%}
+        {%- set tokens_used = kw.outputs.tokens_used -%}
+        {%- set tokens_remaining = kw.outputs.tokens_remaining -%}
+      {%- else -%}
+        {%- set files_ranked = 0 -%}
+        {%- set files_excluded = 0 -%}
+        {%- set tokens_used = 0 -%}
+        {%- set tokens_remaining = 0 -%}
+      {%- endif -%}
+
+      {#- Build the output dictionary -#}
+      {
+        'enabled': {{ get(inputs.features, 'salience_enabled', false) }},
+        'semantic_enabled': {{ get(inputs.features, 'semantic_enabled', true) }},
+        'semantic_used': {{ has_sem }},
+        'files_ranked': {{ files_ranked }},
+        'files_excluded': {{ files_excluded }},
+        'tokens_used': {{ tokens_used }},
+        'tokens_remaining': {{ tokens_remaining }},
+        'keywords': {{ kw.outputs.keywords if has_kw else [] }},
+        'sources_fused': {{ rrf.outputs.sources_fused if has_rrf else [] }}
+      }
+      {%- endif -%}
 
   prioritized_files:
     type: list
     description: "Top prioritized files from salience filtering."
     value: "{{ blocks.rrf_fusion.outputs.fused_ranking if blocks.rrf_fusion.succeeded else (blocks.keyword_search.outputs.ranked_files if blocks.keyword_search.succeeded else []) }}"
+
+  tree:
+    type: dict
+    description: "Directory tree discovery results."
+    value: |-
+      {%- if blocks.discover_tree.succeeded -%}
+      {
+        'discovered': blocks.discover_tree.succeeded | default(false),
+        'file_count': blocks.discover_tree.outputs.file_count | default(0),
+        'dir_count': blocks.discover_tree.outputs.dir_count | default(0),
+        'type_summary': blocks.discover_tree.outputs.type_summary | default(''),
+        'truncated': blocks.discover_tree.outputs.truncated | default(false)
+      }
+      {%- else -%}
+      {'discovered': false}
+      {%- endif -%}
+
+  tree_files:
+    type: list
+    description: "List of discovered files with metadata."
+    value: "{{ get(blocks.discover_tree.outputs, 'files', []) }}"
 
   state:
     type: str

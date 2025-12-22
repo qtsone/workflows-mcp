@@ -1,9 +1,5 @@
-# =============================================================================
 # CORTEX Query Heuristics Capability
-# =============================================================================
-#
 # Queries the heuristics table to find applicable learned rules.
-#
 # Uses a hybrid approach for matching:
 # 1. SQLite FTS5 for text-based keyword matching (BM25 ranking)
 # 2. sqlite-vec for semantic vector similarity (cosine distance)
@@ -14,8 +10,6 @@
 #   - times_applied >= min_applications (default 3)
 #   - status = 'active'
 #   - Optional: category_filter matches task category
-#
-# =============================================================================
 
 name: cortex-query-heuristics
 description: "Query learned heuristics using hybrid FTS5 + vector search"
@@ -78,10 +72,12 @@ inputs:
     description: Task ID for tracking.
     default: ""
 
+  depth:
+    type: num
+    description: Task depth for tracking.
+    default: 0
+
 blocks:
-  # ===========================================================================
-  # STEP 1: Register capability in task tree
-  # ===========================================================================
   - id: register
     type: Sql
     description: Register this capability in the task tree.
@@ -95,14 +91,11 @@ blocks:
         parent_id: "{{ inputs.parent_id if inputs.parent_id else none }}"
         kind: capability
         name: cortex-query-heuristics
-        metadata: "{{ {'labels': {'capability_type': 'memory', 'algorithm': 'fts5'}} }}"
-        inputs: "{{ {'query': inputs.query[:100], 'category': inputs.category, 'max_results': inputs.max_results} }}"
+        metadata: "{'labels': {'capability_type': 'memory', 'algorithm': 'fts5'}}"
+        inputs: "{'query': {{ inputs.query[:100] }}, 'category': {{ inputs.category }}, 'max_results': {{ inputs.max_results }}}"
         status: running
-        depth: 2
+        depth: "{{ inputs.depth }}"
 
-  # ===========================================================================
-  # STEP 2: Extract keywords from query
-  # ===========================================================================
   - id: extract_keywords
     type: Shell
     depends_on:
@@ -160,9 +153,6 @@ blocks:
       env:
         QUERY: "{{ inputs.query }}"
 
-  # ===========================================================================
-  # STEP 3: Generate query embedding for vector search
-  # ===========================================================================
   - id: query_embedding
     type: Workflow
     description: Generate embedding for semantic similarity search.
@@ -177,14 +167,11 @@ blocks:
         models: "{{ inputs.models }}"
         parent_id: "{{ inputs.parent_id }}"
 
-  # ===========================================================================
-  # STEP 4: Query heuristics via FTS5
-  # ===========================================================================
   - id: fts_search
     type: Sql
     description: Search heuristics using FTS5 full-text search.
     depends_on: [extract_keywords]
-    condition: "{{ blocks.extract_keywords.succeeded and (blocks.extract_keywords.outputs.stdout | fromjson).keyword_count > 0 }}"
+    condition: "{{ blocks.extract_keywords.succeeded and get(blocks.extract_keywords.outputs.stdout, 'keyword_count', 0) > 0 }}"
     inputs:
       engine: sqlite
       path: "{{ inputs.state }}"
@@ -217,15 +204,12 @@ blocks:
         ORDER BY fts_rank ASC, effective_confidence DESC
         LIMIT ?
       params:
-        - "{{ (blocks.extract_keywords.outputs.stdout | fromjson).fts_query }}"
+        - "{{ get(blocks.extract_keywords.outputs.stdout, 'fts_query', '') }}"
         - "{{ inputs.min_confidence }}"
         - "{{ inputs.min_applications }}"
         - "{{ inputs.category }}"
         - "{{ inputs.max_results }}"
 
-  # ===========================================================================
-  # STEP 5: Vector similarity search on heuristics
-  # ===========================================================================
   - id: vector_search
     type: Sql
     description: Search heuristics using vector similarity.
@@ -266,9 +250,6 @@ blocks:
         - "{{ inputs.category }}"
         - "{{ inputs.max_results * 2 }}"
 
-  # ===========================================================================
-  # STEP 6: Fallback - Query by category if FTS returns nothing
-  # ===========================================================================
   - id: category_fallback
     type: Sql
     description: Fallback to category-based query if FTS fails.
@@ -306,9 +287,6 @@ blocks:
         - "{{ inputs.category }}"
         - "{{ inputs.max_results }}"
 
-  # ===========================================================================
-  # STEP 7: Format results with RRF fusion
-  # ===========================================================================
   - id: format_results
     type: Shell
     description: Merge FTS and vector results using RRF fusion.
@@ -423,9 +401,6 @@ blocks:
         FALLBACK_ROWS: "{{ blocks.category_fallback.outputs.rows | default([]) | tojson }}"
         MAX_RESULTS: "{{ inputs.max_results }}"
 
-  # ===========================================================================
-  # STEP 8: Track completion
-  # ===========================================================================
   - id: track_done
     type: Sql
     description: Mark capability complete.
@@ -440,34 +415,31 @@ blocks:
       model: "{{ inputs.models.task }}"
       op: update
       where:
-        id: "{{ (blocks.register.outputs.rows | default([{}]))[0].id | default('') }}"
+        id: "{{ get(blocks.register.outputs, 'rows.0.id', '') }}"
       data:
         status: "{{ 'done' if blocks.format_results.succeeded else 'failed' }}"
-        outputs: "{{ {'count': (blocks.format_results.outputs.stdout | fromjson).count if blocks.format_results.succeeded else 0, 'source': (blocks.format_results.outputs.stdout | fromjson).source if blocks.format_results.succeeded else 'none'} }}"
+        outputs: "{'count': {{ get(blocks.format_results.outputs.stdout, 'count', 0) if blocks.format_results.succeeded else 0 }}, 'source': {{ get(blocks.format_results.outputs.stdout, 'source', 'none') if blocks.format_results.succeeded else 'none' }}}"
 
-# =============================================================================
-# OUTPUTS
-# =============================================================================
 outputs:
   heuristics:
     type: list
     description: "Matched heuristics with confidence and success rate."
-    value: "{{ (blocks.format_results.outputs.stdout | fromjson).heuristics if blocks.format_results.succeeded else [] }}"
+    value: "{{ get(blocks.format_results.outputs.stdout, 'heuristics', []) if blocks.format_results.succeeded else [] }}"
 
   count:
     type: num
     description: "Number of heuristics found."
-    value: "{{ (blocks.format_results.outputs.stdout | fromjson).count if blocks.format_results.succeeded else 0 }}"
+    value: "{{ get(blocks.format_results.outputs.stdout, 'count', 0) if blocks.format_results.succeeded else 0 }}"
 
   has_results:
     type: bool
     description: "Whether any heuristics were found."
-    value: "{{ (blocks.format_results.outputs.stdout | fromjson).has_results if blocks.format_results.succeeded else false }}"
+    value: "{{ get(blocks.format_results.outputs.stdout, 'has_results', false) if blocks.format_results.succeeded else false }}"
 
   source:
     type: str
     description: "Search method used (fts5, category_fallback, none)."
-    value: "{{ (blocks.format_results.outputs.stdout | fromjson).source if blocks.format_results.succeeded else 'none' }}"
+    value: "{{ get(blocks.format_results.outputs.stdout, 'source', 'none') if blocks.format_results.succeeded else 'none' }}"
 
   state:
     type: str

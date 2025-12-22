@@ -1,11 +1,7 @@
-# =============================================================================
 # CORTEX Cell - Predictive Cognitive Architecture
-# =============================================================================
-#
 # evolves from a "robust script" into a "learning cognitive agent" by
 # addressing gaps in predictive coding, dual-track processing, memory
 # consolidation, salience filtering, and homeostatic control.
-#
 # Architecture (9 phases + dual-track routing):
 #   1. CATEGORIZE - Classify + G-Score + heuristics + expectations
 #   2. GATHER     - Collect evidence with RRF salience filtering
@@ -28,8 +24,6 @@
 #   - Memory consolidation: episodes → heuristics
 #   - Salience filtering: RRF-based context budget (≤60%)
 #   - Homeostatic control: PID-based caution regulation
-#
-# =============================================================================
 
 name: cortex-cell
 description: |
@@ -94,27 +88,23 @@ inputs:
     description: LLM profile to use.
     default: "default"
 
-  # ===========================================================================
-  # STATE MODELS - Extended for v2 with hypothesis/execution/backup/verification
-  # ===========================================================================
   models:
     type: dict
     description: |
       Table model definitions for state management.
-      v2 adds: hypothesis, execution, backup, verification tables.
     default:
       task:
         table: tasks
         columns:
           id: { type: text, primary: true, auto: uuid }
           parent_id: { type: text }
+          status: { type: text, default: "pending" }
           kind: { type: text, required: true }
           name: { type: text, required: true }
+          depth: { type: integer, default: 0 }
           metadata: { type: json, default: "{}" }
           inputs: { type: json, default: "{}" }
           outputs: { type: json, default: "{}" }
-          status: { type: text, default: "pending" }
-          depth: { type: integer, default: 0 }
           iteration: { type: integer, default: 0 }
           created_at: { type: timestamp, auto: created }
           updated_at: { type: timestamp, auto: updated }
@@ -128,9 +118,9 @@ inputs:
         columns:
           namespace: { type: text, required: true }
           key: { type: text, required: true }
-          value: { type: json }
-          metadata: { type: json, default: "{}" }
           task_id: { type: text }
+          value: { type: json }
+          metadata: { type: json }
           created_at: { type: timestamp, auto: created }
           updated_at: { type: timestamp, auto: updated }
         indexes:
@@ -142,14 +132,14 @@ inputs:
         table: facts
         columns:
           id: { type: text, primary: true, auto: uuid }
+          status: { type: text, default: "active" }
+          task_id: { type: text, required: true }
           claim: { type: text, required: true }
-          evidence_type: { type: text, default: "inferred" }
           severity: { type: text, default: "info" }
+          evidence_type: { type: text, default: "inferred" }
           confidence: { type: real, required: true }
           grounding: { type: json, default: "[]" }
           scope: { type: text }
-          task_id: { type: text, required: true }
-          status: { type: text, default: "active" }
           created_at: { type: timestamp, auto: created }
           updated_at: { type: timestamp, auto: updated }
         indexes:
@@ -211,11 +201,6 @@ inputs:
           key: { type: text, primary: true }
           value: { type: text }
 
-      # =========================================================================
-      # NEW v2 TABLES
-      # =========================================================================
-
-      # Hypothesis tracking for debugging category
       hypothesis:
         table: hypotheses
         columns:
@@ -232,7 +217,6 @@ inputs:
           - columns: [task_id]
           - columns: [status]
 
-      # Execution results from EXECUTE and VERIFY phases
       execution:
         table: executions
         columns:
@@ -251,7 +235,6 @@ inputs:
           - columns: [task_id]
           - columns: [phase]
 
-      # File backups for rollback
       backup:
         table: backups
         columns:
@@ -265,7 +248,6 @@ inputs:
           - columns: [task_id]
           - columns: [file_path]
 
-      # Verification results
       verification:
         table: verifications
         columns:
@@ -280,11 +262,6 @@ inputs:
           - columns: [task_id]
           - columns: [passed]
 
-      # =========================================================================
-      # NEW TABLES - Predictive Coding, Memory Consolidation, Homeostatic Control
-      # =========================================================================
-
-      # Expectations table for predictive coding (surprisal calculation)
       expectation:
         table: expectations
         columns:
@@ -300,7 +277,6 @@ inputs:
           - columns: [phase]
           - columns: [matched]
 
-      # Expectation outcomes for surprisal tracking
       expectation_outcome:
         table: expectation_outcomes
         columns:
@@ -316,7 +292,6 @@ inputs:
           - columns: [surprisal_bits]
           - columns: [context_hash]
 
-      # Episodes for memory consolidation (SYNTHESIZE → CONSOLIDATE)
       episode:
         table: episodes
         columns:
@@ -337,7 +312,6 @@ inputs:
           - columns: [consolidated]
           - columns: [query_hash]
 
-      # Heuristics for learned behaviors (generated by CONSOLIDATE)
       heuristic:
         table: heuristics
         columns:
@@ -358,7 +332,6 @@ inputs:
           - columns: [category_filter]
           - columns: [times_applied]
 
-      # Health metrics for homeostatic control (PID controller)
       health_metric:
         table: health_metrics
         columns:
@@ -376,7 +349,6 @@ inputs:
             unique: true
           - columns: [caution_level]
 
-      # Salience cache for RRF ranking (stores ranking results)
       salience_cache:
         table: salience_cache
         columns:
@@ -394,7 +366,6 @@ inputs:
           - columns: [ranking_type]
           - columns: [task_id, ranking_type]
 
-      # File embeddings cache for semantic search (lazy generation)
       file_embedding:
         table: file_embeddings
         columns:
@@ -415,7 +386,6 @@ inputs:
     type: list
     description: Available capabilities registry.
     default:
-      # GATHER CAPABILITIES (read permission)
       - name: cortex-gather-files
         description: Read files matching glob patterns (use **/ for recursive search)
         inputs:
@@ -530,14 +500,10 @@ inputs:
     description: Hashes of ancestor queries (for cycle detection).
     default: []
 
-  # ===========================================================================
-  # FEATURE TOGGLES - Control specific features for gradual rollout
-  # ===========================================================================
   features:
     type: dict
     description: |
       Feature toggles for specific capabilities.
-      All features disabled by default for safe incremental rollout.
 
       Features:
         - dual_track_enabled: System 1/System 2 routing based on G-Score
@@ -664,9 +630,6 @@ blocks:
         PROMPT_HISTORY: "{{ inputs.prompt_history | tojson }}"
         STATE: "{{ inputs.state }}"
 
-  # ===========================================================================
-  # Initialize Database Schema
-  # ===========================================================================
   - id: init_tables
     type: Sql
     description: Create all tables from model definitions.
@@ -676,13 +639,10 @@ blocks:
     for_each_mode: sequential
     inputs:
       engine: sqlite
-      path: "{{ (blocks.init.outputs.stdout | fromjson).state_path }}"
+      path: "{{ get(blocks.init.outputs.stdout, 'state_path', '') }}"
       model: "{{ each.value[1] }}"
       op: schema
 
-  # ===========================================================================
-  # Initialize FTS5, Triggers, and Extensions
-  # ===========================================================================
   - id: init_db
     type: Sql
     description: Create FTS5 virtual tables, triggers, and views.
@@ -690,7 +650,7 @@ blocks:
     depends_on: [init_tables]
     inputs:
       engine: sqlite
-      path: "{{ (blocks.init.outputs.stdout | fromjson).state_path }}"
+      path: "{{ get(blocks.init.outputs.stdout, 'state_path', '') }}"
       init_sql: |
         -- =====================================================================
         -- FACTS FTS5
@@ -843,9 +803,6 @@ blocks:
         END;
       sql: "SELECT 1 as initialized"
 
-  # ===========================================================================
-  # Query current caution level for homeostatic control
-  # ===========================================================================
   - id: query_caution
     type: Sql
     description: "Get current caution level from rolling error rate."
@@ -857,7 +814,7 @@ blocks:
     condition: "{{ inputs.features.homeostatic_enabled | default(false) }}"
     inputs:
       engine: sqlite
-      path: "{{ (blocks.init.outputs.stdout | fromjson).state_path }}"
+      path: "{{ get(blocks.init.outputs.stdout, 'state_path', '') }}"
       sql: |
         -- Get current caution level and error metrics
         SELECT
@@ -867,9 +824,7 @@ blocks:
           COALESCE(total_failed, 0) as total_failed
         FROM current_error_rate
 
-  # ===========================================================================
   # Compute caution-adjusted parameters
-  # ===========================================================================
   # When homeostatic control is enabled, adjust operational parameters
   # based on the current caution level:
   #
@@ -879,7 +834,6 @@ blocks:
   # | 1.0 (normal)  | 5         | 3                 | 3           |
   # | 1.5 (cautious)| 3         | 4                 | 2           |
   # | 2.0 (paranoid)| 2         | 5                 | 1           |
-  # ===========================================================================
   - id: compute_caution_params
     type: Shell
     description: "Compute caution-adjusted operational parameters."
@@ -899,13 +853,9 @@ blocks:
         base_max_depth = int(os.environ.get('BASE_MAX_DEPTH', '5'))
         base_max_retries = int(os.environ.get('BASE_MAX_RETRIES', '3'))
 
-        # =======================================================================
-        # CAUTION-ADJUSTED PARAMETERS
-        # =======================================================================
         # max_depth: decreases with caution (less exploration when cautious)
         # max_retries: increases with caution (more thorough verification)
         # spawn_limit: decreases with caution (fewer child cells when cautious)
-        # =======================================================================
 
         # max_depth: 7 at 0.5, 5 at 1.0, 3 at 1.5, 2 at 2.0
         # Formula: base / caution + 2, clamped to [2, 7]
@@ -948,13 +898,10 @@ blocks:
         print(json.dumps(result))
         EOF
       env:
-        CAUTION_LEVEL: "{{ (blocks.query_caution.outputs.rows | default([{}]))[0].caution_level | default(1.0) if blocks.query_caution.succeeded else 1.0 }}"
+        CAUTION_LEVEL: "{{ get(blocks.query_caution.outputs, 'rows.0.caution_level', 1.0) if blocks.query_caution.succeeded else 1.0 }}"
         BASE_MAX_DEPTH: "{{ inputs.max_depth }}"
         BASE_MAX_RETRIES: "{{ inputs.features.homeostatic.default_max_retries | default(3) }}"
 
-  # ===========================================================================
-  # Filter capabilities based on permissions
-  # ===========================================================================
   - id: filter_capabilities
     type: Shell
     description: Filter capabilities based on permission flags.
@@ -979,9 +926,6 @@ blocks:
         CAPABILITIES: "{{ inputs.capabilities | tojson }}"
         PERMISSIONS: "{{ inputs.permissions | tojson }}"
 
-  # ===========================================================================
-  # Register Task in Database
-  # ===========================================================================
   - id: register
     type: Sql
     description: Register this cell in the task tree.
@@ -991,22 +935,19 @@ blocks:
       - block: filter_capabilities
     inputs:
       engine: sqlite
-      path: "{{ (blocks.init.outputs.stdout | fromjson).state_path }}"
+      path: "{{ get(blocks.init.outputs.stdout, 'state_path', '') }}"
       model: "{{ inputs.models.task }}"
       op: insert
       data:
         parent_id: "{{ inputs.parent_id if inputs.parent_id else none }}"
         kind: "cell"
         name: "cortex-cell"
-        metadata: "{{ {'labels': {}, 'annotations': {'prompt_hash': (blocks.init.outputs.stdout | fromjson).hash}} | tojson }}"
+        metadata: "{{ {'labels': {}, 'annotations': {'prompt_hash': get(blocks.init.outputs.stdout, 'hash', '')}} | tojson }}"
         inputs: "{{ {'prompt': inputs.prompt, 'context': inputs.context, 'iterations': inputs.iterations} | tojson }}"
         status: "running"
         depth: "{{ inputs.depth }}"
         iteration: "{{ inputs.iterations }}"
 
-  # ===========================================================================
-  # Store Root Task ID in Metadata
-  # ===========================================================================
   - id: register_root_meta
     type: Sql
     description: Store root_task_id in metadata table.
@@ -1014,18 +955,18 @@ blocks:
     depends_on: [register]
     inputs:
       engine: sqlite
-      path: "{{ (blocks.init.outputs.stdout | fromjson).state_path }}"
+      path: "{{ get(blocks.init.outputs.stdout, 'state_path', '') }}"
       sql: |
         INSERT OR REPLACE INTO metadata (key, value)
         VALUES ('root_task_id', ?), ('created_at', datetime('now'))
       params:
-        - "{{ (blocks.register.outputs.rows | default([{}]))[0].id | default('') }}"
+        - "{{ get(blocks.register.outputs, 'rows.0.id', '') }}"
 
   - id: early_termination
     type: Shell
     description: Return early termination result.
     depends_on: [init, register]
-    condition: "{{ (blocks.init.outputs.stdout | fromjson).terminate }}"
+    condition: "{{ get(blocks.init.outputs.stdout, 'terminate', false) }}"
     inputs:
       command: |
         python3 << 'EOF'
@@ -1049,11 +990,8 @@ blocks:
         print(json.dumps(result))
         EOF
       env:
-        TERMINATION_REASON: "{{ (blocks.init.outputs.stdout | fromjson).reason }}"
+        TERMINATION_REASON: "{{ get(blocks.init.outputs.stdout, 'reason', 'unknown') }}"
 
-  # ===========================================================================
-  # PHASE 1: CATEGORIZE
-  # ===========================================================================
   - id: categorize
     description: Classify the query and set pipeline configuration.
     type: Workflow
@@ -1062,7 +1000,7 @@ blocks:
         required: true
       - block: query_caution
         required: false
-    condition: "{{ not (blocks.init.outputs.stdout | fromjson).terminate }}"
+    condition: "{{ not get(blocks.init.outputs.stdout, 'terminate', false) }}"
     inputs:
       workflow: cortex-phase-categorize
       inputs:
@@ -1073,25 +1011,20 @@ blocks:
         iterations: "{{ inputs.iterations }}"
         max_iterations: "{{ inputs.max_iterations }}"
         confidence_threshold: "{{ inputs.confidence_threshold }}"
-        state: "{{ (blocks.init.outputs.stdout | fromjson).state_path }}"
+        state: "{{ get(blocks.init.outputs.stdout, 'state_path', '') }}"
         models: "{{ inputs.models }}"
-        parent_id: "{{ (blocks.register.outputs.rows | default([{}]))[0].id | default('') }}"
+        parent_id: "{{ get(blocks.register.outputs, 'rows.0.id', '') }}"
         profile: "{{ inputs.profile }}"
-        capabilities: "{{ blocks.filter_capabilities.outputs.stdout | fromjson }}"
+        capabilities: "{{ get(blocks.filter_capabilities.outputs, 'stdout', []) }}"
         permissions: "{{ inputs.permissions }}"
-        # Pass feature toggles for expectation formation
         features: "{{ inputs.features }}"
-        # Pass caution level for threshold adjustment (homeostatic control)
-        caution_level: "{{ (blocks.query_caution.outputs.rows | default([{}]))[0].caution_level | default(1.0) if blocks.query_caution.succeeded else 1.0 }}"
+        caution_level: "{{ get(blocks.query_caution.outputs, 'rows.0.caution_level', 1.0) if blocks.query_caution.succeeded else 1.0 }}"
 
-  # ===========================================================================
   # SYSTEM 1 FAST PATH (G-Score ≤ 10)
-  # ===========================================================================
   # When dual_track_enabled=true and processing_path=system1:
   # - Skip REASON/DECIDE/ACT/VERIFY phases
   # - Use shallow gather + direct response
   # - Faster, lighter cognitive load for simple queries
-  # ===========================================================================
 
   - id: system1_gather
     type: Workflow
@@ -1116,9 +1049,9 @@ blocks:
         confidence_threshold: "{{ inputs.confidence_threshold }}"
         state: "{{ blocks.categorize.outputs.state }}"
         models: "{{ inputs.models }}"
-        parent_id: "{{ (blocks.register.outputs.rows | default([{}]))[0].id | default('') }}"
+        parent_id: "{{ get(blocks.register.outputs, 'rows.0.id', '') }}"
         profile: "{{ inputs.profile }}"
-        capabilities: "{{ blocks.filter_capabilities.outputs.stdout | fromjson }}"
+        capabilities: "{{ get(blocks.filter_capabilities.outputs, 'stdout', []) }}"
         permissions: "{{ inputs.permissions }}"
         features: "{{ inputs.features }}"
 
@@ -1185,11 +1118,11 @@ blocks:
     condition: "{{ blocks.system1_respond.succeeded }}"
     inputs:
       engine: sqlite
-      path: "{{ (blocks.init.outputs.stdout | fromjson).state_path }}"
+      path: "{{ get(blocks.init.outputs.stdout, 'state_path', '') }}"
       model: "{{ inputs.models.llm_call }}"
       op: insert
       data:
-        task_id: "{{ (blocks.register.outputs.rows | default([{}]))[0].id | default('') }}"
+        task_id: "{{ get(blocks.register.outputs, 'rows.0.id', '') }}"
         phase: "system1_respond"
         system_instructions: "CORTEX System 1 Fast Path"
         prompt: "{{ inputs.prompt }}"
@@ -1217,7 +1150,7 @@ blocks:
           verification: {}
         state: "{{ blocks.categorize.outputs.state }}"
         models: "{{ inputs.models }}"
-        parent_id: "{{ (blocks.register.outputs.rows | default([{}]))[0].id | default('') }}"
+        parent_id: "{{ get(blocks.register.outputs, 'rows.0.id', '') }}"
         features: "{{ inputs.features }}"
         expectation_id: "{{ blocks.categorize.outputs.expectation_id | default('') }}"
         surprisal: {}
@@ -1225,16 +1158,11 @@ blocks:
         category: "{{ blocks.categorize.outputs.result.category | default('understanding') }}"
         actions_taken: []
 
-  # ===========================================================================
   # SYSTEM 2 FULL PATH (G-Score > 10)
-  # ===========================================================================
   # Full cognitive loop with all phases:
   # GATHER → EXECUTE → REASON → DECIDE → ACT → VERIFY → SYNTHESIZE
-  # ===========================================================================
 
-  # ===========================================================================
   # PHASE 2: GATHER (System 2)
-  # ===========================================================================
   - id: gather
     type: Workflow
     description: Collect evidence with salience filtering.
@@ -1255,7 +1183,7 @@ blocks:
         pipeline_config: "{{ blocks.categorize.outputs.pipeline_config | default({}) }}"
         depth: "{{ inputs.depth }}"
         max_depth: |
-          {{ (blocks.compute_caution_params.outputs.stdout | fromjson).max_depth
+          {{ get(blocks.compute_caution_params.outputs.stdout, 'max_depth', inputs.max_depth)
              if blocks.compute_caution_params.succeeded
              else inputs.max_depth }}
         iterations: "{{ inputs.iterations }}"
@@ -1263,15 +1191,12 @@ blocks:
         confidence_threshold: "{{ inputs.confidence_threshold }}"
         state: "{{ blocks.categorize.outputs.state }}"
         models: "{{ inputs.models }}"
-        parent_id: "{{ (blocks.register.outputs.rows | default([{}]))[0].id | default('') }}"
+        parent_id: "{{ get(blocks.register.outputs, 'rows.0.id', '') }}"
         profile: "{{ inputs.profile }}"
-        capabilities: "{{ blocks.filter_capabilities.outputs.stdout | fromjson }}"
+        capabilities: "{{ get(blocks.filter_capabilities.outputs, 'stdout', []) }}"
         permissions: "{{ inputs.permissions }}"
         features: "{{ inputs.features }}"
 
-  # ===========================================================================
-  # PHASE 3: EXECUTE - Run commands BEFORE reasoning
-  # ===========================================================================
   - id: execute
     type: Workflow
     description: Execute commands before reasoning (pytest, build, lint, etc.).
@@ -1288,14 +1213,12 @@ blocks:
         pipeline_config: "{{ blocks.categorize.outputs.pipeline_config | default({}) }}"
         state: "{{ blocks.gather.outputs.state }}"
         models: "{{ inputs.models }}"
-        parent_id: "{{ (blocks.register.outputs.rows | default([{}]))[0].id | default('') }}"
+        parent_id: "{{ get(blocks.register.outputs, 'rows.0.id', '') }}"
         profile: "{{ inputs.profile }}"
-        capabilities: "{{ blocks.filter_capabilities.outputs.stdout | fromjson }}"
+        capabilities: "{{ get(blocks.filter_capabilities.outputs, 'stdout', []) }}"
         permissions: "{{ inputs.permissions }}"
+        features: "{{ inputs.features }}"
 
-  # ===========================================================================
-  # PHASE 4: REASON - Analyze with ACTUAL execution results
-  # ===========================================================================
   - id: reason
     description: Analyze evidence and execution results.
     depends_on:
@@ -1321,7 +1244,7 @@ blocks:
           {{ blocks.categorize.outputs.pipeline_config | default({}) | combine(blocks.gather.outputs.config_override | default({}), recursive=True) }}
         depth: "{{ inputs.depth }}"
         max_depth: |
-          {{ (blocks.compute_caution_params.outputs.stdout | fromjson).max_depth
+          {{ get(blocks.compute_caution_params.outputs.stdout, 'max_depth', inputs.max_depth)
              if blocks.compute_caution_params.succeeded
              else inputs.max_depth }}
         iterations: "{{ inputs.iterations }}"
@@ -1329,18 +1252,15 @@ blocks:
         confidence_threshold: "{{ inputs.confidence_threshold }}"
         state: "{{ blocks.gather.outputs.state }}"
         models: "{{ inputs.models }}"
-        parent_id: "{{ (blocks.register.outputs.rows | default([{}]))[0].id | default('') }}"
+        parent_id: "{{ get(blocks.register.outputs, 'rows.0.id', '') }}"
         profile: "{{ inputs.profile }}"
-        capabilities: "{{ blocks.filter_capabilities.outputs.stdout | fromjson }}"
+        capabilities: "{{ get(blocks.filter_capabilities.outputs, 'stdout', []) }}"
         permissions: "{{ inputs.permissions }}"
         features: "{{ inputs.features }}"
         expectation_id: "{{ blocks.categorize.outputs.expectation_id | default('') }}"
         context_hash: "{{ blocks.categorize.outputs.context_hash | default('') }}"
         expectation: "{{ blocks.categorize.outputs.expectation | default({}) }}"
 
-  # ===========================================================================
-  # PHASE 5: DECIDE - Control point for iteration
-  # ===========================================================================
   - id: decide
     description: Determine next action (DONE, ACT, SPAWN, REFINE, DIAGNOSE).
     depends_on:
@@ -1363,14 +1283,14 @@ blocks:
           {{ blocks.categorize.outputs.pipeline_config | default({}) | combine(blocks.gather.outputs.config_override | default({}), recursive=True) | combine(blocks.reason.outputs.config_override | default({}), recursive=True) }}
         depth: "{{ inputs.depth }}"
         max_depth: |
-          {{ (blocks.compute_caution_params.outputs.stdout | fromjson).max_depth
+          {{ get(blocks.compute_caution_params.outputs.stdout, 'max_depth', inputs.max_depth)
              if blocks.compute_caution_params.succeeded
              else inputs.max_depth }}
         iterations: "{{ inputs.iterations }}"
         max_iterations: "{{ inputs.max_iterations }}"
         state: "{{ blocks.reason.outputs.state }}"
         models: "{{ inputs.models }}"
-        parent_id: "{{ (blocks.register.outputs.rows | default([{}]))[0].id | default('') }}"
+        parent_id: "{{ get(blocks.register.outputs, 'rows.0.id', '') }}"
         profile: "{{ inputs.profile }}"
         features: "{{ inputs.features }}"
         trigger_diagnose: "{{ blocks.reason.outputs.trigger_diagnose | default(false) }}"
@@ -1378,12 +1298,6 @@ blocks:
         diagnosis_questions: "{{ blocks.reason.outputs.diagnosis_questions | default([]) }}"
         surprise_explanation: "{{ blocks.reason.outputs.surprise_explanation | default('') }}"
 
-  # ===========================================================================
-  # PHASE 5b: DIAGNOSE - Investigate prediction failures
-  # ===========================================================================
-  # Triggered when surprisal > 2 bits (prediction significantly wrong).
-  # Queries historical episodes, analyzes the failure, proposes model updates.
-  # ===========================================================================
   - id: diagnose
     type: Workflow
     description: "Investigate high-surprisal prediction failures."
@@ -1394,8 +1308,8 @@ blocks:
       inputs:
         state: "{{ blocks.decide.outputs.state }}"
         models: "{{ inputs.models }}"
-        parent_id: "{{ (blocks.register.outputs.rows | default([{}]))[0].id | default('') }}"
-        task_id: "{{ (blocks.register.outputs.rows | default([{}]))[0].id | default('') }}"
+        parent_id: "{{ get(blocks.register.outputs, 'rows.0.id', '') }}"
+        task_id: "{{ get(blocks.register.outputs, 'rows.0.id', '') }}"
         diagnosis_context: "{{ blocks.decide.outputs.diagnosis_context | default({}) }}"
         expectation_id: "{{ blocks.categorize.outputs.expectation_id | default('') }}"
         category: "{{ blocks.categorize.outputs.result.category | default('understanding') }}"
@@ -1403,9 +1317,6 @@ blocks:
         profile: "{{ inputs.profile }}"
         max_similar_episodes: 10
 
-  # ===========================================================================
-  # PHASE 6: ACT - Implement changes with backup
-  # ===========================================================================
   - id: act
     description: Take action based on DECIDE outcome.
     depends_on:
@@ -1431,21 +1342,19 @@ blocks:
           {{ blocks.categorize.outputs.pipeline_config | default({}) | combine(blocks.gather.outputs.config_override | default({}), recursive=True) | combine(blocks.reason.outputs.config_override | default({}), recursive=True) }}
         depth: "{{ inputs.depth }}"
         max_depth: |
-          {{ (blocks.compute_caution_params.outputs.stdout | fromjson).max_depth
+          {{ get(blocks.compute_caution_params.outputs.stdout, 'max_depth', inputs.max_depth)
              if blocks.compute_caution_params.succeeded
              else inputs.max_depth }}
         iterations: "{{ inputs.iterations }}"
         max_iterations: "{{ inputs.max_iterations }}"
         state: "{{ blocks.decide.outputs.state }}"
         models: "{{ inputs.models }}"
-        parent_id: "{{ (blocks.register.outputs.rows | default([{}]))[0].id | default('') }}"
+        parent_id: "{{ get(blocks.register.outputs, 'rows.0.id', '') }}"
         profile: "{{ inputs.profile }}"
-        capabilities: "{{ blocks.filter_capabilities.outputs.stdout | fromjson }}"
+        capabilities: "{{ get(blocks.filter_capabilities.outputs, 'stdout', []) }}"
         permissions: "{{ inputs.permissions }}"
+        features: "{{ inputs.features }}"
 
-  # ===========================================================================
-  # PHASE 7: VERIFY - Re-run command to verify fix
-  # ===========================================================================
   - id: verify
     description: Verify fix by re-running the original command.
     depends_on:
@@ -1457,7 +1366,7 @@ blocks:
       {{ blocks.act.succeeded and (
         blocks.categorize.outputs.pipeline_config.verify.enabled | default(false) or
         (blocks.compute_caution_params.succeeded and
-         (blocks.compute_caution_params.outputs.stdout | fromjson).verification_stringency in ['required', 'strict'] and
+         get(blocks.compute_caution_params.outputs.stdout, 'verification_stringency', 'normal') in ['required', 'strict'] and
          blocks.categorize.outputs.result.category in ['action', 'debugging', 'quality'])
       ) }}
     type: Workflow
@@ -1473,16 +1382,14 @@ blocks:
         pipeline_config: "{{ blocks.categorize.outputs.pipeline_config | default({}) }}"
         state: "{{ blocks.act.outputs.state }}"
         models: "{{ inputs.models }}"
-        parent_id: "{{ (blocks.register.outputs.rows | default([{}]))[0].id | default('') }}"
+        parent_id: "{{ get(blocks.register.outputs, 'rows.0.id', '') }}"
         iterations: "{{ inputs.iterations }}"
         max_iterations: |
-          {{ (blocks.compute_caution_params.outputs.stdout | fromjson).max_retries
+          {{ get(blocks.compute_caution_params.outputs.stdout, 'max_retries', inputs.max_iterations)
              if blocks.compute_caution_params.succeeded
              else inputs.max_iterations }}
+        features: "{{ inputs.features }}"
 
-  # ===========================================================================
-  # PHASE 8: SYNTHESIZE - Capture learnings on success
-  # ===========================================================================
   - id: synthesize
     description: Capture learnings when verification succeeds or diagnosis completes.
     depends_on:
@@ -1512,7 +1419,7 @@ blocks:
           verification: "{{ blocks.verify.outputs if blocks.verify.succeeded else {} }}"
         state: "{{ blocks.decide.outputs.state | default(blocks.reason.outputs.state) }}"
         models: "{{ inputs.models }}"
-        parent_id: "{{ (blocks.register.outputs.rows | default([{}]))[0].id | default('') }}"
+        parent_id: "{{ get(blocks.register.outputs, 'rows.0.id', '') }}"
         features: "{{ inputs.features }}"
         expectation_id: "{{ blocks.categorize.outputs.expectation_id | default('') }}"
         surprisal: "{{ blocks.reason.outputs.surprisal | default({}) }}"
@@ -1520,9 +1427,6 @@ blocks:
         category: "{{ blocks.categorize.outputs.result.category | default('understanding') }}"
         actions_taken: "{{ blocks.act.outputs.result.operations | default([]) if blocks.act.succeeded else [] }}"
 
-  # ===========================================================================
-  # PHASE 9: CONSOLIDATE - Async memory consolidation
-  # ===========================================================================
   - id: consolidate
     type: Workflow
     description: "Async memory consolidation - episodes → heuristics."
@@ -1535,16 +1439,13 @@ blocks:
     inputs:
       workflow: cortex-phase-consolidate
       inputs:
-        state: "{{ (blocks.init.outputs.stdout | fromjson).state_path }}"
+        state: "{{ get(blocks.init.outputs.stdout, 'state_path', '') }}"
         models: "{{ inputs.models }}"
-        parent_id: "{{ (blocks.register.outputs.rows | default([{}]))[0].id | default('') }}"
+        parent_id: "{{ get(blocks.register.outputs, 'rows.0.id', '') }}"
         features: "{{ inputs.features }}"
         current_episode_id: "{{ blocks.synthesize.outputs.episode_id if blocks.synthesize.succeeded else blocks.system1_synthesize.outputs.episode_id | default('') }}"
         profile: "{{ inputs.profile }}"
 
-  # ===========================================================================
-  # AGGREGATE TOKEN USAGE
-  # ===========================================================================
   - id: aggregate_tokens
     type: Sql
     description: Aggregate token usage from all LLM calls.
@@ -1569,7 +1470,7 @@ blocks:
         required: false
     inputs:
       engine: sqlite
-      path: "{{ (blocks.init.outputs.stdout | fromjson).state_path }}"
+      path: "{{ get(blocks.init.outputs.stdout, 'state_path', '') }}"
       sql: |
         SELECT
           COALESCE(SUM(prompt_tokens), 0) as total_prompt_tokens,
@@ -1579,9 +1480,6 @@ blocks:
           COUNT(*) as call_count
         FROM llm_calls
 
-  # ===========================================================================
-  # TRACK COMPLETION
-  # ===========================================================================
   - id: track_done
     type: Sql
     description: Mark cell complete.
@@ -1608,21 +1506,21 @@ blocks:
         required: false
     inputs:
       engine: sqlite
-      path: "{{ (blocks.init.outputs.stdout | fromjson).state_path }}"
+      path: "{{ get(blocks.init.outputs.stdout, 'state_path', '') }}"
       model: "{{ inputs.models.task }}"
       op: update
       where:
-        id: "{{ (blocks.register.outputs.rows | default([{}]))[0].id | default('') }}"
+        id: "{{ get(blocks.register.outputs, 'rows.0.id', '') }}"
       data:
         status: "done"
         outputs: >-
           {{ {
             'response': blocks.system1_respond.outputs.response.response if blocks.system1_respond.succeeded
                         else blocks.reason.outputs.response if blocks.reason.succeeded
-                        else (blocks.early_termination.outputs.stdout | fromjson).response if blocks.early_termination.succeeded
+                        else get(blocks.early_termination.outputs.stdout, 'response', 'No response produced') if blocks.early_termination.succeeded
                         else 'No response produced',
             'synthesis': blocks.reason.outputs.synthesis if blocks.reason.succeeded
-                         else (blocks.early_termination.outputs.stdout | fromjson).synthesis if blocks.early_termination.succeeded
+                         else get(blocks.early_termination.outputs.stdout, 'synthesis', {}) if blocks.early_termination.succeeded
                          else {'summary': blocks.system1_respond.outputs.response.response, 'findings': []} if blocks.system1_respond.succeeded
                          else {},
             'verified': blocks.verify.outputs.passed if blocks.verify.succeeded else none,
@@ -1630,12 +1528,6 @@ blocks:
             'processing_path': 'system1' if blocks.system1_respond.succeeded else 'system2'
           } | tojson }}
 
-  # ===========================================================================
-  # Update Health Metrics (Homeostatic Control)
-  # ===========================================================================
-  # Updates error rate tracking and recalculates caution level via PID.
-  # This runs after task completion to feed back into the control loop.
-  # ===========================================================================
   - id: update_health_metrics
     type: Workflow
     description: "Update health metrics and recalculate caution level."
@@ -1644,10 +1536,10 @@ blocks:
     inputs:
       workflow: cortex-pid-controller
       inputs:
-        state: "{{ (blocks.init.outputs.stdout | fromjson).state_path }}"
+        state: "{{ get(blocks.init.outputs.stdout, 'state_path', '') }}"
         models: "{{ inputs.models }}"
-        parent_id: "{{ (blocks.register.outputs.rows | default([{}]))[0].id | default('') }}"
-        task_id: "{{ (blocks.register.outputs.rows | default([{}]))[0].id | default('') }}"
+        parent_id: "{{ get(blocks.register.outputs, 'rows.0.id', '') }}"
+        task_id: "{{ get(blocks.register.outputs, 'rows.0.id', '') }}"
         target_error_rate: "{{ inputs.features.homeostatic.target_error_rate | default(0.10) }}"
         pid_kp: "{{ inputs.features.homeostatic.pid_kp | default(0.5) }}"
         pid_ki: "{{ inputs.features.homeostatic.pid_ki | default(0.1) }}"
@@ -1660,9 +1552,6 @@ blocks:
              else (blocks.decide.outputs.action == 'done' if blocks.decide.succeeded else true) }}
         current_surprisal: "{{ blocks.reason.outputs.surprisal_bits | default(0) }}"
 
-# =============================================================================
-# OUTPUTS
-# =============================================================================
 outputs:
   synthesis:
     type: dict
@@ -1670,7 +1559,7 @@ outputs:
     value: |
       {{ blocks.reason.outputs.synthesis if blocks.reason.succeeded
          else {'summary': blocks.system1_respond.outputs.response.response, 'findings': [], 'key_points': blocks.system1_respond.outputs.response.key_points | default([])} if blocks.system1_respond.succeeded
-         else (blocks.early_termination.outputs.stdout | fromjson).synthesis if blocks.early_termination.succeeded
+         else get(blocks.early_termination.outputs.stdout, 'synthesis', {'findings': [], 'summary': 'No synthesis'}) if blocks.early_termination.succeeded
          else {'findings': [], 'summary': 'No synthesis'} }}
 
   response:
@@ -1679,7 +1568,7 @@ outputs:
     value: |
       {{ blocks.system1_respond.outputs.response.response if blocks.system1_respond.succeeded
          else blocks.reason.outputs.response if blocks.reason.succeeded
-         else (blocks.early_termination.outputs.stdout | fromjson).response if blocks.early_termination.succeeded
+         else get(blocks.early_termination.outputs.stdout, 'response', 'No response produced') if blocks.early_termination.succeeded
          else 'No response produced' }}
 
   categorization:
@@ -1726,12 +1615,12 @@ outputs:
   task_id:
     type: str
     description: "This cell's task ID."
-    value: "{{ (blocks.register.outputs.rows | default([{}]))[0].id | default('') }}"
+    value: "{{ get(blocks.register.outputs, 'rows.0.id', '') }}"
 
   state:
     type: str
     description: "Path to state database."
-    value: "{{ (blocks.init.outputs.stdout | fromjson).state_path }}"
+    value: "{{ get(blocks.init.outputs.stdout, 'state_path', '') }}"
 
   expectation_id:
     type: str
@@ -1788,11 +1677,11 @@ outputs:
     description: "Aggregated token usage across all LLM calls."
     value: |
       {{ {
-        'prompt_tokens': (blocks.aggregate_tokens.outputs.rows | default([{}]))[0].total_prompt_tokens | default(0),
-        'completion_tokens': (blocks.aggregate_tokens.outputs.rows | default([{}]))[0].total_completion_tokens | default(0),
-        'total_tokens': (blocks.aggregate_tokens.outputs.rows | default([{}]))[0].total_tokens | default(0),
-        'total_duration_ms': (blocks.aggregate_tokens.outputs.rows | default([{}]))[0].total_duration_ms | default(0),
-        'call_count': (blocks.aggregate_tokens.outputs.rows | default([{}]))[0].call_count | default(0)
+        'prompt_tokens': get(blocks.aggregate_tokens.outputs, 'rows.0.total_prompt_tokens', 0),
+        'completion_tokens': get(blocks.aggregate_tokens.outputs, 'rows.0.total_completion_tokens', 0),
+        'total_tokens': get(blocks.aggregate_tokens.outputs, 'rows.0.total_tokens', 0),
+        'total_duration_ms': get(blocks.aggregate_tokens.outputs, 'rows.0.total_duration_ms', 0),
+        'call_count': get(blocks.aggregate_tokens.outputs, 'rows.0.call_count', 0)
       } if blocks.aggregate_tokens.succeeded else {'prompt_tokens': 0, 'completion_tokens': 0, 'total_tokens': 0, 'total_duration_ms': 0, 'call_count': 0} }}
 
   consolidation_stats:
@@ -1810,7 +1699,7 @@ outputs:
     description: "Current caution level (0.5 = relaxed, 1.0 = normal, 2.0 = paranoid)."
     value: |
       {{ blocks.update_health_metrics.outputs.caution_level if blocks.update_health_metrics.succeeded
-         else (blocks.query_caution.outputs.rows | default([{}]))[0].caution_level | default(1.0) if blocks.query_caution.succeeded
+         else get(blocks.query_caution.outputs, 'rows.0.caution_level', 1.0) if blocks.query_caution.succeeded
          else 1.0 }}
 
   health_metrics:
@@ -1818,9 +1707,9 @@ outputs:
     description: "Health metrics from homeostatic control."
     value: |
       {{ blocks.update_health_metrics.outputs.metrics if blocks.update_health_metrics.succeeded else {
-        'error_rate': (blocks.query_caution.outputs.rows | default([{}]))[0].error_rate | default(0) if blocks.query_caution.succeeded else 0,
-        'total_completed': (blocks.query_caution.outputs.rows | default([{}]))[0].total_completed | default(0) if blocks.query_caution.succeeded else 0,
-        'total_failed': (blocks.query_caution.outputs.rows | default([{}]))[0].total_failed | default(0) if blocks.query_caution.succeeded else 0,
+        'error_rate': get(blocks.query_caution.outputs, 'rows.0.error_rate', 0) if blocks.query_caution.succeeded else 0,
+        'total_completed': get(blocks.query_caution.outputs, 'rows.0.total_completed', 0) if blocks.query_caution.succeeded else 0,
+        'total_failed': get(blocks.query_caution.outputs, 'rows.0.total_failed', 0) if blocks.query_caution.succeeded else 0,
         'enabled': inputs.features.homeostatic_enabled | default(false)
       } }}
 
@@ -1833,7 +1722,7 @@ outputs:
     type: dict
     description: "Caution-adjusted operational parameters."
     value: |
-      {{ blocks.compute_caution_params.outputs.stdout | fromjson if blocks.compute_caution_params.succeeded else {
+      {{ blocks.compute_caution_params.outputs.stdout if blocks.compute_caution_params.succeeded else {
         'caution_level': 1.0,
         'max_depth': inputs.max_depth,
         'max_retries': 3,

@@ -58,10 +58,10 @@ blocks:
         parent_id: "{{ inputs.parent_id if inputs.parent_id else none }}"
         kind: capability
         name: cortex-action-execute
-        metadata: "{{ {'labels': {'capability_type': 'action', 'side_effects': 'true'}} }}"
-        inputs: "{{ {'command': inputs.command[:100], 'working_dir': inputs.working_dir, 'timeout': inputs.timeout} }}"
+        metadata: "{'labels': {'capability_type': 'action', 'side_effects': 'true'}}"
+        inputs: "{{ inputs }}"
         status: running
-        depth: 2
+        depth: "{{ inputs.depth }}"
 
   # ===========================================================================
   # STEP 2: Execute command
@@ -96,7 +96,7 @@ blocks:
         id: "{{ (blocks.register.outputs.rows | default([{}]))[0].id | default('') }}"
       data:
         status: "{{ 'done' if blocks.execute.succeeded else 'failed' }}"
-        outputs: "{{ {'exit_code': blocks.execute.outputs.exit_code | default(-1), 'success': blocks.execute.succeeded and blocks.execute.outputs.exit_code == 0, 'error': blocks.execute.metadata.message | default('')} }}"
+        outputs: "{'exit_code': {{ blocks.execute.outputs.exit_code | default(-1) }}, 'success': {{ blocks.execute.succeeded and blocks.execute.outputs.exit_code == 0 }}, 'error': {{ blocks.execute.metadata.message | default('') }}}"
 
 outputs:
   stdout:

@@ -60,10 +60,13 @@ inputs:
     required: false
     default: ""
 
+  depth:
+    type: num
+    description: Task depth for task tree registration.
+    required: false
+    default: 0
+
 blocks:
-  # ===========================================================================
-  # STEP 1: Register capability in task tree
-  # ===========================================================================
   - id: register
     type: Sql
     description: Register this capability in the task tree.
@@ -77,14 +80,11 @@ blocks:
         parent_id: "{{ inputs.parent_id if inputs.parent_id else none }}"
         kind: capability
         name: cortex-gather-files
-        metadata: "{{ {'labels': {'capability_type': 'gather', 'side_effects': 'false'}} }}"
-        inputs: "{{ {'patterns': inputs.patterns, 'base_path': inputs.base_path, 'mode': inputs.mode, 'max_files': inputs.max_files} }}"
+        metadata: "{'labels': {'capability_type': 'gather', 'side_effects': 'false'}}"
+        inputs: "{'patterns': {{ inputs.patterns }}, 'base_path': {{ inputs.base_path }}, 'mode': {{ inputs.mode }}, 'max_files': {{ inputs.max_files}}}"
         status: running
-        depth: 2
+        depth: "{{ inputs.depth + 1 }}"
 
-  # ===========================================================================
-  # STEP 2: Read files
-  # ===========================================================================
   - id: read
     type: ReadFiles
     depends_on:
@@ -97,9 +97,6 @@ blocks:
       max_files: "{{ inputs.max_files }}"
       max_file_size_kb: "{{ inputs.max_file_size_kb }}"
 
-  # ===========================================================================
-  # STEP 3: Store each file as evidence in memory table
-  # ===========================================================================
   - id: store_evidence
     type: Sql
     description: Store gathered files as evidence in memory.
@@ -118,13 +115,10 @@ blocks:
         namespace: "{{ 'outline' if inputs.mode == 'outline' else 'content' }}"
         key: "{{ each.value.path }}"
         value: "{{ each.value.content | default('') }}"
-        metadata: "{{ {'path': each.value.path, 'size_bytes': each.value.size_bytes | default(0), 'type': inputs.mode} }}"
-        task_id: "{{ inputs.task_id if inputs.task_id else (blocks.register.outputs.rows | default([{}]))[0].id | default('') }}"
+        metadata: "{'path': {{ each.value.path }}, 'size_bytes': {{ each.value.size_bytes | default(0) }}, 'type': {{ inputs.mode }}}"
+        task_id: "{{ inputs.task_id if inputs.task_id else get(blocks.register.outputs, 'rows.0.id', '') }}"
       conflict: [namespace, key]
 
-  # ===========================================================================
-  # STEP 4: Track completion
-  # ===========================================================================
   - id: track_done
     type: Sql
     description: Mark capability complete in task tree.
@@ -141,10 +135,10 @@ blocks:
       model: "{{ inputs.models.task }}"
       op: update
       where:
-        id: "{{ (blocks.register.outputs.rows | default([{}]))[0].id | default('') }}"
+        id: "{{ get(blocks.register.outputs, 'rows.0.id', '') }}"
       data:
         status: "{{ 'done' if blocks.read.succeeded else 'failed' }}"
-        outputs: "{{ {'total_files': blocks.read.outputs.total_files | default(0), 'total_size_kb': blocks.read.outputs.total_size_kb | default(0), 'evidence_stored': blocks.store_evidence.metadata.count | default(0), 'error': blocks.read.metadata.message | default('')} }}"
+        outputs: "{'total_files': {{ blocks.read.outputs.total_files | default(0) }}, 'total_size_kb': {{ blocks.read.outputs.total_size_kb | default(0) }}, 'evidence_stored': {{ get(blocks.store_evidence.metadata, 'count', 0) }}, 'error': {{ get(blocks.read.metadata, 'message', '') }}}"
 
 outputs:
   files:
@@ -171,12 +165,12 @@ outputs:
     description: Evidence references for findings (file paths).
 
   evidence_stored:
-    value: "{{ blocks.store_evidence.metadata.count | default(0) }}"
+    value: "{{ get(blocks.store_evidence.metadata, 'count', 0) }}"
     type: num
     description: Number of files stored as evidence.
 
   task_id:
-    value: "{{ (blocks.register.outputs.rows | default([{}]))[0].id | default('') }}"
+    value: "{{ get(blocks.register.outputs, 'rows.0.id', '') }}"
     type: str
     description: Task ID of this capability invocation.
 

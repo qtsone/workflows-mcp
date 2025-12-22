@@ -3,7 +3,7 @@ description: |
   Atomic capability: Execute shell command for information gathering.
   Read-only operations only - no side effects.
 
-tags: [cortex, capability, atomic, gather, command, v2]
+tags: [cortex, capability, atomic, gather, command]
 
 inputs:
   command:
@@ -42,9 +42,6 @@ inputs:
     default: ""
 
 blocks:
-  # ===========================================================================
-  # STEP 1: Register capability in task tree
-  # ===========================================================================
   - id: register
     type: Sql
     description: Register this capability in the task tree.
@@ -58,14 +55,11 @@ blocks:
         parent_id: "{{ inputs.parent_id if inputs.parent_id else none }}"
         kind: capability
         name: cortex-gather-command
-        metadata: "{{ {'labels': {'capability_type': 'gather', 'side_effects': 'false'}} }}"
-        inputs: "{{ {'command': inputs.command[:100], 'working_dir': inputs.working_dir, 'timeout': inputs.timeout} }}"
+        metadata: "{'labels': {'capability_type': 'gather', 'side_effects': 'false'}}"
+        inputs: "{'command': {{ inputs.command[:100] }}, 'working_dir': {{ inputs.working_dir }}, 'timeout': {{ inputs.timeout }}}"
         status: running
-        depth: 2
+        depth: "{{ inputs.depth}}"
 
-  # ===========================================================================
-  # STEP 2: Execute command
-  # ===========================================================================
   - id: execute
     type: Shell
     depends_on:
@@ -76,9 +70,6 @@ blocks:
       working_dir: "{{ inputs.working_dir }}"
       timeout: "{{ inputs.timeout }}"
 
-  # ===========================================================================
-  # STEP 3: Track completion
-  # ===========================================================================
   - id: track_done
     type: Sql
     description: Mark capability complete in task tree.
@@ -93,10 +84,10 @@ blocks:
       model: "{{ inputs.models.task }}"
       op: update
       where:
-        id: "{{ (blocks.register.outputs.rows | default([{}]))[0].id | default('') }}"
+        id: "{{ get(blocks.register.outputs, 'rows.0.id', '') }}"
       data:
         status: "{{ 'done' if blocks.execute.succeeded else 'failed' }}"
-        outputs: "{{ {'exit_code': blocks.execute.outputs.exit_code | default(-1), 'success': blocks.execute.succeeded and blocks.execute.outputs.exit_code == 0, 'error': blocks.execute.metadata.message | default('')} }}"
+        outputs: "{'exit_code': {{ get(blocks.execute.outputs, 'exit_code', -1) }}, 'success': {{ blocks.execute.succeeded and blocks.execute.outputs.exit_code == 0 }}, 'error': {{ get(blocks.execute.metadata, 'message', '') }}}"
 
 outputs:
   stdout:
@@ -110,12 +101,12 @@ outputs:
     description: Command standard error.
 
   exit_code:
-    value: "{{ blocks.execute.outputs.exit_code }}"
+    value: "{{ get(blocks.execute.outputs, 'exit_code', -1) }}"
     type: num
     description: Exit code (0 = success).
 
   success:
-    value: "{{ blocks.execute.outputs.exit_code == 0 }}"
+    value: "{{ get(blocks.execute.outputs, 'exit_code', -1) == 0 }}"
     type: bool
     description: Whether command succeeded.
 

@@ -33,8 +33,7 @@ inputs:
   state:
     type: str
     description: Path to SQLite state database (for evidence storage and task tracking).
-    required: false
-    default: ""
+    required: true
 
   models:
     type: dict
@@ -54,14 +53,16 @@ inputs:
     required: false
     default: ""
 
+  depth:
+    type: num
+    description: Task depth for task tree registration.
+    required: false
+    default: 0
+
 blocks:
-  # ===========================================================================
-  # STEP 1: Register capability in task tree
-  # ===========================================================================
   - id: register
     type: Sql
     description: Register this capability in the task tree.
-    condition: "{{ inputs.state | trim != '' }}"
     inputs:
       engine: sqlite
       path: "{{ inputs.state }}"
@@ -74,11 +75,8 @@ blocks:
         metadata: "{{ {'labels': {'capability_type': 'gather', 'side_effects': 'false'}} }}"
         inputs: "{{ {'pattern': inputs.pattern, 'path': inputs.path, 'file_type': inputs.file_type, 'max_matches': inputs.max_matches} }}"
         status: running
-        depth: 2
+        depth: "{{ inputs.depth }}"
 
-  # ===========================================================================
-  # STEP 2: Execute search
-  # ===========================================================================
   - id: search
     type: Shell
     depends_on:
@@ -214,14 +212,11 @@ blocks:
         FILE_TYPE: "{{ inputs.file_type }}"
         MAX_MATCHES: "{{ inputs.max_matches }}"
 
-  # ===========================================================================
-  # STEP 3: Store search results as evidence in memory table
-  # ===========================================================================
   - id: store_evidence
     type: Sql
     description: Store search results as evidence.
     depends_on: [search]
-    condition: "{{ inputs.state | trim != '' and (blocks.search.outputs.stdout | fromjson).count > 0 }}"
+    condition: "{{ get(blocks.search.outputs.stdout, 'count', 0) > 0 }}"
     inputs:
       engine: sqlite
       path: "{{ inputs.state }}"
@@ -230,14 +225,11 @@ blocks:
       data:
         namespace: search
         key: "search:{{ inputs.pattern }}"
-        value: "{{ blocks.search.outputs.stdout | fromjson }}"
-        metadata: "{{ {'count': (blocks.search.outputs.stdout | fromjson).count, 'pattern': inputs.pattern} }}"
-        task_id: "{{ inputs.task_id if inputs.task_id else (blocks.register.outputs.rows | default([{}]))[0].id | default('') }}"
+        value: "{{ blocks.search.outputs.stdout }}"
+        metadata: "{'count': {{ get(blocks.search.outputs.stdout, 'count', 0) }}, 'pattern': {{ inputs.pattern }}}"
+        task_id: "{{ inputs.task_id if inputs.task_id else get(blocks.register.outputs, 'rows.0.id', '') }}"
       conflict: [namespace, key]
 
-  # ===========================================================================
-  # STEP 4: Track completion
-  # ===========================================================================
   - id: track_done
     type: Sql
     description: Mark capability complete in task tree.
@@ -254,19 +246,19 @@ blocks:
       model: "{{ inputs.models.task }}"
       op: update
       where:
-        id: "{{ (blocks.register.outputs.rows | default([{}]))[0].id | default('') }}"
+        id: "{{ get(blocks.register.outputs, 'rows.0.id', '') }}"
       data:
         status: "{{ 'done' if blocks.search.succeeded else 'failed' }}"
-        outputs: "{{ {'count': (blocks.search.outputs.stdout | fromjson).count if blocks.search.succeeded else 0, 'pattern': inputs.pattern, 'evidence_stored': blocks.store_evidence.succeeded | default(false), 'error': blocks.search.metadata.message | default('')} }}"
+        outputs: "{'count': {{ get(blocks.search.outputs.stdout, 'count', 0) if blocks.search.succeeded else 0 }}, 'pattern': {{ inputs.pattern }}, 'evidence_stored': {{ get(blocks.store_evidence.succeeded, false) }}, 'error': {{ get(blocks.search.metadata, 'message', '') }}}"
 
 outputs:
   matches:
-    value: "{{ (blocks.search.outputs.stdout | fromjson).matches }}"
+    value: "{{ get(blocks.search.outputs.stdout, 'matches', []) }}"
     type: list
     description: List of matches with path, line_number, line_text.
 
   count:
-    value: "{{ (blocks.search.outputs.stdout | fromjson).count }}"
+    value: "{{ get(blocks.search.outputs.stdout, 'count', 0) }}"
     type: num
     description: Number of matches found.
 
@@ -276,17 +268,17 @@ outputs:
     description: Pattern that was searched.
 
   evidence:
-    value: "{{ ['search:' ~ inputs.pattern ~ ':' ~ (blocks.search.outputs.stdout | fromjson).count ~ ' matches'] }}"
+    value: "{{ ['search:' ~ inputs.pattern ~ ':' ~ get(blocks.search.outputs.stdout, 'count', 0) ~ ' matches'] }}"
     type: list
     description: Evidence reference for findings.
 
   evidence_stored:
-    value: "{{ blocks.store_evidence.succeeded | default(false) }}"
+    value: "{{ get(blocks.store_evidence.succeeded, false) }}"
     type: bool
     description: Whether evidence was stored.
 
   task_id:
-    value: "{{ (blocks.register.outputs.rows | default([{}]))[0].id | default('') }}"
+    value: "{{ get(blocks.register.outputs, 'rows.0.id', '') }}"
     type: str
     description: Task ID of this capability invocation.
 

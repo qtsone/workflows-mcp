@@ -1,9 +1,5 @@
-# =============================================================================
 # CORTEX RRF Fusion Capability
-# =============================================================================
-#
 # Implements Reciprocal Rank Fusion (RRF) to combine multiple rankings.
-#
 # RRF is a simple but effective rank aggregation method that:
 #   - Doesn't require score normalization across different ranking sources
 #   - Is robust to outliers and score distribution differences
@@ -13,8 +9,6 @@
 #
 # Reference: Cormack, Clarke, Buettcher (2009) "Reciprocal Rank Fusion
 #            outperforms Condorcet and individual Rank Learning Methods"
-#
-# =============================================================================
 
 name: cortex-rrf-fusion
 description: "Reciprocal Rank Fusion to combine multiple file rankings"
@@ -50,6 +44,7 @@ inputs:
     type: str
     description: Path to SQLite state database.
     default: ""
+    required: true
 
   models:
     type: dict
@@ -66,14 +61,15 @@ inputs:
     description: Task ID for salience tracking.
     default: ""
 
+  depth:
+    type: num
+    description: Depth of the task tree.
+    default: 0
+
 blocks:
-  # ===========================================================================
-  # STEP 1: Register capability in task tree
-  # ===========================================================================
   - id: register
     type: Sql
     description: Register this capability in the task tree.
-    condition: "{{ inputs.state | trim != '' }}"
     inputs:
       engine: sqlite
       path: "{{ inputs.state }}"
@@ -83,14 +79,11 @@ blocks:
         parent_id: "{{ inputs.parent_id if inputs.parent_id else none }}"
         kind: capability
         name: cortex-rrf-fusion
-        metadata: "{{ {'labels': {'capability_type': 'salience', 'algorithm': 'rrf'}} }}"
-        inputs: "{{ {'k': inputs.k, 'context_budget': inputs.context_budget, 'max_results': inputs.max_results, 'ranking_sources': inputs.rankings | length} }}"
+        metadata: "{'labels': {'capability_type': 'salience', 'algorithm': 'rrf'}}"
+        inputs: "{'k': {{ inputs.k }}, 'context_budget': {{ inputs.context_budget }}, 'max_results': {{ inputs.max_results }}, 'ranking_sources': {{ inputs.rankings | length}} }"
         status: running
-        depth: 2
+        depth: "{{ inputs.depth }}"
 
-  # ===========================================================================
-  # STEP 2: Compute RRF fusion
-  # ===========================================================================
   - id: fuse
     type: Shell
     depends_on:
@@ -245,27 +238,22 @@ blocks:
         CONTEXT_BUDGET: "{{ inputs.context_budget }}"
         MAX_RESULTS: "{{ inputs.max_results }}"
 
-  # ===========================================================================
-  # STEP 3: Store fused ranking in salience cache
-  # ===========================================================================
   - id: store_fusion
     type: Sql
     description: Store fused ranking in salience cache.
     depends_on: [fuse]
-    condition: "{{ inputs.state | trim != '' and blocks.fuse.succeeded }}"
+    condition: "{{ blocks.fuse.succeeded }}"
     inputs:
       engine: sqlite
       path: "{{ inputs.state }}"
-      sql: |
-        INSERT INTO salience_cache (task_id, ranking_type, query, results, created_at)
-        VALUES (?, 'rrf_fused', 'combined', ?, datetime('now'))
-      params:
-        - "{{ inputs.task_id | default(inputs.parent_id) }}"
-        - "{{ blocks.fuse.outputs.stdout }}"
+      model: "{{ inputs.models.salience_cache }}"
+      op: insert
+      data:
+        task_id: "{{ inputs.task_id | default(inputs.parent_id) }}"
+        ranking_type: rrf_fused
+        query: combined
+        results: "{{ blocks.fuse.outputs.stdout }}"
 
-  # ===========================================================================
-  # STEP 4: Track completion
-  # ===========================================================================
   - id: track_done
     type: Sql
     description: Mark capability complete.
@@ -282,44 +270,45 @@ blocks:
       model: "{{ inputs.models.task }}"
       op: update
       where:
-        id: "{{ (blocks.register.outputs.rows | default([{}]))[0].id | default('') }}"
+        id: "{{ get(blocks.register.outputs, 'rows.0.id', '') }}"
       data:
         status: "{{ 'done' if blocks.fuse.succeeded else 'failed' }}"
-        outputs: "{{ {'count': (blocks.fuse.outputs.stdout | fromjson).count if blocks.fuse.succeeded else 0, 'sources_fused': (blocks.fuse.outputs.stdout | fromjson).sources_fused if blocks.fuse.succeeded else []} }}"
+        outputs: |
+          {
+            'count': {{ get(blocks.fuse.outputs.stdout, 'count', 0) if blocks.fuse.succeeded else 0 }},
+            'sources_fused': {{ get(blocks.fuse.outputs.stdout, 'sources_fused', []) if blocks.fuse.succeeded else [] }}
+          }
 
-# =============================================================================
-# OUTPUTS
-# =============================================================================
 outputs:
   fused_ranking:
     type: list
     description: "Files ranked by RRF score with inclusion status."
-    value: "{{ (blocks.fuse.outputs.stdout | fromjson).fused_ranking if blocks.fuse.succeeded else [] }}"
+    value: "{{ get(blocks.fuse.outputs.stdout, 'fused_ranking', []) if blocks.fuse.succeeded else [] }}"
 
   excluded:
     type: list
     description: "Files excluded due to context budget."
-    value: "{{ (blocks.fuse.outputs.stdout | fromjson).excluded if blocks.fuse.succeeded else [] }}"
+    value: "{{ get(blocks.fuse.outputs.stdout, 'excluded', []) if blocks.fuse.succeeded else [] }}"
 
   count:
     type: num
     description: "Number of files included."
-    value: "{{ (blocks.fuse.outputs.stdout | fromjson).count if blocks.fuse.succeeded else 0 }}"
+    value: "{{ get(blocks.fuse.outputs.stdout, 'count', 0) if blocks.fuse.succeeded else 0 }}"
 
   tokens_used:
     type: num
     description: "Estimated tokens used by included files."
-    value: "{{ (blocks.fuse.outputs.stdout | fromjson).tokens_used if blocks.fuse.succeeded else 0 }}"
+    value: "{{ get(blocks.fuse.outputs.stdout, 'tokens_used', 0) if blocks.fuse.succeeded else 0 }}"
 
   tokens_remaining:
     type: num
     description: "Remaining context budget."
-    value: "{{ (blocks.fuse.outputs.stdout | fromjson).tokens_remaining if blocks.fuse.succeeded else 0 }}"
+    value: "{{ get(blocks.fuse.outputs.stdout, 'tokens_remaining', 0) if blocks.fuse.succeeded else 0 }}"
 
   sources_fused:
     type: list
     description: "Ranking sources that were combined."
-    value: "{{ (blocks.fuse.outputs.stdout | fromjson).sources_fused if blocks.fuse.succeeded else [] }}"
+    value: "{{ get(blocks.fuse.outputs.stdout, 'sources_fused', []) if blocks.fuse.succeeded else [] }}"
 
   state:
     type: str
