@@ -25,7 +25,7 @@ from .formatting import (
     format_workflow_list_markdown,
     format_workflow_not_found_error,
 )
-from .server import mcp
+from .server import load_workflows, mcp
 
 # =============================================================================
 # MCP Tools (following official SDK decorator pattern)
@@ -493,6 +493,45 @@ async def validate_workflow_yaml(
         "errors": errors,
         "warnings": warnings,
         "block_types_used": block_types_used,
+    }
+
+
+@mcp.tool(
+    annotations=ToolAnnotations(
+        title="Reload Workflows",
+        readOnlyHint=False,  # Modifies server state (registry)
+        destructiveHint=False,
+        idempotentHint=True,  # Repeated calls have same effect
+        openWorldHint=False,
+    )
+)
+async def reload_workflows(
+    *,
+    ctx: AppContextType,
+) -> dict[str, Any]:
+    """Reload all workflows from disk (built-in and user templates)."""
+    # Access shared resources from lifespan context
+    if ctx is None:
+        return {
+            "status": "failure",
+            "message": "Server context not available.",
+        }
+
+    app_ctx = ctx.request_context.lifespan_context
+    registry = app_ctx.registry
+
+    try:
+        load_workflows(registry)
+    except Exception as e:
+        return {
+            "status": "failure",
+            "message": f"Failed to reload workflows: {str(e)}",
+        }
+
+    return {
+        "status": "success",
+        "message": "Successfully reloaded workflows",
+        "total": len(registry.list_names()),
     }
 
 

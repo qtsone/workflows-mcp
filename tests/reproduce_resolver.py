@@ -1,13 +1,12 @@
 import asyncio
-import sys
 import os
-from datetime import datetime
+import sys
 
 # Add src to path
 sys.path.append(os.path.join(os.getcwd(), "src"))
 
+from workflows_mcp.engine.resolver.classifier import ExpressionClassifier
 from workflows_mcp.engine.resolver.unified_resolver import UnifiedVariableResolver
-from workflows_mcp.engine.resolver.classifier import ExpressionClassifier, ExpressionType
 
 
 async def run_test():
@@ -62,7 +61,7 @@ async def run_test():
 
     # Test 3: Pass a dict that contains the expression (simulating Block Definition Inputs)
     # The WorkflowRunner iterates over inputs and resolves them.
-    print(f"\nTest 3: Simulating block definition inputs")
+    print("\nTest 3: Simulating block definition inputs")
     block_inputs = {
         "features": "{{ inputs.features }}",
         "nested": {"prop": "{{ inputs.features.dual_track_enabled }}"},
