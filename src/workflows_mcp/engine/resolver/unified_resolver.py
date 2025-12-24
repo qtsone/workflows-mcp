@@ -276,12 +276,13 @@ class UnifiedVariableResolver:
     @staticmethod
     def _get(obj: Any, path: int | str, default: Any = None) -> Any:
         """
-        Safe deep accessor with JSON auto-parsing.
+        Safe deep accessor with JSON auto-parsing at all levels.
 
         Features:
         - Dotted paths: get(obj, 'a.b.c', default)
         - Array indices in paths: get(obj, 'items.0.name', default)
-        - JSON auto-parse: get('{"a":1}', 'a', 0) → 1
+        - JSON auto-parse at ROOT: get('{"a":1}', 'a', 0) → 1
+        - JSON auto-parse at VALUE: get(dict, 'key', {}) parses dict['key'] if JSON string
         - None-safe: Returns default if any part is None/missing
         - Exception-safe: Never throws, always returns default
 
@@ -293,11 +294,18 @@ class UnifiedVariableResolver:
         This null-handling behavior is important for LLM responses where
         optional fields may be explicitly set to null rather than omitted.
 
+        JSON Auto-Parsing (at ALL levels):
+        - If root object is a JSON string, it's parsed before traversal
+        - If any intermediate value is a JSON string, it's parsed before continuing
+        - If final value is a JSON string, it's parsed before returning
+        - This handles Shell block outputs seamlessly: get(outputs, 'stdout.field', default)
+
         Examples:
             {{get(data, 'user.profile.name', 'Unknown')}}  # Dotted path
             {{get(items, 0, {})}}                          # List index
             {{get(data, 'results.0.id', none)}}            # Index in path
-            {{get(json_string, 'status', 'error')}}        # Auto-parses JSON
+            {{get(json_string, 'status', 'error')}}        # Auto-parses JSON root
+            {{get(context, 'json_field', {})}}             # Auto-parses JSON value
             {{get(response, 'sub_queries', [])}}           # Returns [] if null
         """
         try:
@@ -335,6 +343,18 @@ class UnifiedVariableResolver:
                 if current is None:
                     return default
 
+                # Auto-parse JSON strings at intermediate levels
+                # This handles paths like 'stdout.field' where stdout is a JSON string
+                if isinstance(current, str):
+                    current = current.strip()
+                    if current and current[0] in "{[":
+                        try:
+                            current = json.loads(current)
+                        except (json.JSONDecodeError, TypeError, ValueError):
+                            return default  # Can't traverse unparseable JSON
+                    else:
+                        return default  # Can't traverse plain string
+
                 # Numeric index in path (e.g., "items.0.name")
                 if part.lstrip("-").isdigit():
                     try:
@@ -364,6 +384,16 @@ class UnifiedVariableResolver:
                         pass
 
                 return default
+
+            # Auto-parse JSON strings in the final value
+            # This handles cases like get(dict, 'key', default) where dict['key'] is a JSON string
+            if isinstance(current, str):
+                current = current.strip()
+                if current and current[0] in "{[":
+                    try:
+                        current = json.loads(current)
+                    except (json.JSONDecodeError, TypeError, ValueError):
+                        pass  # Return original string if parsing fails
 
             return default if current is None else current
 

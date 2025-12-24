@@ -15,6 +15,7 @@ and the workflow execution layer (which needs Metadata).
 from __future__ import annotations
 
 import asyncio
+import traceback
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any, Literal
 
@@ -220,8 +221,10 @@ class BlockOrchestrator:
             # Execution failed (executor crashed)
             execution_time_ms = int(datetime.now(UTC).timestamp() * 1000 - start_time_ms)
 
-            # Get error message
-            error_msg = f"{type(e).__name__}: {str(e)}"
+            # Get error details with full traceback for debugging
+            error_type = type(e).__name__
+            error_msg = f"{error_type}: {str(e)}"
+            error_traceback = traceback.format_exc()
 
             metadata = Metadata.create_leaf_failure(
                 type=executor.type_name,
@@ -234,6 +237,9 @@ class BlockOrchestrator:
                 depth=depth,
                 outcome="crash",  # Distinguish crash from operation failure
                 message=error_msg,
+                # Enhanced error logging (extra fields via Metadata.extra='allow')
+                error_type=error_type,
+                error_traceback=error_traceback,
             )
 
             # Create default output instance to prevent VariableNotFoundError
@@ -342,7 +348,10 @@ class BlockOrchestrator:
             # Resume failed
             execution_time_ms = int(datetime.now(UTC).timestamp() * 1000 - start_time_ms)
 
-            error_msg = f"{type(e).__name__}: {str(e)}"
+            # Get error details with full traceback for debugging
+            error_type = type(e).__name__
+            error_msg = f"{error_type}: {str(e)}"
+            error_traceback = traceback.format_exc()
 
             metadata = Metadata.create_leaf_failure(
                 type=executor.type_name,
@@ -354,6 +363,9 @@ class BlockOrchestrator:
                 index=execution_order,
                 depth=depth,
                 message=error_msg,
+                # Enhanced error logging (extra fields via Metadata.extra='allow')
+                error_type=error_type,
+                error_traceback=error_traceback,
             )
 
             return BlockExecution(
