@@ -1,0 +1,210 @@
+name: github-app-auth
+description: |
+  Authenticate as a GitHub App and obtain an installation access token.
+
+  Uses `pyjwt` and `cryptography` (native Python) to sign the JWT.
+  Includes logic to auto-discover installation ID if context is available.
+
+version: "1.0"
+tags: [git, auth, github, app]
+
+inputs:
+  app_id:
+    type: str
+    description: "GitHub App ID."
+    required: false
+    default: ""
+
+  private_key:
+    type: str
+    description: "GitHub App private key (PEM format)."
+    required: false
+    default: ""
+
+  installation_id:
+    type: str
+    description: |
+      Installation ID to request token for.
+      If omitted, attempts to find installation for a specific account/repo if context is provided (TODO: add context inputs if needed).
+      For now, if omitted, will fetch all installations and pick the first one (useful for single-install apps).
+    required: false
+    default: ""
+
+  owner:
+    type: str
+    description: "Repo owner (account) to find installation for."
+    required: false
+    default: ""
+
+  repo:
+    type: str
+    description: "Repo name to find installation for."
+    required: false
+    default: ""
+
+blocks:
+  - id: generate_jwt
+    type: Shell
+    description: Generate signed JWT for GitHub App.
+    inputs:
+      env:
+        APP_ID: "{{ inputs.app_id | default(secrets.GITHUB_APP_ID, true) }}"
+        PRIVATE_KEY: "{{ inputs.private_key | default(secrets.GITHUB_APP_PRIVATE_KEY, true) }}"
+      working_dir: "{{ tmp }}"
+      command: |
+        python3 << 'EOF'
+        import jwt
+        import time
+        import os
+        import json
+        import sys
+        import base64
+
+        app_id = os.environ.get('APP_ID')
+        private_key = os.environ.get('PRIVATE_KEY')
+
+        if not app_id or not private_key:
+            print("Error: APP_ID and PRIVATE_KEY are required", file=sys.stderr)
+            sys.exit(1)
+            
+        # Handle Base64 encoded private key (common in secret managers/env vars to avoid newline issues)
+        if "-----BEGIN" not in private_key:
+            try:
+                decoded = base64.b64decode(private_key).decode('utf-8')
+                if "-----BEGIN" in decoded:
+                    private_key = decoded
+            except Exception:
+                # If decode fails or doesn't look like PEM, assume it's just a malformed raw string calling for help
+                pass
+
+        # Create JWT payload
+        now = int(time.time())
+        payload = {
+            # Issued at time, 60 seconds in the past to allow for clock drift
+            "iat": now - 60,
+            # JWT expiration time (10 minute maximum)
+            "exp": now + (10 * 60),
+            # GitHub App's identifier
+            "iss": app_id
+        }
+
+        # Encode (Sign) JWT
+        try:
+            encoded_jwt = jwt.encode(payload, private_key, algorithm="RS256")
+            with open('token', 'w') as f:
+                f.write(encoded_jwt)
+            # print(encoded_jwt) # Debug
+        except Exception as e:
+            print(f"Error signing JWT: {e}", file=sys.stderr)
+            sys.exit(1)
+        EOF
+    outputs:
+      jwt:
+        type: str
+        path: "token"
+
+  - id: resolve_installation_id
+    description: |
+      Find installation ID if not provided.
+      If owner/repo provided, find specific installation. 
+      Otherwise, return first installation.
+    depends_on: [generate_jwt]
+    condition: "{{ inputs.installation_id | trim == '' }}"
+    type: HttpCall
+    inputs:
+      url: >-
+        {{ 
+          'https://api.github.com/repos/' + inputs.owner | trim + '/' + inputs.repo | trim + '/installation' 
+          if inputs.owner | trim != '' and inputs.repo | trim != '' 
+          else 'https://api.github.com/app/installations' 
+        }}
+      method: GET
+      headers:
+        Authorization: "Bearer {{ blocks.generate_jwt.outputs.jwt | trim }}"
+        Accept: "application/vnd.github+json"
+        X-GitHub-Api-Version: "2022-11-28"
+
+  - id: parse_installation_id
+    type: Shell
+    description: Parse installation ID from API response.
+    depends_on: [resolve_installation_id]
+    condition: "{{ inputs.installation_id | trim == '' }}"
+    inputs:
+      env:
+        RESPONSE: "{{ blocks.resolve_installation_id.outputs.response_body }}"
+        IS_LIST: "{{ 'true' if inputs.owner | trim == '' and inputs.repo | trim == '' else 'false' }}"
+      working_dir: "{{ tmp }}"
+      command: |
+        python3 << 'EOF'
+        import json
+        import os
+        import sys
+
+        response = os.environ.get('RESPONSE', '')
+        is_list = os.environ.get('IS_LIST') == 'true'
+
+        try:
+            data = json.loads(response)
+        except json.JSONDecodeError:
+            print(f"Invalid JSON response: {response}", file=sys.stderr)
+            sys.exit(1)
+
+        # Handle simplified error format or API errors
+        if isinstance(data, dict):
+             if data.get('message') == 'Not Found':
+                  print("Installation not found.", file=sys.stderr)
+                  sys.exit(1)
+
+        inst_id = ""
+        if is_list:
+            if isinstance(data, list) and len(data) > 0:
+                inst_id = str(data[0].get('id', ''))
+            else:
+                print("No installations found for this app.", file=sys.stderr)
+                sys.exit(1)
+        else:
+            # Single object
+            inst_id = str(data.get('id', ''))
+
+        if not inst_id:
+             print("Could not resolve installation ID.", file=sys.stderr)
+             sys.exit(1)
+        with open('installation_id', 'w') as f:
+            f.write(inst_id)
+        EOF
+    outputs:
+      id:
+        type: str
+        path: installation_id
+
+  - id: get_access_token
+    type: HttpCall
+    description: Obtain installation access token.
+    depends_on:
+      - block: generate_jwt
+      - block: parse_installation_id
+        required: false
+    inputs:
+      url: "https://api.github.com/app/installations/{{ inputs.installation_id if inputs.installation_id != '' else blocks.parse_installation_id.outputs.id }}/access_tokens"
+      method: POST
+      headers:
+        Authorization: "Bearer {{ blocks.generate_jwt.outputs.jwt | trim }}"
+        Accept: "application/vnd.github+json"
+        X-GitHub-Api-Version: "2022-11-28"
+
+outputs:
+  token:
+    value: "{{ get(blocks.get_access_token.outputs, 'response_body.token', '') }}"
+    type: str
+    description: "GitHub App Installation Access Token."
+
+  installation_id:
+    value: >-
+      {% set installation_id = inputs.installation_id | trim %}
+      {% if installation_id != '' %}
+        {{ installation_id }}
+      {% else %}
+        {{ blocks.parse_installation_id.outputs.id }}
+      {% endif %}
+    type: str
+    description: "The installation ID used."

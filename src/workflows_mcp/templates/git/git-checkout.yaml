@@ -97,6 +97,11 @@ inputs:
     default: false
     required: false
 
+  fetch_refspec:
+    type: str
+    description: "Custom refspec to fetch (e.g. 'pull/123/head:pr-123'). runs after clone/fetch."
+    default: ""
+    required: false
 
 blocks:
   - id: validate_inputs
@@ -123,6 +128,7 @@ blocks:
         echo "✓ Input validation passed"
 
   - id: auth
+    depends_on: [validate_inputs]
     type: Workflow
     inputs:
       workflow: git-auth
@@ -130,9 +136,9 @@ blocks:
         repo: "{{inputs.repo}}"
         token: "{{inputs.token}}"
         ssh_key: "{{inputs.ssh_key}}"
-    depends_on: [validate_inputs]
 
   - id: prepare_target_directory
+    depends_on: [auth]
     type: Shell
     inputs:
       working_dir: "{{tmp}}"
@@ -155,16 +161,15 @@ blocks:
           printf "new" > target_state
           echo "✓ Target directory will be created"
         fi
-    depends_on: [auth]
     outputs:
       state:
         type: str
         path: "{{tmp}}/target_state"
 
   - id: check_clean_state
-    type: Shell
+    depends_on: [prepare_target_directory]
     condition: "{{blocks.prepare_target_directory.outputs.state == 'existing_repo'}}"
-    continue_on_error: true
+    type: Shell
     inputs:
       working_dir: "{{inputs.workspace}}"
       command: |
@@ -175,10 +180,12 @@ blocks:
           git status --short | head -10
           exit 1
         fi
-    depends_on: [prepare_target_directory]
 
   - id: prompt_for_clean_action
     type: Prompt
+    depends_on:
+      - block: check_clean_state
+        required: false
     condition: "{{inputs.clean_mode == 'prompt' and blocks.check_clean_state.failed}}"
     inputs:
       prompt: |
@@ -193,13 +200,15 @@ blocks:
           abort    - Stop the workflow
 
         Enter your choice:
+
+  - id: handle_uncommitted_changes
     depends_on:
       - block: check_clean_state
         required: false
-
-  - id: handle_uncommitted_changes
-    type: Shell
+      - block: prompt_for_clean_action
+        required: false
     condition: "{{blocks.check_clean_state.failed and inputs.clean_mode != 'skip'}}"
+    type: Shell
     inputs:
       working_dir: "{{inputs.workspace}}"
       command: |
@@ -257,17 +266,17 @@ blocks:
             exit 1
             ;;
         esac
-    depends_on:
-      - block: check_clean_state
-        required: false
-      - block: prompt_for_clean_action
-        required: false
 
   - id: clone_first_attempt
-    type: Shell
+    depends_on:
+      - block: handle_uncommitted_changes
+        required: false
+      - block: auth
+        required: true
     condition: "{{blocks.prepare_target_directory.outputs.state != 'existing_repo'}}"
-    continue_on_error: true
+    type: Shell
     inputs:
+      timeout: 300
       command: |
         {% set strategy = blocks.auth.outputs.strategy %}
         {% set method = blocks.auth.outputs.method %}
@@ -311,17 +320,15 @@ blocks:
           "$REPO_URL" "{{inputs.workspace}}"
 
         echo "✓ Clone successful"
-      timeout: 300
-    depends_on:
-      - block: handle_uncommitted_changes
-        required: false
-      - block: auth
-        required: true
 
   - id: clone_ref_fallback
-    type: Shell
+    depends_on:
+      - block: clone_first_attempt
+        required: false
     condition: "{{inputs.ref != '' and blocks.clone_first_attempt.failed}}"
+    type: Shell
     inputs:
+      timeout: 300
       command: |
         {% set method = blocks.auth.outputs.method %}
         {% set base_url = blocks.auth.outputs.repo_url %}
@@ -351,15 +358,17 @@ blocks:
           "$REPO_URL" "{{inputs.workspace}}"
 
         echo "✓ Cloned (will create '{{inputs.ref}}' as new branch)"
-      timeout: 300
-    depends_on:
-      - block: clone_first_attempt
-        required: false
 
   - id: fetch_updates
-    type: Shell
+    depends_on:
+      - block: handle_uncommitted_changes
+        required: false
+      - block: auth
+        required: true
     condition: "{{blocks.prepare_target_directory.outputs.state == 'existing_repo'}}"
+    type: Shell
     inputs:
+      timeout: 300
       working_dir: "{{inputs.workspace}}"
       command: |
         {% set ssh_cmd = blocks.auth.outputs.git_ssh_command %}
@@ -373,17 +382,43 @@ blocks:
           --quiet
 
         echo "✓ Updates fetched successfully"
-      timeout: 300
+
+  - id: custom_fetch
     depends_on:
-      - block: handle_uncommitted_changes
+      - block: clone_first_attempt
         required: false
-      - block: auth
-        required: true
+      - block: clone_ref_fallback
+        required: false
+      - block: fetch_updates
+        required: false
+    condition: "{{inputs.fetch_refspec | trim!= ''}}"
+    type: Shell
+    inputs:
+      timeout: 300
+      working_dir: "{{inputs.workspace}}"
+      command: |
+        echo "Fetching custom refspec: {{inputs.fetch_refspec}}"
+        {% set ssh_cmd = blocks.auth.outputs.git_ssh_command %}
+        {% if ssh_cmd %}
+        export GIT_SSH_COMMAND="{{ ssh_cmd }}"
+        {% endif %}
+        git fetch origin {{inputs.fetch_refspec}}
+        echo "✓ Custom refspec fetched"
 
   - id: configure_sparse_checkout
+    depends_on:
+      - block: clone_first_attempt
+        required: false
+      - block: clone_ref_fallback
+        required: false
+      - block: fetch_updates
+        required: false
+      - block: custom_fetch
+        required: false
+    condition: "{{inputs.sparse_checkout | trim != ''}}"
     type: Shell
-    condition: "{{inputs.sparse_checkout != ''}}"
     inputs:
+      timeout: 60
       working_dir: "{{inputs.workspace}}"
       command: |
         echo "Configuring sparse checkout..."
@@ -399,31 +434,29 @@ blocks:
 
         echo "✓ Sparse checkout configured with patterns:"
         git sparse-checkout list
-      timeout: 60
-    depends_on:
-      - block: clone_first_attempt
-        required: false
-      - block: clone_ref_fallback
-        required: false
-      - block: fetch_updates
-        required: false
 
   - id: checkout_sparse
+    depends_on: [configure_sparse_checkout]
+    condition: "{{inputs.sparse_checkout | trim != '' and blocks.clone_first_attempt.succeeded}}"
     type: Shell
-    condition: "{{inputs.sparse_checkout != '' and blocks.clone_first_attempt.succeeded}}"
     inputs:
+      timeout: 60
       working_dir: "{{inputs.workspace}}"
       command: |
         echo "Checking out files (sparse)..."
         git checkout
         echo "✓ Checked out sparse files"
-      timeout: 60
-    depends_on: [configure_sparse_checkout]
 
   - id: checkout_new_branch
-    type: Shell
+    depends_on:
+      - block: configure_sparse_checkout
+        required: false
+      - block: custom_fetch
+        required: false
     condition: "{{blocks.clone_ref_fallback.succeeded}}"
+    type: Shell
     inputs:
+      timeout: 60
       working_dir: "{{inputs.workspace}}"
       command: |
         echo "Creating new branch: {{inputs.ref}}"
@@ -431,18 +464,23 @@ blocks:
         git branch {{inputs.ref}}
         git checkout {{inputs.ref}}
         {% else %}
-        git checkout -b {{inputs.ref}}
+        if git show-ref --verify --quiet "refs/heads/{{inputs.ref}}"; then
+          echo "Branch {{inputs.ref}} already exists, checking out..."
+          git checkout {{inputs.ref}}
+        else
+          git checkout -b {{inputs.ref}}
+        fi
         {% endif %}
-        echo "✓ Created and checked out new branch: {{inputs.ref}}"
-      timeout: 60
+        echo "✓ Checked out branch: {{inputs.ref}}"
+
+  - id: checkout_existing_repo
     depends_on:
       - block: configure_sparse_checkout
         required: false
-
-  - id: checkout_existing_repo
-    type: Shell
     condition: "{{inputs.ref != '' and blocks.prepare_target_directory.outputs.state == 'existing_repo'}}"
+    type: Shell
     inputs:
+      timeout: 120
       working_dir: "{{inputs.workspace}}"
       command: |
         REF="{{inputs.ref}}"
@@ -471,15 +509,21 @@ blocks:
           fi
         fi
         echo "✓ Checked out: $REF"
-      timeout: 120
-    depends_on:
-      - block: configure_sparse_checkout
-        required: false
 
   - id: fetch_tags
-    type: Shell
+    depends_on:
+      - block: checkout_sparse
+        required: false
+      - block: checkout_new_branch
+        required: false
+      - block: checkout_existing_repo
+        required: false
+      - block: clone_first_attempt
+        required: false
     condition: "{{inputs.fetch_tags}}"
+    type: Shell
     inputs:
+      timeout: 60
       working_dir: "{{inputs.workspace}}"
       command: |
         echo "Fetching tags..."
@@ -492,21 +536,15 @@ blocks:
         git fetch --tags origin
 
         echo "✓ Tags fetched successfully"
-      timeout: 60
-    depends_on:
-      - block: checkout_sparse
-        required: false
-      - block: checkout_new_branch
-        required: false
-      - block: checkout_existing_repo
-        required: false
-      - block: clone_first_attempt
-        required: false
 
   - id: checkout_submodules
-    type: Shell
+    depends_on:
+      - block: fetch_tags
+        required: false
     condition: "{{inputs.submodules != 'false'}}"
+    type: Shell
     inputs:
+      timeout: 300
       working_dir: "{{inputs.workspace}}"
       command: |
         echo "Initializing submodules..."
@@ -523,50 +561,38 @@ blocks:
           {% if inputs.fetch_depth > 0 %}--depth={{inputs.fetch_depth}} {% endif %}
 
         echo "✓ Submodules checked out successfully"
-      timeout: 300
-    depends_on:
-      - block: fetch_tags
-        required: false
 
   - id: check_lfs_installed
-    type: Shell
+    depends_on:
+      - block: checkout_submodules
+        required: false
     condition: "{{inputs.lfs}}"
+    type: Shell
     inputs:
+      timeout: 120
       command: |
         if ! command -v git-lfs &> /dev/null; then
           echo "Error: Git LFS is not installed but lfs=true was specified"
           echo "Install with: brew install git-lfs (macOS) or apt-get install git-lfs (Linux)"
           exit 1
         fi
-
         echo "✓ Git LFS is installed"
-    depends_on:
-      - block: checkout_submodules
-        required: false
 
   - id: fetch_lfs_files
-    type: Shell
+    depends_on: [check_lfs_installed]
     condition: "{{inputs.lfs and blocks.check_lfs_installed.succeeded}}"
+    type: Shell
     inputs:
+      timeout: 600
       working_dir: "{{inputs.workspace}}"
       command: |
         echo "Fetching Git LFS files..."
-
         git lfs install
         git lfs fetch
         git lfs checkout
-
         echo "✓ Git LFS files downloaded successfully"
-      timeout: 600
-    depends_on: [check_lfs_installed]
 
   - id: get_commit_sha
-    type: Shell
-    condition: "{{blocks.clone_first_attempt.succeeded or blocks.clone_ref_fallback.succeeded or blocks.fetch_updates.succeeded}}"
-    inputs:
-      working_dir: "{{inputs.workspace}}"
-      command: |
-        git rev-parse HEAD > {{tmp}}/commit_sha
     depends_on:
       - block: fetch_lfs_files
         required: false
@@ -576,18 +602,18 @@ blocks:
         required: false
       - block: fetch_updates
         required: false
+    condition: "{{blocks.clone_first_attempt.succeeded or blocks.clone_ref_fallback.succeeded or blocks.fetch_updates.succeeded}}"
+    type: Shell
+    inputs:
+      working_dir: "{{inputs.workspace}}"
+      command: |
+        git rev-parse HEAD > {{tmp}}/commit_sha
     outputs:
       sha:
         type: str
         path: "{{tmp}}/commit_sha"
 
   - id: get_branch
-    type: Shell
-    condition: "{{blocks.clone_first_attempt.succeeded or blocks.clone_ref_fallback.succeeded or blocks.fetch_updates.succeeded}}"
-    inputs:
-      working_dir: "{{inputs.workspace}}"
-      command: |
-        git branch --show-current > {{tmp}}/current_branch || printf "(detached)" > {{tmp}}/current_branch
     depends_on:
       - block: fetch_lfs_files
         required: false
@@ -597,6 +623,12 @@ blocks:
         required: false
       - block: fetch_updates
         required: false
+    condition: "{{blocks.clone_first_attempt.succeeded or blocks.clone_ref_fallback.succeeded or blocks.fetch_updates.succeeded}}"
+    type: Shell
+    inputs:
+      working_dir: "{{inputs.workspace}}"
+      command: |
+        git branch --show-current > {{tmp}}/current_branch || printf "(detached)" > {{tmp}}/current_branch
     outputs:
       name:
         type: str
