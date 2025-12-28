@@ -385,10 +385,8 @@ class WorkflowRunner:
                     # Regular block
                     exec_context.set_block_result(
                         block_id=block_id,
-                        inputs=resolved_inputs,
-                        outputs=block_execution.output.model_dump()
-                        if block_execution.output
-                        else {},
+                        inputs=block_execution.inputs,
+                        outputs=self._get_block_outputs(block_execution.output),
                         metadata=block_execution.metadata,
                     )
 
@@ -812,7 +810,7 @@ class WorkflowRunner:
             exec_context.set_block_result(
                 block_id=block_id,
                 inputs=resolved_inputs,
-                outputs=block_execution.output.model_dump() if block_execution.output else {},
+                outputs=self._get_block_outputs(block_execution.output),
                 metadata=block_execution.metadata,  # Metadata from orchestrator
             )
 
@@ -1101,12 +1099,14 @@ class WorkflowRunner:
 
     def _execution_to_dict(self, exec_context: Execution) -> dict[str, Any]:
         """Convert Execution model to dict for variable resolution."""
-        # Get workflow metadata from _internal storage
         metadata = exec_context.workflow_metadata
-        blocks = {
-            block_id: (block_exec.model_dump() if isinstance(block_exec, Execution) else block_exec)
-            for block_id, block_exec in exec_context.blocks.items()
-        }
+        blocks = {}
+        for block_id, block_exec in exec_context.blocks.items():
+            if isinstance(block_exec, Execution):
+                blocks[block_id] = block_exec.model_dump()
+            else:
+                blocks[block_id] = block_exec
+
         return {
             "inputs": exec_context.inputs,
             "metadata": metadata,
@@ -1349,6 +1349,12 @@ class WorkflowRunner:
             runtime_inputs=execution_state_dict.get("runtime_inputs", {}),
             pause_metadata=execution_state_dict.get("pause_metadata"),
         )
+
+    def _get_block_outputs(self, block_output: Any) -> dict[str, Any]:
+        """Extract output dict from BlockOutput."""
+        if not block_output:
+            return {}
+        return block_output.model_dump()
 
 
 __all__ = ["WorkflowRunner"]

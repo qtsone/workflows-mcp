@@ -50,9 +50,8 @@ class ValueType(str, Enum):
     - str: Text values (Python str)
     - num: Numeric values (int or float)
     - bool: Boolean values (Python bool)
-    - list: List/array values (Python list)
-    - dict: Dictionary/object values (Python dict)
-    - json: Special - parse as JSON (returns dict/list/str/int/float/bool/None)
+    - list: JSON array (Python list)
+    - dict: JSON object (Python dict)
     """
 
     STR = "str"
@@ -60,7 +59,6 @@ class ValueType(str, Enum):
     BOOL = "bool"
     LIST = "list"
     DICT = "dict"
-    JSON = "json"  # Special: JSON parsing
 
     @classmethod
     def input_types(cls) -> tuple[str, ...]:
@@ -75,8 +73,14 @@ class ValueType(str, Enum):
 
     @classmethod
     def output_types(cls) -> tuple[str, ...]:
-        """Get tuple of output type values (excludes list/dict, adds json)."""
-        return (cls.STR.value, cls.NUM.value, cls.BOOL.value, cls.JSON.value)
+        """Get tuple of output type values."""
+        return (
+            cls.STR.value,
+            cls.NUM.value,
+            cls.BOOL.value,
+            cls.DICT.value,
+            cls.LIST.value,
+        )
 
 
 # Input types - uses ValueType for consistency

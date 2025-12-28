@@ -58,11 +58,20 @@ class ShellInput(BlockInput):
         """Auto-coerce env values to strings.
 
         Environment variables are always strings at the OS level, so we
-        auto-convert numeric and other types for convenience.
+        auto-convert values for convenience:
+        - dicts/lists: JSON serialized (with double quotes)
+        - everything else: str() conversion
         """
         if not isinstance(v, dict):
             return v
-        return {str(k): str(val) for k, val in v.items()}
+        result = {}
+        for k, val in v.items():
+            if isinstance(val, (dict, list)):
+                # Serialize structured data as JSON for shell scripts to parse
+                result[str(k)] = json.dumps(val)
+            else:
+                result[str(k)] = str(val)
+        return result
 
 
 class ShellOutput(BlockOutput):
@@ -189,6 +198,19 @@ def validate_output_path(
     return resolved_path
 
 
+def _unwrap_proxy(value: Any) -> Any:
+    """Unwrap BlockProxy objects to their underlying dict.
+
+    BlockProxy wraps dict values in a _data attribute for attribute-style access.
+    This helper extracts the underlying dict when needed.
+    """
+    if hasattr(value, "_data"):
+        data = object.__getattribute__(value, "_data")
+        if isinstance(data, dict):
+            return data
+    return value
+
+
 def parse_output_value(content: str, output_type: str) -> Any:
     """
     Parse file content according to declared type.
@@ -228,11 +250,22 @@ def parse_output_value(content: str, output_type: str) -> Any:
                 f"Cannot parse as bool: {content}. "
                 f"Accepted values: true/false, 1/0, yes/no (case-insensitive)"
             )
-    elif output_type == "json":
+    elif output_type in ("dict", "list"):
+        # Parse JSON content with type validation
+        # - dict: must be JSON object (Python dict)
+        # - list: must be JSON array (Python list)
         try:
-            return json.loads(content)
+            value = json.loads(content)
         except json.JSONDecodeError as e:
-            raise ValueError(f"Cannot parse as JSON: {e}")
+            raise ValueError(f"Cannot parse as {output_type}: {e}")
+
+        # Strict type validation
+        if output_type == "dict" and not isinstance(value, dict):
+            raise ValueError(f"Parsed JSON is not a dict: {type(value).__name__}")
+        if output_type == "list" and not isinstance(value, list):
+            raise ValueError(f"Parsed JSON is not a list: {type(value).__name__}")
+        return value
+
     else:
         raise ValueError(f"Unknown output type: {output_type}")
 
@@ -283,6 +316,9 @@ def coerce_value_type(value: Any, output_type: str) -> Any:
         # Special handling for booleans to produce JSON-compatible strings
         if isinstance(value, bool):
             return "true" if value else "false"
+        # Use json.dumps for dicts/lists to ensure valid JSON (double quotes)
+        if isinstance(value, (dict, list)):
+            return json.dumps(value)
         return str(value)
 
     elif output_type == "num":
@@ -310,12 +346,6 @@ def coerce_value_type(value: Any, output_type: str) -> Any:
             f"Only bool values or integers 0/1 are accepted."
         )
 
-    elif output_type == "json":
-        # Accept dict, list, or JSON-compatible primitives
-        if isinstance(value, (dict, list, str, int, float, bool, type(None))):
-            return value
-        raise ValueError(f"Cannot coerce {type(value).__name__} to json: {value}")
-
     elif output_type == "list":
         # If already list, return as-is
         if isinstance(value, list):
@@ -326,6 +356,10 @@ def coerce_value_type(value: Any, output_type: str) -> Any:
         # If already dict, return as-is
         if isinstance(value, dict):
             return value
+        # Handle proxy objects
+        unwrapped = _unwrap_proxy(value)
+        if unwrapped is not value:
+            return unwrapped
         raise ValueError(f"Cannot coerce {type(value).__name__} to dict: {value}")
 
     else:

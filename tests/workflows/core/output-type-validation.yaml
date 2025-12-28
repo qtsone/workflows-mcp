@@ -1,0 +1,31 @@
+name: output-type-validation
+description: Test workflow output type coercion logic
+version: "1.0"
+tags: [test, types, core]
+
+blocks:
+  - id: generate
+    type: Shell
+    inputs:
+      working_dir: "{{tmp}}"
+      command: |
+        python3 -c 'import json; print(json.dumps({"foo": "bar"}))' > output.json
+    outputs:
+      test_json:
+        type: dict
+        path: "output.json"
+      test_dict:
+        type: dict
+        path: "output.json"
+      test_str:
+        type: str
+        path: "output.json"
+
+outputs:
+  dict_output:
+    type: dict
+    value: "{{ blocks.generate.outputs.test_dict }}"
+
+  str_output:
+    type: str
+    value: "{{ blocks.generate.outputs.test_str }}"
