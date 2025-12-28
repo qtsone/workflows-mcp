@@ -239,10 +239,17 @@ class ReadFilesInput(BlockInput):
         max_length=50,
     )
 
-    base_path: str = Field(
+    base_path: str | None = Field(
         default=".",
         description="Base directory to search from (relative or absolute). Used with patterns.",
     )
+
+    @field_validator("base_path", mode="before")
+    @classmethod
+    def _default_base_path(cls, v: Any) -> Any:
+        if v is None:
+            return "."
+        return v
 
     mode: Literal["full", "outline", "summary"] | str = Field(
         default="full",
