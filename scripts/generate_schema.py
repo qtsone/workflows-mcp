@@ -5,7 +5,7 @@ This script regenerates the workflow schema file:
 - schema.json - Complete schema for validation and documentation
 
 Usage:
-    python generate_schema.py
+    uv run python scripts/generate_schema.py
 """
 
 import json

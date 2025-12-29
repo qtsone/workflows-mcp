@@ -1,0 +1,7 @@
+{
+  "outputs": {
+    "github": "GH Short Results:\nPlatform: github\nRepo: qtsone/workflows-mcp\nPR: 123\nRef: pr-123\nRefspec: pull/123/head:pr-123\nGH Short OK",
+    "gitlab": "GL Full Results:\nPlatform: gitlab\nRepo: owner/repo\nPR: 456\nRef: mr-456\nRefspec: refs/merge-requests/456/head:mr-456\nGL Full OK"
+  },
+  "status": "success"
+}
