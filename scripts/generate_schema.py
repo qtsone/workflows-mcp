@@ -25,7 +25,7 @@ def main() -> None:
     schema = registry.generate_workflow_schema()
 
     # Save complete schema
-    schema_path = Path(__file__).parent / "schema.json"
+    schema_path = Path(__file__).parent.parent / "schema.json"
     with open(schema_path, "w") as f:
         json.dump(schema, f, indent=2)
         f.write("\n")

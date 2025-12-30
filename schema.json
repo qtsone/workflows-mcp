@@ -289,10 +289,17 @@
                       "type": "string"
                     },
                     "inputs": {
-                      "additionalProperties": true,
+                      "anyOf": [
+                        {
+                          "additionalProperties": true,
+                          "type": "object"
+                        },
+                        {
+                          "type": "string"
+                        }
+                      ],
                       "description": "Inputs to pass to child workflow (variables resolved in parent context)",
-                      "title": "Inputs",
-                      "type": "object"
+                      "title": "Inputs"
                     },
                     "timeout_ms": {
                       "anyOf": [
@@ -420,12 +427,19 @@
                       "type": "string"
                     },
                     "operations": {
+                      "anyOf": [
+                        {
+                          "items": {
+                            "$ref": "#/$defs/EditOperation"
+                          },
+                          "type": "array"
+                        },
+                        {
+                          "type": "string"
+                        }
+                      ],
                       "description": "List of edit operations to apply sequentially",
-                      "items": {
-                        "$ref": "#/$defs/EditOperation"
-                      },
-                      "title": "Operations",
-                      "type": "array"
+                      "title": "Operations"
                     },
                     "encoding": {
                       "default": "utf-8",
@@ -533,10 +547,17 @@
                       "type": "array"
                     },
                     "base_path": {
+                      "anyOf": [
+                        {
+                          "type": "string"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ],
                       "default": ".",
                       "description": "Base directory to search from (relative or absolute). Used with patterns.",
-                      "title": "Base Path",
-                      "type": "string"
+                      "title": "Base Path"
                     },
                     "mode": {
                       "anyOf": [
@@ -1834,14 +1855,13 @@
   },
   "$defs": {
     "ValueType": {
-      "description": "Unified Python type system for workflow values.\n\nSingle source of truth for all type declarations across:\n- Workflow inputs\n- Block outputs (file-based)\n- Workflow outputs\n- Output parsing logic\n\nThese match Python's built-in types for consistency with:\n- isinstance() checks in conditions: isinstance({{inputs.name}}, str)\n- Type annotations in executor models: Field(default=\"\", description=\"...\")\n- Variable resolution return types\n\nType mappings:\n- str: Text values (Python str)\n- num: Numeric values (int or float)\n- bool: Boolean values (Python bool)\n- list: List/array values (Python list)\n- dict: Dictionary/object values (Python dict)\n- json: Special - parse as JSON (returns dict/list/str/int/float/bool/None)",
+      "description": "Unified Python type system for workflow values.\n\nSingle source of truth for all type declarations across:\n- Workflow inputs\n- Block outputs (file-based)\n- Workflow outputs\n- Output parsing logic\n\nThese match Python's built-in types for consistency with:\n- isinstance() checks in conditions: isinstance({{inputs.name}}, str)\n- Type annotations in executor models: Field(default=\"\", description=\"...\")\n- Variable resolution return types\n\nType mappings:\n- str: Text values (Python str)\n- num: Numeric values (int or float)\n- bool: Boolean values (Python bool)\n- list: JSON array (Python list)\n- dict: JSON object (Python dict)",
       "enum": [
         "str",
         "num",
         "bool",
         "list",
-        "dict",
-        "json"
+        "dict"
       ],
       "title": "ValueType",
       "type": "string"
@@ -1911,10 +1931,17 @@
           "type": "string"
         },
         "inputs": {
-          "additionalProperties": true,
+          "anyOf": [
+            {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            {
+              "type": "string"
+            }
+          ],
           "description": "Inputs to pass to child workflow (variables resolved in parent context)",
-          "title": "Inputs",
-          "type": "object"
+          "title": "Inputs"
         },
         "timeout_ms": {
           "anyOf": [
@@ -2175,12 +2202,19 @@
           "type": "string"
         },
         "operations": {
+          "anyOf": [
+            {
+              "items": {
+                "$ref": "#/$defs/EditOperation"
+              },
+              "type": "array"
+            },
+            {
+              "type": "string"
+            }
+          ],
           "description": "List of edit operations to apply sequentially",
-          "items": {
-            "$ref": "#/$defs/EditOperation"
-          },
-          "title": "Operations",
-          "type": "array"
+          "title": "Operations"
         },
         "encoding": {
           "default": "utf-8",
@@ -2275,10 +2309,17 @@
           "type": "array"
         },
         "base_path": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
           "default": ".",
           "description": "Base directory to search from (relative or absolute). Used with patterns.",
-          "title": "Base Path",
-          "type": "string"
+          "title": "Base Path"
         },
         "mode": {
           "anyOf": [

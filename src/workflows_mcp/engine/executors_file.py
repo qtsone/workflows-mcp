@@ -823,7 +823,7 @@ class EditFileInput(BlockInput):
     """
 
     path: str = Field(description="Path to file to edit (relative or absolute)")
-    operations: list[EditOperation] = Field(
+    operations: list[EditOperation] | str = Field(
         description="List of edit operations to apply sequentially"
     )
     encoding: str = Field(default="utf-8", description="File encoding")
@@ -1002,7 +1002,22 @@ class EditFileExecutor(BlockExecutor):
         errors: list[str] = []
         operations_applied = 0
 
-        for i, op in enumerate(inputs.operations):
+        # Parse operations if passed as string (JSON)
+        operations = inputs.operations
+        if isinstance(operations, str):
+            try:
+                import json
+
+                parsed = json.loads(operations)
+                if not isinstance(parsed, list):
+                    raise ValueError(
+                        f"Expected JSON list for operations, got {type(parsed).__name__}"
+                    )
+                operations = [EditOperation.model_validate(op) for op in parsed]
+            except Exception as e:
+                raise ValueError(f"Failed to parse operations JSON: {e}") from e
+
+        for i, op in enumerate(operations):
             try:
                 content = self._apply_operation(content, op)
                 operations_applied += 1
