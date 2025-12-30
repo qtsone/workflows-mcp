@@ -1,0 +1,21 @@
+name: safe-model-child
+description: Child workflow with default input
+version: "1.0"
+
+inputs:
+  workspace:
+    type: str
+    description: Workspace path
+    default: "DEFAULT_WORKSPACE"
+
+blocks:
+  - id: echo_workspace
+    type: Shell
+    inputs:
+      command: echo "Workspace is {{inputs.workspace}}"
+      working_dir: "{{tmp}}"
+
+outputs:
+  workspace:
+    value: "{{blocks.echo_workspace.outputs.stdout}}"
+    type: str

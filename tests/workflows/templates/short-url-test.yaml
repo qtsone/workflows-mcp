@@ -10,6 +10,7 @@ blocks:
       inputs:
         url: "qtsone/workflows-mcp/pull/123"
         dry_run: true
+        fetch_metadata: false
 
   - id: verify_github_short
     type: Shell
@@ -43,6 +44,7 @@ blocks:
       inputs:
         url: "https://gitlab.com/owner/repo/-/merge_requests/456"
         dry_run: true
+        fetch_metadata: false
 
   - id: verify_gitlab_full
     type: Shell

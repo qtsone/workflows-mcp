@@ -1163,7 +1163,16 @@ class WorkflowRunner:
 
         # Override with runtime inputs
         if runtime_inputs:
-            merged.update(runtime_inputs)
+            for key, value in runtime_inputs.items():
+                # Fix: If value is explicitly None (null), check if we have a default
+                # If we have a default, we should preserve it instead of overwriting with None
+                if (
+                    value is None
+                    and key in workflow.inputs
+                    and workflow.inputs[key].default is not None
+                ):
+                    continue
+                merged[key] = value
 
         # Validate required inputs
         missing = [
