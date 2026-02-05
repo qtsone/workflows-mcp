@@ -80,7 +80,7 @@ Field names are **exact** - use them precisely in your workflows.
 
 ### Optional Inputs
 
-- **`inputs`** (object): Inputs to pass to child workflow (variables resolved in parent context)
+- **`inputs`** (any): Inputs to pass to child workflow (variables resolved in parent context)
 - **`timeout_ms`** (any): Optional timeout for child execution in milliseconds
 
 ### Example
@@ -139,7 +139,7 @@ Field names are **exact** - use them precisely in your workflows.
 ### Required Inputs
 
 - **`path`** (string): Path to file to edit (relative or absolute)
-- **`operations`** (array): List of edit operations to apply sequentially
+- **`operations`** (any): List of edit operations to apply sequentially
 
 ### Optional Inputs
 
@@ -183,8 +183,8 @@ Field names are **exact** - use them precisely in your workflows.
 ### Optional Inputs
 
 - **`path`** (any): Single file path to read (absolute or relative). Mutually exclusive with patterns. Use for single-file reads.
-- **`patterns`** (array): Glob patterns for files to read (e.g., ['*.py', '**/*.ts', 'docs/**/*.md'])
-- **`base_path`** (string) *(default: `.`)*: Base directory to search from (relative or absolute). Used with patterns.
+- **`patterns`** (any): Glob patterns for files to read (e.g., ['*.py', '**/*.ts', 'docs/**/*.md'])
+- **`base_path`** (any) *(default: `.`)*: Base directory to search from (relative or absolute). Used with patterns.
 - **`mode`** (any) *(default: `full`)*: Output mode: 'full' (complete content), 'outline' (symbol tree with line ranges), 'summary' (outline + docstrings)
 - **`exclude_patterns`** (array): Additional patterns to exclude beyond defaults (e.g., ['*test*', '*.min.js'])
 - **`max_files`** (any) *(default: `20`)*: Maximum number of files to read (1-100, supports interpolation)

@@ -233,11 +233,27 @@ class ReadFilesInput(BlockInput):
         ),
     )
 
-    patterns: list[str] = Field(
+    patterns: list[str] | str = Field(
         default_factory=list,
         description="Glob patterns for files to read (e.g., ['*.py', '**/*.ts', 'docs/**/*.md'])",
         max_length=50,
     )
+
+    @field_validator("patterns", mode="before")
+    @classmethod
+    def _parse_patterns_json(cls, v: Any) -> list[str] | Any:
+        """Parse JSON string patterns into list."""
+        if isinstance(v, str):
+            try:
+                import json
+
+                value = json.loads(v)
+                if not isinstance(value, list):
+                    raise ValueError(f"Parsed JSON must be a list, got {type(value).__name__}")
+                return value
+            except json.JSONDecodeError as e:
+                raise ValueError(f"Invalid JSON in patterns: {e}")
+        return v
 
     base_path: str | None = Field(
         default=".",

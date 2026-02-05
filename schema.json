@@ -538,13 +538,20 @@
                       "title": "Path"
                     },
                     "patterns": {
+                      "anyOf": [
+                        {
+                          "items": {
+                            "type": "string"
+                          },
+                          "type": "array"
+                        },
+                        {
+                          "type": "string"
+                        }
+                      ],
                       "description": "Glob patterns for files to read (e.g., ['*.py', '**/*.ts', 'docs/**/*.md'])",
-                      "items": {
-                        "type": "string"
-                      },
-                      "maxItems": 50,
-                      "title": "Patterns",
-                      "type": "array"
+                      "maxLength": 50,
+                      "title": "Patterns"
                     },
                     "base_path": {
                       "anyOf": [
@@ -2300,13 +2307,20 @@
           "title": "Path"
         },
         "patterns": {
+          "anyOf": [
+            {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            {
+              "type": "string"
+            }
+          ],
           "description": "Glob patterns for files to read (e.g., ['*.py', '**/*.ts', 'docs/**/*.md'])",
-          "items": {
-            "type": "string"
-          },
-          "maxItems": 50,
-          "title": "Patterns",
-          "type": "array"
+          "maxLength": 50,
+          "title": "Patterns"
         },
         "base_path": {
           "anyOf": [

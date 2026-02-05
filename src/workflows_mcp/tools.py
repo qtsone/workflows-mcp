@@ -45,35 +45,69 @@ async def execute_workflow(
     workflow: Annotated[
         str,
         Field(
-            description="Workflow name (use list_workflows() to discover)",
-            min_length=1,
-            max_length=200,
+            description=(
+                "Name of the workflow to execute. Use list_workflows to discover available options"
+            ),
         ),
     ],
     inputs: Annotated[
         dict[str, Any] | None,
-        Field(description="Runtime inputs for {{inputs.*}} substitution"),
-    ] = None,
+        Field(
+            description=(
+                "Key-value pairs passed to the workflow, accessible via {{inputs.key}} in templates"
+            ),
+            default=None,
+        ),
+    ],
     debug: Annotated[
         bool,
-        Field(description="Write debug log to /tmp/"),
-    ] = False,
+        Field(
+            description=(
+                "Write detailed execution trace to "
+                "/tmp/<workflow>-<timestamp>.json for troubleshooting"
+            ),
+            default=False,
+        ),
+    ],
     mode: Annotated[
         Literal["sync", "async"],
-        Field(description="sync=wait for result, async=return job_id"),
-    ] = "sync",
+        Field(
+            description=(
+                "Execution mode: 'sync' waits for completion, "
+                "'async' returns a job_id immediately for tracking"
+            ),
+            default="sync",
+        ),
+    ],
     timeout: Annotated[
         int | None,
         Field(
-            description="Timeout in seconds (async mode only)",
+            description=(
+                "Maximum execution time in seconds for async jobs. Only applies to async mode"
+            ),
             ge=1,
             le=86400,
+            default=None,
         ),
-    ] = None,
+    ],
     *,
     ctx: AppContextType,
 ) -> dict[str, Any]:
-    """Run a workflow by name. Required: workflow. Optional: inputs, mode (sync|async), timeout."""
+    """
+    Run a registered workflow by name to automate a task.
+
+    WHEN TO USE: After calling list_workflows to find available workflow names.
+
+    PARAMETERS:
+    - workflow: The exact workflow name (e.g., "build-project", "deploy-app")
+    - inputs: Key-value pairs the workflow needs (e.g., {"branch": "main"})
+    - mode: "sync" waits for completion, "async" returns job_id immediately
+    - debug: Set True to write execution trace to /tmp for troubleshooting
+
+    RETURNS: {status: "success"|"failure"|"paused", outputs: {...}, ...}
+
+    SEE ALSO: list_workflows (discover names), get_workflow_info (see required inputs)
+    """
     # Validate context availability
     if ctx is None:
         return {
@@ -209,23 +243,55 @@ async def execute_inline_workflow(
     workflow_yaml: Annotated[
         str,
         Field(
-            description="Complete workflow YAML with name, description, and blocks",
-            min_length=10,
-            max_length=100000,
+            description=(
+                "Complete workflow definition in YAML including name, description, and blocks array"
+            ),
         ),
     ],
     inputs: Annotated[
         dict[str, Any] | None,
-        Field(description="Runtime inputs for {{inputs.*}} variable substitution"),
-    ] = None,
+        Field(
+            description=(
+                "Key-value pairs passed to the workflow, accessible via {{inputs.key}} in templates"
+            ),
+            default=None,
+        ),
+    ],
     debug: Annotated[
         bool,
-        Field(description="Write execution log to /tmp/<workflow>-<timestamp>.json"),
-    ] = False,
+        Field(
+            description=(
+                "Write detailed execution trace to "
+                "/tmp/<workflow>-<timestamp>.json for troubleshooting"
+            ),
+            default=False,
+        ),
+    ],
     *,
     ctx: AppContextType,
 ) -> dict[str, Any]:
-    """Run inline YAML workflow. Required: workflow_yaml. Optional: inputs, debug."""
+    """
+    Run a workflow directly from YAML without registering it.
+
+    WHEN TO USE: For testing new workflow definitions or one-off automation.
+    Call validate_workflow_yaml first to check for syntax errors.
+
+    PARAMETERS:
+    - workflow_yaml: Complete YAML with name, description, and blocks
+    - inputs: Runtime values accessible via {{inputs.key}} in templates
+    - debug: Set True to write execution trace for troubleshooting
+
+    EXAMPLE workflow_yaml:
+        name: my-workflow
+        description: Example workflow
+        blocks:
+          - id: step1
+            type: Shell
+            inputs:
+              command: echo "Hello"
+
+    SEE ALSO: validate_workflow_yaml (check before running), get_workflow_schema (full syntax reference)
+    """
     # Validate context availability
     if ctx is None:
         return {
@@ -292,18 +358,37 @@ async def list_workflows(
     tags: Annotated[
         list[str],
         Field(
-            description="Filter by tags (AND logic). Empty list returns all workflows.",
-            max_length=20,
+            description=(
+                "Filter by tags using AND logic. Example: ['build', 'ci']. Empty returns all"
+            ),
+            default=[],
         ),
-    ] = [],
+    ],
     format: Annotated[  # noqa: A002
         Literal["json", "markdown"],
-        Field(description="Output format"),
-    ] = "json",
+        Field(
+            description=(
+                "Return format: 'json' for programmatic use, 'markdown' for human-readable display"
+            ),
+            default="json",
+        ),
+    ],
     *,
     ctx: AppContextType,
 ) -> str:
-    """List workflow templates. Optional: tags (filter), format (json|markdown)."""
+    """
+    Discover available workflows in the registry.
+
+    WHEN TO USE: Call this FIRST before execute_workflow to find valid workflow names.
+
+    PARAMETERS:
+    - tags: Filter by tags (e.g., ["build", "ci"]). Empty list returns all.
+    - format: "json" for programmatic use, "markdown" for display
+
+    RETURNS: List of workflow names like ["build-project", "deploy-app", ...]
+
+    SEE ALSO: get_workflow_info (details about a specific workflow)
+    """
     # Access shared resources from lifespan context
     app_ctx = ctx.request_context.lifespan_context
     registry = app_ctx.registry
@@ -329,16 +414,34 @@ async def list_workflows(
 async def get_workflow_info(
     workflow: Annotated[
         str,
-        Field(description="Workflow name to inspect", min_length=1, max_length=200),
+        Field(description="Name of the workflow to inspect"),
     ],
     format: Annotated[  # noqa: A002
         Literal["json", "markdown"],
-        Field(description="Output format"),
-    ] = "json",
+        Field(
+            description=(
+                "Return format: 'json' for structured data, 'markdown' for readable documentation"
+            ),
+            default="json",
+        ),
+    ],
     *,
     ctx: AppContextType,
 ) -> dict[str, Any] | str:
-    """Get workflow details (blocks, inputs, outputs). Required: workflow. Optional: format."""
+    """
+    Inspect a workflow's structure including required inputs and block sequence.
+
+    WHEN TO USE: After list_workflows, before execute_workflow - to understand
+    what inputs a workflow expects and what outputs it produces.
+
+    PARAMETERS:
+    - workflow: Exact workflow name from list_workflows
+    - format: "json" for parsing, "markdown" for readable documentation
+
+    RETURNS: {name, description, inputs: {...}, outputs: {...}, blocks: [...]}
+
+    SEE ALSO: list_workflows (find names), execute_workflow (run it)
+    """
     # Access shared resources from lifespan context
     app_ctx = ctx.request_context.lifespan_context
     registry = app_ctx.registry
@@ -405,7 +508,18 @@ async def get_workflow_info(
     )
 )
 async def get_workflow_schema() -> dict[str, Any]:
-    """Get JSON Schema for workflow YAML structure and block types. No parameters."""
+    """
+    Get the complete JSON Schema for workflow YAML authoring.
+
+    WHEN TO USE: When writing new workflow YAML to understand:
+    - Available block types: Shell, LLM, SQL, ReadFiles, EditFile, Workflow, etc.
+    - Required fields for each block type
+    - Valid workflow structure
+
+    RETURNS: JSON Schema object with $schema, properties, definitions
+
+    SEE ALSO: validate_workflow_yaml (check your YAML), execute_inline_workflow (run it)
+    """
     # Schema can be generated from executor registry without context
     from .engine.executor_base import create_default_registry
 
@@ -428,13 +542,24 @@ async def validate_workflow_yaml(
     yaml_content: Annotated[
         str,
         Field(
-            description="Complete workflow YAML to validate",
-            min_length=10,
-            max_length=100000,
+            description=(
+                "Workflow YAML to validate. Must include name, description, and blocks fields"
+            ),
         ),
     ],
 ) -> dict[str, Any]:
-    """Validate workflow YAML without execution. Required: yaml_content."""
+    """
+    Check workflow YAML for syntax errors and unknown block types.
+
+    WHEN TO USE: BEFORE execute_inline_workflow to catch errors early.
+
+    PARAMETERS:
+    - yaml_content: Complete workflow YAML string
+
+    RETURNS: {valid: true|false, errors: [...], warnings: [...], block_types_used: [...]}
+
+    SEE ALSO: get_workflow_schema (see valid syntax), execute_inline_workflow (run it)
+    """
     # Parse workflow YAML
     load_result = load_workflow_from_yaml(yaml_content, source="<validation>")
 
@@ -509,7 +634,16 @@ async def reload_workflows(
     *,
     ctx: AppContextType,
 ) -> dict[str, Any]:
-    """Reload all workflows from disk (built-in and user templates)."""
+    """
+    Refresh the workflow registry from disk to pick up file changes.
+
+    WHEN TO USE: After modifying workflow YAML files on disk.
+    The registry caches workflows at startup, so call this to reload.
+
+    RETURNS: {status: "success", total: <number of workflows loaded>}
+
+    SEE ALSO: list_workflows (see what's loaded)
+    """
     # Access shared resources from lifespan context
     if ctx is None:
         return {
@@ -552,20 +686,42 @@ async def reload_workflows(
 async def resume_workflow(
     job_id: Annotated[
         str,
-        Field(description="Job ID from paused workflow", min_length=1, max_length=100),
+        Field(description="ID of the paused job (returned when workflow pauses)"),
     ],
     response: Annotated[
         str,
-        Field(description="Response to the pause prompt", max_length=10000),
-    ] = "",
+        Field(
+            description="Your answer to the question the Prompt block displayed",
+            default="",
+        ),
+    ],
     debug: Annotated[
         bool,
-        Field(description="Write execution log to /tmp/<workflow>-<timestamp>.json"),
-    ] = False,
+        Field(
+            description=(
+                "Write execution trace to /tmp/<workflow>-<timestamp>.json for troubleshooting"
+            ),
+            default=False,
+        ),
+    ],
     *,
     ctx: AppContextType,
 ) -> dict[str, Any]:
-    """Resume a paused workflow. Required: job_id. Optional: response, debug."""
+    """
+    Continue a workflow that paused waiting for user input (Prompt block).
+
+    WHEN TO USE: After execute_workflow returns status="paused" with a job_id.
+    The workflow paused because a Prompt block needs your answer.
+
+    PARAMETERS:
+    - job_id: The job_id returned when workflow paused (e.g., "job_a1b2c3d4")
+    - response: Your answer to the prompt question
+    - debug: Set True for execution trace
+
+    RETURNS: Workflow continues and returns final {status, outputs, ...}
+
+    SEE ALSO: list_jobs (find paused jobs), get_job_status (check job state)
+    """
     # Access shared resources from lifespan context
     app_ctx = ctx.request_context.lifespan_context
 
@@ -693,11 +849,26 @@ async def resume_workflow(
     )
 )
 async def get_job_status(
-    job_id: str,
+    job_id: Annotated[
+        str,
+        Field(description="Job ID returned from execute_workflow in async mode"),
+    ],
     *,
     ctx: AppContextType,
 ) -> dict[str, Any]:
-    """Get job status and outputs. Required: job_id."""
+    """
+    Check the status and results of an async workflow job.
+
+    WHEN TO USE: After execute_workflow with mode="async" returns a job_id.
+    Poll this to track progress until status is "completed" or "failed".
+
+    PARAMETERS:
+    - job_id: Job ID from execute_workflow async response
+
+    RETURNS: {status: "queued"|"running"|"paused"|"completed"|"failed", outputs: {...}, error: ...}
+
+    SEE ALSO: list_jobs (see all jobs), cancel_job (stop a job)
+    """
     # Access shared resources from lifespan context
     app_ctx = ctx.request_context.lifespan_context
 
@@ -729,11 +900,26 @@ async def get_job_status(
     )
 )
 async def cancel_job(
-    job_id: str,
+    job_id: Annotated[
+        str,
+        Field(description="ID of the job to cancel"),
+    ],
     *,
     ctx: AppContextType,
 ) -> dict[str, Any]:
-    """Cancel a pending or running job. Required: job_id."""
+    """
+    Stop an async job that is queued or running.
+
+    WHEN TO USE: To abort a long-running or stuck workflow.
+    Note: Cancelled jobs cannot be resumed.
+
+    PARAMETERS:
+    - job_id: Job ID to cancel
+
+    RETURNS: {cancelled: true|false, message: ...}
+
+    SEE ALSO: list_jobs (find job IDs), get_job_status (check before cancelling)
+    """
     # Access shared resources from lifespan context
     app_ctx = ctx.request_context.lifespan_context
 
@@ -772,12 +958,38 @@ async def cancel_job(
     )
 )
 async def list_jobs(
-    status: str | None = None,
-    limit: int = 100,
+    status: Annotated[
+        str | None,
+        Field(
+            description="Filter by status: queued, running, paused, completed, failed, or cancelled",
+            default=None,
+        ),
+    ],
+    limit: Annotated[
+        int,
+        Field(
+            description="Maximum number of jobs to return",
+            ge=1,
+            le=1000,
+            default=100,
+        ),
+    ],
     *,
     ctx: AppContextType,
 ) -> dict[str, Any]:
-    """List workflow jobs. Optional: status (filter), limit (default 100)."""
+    """
+    List async workflow jobs with optional status filter.
+
+    WHEN TO USE: To find jobs by status, especially "paused" jobs waiting for input.
+
+    PARAMETERS:
+    - status: Filter by "queued", "running", "paused", "completed", "failed", "cancelled"
+    - limit: Maximum jobs to return (default 100)
+
+    RETURNS: {jobs: [...], total: <count>, filtered: <count>}
+
+    SEE ALSO: get_job_status (details on one job), resume_workflow (continue paused jobs)
+    """
     # Access shared resources from lifespan context
     app_ctx = ctx.request_context.lifespan_context
 
@@ -831,7 +1043,15 @@ async def get_queue_stats(
     *,
     ctx: AppContextType,
 ) -> dict[str, Any]:
-    """Get queue statistics (IO and job queues). No parameters."""
+    """
+    Get metrics about job and IO queue health.
+
+    WHEN TO USE: For monitoring system health and capacity.
+
+    RETURNS: {job_queue: {total_jobs, queued, running, ...}, io_queue: {...}}
+
+    SEE ALSO: list_jobs (see actual jobs)
+    """
     app_ctx = ctx.request_context.lifespan_context
 
     stats: dict[str, Any] = {}
@@ -863,6 +1083,7 @@ __all__ = [
     "get_workflow_info",
     "get_workflow_schema",
     "validate_workflow_yaml",
+    "reload_workflows",
     "resume_workflow",
     # Async execution tools
     "get_job_status",
