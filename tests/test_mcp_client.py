@@ -48,7 +48,7 @@ from unittest.mock import MagicMock
 import pytest
 from mcp import ClientSession, StdioServerParameters
 from mcp.client.stdio import stdio_client
-from mcp.types import TextContent
+from mcp.types import CallToolResult, TextContent
 from test_utils import format_diff, normalize_dynamic_fields
 
 from workflows_mcp.context import AppContext
@@ -243,14 +243,19 @@ class TestWorkflowExecution:
             workflow="test-workflow",
             inputs={"message": "Test"},
             debug=False,
+            mode="sync",
+            timeout=None,
             ctx=mock_context,
         )
 
-        assert result["status"] == "success"
-        assert "outputs" in result
+        # Tools return CallToolResult with structuredContent
+        assert isinstance(result, CallToolResult)
+        data = result.structuredContent
+        assert data["status"] == "success"
+        assert "outputs" in data
         # Minimal format excludes blocks/metadata
-        assert "blocks" not in result
-        assert "metadata" not in result
+        assert "blocks" not in data
+        assert "metadata" not in data
 
     @pytest.mark.asyncio
     async def test_execute_workflow_debug_mode(self, mock_context) -> None:
@@ -259,26 +264,39 @@ class TestWorkflowExecution:
             workflow="test-workflow",
             inputs={"message": "Test"},
             debug=True,
+            mode="sync",
+            timeout=None,
             ctx=mock_context,
         )
 
-        assert result["status"] == "success"
-        assert "outputs" in result
+        # Tools return CallToolResult with structuredContent
+        data = result.structuredContent
+        assert data["status"] == "success"
+        assert "outputs" in data
         # Debug mode includes logfile path instead of inline blocks/metadata
-        assert "logfile" in result
-        assert result["logfile"].startswith("/tmp/")
-        assert result["logfile"].endswith(".json")
+        assert "logfile" in data
+        assert data["logfile"].startswith("/tmp/")
+        assert data["logfile"].endswith(".json")
 
     @pytest.mark.asyncio
     async def test_execute_workflow_not_found(self, mock_context) -> None:
         """Test execute_workflow with non-existent workflow."""
-        result = await execute_workflow(workflow="non-existent-workflow", ctx=mock_context)
+        result = await execute_workflow(
+            workflow="non-existent-workflow",
+            inputs=None,
+            debug=False,
+            mode="sync",
+            timeout=None,
+            ctx=mock_context,
+        )
 
-        assert result["status"] == "failure"
-        assert "not found" in result["error"].lower()
+        # Tools return CallToolResult with structuredContent
+        data = result.structuredContent
+        assert data["status"] == "failure"
+        assert "not found" in data["error"].lower()
         # Should provide actionable guidance
-        assert "available_workflows" in result
-        assert isinstance(result["available_workflows"], list)
+        assert "available_workflows" in data
+        assert isinstance(data["available_workflows"], list)
 
     @pytest.mark.asyncio
     async def test_execute_workflow_missing_required_inputs(self, mock_context) -> None:
@@ -306,12 +324,19 @@ class TestWorkflowExecution:
         registry.register(required_workflow)
 
         result = await execute_workflow(
-            workflow="test-required-inputs", inputs={}, ctx=mock_context
+            workflow="test-required-inputs",
+            inputs={},
+            debug=False,
+            mode="sync",
+            timeout=None,
+            ctx=mock_context,
         )
 
-        assert result["status"] == "failure"
+        # Tools return CallToolResult with structuredContent
+        data = result.structuredContent
+        assert data["status"] == "failure"
         # Error about missing inputs or variable resolution
-        assert "required" in result["error"].lower() or "not found" in result["error"].lower()
+        assert "required" in data["error"].lower() or "not found" in data["error"].lower()
 
     @pytest.mark.asyncio
     async def test_execute_workflow_with_custom_inputs(self, mock_context) -> None:
@@ -320,12 +345,16 @@ class TestWorkflowExecution:
             workflow="test-workflow",
             inputs={"message": "CustomMessage"},
             debug=True,
+            mode="sync",
+            timeout=None,
             ctx=mock_context,
         )
 
-        assert result["status"] == "success"
-        assert "logfile" in result
-        assert result["logfile"].startswith("/tmp/")
+        # Tools return CallToolResult with structuredContent
+        data = result.structuredContent
+        assert data["status"] == "success"
+        assert "logfile" in data
+        assert data["logfile"].startswith("/tmp/")
 
     # Inline workflow execution tests
 
@@ -345,27 +374,48 @@ outputs:
     value: "{{blocks.echo.outputs.stdout}}"
 """
 
-        result = await execute_inline_workflow(workflow_yaml=workflow_yaml, ctx=mock_context)
+        result = await execute_inline_workflow(
+            workflow_yaml=workflow_yaml,
+            inputs=None,
+            debug=False,
+            ctx=mock_context,
+        )
 
-        assert result["status"] == "success"
-        assert "outputs" in result
+        # Tools return CallToolResult with structuredContent
+        data = result.structuredContent
+        assert data["status"] == "success"
+        assert "outputs" in data
 
     @pytest.mark.asyncio
     async def test_execute_inline_workflow_empty_yaml(self, mock_context) -> None:
         """Test execute_inline_workflow with empty YAML."""
-        result = await execute_inline_workflow(workflow_yaml="# empty yaml\n", ctx=mock_context)
+        result = await execute_inline_workflow(
+            workflow_yaml="# empty yaml\n",
+            inputs=None,
+            debug=False,
+            ctx=mock_context,
+        )
 
-        assert result["status"] == "failure"
+        # Tools return CallToolResult with structuredContent
+        data = result.structuredContent
+        assert data["status"] == "failure"
         # Empty YAML parsed as None
-        assert "dictionary" in result["error"].lower() or "nonetype" in result["error"].lower()
+        assert "dictionary" in data["error"].lower() or "nonetype" in data["error"].lower()
 
     @pytest.mark.asyncio
     async def test_execute_inline_workflow_invalid_yaml(self, mock_context) -> None:
         """Test execute_inline_workflow with invalid YAML syntax."""
-        result = await execute_inline_workflow(workflow_yaml="invalid: [unclosed", ctx=mock_context)
+        result = await execute_inline_workflow(
+            workflow_yaml="invalid: [unclosed",
+            inputs=None,
+            debug=False,
+            ctx=mock_context,
+        )
 
-        assert result["status"] == "failure"
-        assert "parse" in result["error"].lower() or "yaml" in result["error"].lower()
+        # Tools return CallToolResult with structuredContent
+        data = result.structuredContent
+        assert data["status"] == "failure"
+        assert "parse" in data["error"].lower() or "yaml" in data["error"].lower()
 
     @pytest.mark.asyncio
     async def test_execute_inline_workflow_missing_required_fields(self, mock_context) -> None:
@@ -375,9 +425,16 @@ name: incomplete-workflow
 description: Missing blocks field
 """
 
-        result = await execute_inline_workflow(workflow_yaml=workflow_yaml, ctx=mock_context)
+        result = await execute_inline_workflow(
+            workflow_yaml=workflow_yaml,
+            inputs=None,
+            debug=False,
+            ctx=mock_context,
+        )
 
-        assert result["status"] == "failure"
+        # Tools return CallToolResult with structuredContent
+        data = result.structuredContent
+        assert data["status"] == "failure"
 
 
 # =============================================================================
@@ -398,11 +455,11 @@ class TestWorkflowDiscovery:
     @pytest.mark.asyncio
     async def test_list_workflows_json_format(self, mock_context) -> None:
         """Test list_workflows returns JSON list."""
-        result = await list_workflows(format="json", ctx=mock_context)
+        result = await list_workflows(tags=[], format="json", ctx=mock_context)
 
-        # list_workflows returns JSON string when called directly
-        assert isinstance(result, str)
-        workflows = json.loads(result)
+        # list_workflows returns CallToolResult with structuredContent
+        assert isinstance(result, CallToolResult)
+        workflows = result.structuredContent["workflows"]
         assert isinstance(workflows, list)
         assert len(workflows) > 0
         assert isinstance(workflows[0], str)
@@ -411,20 +468,21 @@ class TestWorkflowDiscovery:
     @pytest.mark.asyncio
     async def test_list_workflows_markdown_format(self, mock_context) -> None:
         """Test list_workflows markdown format."""
-        result = await list_workflows(format="markdown", ctx=mock_context)
+        result = await list_workflows(tags=[], format="markdown", ctx=mock_context)
 
-        assert isinstance(result, str)
-        assert "Available Workflows" in result
-        assert "test-workflow" in result
+        assert isinstance(result, CallToolResult)
+        text = result.content[0].text
+        assert "Available Workflows" in text
+        assert "test-workflow" in text
 
     @pytest.mark.asyncio
     async def test_list_workflows_with_tag_filter(self, mock_context) -> None:
         """Test workflow filtering by tags."""
         result = await list_workflows(tags=["nonexistent-tag"], format="json", ctx=mock_context)
 
-        # list_workflows returns JSON string when called directly
-        assert isinstance(result, str)
-        workflows = json.loads(result)
+        # list_workflows returns CallToolResult with structuredContent
+        assert isinstance(result, CallToolResult)
+        workflows = result.structuredContent["workflows"]
         assert isinstance(workflows, list)
         # Should return empty list when no workflows match
 
@@ -440,11 +498,11 @@ class TestWorkflowDiscovery:
         )
         registry.register(another_workflow)
 
-        result = await list_workflows(format="json", ctx=mock_context)
+        result = await list_workflows(tags=[], format="json", ctx=mock_context)
 
-        # list_workflows returns JSON string when called directly
-        assert isinstance(result, str)
-        workflows = json.loads(result)
+        # list_workflows returns CallToolResult with structuredContent
+        assert isinstance(result, CallToolResult)
+        workflows = result.structuredContent["workflows"]
         assert isinstance(workflows, list)
         assert len(workflows) >= 2
         assert "test-workflow" in workflows
@@ -457,12 +515,14 @@ class TestWorkflowDiscovery:
         """Test get_workflow_info returns structured data."""
         result = await get_workflow_info(workflow="test-workflow", format="json", ctx=mock_context)
 
-        assert isinstance(result, dict)
-        assert result["name"] == "test-workflow"
-        assert "description" in result
-        assert "blocks" in result
-        assert "total_blocks" in result
-        assert result["total_blocks"] > 0
+        # Tools return CallToolResult with structuredContent
+        assert isinstance(result, CallToolResult)
+        data = result.structuredContent
+        assert data["name"] == "test-workflow"
+        assert "description" in data
+        assert "blocks" in data
+        assert "total_blocks" in data
+        assert data["total_blocks"] > 0
 
     @pytest.mark.asyncio
     async def test_get_workflow_info_markdown_format(self, mock_context) -> None:
@@ -471,42 +531,50 @@ class TestWorkflowDiscovery:
             workflow="test-workflow", format="markdown", ctx=mock_context
         )
 
-        assert isinstance(result, str)
-        assert "# Workflow: test-workflow" in result
-        assert "## Blocks" in result
+        assert isinstance(result, CallToolResult)
+        text = result.content[0].text
+        assert "# Workflow: test-workflow" in text
+        assert "## Blocks" in text
 
     @pytest.mark.asyncio
     async def test_get_workflow_info_not_found(self, mock_context) -> None:
         """Test get_workflow_info with non-existent workflow."""
         result = await get_workflow_info(workflow="non-existent", format="json", ctx=mock_context)
 
-        assert "error" in result
-        assert "not found" in result["error"].lower()
-        assert "available_workflows" in result
+        # Tools return CallToolResult with structuredContent
+        data = result.structuredContent
+        assert "error" in data
+        assert "not found" in data["error"].lower()
+        assert "available_workflows" in data
 
     # Schema generation tests
 
     @pytest.mark.asyncio
-    async def test_get_workflow_schema_returns_valid_schema(self) -> None:
+    async def test_get_workflow_schema_returns_valid_schema(self, mock_context) -> None:
         """Test schema generation returns valid JSON Schema."""
-        schema = await get_workflow_schema()
+        result = await get_workflow_schema(ctx=mock_context)
 
+        # Tools return CallToolResult with structuredContent
+        assert isinstance(result, CallToolResult)
+        schema = result.structuredContent
         assert isinstance(schema, dict)
         assert "$schema" in schema or "type" in schema
         assert "properties" in schema
 
     @pytest.mark.asyncio
-    async def test_get_workflow_schema_includes_block_types(self) -> None:
+    async def test_get_workflow_schema_includes_block_types(self, mock_context) -> None:
         """Test schema includes block structure."""
-        schema = await get_workflow_schema()
+        result = await get_workflow_schema(ctx=mock_context)
 
+        # Tools return CallToolResult with structuredContent
+        schema = result.structuredContent
         assert "properties" in schema
         assert "blocks" in schema["properties"]
 
     # YAML validation tests
 
     @pytest.mark.asyncio
-    async def test_validate_valid_workflow(self) -> None:
+    async def test_validate_valid_workflow(self, mock_context) -> None:
         """Test validation of valid workflow YAML."""
         valid_yaml = """
 name: valid-workflow
@@ -518,30 +586,36 @@ blocks:
       command: echo "test"
 """
 
-        result = await validate_workflow_yaml(yaml_content=valid_yaml)
+        result = await validate_workflow_yaml(yaml_content=valid_yaml, ctx=mock_context)
 
-        assert "valid" in result
-        assert "errors" in result
-        assert "warnings" in result
-        assert "block_types_used" in result
+        # Tools return CallToolResult with structuredContent
+        data = result.structuredContent
+        assert "valid" in data
+        assert "errors" in data
+        assert "warnings" in data
+        assert "block_types_used" in data
 
-        if result["valid"]:
-            assert len(result["errors"]) == 0
-            assert "Shell" in result["block_types_used"]
+        if data["valid"]:
+            assert len(data["errors"]) == 0
+            assert "Shell" in data["block_types_used"]
 
     @pytest.mark.asyncio
-    async def test_validate_invalid_yaml_syntax(self) -> None:
+    async def test_validate_invalid_yaml_syntax(self, mock_context) -> None:
         """Test validation catches YAML syntax errors."""
-        result = await validate_workflow_yaml(yaml_content="invalid: [yaml: syntax")
+        result = await validate_workflow_yaml(
+            yaml_content="invalid: [yaml: syntax", ctx=mock_context
+        )
 
-        assert result["valid"] is False
-        assert len(result["errors"]) > 0
+        # Tools return CallToolResult with structuredContent
+        data = result.structuredContent
+        assert data["valid"] is False
+        assert len(data["errors"]) > 0
         assert any(
-            "yaml" in error.lower() and "syntax" in error.lower() for error in result["errors"]
+            "yaml" in error.lower() and "syntax" in error.lower() for error in data["errors"]
         )
 
     @pytest.mark.asyncio
-    async def test_validate_workflow_schema_error(self) -> None:
+    async def test_validate_workflow_schema_error(self, mock_context) -> None:
         """Test validation catches schema violations."""
         # Missing required 'name' field
         invalid_yaml = """
@@ -549,10 +623,12 @@ description: Missing name field
 blocks: []
 """
 
-        result = await validate_workflow_yaml(yaml_content=invalid_yaml)
+        result = await validate_workflow_yaml(yaml_content=invalid_yaml, ctx=mock_context)
 
-        assert result["valid"] is False
-        assert len(result["errors"]) > 0
+        # Tools return CallToolResult with structuredContent
+        data = result.structuredContent
+        assert data["valid"] is False
+        assert len(data["errors"]) > 0
 
 
 # =============================================================================
@@ -964,38 +1040,61 @@ class TestQualityAssurance:
     @pytest.mark.asyncio
     async def test_workflow_response_structure(self, mock_context) -> None:
         """Test workflow response structure consistency."""
-        result = await execute_workflow(workflow="test-workflow", debug=True, ctx=mock_context)
+        result = await execute_workflow(
+            workflow="test-workflow",
+            inputs=None,
+            debug=True,
+            mode="sync",
+            timeout=None,
+            ctx=mock_context,
+        )
 
-        assert "status" in result
-        assert result["status"] in ["success", "failure", "paused"]
+        # Tools return CallToolResult with structuredContent
+        data = result.structuredContent
+        assert "status" in data
+        assert data["status"] in ["success", "failure", "paused"]
 
-        if result["status"] == "success":
-            assert "outputs" in result
-            assert "logfile" in result  # Debug mode writes to file
-            assert result["logfile"].startswith("/tmp/")
-        elif result["status"] == "failure":
-            assert "error" in result
+        if data["status"] == "success":
+            assert "outputs" in data
+            assert "logfile" in data  # Debug mode writes to file
+            assert data["logfile"].startswith("/tmp/")
+        elif data["status"] == "failure":
+            assert "error" in data
 
     # Error message quality tests
 
     @pytest.mark.asyncio
     async def test_workflow_not_found_includes_suggestions(self, mock_context) -> None:
         """Test workflow not found error includes helpful suggestions."""
-        result = await execute_workflow(workflow="typo-workflow", ctx=mock_context)
+        result = await execute_workflow(
+            workflow="typo-workflow",
+            inputs=None,
+            debug=False,
+            mode="sync",
+            timeout=None,
+            ctx=mock_context,
+        )
 
-        assert result["status"] == "failure"
+        # Tools return CallToolResult with structuredContent
+        data = result.structuredContent
+        assert data["status"] == "failure"
         # Should provide list of available workflows
-        assert "available_workflows" in result
-        assert isinstance(result["available_workflows"], list)
+        assert "available_workflows" in data
+        assert isinstance(data["available_workflows"], list)
 
     @pytest.mark.asyncio
-    async def test_validation_error_provides_guidance(self) -> None:
+    async def test_validation_error_provides_guidance(self, mock_context) -> None:
         """Test YAML validation errors provide clear guidance."""
-        result = await validate_workflow_yaml(yaml_content="invalid: yaml: [syntax")
+        result = await validate_workflow_yaml(
+            yaml_content="invalid: yaml: [syntax",
+            ctx=mock_context,
+        )
 
-        assert result["valid"] is False
-        assert len(result["errors"]) > 0
-        assert any("YAML" in error or "parsing" in error for error in result["errors"])
+        # Tools return CallToolResult with structuredContent
+        data = result.structuredContent
+        assert data["valid"] is False
+        assert len(data["errors"]) > 0
+        assert any("YAML" in error or "parsing" in error for error in data["errors"])
 
 
 # =============================================================================

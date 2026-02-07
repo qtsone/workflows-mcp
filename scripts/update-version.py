@@ -93,9 +93,7 @@ def update_version_in_file(file_path: Path, new_version: str) -> tuple[str, bool
                         # Replace only the version string in the entire content
                         # This preserves all whitespace and line endings
                         old_full_line = line
-                        new_value_part = (
-                            value_part[: start + 1] + new_version + value_part[end:]
-                        )
+                        new_value_part = value_part[: start + 1] + new_version + value_part[end:]
                         new_full_line = parts[0] + "= " + new_value_part
                         content = content.replace(old_full_line, new_full_line, 1)
                         updated = True
