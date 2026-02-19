@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file.
 
+# [8.1.0](https://github.com/qtsone/workflows-mcp/compare/v8.0.0...v8.1.0) (2026-02-19)
+
+
+### Features
+
+* **workflows-mcp:** add ephemeral execution memory (SQLite) ([42925f3](https://github.com/qtsone/workflows-mcp/commit/42925f3ce4892550cbea777c453bc22c2d5ddb86))
+
 # [8.0.0](https://github.com/qtsone/workflows-mcp/compare/v7.1.0...v8.0.0) (2025-12-09)
 
 
