@@ -19,6 +19,7 @@ import shutil
 import tempfile
 import time
 import uuid
+from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Literal, cast
@@ -53,8 +54,19 @@ class WorkflowRunner:
         response_dict = result.to_response(response_format="detailed")
     """
 
-    def __init__(self) -> None:
-        """Initialize workflow runner."""
+    def __init__(
+        self,
+        on_block_transition: Callable[[dict[str, Any]], Awaitable[None]] | None = None,
+    ) -> None:
+        """Initialize workflow runner.
+
+        Args:
+            on_block_transition: Optional async callback invoked at block lifecycle
+                boundaries (started, completed, failed, skipped). Receives a dict
+                with event details and metadata. Default None = no observability.
+        """
+        self.on_block_transition = on_block_transition
+
         # Initialize secret management components
         self.secret_provider = EnvVarSecretProvider()
         self.secret_redactor = SecretRedactor(self.secret_provider)
@@ -385,10 +397,8 @@ class WorkflowRunner:
                     # Regular block
                     exec_context.set_block_result(
                         block_id=block_id,
-                        inputs=resolved_inputs,
-                        outputs=block_execution.output.model_dump()
-                        if block_execution.output
-                        else {},
+                        inputs=block_execution.inputs,
+                        outputs=self._get_block_outputs(block_execution.output),
                         metadata=block_execution.metadata,
                     )
 
@@ -630,7 +640,7 @@ class WorkflowRunner:
 
             # Check if should skip due to dependencies
             if self._should_skip_block(block_id, block_def.depends_on, exec_context):
-                self._mark_block_skipped(
+                await self._mark_block_skipped(
                     block_id=block_id,
                     block_def=block_def,
                     exec_context=exec_context,
@@ -646,7 +656,7 @@ class WorkflowRunner:
             if block_def.condition and not block_def.for_each:
                 should_execute = await self._evaluate_condition(block_def.condition, exec_context)
                 if not should_execute:
-                    self._mark_block_skipped(
+                    await self._mark_block_skipped(
                         block_id=block_id,
                         block_def=block_def,
                         exec_context=exec_context,
@@ -679,7 +689,7 @@ class WorkflowRunner:
                     raise result
                 elif isinstance(result, Exception):
                     # Execution error - mark as failed but continue
-                    self._mark_block_failed(
+                    await self._mark_block_failed(
                         block_id=block_id,
                         block_def=blocks_by_id[block_id],
                         exec_context=exec_context,
@@ -762,7 +772,18 @@ class WorkflowRunner:
         else:
             block_custom_outputs.set(None)
 
-        # 4. Execute via orchestrator
+        # 4. Notify observer: block starting
+        if self.on_block_transition:
+            event: dict[str, Any] = {
+                "event": "block_started",
+                "block_id": block_id,
+                "block_type": block_def.type,
+            }
+            if block_def.description:
+                event["description"] = block_def.description
+            await self.on_block_transition(event)
+
+        # 5. Execute via orchestrator
         block_execution = await self.orchestrator.execute_block(
             id=block_id,  # Pass block ID to orchestrator
             executor=executor,
@@ -812,9 +833,22 @@ class WorkflowRunner:
             exec_context.set_block_result(
                 block_id=block_id,
                 inputs=resolved_inputs,
-                outputs=block_execution.output.model_dump() if block_execution.output else {},
+                outputs=self._get_block_outputs(block_execution.output),
                 metadata=block_execution.metadata,  # Metadata from orchestrator
             )
+
+        # 8. Notify observer: block completed
+        if self.on_block_transition:
+            event: dict[str, Any] = {
+                "event": "block_completed",
+                "block_id": block_id,
+                "block_type": block_def.type,
+                "metadata": block_execution.metadata.model_dump(),
+                "outputs": self._get_block_outputs(block_execution.output),
+            }
+            if block_def.description:
+                event["description"] = block_def.description
+            await self.on_block_transition(event)
 
     async def _execute_for_each_block(
         self,
@@ -870,7 +904,7 @@ class WorkflowRunner:
         # 3. Handle empty collection - mark block as skipped
         if not iterations:
             # Empty for_each is valid - mark block as skipped (like conditional execution)
-            self._mark_block_skipped(
+            await self._mark_block_skipped(
                 block_id=block_id,
                 block_def=block_def,
                 exec_context=exec_context,
@@ -927,7 +961,7 @@ class WorkflowRunner:
 
         return False
 
-    def _mark_block_skipped(
+    async def _mark_block_skipped(
         self,
         block_id: str,
         block_def: BlockDefinition,
@@ -958,7 +992,20 @@ class WorkflowRunner:
             metadata=metadata,
         )
 
-    def _mark_block_failed(
+        if self.on_block_transition:
+            event: dict[str, Any] = {
+                "event": "block_skipped",
+                "block_id": block_id,
+                "block_type": block_def.type,
+                "reason": reason,
+                "metadata": metadata.model_dump(),
+                "outputs": default_outputs,
+            }
+            if block_def.description:
+                event["description"] = block_def.description
+            await self.on_block_transition(event)
+
+    async def _mark_block_failed(
         self,
         block_id: str,
         block_def: BlockDefinition,
@@ -989,6 +1036,19 @@ class WorkflowRunner:
             outputs=default_outputs,
             metadata=metadata,
         )
+
+        if self.on_block_transition:
+            event: dict[str, Any] = {
+                "event": "block_failed",
+                "block_id": block_id,
+                "block_type": block_def.type,
+                "error": error,
+                "metadata": metadata.model_dump(),
+                "outputs": default_outputs,
+            }
+            if block_def.description:
+                event["description"] = block_def.description
+            await self.on_block_transition(event)
 
     def _create_default_outputs(self, block_type: str, exec_context: Execution) -> dict[str, Any]:
         """Create default outputs for skipped/failed blocks.
@@ -1101,12 +1161,14 @@ class WorkflowRunner:
 
     def _execution_to_dict(self, exec_context: Execution) -> dict[str, Any]:
         """Convert Execution model to dict for variable resolution."""
-        # Get workflow metadata from _internal storage
         metadata = exec_context.workflow_metadata
-        blocks = {
-            block_id: (block_exec.model_dump() if isinstance(block_exec, Execution) else block_exec)
-            for block_id, block_exec in exec_context.blocks.items()
-        }
+        blocks = {}
+        for block_id, block_exec in exec_context.blocks.items():
+            if isinstance(block_exec, Execution):
+                blocks[block_id] = block_exec.model_dump()
+            else:
+                blocks[block_id] = block_exec
+
         return {
             "inputs": exec_context.inputs,
             "metadata": metadata,
@@ -1163,7 +1225,16 @@ class WorkflowRunner:
 
         # Override with runtime inputs
         if runtime_inputs:
-            merged.update(runtime_inputs)
+            for key, value in runtime_inputs.items():
+                # Fix: If value is explicitly None (null), check if we have a default
+                # If we have a default, we should preserve it instead of overwriting with None
+                if (
+                    value is None
+                    and key in workflow.inputs
+                    and workflow.inputs[key].default is not None
+                ):
+                    continue
+                merged[key] = value
 
         # Validate required inputs
         missing = [
@@ -1349,6 +1420,12 @@ class WorkflowRunner:
             runtime_inputs=execution_state_dict.get("runtime_inputs", {}),
             pause_metadata=execution_state_dict.get("pause_metadata"),
         )
+
+    def _get_block_outputs(self, block_output: Any) -> dict[str, Any]:
+        """Extract output dict from BlockOutput."""
+        if not block_output:
+            return {}
+        return block_output.model_dump()
 
 
 __all__ = ["WorkflowRunner"]

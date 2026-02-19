@@ -311,6 +311,7 @@ All workflow fields are Jinja2 templates with support for:
 - **Control structures**: `{% if condition %}...{% endif %}`, `{% for item in list %}...{% endfor %}`
 - **Custom filters**: `quote`, `prettyjson`, `b64encode`, `hash`, `trim`, `upper`, `lower`, `replace`
 - **Global functions**: `now()`, `render()`, `get()`, `len()`, `range()`
+- **Safe accessor**: `get(obj, 'path.to.key', default)` - dotted paths, JSON auto-parse, never throws
 - **Filter chaining**: `{{inputs.text | trim | lower | replace(' ', '_')}}`
 
 **See examples:** `tests/workflows/core/filters/filters-chaining.yaml`

@@ -635,7 +635,8 @@ def create_default_registry() -> ExecutorRegistry:
     from .executors_http import HttpCallExecutor
     from .executors_image import ImageGenExecutor
     from .executors_interactive import PromptExecutor
-    from .executors_llm import LLMCallExecutor
+    from .executors_llm import EmbeddingExecutor, LLMCallExecutor
+    from .executors_sql import SqlExecutor
     from .executors_state import (
         MergeJSONStateExecutor,
         ReadJSONStateExecutor,
@@ -657,8 +658,9 @@ def create_default_registry() -> ExecutorRegistry:
     # Register HTTP executor
     registry.register(HttpCallExecutor())
 
-    # Register LLM executor
+    # Register LLM executors
     registry.register(LLMCallExecutor())
+    registry.register(EmbeddingExecutor())
 
     # Register Image executor
     registry.register(ImageGenExecutor())
@@ -670,5 +672,8 @@ def create_default_registry() -> ExecutorRegistry:
     registry.register(ReadJSONStateExecutor())
     registry.register(WriteJSONStateExecutor())
     registry.register(MergeJSONStateExecutor())
+
+    # Register SQL executor
+    registry.register(SqlExecutor())
 
     return registry

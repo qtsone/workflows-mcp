@@ -14,14 +14,16 @@ Field names are **exact** - use them precisely in your workflows.
 | Workflow | workflow |
 | CreateFile | path, content |
 | EditFile | path, operations |
-| ReadFiles | patterns |
+| ReadFiles | (none) |
 | HttpCall | url |
 | LLMCall | prompt; **profile OR provider** |
+| Embedding | text |
 | ImageGen | **profile OR provider** |
 | Prompt | prompt |
 | ReadJSONState | path |
 | WriteJSONState | path, data |
 | MergeJSONState | path, updates |
+| Sql | engine |
 
 ### Common Field Name Mistakes
 
@@ -78,7 +80,7 @@ Field names are **exact** - use them precisely in your workflows.
 
 ### Optional Inputs
 
-- **`inputs`** (object): Inputs to pass to child workflow (variables resolved in parent context)
+- **`inputs`** (any): Inputs to pass to child workflow (variables resolved in parent context)
 - **`timeout_ms`** (any): Optional timeout for child execution in milliseconds
 
 ### Example
@@ -137,7 +139,7 @@ Field names are **exact** - use them precisely in your workflows.
 ### Required Inputs
 
 - **`path`** (string): Path to file to edit (relative or absolute)
-- **`operations`** (array): List of edit operations to apply sequentially
+- **`operations`** (any): List of edit operations to apply sequentially
 
 ### Optional Inputs
 
@@ -178,13 +180,11 @@ Field names are **exact** - use them precisely in your workflows.
 
 **Description**: File reading executor with multi-file and outline support.
 
-### Required Inputs
-
-- **`patterns`** (array): Glob patterns for files to read (e.g., ['*.py', '**/*.ts', 'docs/**/*.md'])
-
 ### Optional Inputs
 
-- **`base_path`** (string) *(default: `.`)*: Base directory to search from (relative or absolute)
+- **`path`** (any): Single file path to read (absolute or relative). Mutually exclusive with patterns. Use for single-file reads.
+- **`patterns`** (any): Glob patterns for files to read (e.g., ['*.py', '**/*.ts', 'docs/**/*.md'])
+- **`base_path`** (any) *(default: `.`)*: Base directory to search from (relative or absolute). Used with patterns.
 - **`mode`** (any) *(default: `full`)*: Output mode: 'full' (complete content), 'outline' (symbol tree with line ranges), 'summary' (outline + docstrings)
 - **`exclude_patterns`** (array): Additional patterns to exclude beyond defaults (e.g., ['*test*', '*.min.js'])
 - **`max_files`** (any) *(default: `20`)*: Maximum number of files to read (1-100, supports interpolation)
@@ -307,6 +307,41 @@ Please provide a valid response that conforms to the schema.`)*: Template for va
   inputs:
     profile: default
     prompt: "Summarize this text: {{inputs.text}}"
+```
+
+---
+
+## Embedding
+
+**Description**: Executor for generating text embeddings using OpenAI-compatible API.
+
+### Required Inputs
+
+- **`text`** (string): Text to generate embedding for
+
+### Optional Inputs
+
+- **`profile`** (string) *(default: `embedding`)*: Profile name from ~/.workflows/llm-config.yml (defaults to 'embedding')
+- **`model`** (any): Override embedding model (uses profile model if not specified)
+- **`api_key`** (any): Override API key (uses profile api_key_secret if not specified)
+- **`api_url`** (any): Override API endpoint URL (uses profile api_url if not specified)
+- **`timeout`** (any) *(default: `30`)*: Request timeout in seconds
+
+### Outputs
+
+- **`meta`** (object): Executor-specific metadata fields (exit_code, tokens_used, etc.)
+- **`embedding`** (array): Embedding vector (list of floats)
+- **`dimensions`** (integer): Number of dimensions in the embedding
+- **`success`** (boolean): Whether the embedding generation succeeded
+- **`metadata`** (object): Execution metadata (model, usage, etc.)
+
+### Example
+
+```yaml
+- id: embed_text
+  type: Embedding
+  inputs:
+    text: "Search for authentication bugs"
 ```
 
 ---
@@ -480,6 +515,146 @@ Without this, execution fails with configuration error.
     path: "{{tmp}}/state.json"
     updates:
       last_updated: "{{now()}}"
+```
+
+---
+
+## Sql
+
+**Description**: SQL executor for database operations.
+
+### Required Inputs
+
+- **`engine`** (string): Database engine. Required.
+
+### Optional Inputs
+
+- **`path`** (any): SQLite: Database file path. Use ':memory:' for in-memory DB.
+- **`host`** (any): Database host
+- **`port`** (any): Database port (default: 5432 for PostgreSQL, 3306 for MariaDB)
+- **`database`** (any): Database name
+- **`username`** (any): Database username
+- **`password`** (any): Database password. Use {{secrets.DB_PASSWORD}} for security.
+- **`sql`** (any): 
+        SQL statement(s) to execute (Raw SQL mode).
+        - Use ? for positional params (SQLite) or $1, $2 for PostgreSQL
+        - MariaDB uses %s for positional params
+        - Multi-statement scripts: separate with semicolons
+        Mutually exclusive with 'model' field.
+        
+- **`params`** (any): 
+        Query parameters for raw SQL (prevents SQL injection).
+        - List for positional: [value1, value2]
+        - Dict for named: {"name": value} (PostgreSQL/MariaDB)
+        
+- **`model`** (any): 
+        Model schema for CRUD operations (Model mode).
+        Defines table structure with columns, types, indexes.
+        Mutually exclusive with 'sql' field.
+        Example:
+          model:
+            table: tasks
+            columns:
+              id: {type: text, primary: true, auto: uuid}
+              name: {type: text, required: true}
+            indexes:
+              - columns: [name]
+        
+- **`op`** (any): 
+        CRUD operation (required when using model mode).
+        - schema: Create table + indexes
+        - insert: Insert row (requires data)
+        - select: Query rows (optional where, order, limit, offset)
+        - update: Update rows (requires where and data)
+        - delete: Delete rows (requires where)
+        - upsert: Insert or update on conflict (requires data and conflict)
+        
+- **`data`** (any): Row data for insert/update/upsert operations.
+- **`where`** (any): 
+        Filter conditions for select/update/delete.
+        - Simple equality: {status: running}
+        - Operators: {priority: {">": 5}}
+        - IN: {type: {in: [a, b, c]}}
+        - IS NULL: {deleted_at: {is: null}}
+        
+- **`order`** (any): Sort order for select. Format: ["column:asc", "column:desc"]
+- **`limit`** (any): Maximum rows to return (select).
+- **`offset`** (any): Rows to skip (select).
+- **`columns`** (any): Specific columns to select (default: all columns).
+- **`conflict`** (any): Conflict columns for upsert (usually primary key).
+- **`init_sql`** (any): 
+        DDL to execute before the main operation (idempotent).
+        Use CREATE TABLE IF NOT EXISTS, CREATE INDEX IF NOT EXISTS, etc.
+        
+- **`isolation_level`** (any): 
+        Transaction isolation level.
+        - PostgreSQL/MariaDB: read_uncommitted, read_committed, repeatable_read, serializable
+        - SQLite: immediate (recommended for writes), exclusive, or default (deferred)
+        
+- **`ssl`** (any) *(default: `False`)*: Enable SSL/TLS. Boolean or sslmode string (require, verify-ca, verify-full)
+- **`timeout`** (any) *(default: `30`)*: Query execution timeout in seconds
+- **`connect_timeout`** (any) *(default: `10`)*: Connection establishment timeout in seconds
+- **`pool_size`** (any) *(default: `5`)*: Connection pool size (PostgreSQL/MariaDB only)
+- **`sqlite_pragmas`** (any): 
+        SQLite PRAGMA settings applied on connection.
+        Defaults: journal_mode=WAL, busy_timeout=30000, synchronous=NORMAL, foreign_keys=ON
+        
+
+### Outputs
+
+- **`meta`** (object): Executor-specific metadata fields (exit_code, tokens_used, etc.)
+- **`rows`** (array): Result rows as list of dicts
+- **`columns`** (array): Column names from result set
+- **`row_count`** (integer): Number of rows returned (select) or affected (insert/update/delete)
+- **`affected_rows`** (integer): Rows affected by INSERT/UPDATE/DELETE
+- **`last_insert_id`** (any): Last inserted row ID (auto-increment)
+- **`success`** (boolean): Operation completed successfully
+- **`engine`** (string): Database engine used
+- **`execution_time_ms`** (number): Query execution time in milliseconds
+
+### Example
+
+```yaml
+# Raw SQL mode - SQLite query
+- id: get_users
+  type: Sql
+  inputs:
+    engine: sqlite
+    path: "/data/app.db"
+    sql: "SELECT * FROM users WHERE status = ?"
+    params: ["active"]
+
+# Model mode - Create table and insert
+- id: create_task
+  type: Sql
+  inputs:
+    engine: sqlite
+    path: "{{state.db_path}}"
+    model:
+      table: tasks
+      columns:
+        task_id: {type: text, primary: true, auto: uuid}
+        name: {type: text, required: true}
+        status: {type: text, default: pending}
+        created_at: {type: timestamp, auto: created}
+      indexes:
+        - columns: [status]
+    op: insert
+    data:
+      name: "My Task"
+
+# Model mode - Select with filters
+- id: find_tasks
+  type: Sql
+  inputs:
+    engine: sqlite
+    path: "{{state.db_path}}"
+    model: "{{inputs.models.task}}"
+    op: select
+    where:
+      status: running
+    order: [created_at:desc]
+    limit: 10
 ```
 
 ---

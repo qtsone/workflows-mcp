@@ -1,0 +1,365 @@
+name: test-model-crud
+description: |
+  Integration test for model-based CRUD operations in the Sql block.
+  Tests the Active Record-style API with schema creation, insert, select,
+  update, delete, and upsert operations.
+
+tags: [test, sql, model, crud, active-record]
+
+inputs:
+  temp_dir:
+    type: str
+    description: Temporary directory for test database
+    required: false
+    default: ""
+
+  models:
+    type: dict
+    description: Model definitions for CRUD operations
+    default:
+      task:
+        table: test_tasks
+        columns:
+          task_id:
+            type: text
+            primary: true
+            auto: uuid
+          name:
+            type: text
+            required: true
+          status:
+            type: text
+            default: pending
+          priority:
+            type: integer
+            default: 0
+          created_at:
+            type: timestamp
+            auto: created
+          updated_at:
+            type: timestamp
+            auto: updated
+        indexes:
+          - columns: [status]
+          - columns: [priority]
+            order: desc
+
+blocks:
+  # ==========================================================================
+  # Setup: Create temp directory and database path
+  # ==========================================================================
+  - id: setup
+    type: Shell
+    description: Create temp directory for test database.
+    inputs:
+      command: |
+        if [ -n "$TEMP_DIR" ]; then
+          echo "$TEMP_DIR/test_model_crud.db"
+        else
+          DIR=$(mktemp -d)
+          echo "$DIR/test_model_crud.db"
+        fi
+      env:
+        TEMP_DIR: "{{inputs.temp_dir}}"
+
+  # ==========================================================================
+  # Test 1: Schema creation (CREATE TABLE IF NOT EXISTS)
+  # ==========================================================================
+  - id: create_schema
+    type: Sql
+    description: Create table and indexes from model definition.
+    depends_on: [setup]
+    inputs:
+      engine: sqlite
+      path: "{{blocks.setup.outputs.stdout | trim}}"
+      model: "{{inputs.models.task}}"
+      op: schema
+
+  # ==========================================================================
+  # Test 2: Insert - create a new row
+  # ==========================================================================
+  - id: insert_task1
+    type: Sql
+    description: Insert first task using model-based insert.
+    depends_on: [create_schema]
+    inputs:
+      engine: sqlite
+      path: "{{blocks.setup.outputs.stdout | trim}}"
+      model: "{{inputs.models.task}}"
+      op: insert
+      data:
+        name: "First Task"
+        priority: 5
+
+  - id: insert_task2
+    type: Sql
+    description: Insert second task.
+    depends_on: [insert_task1]
+    inputs:
+      engine: sqlite
+      path: "{{blocks.setup.outputs.stdout | trim}}"
+      model: "{{inputs.models.task}}"
+      op: insert
+      data:
+        name: "Second Task"
+        status: running
+        priority: 10
+
+  - id: insert_task3
+    type: Sql
+    description: Insert third task.
+    depends_on: [insert_task2]
+    inputs:
+      engine: sqlite
+      path: "{{blocks.setup.outputs.stdout | trim}}"
+      model: "{{inputs.models.task}}"
+      op: insert
+      data:
+        name: "Third Task"
+        priority: 3
+
+  # ==========================================================================
+  # Test 3: Select - query rows with filters
+  # ==========================================================================
+  - id: select_all
+    type: Sql
+    description: Select all tasks.
+    depends_on: [insert_task3]
+    inputs:
+      engine: sqlite
+      path: "{{blocks.setup.outputs.stdout | trim}}"
+      model: "{{inputs.models.task}}"
+      op: select
+
+  - id: select_filtered
+    type: Sql
+    description: Select tasks with status filter.
+    depends_on: [insert_task3]
+    inputs:
+      engine: sqlite
+      path: "{{blocks.setup.outputs.stdout | trim}}"
+      model: "{{inputs.models.task}}"
+      op: select
+      where:
+        status: pending
+
+  - id: select_ordered
+    type: Sql
+    description: Select tasks ordered by priority descending.
+    depends_on: [insert_task3]
+    inputs:
+      engine: sqlite
+      path: "{{blocks.setup.outputs.stdout | trim}}"
+      model: "{{inputs.models.task}}"
+      op: select
+      order: ["priority:desc"]
+      limit: 2
+
+  - id: select_with_operator
+    type: Sql
+    description: Select tasks with priority > 4.
+    depends_on: [insert_task3]
+    inputs:
+      engine: sqlite
+      path: "{{blocks.setup.outputs.stdout | trim}}"
+      model: "{{inputs.models.task}}"
+      op: select
+      where:
+        priority:
+          ">": 4
+
+  # ==========================================================================
+  # Test 4: Update - modify existing rows
+  # ==========================================================================
+  - id: update_task
+    type: Sql
+    description: Update first task status to done.
+    depends_on: [select_all]
+    inputs:
+      engine: sqlite
+      path: "{{blocks.setup.outputs.stdout | trim}}"
+      model: "{{inputs.models.task}}"
+      op: update
+      where:
+        task_id: "{{blocks.insert_task1.outputs.rows[0].task_id}}"
+      data:
+        status: done
+
+  - id: verify_update
+    type: Sql
+    description: Verify the update was applied.
+    depends_on: [update_task]
+    inputs:
+      engine: sqlite
+      path: "{{blocks.setup.outputs.stdout | trim}}"
+      model: "{{inputs.models.task}}"
+      op: select
+      where:
+        task_id: "{{blocks.insert_task1.outputs.rows[0].task_id}}"
+
+  # ==========================================================================
+  # Test 5: Upsert - insert or update on conflict
+  # ==========================================================================
+  - id: upsert_new
+    type: Sql
+    description: Upsert a new task (should insert).
+    depends_on: [verify_update]
+    inputs:
+      engine: sqlite
+      path: "{{blocks.setup.outputs.stdout | trim}}"
+      model: "{{inputs.models.task}}"
+      op: upsert
+      data:
+        task_id: "upsert-test-id"
+        name: "Upsert New Task"
+        priority: 7
+      conflict: [task_id]
+
+  - id: upsert_existing
+    type: Sql
+    description: Upsert existing task (should update).
+    depends_on: [upsert_new]
+    inputs:
+      engine: sqlite
+      path: "{{blocks.setup.outputs.stdout | trim}}"
+      model: "{{inputs.models.task}}"
+      op: upsert
+      data:
+        task_id: "upsert-test-id"
+        name: "Upsert Updated Task"
+        priority: 8
+      conflict: [task_id]
+
+  - id: verify_upsert
+    type: Sql
+    description: Verify upsert result.
+    depends_on: [upsert_existing]
+    inputs:
+      engine: sqlite
+      path: "{{blocks.setup.outputs.stdout | trim}}"
+      model: "{{inputs.models.task}}"
+      op: select
+      where:
+        task_id: "upsert-test-id"
+
+  # ==========================================================================
+  # Test 6: Delete - remove rows
+  # ==========================================================================
+  - id: delete_task
+    type: Sql
+    description: Delete the upsert test task.
+    depends_on: [verify_upsert]
+    inputs:
+      engine: sqlite
+      path: "{{blocks.setup.outputs.stdout | trim}}"
+      model: "{{inputs.models.task}}"
+      op: delete
+      where:
+        task_id: "upsert-test-id"
+
+  - id: verify_delete
+    type: Sql
+    description: Verify deletion.
+    depends_on: [delete_task]
+    inputs:
+      engine: sqlite
+      path: "{{blocks.setup.outputs.stdout | trim}}"
+      model: "{{inputs.models.task}}"
+      op: select
+      where:
+        task_id: "upsert-test-id"
+
+  # ==========================================================================
+  # Test 7: Raw SQL mode (verify both modes work)
+  # ==========================================================================
+  - id: raw_sql_query
+    type: Sql
+    description: Execute raw SQL query for comparison.
+    depends_on: [delete_task]
+    inputs:
+      engine: sqlite
+      path: "{{blocks.setup.outputs.stdout | trim}}"
+      sql: "SELECT COUNT(*) as total FROM test_tasks"
+
+  # ==========================================================================
+  # Cleanup
+  # ==========================================================================
+  - id: cleanup
+    type: Shell
+    description: Remove test database.
+    depends_on: [raw_sql_query]
+    inputs:
+      command: |
+        rm -f "{{blocks.setup.outputs.stdout | trim}}"
+        echo "cleaned"
+
+outputs:
+  # Test results summary
+  schema_created:
+    type: bool
+    description: Whether schema was created successfully.
+    value: "{{blocks.create_schema.succeeded}}"
+
+  insert_count:
+    type: num
+    description: Number of inserts performed.
+    value: "3"
+
+  select_all_count:
+    type: num
+    description: Number of rows from select all.
+    value: "{{blocks.select_all.outputs.row_count}}"
+
+  select_filtered_count:
+    type: num
+    description: Number of pending tasks.
+    value: "{{blocks.select_filtered.outputs.row_count}}"
+
+  select_ordered_first:
+    type: str
+    description: First task when ordered by priority desc.
+    value: "{{blocks.select_ordered.outputs.rows[0].name if blocks.select_ordered.outputs.row_count > 0 else ''}}"
+
+  select_operator_count:
+    type: num
+    description: Tasks with priority > 4.
+    value: "{{blocks.select_with_operator.outputs.row_count}}"
+
+  update_verified:
+    type: bool
+    description: Whether update was verified.
+    value: "{{blocks.verify_update.outputs.rows[0].status == 'done' if blocks.verify_update.outputs.row_count > 0 else false}}"
+
+  upsert_verified:
+    type: bool
+    description: Whether upsert updated the name.
+    value: "{{blocks.verify_upsert.outputs.rows[0].name == 'Upsert Updated Task' if blocks.verify_upsert.outputs.row_count > 0 else false}}"
+
+  delete_verified:
+    type: bool
+    description: Whether delete removed the row.
+    value: "{{blocks.verify_delete.outputs.row_count == 0}}"
+
+  raw_sql_total:
+    type: num
+    description: Total tasks from raw SQL query.
+    value: "{{blocks.raw_sql_query.outputs.rows[0].total if blocks.raw_sql_query.outputs.row_count > 0 else 0}}"
+
+  all_tests_passed:
+    type: bool
+    description: Whether all tests passed.
+    value: >-
+      {{
+        blocks.create_schema.succeeded and
+        blocks.insert_task1.succeeded and
+        blocks.insert_task2.succeeded and
+        blocks.insert_task3.succeeded and
+        blocks.select_all.outputs.row_count == 3 and
+        blocks.select_filtered.outputs.row_count == 2 and
+        blocks.select_ordered.outputs.rows[0].name == 'Second Task' and
+        blocks.select_with_operator.outputs.row_count == 2 and
+        blocks.verify_update.outputs.rows[0].status == 'done' and
+        blocks.verify_upsert.outputs.rows[0].name == 'Upsert Updated Task' and
+        blocks.verify_delete.outputs.row_count == 0 and
+        blocks.raw_sql_query.outputs.rows[0].total == 3
+      }}

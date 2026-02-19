@@ -11,7 +11,7 @@ from __future__ import annotations
 
 from typing import Any, ClassVar
 
-from pydantic import Field
+from pydantic import Field, field_validator
 
 from .block import BlockInput
 from .exceptions import ExecutionPaused
@@ -33,10 +33,24 @@ class WorkflowInput(BlockInput):
     """
 
     workflow: str = Field(description="Workflow name to execute")
-    inputs: dict[str, Any] = Field(
+    inputs: dict[str, Any] | str = Field(
         default_factory=dict,
         description="Inputs to pass to child workflow (variables resolved in parent context)",
     )
+
+    @field_validator("inputs", mode="before")
+    @classmethod
+    def _parse_inputs_json(cls, v: Any) -> dict[str, Any] | Any:
+        """Parse JSON string inputs into dict."""
+        if isinstance(v, str):
+            try:
+                import json
+
+                return json.loads(v)
+            except json.JSONDecodeError as e:
+                raise ValueError(f"Invalid JSON in inputs: {e}")
+        return v
+
     timeout_ms: int | None = Field(
         default=None,
         description="Optional timeout for child execution in milliseconds",

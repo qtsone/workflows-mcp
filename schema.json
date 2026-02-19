@@ -110,11 +110,13 @@
               "ReadFiles",
               "HttpCall",
               "LLMCall",
+              "Embedding",
               "ImageGen",
               "Prompt",
               "ReadJSONState",
               "WriteJSONState",
-              "MergeJSONState"
+              "MergeJSONState",
+              "Sql"
             ],
             "description": "Block type"
           },
@@ -287,10 +289,17 @@
                       "type": "string"
                     },
                     "inputs": {
-                      "additionalProperties": true,
+                      "anyOf": [
+                        {
+                          "additionalProperties": true,
+                          "type": "object"
+                        },
+                        {
+                          "type": "string"
+                        }
+                      ],
                       "description": "Inputs to pass to child workflow (variables resolved in parent context)",
-                      "title": "Inputs",
-                      "type": "object"
+                      "title": "Inputs"
                     },
                     "timeout_ms": {
                       "anyOf": [
@@ -418,12 +427,19 @@
                       "type": "string"
                     },
                     "operations": {
+                      "anyOf": [
+                        {
+                          "items": {
+                            "$ref": "#/$defs/EditOperation"
+                          },
+                          "type": "array"
+                        },
+                        {
+                          "type": "string"
+                        }
+                      ],
                       "description": "List of edit operations to apply sequentially",
-                      "items": {
-                        "$ref": "#/$defs/EditOperation"
-                      },
-                      "title": "Operations",
-                      "type": "array"
+                      "title": "Operations"
                     },
                     "encoding": {
                       "default": "utf-8",
@@ -508,21 +524,47 @@
                   "additionalProperties": false,
                   "description": "Inputs for ReadFiles block",
                   "properties": {
+                    "path": {
+                      "anyOf": [
+                        {
+                          "type": "string"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ],
+                      "default": null,
+                      "description": "Single file path to read (absolute or relative). Mutually exclusive with patterns. Use for single-file reads.",
+                      "title": "Path"
+                    },
                     "patterns": {
+                      "anyOf": [
+                        {
+                          "items": {
+                            "type": "string"
+                          },
+                          "type": "array"
+                        },
+                        {
+                          "type": "string"
+                        }
+                      ],
                       "description": "Glob patterns for files to read (e.g., ['*.py', '**/*.ts', 'docs/**/*.md'])",
-                      "items": {
-                        "type": "string"
-                      },
-                      "maxItems": 50,
-                      "minItems": 1,
-                      "title": "Patterns",
-                      "type": "array"
+                      "maxLength": 50,
+                      "title": "Patterns"
                     },
                     "base_path": {
+                      "anyOf": [
+                        {
+                          "type": "string"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ],
                       "default": ".",
-                      "description": "Base directory to search from (relative or absolute)",
-                      "title": "Base Path",
-                      "type": "string"
+                      "description": "Base directory to search from (relative or absolute). Used with patterns.",
+                      "title": "Base Path"
                     },
                     "mode": {
                       "anyOf": [
@@ -596,9 +638,6 @@
                       "type": "string"
                     }
                   },
-                  "required": [
-                    "patterns"
-                  ],
                   "title": "ReadFilesInput",
                   "type": "object"
                 }
@@ -649,7 +688,7 @@
                         }
                       ],
                       "default": null,
-                      "description": "JSON request body (mutually exclusive with content). Matches httpx parameter name.",
+                      "description": "JSON request body (mutually exclusive with content). Use 'json' in YAML for httpx compatibility.",
                       "title": "Json"
                     },
                     "content": {
@@ -917,6 +956,93 @@
                     "prompt"
                   ],
                   "title": "LLMCallInput",
+                  "type": "object"
+                }
+              }
+            }
+          },
+          {
+            "if": {
+              "properties": {
+                "type": {
+                  "const": "Embedding"
+                }
+              }
+            },
+            "then": {
+              "properties": {
+                "inputs": {
+                  "additionalProperties": false,
+                  "description": "Inputs for Embedding block",
+                  "properties": {
+                    "profile": {
+                      "default": "embedding",
+                      "description": "Profile name from ~/.workflows/llm-config.yml (defaults to 'embedding')",
+                      "title": "Profile",
+                      "type": "string"
+                    },
+                    "model": {
+                      "anyOf": [
+                        {
+                          "type": "string"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ],
+                      "default": null,
+                      "description": "Override embedding model (uses profile model if not specified)",
+                      "title": "Model"
+                    },
+                    "text": {
+                      "description": "Text to generate embedding for",
+                      "title": "Text",
+                      "type": "string"
+                    },
+                    "api_key": {
+                      "anyOf": [
+                        {
+                          "type": "string"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ],
+                      "default": null,
+                      "description": "Override API key (uses profile api_key_secret if not specified)",
+                      "title": "Api Key"
+                    },
+                    "api_url": {
+                      "anyOf": [
+                        {
+                          "type": "string"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ],
+                      "default": null,
+                      "description": "Override API endpoint URL (uses profile api_url if not specified)",
+                      "title": "Api Url"
+                    },
+                    "timeout": {
+                      "anyOf": [
+                        {
+                          "type": "integer"
+                        },
+                        {
+                          "type": "string"
+                        }
+                      ],
+                      "default": 30,
+                      "description": "Request timeout in seconds",
+                      "title": "Timeout"
+                    }
+                  },
+                  "required": [
+                    "text"
+                  ],
+                  "title": "EmbeddingInput",
                   "type": "object"
                 }
               }
@@ -1318,6 +1444,417 @@
                 }
               }
             }
+          },
+          {
+            "if": {
+              "properties": {
+                "type": {
+                  "const": "Sql"
+                }
+              }
+            },
+            "then": {
+              "properties": {
+                "inputs": {
+                  "additionalProperties": false,
+                  "description": "Inputs for Sql block",
+                  "properties": {
+                    "engine": {
+                      "description": "Database engine. Required.",
+                      "enum": [
+                        "sqlite",
+                        "postgresql",
+                        "mariadb"
+                      ],
+                      "title": "Engine",
+                      "type": "string"
+                    },
+                    "path": {
+                      "anyOf": [
+                        {
+                          "type": "string"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ],
+                      "default": null,
+                      "description": "SQLite: Database file path. Use ':memory:' for in-memory DB.",
+                      "title": "Path"
+                    },
+                    "host": {
+                      "anyOf": [
+                        {
+                          "type": "string"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ],
+                      "default": null,
+                      "description": "Database host",
+                      "title": "Host"
+                    },
+                    "port": {
+                      "anyOf": [
+                        {
+                          "type": "integer"
+                        },
+                        {
+                          "type": "string"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ],
+                      "default": null,
+                      "description": "Database port (default: 5432 for PostgreSQL, 3306 for MariaDB)",
+                      "title": "Port"
+                    },
+                    "database": {
+                      "anyOf": [
+                        {
+                          "type": "string"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ],
+                      "default": null,
+                      "description": "Database name",
+                      "title": "Database"
+                    },
+                    "username": {
+                      "anyOf": [
+                        {
+                          "type": "string"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ],
+                      "default": null,
+                      "description": "Database username",
+                      "title": "Username"
+                    },
+                    "password": {
+                      "anyOf": [
+                        {
+                          "type": "string"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ],
+                      "default": null,
+                      "description": "Database password. Use {{secrets.DB_PASSWORD}} for security.",
+                      "title": "Password"
+                    },
+                    "sql": {
+                      "anyOf": [
+                        {
+                          "type": "string"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ],
+                      "default": null,
+                      "description": "\n        SQL statement(s) to execute (Raw SQL mode).\n        - Use ? for positional params (SQLite) or $1, $2 for PostgreSQL\n        - MariaDB uses %s for positional params\n        - Multi-statement scripts: separate with semicolons\n        Mutually exclusive with 'model' field.\n        ",
+                      "title": "Sql"
+                    },
+                    "params": {
+                      "anyOf": [
+                        {
+                          "items": {},
+                          "type": "array"
+                        },
+                        {
+                          "additionalProperties": true,
+                          "type": "object"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ],
+                      "default": null,
+                      "description": "\n        Query parameters for raw SQL (prevents SQL injection).\n        - List for positional: [value1, value2]\n        - Dict for named: {\"name\": value} (PostgreSQL/MariaDB)\n        ",
+                      "title": "Params"
+                    },
+                    "model": {
+                      "anyOf": [
+                        {
+                          "additionalProperties": true,
+                          "type": "object"
+                        },
+                        {
+                          "type": "string"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ],
+                      "default": null,
+                      "description": "\n        Model schema for CRUD operations (Model mode).\n        Defines table structure with columns, types, indexes.\n        Mutually exclusive with 'sql' field.\n        Example:\n          model:\n            table: tasks\n            columns:\n              id: {type: text, primary: true, auto: uuid}\n              name: {type: text, required: true}\n            indexes:\n              - columns: [name]\n        ",
+                      "title": "Model"
+                    },
+                    "op": {
+                      "anyOf": [
+                        {
+                          "enum": [
+                            "schema",
+                            "insert",
+                            "select",
+                            "update",
+                            "delete",
+                            "upsert"
+                          ],
+                          "type": "string"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ],
+                      "default": null,
+                      "description": "\n        CRUD operation (required when using model mode).\n        - schema: Create table + indexes\n        - insert: Insert row (requires data)\n        - select: Query rows (optional where, order, limit, offset)\n        - update: Update rows (requires where and data)\n        - delete: Delete rows (requires where)\n        - upsert: Insert or update on conflict (requires data and conflict)\n        ",
+                      "title": "Op"
+                    },
+                    "data": {
+                      "anyOf": [
+                        {
+                          "additionalProperties": true,
+                          "type": "object"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ],
+                      "default": null,
+                      "description": "Row data for insert/update/upsert operations.",
+                      "title": "Data"
+                    },
+                    "where": {
+                      "anyOf": [
+                        {
+                          "additionalProperties": true,
+                          "type": "object"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ],
+                      "default": null,
+                      "description": "\n        Filter conditions for select/update/delete.\n        - Simple equality: {status: running}\n        - Operators: {priority: {\">\": 5}}\n        - IN: {type: {in: [a, b, c]}}\n        - IS NULL: {deleted_at: {is: null}}\n        ",
+                      "title": "Where"
+                    },
+                    "order": {
+                      "anyOf": [
+                        {
+                          "items": {
+                            "type": "string"
+                          },
+                          "type": "array"
+                        },
+                        {
+                          "type": "string"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ],
+                      "default": null,
+                      "description": "Sort order for select. Format: [\"column:asc\", \"column:desc\"]",
+                      "title": "Order"
+                    },
+                    "limit": {
+                      "anyOf": [
+                        {
+                          "type": "integer"
+                        },
+                        {
+                          "type": "string"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ],
+                      "default": null,
+                      "description": "Maximum rows to return (select).",
+                      "title": "Limit"
+                    },
+                    "offset": {
+                      "anyOf": [
+                        {
+                          "type": "integer"
+                        },
+                        {
+                          "type": "string"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ],
+                      "default": null,
+                      "description": "Rows to skip (select).",
+                      "title": "Offset"
+                    },
+                    "columns": {
+                      "anyOf": [
+                        {
+                          "items": {
+                            "type": "string"
+                          },
+                          "type": "array"
+                        },
+                        {
+                          "type": "string"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ],
+                      "default": null,
+                      "description": "Specific columns to select (default: all columns).",
+                      "title": "Columns"
+                    },
+                    "conflict": {
+                      "anyOf": [
+                        {
+                          "items": {
+                            "type": "string"
+                          },
+                          "type": "array"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ],
+                      "default": null,
+                      "description": "Conflict columns for upsert (usually primary key).",
+                      "title": "Conflict"
+                    },
+                    "init_sql": {
+                      "anyOf": [
+                        {
+                          "type": "string"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ],
+                      "default": null,
+                      "description": "\n        DDL to execute before the main operation (idempotent).\n        Use CREATE TABLE IF NOT EXISTS, CREATE INDEX IF NOT EXISTS, etc.\n        ",
+                      "title": "Init Sql"
+                    },
+                    "isolation_level": {
+                      "anyOf": [
+                        {
+                          "enum": [
+                            "default",
+                            "read_uncommitted",
+                            "read_committed",
+                            "repeatable_read",
+                            "serializable",
+                            "immediate",
+                            "exclusive"
+                          ],
+                          "type": "string"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ],
+                      "default": null,
+                      "description": "\n        Transaction isolation level.\n        - PostgreSQL/MariaDB: read_uncommitted, read_committed, repeatable_read, serializable\n        - SQLite: immediate (recommended for writes), exclusive, or default (deferred)\n        ",
+                      "title": "Isolation Level"
+                    },
+                    "ssl": {
+                      "anyOf": [
+                        {
+                          "type": "boolean"
+                        },
+                        {
+                          "type": "string"
+                        }
+                      ],
+                      "default": false,
+                      "description": "Enable SSL/TLS. Boolean or sslmode string (require, verify-ca, verify-full)",
+                      "title": "Ssl"
+                    },
+                    "timeout": {
+                      "anyOf": [
+                        {
+                          "type": "integer"
+                        },
+                        {
+                          "type": "string"
+                        }
+                      ],
+                      "default": 30,
+                      "description": "Query execution timeout in seconds",
+                      "title": "Timeout"
+                    },
+                    "connect_timeout": {
+                      "anyOf": [
+                        {
+                          "type": "integer"
+                        },
+                        {
+                          "type": "string"
+                        }
+                      ],
+                      "default": 10,
+                      "description": "Connection establishment timeout in seconds",
+                      "title": "Connect Timeout"
+                    },
+                    "pool_size": {
+                      "anyOf": [
+                        {
+                          "type": "integer"
+                        },
+                        {
+                          "type": "string"
+                        }
+                      ],
+                      "default": 5,
+                      "description": "Connection pool size (PostgreSQL/MariaDB only)",
+                      "title": "Pool Size"
+                    },
+                    "sqlite_pragmas": {
+                      "anyOf": [
+                        {
+                          "additionalProperties": {
+                            "anyOf": [
+                              {
+                                "type": "string"
+                              },
+                              {
+                                "type": "integer"
+                              },
+                              {
+                                "type": "boolean"
+                              }
+                            ]
+                          },
+                          "type": "object"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ],
+                      "default": null,
+                      "description": "\n        SQLite PRAGMA settings applied on connection.\n        Defaults: journal_mode=WAL, busy_timeout=30000, synchronous=NORMAL, foreign_keys=ON\n        ",
+                      "title": "Sqlite Pragmas"
+                    }
+                  },
+                  "required": [
+                    "engine"
+                  ],
+                  "title": "SqlInput",
+                  "type": "object"
+                }
+              }
+            }
           }
         ]
       }
@@ -1325,14 +1862,13 @@
   },
   "$defs": {
     "ValueType": {
-      "description": "Unified Python type system for workflow values.\n\nSingle source of truth for all type declarations across:\n- Workflow inputs\n- Block outputs (file-based)\n- Workflow outputs\n- Output parsing logic\n\nThese match Python's built-in types for consistency with:\n- isinstance() checks in conditions: isinstance({{inputs.name}}, str)\n- Type annotations in executor models: Field(default=\"\", description=\"...\")\n- Variable resolution return types\n\nType mappings:\n- str: Text values (Python str)\n- num: Numeric values (int or float)\n- bool: Boolean values (Python bool)\n- list: List/array values (Python list)\n- dict: Dictionary/object values (Python dict)\n- json: Special - parse as JSON (returns dict/list/str/int/float/bool/None)",
+      "description": "Unified Python type system for workflow values.\n\nSingle source of truth for all type declarations across:\n- Workflow inputs\n- Block outputs (file-based)\n- Workflow outputs\n- Output parsing logic\n\nThese match Python's built-in types for consistency with:\n- isinstance() checks in conditions: isinstance({{inputs.name}}, str)\n- Type annotations in executor models: Field(default=\"\", description=\"...\")\n- Variable resolution return types\n\nType mappings:\n- str: Text values (Python str)\n- num: Numeric values (int or float)\n- bool: Boolean values (Python bool)\n- list: JSON array (Python list)\n- dict: JSON object (Python dict)",
       "enum": [
         "str",
         "num",
         "bool",
         "list",
-        "dict",
-        "json"
+        "dict"
       ],
       "title": "ValueType",
       "type": "string"
@@ -1402,10 +1938,17 @@
           "type": "string"
         },
         "inputs": {
-          "additionalProperties": true,
+          "anyOf": [
+            {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            {
+              "type": "string"
+            }
+          ],
           "description": "Inputs to pass to child workflow (variables resolved in parent context)",
-          "title": "Inputs",
-          "type": "object"
+          "title": "Inputs"
         },
         "timeout_ms": {
           "anyOf": [
@@ -1666,12 +2209,19 @@
           "type": "string"
         },
         "operations": {
+          "anyOf": [
+            {
+              "items": {
+                "$ref": "#/$defs/EditOperation"
+              },
+              "type": "array"
+            },
+            {
+              "type": "string"
+            }
+          ],
           "description": "List of edit operations to apply sequentially",
-          "items": {
-            "$ref": "#/$defs/EditOperation"
-          },
-          "title": "Operations",
-          "type": "array"
+          "title": "Operations"
         },
         "encoding": {
           "default": "utf-8",
@@ -1741,23 +2291,49 @@
     },
     "ReadFilesInput": {
       "additionalProperties": false,
-      "description": "Input model for ReadFiles executor with full interpolation support.",
+      "description": "Input model for ReadFiles executor with full interpolation support.\n\nTwo modes of operation:\n1. Single file: Use `path` for reading one file directly (absolute or relative)\n2. Multiple files: Use `patterns` + `base_path` for glob-based file discovery\n\nThese are mutually exclusive - provide either `path` OR `patterns`, not both.",
       "properties": {
+        "path": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Single file path to read (absolute or relative). Mutually exclusive with patterns. Use for single-file reads.",
+          "title": "Path"
+        },
         "patterns": {
+          "anyOf": [
+            {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            {
+              "type": "string"
+            }
+          ],
           "description": "Glob patterns for files to read (e.g., ['*.py', '**/*.ts', 'docs/**/*.md'])",
-          "items": {
-            "type": "string"
-          },
-          "maxItems": 50,
-          "minItems": 1,
-          "title": "Patterns",
-          "type": "array"
+          "maxLength": 50,
+          "title": "Patterns"
         },
         "base_path": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
           "default": ".",
-          "description": "Base directory to search from (relative or absolute)",
-          "title": "Base Path",
-          "type": "string"
+          "description": "Base directory to search from (relative or absolute). Used with patterns.",
+          "title": "Base Path"
         },
         "mode": {
           "anyOf": [
@@ -1831,9 +2407,6 @@
           "type": "string"
         }
       },
-      "required": [
-        "patterns"
-      ],
       "title": "ReadFilesInput",
       "type": "object"
     },
@@ -1871,7 +2444,7 @@
             }
           ],
           "default": null,
-          "description": "JSON request body (mutually exclusive with content). Matches httpx parameter name.",
+          "description": "JSON request body (mutually exclusive with content). Use 'json' in YAML for httpx compatibility.",
           "title": "Json"
         },
         "content": {
@@ -2137,6 +2710,80 @@
         "prompt"
       ],
       "title": "LLMCallInput",
+      "type": "object"
+    },
+    "EmbeddingInput": {
+      "additionalProperties": false,
+      "description": "Input schema for Embedding block.\n\nGenerates vector embeddings for text using OpenAI-compatible embedding API.\nWorks with OpenAI, LMStudio, Ollama (--api-compat), LocalAI, vLLM, and other\nservers implementing the /v1/embeddings endpoint.\n\nDefaults to 'embedding' profile from ~/.workflows/llm-config.yml.",
+      "properties": {
+        "profile": {
+          "default": "embedding",
+          "description": "Profile name from ~/.workflows/llm-config.yml (defaults to 'embedding')",
+          "title": "Profile",
+          "type": "string"
+        },
+        "model": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Override embedding model (uses profile model if not specified)",
+          "title": "Model"
+        },
+        "text": {
+          "description": "Text to generate embedding for",
+          "title": "Text",
+          "type": "string"
+        },
+        "api_key": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Override API key (uses profile api_key_secret if not specified)",
+          "title": "Api Key"
+        },
+        "api_url": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Override API endpoint URL (uses profile api_url if not specified)",
+          "title": "Api Url"
+        },
+        "timeout": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "string"
+            }
+          ],
+          "default": 30,
+          "description": "Request timeout in seconds",
+          "title": "Timeout"
+        }
+      },
+      "required": [
+        "text"
+      ],
+      "title": "EmbeddingInput",
       "type": "object"
     },
     "ImageProvider": {
@@ -2478,6 +3125,404 @@
         "updates"
       ],
       "title": "MergeJSONStateInput",
+      "type": "object"
+    },
+    "SqlInput": {
+      "additionalProperties": false,
+      "description": "Input schema for SQL executor.\n\nTwo operating modes (mutually exclusive):\n\n**Mode A: Raw SQL** - Provide `sql` field to execute SQL directly\n**Mode B: Model-based CRUD** - Provide `model` + `op` for Active Record-style operations",
+      "properties": {
+        "engine": {
+          "description": "Database engine. Required.",
+          "enum": [
+            "sqlite",
+            "postgresql",
+            "mariadb"
+          ],
+          "title": "Engine",
+          "type": "string"
+        },
+        "path": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "SQLite: Database file path. Use ':memory:' for in-memory DB.",
+          "title": "Path"
+        },
+        "host": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Database host",
+          "title": "Host"
+        },
+        "port": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Database port (default: 5432 for PostgreSQL, 3306 for MariaDB)",
+          "title": "Port"
+        },
+        "database": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Database name",
+          "title": "Database"
+        },
+        "username": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Database username",
+          "title": "Username"
+        },
+        "password": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Database password. Use {{secrets.DB_PASSWORD}} for security.",
+          "title": "Password"
+        },
+        "sql": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "\n        SQL statement(s) to execute (Raw SQL mode).\n        - Use ? for positional params (SQLite) or $1, $2 for PostgreSQL\n        - MariaDB uses %s for positional params\n        - Multi-statement scripts: separate with semicolons\n        Mutually exclusive with 'model' field.\n        ",
+          "title": "Sql"
+        },
+        "params": {
+          "anyOf": [
+            {
+              "items": {},
+              "type": "array"
+            },
+            {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "\n        Query parameters for raw SQL (prevents SQL injection).\n        - List for positional: [value1, value2]\n        - Dict for named: {\"name\": value} (PostgreSQL/MariaDB)\n        ",
+          "title": "Params"
+        },
+        "model": {
+          "anyOf": [
+            {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "\n        Model schema for CRUD operations (Model mode).\n        Defines table structure with columns, types, indexes.\n        Mutually exclusive with 'sql' field.\n        Example:\n          model:\n            table: tasks\n            columns:\n              id: {type: text, primary: true, auto: uuid}\n              name: {type: text, required: true}\n            indexes:\n              - columns: [name]\n        ",
+          "title": "Model"
+        },
+        "op": {
+          "anyOf": [
+            {
+              "enum": [
+                "schema",
+                "insert",
+                "select",
+                "update",
+                "delete",
+                "upsert"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "\n        CRUD operation (required when using model mode).\n        - schema: Create table + indexes\n        - insert: Insert row (requires data)\n        - select: Query rows (optional where, order, limit, offset)\n        - update: Update rows (requires where and data)\n        - delete: Delete rows (requires where)\n        - upsert: Insert or update on conflict (requires data and conflict)\n        ",
+          "title": "Op"
+        },
+        "data": {
+          "anyOf": [
+            {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Row data for insert/update/upsert operations.",
+          "title": "Data"
+        },
+        "where": {
+          "anyOf": [
+            {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "\n        Filter conditions for select/update/delete.\n        - Simple equality: {status: running}\n        - Operators: {priority: {\">\": 5}}\n        - IN: {type: {in: [a, b, c]}}\n        - IS NULL: {deleted_at: {is: null}}\n        ",
+          "title": "Where"
+        },
+        "order": {
+          "anyOf": [
+            {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Sort order for select. Format: [\"column:asc\", \"column:desc\"]",
+          "title": "Order"
+        },
+        "limit": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Maximum rows to return (select).",
+          "title": "Limit"
+        },
+        "offset": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Rows to skip (select).",
+          "title": "Offset"
+        },
+        "columns": {
+          "anyOf": [
+            {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Specific columns to select (default: all columns).",
+          "title": "Columns"
+        },
+        "conflict": {
+          "anyOf": [
+            {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Conflict columns for upsert (usually primary key).",
+          "title": "Conflict"
+        },
+        "init_sql": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "\n        DDL to execute before the main operation (idempotent).\n        Use CREATE TABLE IF NOT EXISTS, CREATE INDEX IF NOT EXISTS, etc.\n        ",
+          "title": "Init Sql"
+        },
+        "isolation_level": {
+          "anyOf": [
+            {
+              "enum": [
+                "default",
+                "read_uncommitted",
+                "read_committed",
+                "repeatable_read",
+                "serializable",
+                "immediate",
+                "exclusive"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "\n        Transaction isolation level.\n        - PostgreSQL/MariaDB: read_uncommitted, read_committed, repeatable_read, serializable\n        - SQLite: immediate (recommended for writes), exclusive, or default (deferred)\n        ",
+          "title": "Isolation Level"
+        },
+        "ssl": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "string"
+            }
+          ],
+          "default": false,
+          "description": "Enable SSL/TLS. Boolean or sslmode string (require, verify-ca, verify-full)",
+          "title": "Ssl"
+        },
+        "timeout": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "string"
+            }
+          ],
+          "default": 30,
+          "description": "Query execution timeout in seconds",
+          "title": "Timeout"
+        },
+        "connect_timeout": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "string"
+            }
+          ],
+          "default": 10,
+          "description": "Connection establishment timeout in seconds",
+          "title": "Connect Timeout"
+        },
+        "pool_size": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "string"
+            }
+          ],
+          "default": 5,
+          "description": "Connection pool size (PostgreSQL/MariaDB only)",
+          "title": "Pool Size"
+        },
+        "sqlite_pragmas": {
+          "anyOf": [
+            {
+              "additionalProperties": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "integer"
+                  },
+                  {
+                    "type": "boolean"
+                  }
+                ]
+              },
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "\n        SQLite PRAGMA settings applied on connection.\n        Defaults: journal_mode=WAL, busy_timeout=30000, synchronous=NORMAL, foreign_keys=ON\n        ",
+          "title": "Sqlite Pragmas"
+        }
+      },
+      "required": [
+        "engine"
+      ],
+      "title": "SqlInput",
       "type": "object"
     }
   }

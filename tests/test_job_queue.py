@@ -421,19 +421,21 @@ async def test_job_queue_backpressure():
         llm_config_loader = LLMConfigLoader()
         io_queue = IOQueue()
 
-        # Register simple workflow
-        simple_workflow = WorkflowSchema(
-            name="test-simple",
-            description="Test",
+        # Register a SLOW workflow to prevent race conditions
+        # The fast echo workflow completes in ~1ms, causing jobs to finish
+        # before assertions run. Using sleep ensures jobs stay "active".
+        slow_workflow = WorkflowSchema(
+            name="slow-for-backpressure",
+            description="Slow workflow for backpressure testing",
             blocks=[
                 {
-                    "id": "echo",
+                    "id": "sleep",
                     "type": "Shell",
-                    "inputs": {"command": "echo 'test'"},
+                    "inputs": {"command": "sleep 5"},
                 }
             ],
         )
-        registry.register(simple_workflow)
+        registry.register(slow_workflow)
 
         app_context = AppContext(
             registry=registry,
@@ -450,8 +452,8 @@ async def test_job_queue_backpressure():
 
         try:
             # Submit jobs up to the limit
-            job_id_1 = await queue.submit_job("test-simple")
-            _ = await queue.submit_job("test-simple")  # Second job (fills queue)
+            job_id_1 = await queue.submit_job("slow-for-backpressure")
+            _ = await queue.submit_job("slow-for-backpressure")  # Second job (fills queue)
 
             # Verify we have 2 active jobs
             stats = await queue.get_stats()
@@ -459,7 +461,7 @@ async def test_job_queue_backpressure():
 
             # Try to submit one more - should fail with RuntimeError
             with pytest.raises(RuntimeError) as exc_info:
-                await queue.submit_job("test-simple")
+                await queue.submit_job("slow-for-backpressure")
 
             # Verify error message contains useful information
             error_msg = str(exc_info.value)
@@ -474,7 +476,7 @@ async def test_job_queue_backpressure():
             await asyncio.sleep(0.1)
 
             # Should be able to submit again after freeing a slot
-            job_id_3 = await queue.submit_job("test-simple")
+            job_id_3 = await queue.submit_job("slow-for-backpressure")
             assert job_id_3 is not None
 
         finally:

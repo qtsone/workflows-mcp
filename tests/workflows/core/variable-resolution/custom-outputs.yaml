@@ -26,7 +26,7 @@ blocks:
         path: "{{tmp}}/bool_output.txt"
         description: "Custom boolean output"
       json_output:
-        type: json
+        type: dict
         path: "{{tmp}}/json_output.json"
         description: "Custom JSON output"
 

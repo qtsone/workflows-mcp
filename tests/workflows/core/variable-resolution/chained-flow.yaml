@@ -138,7 +138,7 @@ blocks:
         cat "{{tmp}}/stage6.json"
     outputs:
       result:
-        type: json
+        type: dict
         path: "{{tmp}}/stage6.json"
     depends_on: [stage4_validate_chain, stage5_string_start]
 
@@ -213,7 +213,7 @@ outputs:
     description: "Stage 5 string format result (value_70)"
   stage6_result:
     value: "{{blocks.stage6_to_json.outputs.result}}"
-    type: json
+    type: dict
     description: "Stage 6 JSON aggregation result"
   pipeline_valid:
     value: "{{blocks.final_validation.succeeded}}"

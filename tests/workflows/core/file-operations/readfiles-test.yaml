@@ -174,5 +174,5 @@ outputs:
 
   files_processed_json:
     value: "{{blocks.test_multi_full.outputs.files}}"
-    type: json
+    type: dict
     description: List of files processed with metadata

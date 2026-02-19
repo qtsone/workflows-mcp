@@ -122,7 +122,7 @@ class HttpCallOutput(BlockOutput):
         default="",
         description="Response body as text (empty string if request failed)",
     )
-    response_json: dict[str, Any] | None = Field(
+    response_json: Any | None = Field(
         default=None,
         description="Parsed JSON response (None if not valid JSON or request failed)",
     )

@@ -1234,3 +1234,242 @@ class LLMCallExecutor(BlockExecutor):
             raise ValueError(f"Response does not match schema: {e.message}")
 
         return response
+
+
+# ===========================================================================
+# Embedding Executor
+# ===========================================================================
+
+
+class EmbeddingInput(BlockInput):
+    """Input schema for Embedding block.
+
+    Generates vector embeddings for text using OpenAI-compatible embedding API.
+    Works with OpenAI, LMStudio, Ollama (--api-compat), LocalAI, vLLM, and other
+    servers implementing the /v1/embeddings endpoint.
+
+    Defaults to 'embedding' profile from ~/.workflows/llm-config.yml.
+    """
+
+    profile: str = Field(
+        default="embedding",
+        description="Profile name from ~/.workflows/llm-config.yml (defaults to 'embedding')",
+    )
+
+    model: str | None = Field(
+        default=None,
+        description="Override embedding model (uses profile model if not specified)",
+    )
+
+    text: str = Field(
+        description="Text to generate embedding for",
+    )
+
+    api_key: str | None = Field(
+        default=None,
+        description="Override API key (uses profile api_key_secret if not specified)",
+    )
+
+    api_url: str | None = Field(
+        default=None,
+        description="Override API endpoint URL (uses profile api_url if not specified)",
+    )
+
+    timeout: int | str = Field(
+        default=30,
+        description="Request timeout in seconds",
+    )
+
+    _validate_timeout = field_validator("timeout", mode="before")(
+        interpolatable_numeric_validator(int, ge=1, le=300)
+    )
+
+
+class EmbeddingOutput(BlockOutput):
+    """Output schema for Embedding block.
+
+    Returns the embedding vector and metadata.
+    """
+
+    embedding: list[float] = Field(
+        default_factory=list,
+        description="Embedding vector (list of floats)",
+    )
+
+    dimensions: int = Field(
+        default=0,
+        description="Number of dimensions in the embedding",
+    )
+
+    success: bool = Field(
+        default=False,
+        description="Whether the embedding generation succeeded",
+    )
+
+    metadata: dict[str, Any] = Field(
+        default_factory=dict,
+        description="Execution metadata (model, usage, etc.)",
+    )
+
+
+class EmbeddingExecutor(BlockExecutor):
+    """Executor for generating text embeddings using OpenAI-compatible API.
+
+    Works with any server implementing the OpenAI embeddings endpoint:
+    - OpenAI API (api.openai.com)
+    - LMStudio (localhost:1234)
+    - Ollama with OpenAI compatibility (localhost:11434/v1)
+    - LocalAI, vLLM, and other OpenAI-compatible servers
+
+    Configuration via ~/.workflows/llm-config.yml profile (defaults to 'embedding'):
+    ```yaml
+    profiles:
+      embedding:
+        provider: openai  # or ollama, local, etc.
+        model: text-embedding-3-small
+        api_url: http://localhost:1234/v1  # for LMStudio
+        api_key_secret: OPENAI_API_KEY
+    ```
+
+    Example:
+        ```yaml
+        - id: embed_query
+          type: Embedding
+          inputs:
+            text: "{{inputs.query}}"
+        ```
+
+    Outputs:
+        - embedding: List of floats representing the embedding vector
+        - dimensions: Number of dimensions (e.g., 1536 for text-embedding-3-small)
+        - success: Whether the API call succeeded
+        - metadata: Contains model, usage, etc.
+    """
+
+    type_name: ClassVar[str] = "Embedding"
+    input_type: ClassVar[type[BlockInput]] = EmbeddingInput
+    output_type: ClassVar[type[BlockOutput]] = EmbeddingOutput
+    examples: ClassVar[str] = """```yaml
+- id: embed_text
+  type: Embedding
+  inputs:
+    text: "Search for authentication bugs"
+```"""
+
+    security_level: ClassVar[ExecutorSecurityLevel] = ExecutorSecurityLevel.TRUSTED
+    capabilities: ClassVar[ExecutorCapabilities] = ExecutorCapabilities(can_network=True)
+
+    async def execute(  # type: ignore[override]
+        self, inputs: EmbeddingInput, context: Execution
+    ) -> EmbeddingOutput:
+        """Execute embedding generation using OpenAI-compatible API.
+
+        Resolves profile configuration and calls the embeddings endpoint.
+        Works with any OpenAI-compatible server (OpenAI, LMStudio, Ollama, etc.).
+
+        Raises:
+            ValueError: Invalid configuration
+            httpx.*: Network errors
+        """
+        execution_context = context.execution_context
+        if execution_context is None:
+            raise ValueError("ExecutionContext not available")
+
+        llm_config_loader = execution_context.llm_config_loader
+
+        # Start with input overrides
+        model = inputs.model
+        api_key = inputs.api_key
+        api_url = inputs.api_url
+
+        # Build inline overrides from inputs (filter out None values)
+        inline_overrides = {
+            key: value
+            for key, value in {
+                "model": inputs.model,
+                "api_url": inputs.api_url,
+            }.items()
+            if value is not None
+        }
+
+        # Try to resolve profile (returns ResolvedLLMConfig with merged provider+profile values)
+        resolved_config = None
+        config = llm_config_loader.load_config()
+
+        effective_profile: str | None = inputs.profile
+        if effective_profile not in config.profiles:
+            if config.default_profile and config.default_profile in config.profiles:
+                logger.warning(
+                    f"Embedding profile '{inputs.profile}' not found, "
+                    f"using default_profile '{config.default_profile}'"
+                )
+                effective_profile = config.default_profile
+            else:
+                effective_profile = None
+
+        if effective_profile is not None:
+            resolved_config = llm_config_loader.resolve_profile(
+                profile=effective_profile, inline_overrides=inline_overrides
+            )
+
+        if resolved_config:
+            # Use resolved values as defaults (inputs override)
+            model = model or resolved_config.model
+            api_url = api_url or resolved_config.api_url
+
+            # Resolve API key from secrets if not provided
+            if api_key is None and resolved_config.api_key_secret:
+                from .secrets import EnvVarSecretProvider
+
+                secret_provider = EnvVarSecretProvider()
+                api_key = await secret_provider.get_secret(resolved_config.api_key_secret)
+
+        # Default model if still not set
+        if model is None:
+            model = "text-embedding-3-small"
+
+        # Resolve timeout
+        timeout = resolve_interpolatable_numeric(inputs.timeout, int, "timeout", ge=1, le=300)
+
+        try:
+            # Use OpenAI SDK which works with any OpenAI-compatible server
+            client = AsyncOpenAI(
+                api_key=api_key or "not-required",  # Some local servers don't need API key
+                base_url=api_url,  # None = default OpenAI endpoint
+                timeout=float(timeout),
+            )
+
+            response = await client.embeddings.create(
+                model=model,
+                input=inputs.text,
+            )
+
+            embedding = response.data[0].embedding
+            dimensions = len(embedding)
+
+            metadata: dict[str, Any] = {
+                "model": response.model,
+            }
+
+            # Include usage if available (some servers may not return it)
+            if response.usage:
+                metadata["usage"] = {
+                    "prompt_tokens": response.usage.prompt_tokens,
+                    "total_tokens": response.usage.total_tokens,
+                }
+
+            return EmbeddingOutput(
+                embedding=embedding,
+                dimensions=dimensions,
+                success=True,
+                metadata=metadata,
+            )
+
+        except Exception as e:
+            logger.error(f"Embedding generation failed: {e}")
+            return EmbeddingOutput(
+                embedding=[],
+                dimensions=0,
+                success=False,
+                metadata={"error": str(e)},
+            )

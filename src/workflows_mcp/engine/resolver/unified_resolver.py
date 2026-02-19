@@ -32,6 +32,8 @@ import hashlib
 import json
 import logging
 import shlex
+import time
+import uuid
 from datetime import datetime
 from typing import TYPE_CHECKING, Any
 
@@ -165,6 +167,7 @@ class UnifiedVariableResolver:
                 "hash": lambda x, algo="sha256": hashlib.new(algo, x.encode()).hexdigest(),
                 "keys": lambda x: list(x.keys()) if isinstance(x, dict) else [],
                 "values": lambda x: list(x.values()) if isinstance(x, dict) else [],
+                "combine": self._combine_dicts,
             }
         )
 
@@ -173,6 +176,7 @@ class UnifiedVariableResolver:
             {
                 "now": lambda: datetime.now().isoformat(),
                 "timestamp": lambda: int(datetime.now().timestamp()),
+                "generate_id": self._generate_id,
                 "len": len,
                 "range": range,
                 "int": int,
@@ -209,40 +213,191 @@ class UnifiedVariableResolver:
         return result.unwrap()
 
     @staticmethod
-    def _get(obj: Any, key: int | str, default: Any = None) -> Any:
+    def _combine_dicts(base: Any, other: Any, recursive: bool = False) -> dict[str, Any]:
         """
-        Unified safe accessor for dicts, lists, and attributes.
+        Combine two dictionaries (Ansible-style combine filter).
 
-        Similar to dict.get() but works for:
-        - Dict key access: get(mydict, 'key', default)
-        - List index access: get(mylist, 1, default)
-        - Attribute access: get(myobj, 'attr', default)
+        Args:
+            base: Base dictionary
+            other: Dictionary to merge in
+            recursive: If True, perform deep merge; if False, shallow merge
 
-        Returns default if key/index/attribute doesn't exist or is out of bounds.
+        Returns:
+            Merged dictionary
+        """
+        if not isinstance(base, dict):
+            base = {}
+        if not isinstance(other, dict):
+            other = {}
+
+        if not recursive:
+            return {**base, **other}
+
+        # Deep merge
+        result = dict(base)
+        for key, value in other.items():
+            if key in result and isinstance(result[key], dict) and isinstance(value, dict):
+                result[key] = UnifiedVariableResolver._combine_dicts(
+                    result[key], value, recursive=True
+                )
+            else:
+                result[key] = value
+        return result
+
+    @staticmethod
+    def _generate_id(prefix: str = "task") -> str:
+        """
+        Generate a unique, sortable identifier.
+
+        Format: {prefix}-{unix_timestamp}-{random_hex}
+        Example: task-1734012345-a1b2c3
+
+        The format provides:
+        - Chronological sorting via timestamp
+        - Human-readable structure
+        - Uniqueness via random suffix
+        - Clear auto-generated indication
+
+        Args:
+            prefix: ID prefix (default: "task")
+
+        Returns:
+            Generated unique identifier
 
         Examples:
-            {{get(files, 1, {})}}                      # List index
-            {{get(files, 1, {}).content | default('')}} # Chained access
-            {{get(block, 'outputs', {})}}              # Dict key
-            {{get(obj, 'missing_attr', None)}}         # Attribute
+            {{generate_id()}}           -> task-1734012345-a1b2c3
+            {{generate_id('job')}}      -> job-1734012345-d4e5f6
+            {{generate_id('req')}}      -> req-1734012345-789abc
+        """
+        ts = int(time.time())
+        random_hex = uuid.uuid4().hex[:6]
+        return f"{prefix}-{ts}-{random_hex}"
+
+    @staticmethod
+    def _get(obj: Any, path: int | str, default: Any = None) -> Any:
+        """
+        Safe deep accessor with JSON auto-parsing at all levels.
+
+        Features:
+        - Dotted paths: get(obj, 'a.b.c', default)
+        - Array indices in paths: get(obj, 'items.0.name', default)
+        - JSON auto-parse at ROOT: get('{"a":1}', 'a', 0) → 1
+        - JSON auto-parse at VALUE: get(dict, 'key', {}) parses dict['key'] if JSON string
+        - None-safe: Returns default if any part is None/missing
+        - Exception-safe: Never throws, always returns default
+
+        Returns default if:
+        - Path doesn't exist or any part is out of bounds
+        - Value is None/null (unlike Python's dict.get which returns None)
+        - JSON string fails to parse
+
+        This null-handling behavior is important for LLM responses where
+        optional fields may be explicitly set to null rather than omitted.
+
+        JSON Auto-Parsing (at ALL levels):
+        - If root object is a JSON string, it's parsed before traversal
+        - If any intermediate value is a JSON string, it's parsed before continuing
+        - If final value is a JSON string, it's parsed before returning
+        - This handles Shell block outputs seamlessly: get(outputs, 'stdout.field', default)
+
+        Examples:
+            {{get(data, 'user.profile.name', 'Unknown')}}  # Dotted path
+            {{get(items, 0, {})}}                          # List index
+            {{get(data, 'results.0.id', none)}}            # Index in path
+            {{get(json_string, 'status', 'error')}}        # Auto-parses JSON root
+            {{get(context, 'json_field', {})}}             # Auto-parses JSON value
+            {{get(response, 'sub_queries', [])}}           # Returns [] if null
         """
         try:
-            # List/tuple index access
-            if isinstance(key, int) and isinstance(obj, (list, tuple)):
-                if -len(obj) <= key < len(obj):
-                    return obj[key]
+            if obj is None:
                 return default
 
-            # Dict key access
-            if isinstance(obj, dict):
-                return obj.get(key, default)
+            # Auto-parse JSON strings
+            if isinstance(obj, str):
+                obj = obj.strip()
+                if not obj:
+                    return default
+                if obj[0] in "{[":
+                    try:
+                        obj = json.loads(obj)
+                    except (json.JSONDecodeError, TypeError, ValueError):
+                        return default
+                else:
+                    return default  # Plain string can't be traversed
 
-            # Attribute access
-            if isinstance(key, str) and hasattr(obj, key):
-                return getattr(obj, key, default)
+            # Integer path: direct index access
+            if isinstance(path, int):
+                if isinstance(obj, (list, tuple)) and -len(obj) <= path < len(obj):
+                    value = obj[path]
+                    return default if value is None else value
+                return default
 
-            return default
-        except (TypeError, KeyError, IndexError, AttributeError):
+            # String path (may contain dots)
+            if not isinstance(path, str):
+                return default
+
+            parts = path.split(".") if "." in path else [path]
+            current = obj
+
+            for part in parts:
+                if current is None:
+                    return default
+
+                # Auto-parse JSON strings at intermediate levels
+                # This handles paths like 'stdout.field' where stdout is a JSON string
+                if isinstance(current, str):
+                    current = current.strip()
+                    if current and current[0] in "{[":
+                        try:
+                            current = json.loads(current)
+                        except (json.JSONDecodeError, TypeError, ValueError):
+                            return default  # Can't traverse unparseable JSON
+                    else:
+                        return default  # Can't traverse plain string
+
+                # Numeric index in path (e.g., "items.0.name")
+                if part.lstrip("-").isdigit():
+                    try:
+                        idx = int(part)
+                        if isinstance(current, (list, tuple)) and -len(current) <= idx < len(
+                            current
+                        ):
+                            current = current[idx]
+                            continue
+                    except (ValueError, TypeError):
+                        pass
+                    return default
+
+                # Dict key access
+                if isinstance(current, dict):
+                    if part in current:
+                        current = current[part]
+                        continue
+                    return default
+
+                # Attribute access (for BlockProxy, etc.)
+                if hasattr(current, part):
+                    try:
+                        current = getattr(current, part)
+                        continue
+                    except AttributeError:
+                        pass
+
+                return default
+
+            # Auto-parse JSON strings in the final value
+            # This handles cases like get(dict, 'key', default) where dict['key'] is a JSON string
+            if isinstance(current, str):
+                current = current.strip()
+                if current and current[0] in "{[":
+                    try:
+                        current = json.loads(current)
+                    except (json.JSONDecodeError, TypeError, ValueError):
+                        pass  # Return original string if parsing fails
+
+            return default if current is None else current
+
+        except Exception:
             return default
 
     @staticmethod

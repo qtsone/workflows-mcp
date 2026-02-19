@@ -218,8 +218,7 @@ CLAUDE.md
 # Docs configuration
 docs/*
 !docs/llm/
+!docs/guides/
 .agent/
 .workflows-state/
-src/workflows_mcp/templates/agents/*
-!src/workflows_mcp/templates/agents/workflow-creator/
 .DS_Store

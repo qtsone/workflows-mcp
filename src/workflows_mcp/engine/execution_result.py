@@ -402,24 +402,49 @@ class ExecutionResult:
             /tmp/<workflow-name>-<timestamp-ms>.json
             Example: /tmp/python-ci-pipeline-1730000000123.json
         """
-        # Get debug data (with secrets already redacted)
-        debug_data = self._build_debug_data()
+        # Generate filename with timestamp first (before any potential errors)
+        timestamp_ms = int(datetime.now().timestamp() * 1000)
 
-        # Extract workflow name from metadata for filename
-        metadata_dict = self._metadata_to_dict()
-        workflow_name = metadata_dict.get("workflow_name", "workflow")
+        try:
+            # Get debug data (with secrets already redacted)
+            debug_data = self._build_debug_data()
+
+            # Extract workflow name from metadata for filename
+            metadata_dict = self._metadata_to_dict()
+            workflow_name = metadata_dict.get("workflow_name", "workflow")
+        except Exception as e:
+            # If _build_debug_data fails, create minimal fallback
+            logger.warning(f"Failed to build debug data: {e}")
+            debug_data = {
+                "status": self.status,
+                "error": f"Debug data build failed: {e}",
+                "outputs": str(self.execution.outputs) if self.execution else None,
+            }
+            workflow_name = "workflow-error"
 
         # Sanitize workflow name for filename (replace invalid chars with hyphen)
-        safe_workflow_name = "".join(c if c.isalnum() or c in "-_" else "-" for c in workflow_name)
-
-        # Generate filename with timestamp
-        timestamp_ms = int(datetime.now().timestamp() * 1000)
+        safe_workflow_name = "".join(
+            c if c.isalnum() or c in "-_" else "-" for c in str(workflow_name)
+        )
         filename = f"/tmp/{safe_workflow_name}-{timestamp_ms}.json"
+
+        # Custom serializer that handles problematic objects
+        def safe_serializer(obj: Any) -> Any:
+            """Safely serialize objects that json.dumps can't handle."""
+            try:
+                # Try standard str() first
+                return str(obj)
+            except Exception:
+                # Fallback to repr() if str() fails
+                try:
+                    return repr(obj)
+                except Exception:
+                    return f"<unserializable: {type(obj).__name__}>"
 
         # Write to file with pretty formatting
         try:
             with open(filename, "w", encoding="utf-8") as f:
-                json.dump(debug_data, f, indent=2, default=str, ensure_ascii=False)
+                json.dump(debug_data, f, indent=2, default=safe_serializer, ensure_ascii=False)
 
             logger.info(f"Debug file written: {filename}")
             return filename

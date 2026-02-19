@@ -1,0 +1,9 @@
+{
+  "outputs": {
+    "dict_output": {
+      "foo": "bar"
+    },
+    "str_output": "{\"foo\": \"bar\"}"
+  },
+  "status": "success"
+}

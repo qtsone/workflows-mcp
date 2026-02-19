@@ -1,0 +1,23 @@
+name: safe-model-parent
+description: Parent workflow passing null
+version: "1.0"
+tags: [test, composition, defaults]
+
+inputs:
+  workspace:
+    type: str
+    description: Workspace path
+    required: false
+
+blocks:
+  - id: call_child
+    type: Workflow
+    inputs:
+      workflow: safe-model-child
+      inputs:
+        workspace: "{{inputs.workspace}}"
+
+outputs:
+  child_stdout:
+    value: "{{blocks.call_child.outputs.workspace}}"
+    type: str
