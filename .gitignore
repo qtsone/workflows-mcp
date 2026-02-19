@@ -221,16 +221,4 @@ docs/*
 !docs/guides/
 .agent/
 .workflows-state/
-src/workflows_mcp/templates/agents/*
-!src/workflows_mcp/templates/agents/workflow-creator/
-!src/workflows_mcp/templates/agents/pr-review/
-!src/workflows_mcp/templates/agents/state-management/
-!src/workflows_mcp/templates/agents/state-visualize/
-!src/workflows_mcp/templates/agents/memory/
-!src/workflows_mcp/templates/agents/iteration/
-!src/workflows_mcp/templates/agents/investigation/
-!src/workflows_mcp/templates/agents/cortex/
-!src/workflows_mcp/templates/agents/cortex-cell-v2/
-
-# OS
 .DS_Store
