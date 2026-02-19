@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file.
 
+# [9.2.0](https://github.com/qtsone/workflows-mcp/compare/v9.1.0...v9.2.0) (2026-02-19)
+
+
+### Features
+
+* **engine:** add knowledge context prefetch schema and memory namespace ([658469e](https://github.com/qtsone/workflows-mcp/commit/658469e2e188485877e132753052db7f602ae62c))
+
 # [9.1.0](https://github.com/qtsone/workflows-mcp/compare/v9.0.0...v9.1.0) (2026-02-19)
 
 
