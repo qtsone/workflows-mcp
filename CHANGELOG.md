@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file.
 
+# [9.1.0](https://github.com/qtsone/workflows-mcp/compare/v9.0.0...v9.1.0) (2026-02-19)
+
+
+### Features
+
+* **workflows-mcp:** add get_all() to ExecutionMemory and flush_memory_on_complete to WorkflowSchema ([d3ee9a1](https://github.com/qtsone/workflows-mcp/commit/d3ee9a167ae8ccb88c3dabd7e7366de2539ca741))
+
 # [9.0.0](https://github.com/qtsone/workflows-mcp/compare/v8.1.0...v9.0.0) (2026-02-19)
 
 
