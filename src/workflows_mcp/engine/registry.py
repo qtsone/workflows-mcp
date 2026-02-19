@@ -98,6 +98,29 @@ class WorkflowRegistry:
 
         logger.info(f"Registered workflow: {workflow.name}")
 
+    def load_from_schemas(self, schemas: list[WorkflowSchema]) -> int:
+        """Register pre-validated WorkflowSchema objects directly.
+
+        Used by the Job execution path where schemas arrive as
+        pre-validated JSON (via WorkflowSchema.model_validate_json).
+        The MCP server path continues using load_from_directory().
+
+        Args:
+            schemas: List of pre-validated WorkflowSchema instances
+
+        Returns:
+            Number of successfully registered workflows
+        """
+        count = 0
+        for schema in schemas:
+            try:
+                self.register(schema)
+                count += 1
+            except ValueError:
+                logger.warning(f"Skipping duplicate workflow: {schema.name}")
+        logger.info(f"Loaded {count} workflows from pre-validated schemas")
+        return count
+
     def unregister(self, name: str) -> None:
         """
         Unregister a workflow by name.

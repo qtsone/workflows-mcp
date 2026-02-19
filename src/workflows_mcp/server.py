@@ -48,25 +48,24 @@ def get_max_recursion_depth() -> int:
 
 
 def load_workflows(registry: WorkflowRegistry) -> None:
-    """Load workflows from built-in templates and optional user-provided directories.
+    """Load workflows from optional built-in templates and user-provided directories.
 
     This function:
-    1. Parses WORKFLOWS_TEMPLATE_PATHS environment variable (comma-separated paths)
-    2. Builds directory list: [built_in_templates, ...user_template_paths]
+    1. Checks for built-in templates (skipped if empty or absent)
+    2. Parses WORKFLOWS_TEMPLATE_PATHS environment variable (comma-separated paths)
     3. Uses registry.load_from_directories() with on_duplicate="overwrite"
-    4. Logs clearly which templates are built-in vs user-provided
 
     Priority: User templates OVERRIDE built-in templates by name.
 
     Environment Variables:
-        WORKFLOWS_TEMPLATE_PATHS: Comma-separated list of additional template directories.
+        WORKFLOWS_TEMPLATE_PATHS: Comma-separated list of template directories.
             Paths can use ~ for home directory. Empty or missing variable is handled gracefully.
 
     Example:
-        WORKFLOWS_TEMPLATE_PATHS="~/my-workflows,/opt/company-workflows"
+        WORKFLOWS_TEMPLATE_PATHS="/workflows,/opt/company-workflows"
         # Load order:
-        # 1. Built-in: src/workflows_mcp/templates/
-        # 2. User: ~/my-workflows (overrides built-in by name)
+        # 1. Built-in: src/workflows_mcp/templates/ (if any YAML files exist)
+        # 2. User: /workflows (overrides built-in by name)
         # 3. User: /opt/company-workflows (overrides both by name)
 
     Args:
@@ -76,20 +75,11 @@ def load_workflows(registry: WorkflowRegistry) -> None:
         Post ADR-008: WorkflowRunner is stateless, workflows only need to be
         loaded into registry. No executor loading step required.
     """
-    # Built-in templates directory
+    # Built-in templates directory (optional — may be empty or absent)
     built_in_templates = Path(__file__).parent / "templates"
-
-    # Validate built-in templates directory exists
-    if not built_in_templates.exists():
-        raise RuntimeError(
-            f"Built-in templates directory not found: {built_in_templates}\n"
-            "This indicates a broken installation. Please reinstall workflows-mcp."
-        )
-    if not built_in_templates.is_dir():
-        raise RuntimeError(
-            f"Built-in templates path is not a directory: {built_in_templates}\n"
-            "This indicates a broken installation. Please reinstall workflows-mcp."
-        )
+    has_built_in = built_in_templates.is_dir() and any(built_in_templates.glob("*.yaml"))
+    if not has_built_in:
+        logger.info("No built-in workflow templates found, skipping")
 
     # Parse WORKFLOWS_TEMPLATE_PATHS environment variable
     env_paths_str = os.getenv("WORKFLOWS_TEMPLATE_PATHS", "")
@@ -118,13 +108,19 @@ def load_workflows(registry: WorkflowRegistry) -> None:
         else:
             logger.warning("WORKFLOWS_TEMPLATE_PATHS provided but no valid directories found")
 
-    # Build directory list: built-in first, then user paths (user paths override)
-    # Cast to list[Path | str] for type compatibility with load_from_directories
-    directories_to_load: list[Path | str] = [built_in_templates]
+    # Build directory list: built-in first (if present), then user paths (user paths override)
+    directories_to_load: list[Path | str] = []
+    if has_built_in:
+        directories_to_load.append(built_in_templates)
     directories_to_load.extend(user_template_paths)
 
+    if not directories_to_load:
+        logger.info("No workflow directories to load")
+        return
+
     logger.info(f"Loading workflows from {len(directories_to_load)} directories")
-    logger.info(f"  Built-in: {built_in_templates}")
+    if has_built_in:
+        logger.info(f"  Built-in: {built_in_templates}")
     for idx, user_path in enumerate(user_template_paths, 1):
         logger.info(f"  User {idx}: {user_path}")
 
@@ -137,9 +133,8 @@ def load_workflows(registry: WorkflowRegistry) -> None:
         raise RuntimeError(
             f"{error_msg}\n"
             "Server cannot start without workflows. Please check:\n"
-            "1. Built-in templates directory is intact\n"
-            "2. WORKFLOWS_TEMPLATE_PATHS (if set) contains valid workflow YAML files\n"
-            "3. All workflow files follow the correct schema"
+            "1. WORKFLOWS_TEMPLATE_PATHS (if set) contains valid workflow YAML files\n"
+            "2. All workflow files follow the correct schema"
         )
 
     # Log loading results per directory
@@ -150,8 +145,9 @@ def load_workflows(registry: WorkflowRegistry) -> None:
 
     if load_counts:
         logger.info("Workflow loading summary:")
-        built_in_count = load_counts.get(str(built_in_templates), 0)
-        logger.info(f"  Built-in templates: {built_in_count} workflows")
+        if has_built_in:
+            built_in_count = load_counts.get(str(built_in_templates), 0)
+            logger.info(f"  Built-in templates: {built_in_count} workflows")
 
         for user_path in user_template_paths:
             user_count = load_counts.get(str(user_path), 0)
