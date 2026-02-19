@@ -10,6 +10,7 @@ from mcp.server.fastmcp import Context
 from mcp.server.session import ServerSession
 
 from .engine import ExecutionContext, WorkflowRegistry
+from .engine.execution_memory import ExecutionMemory
 from .engine.executor_base import ExecutorRegistry
 from .engine.io_queue import IOQueue
 from .engine.job_queue import JobQueue
@@ -33,13 +34,18 @@ class AppContext:
     job_queue: JobQueue | None = None  # Optional job queue for async execution
     max_recursion_depth: int = 50  # Default recursion depth limit
 
-    def create_execution_context(self, workflow_stack: list[str] | None = None) -> ExecutionContext:
+    def create_execution_context(
+        self,
+        workflow_stack: list[str] | None = None,
+        execution_memory: ExecutionMemory | None = None,
+    ) -> ExecutionContext:
         """Create ExecutionContext for workflow execution.
 
         Args:
             workflow_stack: Optional workflow stack for resume (default: empty for new executions).
                            When resuming paused workflows, pass the saved workflow_stack to ensure
                            correct depth tracking for recursive workflows.
+            execution_memory: Optional ephemeral SQLite memory for the execution.
 
         Returns:
             ExecutionContext with access to all shared resources and configured recursion limit
@@ -52,6 +58,7 @@ class AppContext:
             parent=None,
             workflow_stack=workflow_stack or [],
             max_recursion_depth=self.max_recursion_depth,
+            execution_memory=execution_memory,
         )
 
 

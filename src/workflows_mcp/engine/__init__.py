@@ -49,6 +49,7 @@ from .dag import DAGResolver
 # This resolves forward references in Execution (ExecutionContext property)
 from .execution import Execution
 from .execution_context import ExecutionContext
+from .execution_memory import ExecutionMemory, Turn
 from .execution_result import ExecutionResult, PauseData
 from .executor_base import create_default_registry
 from .executors_core import (
@@ -115,6 +116,8 @@ __all__ = [
     "ExecutionResult",
     "PauseData",
     "ExecutionContext",
+    "ExecutionMemory",
+    "Turn",
     "WorkflowRegistry",
     "WorkflowSchema",
     "load_workflow_from_yaml",

@@ -18,6 +18,7 @@ from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from .execution import Execution
+    from .execution_memory import ExecutionMemory
     from .executor_base import ExecutorRegistry
     from .io_queue import IOQueue
     from .llm_config import LLMConfigLoader
@@ -51,6 +52,7 @@ class ExecutionContext:
         parent: Execution | None = None,
         workflow_stack: list[str] | None = None,
         max_recursion_depth: int = 50,
+        execution_memory: ExecutionMemory | None = None,
     ):
         """
         Initialize execution context with shared resources.
@@ -63,6 +65,7 @@ class ExecutionContext:
             parent: Parent execution (for nested workflows)
             workflow_stack: Workflow execution stack (depth tracking)
             max_recursion_depth: Maximum allowed recursion depth (default: 50)
+            execution_memory: Ephemeral SQLite memory for the execution (optional)
         """
         self.workflow_registry = workflow_registry
         self.executor_registry = executor_registry
@@ -71,6 +74,7 @@ class ExecutionContext:
         self.parent = parent
         self.workflow_stack = workflow_stack or []
         self.max_recursion_depth = max_recursion_depth
+        self.execution_memory = execution_memory
 
     def get_workflow(self, name: str) -> WorkflowSchema | None:
         """
@@ -113,6 +117,7 @@ class ExecutionContext:
             parent=parent_execution,
             workflow_stack=self.workflow_stack + [workflow_name],
             max_recursion_depth=self.max_recursion_depth,
+            execution_memory=self.execution_memory,
         )
 
     def check_recursion_depth(self, workflow_name: str) -> None:
