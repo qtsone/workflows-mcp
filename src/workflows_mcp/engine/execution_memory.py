@@ -99,6 +99,16 @@ class ExecutionMemory:
         )
         await asyncio.to_thread(self._conn.commit)
 
+    async def get_all(self, scope: str = "global") -> dict[str, str]:
+        """Retrieve all key-value pairs for a given scope."""
+        assert self._conn is not None, "ExecutionMemory not initialized"
+        cursor = await asyncio.to_thread(
+            self._conn.execute,
+            "SELECT key, value FROM execution_context WHERE scope = ? ORDER BY key",
+            (scope,),
+        )
+        return {row[0]: row[1] for row in cursor.fetchall()}
+
     # ------------------------------------------------------------------
     # Conversation Turns
     # ------------------------------------------------------------------

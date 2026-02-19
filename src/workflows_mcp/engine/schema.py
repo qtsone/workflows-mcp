@@ -578,6 +578,10 @@ class WorkflowSchema(BaseModel):
     version: str = Field(default="1.0", pattern=r"^\d+\.\d+(\.\d+)?$")
     author: str | None = Field(default=None)
     tags: list[str] = Field(default_factory=list)
+    flush_memory_on_complete: bool = Field(
+        default=False,
+        description="Flush global-scoped memory entries to durable knowledge on completion",
+    )
 
     # Workflow structure
     inputs: dict[str, WorkflowInputDeclaration] = Field(

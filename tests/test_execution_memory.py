@@ -53,6 +53,27 @@ class TestKeyValueContext:
         await memory.set("key", "val", scope="block:a")
         assert await memory.get("key", scope="block:b") is None
 
+    @pytest.mark.asyncio
+    async def test_get_all_returns_global_entries(self, memory: ExecutionMemory) -> None:
+        await memory.set("alpha", "1")
+        await memory.set("beta", "2")
+        result = await memory.get_all("global")
+        assert result == {"alpha": "1", "beta": "2"}
+
+    @pytest.mark.asyncio
+    async def test_get_all_scoped_isolation(self, memory: ExecutionMemory) -> None:
+        """get_all('global') should not include block-scoped entries."""
+        await memory.set("shared", "global_val", scope="global")
+        await memory.set("local", "block_val", scope="block:step_1")
+        result = await memory.get_all("global")
+        assert result == {"shared": "global_val"}
+        assert "local" not in result
+
+    @pytest.mark.asyncio
+    async def test_get_all_empty(self, memory: ExecutionMemory) -> None:
+        result = await memory.get_all("global")
+        assert result == {}
+
 
 # -----------------------------------------------------------------------
 # Conversation Turns
