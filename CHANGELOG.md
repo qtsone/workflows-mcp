@@ -2,6 +2,64 @@
 
 All notable changes to this project will be documented in this file.
 
+# [9.0.0](https://github.com/qtsone/workflows-mcp/compare/v8.1.0...v9.0.0) (2026-02-19)
+
+
+* feat(engine)!: add strict output type parsing and coercion for dict and list ([6de95ef](https://github.com/qtsone/workflows-mcp/commit/6de95efd54ad27fdb02aa720a2e98fc2ee92b3ec))
+
+
+### Bug Fixes
+
+* **cortex:** update default threshold and key name in categorize phase ([9884a06](https://github.com/qtsone/workflows-mcp/commit/9884a06d209a37fef326ff9d2474f9a8501d7a28))
+* **engine:** use safe composition model. ([90dd7cc](https://github.com/qtsone/workflows-mcp/commit/90dd7cc05ddd77a513f6e6c8aaaf5fd0f9ac0d9d))
+* **pr-review:** resolve Jinja2 condition and template issues ([0935a90](https://github.com/qtsone/workflows-mcp/commit/0935a905024f3d8b9116f291d9fa3446cbdd9f29))
+* **pr-review:** resolve Jinja2 condition and template issues ([93fa320](https://github.com/qtsone/workflows-mcp/commit/93fa320201b8d3eaa0243ab638d985605ca7e642))
+* **workflows_mcp.engine.executors_file:** allow base_path to be None and default to current directory ([da9db50](https://github.com/qtsone/workflows-mcp/commit/da9db50bc1c87c0cca3960d6419aaa20443fa5b5))
+* **workflows_mcp:** remove unnecessary tojson filter in yaml template ([a80d838](https://github.com/qtsone/workflows-mcp/commit/a80d838b71c3cf6ab468fa9c0bdcd32c757460e5))
+
+
+### Features
+
+* add embedding executor and safe accessor ([9b04dce](https://github.com/qtsone/workflows-mcp/commit/9b04dcea9edc2c7de24ba2b97ea19deec7f11187))
+* add reload_workflows tool ([8d9a2df](https://github.com/qtsone/workflows-mcp/commit/8d9a2dfd4d51fa8a606696674db9c25c0a60b7a8))
+* add test for git-pr-setup short GitHub and GitLab URLs and improve job queue test stability by using a slower workflow. ([9a533f7](https://github.com/qtsone/workflows-mcp/commit/9a533f7cdf4673940bca8a8246d868878c4421ac))
+* add timeout configuration to investigation and pr-review workflows ([299ad91](https://github.com/qtsone/workflows-mcp/commit/299ad91da0f10e692183569edbb44f32a4a0074f))
+* **agents/cortex:** aggregate and expose total token usage across all LLM calls ([c5f5c51](https://github.com/qtsone/workflows-mcp/commit/c5f5c51b18a6bafc76e46ec37695154c21c41909))
+* **agents/cortex:** enhance cortex agent with surprisal and g-score integration ([2513ddd](https://github.com/qtsone/workflows-mcp/commit/2513dddfa5437d21d545db8e7278f655456e75c1))
+* **agents:** add agent-pr-review with hierarchical state tracking ([e84950d](https://github.com/qtsone/workflows-mcp/commit/e84950d50eaeaf02f2da4c81e4464a464d39c606))
+* **agents:** add iteration and memory management workflows ([a07ff12](https://github.com/qtsone/workflows-mcp/commit/a07ff125f767513fafe0146658d58bbeed5f8d5a))
+* **agents:** implement CORTEX cognitive architecture ([1b2b582](https://github.com/qtsone/workflows-mcp/commit/1b2b5827abddb47ca37b36f5e8615b078d81b00f))
+* **cortex, state-management, resolver:** add dict combine method and enhance cortex capabilities and state management ([373ef73](https://github.com/qtsone/workflows-mcp/commit/373ef73d3a852028090bd19b922e3ca0c05a72ca))
+* **cortex:** add EVALUATE/REFINE loop to gather phase and renumber ACT ([f3ba393](https://github.com/qtsone/workflows-mcp/commit/f3ba393188a74a84b59714faca96b1cf565926a8))
+* **cortex:** add llm call tracking and refactor phase task registration ([fab9b7e](https://github.com/qtsone/workflows-mcp/commit/fab9b7e0a97692bbd83ee0858182af255aff6f3c))
+* **cortex:** add ripgrep search with fallback to grep in gather-search capability ([b5a4f77](https://github.com/qtsone/workflows-mcp/commit/b5a4f77e47c1c3d216ebe103c3297111c20081a5))
+* **cortex:** optimize output by querying child syntheses from task tree ([b89c667](https://github.com/qtsone/workflows-mcp/commit/b89c667acf74a87ef0f88efac4746f4b046fb835))
+* **cortex:** restructure agent phases and add atomic capabilities ([c861c20](https://github.com/qtsone/workflows-mcp/commit/c861c208624f50c3b9bc0066ebba5e5bf22399ea))
+* **cortex:** revamp cognitive phases to v2 architecture ([5e59e8c](https://github.com/qtsone/workflows-mcp/commit/5e59e8cb217d30593a8e3e985a6f5536b14a7aaa))
+* **engine/sql:** add sql executor with multi-backend support and connection pooling ([f314519](https://github.com/qtsone/workflows-mcp/commit/f31451979eb683e89a55f2bcc0e1ce92938dda90))
+* **engine:** allow operations and inputs fields to accept JSON strings ([6668ad8](https://github.com/qtsone/workflows-mcp/commit/6668ad8428e3b93a0100b6c6226a4a2337441fc4))
+* **engine:** enhance error handling and json parsing in execution and resolution ([c640d73](https://github.com/qtsone/workflows-mcp/commit/c640d73fd65c762ec3924579108e4ba104741170))
+* enhance `read_files` block to accept `patterns` as a JSON string or array, with updated schema, documentation, and new tests, and add `.DS_Store` to gitignore. ([236c32f](https://github.com/qtsone/workflows-mcp/commit/236c32fa18ed319c904a421b2bde1f3bf993fb1e))
+* **git:** add GitHub App authentication and post-review workflows ([89527c6](https://github.com/qtsone/workflows-mcp/commit/89527c6d54d7eb6648f65a00baf55d61b297bc6b))
+* **git:** add workflow template to parse and checkout git PR/MR repositories ([f644b96](https://github.com/qtsone/workflows-mcp/commit/f644b96b08faa7ed7fac3f5cffd8b05f43dfb44e))
+* **pr-review:** add task hierarchy visualization ([7613538](https://github.com/qtsone/workflows-mcp/commit/761353855856f6f455ee499ec70a72b904f52d9d))
+* **pr-review:** implement memory storage and retrieval in PR review workflows ([a532f81](https://github.com/qtsone/workflows-mcp/commit/a532f813316db1f153513643b1f465536ed2ff72))
+* **sql:** add model-based CRUD support with Active Record-style API ([de02905](https://github.com/qtsone/workflows-mcp/commit/de02905b1e8895d3ef3cac9933a95369895bb42a))
+* **state-management:** add aggregate status helper outputs ([096904a](https://github.com/qtsone/workflows-mcp/commit/096904a5f62c92b0d6a594dc3ebc25b4cf2adf31))
+* **state-management:** add depth attribute to tasks for hierarchical state management ([cc6d0a2](https://github.com/qtsone/workflows-mcp/commit/cc6d0a2f7ae61c30122075d8b028584d2a769541))
+* **state-management:** add state management workflow with audit trail ([16cb8ee](https://github.com/qtsone/workflows-mcp/commit/16cb8ee572a44c0716d93650ac64664ed5727954))
+* **state-visualize:** add agent-state-visualize workflow ([be817dc](https://github.com/qtsone/workflows-mcp/commit/be817dcfff3a60abbebb1d8a46fb8d7bfdd473e4))
+* Update workflow execution functions and tests to return and handle `CallToolResult` objects, and simplify version script string manipulation. ([7039f87](https://github.com/qtsone/workflows-mcp/commit/7039f87b7f84d2c94dcebb64d5b5b3f5eb66e9d2))
+* **workflows-mcp:** add ephemeral execution memory (SQLite) ([3b56617](https://github.com/qtsone/workflows-mcp/commit/3b566173501549215a3d862d6450594b7bdc6e90))
+* **workflows:** Cleanup workflows and fix engine issues ([#37](https://github.com/qtsone/workflows-mcp/issues/37)) ([37db9e9](https://github.com/qtsone/workflows-mcp/commit/37db9e9ecc9c42134e633841e4178e8967ae1e74))
+
+
+### BREAKING CHANGES
+
+* The 'json' output type is deprecated and replaced by explicit 'dict' and 'list' types that enforce JSON parsing and type validation. Users must update output types in workflows and tests from 'json' to 'dict' or 'list' accordingly to avoid errors.
+
+Replace legacy 'json' output type with explicit 'dict' and 'list' types that enforce JSON parsing with type validation. Modify output coercion to serialize dicts/lists as JSON strings for shell inputs. Update workflow runner to correctly extract block outputs. Adjust test workflows and snapshots to use 'dict' instead of 'json' for output types. This improves type safety and clarity in output handling.
+
 # [8.1.0](https://github.com/qtsone/workflows-mcp/compare/v8.0.0...v8.1.0) (2026-02-19)
 
 
