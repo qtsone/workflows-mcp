@@ -222,3 +222,4 @@ docs/*
 .workflows-state/
 src/workflows_mcp/templates/agents/*
 !src/workflows_mcp/templates/agents/workflow-creator/
+.DS_Store
