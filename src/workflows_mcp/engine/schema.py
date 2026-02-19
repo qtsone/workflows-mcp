@@ -520,6 +520,24 @@ class WorkflowOutputSchema(BaseModel):
     model_config = {"extra": "forbid"}
 
 
+class KnowledgeContextConfig(BaseModel):
+    """Configuration for pre-fetching organizational knowledge before execution."""
+
+    categories: list[str] = Field(
+        description="Knowledge category IDs to filter the search",
+    )
+    max_chunks: int = Field(
+        default=20,
+        ge=1,
+        le=100,
+        description="Maximum number of knowledge chunks to pre-fetch",
+    )
+    query_from_inputs: list[str] | None = Field(
+        default=None,
+        description="Input keys whose values are used as search queries",
+    )
+
+
 class WorkflowSchema(BaseModel):
     """
     Complete YAML workflow schema.
@@ -581,6 +599,10 @@ class WorkflowSchema(BaseModel):
     flush_memory_on_complete: bool = Field(
         default=False,
         description="Flush global-scoped memory entries to durable knowledge on completion",
+    )
+    knowledge_context: KnowledgeContextConfig | None = Field(
+        default=None,
+        description="Pre-fetch organizational knowledge before execution",
     )
 
     # Workflow structure
@@ -843,13 +865,16 @@ class WorkflowSchema(BaseModel):
                     # Valid each fields are: key, value, index, count
                     # But we also allow nested access like each.value.nested for dict values
 
+                elif parts[0] == "memory":
+                    pass  # Memory namespace — resolved at runtime from ExecutionMemory
+
                 # Unknown namespace
                 else:
                     raise ValueError(
                         f"{context}: Invalid variable reference '{{{{{var_path}}}}}'. "
                         f"Unknown namespace '{parts[0]}'. "
                         f"Valid namespaces: 'inputs', 'blocks', 'metadata', 'secrets', "
-                        f"'tmp', 'each' (for_each blocks only)"
+                        f"'tmp', 'memory', 'each' (for_each blocks only)"
                     )
 
         def check_dict_values(obj: Any, path: str, allow_each: bool = False) -> None:

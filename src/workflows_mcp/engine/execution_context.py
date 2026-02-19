@@ -75,6 +75,7 @@ class ExecutionContext:
         self.workflow_stack = workflow_stack or []
         self.max_recursion_depth = max_recursion_depth
         self.execution_memory = execution_memory
+        self.memory_snapshot: dict[str, str] = {}
 
     def get_workflow(self, name: str) -> WorkflowSchema | None:
         """
@@ -109,7 +110,7 @@ class ExecutionContext:
         Raises:
             RecursionDepthExceededError: If adding this workflow would exceed max_recursion_depth
         """
-        return ExecutionContext(
+        child = ExecutionContext(
             workflow_registry=self.workflow_registry,
             executor_registry=self.executor_registry,
             llm_config_loader=self.llm_config_loader,
@@ -119,6 +120,8 @@ class ExecutionContext:
             max_recursion_depth=self.max_recursion_depth,
             execution_memory=self.execution_memory,
         )
+        child.memory_snapshot = self.memory_snapshot
+        return child
 
     def check_recursion_depth(self, workflow_name: str) -> None:
         """

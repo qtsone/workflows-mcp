@@ -1169,11 +1169,15 @@ class WorkflowRunner:
             else:
                 blocks[block_id] = block_exec
 
+        context = exec_context.execution_context
+        memory = context.memory_snapshot if context else {}
+
         return {
             "inputs": exec_context.inputs,
             "metadata": metadata,
             "blocks": blocks,
             "tmp": str(exec_context.scratch_dir) if exec_context.scratch_dir else "",
+            "memory": memory,
         }
 
     async def _evaluate_condition(self, condition: str, exec_context: Execution) -> bool:
