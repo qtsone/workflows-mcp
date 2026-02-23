@@ -1426,9 +1426,20 @@ class WorkflowRunner:
         )
 
     def _get_block_outputs(self, block_output: Any) -> dict[str, Any]:
-        """Extract output dict from BlockOutput."""
+        """Extract output dict from BlockOutput.
+
+        For regular blocks (Shell, LLMCall), block_output is a BlockOutput model
+        and model_dump() produces a small dict with stdout/response.
+
+        For Workflow blocks, block_output is an Execution object. Using model_dump()
+        would serialize the ENTIRE child execution tree (all child blocks, metadata,
+        nested executions). Instead, we extract only the declared workflow outputs.
+        """
         if not block_output:
             return {}
+        # Workflow blocks return Execution — only include declared outputs, not the full tree
+        if isinstance(block_output, Execution):
+            return block_output.outputs or {}
         return block_output.model_dump()
 
 
