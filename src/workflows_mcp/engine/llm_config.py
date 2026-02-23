@@ -117,6 +117,13 @@ class ProviderConfig(BaseModel):
         le=60.0,
         description="Initial retry delay in seconds (exponential backoff)",
     )
+    extra_headers: dict[str, str] = Field(
+        default_factory=dict,
+        description=(
+            "Custom HTTP headers to include in all requests to this provider. "
+            "Values can use {ENV_VAR} syntax for runtime environment variable resolution."
+        ),
+    )
     # Azure OpenAI specific fields
     deployment_name: str | None = Field(
         default=None,
@@ -237,6 +244,10 @@ class ResolvedLLMConfig(BaseModel):
     temperature: float | None = Field(default=None, description="Sampling temperature")
     max_tokens: int | None = Field(default=None, description="Maximum tokens to generate")
     system_instructions: str | None = Field(default=None, description="System instructions")
+    extra_headers: dict[str, str] = Field(
+        default_factory=dict,
+        description="Custom HTTP headers for provider requests",
+    )
     # Azure OpenAI specific
     deployment_name: str | None = Field(default=None)
     api_version: str | None = Field(default=None)
@@ -447,6 +458,7 @@ class LLMConfigLoader:
             system_instructions=inline.get("system_instructions"),
             deployment_name=inline.get("deployment_name", provider_config.deployment_name),
             api_version=inline.get("api_version", provider_config.api_version),
+            extra_headers=inline.get("extra_headers", provider_config.extra_headers),
         )
 
     def get_default_profile(self) -> str | None:

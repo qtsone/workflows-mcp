@@ -10,6 +10,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import os
 from enum import Enum
 from typing import Any, ClassVar, cast
 
@@ -48,6 +49,21 @@ class LLMProvider(str, Enum):
     ANTHROPIC = "anthropic"
     GEMINI = "gemini"
     OLLAMA = "ollama"
+
+
+def _resolve_header_env_vars(headers: dict[str, str]) -> dict[str, str]:
+    """Resolve {ENV_VAR} placeholders in header values.
+
+    Values wrapped in curly braces (e.g., "{ORG_ID}") are resolved from
+    environment variables at runtime. Other values are passed through as-is.
+    """
+    resolved = {}
+    for k, v in headers.items():
+        if v.startswith("{") and v.endswith("}"):
+            resolved[k] = os.environ.get(v[1:-1], "")
+        else:
+            resolved[k] = v
+    return resolved
 
 
 # ===========================================================================
@@ -109,6 +125,10 @@ class LLMCallInput(BlockInput):
     api_url: str | None = Field(
         default=None,
         description="Custom API endpoint URL (optional, for custom deployments)",
+    )
+    extra_headers: dict[str, str] = Field(
+        default_factory=dict,
+        description="Custom HTTP headers for provider requests (resolved from config)",
     )
     response_schema: dict[str, Any] | str | None = Field(
         default=None,
@@ -604,6 +624,7 @@ class LLMCallExecutor(BlockExecutor):
             temperature=resolved_config.temperature,
             max_tokens=resolved_config.max_tokens,
             validation_prompt_template=inputs.validation_prompt_template,
+            extra_headers=resolved_config.extra_headers,
         )
 
     def _resolve_profile_with_fallback(
@@ -915,6 +936,10 @@ class LLMCallExecutor(BlockExecutor):
                 base_url = base_url.rsplit("/chat/completions", 1)[0]
             client_kwargs["base_url"] = base_url
 
+        # Merge extra_headers (e.g., X-Org-Id, X-User-Id for proxy routing)
+        if inputs.extra_headers:
+            client_kwargs["default_headers"] = _resolve_header_env_vars(inputs.extra_headers)
+
         # Prepare completion parameters (required parameters only)
         completion_kwargs: dict[str, Any] = {
             "model": inputs.model or "",
@@ -1045,6 +1070,10 @@ class LLMCallExecutor(BlockExecutor):
         }
         if inputs.api_key:
             headers["x-api-key"] = inputs.api_key
+
+        # Merge extra_headers (e.g., X-Org-Id, X-User-Id for proxy routing)
+        if inputs.extra_headers:
+            headers.update(_resolve_header_env_vars(inputs.extra_headers))
 
         async with httpx.AsyncClient(timeout=timeout) as client:
             response = await client.post(url, json=body, headers=headers)
@@ -1428,16 +1457,25 @@ class EmbeddingExecutor(BlockExecutor):
         if model is None:
             model = "text-embedding-3-small"
 
+        # Resolve extra_headers from profile config
+        default_headers: dict[str, str] | None = None
+        if resolved_config and resolved_config.extra_headers:
+            default_headers = _resolve_header_env_vars(resolved_config.extra_headers)
+
         # Resolve timeout
         timeout = resolve_interpolatable_numeric(inputs.timeout, int, "timeout", ge=1, le=300)
 
         try:
             # Use OpenAI SDK which works with any OpenAI-compatible server
-            client = AsyncOpenAI(
-                api_key=api_key or "not-required",  # Some local servers don't need API key
-                base_url=api_url,  # None = default OpenAI endpoint
-                timeout=float(timeout),
-            )
+            client_kwargs: dict[str, Any] = {
+                "api_key": api_key or "not-required",
+                "base_url": api_url,
+                "timeout": float(timeout),
+            }
+            if default_headers:
+                client_kwargs["default_headers"] = default_headers
+
+            client = AsyncOpenAI(**client_kwargs)
 
             response = await client.embeddings.create(
                 model=model,
