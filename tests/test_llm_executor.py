@@ -149,12 +149,12 @@ class TestLLMCallExecutor:
 
     @pytest.mark.asyncio
     async def test_ollama_basic_call(self, executor, mock_context):
-        """Test basic Ollama local API call."""
+        """Test basic Ollama API call via /api/chat."""
         inputs = LLMCallInput(
             provider="ollama",
             model="llama2",
             prompt="Hello",
-            api_url="http://localhost:11434/api/generate",
+            api_url="http://localhost:11434/api/chat",
             timeout=60,
         )
 
@@ -162,7 +162,7 @@ class TestLLMCallExecutor:
         mock_response.status_code = 200
         mock_response.json.return_value = {
             "model": "llama2",
-            "response": "Hello! How are you?",
+            "message": {"role": "assistant", "content": "Hello! How are you?"},
             "total_duration": 1234567890,
             "load_duration": 123456,
             "prompt_eval_count": 5,

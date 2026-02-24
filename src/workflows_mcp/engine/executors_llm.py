@@ -11,6 +11,7 @@ import asyncio
 import json
 import logging
 import os
+import re
 from enum import Enum
 from typing import Any, ClassVar, cast
 
@@ -409,13 +410,27 @@ class LLMCallExecutor(BlockExecutor):
         # Determine if we need schema validation
         needs_validation = effective_inputs.response_schema is not None
 
-        # Prepare schema ONCE before retry loop - this is the schema LLM receives
-        # CRITICAL: Use the SAME prepared schema for validation to avoid mismatch
-        # where LLM generates null (allowed by prepared schema) but validation
-        # uses original schema (which doesn't allow null)
+        # Prepare schema ONCE before retry loop
+        # prepared_schema: strict OpenAI-compatible schema (for OpenAI's response_format param)
+        # validation_schema: schema used for client-side validation AND retry error prompts
+        #
+        # For OpenAI: both are prepared_schema (strict, with anyOf/additionalProperties)
+        # For all other providers (Ollama, Anthropic, Gemini): validation_schema stays
+        # as inputs.response_schema so the retry prompt matches what format sends
         prepared_schema: dict[str, Any] | None = None
+        validation_schema: dict[str, Any] | None = None
         if needs_validation:
             prepared_schema = self._prepare_schema_for_openai(effective_inputs.response_schema)
+            # Resolve effective provider to determine which schema to validate against
+            _provider = resolve_interpolatable_enum(
+                effective_inputs.provider, LLMProvider, "provider"
+            )
+            if _provider == LLMProvider.OPENAI:
+                # OpenAI sends prepared_schema to the API, validate against same schema
+                validation_schema = prepared_schema
+            else:
+                # Other providers use inputs.response_schema as format — validate consistently
+                validation_schema = effective_inputs.response_schema
 
         for attempt in range(max_retries):
             attempts += 1
@@ -431,7 +446,7 @@ class LLMCallExecutor(BlockExecutor):
                         + "\n\n"
                         + effective_inputs.validation_prompt_template.format(
                             validation_error=validation_error,
-                            schema=json.dumps(prepared_schema, indent=2),
+                            schema=json.dumps(validation_schema, indent=2),
                         )
                     )
 
@@ -449,10 +464,10 @@ class LLMCallExecutor(BlockExecutor):
                 # Validate response if schema provided (client-side for all providers)
                 if needs_validation:
                     try:
-                        # Use the SAME prepared schema that was sent to the LLM
+                        # Validate against the schema matching what the provider was given
                         validated_response = self._validate_response(
                             response_text=response_text,
-                            schema=cast(dict[str, Any], prepared_schema),
+                            schema=cast(dict[str, Any], validation_schema),
                         )
 
                         # Success - return validated JSON structure directly
@@ -1114,15 +1129,24 @@ class LLMCallExecutor(BlockExecutor):
     ) -> tuple[str, dict[str, Any]]:
         """Call Google Gemini API with null safety.
 
+        Supports two modes:
+        - Direct: api_key required, constructs googleapis.com URL with ?key= param
+        - Proxy: api_url is set (via profile), proxy handles auth — no api_key needed
+
         Raises:
-            ValueError: Missing API key, empty content, or null text
+            ValueError: Missing API key (direct mode), empty content, or null text
             httpx.*: Network/API errors
         """
-        if not inputs.api_key:
-            raise ValueError("api_key is required for Gemini provider")
-
-        base_url = "https://generativelanguage.googleapis.com/v1beta"
-        url = f"{base_url}/models/{inputs.model}:generateContent?key={inputs.api_key}"
+        if inputs.api_url:
+            # Proxy mode — proxy manages the API key, use api_url as base
+            base_url = inputs.api_url.rstrip("/")
+            url = f"{base_url}/v1beta/models/{inputs.model}:generateContent"
+        else:
+            # Direct mode — api_key required
+            if not inputs.api_key:
+                raise ValueError("api_key is required for Gemini provider")
+            base_url = "https://generativelanguage.googleapis.com/v1beta"
+            url = f"{base_url}/models/{inputs.model}:generateContent?key={inputs.api_key}"
 
         contents = [{"parts": [{"text": prompt}], "role": "user"}]
 
@@ -1142,12 +1166,14 @@ class LLMCallExecutor(BlockExecutor):
         if generation_config:
             body["generationConfig"] = generation_config
 
+        headers: dict[str, str] = {"Content-Type": "application/json"}
+
+        # Merge extra_headers (e.g., X-Org-Id, X-User-Id for proxy routing)
+        if inputs.extra_headers:
+            headers.update(_resolve_header_env_vars(inputs.extra_headers))
+
         async with httpx.AsyncClient(timeout=timeout) as client:
-            response = await client.post(
-                url,
-                json=body,
-                headers={"Content-Type": "application/json"},
-            )
+            response = await client.post(url, json=body, headers=headers)
             response.raise_for_status()
 
             data = response.json()
@@ -1190,42 +1216,73 @@ class LLMCallExecutor(BlockExecutor):
         temperature: float | None,
         max_tokens: int | None,
     ) -> tuple[str, dict[str, Any]]:
-        """Call Ollama local API with null safety.
+        """Call Ollama API via /api/chat with native structured output.
+
+        Uses /api/chat (messages format) instead of /api/generate because
+        Ollama's structured output (``format`` parameter with JSON schema)
+        is only supported on the chat endpoint.
 
         Raises:
             ValueError: Null response
             httpx.*: Network/API errors
         """
-        url = inputs.api_url or "http://localhost:11434/api/generate"
+        url = inputs.api_url or "http://localhost:11434/api/chat"
 
-        # Combine system instructions and prompt for Ollama
-        full_prompt = prompt
+        # Build messages list (Ollama /api/chat uses messages array)
+        messages: list[dict[str, str]] = []
         if inputs.system_instructions:
-            full_prompt = f"{inputs.system_instructions}\n\n{prompt}"
+            messages.append({"role": "system", "content": inputs.system_instructions})
+
+        # Ollama tip: append JSON instruction to the user message when a schema is defined.
+        # Explicitly name the required fields so models without strict grammar enforcement
+        # still know what keys to include.
+        user_content = prompt
+        if inputs.response_schema:
+            required_fields = inputs.response_schema.get("required", [])
+            if required_fields:
+                fields_hint = ", ".join(required_fields)
+                user_content = f"{prompt}\n\nRespond with JSON containing fields: {fields_hint}"
+            else:
+                user_content = f"{prompt}\n\nRespond with JSON"
+        messages.append({"role": "user", "content": user_content})
 
         body: dict[str, Any] = {
             "model": inputs.model,
-            "prompt": full_prompt,
+            "messages": messages,
             "stream": False,
         }
 
-        if temperature is not None:
+        # Native structured output — Ollama uses 'format' parameter on /api/chat
+        # Use raw inputs.response_schema (NOT prepared_schema) because llama.cpp's grammar
+        # engine can't reliably handle OpenAI-specific patterns like anyOf, additionalProperties.
+        # prepared_schema is still used for client-side validation in execute().
+        if inputs.response_schema:
+            body["format"] = inputs.response_schema
+            # Ollama tip: force temperature=0 for deterministic structured output
+            body["options"] = {"temperature": 0}
+        elif temperature is not None:
             body["options"] = {"temperature": temperature}
 
+        headers: dict[str, str] = {"Content-Type": "application/json"}
+
+        # Merge extra_headers (e.g., X-Org-Id, X-User-Id for proxy routing)
+        if inputs.extra_headers:
+            headers.update(_resolve_header_env_vars(inputs.extra_headers))
+
+        logger.info(f"Engine sending Ollama request to {url} with body: {json.dumps(body)}")
+
         async with httpx.AsyncClient(timeout=timeout) as client:
-            response = await client.post(
-                url,
-                json=body,
-                headers={"Content-Type": "application/json"},
-            )
+            response = await client.post(url, json=body, headers=headers)
             response.raise_for_status()
 
             data = response.json()
 
-            # Extract content with null safety
-            response_text = data.get("response")
+            # Extract content from /api/chat response format
+            message = data.get("message", {})
+            response_text = message.get("content")
             if response_text is None:
-                raise ValueError("Ollama returned null response")
+                raise ValueError("Ollama returned null content")
+            logger.info(f"Engine received Ollama response content: {response_text!r}")
 
             provider_metadata = {
                 "model": data.get("model"),
@@ -1246,9 +1303,23 @@ class LLMCallExecutor(BlockExecutor):
         Raises:
             ValueError: Invalid JSON, non-dict response, or schema validation failure
         """
+        # Robust extraction: find markdown json block anywhere in text
+        text = response_text.strip()
+        block_match = re.search(r"```(?:json)?\s*(.*?)\s*```", text, re.DOTALL | re.IGNORECASE)
+
+        if block_match:
+            text = block_match.group(1).strip()
+        else:
+            # Fallback for plain text containing JSON or conversational wrappers
+            # Find the outermost curly braces
+            start_idx = text.find("{")
+            end_idx = text.rfind("}")
+            if start_idx != -1 and end_idx != -1 and end_idx >= start_idx:
+                text = text[start_idx : end_idx + 1]
+
         # Try to parse as JSON
         try:
-            response = json.loads(response_text)
+            response = json.loads(text)
         except json.JSONDecodeError as e:
             raise ValueError(f"Response is not valid JSON: {e}")
 
