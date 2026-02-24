@@ -2,6 +2,19 @@
 
 All notable changes to this project will be documented in this file.
 
+# [9.3.0](https://github.com/qtsone/workflows-mcp/compare/v9.2.0...v9.3.0) (2026-02-24)
+
+
+### Bug Fixes
+
+* **workflows-mcp:** extract only declared outputs for Workflow block events ([dc4caef](https://github.com/qtsone/workflows-mcp/commit/dc4caef14e358ee97136fe960ba347aa6f088291))
+* **workflows-mcp:** migrate Ollama executor to /api/chat with reliable structured output ([3fcb941](https://github.com/qtsone/workflows-mcp/commit/3fcb9417477bbb44c8e9d69ec295441dd5549c7a))
+
+
+### Features
+
+* **engine:** add generic extra_headers support for LLM providers ([bf3e6a5](https://github.com/qtsone/workflows-mcp/commit/bf3e6a5e3e73691ef086a75081a0aa1a4967c00c))
+
 # [9.2.0](https://github.com/qtsone/workflows-mcp/compare/v9.1.0...v9.2.0) (2026-02-19)
 
 
