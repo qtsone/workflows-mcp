@@ -14,7 +14,8 @@ This enables:
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+from collections.abc import Awaitable, Callable
+from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from .execution import Execution
@@ -76,6 +77,8 @@ class ExecutionContext:
         self.max_recursion_depth = max_recursion_depth
         self.execution_memory = execution_memory
         self.memory_snapshot: dict[str, str] = {}
+        self.on_log: Callable[[str, str | None], Awaitable[None]] | None = None
+        self.on_block_transition: Callable[[dict[str, Any]], Awaitable[None]] | None = None
 
     def get_workflow(self, name: str) -> WorkflowSchema | None:
         """
@@ -121,6 +124,8 @@ class ExecutionContext:
             execution_memory=self.execution_memory,
         )
         child.memory_snapshot = self.memory_snapshot
+        child.on_log = self.on_log
+        child.on_block_transition = self.on_block_transition
         return child
 
     def check_recursion_depth(self, workflow_name: str) -> None:

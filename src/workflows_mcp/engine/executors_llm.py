@@ -341,6 +341,19 @@ class LLMCallExecutor(BlockExecutor):
     security_level: ClassVar[ExecutorSecurityLevel] = ExecutorSecurityLevel.TRUSTED
     capabilities: ClassVar[ExecutorCapabilities] = ExecutorCapabilities(can_network=True)
 
+    @staticmethod
+    async def _emit_log(context: Execution, message: str) -> None:
+        """Emit a log event via the execution context's on_log callback."""
+        from .context_vars import current_block_id
+
+        exec_ctx = context.execution_context
+        if exec_ctx and exec_ctx.on_log and callable(exec_ctx.on_log):
+            block_id = current_block_id.get()
+            try:
+                await exec_ctx.on_log(message, block_id)
+            except TypeError:
+                pass
+
     async def execute(  # type: ignore[override]
         self, inputs: LLMCallInput, context: Execution
     ) -> LLMCallOutput:
@@ -409,6 +422,17 @@ class LLMCallExecutor(BlockExecutor):
 
         # Determine if we need schema validation
         needs_validation = effective_inputs.response_schema is not None
+
+        # Emit pre-execution log
+        provider_label = effective_inputs.provider or effective_profile or "unknown"
+        model_label = effective_inputs.model or "default"
+        prompt_len = f"{len(effective_inputs.prompt) / 1000:.1f}k"
+        await self._emit_log(
+            context,
+            f"[LLM] calling {provider_label}/{model_label} "
+            f"({prompt_len} chars, schema: {'yes' if needs_validation else 'no'}, "
+            f"timeout: {timeout}s, retries: {max_retries})",
+        )
 
         # Prepare schema ONCE before retry loop
         # prepared_schema: strict OpenAI-compatible schema (for OpenAI's response_format param)
@@ -482,6 +506,13 @@ class LLMCallExecutor(BlockExecutor):
                                 "resolved": effective_profile,
                             }
 
+                        resp_len = f"{len(response_text) / 1000:.1f}k"
+                        await self._emit_log(
+                            context,
+                            f"[LLM] attempt {attempts}/{max_retries} succeeded "
+                            f"— {resp_len} chars response",
+                        )
+
                         return LLMCallOutput(
                             response=validated_response,
                             success=True,
@@ -491,6 +522,12 @@ class LLMCallExecutor(BlockExecutor):
                         # Validation failed
                         validation_error = str(e)
                         last_error = e
+
+                        await self._emit_log(
+                            context,
+                            f"[LLM] attempt {attempts}/{max_retries} failed — "
+                            f"validation error: {validation_error[:120]}",
+                        )
 
                         # If this is the last attempt, return with validation failure
                         if attempt == max_retries - 1:
@@ -546,6 +583,12 @@ class LLMCallExecutor(BlockExecutor):
                 openai.APIStatusError,
             ) as e:
                 last_error = e
+
+                error_type = type(e).__name__
+                await self._emit_log(
+                    context,
+                    f"[LLM] attempt {attempts}/{max_retries} failed — {error_type}: {str(e)[:120]}",
+                )
 
                 # If this is the last attempt, raise
                 if attempt == max_retries - 1:

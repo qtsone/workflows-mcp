@@ -164,8 +164,12 @@ class WorkflowExecutor(BlockExecutor):
         # 4. Create WorkflowRunner and execute child workflow
         from .workflow_runner import WorkflowRunner
 
-        # No checkpointing for nested workflows - parent handles all checkpointing
-        runner = WorkflowRunner()
+        # Propagate block transition and log callbacks to child runner
+        # so child block events are visible to the same observer (e.g., Redis → frontend)
+        runner = WorkflowRunner(
+            on_block_transition=exec_context.on_block_transition,
+            on_log=exec_context.on_log,
+        )
 
         # Create child execution context
         child_context = exec_context.create_child_context(
@@ -361,8 +365,11 @@ class WorkflowExecutor(BlockExecutor):
         # 7. Create WorkflowRunner and resume child workflow
         from .workflow_runner import WorkflowRunner
 
-        # No checkpointing for nested workflows - parent handles all checkpointing
-        runner = WorkflowRunner()
+        # Propagate block transition and log callbacks to child runner
+        runner = WorkflowRunner(
+            on_block_transition=exec_context.on_block_transition,
+            on_log=exec_context.on_log,
+        )
 
         try:
             # Resume child workflow from ExecutionState with CHILD context

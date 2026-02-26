@@ -23,3 +23,11 @@ from typing import Any
 block_custom_outputs: ContextVar[dict[str, Any] | None] = ContextVar(
     "block_custom_outputs", default=None
 )
+
+# Current block ID context variable
+# Allows executors (e.g., LLMCallExecutor) to identify which block they
+# are executing as, without explicit parameter passing.
+#
+# Set by: WorkflowRunner._execute_block() before calling executor.execute()
+# Read by: Executors that emit log events (e.g., LLMCallExecutor)
+current_block_id: ContextVar[str | None] = ContextVar("current_block_id", default=None)

@@ -24,7 +24,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Literal, cast
 
-from .context_vars import block_custom_outputs
+from .context_vars import block_custom_outputs, current_block_id
 from .exceptions import ExecutionPaused, RecursionDepthExceededError
 from .execution import Execution
 from .execution_context import ExecutionContext
@@ -57,6 +57,7 @@ class WorkflowRunner:
     def __init__(
         self,
         on_block_transition: Callable[[dict[str, Any]], Awaitable[None]] | None = None,
+        on_log: Callable[[str, str | None], Awaitable[None]] | None = None,
     ) -> None:
         """Initialize workflow runner.
 
@@ -64,8 +65,12 @@ class WorkflowRunner:
             on_block_transition: Optional async callback invoked at block lifecycle
                 boundaries (started, completed, failed, skipped). Receives a dict
                 with event details and metadata. Default None = no observability.
+            on_log: Optional async callback for engine-level log messages.
+                Receives (message, block_id). Used by executors to surface
+                internal activity (LLM attempts, validation errors, retries).
         """
         self.on_block_transition = on_block_transition
+        self.on_log = on_log
 
         # Initialize secret management components
         self.secret_provider = EnvVarSecretProvider()
@@ -118,6 +123,15 @@ class WorkflowRunner:
                 "Create one via AppContext.create_execution_context() "
                 "or ExecutionContext(...) with proper registries."
             )
+
+        # Wire on_log callback into the execution context
+        if self.on_log:
+            context.on_log = self.on_log
+
+        # Wire on_block_transition callback into the execution context
+        # This enables child workflows to emit block events to the same observer
+        if self.on_block_transition:
+            context.on_block_transition = self.on_block_transition
 
         scratch_dir: Path | None = None
 
@@ -778,12 +792,16 @@ class WorkflowRunner:
                 "event": "block_started",
                 "block_id": block_id,
                 "block_type": block_def.type,
+                "depth": exec_context.depth,
             }
             if block_def.description:
                 event["description"] = block_def.description
             await self.on_block_transition(event)
 
-        # 5. Execute via orchestrator
+        # 5. Set current block ID for executor logging
+        current_block_id.set(block_id)
+
+        # 6. Execute via orchestrator
         block_execution = await self.orchestrator.execute_block(
             id=block_id,  # Pass block ID to orchestrator
             executor=executor,
@@ -843,6 +861,7 @@ class WorkflowRunner:
                 "event": "block_completed",
                 "block_id": block_id,
                 "block_type": block_def.type,
+                "depth": exec_context.depth,
                 "metadata": block_execution.metadata.model_dump(),
                 "outputs": self._get_block_outputs(block_execution.output),
             }
@@ -997,6 +1016,7 @@ class WorkflowRunner:
                 "event": "block_skipped",
                 "block_id": block_id,
                 "block_type": block_def.type,
+                "depth": exec_context.depth,
                 "reason": reason,
                 "metadata": metadata.model_dump(),
                 "outputs": default_outputs,
@@ -1042,6 +1062,7 @@ class WorkflowRunner:
                 "event": "block_failed",
                 "block_id": block_id,
                 "block_type": block_def.type,
+                "depth": exec_context.depth,
                 "error": error,
                 "metadata": metadata.model_dump(),
                 "outputs": default_outputs,
