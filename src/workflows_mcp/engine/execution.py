@@ -225,9 +225,17 @@ class Execution(BaseModel):
 
             iteration_executions[iteration_key] = iter_exec
 
+        # Build iterations output as a list for downstream chaining (outputs.iterations)
+        # List format works for both for_each inputs (engine converts to indexed dict)
+        # and for direct iteration in Shell blocks (for s in summaries)
+        iterations_output = [iter_exec.outputs for iter_exec in iteration_executions.values()]
+
         # Store parent with iterations as child blocks
         parent_exec = Execution(
-            inputs={}, outputs={}, blocks=iteration_executions, metadata=parent_meta
+            inputs={},
+            outputs={"iterations": iterations_output},
+            blocks=iteration_executions,
+            metadata=parent_meta,
         )
         self.blocks[block_id] = parent_exec
 
