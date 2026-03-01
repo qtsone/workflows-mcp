@@ -880,6 +880,10 @@ class WorkflowRunner:
         """
         Execute a for_each block with multiple iterations (ADR-009).
 
+        Emits on_block_transition events for the parent block lifecycle
+        (block_started/completed/failed) and threads the callback to the
+        orchestrator for per-iteration visibility.
+
         Args:
             block_id: Block ID
             block_def: Block definition with for_each field
@@ -891,76 +895,121 @@ class WorkflowRunner:
             ExecutionPaused: If any iteration pauses (not yet supported for for_each)
             Exception: On execution errors
         """
-        # 1. Resolve for_each expression to get iterations
-        context_dict = self._execution_to_dict(exec_context)
+        # Notify observer: for_each block starting
+        if self.on_block_transition:
+            event: dict[str, Any] = {
+                "event": "block_started",
+                "block_id": block_id,
+                "block_type": block_def.type,
+                "depth": exec_context.depth,
+            }
+            if block_def.description:
+                event["description"] = block_def.description
+            await self.on_block_transition(event)
 
-        # Get workflow name safely from internal metadata
-        workflow_metadata = exec_context.workflow_metadata
-        workflow_name = workflow_metadata.get("workflow_name", "")
+        try:
+            # 1. Resolve for_each expression to get iterations
+            context_dict = self._execution_to_dict(exec_context)
 
-        resolver = UnifiedVariableResolver(
-            context_dict,
-            secret_provider=self.secret_provider,
-            audit_log=self.secret_audit_log,
-            workflow_name=workflow_name,
-            block_id=block_id,
-        )
-        for_each_value = await resolver.resolve_async(block_def.for_each)
+            # Get workflow name safely from internal metadata
+            workflow_metadata = exec_context.workflow_metadata
+            workflow_name = workflow_metadata.get("workflow_name", "")
 
-        # 2. Convert to dict format (ADR-009: iterations are always dicts)
-        if isinstance(for_each_value, list):
-            # Convert list to dict with numeric string keys: ["a", "b"] → {"0": "a", "1": "b"}
-            iterations = {str(i): value for i, value in enumerate(for_each_value)}
-        elif isinstance(for_each_value, dict):
-            # Already a dict, use as-is
-            iterations = for_each_value
-        else:
-            raise ValueError(
-                f"for_each expression must evaluate to dict or list, "
-                f"got {type(for_each_value).__name__}: {block_def.for_each}"
-            )
-
-        # 3. Handle empty collection - mark block as skipped
-        if not iterations:
-            # Empty for_each is valid - mark block as skipped (like conditional execution)
-            await self._mark_block_skipped(
+            resolver = UnifiedVariableResolver(
+                context_dict,
+                secret_provider=self.secret_provider,
+                audit_log=self.secret_audit_log,
+                workflow_name=workflow_name,
                 block_id=block_id,
-                block_def=block_def,
-                exec_context=exec_context,
-                wave_idx=wave_idx,
-                execution_order=0,
-                reason=f"for_each expression resulted in empty collection: {block_def.for_each}",
             )
-            return
+            for_each_value = await resolver.resolve_async(block_def.for_each)
 
-        # 4. Execute via orchestrator.execute_for_each()
-        # Cast mode to Literal type for type safety
-        mode = cast(Literal["parallel", "sequential"], block_def.for_each_mode)
+            # 2. Convert to dict format (ADR-009: iterations are always dicts)
+            if isinstance(for_each_value, list):
+                # Convert list to dict with numeric string keys: ["a", "b"] → {"0": "a", "1": "b"}
+                iterations = {str(i): value for i, value in enumerate(for_each_value)}
+            elif isinstance(for_each_value, dict):
+                # Already a dict, use as-is
+                iterations = for_each_value
+            else:
+                raise ValueError(
+                    f"for_each expression must evaluate to dict or list, "
+                    f"got {type(for_each_value).__name__}: {block_def.for_each}"
+                )
 
-        iteration_results, parent_meta = await self.orchestrator.execute_for_each(
-            id=block_id,
-            executor=executor,
-            inputs_template=block_def.inputs,
-            iterations=iterations,
-            context=exec_context,
-            mode=mode,
-            max_parallel=block_def.max_parallel,
-            continue_on_error=block_def.continue_on_error,
-            wave=wave_idx,
-            depth=exec_context.depth,
-            condition=block_def.condition,  # Pass condition for per-iteration evaluation
-        )
+            # 3. Handle empty collection - mark block as skipped
+            if not iterations:
+                # Empty for_each is valid - mark block as skipped (like conditional execution)
+                await self._mark_block_skipped(
+                    block_id=block_id,
+                    block_def=block_def,
+                    exec_context=exec_context,
+                    wave_idx=wave_idx,
+                    execution_order=0,
+                    reason=(
+                        f"for_each expression resulted in empty collection: {block_def.for_each}"
+                    ),
+                )
+                return
 
-        # 5. Store results in execution context using fractal structure
-        exec_context.set_for_each_result(
-            block_id=block_id,
-            parent_meta=parent_meta,
-            iteration_results=iteration_results,
-        )
+            # 4. Execute via orchestrator.execute_for_each()
+            # Cast mode to Literal type for type safety
+            mode = cast(Literal["parallel", "sequential"], block_def.for_each_mode)
 
-        # Note: Pause handling for for_each blocks is not yet implemented.
-        # If any iteration pauses, the entire for_each block would need to pause,
-        # storing iteration state in checkpoint. This is Phase 2+ enhancement.
+            iteration_results, parent_meta = await self.orchestrator.execute_for_each(
+                id=block_id,
+                executor=executor,
+                inputs_template=block_def.inputs,
+                iterations=iterations,
+                context=exec_context,
+                mode=mode,
+                max_parallel=block_def.max_parallel,
+                continue_on_error=block_def.continue_on_error,
+                wave=wave_idx,
+                depth=exec_context.depth,
+                condition=block_def.condition,
+                on_iteration_transition=self.on_block_transition,
+            )
+
+            # 5. Store results in execution context using fractal structure
+            exec_context.set_for_each_result(
+                block_id=block_id,
+                parent_meta=parent_meta,
+                iteration_results=iteration_results,
+            )
+
+            # Notify observer: for_each block completed
+            if self.on_block_transition:
+                event = {
+                    "event": "block_completed",
+                    "block_id": block_id,
+                    "block_type": block_def.type,
+                    "depth": exec_context.depth,
+                    "metadata": parent_meta.model_dump(),
+                    "outputs": {},
+                }
+                if block_def.description:
+                    event["description"] = block_def.description
+                await self.on_block_transition(event)
+
+        except ExecutionPaused:
+            # Pause bubbles up naturally — no block_failed event needed
+            raise
+
+        except Exception as e:
+            # Notify observer: for_each block failed
+            if self.on_block_transition:
+                event = {
+                    "event": "block_failed",
+                    "block_id": block_id,
+                    "block_type": block_def.type,
+                    "depth": exec_context.depth,
+                    "error": str(e),
+                }
+                if block_def.description:
+                    event["description"] = block_def.description
+                await self.on_block_transition(event)
+            raise
 
     def _should_skip_block(
         self,

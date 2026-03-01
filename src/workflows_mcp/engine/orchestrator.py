@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import asyncio
 import traceback
+from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any, Literal
 
@@ -723,6 +724,7 @@ class BlockOrchestrator:
         wave: int = 0,
         depth: int = 0,
         condition: str | None = None,
+        on_iteration_transition: (Callable[[dict[str, Any]], Awaitable[None]] | None) = None,
     ) -> tuple[dict[str, BlockExecution], Metadata]:
         """
         Execute a for_each block with multiple iterations (ADR-009).
@@ -740,6 +742,9 @@ class BlockOrchestrator:
             depth: Nesting depth (0 for root blocks, 1+ for nested iterations)
             condition: Optional condition expression evaluated per-iteration
                        with access to {{each.*}} variables
+            on_iteration_transition: Optional callback for per-iteration
+                observer events (block_started/completed/failed/skipped).
+                Uses same event shape as WorkflowRunner.on_block_transition.
 
         Returns:
             Tuple of (iteration_results_dict, parent_metadata)
@@ -806,11 +811,34 @@ class BlockOrchestrator:
                         depth=depth + 1,
                         message=f"Condition '{condition}' evaluated to False",
                     )
-                    return iteration_key, BlockExecution(
+                    iter_result = BlockExecution(
                         output=None,
                         metadata=skipped_metadata,
                         paused=False,
                     )
+                    if on_iteration_transition:
+                        await on_iteration_transition(
+                            {
+                                "event": "block_skipped",
+                                "block_id": iteration_key,
+                                "block_type": executor.type_name,
+                                "depth": depth + 1,
+                                "reason": f"Condition '{condition}' evaluated to False",
+                                "metadata": skipped_metadata.model_dump(),
+                            }
+                        )
+                    return iteration_key, iter_result
+
+            # Notify observer: iteration starting
+            if on_iteration_transition:
+                await on_iteration_transition(
+                    {
+                        "event": "block_started",
+                        "block_id": iteration_key,
+                        "block_type": executor.type_name,
+                        "depth": depth + 1,
+                    }
+                )
 
             # Resolve iteration inputs (replace {{each.*}} variables)
             resolved_inputs = await resolver.resolve_async(inputs_template)
@@ -828,6 +856,30 @@ class BlockOrchestrator:
                 execution_order=iteration_index,
                 depth=depth + 1,
             )
+
+            # Notify observer: iteration completed/failed
+            if on_iteration_transition:
+                if result.metadata.failed:
+                    await on_iteration_transition(
+                        {
+                            "event": "block_failed",
+                            "block_id": iteration_key,
+                            "block_type": executor.type_name,
+                            "depth": depth + 1,
+                            "error": result.metadata.message or "",
+                            "metadata": result.metadata.model_dump(),
+                        }
+                    )
+                else:
+                    await on_iteration_transition(
+                        {
+                            "event": "block_completed",
+                            "block_id": iteration_key,
+                            "block_type": executor.type_name,
+                            "depth": depth + 1,
+                            "metadata": result.metadata.model_dump(),
+                        }
+                    )
 
             return iteration_key, result
 
