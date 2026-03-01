@@ -2,6 +2,20 @@
 
 All notable changes to this project will be documented in this file.
 
+# [9.4.0](https://github.com/qtsone/workflows-mcp/compare/v9.3.0...v9.4.0) (2026-03-01)
+
+
+### Bug Fixes
+
+* enable iterations for for_each ([0082e3e](https://github.com/qtsone/workflows-mcp/commit/0082e3e58ff5c2329005ccfbbea2287dc1a38633))
+
+
+### Features
+
+* Add new test scripts for workflow execution analysis and unified variable resolution. ([8a7563e](https://github.com/qtsone/workflows-mcp/commit/8a7563e7bc5d8ca6b1969d7dea0e11b1437cba51))
+* **engine:** emit on_block_transition events for for_each blocks ([1fe7bc7](https://github.com/qtsone/workflows-mcp/commit/1fe7bc7d7a34f0378f82f38f8fc38c0d01ebe1de))
+* **engine:** enrich block transition events with inputs and parent references ([8370f0e](https://github.com/qtsone/workflows-mcp/commit/8370f0e40e939fd926533fa790007a3c6fb395b6))
+
 # [9.3.0](https://github.com/qtsone/workflows-mcp/compare/v9.2.0...v9.3.0) (2026-02-24)
 
 
