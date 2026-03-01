@@ -350,7 +350,7 @@ class LLMCallExecutor(BlockExecutor):
         if exec_ctx and exec_ctx.on_log and callable(exec_ctx.on_log):
             block_id = current_block_id.get()
             try:
-                await exec_ctx.on_log(message, block_id)
+                await exec_ctx.on_log(message, block_id, context.depth)
             except TypeError:
                 pass
 

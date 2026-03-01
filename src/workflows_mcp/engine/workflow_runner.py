@@ -57,7 +57,7 @@ class WorkflowRunner:
     def __init__(
         self,
         on_block_transition: Callable[[dict[str, Any]], Awaitable[None]] | None = None,
-        on_log: Callable[[str, str | None], Awaitable[None]] | None = None,
+        on_log: Callable[[str, str | None, int], Awaitable[None]] | None = None,
     ) -> None:
         """Initialize workflow runner.
 
@@ -793,6 +793,8 @@ class WorkflowRunner:
                 "block_id": block_id,
                 "block_type": block_def.type,
                 "depth": exec_context.depth,
+                "metadata": {"type": block_def.type},
+                "inputs": resolved_inputs,
             }
             if block_def.description:
                 event["description"] = block_def.description
@@ -864,6 +866,7 @@ class WorkflowRunner:
                 "depth": exec_context.depth,
                 "metadata": block_execution.metadata.model_dump(),
                 "outputs": self._get_block_outputs(block_execution.output),
+                "inputs": resolved_inputs,
             }
             if block_def.description:
                 event["description"] = block_def.description
@@ -902,6 +905,7 @@ class WorkflowRunner:
                 "block_id": block_id,
                 "block_type": block_def.type,
                 "depth": exec_context.depth,
+                "metadata": {"type": block_def.type},
             }
             if block_def.description:
                 event["description"] = block_def.description

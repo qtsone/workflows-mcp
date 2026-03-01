@@ -77,7 +77,7 @@ class ExecutionContext:
         self.max_recursion_depth = max_recursion_depth
         self.execution_memory = execution_memory
         self.memory_snapshot: dict[str, str] = {}
-        self.on_log: Callable[[str, str | None], Awaitable[None]] | None = None
+        self.on_log: Callable[[str, str | None, int], Awaitable[None]] | None = None
         self.on_block_transition: Callable[[dict[str, Any]], Awaitable[None]] | None = None
 
     def get_workflow(self, name: str) -> WorkflowSchema | None:

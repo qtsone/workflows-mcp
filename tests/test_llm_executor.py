@@ -29,7 +29,9 @@ class TestLLMCallExecutor:
     @pytest.fixture
     def mock_context(self):
         """Create mock execution context."""
-        return Mock(spec=Execution)
+        ctx = Mock(spec=Execution)
+        ctx.depth = 0
+        return ctx
 
     @pytest.mark.asyncio
     async def test_openai_basic_call(self, executor, mock_context):

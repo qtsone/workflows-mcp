@@ -825,6 +825,7 @@ class BlockOrchestrator:
                                 "depth": depth + 1,
                                 "reason": f"Condition '{condition}' evaluated to False",
                                 "metadata": skipped_metadata.model_dump(),
+                                "parent_block_id": id,
                             }
                         )
                     return iteration_key, iter_result
@@ -837,6 +838,8 @@ class BlockOrchestrator:
                         "block_id": iteration_key,
                         "block_type": executor.type_name,
                         "depth": depth + 1,
+                        "metadata": {"type": executor.type_name},
+                        "parent_block_id": id,
                     }
                 )
 
@@ -868,6 +871,9 @@ class BlockOrchestrator:
                             "depth": depth + 1,
                             "error": result.metadata.message or "",
                             "metadata": result.metadata.model_dump(),
+                            "outputs": result.output.model_dump() if result.output else {},
+                            "inputs": resolved_inputs,
+                            "parent_block_id": id,
                         }
                     )
                 else:
@@ -878,6 +884,9 @@ class BlockOrchestrator:
                             "block_type": executor.type_name,
                             "depth": depth + 1,
                             "metadata": result.metadata.model_dump(),
+                            "outputs": result.output.model_dump() if result.output else {},
+                            "inputs": resolved_inputs,
+                            "parent_block_id": id,
                         }
                     )
 

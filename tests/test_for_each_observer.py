@@ -145,13 +145,16 @@ class TestForEachObserverEvents:
             f"got {len(iteration_started)}: {iteration_started}"
         )
 
-        # Iterations should have higher depth than parent
+        # Iterations should have higher depth than parent and reference parent
         parent_started = next(
             e for e in events if e["block_id"] == "process_files" and e["event"] == "block_started"
         )
         for iter_event in iteration_started:
             assert iter_event["depth"] > parent_started["depth"], (
                 "Iteration depth must be > parent depth"
+            )
+            assert iter_event.get("parent_block_id") == "process_files", (
+                "Iteration events must reference parent_block_id"
             )
 
     @pytest.mark.asyncio
