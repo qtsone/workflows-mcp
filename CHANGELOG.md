@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file.
 
+# [9.5.0](https://github.com/qtsone/workflows-mcp/compare/v9.4.0...v9.5.0) (2026-03-04)
+
+
+### Features
+
+* **engine:** add Knowledge executor for workflow-native knowledge access ([0bd8ef8](https://github.com/qtsone/workflows-mcp/commit/0bd8ef8f8fe5277b4204dc3f1ea589e51af37047))
+
 # [9.4.0](https://github.com/qtsone/workflows-mcp/compare/v9.3.0...v9.4.0) (2026-03-01)
 
 
