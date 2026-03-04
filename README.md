@@ -467,6 +467,165 @@ The executor automatically filters parameters and provides clear error messages 
     output_file: "{{tmp}}/castle.png"
 ```
 
+### 🧠 Knowledge Store
+
+Store and retrieve knowledge propositions using PostgreSQL with pgvector for semantic search. The `Knowledge` block type provides hybrid search (vector + full-text), storage with auto-computed embeddings, and token-budgeted context assembly for LLM prompts.
+
+**Requirements:**
+- PostgreSQL with `pgvector` extension
+- `asyncpg` dependency: `pip install workflows-mcp[postgresql]`
+- Embedding profile in `~/.workflows/llm-config.yml`
+
+**Configuration:**
+
+Set connection details once using environment variables in your MCP server config:
+
+```json
+{
+  "mcpServers": {
+    "workflows": {
+      "env": {
+        "KNOWLEDGE_DB_HOST": "localhost",
+        "KNOWLEDGE_DB_PORT": "5432",
+        "KNOWLEDGE_DB_NAME": "knowledge_db",
+        "KNOWLEDGE_DB_USER": "postgres",
+        "KNOWLEDGE_DB_PASSWORD": "your_password",
+        "KNOWLEDGE_ORG_ID": "your-org-uuid"
+      }
+    }
+  }
+}
+```
+
+Tables and the pgvector extension are created automatically on first use.
+
+| Input | Description | Default |
+|-------|-------------|---------|
+| `op` | Operation: `search`, `store`, `recall`, `forget`, `context` | Required |
+| `query` | Search text (required for search/context) | - |
+| `content` | Text to store (required for store) | - |
+| `source` | Filter by source name (exact or prefix with `*`) | - |
+| `categories` | Filter by category UUIDs | - |
+| `min_confidence` | Minimum confidence threshold | `0.0` |
+| `limit` | Maximum results | `20` |
+| `max_tokens` | Token budget for context assembly | `4000` |
+| `diversity` | Use MMR for diverse context results | `false` |
+| `embedding_profile` | LLM config profile for embeddings | `embedding` |
+
+**Operations:**
+
+**1. Search — Hybrid vector + full-text with RRF fusion:**
+```yaml
+- id: search_docs
+  type: Knowledge
+  inputs:
+    op: search
+    query: "deployment strategies for microservices"
+    source: "engineering-docs"
+    limit: 10
+```
+
+**2. Store — Persist with auto-computed embedding:**
+```yaml
+- id: save_finding
+  type: Knowledge
+  inputs:
+    op: store
+    content: "Redis connection pooling reduces latency by 40% under load"
+    source: "performance-tests"
+    confidence: 0.85
+```
+
+**3. Context — Token-budgeted assembly for LLM prompts:**
+```yaml
+- id: gather_context
+  type: Knowledge
+  inputs:
+    op: context
+    query: "database optimization techniques"
+    max_tokens: 2000
+    diversity: true
+```
+Returns clean content only (no metadata) in `context_text`, ready for LLM prompt injection.
+
+**4. Recall — Filtered retrieval:**
+```yaml
+- id: recent_items
+  type: Knowledge
+  inputs:
+    op: recall
+    where:
+      source_name: "daily-reports"
+    order: ["created_at:desc"]
+    limit: 5
+```
+
+**5. Forget — Archive stale propositions:**
+```yaml
+- id: cleanup
+  type: Knowledge
+  inputs:
+    op: forget
+    proposition_ids:
+      - "uuid-1"
+      - "uuid-2"
+```
+Returns `archived_count` and `skipped_count` in the output.
+
+**6. Chaining Operations — Store, search, and cleanup in one workflow:**
+```yaml
+blocks:
+  - id: store_finding
+    type: Knowledge
+    inputs:
+      op: store
+      content: "Redis connection pooling reduces latency by 40% under load"
+      source: "perf-tests"
+      confidence: 0.85
+
+  - id: search_related
+    type: Knowledge
+    depends_on: [store_finding]
+    inputs:
+      op: search
+      query: "database performance optimization"
+      limit: 5
+
+  - id: build_context
+    type: Knowledge
+    depends_on: [store_finding]
+    inputs:
+      op: context
+      query: "performance tuning recommendations"
+      max_tokens: 2000
+
+  - id: use_results
+    type: Shell
+    depends_on: [search_related, build_context]
+    inputs:
+      command: |
+        echo "Found: {{blocks.search_related.outputs.row_count}} results"
+        echo "IDs: {{blocks.search_related.outputs.rows | map(attribute='id') | list}}"
+        echo "Context ({{blocks.build_context.outputs.tokens_used}} tokens):"
+        echo "{{blocks.build_context.outputs.context_text}}"
+```
+
+Use `map(attribute='id') | list` to extract values from result rows — this works with any attribute (`id`, `content`, `confidence`, etc.).
+
+**Embedding Configuration:**
+
+Add an `embedding` profile to `~/.workflows/llm-config.yml`:
+
+```yaml
+profiles:
+  embedding:
+    provider: openai-cloud
+    model: text-embedding-3-small
+    api_key: sk-your-key
+```
+
+Supports any OpenAI-compatible embedding API (OpenAI, Ollama, vLLM, etc.).
+
 ### 🔁 Universal Iteration (for_each)
 
 Iterate over collections with ANY block type using `for_each`. Supports parallel and sequential execution modes with error handling.
@@ -591,6 +750,12 @@ Configure the server behavior with these environment variables:
 | `WORKFLOWS_JOB_QUEUE_ENABLED` | Enable async workflow execution | `true` | true, false |
 | `WORKFLOWS_JOB_QUEUE_WORKERS` | Worker pool size for async jobs | `3` | 1-100 |
 | `WORKFLOWS_MAX_CONCURRENT_JOBS` | Maximum concurrent jobs | `100` | 1-10000 |
+| `KNOWLEDGE_DB_HOST` | Knowledge DB PostgreSQL host | `localhost` | Hostname/IP |
+| `KNOWLEDGE_DB_PORT` | Knowledge DB PostgreSQL port | `5432` | 1-65535 |
+| `KNOWLEDGE_DB_NAME` | Knowledge DB database name | `knowledge_db` | Valid DB name |
+| `KNOWLEDGE_DB_USER` | Knowledge DB username | *(none)* | Any string |
+| `KNOWLEDGE_DB_PASSWORD` | Knowledge DB password | *(none)* | Any string |
+| `KNOWLEDGE_ORG_ID` | Organization ID for knowledge scoping | *(none)* | UUID string |
 
 ### Example Configuration
 
@@ -731,6 +896,12 @@ workflows-mcp/
 │   │   ├── file_outline.py      # File outline extraction utilities
 │   │   ├── executors_http.py    # HTTP call executor
 │   │   ├── executors_llm.py     # LLM call executor
+│   │   ├── executors_knowledge.py # Knowledge store executor
+│   │   ├── knowledge/            # Knowledge subpackage
+│   │   │   ├── constants.py      # Enums and defaults
+│   │   │   ├── schema.py         # Idempotent DDL
+│   │   │   ├── search.py         # Hybrid search + RRF
+│   │   │   └── context.py        # Token-budgeted assembly
 │   │   ├── executors_state.py   # State management executors
 │   │   ├── workflow_runner.py   # Main workflow orchestrator
 │   │   ├── dag.py               # DAG resolution

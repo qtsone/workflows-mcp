@@ -1514,101 +1514,22 @@ class EmbeddingExecutor(BlockExecutor):
             ValueError: Invalid configuration
             httpx.*: Network errors
         """
-        execution_context = context.execution_context
-        if execution_context is None:
-            raise ValueError("ExecutionContext not available")
-
-        llm_config_loader = execution_context.llm_config_loader
-
-        # Start with input overrides
-        model = inputs.model
-        api_key = inputs.api_key
-        api_url = inputs.api_url
-
-        # Build inline overrides from inputs (filter out None values)
-        inline_overrides = {
-            key: value
-            for key, value in {
-                "model": inputs.model,
-                "api_url": inputs.api_url,
-            }.items()
-            if value is not None
-        }
-
-        # Try to resolve profile (returns ResolvedLLMConfig with merged provider+profile values)
-        resolved_config = None
-        config = llm_config_loader.load_config()
-
-        effective_profile: str | None = inputs.profile
-        if effective_profile not in config.profiles:
-            if config.default_profile and config.default_profile in config.profiles:
-                logger.warning(
-                    f"Embedding profile '{inputs.profile}' not found, "
-                    f"using default_profile '{config.default_profile}'"
-                )
-                effective_profile = config.default_profile
-            else:
-                effective_profile = None
-
-        if effective_profile is not None:
-            resolved_config = llm_config_loader.resolve_profile(
-                profile=effective_profile, inline_overrides=inline_overrides
-            )
-
-        if resolved_config:
-            # Use resolved values as defaults (inputs override)
-            model = model or resolved_config.model
-            api_url = api_url or resolved_config.api_url
-
-            # Resolve API key from secrets if not provided
-            if api_key is None and resolved_config.api_key_secret:
-                from .secrets import EnvVarSecretProvider
-
-                secret_provider = EnvVarSecretProvider()
-                api_key = await secret_provider.get_secret(resolved_config.api_key_secret)
-
-        # Default model if still not set
-        if model is None:
-            model = "text-embedding-3-small"
-
-        # Resolve extra_headers from profile config
-        default_headers: dict[str, str] | None = None
-        if resolved_config and resolved_config.extra_headers:
-            default_headers = _resolve_header_env_vars(resolved_config.extra_headers)
-
-        # Resolve timeout
         timeout = resolve_interpolatable_numeric(inputs.timeout, int, "timeout", ge=1, le=300)
 
         try:
-            # Use OpenAI SDK which works with any OpenAI-compatible server
-            client_kwargs: dict[str, Any] = {
-                "api_key": api_key or "not-required",
-                "base_url": api_url,
-                "timeout": float(timeout),
-            }
-            if default_headers:
-                client_kwargs["default_headers"] = default_headers
-
-            client = AsyncOpenAI(**client_kwargs)
-
-            response = await client.embeddings.create(
-                model=model,
-                input=inputs.text,
+            embedding, model_name, dimensions, usage = await compute_embedding(
+                text=inputs.text,
+                context=context,
+                profile=inputs.profile,
+                model=inputs.model,
+                api_key=inputs.api_key,
+                api_url=inputs.api_url,
+                timeout=timeout,
             )
 
-            embedding = response.data[0].embedding
-            dimensions = len(embedding)
-
-            metadata: dict[str, Any] = {
-                "model": response.model,
-            }
-
-            # Include usage if available (some servers may not return it)
-            if response.usage:
-                metadata["usage"] = {
-                    "prompt_tokens": response.usage.prompt_tokens,
-                    "total_tokens": response.usage.total_tokens,
-                }
+            metadata: dict[str, Any] = {"model": model_name}
+            if usage:
+                metadata["usage"] = usage
 
             return EmbeddingOutput(
                 embedding=embedding,
@@ -1625,3 +1546,126 @@ class EmbeddingExecutor(BlockExecutor):
                 success=False,
                 metadata={"error": str(e)},
             )
+
+
+# ===========================================================================
+# Shared Embedding Helper
+# ===========================================================================
+
+
+async def compute_embedding(
+    text: str,
+    context: Execution,
+    *,
+    profile: str = "embedding",
+    model: str | None = None,
+    api_key: str | None = None,
+    api_url: str | None = None,
+    timeout: int = 30,
+) -> tuple[list[float], str, int, dict[str, int] | None]:
+    """Compute a text embedding using the configured LLM profile.
+
+    Shared helper used by both EmbeddingExecutor and KnowledgeExecutor.
+    Resolves profile configuration via LLMConfigLoader and calls the
+    OpenAI-compatible embeddings endpoint.
+
+    Args:
+        text: Text to generate embedding for.
+        context: Execution context with LLM config loader.
+        profile: Profile name from llm-config.yml (defaults to 'embedding').
+        model: Override embedding model (uses profile model if not specified).
+        api_key: Override API key (uses profile secret if not specified).
+        api_url: Override API endpoint URL (uses profile URL if not specified).
+        timeout: Request timeout in seconds.
+
+    Returns:
+        Tuple of (embedding_vector, model_name, dimensions, usage_dict_or_none).
+
+    Raises:
+        ValueError: If execution context is not available or configuration is invalid.
+        openai.APIError: On API errors.
+    """
+    execution_context = context.execution_context
+    if execution_context is None:
+        raise ValueError("ExecutionContext not available")
+
+    llm_config_loader = execution_context.llm_config_loader
+
+    # Build inline overrides from inputs (filter out None values)
+    inline_overrides = {
+        key: value
+        for key, value in {
+            "model": model,
+            "api_url": api_url,
+        }.items()
+        if value is not None
+    }
+
+    # Try to resolve profile (returns ResolvedLLMConfig with merged provider+profile values)
+    resolved_config = None
+    config = llm_config_loader.load_config()
+
+    effective_profile: str | None = profile
+    if effective_profile not in config.profiles:
+        if config.default_profile and config.default_profile in config.profiles:
+            logger.warning(
+                f"Embedding profile '{profile}' not found, "
+                f"using default_profile '{config.default_profile}'"
+            )
+            effective_profile = config.default_profile
+        else:
+            effective_profile = None
+
+    if effective_profile is not None:
+        resolved_config = llm_config_loader.resolve_profile(
+            profile=effective_profile, inline_overrides=inline_overrides
+        )
+
+    if resolved_config:
+        # Use resolved values as defaults (explicit args override)
+        model = model or resolved_config.model
+        api_url = api_url or resolved_config.api_url
+
+        # Resolve API key from secrets if not provided
+        if api_key is None and resolved_config.api_key_secret:
+            from .secrets import EnvVarSecretProvider
+
+            secret_provider = EnvVarSecretProvider()
+            api_key = await secret_provider.get_secret(resolved_config.api_key_secret)
+
+    # Default model if still not set
+    if model is None:
+        model = "text-embedding-3-small"
+
+    # Resolve extra_headers from profile config
+    default_headers: dict[str, str] | None = None
+    if resolved_config and resolved_config.extra_headers:
+        default_headers = _resolve_header_env_vars(resolved_config.extra_headers)
+
+    # Use OpenAI SDK which works with any OpenAI-compatible server
+    client_kwargs: dict[str, Any] = {
+        "api_key": api_key or "not-required",
+        "base_url": api_url,
+        "timeout": float(timeout),
+    }
+    if default_headers:
+        client_kwargs["default_headers"] = default_headers
+
+    client = AsyncOpenAI(**client_kwargs)
+
+    response = await client.embeddings.create(
+        model=model,
+        input=text,
+    )
+
+    embedding = response.data[0].embedding
+    dimensions = len(embedding)
+
+    usage: dict[str, int] | None = None
+    if response.usage:
+        usage = {
+            "prompt_tokens": response.usage.prompt_tokens,
+            "total_tokens": response.usage.total_tokens,
+        }
+
+    return embedding, response.model, dimensions, usage

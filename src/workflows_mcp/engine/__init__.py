@@ -38,6 +38,7 @@ from . import (  # noqa: F401
     executors_http,  # HTTP/REST API executor
     executors_image,  # Image generation executor
     executors_interactive,  # Interactive executors
+    executors_knowledge,  # Knowledge executor
     executors_llm,  # LLM call executor
     executors_sql,  # SQL database executor
     executors_state,  # JSON state executors
@@ -81,6 +82,11 @@ from .executors_interactive import (
     PromptExecutor,
     PromptInput,
     PromptOutput,
+)
+from .executors_knowledge import (
+    KnowledgeExecutor,
+    KnowledgeInput,
+    KnowledgeOutput,
 )
 from .executors_sql import (
     SqlExecutor,
@@ -170,4 +176,8 @@ __all__ = [
     "SqlExecutor",
     "SqlInput",
     "SqlOutput",
+    # Knowledge Executors
+    "KnowledgeExecutor",
+    "KnowledgeInput",
+    "KnowledgeOutput",
 ]
