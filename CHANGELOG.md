@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file.
 
+# [9.7.0](https://github.com/qtsone/workflows-mcp/compare/v9.6.0...v9.7.0) (2026-03-05)
+
+
+### Features
+
+* **knowledge:** implement MCP Tools for Knowledge ([6b10a0f](https://github.com/qtsone/workflows-mcp/commit/6b10a0fa773534011d629898efdf0f3fe7152181))
+
 # [9.6.0](https://github.com/qtsone/workflows-mcp/compare/v9.5.0...v9.6.0) (2026-03-05)
 
 
