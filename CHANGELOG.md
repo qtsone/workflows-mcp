@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file.
 
+# [9.6.0](https://github.com/qtsone/workflows-mcp/compare/v9.5.0...v9.6.0) (2026-03-05)
+
+
+### Features
+
+* complete recall and forget operations for Knowledge executor ([604be76](https://github.com/qtsone/workflows-mcp/commit/604be76c02ea9063b6ea0656e9cb3f5300e5f361))
+
 # [9.5.0](https://github.com/qtsone/workflows-mcp/compare/v9.4.0...v9.5.0) (2026-03-04)
 
 
