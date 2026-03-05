@@ -154,11 +154,19 @@ class KnowledgeInput(BlockInput):
     # --- Recall fields ---
     where: dict[str, Any] | None = Field(
         default=None,
-        description="Filter conditions for recall (key-value pairs)",
+        description="Filter conditions for recall/forget (key-value pairs)",
     )
     order: list[str] | None = Field(
         default=None,
         description="Order by fields (e.g., ['relevance_score:desc'])",
+    )
+    created_after: str | None = Field(
+        default=None,
+        description="Filter: propositions created after this ISO date (recall/forget)",
+    )
+    created_before: str | None = Field(
+        default=None,
+        description="Filter: propositions created before this ISO date (recall/forget)",
     )
 
     # --- Forget fields ---
@@ -184,8 +192,8 @@ class KnowledgeInput(BlockInput):
             raise ValueError(f"'query' is required for op='{self.op}'")
         if self.op == "store" and not self.content:
             raise ValueError("'content' is required for op='store'")
-        if self.op == "forget" and not self.proposition_ids:
-            raise ValueError("'proposition_ids' is required for op='forget'")
+        if self.op == "forget" and not self.proposition_ids and not self.where:
+            raise ValueError("'proposition_ids' or 'where' is required for op='forget'")
         return self
 
 
@@ -508,16 +516,13 @@ class KnowledgeExecutor(BlockExecutor):
             stored_count=1,
         )
 
-    async def _op_recall(
-        self,
-        inputs: KnowledgeInput,
-        context: Execution,
-        backend: Any,
-    ) -> KnowledgeOutput:
-        """Recall propositions by filter conditions."""
-        org_id = inputs.org_id or str(uuid.UUID(int=0))
-        limit = int(inputs.limit) if isinstance(inputs.limit, str) else inputs.limit
+    def _build_where_clause(
+        self, inputs: KnowledgeInput, org_id: str
+    ) -> tuple[str, str, list[Any]]:
+        """Build WHERE and JOIN clauses from recall/forget filters.
 
+        Returns (where_clause, join_clause, params).
+        """
         params: list[Any] = []
         param_idx = 0
 
@@ -528,29 +533,63 @@ class KnowledgeExecutor(BlockExecutor):
             return f"${param_idx}"
 
         where_clauses = [f"kp.org_id = {next_param(org_id)}::uuid"]
+        needs_join = False
 
-        # Apply where filters
         if inputs.where:
             if "source_name" in inputs.where:
-                where_clauses.append(f"ks.name = {next_param(inputs.where['source_name'])}")
+                needs_join = True
+                source_val = inputs.where["source_name"]
+                if isinstance(source_val, str) and source_val.endswith("*"):
+                    prefix_param = next_param(source_val[:-1] + "%")
+                    where_clauses.append(f"ks.name LIKE {prefix_param}")
+                else:
+                    where_clauses.append(f"ks.name = {next_param(source_val)}")
             if "lifecycle_state" in inputs.where:
                 state = inputs.where["lifecycle_state"].upper()
                 where_clauses.append(f"kp.lifecycle_state = {next_param(state)}")
             if "category" in inputs.where:
+                needs_join = True
                 where_clauses.append(
                     f"ks.category_ids && ARRAY[{next_param(inputs.where['category'])}]::uuid[]"
+                )
+            if "min_confidence" in inputs.where:
+                where_clauses.append(
+                    f"kp.confidence >= {next_param(float(inputs.where['min_confidence']))}"
                 )
         else:
             where_clauses.append(f"kp.lifecycle_state = {next_param(inputs.lifecycle_state)}")
 
-        # Build JOIN if source/category filtering is needed
-        needs_join = inputs.where and ("source_name" in inputs.where or "category" in inputs.where)
+        # Date range filters (top-level fields, usable with or without where)
+        if inputs.created_after:
+            where_clauses.append(
+                f"kp.created_at >= {next_param(inputs.created_after)}::timestamptz"
+            )
+        if inputs.created_before:
+            where_clauses.append(
+                f"kp.created_at <= {next_param(inputs.created_before)}::timestamptz"
+            )
+
         join_clause = (
             "JOIN knowledge_items ki ON kp.item_id = ki.id "
             "JOIN knowledge_sources ks ON ki.source_id = ks.id"
             if needs_join
             else ""
         )
+
+        where_sql = " AND ".join(where_clauses)
+        return where_sql, join_clause, params
+
+    async def _op_recall(
+        self,
+        inputs: KnowledgeInput,
+        context: Execution,
+        backend: Any,
+    ) -> KnowledgeOutput:
+        """Recall propositions by filter conditions."""
+        org_id = inputs.org_id or str(uuid.UUID(int=0))
+        limit = int(inputs.limit) if isinstance(inputs.limit, str) else inputs.limit
+
+        where_sql, join_clause, params = self._build_where_clause(inputs, org_id)
 
         # Order clause
         order_clause = "ORDER BY kp.created_at DESC"
@@ -563,7 +602,6 @@ class KnowledgeExecutor(BlockExecutor):
                 else:
                     field = o
                     direction = "ASC"
-                # Only allow safe column names
                 safe_fields = {
                     "relevance_score",
                     "confidence",
@@ -576,15 +614,17 @@ class KnowledgeExecutor(BlockExecutor):
             if order_parts:
                 order_clause = "ORDER BY " + ", ".join(order_parts)
 
-        limit_param = next_param(limit)
-        where_clause = " AND ".join(where_clauses)
+        param_idx = len(params)
+        param_idx += 1
+        params.append(limit)
+        limit_param = f"${param_idx}"
 
         sql = f"""
             SELECT kp.id, kp.content, kp.confidence, kp.authority,
                    kp.lifecycle_state, kp.relevance_score, kp.retrieval_count
             FROM knowledge_propositions kp
             {join_clause}
-            WHERE {where_clause}
+            WHERE {where_sql}
             {order_clause}
             LIMIT {limit_param}
         """
@@ -625,32 +665,77 @@ class KnowledgeExecutor(BlockExecutor):
         context: Execution,
         backend: Any,
     ) -> KnowledgeOutput:
-        """Transition propositions to ARCHIVED state."""
-        # Normalize proposition_ids
-        ids: list[str] = []
-        if isinstance(inputs.proposition_ids, str):
-            ids = [s.strip() for s in inputs.proposition_ids.split(",") if s.strip()]
-        elif isinstance(inputs.proposition_ids, list):
-            ids = inputs.proposition_ids
+        """Transition propositions to ARCHIVED state by IDs or filter."""
+        org_id = inputs.org_id or str(uuid.UUID(int=0))
+
+        # Path 1: Archive by explicit IDs
+        if inputs.proposition_ids:
+            ids: list[str] = []
+            if isinstance(inputs.proposition_ids, str):
+                ids = [s.strip() for s in inputs.proposition_ids.split(",") if s.strip()]
+            elif isinstance(inputs.proposition_ids, list):
+                ids = inputs.proposition_ids
+
+            if not ids:
+                return KnowledgeOutput(success=True, archived_count=0, skipped_count=0)
+
+            placeholders = ", ".join(f"${i + 1}::uuid" for i in range(len(ids)))
+            result = await backend.execute(
+                f"UPDATE knowledge_propositions "
+                f"SET lifecycle_state = '{LifecycleState.ARCHIVED}', "
+                f"    updated_at = NOW() "
+                f"WHERE id IN ({placeholders}) "
+                f"  AND authority != 'USER_VALIDATED'",
+                tuple(ids),
+            )
+
+            archived = result.affected_rows if result else 0
+            skipped = len(ids) - archived
+
+            return KnowledgeOutput(
+                success=True,
+                archived_count=archived,
+                skipped_count=skipped,
+            )
+
+        # Path 2: Archive by filter
+        where_sql, join_clause, params = self._build_where_clause(inputs, org_id)
+
+        # Count total matching (for skipped_count calculation)
+        count_sql = f"""
+            SELECT COUNT(*) AS total FROM knowledge_propositions kp
+            {join_clause}
+            WHERE {where_sql}
+        """
+        count_result = await backend.query(count_sql, tuple(params))
+        total = count_result.rows[0]["total"] if count_result.rows else 0
+
+        # Archive with USER_VALIDATED immunity
+        # Use subquery to handle JOIN-based filters in UPDATE
+        if join_clause:
+            update_sql = f"""
+                UPDATE knowledge_propositions
+                SET lifecycle_state = '{LifecycleState.ARCHIVED}',
+                    updated_at = NOW()
+                WHERE id IN (
+                    SELECT kp.id FROM knowledge_propositions kp
+                    {join_clause}
+                    WHERE {where_sql}
+                )
+                AND authority != 'USER_VALIDATED'
+            """
         else:
-            return KnowledgeOutput(success=False, error="proposition_ids is required")
+            update_sql = f"""
+                UPDATE knowledge_propositions kp
+                SET lifecycle_state = '{LifecycleState.ARCHIVED}',
+                    updated_at = NOW()
+                WHERE {where_sql}
+                  AND authority != 'USER_VALIDATED'
+            """
 
-        if not ids:
-            return KnowledgeOutput(success=True, archived_count=0, skipped_count=0)
-
-        # Archive, but skip USER_VALIDATED (immune to archival)
-        placeholders = ", ".join(f"${i + 1}::uuid" for i in range(len(ids)))
-        result = await backend.execute(
-            f"UPDATE knowledge_propositions "
-            f"SET lifecycle_state = '{LifecycleState.ARCHIVED}', "
-            f"    updated_at = NOW() "
-            f"WHERE id IN ({placeholders}) "
-            f"  AND authority != 'USER_VALIDATED'",
-            tuple(ids),
-        )
-
+        result = await backend.execute(update_sql, tuple(params))
         archived = result.affected_rows if result else 0
-        skipped = len(ids) - archived
+        skipped = total - archived
 
         return KnowledgeOutput(
             success=True,

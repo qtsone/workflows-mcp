@@ -506,10 +506,15 @@ Tables and the pgvector extension are created automatically on first use.
 | `content` | Text to store (required for store) | - |
 | `source` | Filter by source name (exact or prefix with `*`) | - |
 | `categories` | Filter by category UUIDs | - |
-| `min_confidence` | Minimum confidence threshold | `0.0` |
-| `limit` | Maximum results | `20` |
+| `min_confidence` | Minimum confidence threshold | `0.3` |
+| `limit` | Maximum results | `10` |
 | `max_tokens` | Token budget for context assembly | `4000` |
 | `diversity` | Use MMR for diverse context results | `false` |
+| `where` | Filter dict for recall/forget (`source_name`, `lifecycle_state`, `category`, `min_confidence`) | - |
+| `order` | Order by fields (e.g., `["relevance_score:desc"]`) | `["created_at:desc"]` |
+| `created_after` | Filter: propositions created after this ISO date (recall/forget) | - |
+| `created_before` | Filter: propositions created before this ISO date (recall/forget) | - |
+| `proposition_ids` | UUIDs of propositions to archive (forget) | - |
 | `embedding_profile` | LLM config profile for embeddings | `embedding` |
 
 **Operations:**
@@ -548,27 +553,42 @@ Tables and the pgvector extension are created automatically on first use.
 ```
 Returns clean content only (no metadata) in `context_text`, ready for LLM prompt injection.
 
-**4. Recall — Filtered retrieval:**
+**4. Recall — Filtered retrieval with source prefix, confidence, and date ranges:**
 ```yaml
 - id: recent_items
   type: Knowledge
   inputs:
     op: recall
     where:
-      source_name: "daily-reports"
+      source_name: "daily-reports"       # exact match
+      # source_name: "workflow:*"         # or prefix match
+      # min_confidence: 0.7              # confidence threshold
+      # lifecycle_state: active
+      # category: "cat-uuid"
+    created_after: "2026-01-01"          # ISO date range
     order: ["created_at:desc"]
     limit: 5
 ```
 
-**5. Forget — Archive stale propositions:**
+**5. Forget — Archive propositions by IDs or filter:**
 ```yaml
-- id: cleanup
+# By explicit IDs
+- id: cleanup_ids
   type: Knowledge
   inputs:
     op: forget
     proposition_ids:
       - "uuid-1"
       - "uuid-2"
+
+# By filter (archive all from a source)
+- id: cleanup_source
+  type: Knowledge
+  inputs:
+    op: forget
+    where:
+      source_name: "deprecated-docs"
+    created_before: "2025-01-01"
 ```
 Returns `archived_count` and `skipped_count` in the output.
 
