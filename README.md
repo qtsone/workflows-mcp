@@ -752,6 +752,23 @@ When you configure workflows-mcp, your AI assistant gets these tools:
 - **get_queue_stats** - Get queue statistics for monitoring
 - **resume_workflow** - Resume a paused workflow
 
+### Knowledge Tools
+
+- **search_knowledge** - Hybrid search (vector + full-text + RRF fusion)
+  - `query`, `source`, `categories`, `min_confidence`, `limit`
+
+- **store_knowledge** - Persist a new fact with auto-computed embedding
+  - `content`, `source`, `confidence` (default 0.8), `categories`
+
+- **recall_knowledge** - Filter-based retrieval (no semantic search)
+  - `source`, `categories`, `lifecycle_state`, `min_confidence`, `limit`, `order`
+
+- **forget_knowledge** - Archive propositions (transition to ARCHIVED state)
+  - `proposition_ids`, `reason`
+
+- **knowledge_context** - Token-budgeted context assembly for LLM prompts
+  - `query`, `source`, `categories`, `max_tokens`, `diversity`
+
 ---
 
 ## Configuration Reference
