@@ -116,7 +116,8 @@
               "ReadJSONState",
               "WriteJSONState",
               "MergeJSONState",
-              "Sql"
+              "Sql",
+              "Knowledge"
             ],
             "description": "Block type"
           },
@@ -856,6 +857,14 @@
                       "default": null,
                       "description": "Custom API endpoint URL (optional, for custom deployments)",
                       "title": "Api Url"
+                    },
+                    "extra_headers": {
+                      "additionalProperties": {
+                        "type": "string"
+                      },
+                      "description": "Custom HTTP headers for provider requests (resolved from config)",
+                      "title": "Extra Headers",
+                      "type": "object"
                     },
                     "response_schema": {
                       "anyOf": [
@@ -1855,6 +1864,299 @@
                 }
               }
             }
+          },
+          {
+            "if": {
+              "properties": {
+                "type": {
+                  "const": "Knowledge"
+                }
+              }
+            },
+            "then": {
+              "properties": {
+                "inputs": {
+                  "additionalProperties": false,
+                  "description": "Inputs for Knowledge block",
+                  "properties": {
+                    "op": {
+                      "description": "Operation to perform",
+                      "enum": [
+                        "search",
+                        "store",
+                        "recall",
+                        "forget",
+                        "context"
+                      ],
+                      "title": "Op",
+                      "type": "string"
+                    },
+                    "host": {
+                      "description": "PostgreSQL host (env: KNOWLEDGE_DB_HOST)",
+                      "title": "Host",
+                      "type": "string"
+                    },
+                    "port": {
+                      "anyOf": [
+                        {
+                          "type": "integer"
+                        },
+                        {
+                          "type": "string"
+                        }
+                      ],
+                      "description": "PostgreSQL port (env: KNOWLEDGE_DB_PORT)",
+                      "title": "Port"
+                    },
+                    "database": {
+                      "description": "PostgreSQL database name (env: KNOWLEDGE_DB_NAME)",
+                      "title": "Database",
+                      "type": "string"
+                    },
+                    "username": {
+                      "anyOf": [
+                        {
+                          "type": "string"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ],
+                      "description": "PostgreSQL username (env: KNOWLEDGE_DB_USER)",
+                      "title": "Username"
+                    },
+                    "password": {
+                      "anyOf": [
+                        {
+                          "type": "string"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ],
+                      "description": "PostgreSQL password (env: KNOWLEDGE_DB_PASSWORD)",
+                      "title": "Password"
+                    },
+                    "org_id": {
+                      "anyOf": [
+                        {
+                          "type": "string"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ],
+                      "description": "Organization ID for scoping queries (env: KNOWLEDGE_ORG_ID)",
+                      "title": "Org Id"
+                    },
+                    "query": {
+                      "anyOf": [
+                        {
+                          "type": "string"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ],
+                      "default": null,
+                      "description": "Search query text (required for search/context)",
+                      "title": "Query"
+                    },
+                    "source": {
+                      "anyOf": [
+                        {
+                          "type": "string"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ],
+                      "default": null,
+                      "description": "Filter by source name (exact or prefix with *)",
+                      "title": "Source"
+                    },
+                    "categories": {
+                      "anyOf": [
+                        {
+                          "items": {
+                            "type": "string"
+                          },
+                          "type": "array"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ],
+                      "default": null,
+                      "description": "Filter by category UUIDs",
+                      "title": "Categories"
+                    },
+                    "min_confidence": {
+                      "default": 0.3,
+                      "description": "Minimum confidence threshold",
+                      "title": "Min Confidence",
+                      "type": "number"
+                    },
+                    "lifecycle_state": {
+                      "default": "ACTIVE",
+                      "description": "Filter by lifecycle state (default: ACTIVE)",
+                      "title": "Lifecycle State",
+                      "type": "string"
+                    },
+                    "limit": {
+                      "anyOf": [
+                        {
+                          "type": "integer"
+                        },
+                        {
+                          "type": "string"
+                        }
+                      ],
+                      "default": 10,
+                      "description": "Maximum number of results",
+                      "title": "Limit"
+                    },
+                    "max_tokens": {
+                      "anyOf": [
+                        {
+                          "type": "integer"
+                        },
+                        {
+                          "type": "string"
+                        }
+                      ],
+                      "default": 4000,
+                      "description": "Token budget for context assembly",
+                      "title": "Max Tokens"
+                    },
+                    "diversity": {
+                      "default": false,
+                      "description": "Use MMR for diversity in context results",
+                      "title": "Diversity",
+                      "type": "boolean"
+                    },
+                    "content": {
+                      "anyOf": [
+                        {
+                          "type": "string"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ],
+                      "default": null,
+                      "description": "Proposition content to store",
+                      "title": "Content"
+                    },
+                    "confidence": {
+                      "default": 0.5,
+                      "description": "Confidence score for stored proposition",
+                      "title": "Confidence",
+                      "type": "number"
+                    },
+                    "where": {
+                      "anyOf": [
+                        {
+                          "additionalProperties": true,
+                          "type": "object"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ],
+                      "default": null,
+                      "description": "Filter conditions for recall/forget (key-value pairs)",
+                      "title": "Where"
+                    },
+                    "order": {
+                      "anyOf": [
+                        {
+                          "items": {
+                            "type": "string"
+                          },
+                          "type": "array"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ],
+                      "default": null,
+                      "description": "Order by fields (e.g., ['relevance_score:desc'])",
+                      "title": "Order"
+                    },
+                    "created_after": {
+                      "anyOf": [
+                        {
+                          "type": "string"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ],
+                      "default": null,
+                      "description": "Filter: propositions created after this ISO date (recall/forget)",
+                      "title": "Created After"
+                    },
+                    "created_before": {
+                      "anyOf": [
+                        {
+                          "type": "string"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ],
+                      "default": null,
+                      "description": "Filter: propositions created before this ISO date (recall/forget)",
+                      "title": "Created Before"
+                    },
+                    "proposition_ids": {
+                      "anyOf": [
+                        {
+                          "items": {
+                            "type": "string"
+                          },
+                          "type": "array"
+                        },
+                        {
+                          "type": "string"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ],
+                      "default": null,
+                      "description": "UUIDs of propositions to archive",
+                      "title": "Proposition Ids"
+                    },
+                    "reason": {
+                      "anyOf": [
+                        {
+                          "type": "string"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ],
+                      "default": null,
+                      "description": "Reason for archiving (stored in metadata)",
+                      "title": "Reason"
+                    },
+                    "embedding_profile": {
+                      "default": "embedding",
+                      "description": "LLM config profile for embeddings",
+                      "title": "Embedding Profile",
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "op"
+                  ],
+                  "title": "KnowledgeInput",
+                  "type": "object"
+                }
+              }
+            }
           }
         ]
       }
@@ -2610,6 +2912,14 @@
           "default": null,
           "description": "Custom API endpoint URL (optional, for custom deployments)",
           "title": "Api Url"
+        },
+        "extra_headers": {
+          "additionalProperties": {
+            "type": "string"
+          },
+          "description": "Custom HTTP headers for provider requests (resolved from config)",
+          "title": "Extra Headers",
+          "type": "object"
         },
         "response_schema": {
           "anyOf": [
@@ -3523,6 +3833,286 @@
         "engine"
       ],
       "title": "SqlInput",
+      "type": "object"
+    },
+    "KnowledgeInput": {
+      "additionalProperties": false,
+      "description": "Input schema for Knowledge block.\n\nSupports five operations: search, store, recall, forget, context.\n\nConnection config resolves with priority: YAML inputs > env vars > defaults.\nSet KNOWLEDGE_DB_* environment variables once in your MCP server config\nto avoid repeating connection details in every workflow.\n\nEnvironment variables:\n    KNOWLEDGE_DB_HOST: PostgreSQL host (default: localhost)\n    KNOWLEDGE_DB_PORT: PostgreSQL port (default: 5432)\n    KNOWLEDGE_DB_NAME: Database name (default: knowledge_db)\n    KNOWLEDGE_DB_USER: Username\n    KNOWLEDGE_DB_PASSWORD: Password\n    KNOWLEDGE_ORG_ID: Organization ID for multi-tenant scoping\n\nExamples:\n    ```yaml\n    - id: find_patterns\n      type: Knowledge\n      inputs:\n        op: search\n        query: \"deployment patterns for web services\"\n        source: \"internal-docs\"\n        limit: 10\n    ```",
+      "properties": {
+        "op": {
+          "description": "Operation to perform",
+          "enum": [
+            "search",
+            "store",
+            "recall",
+            "forget",
+            "context"
+          ],
+          "title": "Op",
+          "type": "string"
+        },
+        "host": {
+          "description": "PostgreSQL host (env: KNOWLEDGE_DB_HOST)",
+          "title": "Host",
+          "type": "string"
+        },
+        "port": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "string"
+            }
+          ],
+          "description": "PostgreSQL port (env: KNOWLEDGE_DB_PORT)",
+          "title": "Port"
+        },
+        "database": {
+          "description": "PostgreSQL database name (env: KNOWLEDGE_DB_NAME)",
+          "title": "Database",
+          "type": "string"
+        },
+        "username": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "PostgreSQL username (env: KNOWLEDGE_DB_USER)",
+          "title": "Username"
+        },
+        "password": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "PostgreSQL password (env: KNOWLEDGE_DB_PASSWORD)",
+          "title": "Password"
+        },
+        "org_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Organization ID for scoping queries (env: KNOWLEDGE_ORG_ID)",
+          "title": "Org Id"
+        },
+        "query": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Search query text (required for search/context)",
+          "title": "Query"
+        },
+        "source": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Filter by source name (exact or prefix with *)",
+          "title": "Source"
+        },
+        "categories": {
+          "anyOf": [
+            {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Filter by category UUIDs",
+          "title": "Categories"
+        },
+        "min_confidence": {
+          "default": 0.3,
+          "description": "Minimum confidence threshold",
+          "title": "Min Confidence",
+          "type": "number"
+        },
+        "lifecycle_state": {
+          "default": "ACTIVE",
+          "description": "Filter by lifecycle state (default: ACTIVE)",
+          "title": "Lifecycle State",
+          "type": "string"
+        },
+        "limit": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "string"
+            }
+          ],
+          "default": 10,
+          "description": "Maximum number of results",
+          "title": "Limit"
+        },
+        "max_tokens": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "string"
+            }
+          ],
+          "default": 4000,
+          "description": "Token budget for context assembly",
+          "title": "Max Tokens"
+        },
+        "diversity": {
+          "default": false,
+          "description": "Use MMR for diversity in context results",
+          "title": "Diversity",
+          "type": "boolean"
+        },
+        "content": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Proposition content to store",
+          "title": "Content"
+        },
+        "confidence": {
+          "default": 0.5,
+          "description": "Confidence score for stored proposition",
+          "title": "Confidence",
+          "type": "number"
+        },
+        "where": {
+          "anyOf": [
+            {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Filter conditions for recall/forget (key-value pairs)",
+          "title": "Where"
+        },
+        "order": {
+          "anyOf": [
+            {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Order by fields (e.g., ['relevance_score:desc'])",
+          "title": "Order"
+        },
+        "created_after": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Filter: propositions created after this ISO date (recall/forget)",
+          "title": "Created After"
+        },
+        "created_before": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Filter: propositions created before this ISO date (recall/forget)",
+          "title": "Created Before"
+        },
+        "proposition_ids": {
+          "anyOf": [
+            {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "UUIDs of propositions to archive",
+          "title": "Proposition Ids"
+        },
+        "reason": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Reason for archiving (stored in metadata)",
+          "title": "Reason"
+        },
+        "embedding_profile": {
+          "default": "embedding",
+          "description": "LLM config profile for embeddings",
+          "title": "Embedding Profile",
+          "type": "string"
+        }
+      },
+      "required": [
+        "op"
+      ],
+      "title": "KnowledgeInput",
       "type": "object"
     }
   }
