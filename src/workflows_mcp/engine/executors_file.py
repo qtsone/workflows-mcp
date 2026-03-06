@@ -298,6 +298,22 @@ class ReadFilesInput(BlockInput):
 
     encoding: str = Field(default="utf-8", description="Text encoding for reading files")
 
+    line_start: int | str | None = Field(
+        default=None,
+        description=(
+            "Start line for line-range reading (1-indexed, inclusive). "
+            "Only used with 'path' in 'full' mode. Supports interpolation."
+        ),
+    )
+
+    line_end: int | str | None = Field(
+        default=None,
+        description=(
+            "End line for line-range reading (1-indexed, inclusive). "
+            "Only used with 'path' in 'full' mode. Supports interpolation."
+        ),
+    )
+
     # Validators for interpolatable fields
     _validate_mode = field_validator("mode", mode="before")(
         interpolatable_literal_validator("full", "outline", "summary")
@@ -313,6 +329,14 @@ class ReadFilesInput(BlockInput):
 
     _validate_respect_gitignore = field_validator("respect_gitignore", mode="before")(
         interpolatable_boolean_validator()
+    )
+
+    _validate_line_start = field_validator("line_start", mode="before")(
+        interpolatable_numeric_validator(int, ge=1)
+    )
+
+    _validate_line_end = field_validator("line_end", mode="before")(
+        interpolatable_numeric_validator(int, ge=1)
     )
 
     @model_validator(mode="after")
@@ -361,6 +385,21 @@ class ReadFilesOutput(BlockOutput):
     patterns_matched: int = Field(
         default=0,
         description="Total number of files matching patterns before filtering",
+    )
+
+    sections: list[dict] = Field(
+        default_factory=list,
+        description="Structured section tree from outline mode (nested dicts with children)",
+    )
+
+    max_depth: int = Field(
+        default=0,
+        description="Maximum heading depth in document structure",
+    )
+
+    total_sections: int = Field(
+        default=0,
+        description="Total number of sections across all levels",
     )
 
     @computed_field  # type: ignore[prop-decorator]
@@ -482,7 +521,20 @@ class ReadFilesExecutor(BlockExecutor):
 
         # 2. Handle single-file path mode (fast path)
         if inputs.path is not None:
-            return await self._execute_single_file(inputs.path, mode, max_file_size_kb)
+            # Resolve optional line-range params
+            resolved_line_start = (
+                resolve_interpolatable_numeric(inputs.line_start, int, "line_start", ge=1)
+                if inputs.line_start is not None
+                else None
+            )
+            resolved_line_end = (
+                resolve_interpolatable_numeric(inputs.line_end, int, "line_end", ge=1)
+                if inputs.line_end is not None
+                else None
+            )
+            return await self._execute_single_file(
+                inputs.path, mode, max_file_size_kb, resolved_line_start, resolved_line_end
+            )
 
         # 3. Handle multi-file patterns mode
         max_files = resolve_interpolatable_numeric(inputs.max_files, int, "max_files", ge=1, le=100)
@@ -642,15 +694,24 @@ class ReadFilesExecutor(BlockExecutor):
         file_path_str: str,
         mode: Literal["full", "outline", "summary"],
         max_file_size_kb: int,
+        line_start: int | None = None,
+        line_end: int | None = None,
     ) -> ReadFilesOutput:
         """Fast path for reading a single file directly by path.
 
         Skips glob matching, gitignore checks, and exclusion filters.
         Used when `path` parameter is provided instead of `patterns`.
+
+        Args:
+            file_path_str: Path string to the file
+            mode: Read mode (full, outline, summary)
+            max_file_size_kb: Max file size limit
+            line_start: Optional 1-indexed start line for line-range reading (full mode only)
+            line_end: Optional 1-indexed end line for line-range reading (full mode only)
         """
         from .file_outline import (
             BASE64_ENCODE_EXTENSIONS,
-            generate_file_outline,
+            generate_file_outline_with_sections,
             is_binary,
         )
 
@@ -688,9 +749,14 @@ class ReadFilesExecutor(BlockExecutor):
         # Read file content based on mode
         file_ext = file_path.suffix.lower()
         file_content: str
+        sections: list[dict] = []
+        max_depth = 0
+        total_sections = 0
 
         if mode == "outline" or mode == "summary":
-            file_content = generate_file_outline(file_path, mode)
+            file_content, sections, max_depth, total_sections = generate_file_outline_with_sections(
+                file_path, mode
+            )
 
         elif file_ext in BASE64_ENCODE_EXTENSIONS:
             import base64
@@ -722,6 +788,19 @@ class ReadFilesExecutor(BlockExecutor):
             assert read_result.value is not None
             file_content = read_result.value
 
+            # Apply line-range slicing if requested (full mode only)
+            if line_start is not None or line_end is not None:
+                lines = file_content.split("\n")
+                total_lines = len(lines)
+                start = (line_start or 1) - 1  # Convert to 0-indexed
+                end = line_end or total_lines
+
+                if start >= total_lines:
+                    file_content = ""
+                else:
+                    end = min(end, total_lines)
+                    file_content = "\n".join(lines[start:end])
+
         return ReadFilesOutput(
             files=[
                 FileInfo(
@@ -734,6 +813,9 @@ class ReadFilesExecutor(BlockExecutor):
             total_size_kb=file_size_kb,
             skipped_files=[],
             patterns_matched=1,
+            sections=sections,
+            max_depth=max_depth,
+            total_sections=total_sections,
         )
 
 

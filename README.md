@@ -323,9 +323,11 @@ Read files with glob patterns, multiple output modes, and automatic outline extr
 **Features:**
 - Glob pattern support (`*.py`, `**/*.ts`)
 - Three output modes:
-  - `full` - Complete file content
-  - `outline` - Structural outline (90-97% context reduction for Python/Markdown)
+  - `full` - Complete file content (with optional line-range slicing)
+  - `outline` - Structural outline + structured sections tree (90-97% context reduction)
   - `summary` - Outline + docstrings/comments
+- **Structured sections tree** — Outline mode returns a nested `sections` tree with line ranges, suitable for recursive section-by-section processing
+- **Line-range reading** — `line_start`/`line_end` parameters in full mode to read specific portions of a file
 - Gitignore integration and file filtering
 - Size limits and file count limits
 - Multi-file reading in single block
@@ -333,6 +335,41 @@ Read files with glob patterns, multiple output modes, and automatic outline extr
   - Single file: Direct content (string)
   - Multiple files: YAML-formatted structure
   - No files: Empty string
+
+**Outline mode outputs:**
+
+| Output | Description |
+|--------|-------------|
+| `content` | Display outline string |
+| `sections` | Nested section tree (list of dicts with `id`, `heading`, `path`, `level`, `line_start`, `line_end`, `own_start`, `own_end`, `is_leaf`, `children`) |
+| `max_depth` | Maximum heading depth in document structure |
+| `total_sections` | Total number of sections across all levels |
+
+**Example — Structured sections:**
+```yaml
+- id: read_outline
+  type: ReadFiles
+  inputs:
+    path: "/path/to/document.md"
+    mode: outline
+
+- id: show_structure
+  type: Shell
+  depends_on: [read_outline]
+  inputs:
+    command: echo "Found {{blocks.read_outline.outputs.total_sections}} sections"
+```
+
+**Example — Line-range reading:**
+```yaml
+- id: read_section
+  type: ReadFiles
+  inputs:
+    path: "/path/to/document.md"
+    mode: full
+    line_start: 10
+    line_end: 25
+```
 
 **See examples:** `tests/workflows/core/file-operations/readfiles-test.yaml`
 

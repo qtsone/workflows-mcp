@@ -473,6 +473,151 @@ def extract_markdown_outline(file_path: Path) -> str:
     return "\n".join(lines) if lines else "  [No headers found]"
 
 
+def extract_markdown_sections(file_path: Path) -> list[dict]:
+    """Extract structured section tree from Markdown headers.
+
+    Parses heading hierarchy into a nested tree suitable for recursive
+    section-by-section processing. Each section node carries line ranges
+    for both the full section (line_start/line_end) and the section's own
+    content excluding children (own_start/own_end).
+
+    Args:
+        file_path: Path to Markdown file
+
+    Returns:
+        List of top-level section dicts with nested children.
+        Falls back to one implicit section covering the whole file
+        if no headers are found.
+    """
+    try:
+        with open(file_path, encoding="utf-8", errors="replace") as f:
+            content = f.read()
+    except Exception:
+        return []
+
+    all_lines = content.split("\n")
+    total_lines = len(all_lines)
+
+    if total_lines == 0:
+        return []
+
+    # Parse all headers with their line numbers and levels
+    headers: list[dict] = []
+    for i, line in enumerate(all_lines, 1):
+        stripped = line.strip()
+        if stripped.startswith("#"):
+            level = 0
+            for char in stripped:
+                if char == "#":
+                    level += 1
+                else:
+                    break
+            level = min(level, 6)
+            heading = stripped.lstrip("#").strip()
+            if heading:  # Skip lines with only # characters
+                headers.append({"level": level, "heading": heading, "line": i})
+
+    # Zero-section fallback: document has no headers
+    if not headers:
+        return [
+            {
+                "id": "document",
+                "heading": "",
+                "path": "(full document)",
+                "level": 0,
+                "line_start": 1,
+                "line_end": total_lines,
+                "own_start": 1,
+                "own_end": total_lines,
+                "is_leaf": True,
+                "children": [],
+            }
+        ]
+
+    def _make_id(heading: str) -> str:
+        """Generate a URL-safe ID from heading text."""
+        # Lowercase, replace non-alphanumeric with hyphens, collapse
+        import re
+
+        slug = re.sub(r"[^a-z0-9]+", "-", heading.lower()).strip("-")
+        return slug or "section"
+
+    # Build nested tree, passing section boundaries from parent context
+    def _build_tree(
+        headers: list[dict],
+        parent_path: str = "",
+        section_end: int = total_lines,
+    ) -> list[dict]:
+        """Build nested section tree from flat header list.
+
+        Args:
+            headers: Flat list of header dicts with 'line', 'level', 'heading'
+            parent_path: Path string for parent section breadcrumb
+            section_end: Line number where this group of sections ends
+                         (parent's end or total_lines for top-level)
+        """
+        if not headers:
+            return []
+
+        result: list[dict] = []
+        i = 0
+
+        while i < len(headers):
+            h = headers[i]
+            heading = h["heading"]
+            level = h["level"]
+            section_path = f"{parent_path} > {heading}" if parent_path else heading
+
+            # Collect children: all consecutive headers at deeper levels
+            children_headers: list[dict] = []
+            j = i + 1
+            while j < len(headers) and headers[j]["level"] > level:
+                children_headers.append(headers[j])
+                j += 1
+
+            # Determine this section's line_end:
+            # - If there's a next sibling, it ends before the next sibling's line
+            # - Otherwise, it ends at the parent's section_end
+            if j < len(headers):
+                h_line_end = headers[j]["line"] - 1
+            else:
+                h_line_end = section_end
+
+            # Recursively build children with this section's boundary
+            children = _build_tree(children_headers, section_path, h_line_end)
+
+            # own_start: the header line itself (includes the header)
+            own_start = h["line"]
+            # own_end: line before first child header (or section end if leaf)
+            if children_headers:
+                own_end = children_headers[0]["line"] - 1
+            else:
+                own_end = h_line_end
+
+            # Ensure own_end >= own_start
+            if own_end < own_start:
+                own_end = own_start
+
+            node = {
+                "id": _make_id(heading),
+                "heading": heading,
+                "path": section_path,
+                "level": level,
+                "line_start": h["line"],
+                "line_end": h_line_end,
+                "own_start": own_start,
+                "own_end": own_end,
+                "is_leaf": len(children) == 0,
+                "children": children,
+            }
+            result.append(node)
+            i = j  # Skip past all children
+
+        return result
+
+    return _build_tree(headers)
+
+
 def _format_structured_value(val: object) -> str:
     """Format value with type info and preview (shared helper).
 
@@ -919,3 +1064,69 @@ def generate_file_outline(file_path: Path, mode: Literal["outline", "summary"]) 
         outline = extract_generic_outline(file_path)
 
     return f"{header}\n{outline}"
+
+
+def generate_file_outline_with_sections(
+    file_path: Path, mode: Literal["outline", "summary"]
+) -> tuple[str, list[dict], int, int]:
+    """Generate outline for a file AND return structured sections tree.
+
+    Extends generate_file_outline() with structured section metadata
+    suitable for recursive per-section processing.
+
+    Args:
+        file_path: Path to file
+        mode: Outline extraction mode
+
+    Returns:
+        Tuple of (outline_string, sections_tree, max_depth, total_sections).
+        For non-markdown files, sections contains a single implicit section
+        covering the whole file (zero-section fallback).
+    """
+    # Generate the display outline string (existing behavior)
+    outline_str = generate_file_outline(file_path, mode)
+
+    # Extract structured sections (markdown-aware)
+    file_ext = file_path.suffix.lower()
+    if file_ext in [".md", ".markdown"]:
+        sections = extract_markdown_sections(file_path)
+    else:
+        # Zero-section fallback for non-markdown files
+        total_lines = 0
+        try:
+            with open(file_path, encoding="utf-8", errors="replace") as f:
+                total_lines = sum(1 for _ in f)
+        except Exception:
+            pass
+
+        if total_lines > 0:
+            sections = [
+                {
+                    "id": "document",
+                    "heading": "",
+                    "path": "(full document)",
+                    "level": 0,
+                    "line_start": 1,
+                    "line_end": total_lines,
+                    "own_start": 1,
+                    "own_end": total_lines,
+                    "is_leaf": True,
+                    "children": [],
+                }
+            ]
+        else:
+            sections = []
+
+    # Compute max_depth and total_sections from the tree
+    def _count_tree(nodes: list[dict], depth: int = 1) -> tuple[int, int]:
+        max_d = depth if nodes else 0
+        total = len(nodes)
+        for node in nodes:
+            child_max_d, child_total = _count_tree(node.get("children", []), depth + 1)
+            max_d = max(max_d, child_max_d)
+            total += child_total
+        return max_d, total
+
+    max_depth, total_sections = _count_tree(sections)
+
+    return outline_str, sections, max_depth, total_sections

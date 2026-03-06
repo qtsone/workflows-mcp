@@ -637,6 +637,38 @@
                       "description": "Text encoding for reading files",
                       "title": "Encoding",
                       "type": "string"
+                    },
+                    "line_start": {
+                      "anyOf": [
+                        {
+                          "type": "integer"
+                        },
+                        {
+                          "type": "string"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ],
+                      "default": null,
+                      "description": "Start line for line-range reading (1-indexed, inclusive). Only used with 'path' in 'full' mode. Supports interpolation.",
+                      "title": "Line Start"
+                    },
+                    "line_end": {
+                      "anyOf": [
+                        {
+                          "type": "integer"
+                        },
+                        {
+                          "type": "string"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ],
+                      "default": null,
+                      "description": "End line for line-range reading (1-indexed, inclusive). Only used with 'path' in 'full' mode. Supports interpolation.",
+                      "title": "Line End"
                     }
                   },
                   "title": "ReadFilesInput",
@@ -2707,6 +2739,38 @@
           "description": "Text encoding for reading files",
           "title": "Encoding",
           "type": "string"
+        },
+        "line_start": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Start line for line-range reading (1-indexed, inclusive). Only used with 'path' in 'full' mode. Supports interpolation.",
+          "title": "Line Start"
+        },
+        "line_end": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "End line for line-range reading (1-indexed, inclusive). Only used with 'path' in 'full' mode. Supports interpolation.",
+          "title": "Line End"
         }
       },
       "title": "ReadFilesInput",
