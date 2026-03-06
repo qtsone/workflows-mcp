@@ -351,6 +351,51 @@ class KnowledgeExecutor(BlockExecutor):
         )
 
     # ------------------------------------------------------------------
+    # Helpers
+    # ------------------------------------------------------------------
+
+    async def _resolve_categories(
+        self,
+        categories: list[str],
+        org_id: str,
+        backend: Any,
+    ) -> list[str]:
+        """Resolve category names or UUIDs to a list of UUID strings.
+
+        For each entry in categories:
+        - If it's a valid UUID, use as-is.
+        - Otherwise, look up by (org_id, entity_type='category', name) in
+          knowledge_entities. Auto-create the entity if missing.
+        """
+        resolved: list[str] = []
+        for entry in categories:
+            # Try parsing as UUID first
+            try:
+                uuid.UUID(entry)
+                resolved.append(entry)
+                continue
+            except ValueError:
+                pass
+
+            # Name-based resolution: upsert into knowledge_entities
+            result = await backend.query(
+                """
+                INSERT INTO knowledge_entities (id, org_id, entity_type, name)
+                VALUES ($1::uuid, $2::uuid, 'category', $3)
+                ON CONFLICT (org_id, entity_type, name) DO UPDATE
+                    SET name = EXCLUDED.name
+                RETURNING id
+                """,
+                (str(uuid.uuid4()), org_id, entry),
+            )
+            if result.rows:
+                resolved.append(str(result.rows[0]["id"]))
+            else:
+                logger.warning("Category resolution returned no rows for %r", entry)
+
+        return resolved
+
+    # ------------------------------------------------------------------
     # Operation Handlers
     # ------------------------------------------------------------------
 
@@ -366,6 +411,11 @@ class KnowledgeExecutor(BlockExecutor):
         limit = int(inputs.limit) if isinstance(inputs.limit, str) else inputs.limit
         org_id = inputs.org_id or str(uuid.UUID(int=0))
 
+        # Resolve category names to UUIDs if provided
+        resolved_categories = None
+        if inputs.categories:
+            resolved_categories = await self._resolve_categories(inputs.categories, org_id, backend)
+
         # Compute query embedding
         embedding, _, _, _ = await compute_embedding(
             text=inputs.query,
@@ -378,7 +428,7 @@ class KnowledgeExecutor(BlockExecutor):
             org_id=org_id,
             query_embedding=embedding,
             source=inputs.source,
-            categories=inputs.categories,
+            categories=resolved_categories,
             min_confidence=inputs.min_confidence,
             lifecycle_state=inputs.lifecycle_state,
             limit=limit,
@@ -391,7 +441,7 @@ class KnowledgeExecutor(BlockExecutor):
             org_id=org_id,
             query_text=inputs.query,
             source=inputs.source,
-            categories=inputs.categories,
+            categories=resolved_categories,
             min_confidence=inputs.min_confidence,
             lifecycle_state=inputs.lifecycle_state,
             limit=limit,
@@ -446,6 +496,11 @@ class KnowledgeExecutor(BlockExecutor):
         org_id = inputs.org_id or str(uuid.UUID(int=0))
         prop_id = str(uuid.uuid4())
 
+        # Resolve category names to UUIDs if provided
+        category_ids: list[str] = []
+        if inputs.categories:
+            category_ids = await self._resolve_categories(inputs.categories, org_id, backend)
+
         # Compute embedding for the content
         embedding, model_name, dimensions, _ = await compute_embedding(
             text=inputs.content,
@@ -456,20 +511,22 @@ class KnowledgeExecutor(BlockExecutor):
         # Find or create source if specified
         item_id: str | None = None
         if inputs.source:
-            # Upsert source
-            source_id = str(uuid.uuid4())
-            await backend.execute(
-                """
-                INSERT INTO knowledge_sources (id, org_id, name, source_type)
-                VALUES ($1::uuid, $2::uuid, $3, 'WORKFLOW')
-                ON CONFLICT DO NOTHING
-                """,
-                (source_id, org_id, inputs.source),
-            )
-            # Get the actual source id (may already exist)
+            # Upsert source with category_ids, using unique (org_id, name)
             source_result = await backend.query(
-                "SELECT id FROM knowledge_sources WHERE org_id = $1::uuid AND name = $2 LIMIT 1",
-                (org_id, inputs.source),
+                """
+                INSERT INTO knowledge_sources
+                    (id, org_id, name, source_type, category_ids)
+                VALUES ($1::uuid, $2::uuid, $3, 'WORKFLOW', $4::uuid[])
+                ON CONFLICT (org_id, name) DO UPDATE SET
+                    category_ids = CASE
+                        WHEN EXCLUDED.category_ids != '{}'
+                            THEN EXCLUDED.category_ids
+                        ELSE knowledge_sources.category_ids
+                    END,
+                    updated_at = NOW()
+                RETURNING id
+                """,
+                (str(uuid.uuid4()), org_id, inputs.source, category_ids),
             )
             if source_result.rows:
                 actual_source_id = str(source_result.rows[0]["id"])
@@ -480,7 +537,12 @@ class KnowledgeExecutor(BlockExecutor):
                     INSERT INTO knowledge_items (id, org_id, source_id, title)
                     VALUES ($1::uuid, $2::uuid, $3::uuid, $4)
                     """,
-                    (item_id, org_id, actual_source_id, f"workflow-store-{prop_id[:8]}"),
+                    (
+                        item_id,
+                        org_id,
+                        actual_source_id,
+                        f"workflow-store-{prop_id[:8]}",
+                    ),
                 )
 
         # Insert proposition with server-side tsvector computation
@@ -491,7 +553,8 @@ class KnowledgeExecutor(BlockExecutor):
                  authority, lifecycle_state, confidence,
                  embedding_model, embedding_dimensions, metadata_)
             VALUES
-                ($1::uuid, $2::uuid, $3::uuid, $4, $5::vector, to_tsvector('english', $4),
+                ($1::uuid, $2::uuid, $3::uuid, $4, $5::vector,
+                 to_tsvector('english', $4),
                  $6, $7, $8,
                  $9, $10, $11::jsonb)
             """,
@@ -516,11 +579,12 @@ class KnowledgeExecutor(BlockExecutor):
             stored_count=1,
         )
 
-    def _build_where_clause(
-        self, inputs: KnowledgeInput, org_id: str
+    async def _build_where_clause(
+        self, inputs: KnowledgeInput, org_id: str, backend: Any
     ) -> tuple[str, str, list[Any]]:
         """Build WHERE and JOIN clauses from recall/forget filters.
 
+        Resolves category names to UUIDs if needed.
         Returns (where_clause, join_clause, params).
         """
         params: list[Any] = []
@@ -549,9 +613,11 @@ class KnowledgeExecutor(BlockExecutor):
                 where_clauses.append(f"kp.lifecycle_state = {next_param(state)}")
             if "category" in inputs.where:
                 needs_join = True
-                where_clauses.append(
-                    f"ks.category_ids && ARRAY[{next_param(inputs.where['category'])}]::uuid[]"
-                )
+                cat_value = inputs.where["category"]
+                # Resolve name to UUID if needed
+                resolved = await self._resolve_categories([cat_value], org_id, backend)
+                cat_uuid = resolved[0] if resolved else cat_value
+                where_clauses.append(f"ks.category_ids && ARRAY[{next_param(cat_uuid)}]::uuid[]")
             if "min_confidence" in inputs.where:
                 where_clauses.append(
                     f"kp.confidence >= {next_param(float(inputs.where['min_confidence']))}"
@@ -589,7 +655,7 @@ class KnowledgeExecutor(BlockExecutor):
         org_id = inputs.org_id or str(uuid.UUID(int=0))
         limit = int(inputs.limit) if isinstance(inputs.limit, str) else inputs.limit
 
-        where_sql, join_clause, params = self._build_where_clause(inputs, org_id)
+        where_sql, join_clause, params = await self._build_where_clause(inputs, org_id, backend)
 
         # Order clause
         order_clause = "ORDER BY kp.created_at DESC"
@@ -699,7 +765,7 @@ class KnowledgeExecutor(BlockExecutor):
             )
 
         # Path 2: Archive by filter
-        where_sql, join_clause, params = self._build_where_clause(inputs, org_id)
+        where_sql, join_clause, params = await self._build_where_clause(inputs, org_id, backend)
 
         # Count total matching (for skipped_count calculation)
         count_sql = f"""

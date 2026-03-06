@@ -57,6 +57,18 @@ CREATE TABLE IF NOT EXISTS knowledge_propositions (
 );
 """
 
+_CREATE_KNOWLEDGE_ENTITIES = """
+CREATE TABLE IF NOT EXISTS knowledge_entities (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    org_id UUID NOT NULL,
+    entity_type VARCHAR(50) NOT NULL,
+    name VARCHAR(500) NOT NULL,
+    properties JSONB DEFAULT '{}'::jsonb,
+    confidence FLOAT DEFAULT 1.0,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+"""
+
 _CREATE_INDEXES = """
 CREATE INDEX IF NOT EXISTS idx_kp_org_id ON knowledge_propositions(org_id);
 CREATE INDEX IF NOT EXISTS idx_kp_lifecycle ON knowledge_propositions(lifecycle_state);
@@ -64,8 +76,11 @@ CREATE INDEX IF NOT EXISTS idx_kp_item_id ON knowledge_propositions(item_id);
 CREATE INDEX IF NOT EXISTS idx_kp_search_vector ON knowledge_propositions USING gin(search_vector);
 CREATE INDEX IF NOT EXISTS idx_ks_org_id ON knowledge_sources(org_id);
 CREATE INDEX IF NOT EXISTS idx_ks_category_ids ON knowledge_sources USING gin(category_ids);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_ks_org_name ON knowledge_sources(org_id, name);
 CREATE INDEX IF NOT EXISTS idx_ki_org_id ON knowledge_items(org_id);
 CREATE INDEX IF NOT EXISTS idx_ki_source_id ON knowledge_items(source_id);
+CREATE INDEX IF NOT EXISTS idx_ke_org_id ON knowledge_entities(org_id);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_ke_org_type_name ON knowledge_entities(org_id, entity_type, name);
 """
 
 
@@ -81,6 +96,7 @@ def get_init_schema_sql() -> str:
             _CREATE_KNOWLEDGE_SOURCES,
             _CREATE_KNOWLEDGE_ITEMS,
             _CREATE_KNOWLEDGE_PROPOSITIONS,
+            _CREATE_KNOWLEDGE_ENTITIES,
             _CREATE_INDEXES,
         ]
     )

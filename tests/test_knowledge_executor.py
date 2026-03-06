@@ -8,6 +8,7 @@ require optional deps.
 from __future__ import annotations
 
 from typing import Any
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 from pydantic import ValidationError
@@ -84,12 +85,25 @@ class TestSchemaDDL:
         assert "CREATE TABLE IF NOT EXISTS knowledge_sources" in sql
         assert "CREATE TABLE IF NOT EXISTS knowledge_items" in sql
         assert "CREATE TABLE IF NOT EXISTS knowledge_propositions" in sql
+        assert "CREATE TABLE IF NOT EXISTS knowledge_entities" in sql
 
     def test_ddl_contains_indexes(self) -> None:
         """DDL should create necessary indexes."""
         sql = get_init_schema_sql()
         assert "CREATE INDEX IF NOT EXISTS idx_kp_org_id" in sql
         assert "CREATE INDEX IF NOT EXISTS idx_kp_search_vector" in sql
+
+    def test_ddl_contains_unique_source_index(self) -> None:
+        """DDL should create unique index on knowledge_sources(org_id, name)."""
+        sql = get_init_schema_sql()
+        assert "idx_ks_org_name" in sql
+        assert "knowledge_sources(org_id, name)" in sql
+
+    def test_ddl_contains_unique_entity_index(self) -> None:
+        """DDL should create unique index on knowledge_entities(org_id, entity_type, name)."""
+        sql = get_init_schema_sql()
+        assert "idx_ke_org_type_name" in sql
+        assert "knowledge_entities(org_id, entity_type, name)" in sql
 
     def test_ddl_is_idempotent(self) -> None:
         """DDL should use IF NOT EXISTS throughout."""
@@ -99,7 +113,7 @@ class TestSchemaDDL:
             line = line.strip()
             if line.startswith("CREATE TABLE"):
                 assert "IF NOT EXISTS" in line, f"Missing IF NOT EXISTS: {line}"
-            if line.startswith("CREATE INDEX"):
+            if line.startswith("CREATE INDEX") or line.startswith("CREATE UNIQUE INDEX"):
                 assert "IF NOT EXISTS" in line, f"Missing IF NOT EXISTS: {line}"
             if line.startswith("CREATE EXTENSION"):
                 assert "IF NOT EXISTS" in line, f"Missing IF NOT EXISTS: {line}"
@@ -528,48 +542,59 @@ class TestKnowledgeOutput:
 class TestRecallFilters:
     """Tests for _build_where_clause shared filter logic."""
 
-    def _build(self, **kwargs: Any) -> tuple[str, str, list[Any]]:
+    async def _build(self, **kwargs: Any) -> tuple[str, str, list[Any]]:
         """Helper to build WHERE clause from KnowledgeInput kwargs."""
         executor = KnowledgeExecutor()
         inputs = KnowledgeInput(op="recall", **kwargs)
-        return executor._build_where_clause(inputs, "00000000-0000-0000-0000-000000000000")
+        # Mock backend for category resolution (not used in most tests)
+        backend = MagicMock()
+        backend.query = AsyncMock(return_value=MagicMock(rows=[]))
+        return await executor._build_where_clause(
+            inputs, "00000000-0000-0000-0000-000000000000", backend
+        )
 
-    def test_recall_source_name_exact(self) -> None:
+    @pytest.mark.asyncio
+    async def test_recall_source_name_exact(self) -> None:
         """Exact source_name generates ks.name = $N."""
-        where, join, params = self._build(where={"source_name": "internal-docs"})
+        where, join, params = await self._build(where={"source_name": "internal-docs"})
         assert "ks.name = $2" in where
         assert "internal-docs" in params
         assert "LIKE" not in where
 
-    def test_recall_source_name_prefix(self) -> None:
+    @pytest.mark.asyncio
+    async def test_recall_source_name_prefix(self) -> None:
         """Source name with * generates ks.name LIKE $N."""
-        where, join, params = self._build(where={"source_name": "workflow:*"})
+        where, join, params = await self._build(where={"source_name": "workflow:*"})
         assert "LIKE" in where
         assert "workflow:%" in params
 
-    def test_recall_min_confidence(self) -> None:
+    @pytest.mark.asyncio
+    async def test_recall_min_confidence(self) -> None:
         """min_confidence in where generates kp.confidence >= $N."""
-        where, join, params = self._build(where={"min_confidence": 0.7})
+        where, join, params = await self._build(where={"min_confidence": 0.7})
         assert "kp.confidence >=" in where
         assert 0.7 in params
 
-    def test_recall_created_after(self) -> None:
+    @pytest.mark.asyncio
+    async def test_recall_created_after(self) -> None:
         """created_after generates kp.created_at >= $N::timestamptz."""
-        where, join, params = self._build(created_after="2026-03-01T00:00:00Z")
+        where, join, params = await self._build(created_after="2026-03-01T00:00:00Z")
         assert "kp.created_at >=" in where
         assert "timestamptz" in where
         assert "2026-03-01T00:00:00Z" in params
 
-    def test_recall_created_before(self) -> None:
+    @pytest.mark.asyncio
+    async def test_recall_created_before(self) -> None:
         """created_before generates kp.created_at <= $N::timestamptz."""
-        where, join, params = self._build(created_before="2026-03-04T23:59:59Z")
+        where, join, params = await self._build(created_before="2026-03-04T23:59:59Z")
         assert "kp.created_at <=" in where
         assert "timestamptz" in where
         assert "2026-03-04T23:59:59Z" in params
 
-    def test_recall_combined_filters(self) -> None:
+    @pytest.mark.asyncio
+    async def test_recall_combined_filters(self) -> None:
         """Multiple filters produce correct AND-joined SQL."""
-        where, join, params = self._build(
+        where, join, params = await self._build(
             where={"source_name": "docs", "lifecycle_state": "active", "min_confidence": 0.5},
             created_after="2026-01-01",
         )
@@ -577,32 +602,40 @@ class TestRecallFilters:
         # Should have: org_id, source_name, lifecycle_state, min_confidence, created_after
         assert where.count(" AND ") == 4  # 5 clauses, 4 ANDs
 
-    def test_recall_needs_join_for_source(self) -> None:
+    @pytest.mark.asyncio
+    async def test_recall_needs_join_for_source(self) -> None:
         """Source filter triggers JOIN clause."""
-        where, join, params = self._build(where={"source_name": "test"})
+        where, join, params = await self._build(where={"source_name": "test"})
         assert "knowledge_items" in join
         assert "knowledge_sources" in join
 
-    def test_recall_needs_join_for_category(self) -> None:
+    @pytest.mark.asyncio
+    async def test_recall_needs_join_for_category(self) -> None:
         """Category filter triggers JOIN clause."""
-        where, join, params = self._build(where={"category": "cat-uuid"})
+        # Use a valid UUID so _resolve_categories passes it through
+        where, join, params = await self._build(
+            where={"category": "550e8400-e29b-41d4-a716-446655440000"}
+        )
         assert "knowledge_items" in join
         assert "knowledge_sources" in join
 
-    def test_recall_no_join_without_source_or_category(self) -> None:
+    @pytest.mark.asyncio
+    async def test_recall_no_join_without_source_or_category(self) -> None:
         """Lifecycle-only filter does not trigger JOIN."""
-        where, join, params = self._build(where={"lifecycle_state": "ACTIVE"})
+        where, join, params = await self._build(where={"lifecycle_state": "ACTIVE"})
         assert join == ""
 
-    def test_recall_default_lifecycle_fallback(self) -> None:
+    @pytest.mark.asyncio
+    async def test_recall_default_lifecycle_fallback(self) -> None:
         """Without where dict, default lifecycle_state is applied."""
-        where, join, params = self._build()
+        where, join, params = await self._build()
         assert "kp.lifecycle_state" in where
         assert "ACTIVE" in params
 
-    def test_recall_date_filters_work_without_where(self) -> None:
+    @pytest.mark.asyncio
+    async def test_recall_date_filters_work_without_where(self) -> None:
         """Date filters are top-level and work even without a where dict."""
-        where, join, params = self._build(
+        where, join, params = await self._build(
             created_after="2026-01-01",
             created_before="2026-12-31",
         )
@@ -611,14 +644,36 @@ class TestRecallFilters:
         # Default lifecycle also applied since no where dict
         assert "kp.lifecycle_state" in where
 
-    def test_params_are_sequential(self) -> None:
+    @pytest.mark.asyncio
+    async def test_params_are_sequential(self) -> None:
         """All $N params should be sequential in the WHERE clause."""
-        where, join, params = self._build(
+        where, join, params = await self._build(
             where={"source_name": "test:*", "min_confidence": 0.5},
             created_after="2026-01-01",
         )
         for i in range(1, len(params) + 1):
             assert f"${i}" in where, f"Missing param ${i} in WHERE clause"
+
+    @pytest.mark.asyncio
+    async def test_recall_category_name_resolved(self) -> None:
+        """Category name in where dict triggers resolution via _resolve_categories."""
+        executor = KnowledgeExecutor()
+        inputs = KnowledgeInput(
+            op="recall",
+            where={"category": "learnings"},
+        )
+        # Mock backend to return a UUID for the category name lookup
+        resolved_uuid = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"
+        backend = MagicMock()
+        query_result = MagicMock()
+        query_result.rows = [{"id": resolved_uuid}]
+        backend.query = AsyncMock(return_value=query_result)
+
+        where, join, params = await executor._build_where_clause(
+            inputs, "00000000-0000-0000-0000-000000000000", backend
+        )
+        assert resolved_uuid in params
+        assert "&&" in where
 
 
 # ============================================================================
@@ -716,7 +771,7 @@ class TestRecallOperation:
             where={
                 "source_name": "docs:*",
                 "lifecycle_state": "active",
-                "category": "cat-uuid",
+                "category": "550e8400-e29b-41d4-a716-446655440000",
                 "min_confidence": 0.8,
             },
             created_after="2026-01-01",
@@ -755,3 +810,84 @@ class TestExecutorRegistration:
         """Type name should be 'Knowledge'."""
         executor = KnowledgeExecutor()
         assert executor.type_name == "Knowledge"
+
+
+# ============================================================================
+# Category Resolution Tests
+# ============================================================================
+
+
+class TestCategoryResolution:
+    """Tests for _resolve_categories helper."""
+
+    @pytest.mark.asyncio
+    async def test_uuid_passthrough(self) -> None:
+        """Valid UUIDs should be returned as-is without DB calls."""
+        executor = KnowledgeExecutor()
+        backend = MagicMock()
+        backend.query = AsyncMock()
+
+        test_uuid = "550e8400-e29b-41d4-a716-446655440000"
+        result = await executor._resolve_categories(
+            [test_uuid], "00000000-0000-0000-0000-000000000000", backend
+        )
+
+        assert result == [test_uuid]
+        backend.query.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_name_resolution(self) -> None:
+        """Non-UUID string should trigger upsert into knowledge_entities."""
+        executor = KnowledgeExecutor()
+        resolved_uuid = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"
+        query_result = MagicMock()
+        query_result.rows = [{"id": resolved_uuid}]
+        backend = MagicMock()
+        backend.query = AsyncMock(return_value=query_result)
+
+        result = await executor._resolve_categories(
+            ["learnings"], "00000000-0000-0000-0000-000000000000", backend
+        )
+
+        assert result == [resolved_uuid]
+        backend.query.assert_called_once()
+        # Verify the SQL contains the upsert pattern
+        call_args = backend.query.call_args
+        sql = call_args[0][0]
+        assert "knowledge_entities" in sql
+        assert "ON CONFLICT" in sql
+
+    @pytest.mark.asyncio
+    async def test_mixed_input(self) -> None:
+        """Mix of UUIDs and names should resolve correctly."""
+        executor = KnowledgeExecutor()
+        test_uuid = "550e8400-e29b-41d4-a716-446655440000"
+        resolved_uuid = "bbbbbbbb-cccc-dddd-eeee-ffffffffffff"
+        query_result = MagicMock()
+        query_result.rows = [{"id": resolved_uuid}]
+        backend = MagicMock()
+        backend.query = AsyncMock(return_value=query_result)
+
+        result = await executor._resolve_categories(
+            [test_uuid, "deployment-patterns"],
+            "00000000-0000-0000-0000-000000000000",
+            backend,
+        )
+
+        assert result == [test_uuid, resolved_uuid]
+        # Only one DB call for the name, not the UUID
+        assert backend.query.call_count == 1
+
+    @pytest.mark.asyncio
+    async def test_empty_list(self) -> None:
+        """Empty categories list should return empty list."""
+        executor = KnowledgeExecutor()
+        backend = MagicMock()
+        backend.query = AsyncMock()
+
+        result = await executor._resolve_categories(
+            [], "00000000-0000-0000-0000-000000000000", backend
+        )
+
+        assert result == []
+        backend.query.assert_not_called()
