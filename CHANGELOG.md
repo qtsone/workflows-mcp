@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file.
 
+## [9.8.1](https://github.com/qtsone/workflows-mcp/compare/v9.8.0...v9.8.1) (2026-03-06)
+
+
+### Bug Fixes
+
+* **knowledge:** wire category_ids into store + add name resolution ([b5e205c](https://github.com/qtsone/workflows-mcp/commit/b5e205c5d4794cd1b5dec8ab2ce32e89ad2d8d26))
+
 # [9.8.0](https://github.com/qtsone/workflows-mcp/compare/v9.7.0...v9.8.0) (2026-03-06)
 
 
