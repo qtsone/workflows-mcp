@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file.
 
+# [9.8.0](https://github.com/qtsone/workflows-mcp/compare/v9.7.0...v9.8.0) (2026-03-06)
+
+
+### Features
+
+* **ReadFiles:** add structured sections and line-range to ReadFiles executor ([09660e0](https://github.com/qtsone/workflows-mcp/commit/09660e0a47ce89a81d896f49b13f28b1bd896c8f))
+
 # [9.7.0](https://github.com/qtsone/workflows-mcp/compare/v9.6.0...v9.7.0) (2026-03-05)
 
 
