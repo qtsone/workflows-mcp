@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file.
 
+# [9.9.0](https://github.com/qtsone/workflows-mcp/compare/v9.8.1...v9.9.0) (2026-03-07)
+
+
+### Features
+
+* improve markdown section parsing by ignoring code blocks and add frontmatter, reference, and code block extraction capabilities. ([df838a3](https://github.com/qtsone/workflows-mcp/commit/df838a33fb1a7c0566485878f082fb015dea4045))
+
 ## [9.8.1](https://github.com/qtsone/workflows-mcp/compare/v9.8.0...v9.8.1) (2026-03-06)
 
 
