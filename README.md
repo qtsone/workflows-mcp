@@ -327,6 +327,11 @@ Read files with glob patterns, multiple output modes, and automatic outline extr
   - `outline` - Structural outline + structured sections tree (90-97% context reduction)
   - `summary` - Outline + docstrings/comments
 - **Structured sections tree** — Outline mode returns a nested `sections` tree with line ranges, suitable for recursive section-by-section processing
+- **Markdown intelligence** (outline/summary mode for `.md` files):
+  - **Frontmatter extraction** — Parses YAML frontmatter into a dict
+  - **Reference detection** — Extracts wikilinks (`[[target]]`) and file paths in backticks
+  - **Code block identification** — Locates fenced code blocks with language tags
+  - **Per-section token estimation** — `own_tokens` and `subtree_tokens` on every section node
 - **Line-range reading** — `line_start`/`line_end` parameters in full mode to read specific portions of a file
 - Gitignore integration and file filtering
 - Size limits and file count limits
@@ -341,9 +346,12 @@ Read files with glob patterns, multiple output modes, and automatic outline extr
 | Output | Description |
 |--------|-------------|
 | `content` | Display outline string |
-| `sections` | Nested section tree (list of dicts with `id`, `heading`, `path`, `level`, `line_start`, `line_end`, `own_start`, `own_end`, `is_leaf`, `children`) |
+| `sections` | Nested section tree with `id`, `heading`, `path`, `level`, `line_start`, `line_end`, `own_start`, `own_end`, `is_leaf`, `children`, `own_tokens`, `subtree_tokens` |
 | `max_depth` | Maximum heading depth in document structure |
 | `total_sections` | Total number of sections across all levels |
+| `frontmatter` | Parsed YAML frontmatter dict (None if absent) |
+| `references` | List of `{type, target}` dicts — wikilinks and file paths |
+| `code_blocks` | List of `{lang, start_line, end_line}` dicts |
 
 **Example — Structured sections:**
 ```yaml

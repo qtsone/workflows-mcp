@@ -24,6 +24,7 @@ Field names are **exact** - use them precisely in your workflows.
 | WriteJSONState | path, data |
 | MergeJSONState | path, updates |
 | Sql | engine |
+| Knowledge | op |
 
 ### Common Field Name Mistakes
 
@@ -191,6 +192,8 @@ Field names are **exact** - use them precisely in your workflows.
 - **`max_file_size_kb`** (any) *(default: `100`)*: Maximum individual file size in KB (supports interpolation)
 - **`respect_gitignore`** (any) *(default: `True`)*: Whether to respect .gitignore patterns (supports interpolation)
 - **`encoding`** (string) *(default: `utf-8`)*: Text encoding for reading files
+- **`line_start`** (any): Start line for line-range reading (1-indexed, inclusive). Only used with 'path' in 'full' mode. Supports interpolation.
+- **`line_end`** (any): End line for line-range reading (1-indexed, inclusive). Only used with 'path' in 'full' mode. Supports interpolation.
 
 ### Outputs
 
@@ -200,6 +203,12 @@ Field names are **exact** - use them precisely in your workflows.
 - **`total_size_kb`** (integer): Total size in KB of all processed files
 - **`skipped_files`** (array): Files that were skipped (too large, binary, excluded, etc.)
 - **`patterns_matched`** (integer): Total number of files matching patterns before filtering
+- **`sections`** (array): Structured section tree from outline mode (nested dicts with children)
+- **`max_depth`** (integer): Maximum heading depth in document structure
+- **`total_sections`** (integer): Total number of sections across all levels
+- **`frontmatter`** (any): Parsed YAML frontmatter from document (None if absent)
+- **`references`** (array): Extracted references (wikilinks, file paths) from document content
+- **`code_blocks`** (array): Fenced code block locations (lang, start_line, end_line)
 
 ### Example
 
@@ -277,6 +286,7 @@ Without this, execution fails with 'LLM configuration required' error.
 - **`system_instructions`** (any): System instructions (optional)
 - **`api_key`** (any): API key (pre-resolved from {{secrets.PROVIDER_API_KEY}})
 - **`api_url`** (any): Custom API endpoint URL (optional, for custom deployments)
+- **`extra_headers`** (object): Custom HTTP headers for provider requests (resolved from config)
 - **`response_schema`** (any): JSON Schema for expected response structure (dict or JSON string, enables validation and retry)
 - **`max_retries`** (any) *(default: `3`)*: Maximum number of retry attempts (or interpolation string)
 - **`retry_delay`** (any) *(default: `2.0`)*: Initial retry delay in seconds (exponential backoff, or interpolation string)
@@ -654,6 +664,69 @@ Without this, execution fails with configuration error.
     where:
       status: running
     order: [created_at:desc]
+    limit: 10
+```
+
+---
+
+## Knowledge
+
+**Description**: Executor for knowledge operations against PostgreSQL.
+
+### Required Inputs
+
+- **`op`** (string): Operation to perform
+
+### Optional Inputs
+
+- **`host`** (string): PostgreSQL host (env: KNOWLEDGE_DB_HOST)
+- **`port`** (any): PostgreSQL port (env: KNOWLEDGE_DB_PORT)
+- **`database`** (string): PostgreSQL database name (env: KNOWLEDGE_DB_NAME)
+- **`username`** (any): PostgreSQL username (env: KNOWLEDGE_DB_USER)
+- **`password`** (any): PostgreSQL password (env: KNOWLEDGE_DB_PASSWORD)
+- **`org_id`** (any): Organization ID for scoping queries (env: KNOWLEDGE_ORG_ID)
+- **`query`** (any): Search query text (required for search/context)
+- **`source`** (any): Filter by source name (exact or prefix with *)
+- **`categories`** (any): Filter by category UUIDs
+- **`min_confidence`** (number) *(default: `0.3`)*: Minimum confidence threshold
+- **`lifecycle_state`** (string) *(default: `ACTIVE`)*: Filter by lifecycle state (default: ACTIVE)
+- **`limit`** (any) *(default: `10`)*: Maximum number of results
+- **`max_tokens`** (any) *(default: `4000`)*: Token budget for context assembly
+- **`diversity`** (boolean) *(default: `False`)*: Use MMR for diversity in context results
+- **`content`** (any): Proposition content to store
+- **`confidence`** (number) *(default: `0.5`)*: Confidence score for stored proposition
+- **`where`** (any): Filter conditions for recall/forget (key-value pairs)
+- **`order`** (any): Order by fields (e.g., ['relevance_score:desc'])
+- **`created_after`** (any): Filter: propositions created after this ISO date (recall/forget)
+- **`created_before`** (any): Filter: propositions created before this ISO date (recall/forget)
+- **`proposition_ids`** (any): UUIDs of propositions to archive
+- **`reason`** (any): Reason for archiving (stored in metadata)
+- **`embedding_profile`** (string) *(default: `embedding`)*: LLM config profile for embeddings
+
+### Outputs
+
+- **`meta`** (object): Executor-specific metadata fields (exit_code, tokens_used, etc.)
+- **`success`** (boolean): Whether the operation succeeded
+- **`error`** (any): Error message if failed
+- **`rows`** (array): Result rows (search/recall)
+- **`columns`** (array): Column names in the result rows
+- **`row_count`** (integer): Number of result rows
+- **`proposition_ids`** (array): UUIDs of stored propositions
+- **`stored_count`** (integer): Number of propositions stored
+- **`archived_count`** (integer): Number archived
+- **`skipped_count`** (integer): Number skipped (immune)
+- **`context_text`** (string): Clean content assembled text
+- **`proposition_count`** (integer): Propositions included in context
+- **`tokens_used`** (integer): Estimated tokens used
+
+### Example
+
+```yaml
+- id: search_kb
+  type: Knowledge
+  inputs:
+    op: search
+    query: "deployment patterns"
     limit: 10
 ```
 
