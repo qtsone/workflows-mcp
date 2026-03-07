@@ -402,6 +402,21 @@ class ReadFilesOutput(BlockOutput):
         description="Total number of sections across all levels",
     )
 
+    frontmatter: dict | None = Field(
+        default=None,
+        description="Parsed YAML frontmatter from document (None if absent)",
+    )
+
+    references: list[dict] = Field(
+        default_factory=list,
+        description="Extracted references (wikilinks, file paths) from document content",
+    )
+
+    code_blocks: list[dict] = Field(
+        default_factory=list,
+        description="Fenced code block locations (lang, start_line, end_line)",
+    )
+
     @computed_field  # type: ignore[prop-decorator]
     @property
     def content(self) -> str:
@@ -711,6 +726,10 @@ class ReadFilesExecutor(BlockExecutor):
         """
         from .file_outline import (
             BASE64_ENCODE_EXTENSIONS,
+            annotate_section_tokens,
+            extract_markdown_code_blocks,
+            extract_markdown_frontmatter,
+            extract_markdown_references,
             generate_file_outline_with_sections,
             is_binary,
         )
@@ -752,11 +771,24 @@ class ReadFilesExecutor(BlockExecutor):
         sections: list[dict] = []
         max_depth = 0
         total_sections = 0
+        frontmatter: dict | None = None
+        references: list[dict] = []
+        code_blocks: list[dict] = []
 
         if mode == "outline" or mode == "summary":
             file_content, sections, max_depth, total_sections = generate_file_outline_with_sections(
                 file_path, mode
             )
+            # Extract markdown intelligence for outline/summary mode
+            file_ext = file_path.suffix.lower()
+            if file_ext in (".md", ".markdown"):
+                raw_content = file_path.read_text(encoding="utf-8", errors="replace")
+                frontmatter = extract_markdown_frontmatter(raw_content)
+                references = extract_markdown_references(raw_content)
+                code_blocks = extract_markdown_code_blocks(raw_content)
+                # Add token estimates to the section tree
+                total_lines = len(raw_content.split("\n"))
+                annotate_section_tokens(sections, total_lines)
 
         elif file_ext in BASE64_ENCODE_EXTENSIONS:
             import base64
@@ -816,6 +848,9 @@ class ReadFilesExecutor(BlockExecutor):
             sections=sections,
             max_depth=max_depth,
             total_sections=total_sections,
+            frontmatter=frontmatter,
+            references=references,
+            code_blocks=code_blocks,
         )
 
 

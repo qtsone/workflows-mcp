@@ -10,6 +10,7 @@ import ast
 import configparser
 import fnmatch
 import json
+import re
 import tomllib
 import xml.etree.ElementTree as ET
 from pathlib import Path
@@ -455,11 +456,19 @@ def extract_markdown_outline(file_path: Path) -> str:
         return f"[Read Error: {e}]"
 
     lines = []
+    in_code_block = False
     for i, line in enumerate(content.split("\n"), 1):
-        if line.strip().startswith("#"):
+        stripped = line.strip()
+        # Track fenced code blocks (``` or ~~~)
+        if stripped.startswith("```") or stripped.startswith("~~~"):
+            in_code_block = not in_code_block
+            continue
+        if in_code_block:
+            continue
+        if stripped.startswith("#"):
             # Count heading level
             level = 0
-            for char in line:
+            for char in stripped:
                 if char == "#":
                     level += 1
                 else:
@@ -467,10 +476,146 @@ def extract_markdown_outline(file_path: Path) -> str:
             level = min(level, 6)  # Max 6 levels in Markdown
 
             indent = "  " + ("  " * (level - 1))
-            header = line.strip("#").strip()[:60]
+            header = stripped.lstrip("#").strip()[:60]
             lines.append(f"{indent}├── {header} [{i}]")
 
     return "\n".join(lines) if lines else "  [No headers found]"
+
+
+def extract_markdown_frontmatter(content: str) -> dict | None:
+    """Extract YAML frontmatter from Markdown content.
+
+    Parses the optional YAML block between ``---`` fences at the start
+    of the document. Returns None if no frontmatter is present.
+
+    Args:
+        content: Raw markdown text
+
+    Returns:
+        Parsed frontmatter dict, or None if absent/invalid.
+    """
+    stripped = content.lstrip()
+    if not stripped.startswith("---"):
+        return None
+
+    # Find closing fence
+    end_idx = stripped.find("---", 3)
+    if end_idx == -1:
+        return None
+
+    yaml_text = stripped[3:end_idx].strip()
+    if not yaml_text:
+        return None
+
+    try:
+        import yaml as _yaml
+
+        result = _yaml.safe_load(yaml_text)
+        return result if isinstance(result, dict) else None
+    except Exception:
+        return None
+
+
+def extract_markdown_references(content: str) -> list[dict]:
+    """Extract references from Markdown content.
+
+    Finds wikilinks (``[[target]]``) and explicit file paths
+    (lines containing filesystem-like paths).
+
+    Args:
+        content: Raw markdown text
+
+    Returns:
+        List of dicts with 'type' and 'target' keys.
+    """
+    refs: list[dict] = []
+    seen: set[str] = set()
+
+    # Wikilinks: [[target]] or [[target|label]]
+    for match in re.finditer(r"\[\[([^\]|]+)(?:\|[^\]]*)?\]\]", content):
+        target = match.group(1).strip()
+        if target and target not in seen:
+            refs.append({"type": "wikilink", "target": target})
+            seen.add(target)
+
+    # File paths: common patterns like path/to/file.ext in backtick code spans
+    for match in re.finditer(r"`([a-zA-Z0-9_\-./]+\.[a-z]{1,5})`", content):
+        target = match.group(1)
+        # Filter out things that are clearly not paths (e.g., version numbers)
+        if "/" in target and target not in seen:
+            refs.append({"type": "file_path", "target": target})
+            seen.add(target)
+
+    return refs
+
+
+def extract_markdown_code_blocks(content: str) -> list[dict]:
+    """Extract fenced code block locations from Markdown content.
+
+    Args:
+        content: Raw markdown text
+
+    Returns:
+        List of dicts with 'lang', 'start_line', 'end_line' keys.
+    """
+    blocks: list[dict] = []
+    lines = content.split("\n")
+    in_block = False
+    block_start = 0
+    block_lang = ""
+
+    for i, line in enumerate(lines, 1):
+        stripped = line.strip()
+        if not in_block and (stripped.startswith("```") or stripped.startswith("~~~")):
+            in_block = True
+            block_start = i
+            # Extract language tag after the fence
+            fence_char = stripped[0]
+            block_lang = (
+                stripped.lstrip(fence_char).strip().split()[0]
+                if stripped.lstrip(fence_char).strip()
+                else ""
+            )
+        elif in_block and (stripped.startswith("```") or stripped.startswith("~~~")):
+            in_block = False
+            blocks.append(
+                {
+                    "lang": block_lang,
+                    "start_line": block_start,
+                    "end_line": i,
+                }
+            )
+
+    return blocks
+
+
+def annotate_section_tokens(
+    sections: list[dict], total_lines: int, avg_chars_per_line: int = 10
+) -> None:
+    """Add token estimates to each section node in-place.
+
+    Estimates tokens using: ``(line_count * avg_chars_per_line) / 4``.
+    This is a rough approximation — conservative by design.
+
+    Adds ``own_tokens`` and ``subtree_tokens`` fields to every node.
+
+    Args:
+        sections: Section tree (mutated in-place)
+        total_lines: Total lines in document (for edge-case clamping)
+        avg_chars_per_line: Average characters per line (default 10, conservative)
+    """
+    chars_per_token = 4
+
+    for section in sections:
+        own_lines = max(0, section["own_end"] - section["own_start"] + 1)
+        section["own_tokens"] = (own_lines * avg_chars_per_line) // chars_per_token
+
+        # Recurse into children
+        annotate_section_tokens(section.get("children", []), total_lines, avg_chars_per_line)
+
+        # Compute subtree tokens
+        child_tokens = sum(c.get("subtree_tokens", 0) for c in section.get("children", []))
+        section["subtree_tokens"] = section["own_tokens"] + child_tokens
 
 
 def extract_markdown_sections(file_path: Path) -> list[dict]:
@@ -503,8 +648,15 @@ def extract_markdown_sections(file_path: Path) -> list[dict]:
 
     # Parse all headers with their line numbers and levels
     headers: list[dict] = []
+    in_code_block = False
     for i, line in enumerate(all_lines, 1):
         stripped = line.strip()
+        # Track fenced code blocks (``` or ~~~)
+        if stripped.startswith("```") or stripped.startswith("~~~"):
+            in_code_block = not in_code_block
+            continue
+        if in_code_block:
+            continue
         if stripped.startswith("#"):
             level = 0
             for char in stripped:
