@@ -780,7 +780,6 @@ class ReadFilesExecutor(BlockExecutor):
                 file_path, mode
             )
             # Extract markdown intelligence for outline/summary mode
-            file_ext = file_path.suffix.lower()
             if file_ext in (".md", ".markdown"):
                 raw_content = file_path.read_text(encoding="utf-8", errors="replace")
                 frontmatter = extract_markdown_frontmatter(raw_content)

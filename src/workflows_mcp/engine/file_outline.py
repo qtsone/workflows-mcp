@@ -508,10 +508,28 @@ def extract_markdown_frontmatter(content: str) -> dict | None:
         return None
 
     try:
+        from datetime import date, datetime
+
         import yaml as _yaml
 
         result = _yaml.safe_load(yaml_text)
-        return result if isinstance(result, dict) else None
+        if not isinstance(result, dict):
+            return None
+
+        # PyYAML safe_load converts date strings (e.g. "2026-03-06") to
+        # datetime.date objects — sanitize to ISO strings for JSON safety.
+        def _sanitize(obj: object) -> object:
+            if isinstance(obj, datetime):
+                return obj.isoformat()
+            if isinstance(obj, date):
+                return obj.isoformat()
+            if isinstance(obj, dict):
+                return {k: _sanitize(v) for k, v in obj.items()}
+            if isinstance(obj, list):
+                return [_sanitize(v) for v in obj]
+            return obj
+
+        return _sanitize(result)  # type: ignore[return-value]
     except Exception:
         return None
 

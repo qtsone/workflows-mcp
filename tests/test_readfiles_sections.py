@@ -327,6 +327,19 @@ class TestExtractMarkdownFrontmatter:
         """Invalid YAML returns None (no crash)."""
         assert extract_markdown_frontmatter("---\n[invalid: yaml:\n---\nContent\n") is None
 
+    def test_dates_converted_to_strings(self) -> None:
+        """YAML date values are converted to ISO strings for JSON safety."""
+        import json
+
+        content = "---\ncreated: 2026-03-06\ntitle: Test\n---\n# Title\n"
+        result = extract_markdown_frontmatter(content)
+
+        assert result is not None
+        assert isinstance(result["created"], str)
+        assert result["created"] == "2026-03-06"
+        # Must be JSON-serializable
+        json.dumps(result)  # should not raise
+
 
 # ── extract_markdown_references ────────────────────────────────────────
 
