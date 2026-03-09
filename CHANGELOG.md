@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file.
 
+## [9.10.1](https://github.com/qtsone/workflows-mcp/compare/v9.10.0...v9.10.1) (2026-03-09)
+
+
+### Bug Fixes
+
+* **engine:** sanitize YAML date values in frontmatter to ISO strings ([5d829dd](https://github.com/qtsone/workflows-mcp/commit/5d829dde25f4fd3e8017c370538c0e053dccf4c0))
+
 # [9.10.0](https://github.com/qtsone/workflows-mcp/compare/v9.9.0...v9.10.0) (2026-03-09)
 
 
