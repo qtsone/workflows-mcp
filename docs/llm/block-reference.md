@@ -17,7 +17,7 @@ Field names are **exact** - use them precisely in your workflows.
 | ReadFiles | (none) |
 | HttpCall | url |
 | LLMCall | prompt; **profile OR provider** |
-| Embedding | text |
+| Embedding | (none) |
 | ImageGen | **profile OR provider** |
 | Prompt | prompt |
 | ReadJSONState | path |
@@ -325,14 +325,12 @@ Please provide a valid response that conforms to the schema.`)*: Template for va
 
 **Description**: Executor for generating text embeddings using OpenAI-compatible API.
 
-### Required Inputs
-
-- **`text`** (string): Text to generate embedding for
-
 ### Optional Inputs
 
 - **`profile`** (string) *(default: `embedding`)*: Profile name from ~/.workflows/llm-config.yml (defaults to 'embedding')
 - **`model`** (any): Override embedding model (uses profile model if not specified)
+- **`text`** (any): Single text to generate embedding for. Mutually exclusive with 'texts'.
+- **`texts`** (any): List of texts to embed in a single API call (batch mode). Mutually exclusive with 'text'.
 - **`api_key`** (any): Override API key (uses profile api_key_secret if not specified)
 - **`api_url`** (any): Override API endpoint URL (uses profile api_url if not specified)
 - **`timeout`** (any) *(default: `30`)*: Request timeout in seconds
@@ -340,18 +338,28 @@ Please provide a valid response that conforms to the schema.`)*: Template for va
 ### Outputs
 
 - **`meta`** (object): Executor-specific metadata fields (exit_code, tokens_used, etc.)
-- **`embedding`** (array): Embedding vector (list of floats)
-- **`dimensions`** (integer): Number of dimensions in the embedding
+- **`embedding`** (array): Embedding vector for single-text mode (empty in batch mode)
+- **`embeddings`** (array): List of embedding vectors (batch mode). In single mode this is [embedding] for convenience.
+- **`dimensions`** (integer): Number of dimensions in each embedding
 - **`success`** (boolean): Whether the embedding generation succeeded
-- **`metadata`** (object): Execution metadata (model, usage, etc.)
+- **`metadata`** (object): Execution metadata (model, usage, count, etc.)
 
 ### Example
 
 ```yaml
+# Single text
 - id: embed_text
   type: Embedding
   inputs:
     text: "Search for authentication bugs"
+
+# Batch (multiple texts in one API call)
+- id: embed_batch
+  type: Embedding
+  inputs:
+    texts:
+      - "First document to embed"
+      - "Second document to embed"
 ```
 
 ---

@@ -498,3 +498,252 @@ class TestLLMCallExecutor:
         assert executor.input_type == LLMCallInput
         assert executor.output_type == LLMCallOutput
         assert executor.capabilities.can_network is True
+
+
+# ---------------------------------------------------------------------------
+# TestComputeEmbeddingBatch
+# ---------------------------------------------------------------------------
+
+
+class TestComputeEmbeddingBatch:
+    """Test suite for the compute_embedding_batch helper function."""
+
+    @pytest.fixture
+    def mock_context(self):
+        """Create mock execution context with LLM config loader."""
+        ctx = Mock(spec=Execution)
+        exec_ctx = Mock()
+        loader = Mock()
+        config = Mock()
+        config.profiles = {"embedding": Mock()}
+        config.default_profile = "embedding"
+        loader.load_config.return_value = config
+        resolved = Mock()
+        resolved.model = "text-embedding-3-small"
+        resolved.api_url = "http://test-api"
+        resolved.api_key_secret = None
+        resolved.extra_headers = None
+        loader.resolve_profile.return_value = resolved
+        exec_ctx.llm_config_loader = loader
+        ctx.execution_context = exec_ctx
+        return ctx
+
+    @pytest.mark.asyncio
+    async def test_batch_multiple_texts(self, mock_context):
+        """Multiple texts produce multiple embeddings in a single API call."""
+        from workflows_mcp.engine.executors_llm import compute_embedding_batch
+
+        mock_data = [
+            Mock(index=0, embedding=[0.1, 0.2, 0.3]),
+            Mock(index=1, embedding=[0.4, 0.5, 0.6]),
+            Mock(index=2, embedding=[0.7, 0.8, 0.9]),
+        ]
+        mock_response = Mock()
+        mock_response.data = mock_data
+        mock_response.model = "text-embedding-3-small"
+        mock_response.usage = Mock(prompt_tokens=30, total_tokens=30)
+
+        with patch("workflows_mcp.engine.executors_llm.AsyncOpenAI") as mock_cls:
+            mock_client = AsyncMock()
+            mock_client.embeddings.create = AsyncMock(return_value=mock_response)
+            mock_cls.return_value = mock_client
+
+            embeddings, model, dims, usage = await compute_embedding_batch(
+                texts=["text A", "text B", "text C"],
+                context=mock_context,
+            )
+
+        assert len(embeddings) == 3
+        assert embeddings[0] == [0.1, 0.2, 0.3]
+        assert embeddings[2] == [0.7, 0.8, 0.9]
+        assert model == "text-embedding-3-small"
+        assert dims == 3
+        assert usage == {"prompt_tokens": 30, "total_tokens": 30}
+
+        # Verify single API call with list input
+        mock_client.embeddings.create.assert_called_once()
+        call_kwargs = mock_client.embeddings.create.call_args
+        assert call_kwargs.kwargs["input"] == ["text A", "text B", "text C"]
+
+    @pytest.mark.asyncio
+    async def test_batch_preserves_input_order(self, mock_context):
+        """Embeddings are returned in input order even if API returns them shuffled."""
+        from workflows_mcp.engine.executors_llm import compute_embedding_batch
+
+        # API returns in reverse order
+        mock_data = [
+            Mock(index=2, embedding=[0.7, 0.8]),
+            Mock(index=0, embedding=[0.1, 0.2]),
+            Mock(index=1, embedding=[0.4, 0.5]),
+        ]
+        mock_response = Mock()
+        mock_response.data = mock_data
+        mock_response.model = "text-embedding-3-small"
+        mock_response.usage = None
+
+        with patch("workflows_mcp.engine.executors_llm.AsyncOpenAI") as mock_cls:
+            mock_client = AsyncMock()
+            mock_client.embeddings.create = AsyncMock(return_value=mock_response)
+            mock_cls.return_value = mock_client
+
+            embeddings, _, _, _ = await compute_embedding_batch(
+                texts=["a", "b", "c"],
+                context=mock_context,
+            )
+
+        assert embeddings[0] == [0.1, 0.2]
+        assert embeddings[1] == [0.4, 0.5]
+        assert embeddings[2] == [0.7, 0.8]
+
+    @pytest.mark.asyncio
+    async def test_batch_empty_texts_raises(self, mock_context):
+        """Empty texts list raises ValueError."""
+        from workflows_mcp.engine.executors_llm import compute_embedding_batch
+
+        with pytest.raises(ValueError, match="texts list must not be empty"):
+            await compute_embedding_batch(texts=[], context=mock_context)
+
+
+# ---------------------------------------------------------------------------
+# TestEmbeddingExecutor — single & batch modes
+# ---------------------------------------------------------------------------
+
+
+class TestEmbeddingExecutor:
+    """Test suite for the Embedding block executor (single + batch modes)."""
+
+    @pytest.fixture
+    def executor(self):
+        from workflows_mcp.engine.executors_llm import EmbeddingExecutor
+
+        return EmbeddingExecutor()
+
+    @pytest.fixture
+    def mock_context(self):
+        ctx = Mock(spec=Execution)
+        exec_ctx = Mock()
+        loader = Mock()
+        config = Mock()
+        config.profiles = {"embedding": Mock()}
+        config.default_profile = "embedding"
+        loader.load_config.return_value = config
+        resolved = Mock()
+        resolved.model = "text-embedding-3-small"
+        resolved.api_url = "http://test-api"
+        resolved.api_key_secret = None
+        resolved.extra_headers = None
+        loader.resolve_profile.return_value = resolved
+        exec_ctx.llm_config_loader = loader
+        ctx.execution_context = exec_ctx
+        ctx.depth = 0
+        return ctx
+
+    def test_input_validation_requires_exactly_one(self):
+        """Providing both text and texts, or neither, raises ValueError."""
+        from workflows_mcp.engine.executors_llm import EmbeddingInput
+
+        # Neither
+        with pytest.raises(ValueError, match="neither"):
+            EmbeddingInput()
+
+        # Both
+        with pytest.raises(ValueError, match="both"):
+            EmbeddingInput(text="hello", texts=["hello"])
+
+        # Empty texts list
+        with pytest.raises(ValueError, match="must not be empty"):
+            EmbeddingInput(texts=[])
+
+    def test_input_validation_accepts_single(self):
+        """Single text input is valid."""
+        from workflows_mcp.engine.executors_llm import EmbeddingInput
+
+        inp = EmbeddingInput(text="hello world")
+        assert inp.text == "hello world"
+        assert inp.texts is None
+
+    def test_input_validation_accepts_batch(self):
+        """Batch texts input is valid."""
+        from workflows_mcp.engine.executors_llm import EmbeddingInput
+
+        inp = EmbeddingInput(texts=["a", "b"])
+        assert inp.text is None
+        assert inp.texts == ["a", "b"]
+
+    @pytest.mark.asyncio
+    async def test_execute_single_mode(self, executor, mock_context):
+        """Single-text mode returns embedding and embeddings=[embedding]."""
+        from workflows_mcp.engine.executors_llm import EmbeddingInput
+
+        inputs = EmbeddingInput(text="test query")
+
+        mock_response = Mock()
+        mock_response.data = [Mock(index=0, embedding=[0.1, 0.2, 0.3])]
+        mock_response.model = "text-embedding-3-small"
+        mock_response.usage = Mock(prompt_tokens=5, total_tokens=5)
+
+        with patch("workflows_mcp.engine.executors_llm.AsyncOpenAI") as mock_cls:
+            mock_client = AsyncMock()
+            mock_client.embeddings.create = AsyncMock(return_value=mock_response)
+            mock_cls.return_value = mock_client
+
+            result = await executor.execute(inputs, mock_context)
+
+        assert result.success is True
+        assert result.embedding == [0.1, 0.2, 0.3]
+        assert result.embeddings == [[0.1, 0.2, 0.3]]
+        assert result.dimensions == 3
+        assert result.metadata["count"] == 1
+
+    @pytest.mark.asyncio
+    async def test_execute_batch_mode(self, executor, mock_context):
+        """Batch mode returns embeddings list, embedding is empty."""
+        from workflows_mcp.engine.executors_llm import EmbeddingInput
+
+        inputs = EmbeddingInput(texts=["alpha", "beta", "gamma"])
+
+        mock_response = Mock()
+        mock_response.data = [
+            Mock(index=0, embedding=[0.1, 0.2]),
+            Mock(index=1, embedding=[0.3, 0.4]),
+            Mock(index=2, embedding=[0.5, 0.6]),
+        ]
+        mock_response.model = "text-embedding-3-small"
+        mock_response.usage = Mock(prompt_tokens=15, total_tokens=15)
+
+        with patch("workflows_mcp.engine.executors_llm.AsyncOpenAI") as mock_cls:
+            mock_client = AsyncMock()
+            mock_client.embeddings.create = AsyncMock(return_value=mock_response)
+            mock_cls.return_value = mock_client
+
+            result = await executor.execute(inputs, mock_context)
+
+        assert result.success is True
+        assert result.embedding == []
+        assert len(result.embeddings) == 3
+        assert result.embeddings[0] == [0.1, 0.2]
+        assert result.embeddings[2] == [0.5, 0.6]
+        assert result.dimensions == 2
+        assert result.metadata["count"] == 3
+
+        # Verify single API call with list input
+        mock_client.embeddings.create.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_execute_error_returns_failure(self, executor, mock_context):
+        """API errors return success=False with error in metadata."""
+        from workflows_mcp.engine.executors_llm import EmbeddingInput
+
+        inputs = EmbeddingInput(text="fail me")
+
+        with patch("workflows_mcp.engine.executors_llm.AsyncOpenAI") as mock_cls:
+            mock_client = AsyncMock()
+            mock_client.embeddings.create = AsyncMock(side_effect=Exception("connection refused"))
+            mock_cls.return_value = mock_client
+
+            result = await executor.execute(inputs, mock_context)
+
+        assert result.success is False
+        assert result.embedding == []
+        assert result.embeddings == []
+        assert "connection refused" in result.metadata["error"]

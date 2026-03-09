@@ -512,6 +512,42 @@ The executor automatically filters parameters and provides clear error messages 
     output_file: "{{tmp}}/castle.png"
 ```
 
+### 🔢 Text Embeddings
+
+Generate embeddings for text using any OpenAI-compatible embedding API. Supports **single** and **batch** modes — batch mode sends all texts in a single API call for efficient bulk processing.
+
+**Single text:**
+```yaml
+- id: embed_query
+  type: Embedding
+  inputs:
+    text: "{{inputs.search_query}}"
+```
+
+**Batch mode — embed multiple texts in one API call:**
+```yaml
+- id: embed_documents
+  type: Embedding
+  inputs:
+    texts:
+      - "First document content"
+      - "Second document content"
+      - "Third document content"
+```
+
+**Output access:**
+
+| Mode | Field | Description |
+|------|-------|-------------|
+| Single | `embedding` | The embedding vector |
+| Single | `embeddings` | `[embedding]` for convenience |
+| Batch | `embedding` | Empty `[]` |
+| Batch | `embeddings` | List of vectors (same order as input) |
+| Both | `dimensions` | Vector dimensionality |
+| Both | `metadata.count` | Number of embeddings generated |
+
+Configuration uses `~/.workflows/llm-config.yml` profiles (defaults to `embedding` profile).
+
 ### 🧠 Knowledge Store
 
 Store and retrieve knowledge propositions using PostgreSQL with pgvector for semantic search. The `Knowledge` block type provides hybrid search (vector + full-text), storage with auto-computed embeddings, and token-budgeted context assembly for LLM prompts.

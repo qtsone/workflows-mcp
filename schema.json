@@ -1036,9 +1036,33 @@
                       "title": "Model"
                     },
                     "text": {
-                      "description": "Text to generate embedding for",
-                      "title": "Text",
-                      "type": "string"
+                      "anyOf": [
+                        {
+                          "type": "string"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ],
+                      "default": null,
+                      "description": "Single text to generate embedding for. Mutually exclusive with 'texts'.",
+                      "title": "Text"
+                    },
+                    "texts": {
+                      "anyOf": [
+                        {
+                          "items": {
+                            "type": "string"
+                          },
+                          "type": "array"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ],
+                      "default": null,
+                      "description": "List of texts to embed in a single API call (batch mode). Mutually exclusive with 'text'.",
+                      "title": "Texts"
                     },
                     "api_key": {
                       "anyOf": [
@@ -1080,9 +1104,6 @@
                       "title": "Timeout"
                     }
                   },
-                  "required": [
-                    "text"
-                  ],
                   "title": "EmbeddingInput",
                   "type": "object"
                 }
@@ -3088,7 +3109,7 @@
     },
     "EmbeddingInput": {
       "additionalProperties": false,
-      "description": "Input schema for Embedding block.\n\nGenerates vector embeddings for text using OpenAI-compatible embedding API.\nWorks with OpenAI, LMStudio, Ollama (--api-compat), LocalAI, vLLM, and other\nservers implementing the /v1/embeddings endpoint.\n\nDefaults to 'embedding' profile from ~/.workflows/llm-config.yml.",
+      "description": "Input schema for Embedding block.\n\nGenerates vector embeddings for text using OpenAI-compatible embedding API.\nWorks with OpenAI, LMStudio, Ollama (--api-compat), LocalAI, vLLM, and other\nservers implementing the /v1/embeddings endpoint.\n\nSupports two modes:\n- **Single**: Provide `text` for a single embedding vector.\n- **Batch**: Provide `texts` (list) to embed multiple texts in one API call.\n\nExactly one of `text` or `texts` must be specified.\n\nDefaults to 'embedding' profile from ~/.workflows/llm-config.yml.",
       "properties": {
         "profile": {
           "default": "embedding",
@@ -3110,9 +3131,33 @@
           "title": "Model"
         },
         "text": {
-          "description": "Text to generate embedding for",
-          "title": "Text",
-          "type": "string"
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Single text to generate embedding for. Mutually exclusive with 'texts'.",
+          "title": "Text"
+        },
+        "texts": {
+          "anyOf": [
+            {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "List of texts to embed in a single API call (batch mode). Mutually exclusive with 'text'.",
+          "title": "Texts"
         },
         "api_key": {
           "anyOf": [
@@ -3154,9 +3199,6 @@
           "title": "Timeout"
         }
       },
-      "required": [
-        "text"
-      ],
       "title": "EmbeddingInput",
       "type": "object"
     },

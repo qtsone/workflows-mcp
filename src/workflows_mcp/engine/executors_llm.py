@@ -1391,6 +1391,12 @@ class EmbeddingInput(BlockInput):
     Works with OpenAI, LMStudio, Ollama (--api-compat), LocalAI, vLLM, and other
     servers implementing the /v1/embeddings endpoint.
 
+    Supports two modes:
+    - **Single**: Provide `text` for a single embedding vector.
+    - **Batch**: Provide `texts` (list) to embed multiple texts in one API call.
+
+    Exactly one of `text` or `texts` must be specified.
+
     Defaults to 'embedding' profile from ~/.workflows/llm-config.yml.
     """
 
@@ -1404,8 +1410,17 @@ class EmbeddingInput(BlockInput):
         description="Override embedding model (uses profile model if not specified)",
     )
 
-    text: str = Field(
-        description="Text to generate embedding for",
+    text: str | None = Field(
+        default=None,
+        description="Single text to generate embedding for. Mutually exclusive with 'texts'.",
+    )
+
+    texts: list[str] | None = Field(
+        default=None,
+        description=(
+            "List of texts to embed in a single API call (batch mode). "
+            "Mutually exclusive with 'text'."
+        ),
     )
 
     api_key: str | None = Field(
@@ -1427,21 +1442,47 @@ class EmbeddingInput(BlockInput):
         interpolatable_numeric_validator(int, ge=1, le=300)
     )
 
+    @model_validator(mode="after")
+    def _check_text_or_texts(self) -> EmbeddingInput:
+        has_text = self.text is not None
+        has_texts = self.texts is not None
+        if has_text == has_texts:
+            raise ValueError(
+                "Exactly one of 'text' (single) or 'texts' (batch) must be provided, not "
+                + ("both." if has_text else "neither.")
+            )
+        if has_texts and len(self.texts) == 0:  # type: ignore[arg-type]
+            raise ValueError("'texts' list must not be empty.")
+        return self
+
 
 class EmbeddingOutput(BlockOutput):
     """Output schema for Embedding block.
 
-    Returns the embedding vector and metadata.
+    Returns embedding vector(s) and metadata.
+
+    - **Single mode** (`text`): ``embedding`` contains the vector,
+      ``embeddings`` is ``[embedding]`` for convenience.
+    - **Batch mode** (`texts`): ``embeddings`` contains all vectors
+      (same order as input), ``embedding`` is empty.
     """
 
     embedding: list[float] = Field(
         default_factory=list,
-        description="Embedding vector (list of floats)",
+        description="Embedding vector for single-text mode (empty in batch mode)",
+    )
+
+    embeddings: list[list[float]] = Field(
+        default_factory=list,
+        description=(
+            "List of embedding vectors (batch mode). "
+            "In single mode this is [embedding] for convenience."
+        ),
     )
 
     dimensions: int = Field(
         default=0,
-        description="Number of dimensions in the embedding",
+        description="Number of dimensions in each embedding",
     )
 
     success: bool = Field(
@@ -1451,7 +1492,7 @@ class EmbeddingOutput(BlockOutput):
 
     metadata: dict[str, Any] = Field(
         default_factory=dict,
-        description="Execution metadata (model, usage, etc.)",
+        description="Execution metadata (model, usage, count, etc.)",
     )
 
 
@@ -1464,39 +1505,51 @@ class EmbeddingExecutor(BlockExecutor):
     - Ollama with OpenAI compatibility (localhost:11434/v1)
     - LocalAI, vLLM, and other OpenAI-compatible servers
 
-    Configuration via ~/.workflows/llm-config.yml profile (defaults to 'embedding'):
+    Supports **single** and **batch** modes:
+
+    Single mode (backward compatible):
     ```yaml
-    profiles:
-      embedding:
-        provider: openai  # or ollama, local, etc.
-        model: text-embedding-3-small
-        api_url: http://localhost:1234/v1  # for LMStudio
-        api_key_secret: OPENAI_API_KEY
+    - id: embed_query
+      type: Embedding
+      inputs:
+        text: "{{inputs.query}}"
     ```
 
-    Example:
-        ```yaml
-        - id: embed_query
-          type: Embedding
-          inputs:
-            text: "{{inputs.query}}"
-        ```
+    Batch mode:
+    ```yaml
+    - id: embed_documents
+      type: Embedding
+      inputs:
+        texts:
+          - "first document"
+          - "second document"
+    ```
 
     Outputs:
-        - embedding: List of floats representing the embedding vector
-        - dimensions: Number of dimensions (e.g., 1536 for text-embedding-3-small)
+        - embedding: Single embedding vector (single mode only)
+        - embeddings: List of embedding vectors (both modes)
+        - dimensions: Number of dimensions
         - success: Whether the API call succeeded
-        - metadata: Contains model, usage, etc.
+        - metadata: Contains model, usage, count, etc.
     """
 
     type_name: ClassVar[str] = "Embedding"
     input_type: ClassVar[type[BlockInput]] = EmbeddingInput
     output_type: ClassVar[type[BlockOutput]] = EmbeddingOutput
     examples: ClassVar[str] = """```yaml
+# Single text
 - id: embed_text
   type: Embedding
   inputs:
     text: "Search for authentication bugs"
+
+# Batch (multiple texts in one API call)
+- id: embed_batch
+  type: Embedding
+  inputs:
+    texts:
+      - "First document to embed"
+      - "Second document to embed"
 ```"""
 
     security_level: ClassVar[ExecutorSecurityLevel] = ExecutorSecurityLevel.TRUSTED
@@ -1507,8 +1560,8 @@ class EmbeddingExecutor(BlockExecutor):
     ) -> EmbeddingOutput:
         """Execute embedding generation using OpenAI-compatible API.
 
-        Resolves profile configuration and calls the embeddings endpoint.
-        Works with any OpenAI-compatible server (OpenAI, LMStudio, Ollama, etc.).
+        Dispatches to single or batch embedding based on the input provided.
+        Both modes resolve profile configuration and call the embeddings endpoint.
 
         Raises:
             ValueError: Invalid configuration
@@ -1517,35 +1570,73 @@ class EmbeddingExecutor(BlockExecutor):
         timeout = resolve_interpolatable_numeric(inputs.timeout, int, "timeout", ge=1, le=300)
 
         try:
-            embedding, model_name, dimensions, usage = await compute_embedding(
-                text=inputs.text,
-                context=context,
-                profile=inputs.profile,
-                model=inputs.model,
-                api_key=inputs.api_key,
-                api_url=inputs.api_url,
-                timeout=timeout,
-            )
-
-            metadata: dict[str, Any] = {"model": model_name}
-            if usage:
-                metadata["usage"] = usage
-
-            return EmbeddingOutput(
-                embedding=embedding,
-                dimensions=dimensions,
-                success=True,
-                metadata=metadata,
-            )
-
+            if inputs.texts is not None:
+                return await self._execute_batch(inputs, context, timeout)
+            return await self._execute_single(inputs, context, timeout)
         except Exception as e:
             logger.error(f"Embedding generation failed: {e}")
             return EmbeddingOutput(
                 embedding=[],
+                embeddings=[],
                 dimensions=0,
                 success=False,
                 metadata={"error": str(e)},
             )
+
+    async def _execute_single(
+        self, inputs: EmbeddingInput, context: Execution, timeout: int
+    ) -> EmbeddingOutput:
+        """Handle single-text embedding."""
+        embedding, model_name, dimensions, usage = await compute_embedding(
+            text=inputs.text,  # type: ignore[arg-type]
+            context=context,
+            profile=inputs.profile,
+            model=inputs.model,
+            api_key=inputs.api_key,
+            api_url=inputs.api_url,
+            timeout=timeout,
+        )
+
+        metadata: dict[str, Any] = {"model": model_name, "count": 1}
+        if usage:
+            metadata["usage"] = usage
+
+        return EmbeddingOutput(
+            embedding=embedding,
+            embeddings=[embedding],
+            dimensions=dimensions,
+            success=True,
+            metadata=metadata,
+        )
+
+    async def _execute_batch(
+        self, inputs: EmbeddingInput, context: Execution, timeout: int
+    ) -> EmbeddingOutput:
+        """Handle batch embedding via a single API call."""
+        all_embeddings, model_name, dimensions, usage = await compute_embedding_batch(
+            texts=inputs.texts,  # type: ignore[arg-type]
+            context=context,
+            profile=inputs.profile,
+            model=inputs.model,
+            api_key=inputs.api_key,
+            api_url=inputs.api_url,
+            timeout=timeout,
+        )
+
+        metadata: dict[str, Any] = {
+            "model": model_name,
+            "count": len(all_embeddings),
+        }
+        if usage:
+            metadata["usage"] = usage
+
+        return EmbeddingOutput(
+            embedding=[],
+            embeddings=all_embeddings,
+            dimensions=dimensions,
+            success=True,
+            metadata=metadata,
+        )
 
 
 # ===========================================================================
@@ -1669,3 +1760,129 @@ async def compute_embedding(
         }
 
     return embedding, response.model, dimensions, usage
+
+
+async def compute_embedding_batch(
+    texts: list[str],
+    context: Execution,
+    *,
+    profile: str = "embedding",
+    model: str | None = None,
+    api_key: str | None = None,
+    api_url: str | None = None,
+    timeout: int = 30,
+) -> tuple[list[list[float]], str, int, dict[str, int] | None]:
+    """Compute embeddings for multiple texts in a single API call.
+
+    Batch variant of compute_embedding(). Resolves profile configuration once,
+    creates one AsyncOpenAI client, and sends all texts in a single request.
+    The OpenAI embeddings API natively supports list input.
+
+    Args:
+        texts: List of texts to generate embeddings for.
+        context: Execution context with LLM config loader.
+        profile: Profile name from llm-config.yml (defaults to 'embedding').
+        model: Override embedding model (uses profile model if not specified).
+        api_key: Override API key (uses profile secret if not specified).
+        api_url: Override API endpoint URL (uses profile URL if not specified).
+        timeout: Request timeout in seconds.
+
+    Returns:
+        Tuple of (list_of_embedding_vectors, model_name, dimensions, usage_dict_or_none).
+        Embeddings are returned in the same order as the input texts.
+
+    Raises:
+        ValueError: If execution context is not available, configuration is invalid,
+            or texts list is empty.
+        openai.APIError: On API errors.
+    """
+    if not texts:
+        raise ValueError("texts list must not be empty")
+
+    execution_context = context.execution_context
+    if execution_context is None:
+        raise ValueError("ExecutionContext not available")
+
+    llm_config_loader = execution_context.llm_config_loader
+
+    # Build inline overrides from inputs (filter out None values)
+    inline_overrides = {
+        key: value
+        for key, value in {
+            "model": model,
+            "api_url": api_url,
+        }.items()
+        if value is not None
+    }
+
+    # Try to resolve profile (returns ResolvedLLMConfig with merged provider+profile values)
+    resolved_config = None
+    config = llm_config_loader.load_config()
+
+    effective_profile: str | None = profile
+    if effective_profile not in config.profiles:
+        if config.default_profile and config.default_profile in config.profiles:
+            logger.warning(
+                f"Embedding profile '{profile}' not found, "
+                f"using default_profile '{config.default_profile}'"
+            )
+            effective_profile = config.default_profile
+        else:
+            effective_profile = None
+
+    if effective_profile is not None:
+        resolved_config = llm_config_loader.resolve_profile(
+            profile=effective_profile, inline_overrides=inline_overrides
+        )
+
+    if resolved_config:
+        # Use resolved values as defaults (explicit args override)
+        model = model or resolved_config.model
+        api_url = api_url or resolved_config.api_url
+
+        # Resolve API key from secrets if not provided
+        if api_key is None and resolved_config.api_key_secret:
+            from .secrets import EnvVarSecretProvider
+
+            secret_provider = EnvVarSecretProvider()
+            api_key = await secret_provider.get_secret(resolved_config.api_key_secret)
+
+    # Default model if still not set
+    if model is None:
+        model = "text-embedding-3-small"
+
+    # Resolve extra_headers from profile config
+    default_headers: dict[str, str] | None = None
+    if resolved_config and resolved_config.extra_headers:
+        default_headers = _resolve_header_env_vars(resolved_config.extra_headers)
+
+    # Use OpenAI SDK which works with any OpenAI-compatible server
+    client_kwargs: dict[str, Any] = {
+        "api_key": api_key or "not-required",
+        "base_url": api_url,
+        "timeout": float(timeout),
+    }
+    if default_headers:
+        client_kwargs["default_headers"] = default_headers
+
+    client = AsyncOpenAI(**client_kwargs)
+
+    response = await client.embeddings.create(
+        model=model,
+        input=texts,
+    )
+
+    # OpenAI API may return embeddings in a different order than input texts.
+    # Sort by index to guarantee input-order alignment.
+    sorted_data = sorted(response.data, key=lambda d: d.index)
+    embeddings = [item.embedding for item in sorted_data]
+    dimensions = len(embeddings[0]) if embeddings else 0
+
+    usage: dict[str, int] | None = None
+    if response.usage:
+        usage = {
+            "prompt_tokens": response.usage.prompt_tokens,
+            "total_tokens": response.usage.total_tokens,
+        }
+
+    return embeddings, response.model, dimensions, usage
