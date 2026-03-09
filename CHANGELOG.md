@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file.
 
+# [9.10.0](https://github.com/qtsone/workflows-mcp/compare/v9.9.0...v9.10.0) (2026-03-09)
+
+
+### Features
+
+* **engine:** add batch embedding support to Embedding block ([801412a](https://github.com/qtsone/workflows-mcp/commit/801412a38fb2a66a3a87690cf51af97973b5a5c1))
+
 # [9.9.0](https://github.com/qtsone/workflows-mcp/compare/v9.8.1...v9.9.0) (2026-03-07)
 
 
