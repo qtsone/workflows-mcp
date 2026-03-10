@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file.
 
+# [9.11.0](https://github.com/qtsone/workflows-mcp/compare/v9.10.1...v9.11.0) (2026-03-10)
+
+
+### Features
+
+* **engine:** add context_id to ExecutionContext and on_block_transition events ([af597a2](https://github.com/qtsone/workflows-mcp/commit/af597a2c63114b9acd453f8f753c776ea3d1b5d6))
+
 ## [9.10.1](https://github.com/qtsone/workflows-mcp/compare/v9.10.0...v9.10.1) (2026-03-09)
 
 
