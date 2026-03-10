@@ -14,6 +14,7 @@ This enables:
 
 from __future__ import annotations
 
+import uuid
 from collections.abc import Awaitable, Callable
 from typing import TYPE_CHECKING, Any
 
@@ -79,6 +80,7 @@ class ExecutionContext:
         self.memory_snapshot: dict[str, str] = {}
         self.on_log: Callable[[str, str | None, int], Awaitable[None]] | None = None
         self.on_block_transition: Callable[[dict[str, Any]], Awaitable[None]] | None = None
+        self.context_id: str = str(uuid.uuid4())
 
     def get_workflow(self, name: str) -> WorkflowSchema | None:
         """

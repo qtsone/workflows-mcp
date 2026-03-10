@@ -795,6 +795,7 @@ class WorkflowRunner:
                 "depth": exec_context.depth,
                 "metadata": {"type": block_def.type},
                 "inputs": resolved_inputs,
+                "context_id": exec_context.execution_context.context_id,
             }
             if block_def.description:
                 event["description"] = block_def.description
@@ -867,6 +868,7 @@ class WorkflowRunner:
                 "metadata": block_execution.metadata.model_dump(),
                 "outputs": self._get_block_outputs(block_execution.output),
                 "inputs": resolved_inputs,
+                "context_id": exec_context.execution_context.context_id,
             }
             if block_def.description:
                 event["description"] = block_def.description
@@ -906,6 +908,7 @@ class WorkflowRunner:
                 "block_type": block_def.type,
                 "depth": exec_context.depth,
                 "metadata": {"type": block_def.type},
+                "context_id": exec_context.execution_context.context_id,
             }
             if block_def.description:
                 event["description"] = block_def.description
@@ -991,6 +994,7 @@ class WorkflowRunner:
                     "depth": exec_context.depth,
                     "metadata": parent_meta.model_dump(),
                     "outputs": {},
+                    "context_id": exec_context.execution_context.context_id,
                 }
                 if block_def.description:
                     event["description"] = block_def.description
@@ -1009,6 +1013,7 @@ class WorkflowRunner:
                     "block_type": block_def.type,
                     "depth": exec_context.depth,
                     "error": str(e),
+                    "context_id": exec_context.execution_context.context_id,
                 }
                 if block_def.description:
                     event["description"] = block_def.description
@@ -1073,6 +1078,7 @@ class WorkflowRunner:
                 "reason": reason,
                 "metadata": metadata.model_dump(),
                 "outputs": default_outputs,
+                "context_id": exec_context.execution_context.context_id,
             }
             if block_def.description:
                 event["description"] = block_def.description
@@ -1119,6 +1125,7 @@ class WorkflowRunner:
                 "error": error,
                 "metadata": metadata.model_dump(),
                 "outputs": default_outputs,
+                "context_id": exec_context.execution_context.context_id,
             }
             if block_def.description:
                 event["description"] = block_def.description
