@@ -797,6 +797,8 @@ class WorkflowRunner:
                 "inputs": resolved_inputs,
                 "context_id": exec_context.execution_context.context_id,
             }
+            if block_def.depends_on:
+                event["depends_on"] = [dep.model_dump() for dep in block_def.depends_on]
             if block_def.description:
                 event["description"] = block_def.description
             await self.on_block_transition(event)
@@ -870,6 +872,8 @@ class WorkflowRunner:
                 "inputs": resolved_inputs,
                 "context_id": exec_context.execution_context.context_id,
             }
+            if block_def.depends_on:
+                event["depends_on"] = [dep.model_dump() for dep in block_def.depends_on]
             if block_def.description:
                 event["description"] = block_def.description
             await self.on_block_transition(event)
@@ -910,6 +914,8 @@ class WorkflowRunner:
                 "metadata": {"type": block_def.type},
                 "context_id": exec_context.execution_context.context_id,
             }
+            if block_def.depends_on:
+                event["depends_on"] = [dep.model_dump() for dep in block_def.depends_on]
             if block_def.description:
                 event["description"] = block_def.description
             await self.on_block_transition(event)
@@ -996,6 +1002,8 @@ class WorkflowRunner:
                     "outputs": {},
                     "context_id": exec_context.execution_context.context_id,
                 }
+                if block_def.depends_on:
+                    event["depends_on"] = [dep.model_dump() for dep in block_def.depends_on]
                 if block_def.description:
                     event["description"] = block_def.description
                 await self.on_block_transition(event)
@@ -1015,6 +1023,8 @@ class WorkflowRunner:
                     "error": str(e),
                     "context_id": exec_context.execution_context.context_id,
                 }
+                if block_def.depends_on:
+                    event["depends_on"] = [dep.model_dump() for dep in block_def.depends_on]
                 if block_def.description:
                     event["description"] = block_def.description
                 await self.on_block_transition(event)
@@ -1080,6 +1090,8 @@ class WorkflowRunner:
                 "outputs": default_outputs,
                 "context_id": exec_context.execution_context.context_id,
             }
+            if block_def.depends_on:
+                event["depends_on"] = [dep.model_dump() for dep in block_def.depends_on]
             if block_def.description:
                 event["description"] = block_def.description
             await self.on_block_transition(event)
@@ -1127,6 +1139,8 @@ class WorkflowRunner:
                 "outputs": default_outputs,
                 "context_id": exec_context.execution_context.context_id,
             }
+            if block_def.depends_on:
+                event["depends_on"] = [dep.model_dump() for dep in block_def.depends_on]
             if block_def.description:
                 event["description"] = block_def.description
             await self.on_block_transition(event)
