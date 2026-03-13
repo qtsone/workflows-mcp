@@ -1,5 +1,5 @@
 """Workflows MCP Server - DAG-based workflow execution for Claude Code."""
 
-__version__ = "9.11.0"
+__version__ = "9.12.0"
 
 __all__ = ["__version__"]

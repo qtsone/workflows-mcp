@@ -2,6 +2,14 @@
 
 All notable changes to this project will be documented in this file.
 
+# [9.12.0](https://github.com/qtsone/workflows-mcp/compare/v9.11.0...v9.12.0) (2026-03-13)
+
+
+### Features
+
+* **engine:** add node_id tracking and generic operation failure detection ([5a75877](https://github.com/qtsone/workflows-mcp/commit/5a75877669d55e2e1be476c1b4ef51c61c02dcf0))
+* **engine:** emit depends_on in block transition events ([20a70d6](https://github.com/qtsone/workflows-mcp/commit/20a70d62fc67a029e68f59ed60eb9fae1362545b))
+
 # [9.11.0](https://github.com/qtsone/workflows-mcp/compare/v9.10.1...v9.11.0) (2026-03-10)
 
 
