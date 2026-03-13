@@ -31,3 +31,12 @@ block_custom_outputs: ContextVar[dict[str, Any] | None] = ContextVar(
 # Set by: WorkflowRunner._execute_block() before calling executor.execute()
 # Read by: Executors that emit log events (e.g., LLMCallExecutor)
 current_block_id: ContextVar[str | None] = ContextVar("current_block_id", default=None)
+
+# Current node ID context variable (globally unique UUID per block execution)
+# Enables unambiguous DAG parent-child relationships: each block execution
+# gets a UUID, and child workflows reference the parent's UUID via parent_node_id.
+#
+# Set by: WorkflowRunner._execute_block() and orchestrator.execute_iteration()
+# Read by: WorkflowExecutor.execute() to set parent_node_id on child context
+current_node_id: ContextVar[str | None] = ContextVar("current_node_id", default=None)
+

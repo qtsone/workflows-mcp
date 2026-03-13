@@ -24,7 +24,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Literal, cast
 
-from .context_vars import block_custom_outputs, current_block_id
+from .context_vars import block_custom_outputs, current_block_id, current_node_id
 from .exceptions import ExecutionPaused, RecursionDepthExceededError
 from .execution import Execution
 from .execution_context import ExecutionContext
@@ -703,14 +703,20 @@ class WorkflowRunner:
                     raise result
                 elif isinstance(result, Exception):
                     # Execution error - mark as failed but continue
-                    await self._mark_block_failed(
-                        block_id=block_id,
-                        block_def=blocks_by_id[block_id],
-                        exec_context=exec_context,
-                        wave_idx=wave_idx,
-                        execution_order=len(completed_blocks),
-                        error=str(result),
-                    )
+                    # Skip for for_each blocks: _execute_for_each_block already emits
+                    # its own block_failed event and stores results in exec_context.
+                    # Calling _mark_block_failed here would create a duplicate event
+                    # with a different node_id, causing a phantom node in the DAG.
+                    block_def = blocks_by_id[block_id]
+                    if not block_def.for_each:
+                        await self._mark_block_failed(
+                            block_id=block_id,
+                            block_def=block_def,
+                            exec_context=exec_context,
+                            wave_idx=wave_idx,
+                            execution_order=len(completed_blocks),
+                            error=str(result),
+                        )
 
         return block_ids
 
@@ -786,7 +792,10 @@ class WorkflowRunner:
         else:
             block_custom_outputs.set(None)
 
-        # 4. Notify observer: block starting
+        # 4. Generate globally unique node_id for this block execution
+        node_id = str(uuid.uuid4())
+
+        # 5. Notify observer: block starting
         if self.on_block_transition:
             event: dict[str, Any] = {
                 "event": "block_started",
@@ -796,15 +805,20 @@ class WorkflowRunner:
                 "metadata": {"type": block_def.type},
                 "inputs": resolved_inputs,
                 "context_id": exec_context.execution_context.context_id,
+                "node_id": node_id,
+                "parent_node_id": exec_context.execution_context.parent_node_id,
             }
             if block_def.depends_on:
-                event["depends_on"] = [dep.model_dump() for dep in block_def.depends_on]
+                deps = [dep.model_dump() for dep in block_def.depends_on]
+                event["depends_on"] = deps
+                event["metadata"]["depends_on"] = deps
             if block_def.description:
                 event["description"] = block_def.description
             await self.on_block_transition(event)
 
-        # 5. Set current block ID for executor logging
+        # 6. Set current block/node IDs for executor logging and child context
         current_block_id.set(block_id)
+        current_node_id.set(node_id)
 
         # 6. Execute via orchestrator
         block_execution = await self.orchestrator.execute_block(
@@ -871,9 +885,13 @@ class WorkflowRunner:
                 "outputs": self._get_block_outputs(block_execution.output),
                 "inputs": resolved_inputs,
                 "context_id": exec_context.execution_context.context_id,
+                "node_id": node_id,
+                "parent_node_id": exec_context.execution_context.parent_node_id,
             }
             if block_def.depends_on:
-                event["depends_on"] = [dep.model_dump() for dep in block_def.depends_on]
+                deps = [dep.model_dump() for dep in block_def.depends_on]
+                event["depends_on"] = deps
+                event["metadata"]["depends_on"] = deps
             if block_def.description:
                 event["description"] = block_def.description
             await self.on_block_transition(event)
@@ -904,6 +922,9 @@ class WorkflowRunner:
             ExecutionPaused: If any iteration pauses (not yet supported for for_each)
             Exception: On execution errors
         """
+        # Generate globally unique node_id for the for_each parent block
+        node_id = str(uuid.uuid4())
+
         # Notify observer: for_each block starting
         if self.on_block_transition:
             event: dict[str, Any] = {
@@ -913,6 +934,8 @@ class WorkflowRunner:
                 "depth": exec_context.depth,
                 "metadata": {"type": block_def.type},
                 "context_id": exec_context.execution_context.context_id,
+                "node_id": node_id,
+                "parent_node_id": exec_context.execution_context.parent_node_id,
             }
             if block_def.depends_on:
                 event["depends_on"] = [dep.model_dump() for dep in block_def.depends_on]
@@ -982,6 +1005,7 @@ class WorkflowRunner:
                 depth=exec_context.depth,
                 condition=block_def.condition,
                 on_iteration_transition=self.on_block_transition,
+                parent_node_id=node_id,
             )
 
             # 5. Store results in execution context using fractal structure
@@ -993,14 +1017,30 @@ class WorkflowRunner:
 
             # Notify observer: for_each block completed
             if self.on_block_transition:
+                # Aggregate iteration outputs for detail panel visibility
+                aggregated_outputs: dict[str, Any] = {}
+                for iter_key, iter_result in iteration_results.items():
+                    if iter_result.output is not None:
+                        try:
+                            aggregated_outputs[iter_key] = iter_result.output.model_dump()
+                        except Exception:
+                            aggregated_outputs[iter_key] = str(iter_result.output)
+
                 event = {
                     "event": "block_completed",
                     "block_id": block_id,
                     "block_type": block_def.type,
                     "depth": exec_context.depth,
                     "metadata": parent_meta.model_dump(),
-                    "outputs": {},
+                    "outputs": {"iterations": aggregated_outputs},
+                    "inputs": {
+                        "for_each": block_def.for_each,
+                        "for_each_mode": block_def.for_each_mode,
+                        **block_def.inputs,
+                    },
                     "context_id": exec_context.execution_context.context_id,
+                    "node_id": node_id,
+                    "parent_node_id": exec_context.execution_context.parent_node_id,
                 }
                 if block_def.depends_on:
                     event["depends_on"] = [dep.model_dump() for dep in block_def.depends_on]
@@ -1022,6 +1062,8 @@ class WorkflowRunner:
                     "depth": exec_context.depth,
                     "error": str(e),
                     "context_id": exec_context.execution_context.context_id,
+                    "node_id": node_id,
+                    "parent_node_id": exec_context.execution_context.parent_node_id,
                 }
                 if block_def.depends_on:
                     event["depends_on"] = [dep.model_dump() for dep in block_def.depends_on]
@@ -1089,9 +1131,13 @@ class WorkflowRunner:
                 "metadata": metadata.model_dump(),
                 "outputs": default_outputs,
                 "context_id": exec_context.execution_context.context_id,
+                "node_id": str(uuid.uuid4()),
+                "parent_node_id": exec_context.execution_context.parent_node_id,
             }
             if block_def.depends_on:
-                event["depends_on"] = [dep.model_dump() for dep in block_def.depends_on]
+                deps = [dep.model_dump() for dep in block_def.depends_on]
+                event["depends_on"] = deps
+                event["metadata"]["depends_on"] = deps
             if block_def.description:
                 event["description"] = block_def.description
             await self.on_block_transition(event)
@@ -1138,9 +1184,13 @@ class WorkflowRunner:
                 "metadata": metadata.model_dump(),
                 "outputs": default_outputs,
                 "context_id": exec_context.execution_context.context_id,
+                "node_id": str(uuid.uuid4()),
+                "parent_node_id": exec_context.execution_context.parent_node_id,
             }
             if block_def.depends_on:
-                event["depends_on"] = [dep.model_dump() for dep in block_def.depends_on]
+                deps = [dep.model_dump() for dep in block_def.depends_on]
+                event["depends_on"] = deps
+                event["metadata"]["depends_on"] = deps
             if block_def.description:
                 event["description"] = block_def.description
             await self.on_block_transition(event)

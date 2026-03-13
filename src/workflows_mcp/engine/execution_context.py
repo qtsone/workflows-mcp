@@ -81,6 +81,10 @@ class ExecutionContext:
         self.on_log: Callable[[str, str | None, int], Awaitable[None]] | None = None
         self.on_block_transition: Callable[[dict[str, Any]], Awaitable[None]] | None = None
         self.context_id: str = str(uuid.uuid4())
+        # Parent node ID for DAG hierarchy: the globally unique UUID of the
+        # block execution that spawned this child context. Set by the caller
+        # (e.g., WorkflowExecutor) after create_child_context().
+        self.parent_node_id: str | None = None
 
     def get_workflow(self, name: str) -> WorkflowSchema | None:
         """

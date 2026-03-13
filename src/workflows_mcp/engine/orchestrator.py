@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import asyncio
 import traceback
+import uuid
 from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any, Literal
@@ -151,11 +152,22 @@ class BlockOrchestrator:
 
             # Determine success/failure based on executor-specific logic
             # Shell blocks: exit_code != 0 means operation failure
-            # Other blocks: execution success = operation success (default)
+            # Generic: output.success == False means operation failure
+            is_failure = False
+
             if "exit_code" in executor_fields and executor_fields["exit_code"] != 0:
-                # Shell command failed (non-zero exit code)
                 exit_code = executor_fields["exit_code"]
                 executor_fields["message"] = f"Command exited with code {exit_code}"
+                is_failure = True
+
+            # Check for generic success field (KnowledgeAdmin, etc.)
+            success_attr = getattr(output, "success", None)
+            if success_attr is False:
+                error_msg = getattr(output, "error", None) or "Operation returned success=False"
+                executor_fields.setdefault("message", error_msg)
+                is_failure = True
+
+            if is_failure:
                 metadata = Metadata.create_leaf_failure(
                     type=executor.type_name,
                     id=id,
@@ -168,7 +180,6 @@ class BlockOrchestrator:
                     **executor_fields,
                 )
             else:
-                # Operation succeeded
                 metadata = Metadata.create_leaf_success(
                     type=executor.type_name,
                     id=id,
@@ -725,6 +736,7 @@ class BlockOrchestrator:
         depth: int = 0,
         condition: str | None = None,
         on_iteration_transition: (Callable[[dict[str, Any]], Awaitable[None]] | None) = None,
+        parent_node_id: str | None = None,
     ) -> tuple[dict[str, BlockExecution], Metadata]:
         """
         Execute a for_each block with multiple iterations (ADR-009).
@@ -773,6 +785,12 @@ class BlockOrchestrator:
             iteration_key: str, iteration_index: int, iteration_value: Any
         ) -> tuple[str, BlockExecution]:
             """Execute a single iteration with its own context."""
+            from .context_vars import current_node_id
+
+            # Generate globally unique node_id for this iteration
+            iter_node_id = str(uuid.uuid4())
+            current_node_id.set(iter_node_id)
+
             # Create iteration context with 'each' namespace
             each_context = {
                 "key": iteration_key,
@@ -826,6 +844,8 @@ class BlockOrchestrator:
                                 "reason": f"Condition '{condition}' evaluated to False",
                                 "metadata": skipped_metadata.model_dump(),
                                 "parent_block_id": id,
+                                "node_id": iter_node_id,
+                                "parent_node_id": parent_node_id,
                             }
                         )
                     return iteration_key, iter_result
@@ -840,57 +860,98 @@ class BlockOrchestrator:
                         "depth": depth + 1,
                         "metadata": {"type": executor.type_name},
                         "parent_block_id": id,
+                        "node_id": iter_node_id,
+                        "parent_node_id": parent_node_id,
                     }
                 )
 
             # Resolve iteration inputs (replace {{each.*}} variables)
-            resolved_inputs = await resolver.resolve_async(inputs_template)
+            try:
+                resolved_inputs = await resolver.resolve_async(inputs_template)
 
-            # Validate and create input model
-            input_model = executor.input_type(**resolved_inputs)
+                # Validate and create input model
+                input_model = executor.input_type(**resolved_inputs)
 
-            # Execute this iteration (depth + 1 for nested tracking)
-            result = await self.execute_block(
-                id=iteration_key,
-                executor=executor,
-                inputs=input_model,
-                context=context,
-                wave=wave,
-                execution_order=iteration_index,
-                depth=depth + 1,
-            )
+                # Execute this iteration (depth + 1 for nested tracking)
+                result = await self.execute_block(
+                    id=iteration_key,
+                    executor=executor,
+                    inputs=input_model,
+                    context=context,
+                    wave=wave,
+                    execution_order=iteration_index,
+                    depth=depth + 1,
+                )
 
-            # Notify observer: iteration completed/failed
-            if on_iteration_transition:
-                if result.metadata.failed:
+                # Notify observer: iteration completed/failed
+                if on_iteration_transition:
+                    if result.metadata.failed:
+                        await on_iteration_transition(
+                            {
+                                "event": "block_failed",
+                                "block_id": iteration_key,
+                                "block_type": executor.type_name,
+                                "depth": depth + 1,
+                                "error": result.metadata.message or "",
+                                "metadata": result.metadata.model_dump(),
+                                "outputs": result.output.model_dump() if result.output else {},
+                                "inputs": resolved_inputs,
+                                "parent_block_id": id,
+                                "node_id": iter_node_id,
+                                "parent_node_id": parent_node_id,
+                            }
+                        )
+                    else:
+                        await on_iteration_transition(
+                            {
+                                "event": "block_completed",
+                                "block_id": iteration_key,
+                                "block_type": executor.type_name,
+                                "depth": depth + 1,
+                                "metadata": result.metadata.model_dump(),
+                                "outputs": result.output.model_dump() if result.output else {},
+                                "inputs": resolved_inputs,
+                                "parent_block_id": id,
+                                "node_id": iter_node_id,
+                                "parent_node_id": parent_node_id,
+                            }
+                        )
+
+                return iteration_key, result
+
+            except Exception as e:
+                # Emit block_failed so the iteration doesn't stay stuck in 'running'
+                fail_metadata = Metadata.create_leaf_failure(
+                    type=executor.type_name,
+                    id=iteration_key,
+                    duration_ms=0,
+                    started_at=datetime.now(UTC).isoformat(),
+                    wave=wave,
+                    execution_order=iteration_index,
+                    index=iteration_index,
+                    depth=depth + 1,
+                    message=str(e),
+                )
+                if on_iteration_transition:
                     await on_iteration_transition(
                         {
                             "event": "block_failed",
                             "block_id": iteration_key,
                             "block_type": executor.type_name,
                             "depth": depth + 1,
-                            "error": result.metadata.message or "",
-                            "metadata": result.metadata.model_dump(),
-                            "outputs": result.output.model_dump() if result.output else {},
-                            "inputs": resolved_inputs,
+                            "error": str(e),
+                            "metadata": fail_metadata.model_dump(),
                             "parent_block_id": id,
+                            "node_id": iter_node_id,
+                            "parent_node_id": parent_node_id,
                         }
                     )
-                else:
-                    await on_iteration_transition(
-                        {
-                            "event": "block_completed",
-                            "block_id": iteration_key,
-                            "block_type": executor.type_name,
-                            "depth": depth + 1,
-                            "metadata": result.metadata.model_dump(),
-                            "outputs": result.output.model_dump() if result.output else {},
-                            "inputs": resolved_inputs,
-                            "parent_block_id": id,
-                        }
-                    )
-
-            return iteration_key, result
+                # Return a failed result instead of re-raising
+                return iteration_key, BlockExecution(
+                    output=None,
+                    metadata=fail_metadata,
+                    paused=False,
+                )
 
         # Parallel mode: execute with concurrency control
         if mode == "parallel":

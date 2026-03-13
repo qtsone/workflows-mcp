@@ -177,6 +177,13 @@ class WorkflowExecutor(BlockExecutor):
             workflow_name=workflow_name,
         )
 
+        # Set parent_node_id so child blocks reference this block's node_id
+        # in the DAG hierarchy. current_node_id is set by _execute_block (regular blocks)
+        # or execute_iteration (for_each iterations).
+        from .context_vars import current_node_id
+
+        child_context.parent_node_id = current_node_id.get(None)
+
         try:
             # Execute child workflow
             child_execution_result = await runner.execute(
