@@ -711,9 +711,9 @@ class KnowledgeExecutor(BlockExecutor):
         sql = f"""
             SELECT kp.id, kp.content, kp.confidence, kp.authority,
                    kp.lifecycle_state, kp.relevance_score, kp.retrieval_count,
-                   ki.path AS item_path
+                   ki_ip.path AS item_path
             FROM knowledge_propositions kp
-            LEFT JOIN knowledge_items ki ON kp.item_id = ki.id
+            LEFT JOIN knowledge_items ki_ip ON kp.item_id = ki_ip.id
             {join_clause}
             WHERE {where_sql}
             {order_clause}
