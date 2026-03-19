@@ -2,6 +2,14 @@
 
 All notable changes to this project will be documented in this file.
 
+## [9.12.2](https://github.com/qtsone/workflows-mcp/compare/v9.12.1...v9.12.2) (2026-03-19)
+
+
+### Bug Fixes
+
+* **knowledge:** remove updated_at from forget UPDATE and recall order allowlist ([a10c712](https://github.com/qtsone/workflows-mcp/commit/a10c712eac548f819e87171047d3a1a593074a79))
+* **knowledge:** use distinct alias for item_path LEFT JOIN to avoid collision with filter JOINs ([0656ac1](https://github.com/qtsone/workflows-mcp/commit/0656ac11ed1e5666edbead7ca4db7fcd99f44cfb))
+
 ## [9.12.1](https://github.com/qtsone/workflows-mcp/compare/v9.12.0...v9.12.1) (2026-03-19)
 
 
