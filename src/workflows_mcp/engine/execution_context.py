@@ -5,11 +5,13 @@ Provides access to:
 - Workflow registry (for Workflow composition)
 - Executor registry (for block execution)
 - Parent execution (for nested workflows)
+- User attribution for audit trails
 
 This enables:
 - Fractal composition (workflows in workflows)
 - Access to shared resources (registries)
 - Execution isolation (each workflow gets its own context)
+- Audit trail attribution (user identity for knowledge operations)
 """
 
 from __future__ import annotations
@@ -55,6 +57,9 @@ class ExecutionContext:
         workflow_stack: list[str] | None = None,
         max_recursion_depth: int = 50,
         execution_memory: ExecutionMemory | None = None,
+        user_id: uuid.UUID | None = None,
+        auth_method: str | None = None,
+        user_string_id: str | None = None,
     ):
         """
         Initialize execution context with shared resources.
@@ -68,6 +73,10 @@ class ExecutionContext:
             workflow_stack: Workflow execution stack (depth tracking)
             max_recursion_depth: Maximum allowed recursion depth (default: 50)
             execution_memory: Ephemeral SQLite memory for the execution (optional)
+            user_id: UUID of the user initiating the execution (for audit trails)
+            auth_method: Authentication method used (PAT, SSO, SYSTEM) (for audit trails)
+            user_string_id: Human-readable user identifier (e.g., OS username,
+                email) for audit trails
         """
         self.workflow_registry = workflow_registry
         self.executor_registry = executor_registry
@@ -77,6 +86,9 @@ class ExecutionContext:
         self.workflow_stack = workflow_stack or []
         self.max_recursion_depth = max_recursion_depth
         self.execution_memory = execution_memory
+        self.user_id = user_id
+        self.auth_method = auth_method
+        self.user_string_id = user_string_id
         self.memory_snapshot: dict[str, str] = {}
         self.on_log: Callable[[str, str | None, int], Awaitable[None]] | None = None
         self.on_block_transition: Callable[[dict[str, Any]], Awaitable[None]] | None = None
@@ -108,6 +120,7 @@ class ExecutionContext:
 
         Preserves shared resources (registries, stores) while tracking
         parent execution and workflow stack for depth tracking and debugging.
+        User attribution is inherited from parent context for audit trail continuity.
 
         Args:
             parent_execution: Parent execution context
@@ -128,6 +141,9 @@ class ExecutionContext:
             workflow_stack=self.workflow_stack + [workflow_name],
             max_recursion_depth=self.max_recursion_depth,
             execution_memory=self.execution_memory,
+            user_id=self.user_id,
+            auth_method=self.auth_method,
+            user_string_id=self.user_string_id,
         )
         child.memory_snapshot = self.memory_snapshot
         child.on_log = self.on_log

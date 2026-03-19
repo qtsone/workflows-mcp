@@ -4,7 +4,9 @@ This module contains context types used across server and tools modules,
 separated to avoid circular imports.
 """
 
-from dataclasses import dataclass
+import uuid
+from collections.abc import Callable
+from dataclasses import dataclass, field
 
 from mcp.server.fastmcp import Context
 from mcp.server.session import ServerSession
@@ -33,11 +35,20 @@ class AppContext:
     io_queue: IOQueue | None  # Optional IO queue for serialized file operations
     job_queue: JobQueue | None = None  # Optional job queue for async execution
     max_recursion_depth: int = 50  # Default recursion depth limit
+    # Optional callback for user context resolution.
+    # OSS standalone: leave as None → tools fall back to OS/env user detection.
+    # Platform: pass a function that reads platform-internal ContextVars.
+    # Signature: () -> (user_uuid | None, user_string | None, auth_method)
+    get_user_context: Callable[[], tuple[uuid.UUID | None, str | None, str]] | None = field(
+        default=None, repr=False
+    )
 
     def create_execution_context(
         self,
         workflow_stack: list[str] | None = None,
         execution_memory: ExecutionMemory | None = None,
+        user_id: uuid.UUID | None = None,
+        auth_method: str | None = None,
     ) -> ExecutionContext:
         """Create ExecutionContext for workflow execution.
 
@@ -46,6 +57,8 @@ class AppContext:
                            When resuming paused workflows, pass the saved workflow_stack to ensure
                            correct depth tracking for recursive workflows.
             execution_memory: Optional ephemeral SQLite memory for the execution.
+            user_id: UUID of the user initiating the execution (for audit trails).
+            auth_method: Authentication method used (PAT, SSO, SYSTEM) (for audit trails).
 
         Returns:
             ExecutionContext with access to all shared resources and configured recursion limit
@@ -59,6 +72,8 @@ class AppContext:
             workflow_stack=workflow_stack or [],
             max_recursion_depth=self.max_recursion_depth,
             execution_memory=execution_memory,
+            user_id=user_id,
+            auth_method=auth_method,
         )
 
 

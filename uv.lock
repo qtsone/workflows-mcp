@@ -1268,6 +1268,7 @@ wheels = [
 name = "workflows-mcp"
 source = { editable = "." }
 dependencies = [
+    { name = "asyncpg" },
     { name = "cryptography" },
     { name = "jinja2" },
     { name = "jsonschema" },
@@ -1293,12 +1294,8 @@ dev = [
 mariadb = [
     { name = "aiomysql" },
 ]
-postgresql = [
-    { name = "asyncpg" },
-]
 sql-all = [
     { name = "aiomysql" },
-    { name = "asyncpg" },
 ]
 
 [package.dev-dependencies]
@@ -1316,8 +1313,7 @@ dev = [
 requires-dist = [
     { name = "aiomysql", marker = "extra == 'mariadb'", specifier = ">=0.2.0" },
     { name = "aiomysql", marker = "extra == 'sql-all'", specifier = ">=0.2.0" },
-    { name = "asyncpg", marker = "extra == 'postgresql'", specifier = ">=0.29.0" },
-    { name = "asyncpg", marker = "extra == 'sql-all'", specifier = ">=0.29.0" },
+    { name = "asyncpg", specifier = ">=0.31.0" },
     { name = "cryptography", specifier = ">=41.0.0" },
     { name = "jinja2", specifier = ">=3.1.0" },
     { name = "jsonschema", specifier = ">=4.0" },

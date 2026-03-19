@@ -8,6 +8,7 @@ from the server lifespan, NOT via top-level ``@mcp.tool()`` decorators.
 """
 
 import json
+import uuid
 from typing import Annotated, Any
 
 from mcp.server.fastmcp import FastMCP
@@ -25,12 +26,65 @@ def _json_response(data: dict[str, Any]) -> CallToolResult:
     )
 
 
+def _get_standalone_user_context() -> tuple[uuid.UUID | None, str | None, str]:
+    """OS/env user detection for standalone (non-platform) mode.
+
+    Priority:
+    1. WORKFLOWS_USER_ID env var (UUID or string)
+    2. WORKFLOWS_USER, MCP_USER_ID, USER, USERNAME, LOGNAME env vars
+    3. getpass.getuser()
+    4. SYSTEM fallback
+    """
+    import getpass
+    import os
+
+    from .engine.executors_knowledge import SYSTEM_USER_UUID
+
+    for env_var in ["WORKFLOWS_USER_ID", "WORKFLOWS_USER", "MCP_USER_ID", "USER", "USERNAME", "LOGNAME"]:  # noqa: E501
+        if os_user := os.environ.get(env_var):
+            os_user = os_user.strip()
+            try:
+                return (uuid.UUID(os_user), os_user, "ENV_UUID")
+            except ValueError:
+                det_uuid = uuid.uuid5(uuid.NAMESPACE_OID, f"workflows-user:{os_user}")
+                return (det_uuid, os_user, "OS_USER")
+
+    try:
+        os_user = getpass.getuser()
+        det_uuid = uuid.uuid5(uuid.NAMESPACE_OID, f"workflows-user:{os_user}")
+        return (det_uuid, os_user, "OS_USER")
+    except Exception:
+        pass
+
+    return (SYSTEM_USER_UUID, "system", "SYSTEM")
+
+
 def _create_knowledge_execution(ctx: AppContextType) -> Any:
-    """Create a minimal Execution with ExecutionContext for knowledge operations."""
+    """Create a minimal Execution with ExecutionContext for knowledge operations.
+
+    Includes user attribution from the current request context for audit trail support.
+    Supports both platform mode (via AppContext.get_user_context callback) and
+    open-source mode (OS/env-based user detection).
+    """
     from .engine.execution import Execution
 
     app_ctx = ctx.request_context.lifespan_context
-    exec_context = app_ctx.create_execution_context()
+
+    # Use platform callback if available, otherwise fall back to OS/env detection
+    if app_ctx.get_user_context:
+        user_uuid, user_string, auth_method = app_ctx.get_user_context()
+    else:
+        user_uuid, user_string, auth_method = _get_standalone_user_context()
+
+    exec_context = app_ctx.create_execution_context(
+        user_id=user_uuid,
+        auth_method=auth_method,
+    )
+
+    # Store user_string in execution context for audit metadata
+    if user_string:
+        exec_context.user_string_id = user_string
+
     execution = Execution()
     execution.set_execution_context(exec_context)
     return execution
@@ -297,6 +351,20 @@ def register_knowledge_tools(mcp_server: FastMCP) -> None:
                 default=None,
             ),
         ],
+        created_by: Annotated[
+            str | None,
+            Field(
+                description="Filter by user ID who created the proposition (UUID)",
+                default=None,
+            ),
+        ],
+        auth_method: Annotated[
+            str | None,
+            Field(
+                description="Filter by authentication method used (PAT, SSO, SYSTEM)",
+                default=None,
+            ),
+        ],
         *,
         ctx: AppContextType,
     ) -> CallToolResult:
@@ -314,8 +382,11 @@ def register_knowledge_tools(mcp_server: FastMCP) -> None:
         - min_confidence: Minimum confidence threshold
         - limit: Max results (default 10)
         - order: Sort fields (e.g. ['confidence:desc'])
+        - created_by: Filter by user ID who created the proposition (UUID)
+        - auth_method: Filter by authentication method (PAT, SSO, SYSTEM)
 
-        RETURNS: {rows: [{id, content, confidence, authority, lifecycle_state, ...}], row_count: N}
+        RETURNS: {rows: [{id, content, confidence, authority, lifecycle_state,
+        created_by, auth_method, ...}], row_count: N}
 
         SEE ALSO: search_knowledge (semantic search), forget_knowledge (archive facts)
         """
@@ -327,10 +398,14 @@ def register_knowledge_tools(mcp_server: FastMCP) -> None:
         where: dict[str, Any] = {}
         if source:
             where["source_name"] = source
-        if lifecycle_state and lifecycle_state != "ACTIVE":
+        if lifecycle_state:
             where["lifecycle_state"] = lifecycle_state
         if min_confidence is not None:
             where["min_confidence"] = min_confidence
+        if created_by:
+            where["created_by"] = created_by
+        if auth_method:
+            where["auth_method"] = auth_method
 
         inputs = KnowledgeInput(
             op="recall",

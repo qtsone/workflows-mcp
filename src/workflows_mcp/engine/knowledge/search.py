@@ -63,25 +63,21 @@ def build_vector_search_query(
     joins = []
 
     # Source filter (exact match or prefix with *)
+    # Uses the denormalized source_name column for consistent, performant queries
     if source:
+        if source.endswith("*"):
+            prefix_param = next_param(source[:-1] + "%")
+            where_clauses.append(f"kp.source_name LIKE {prefix_param}")
+        else:
+            source_param = next_param(source)
+            where_clauses.append(f"kp.source_name = {source_param}")
+
+    # Category filter - requires JOIN to knowledge_sources
+    if categories:
         joins.append(
             "JOIN knowledge_items ki ON kp.item_id = ki.id "
             "JOIN knowledge_sources ks ON ki.source_id = ks.id"
         )
-        if source.endswith("*"):
-            prefix_param = next_param(source[:-1] + "%")
-            where_clauses.append(f"ks.name LIKE {prefix_param}")
-        else:
-            source_param = next_param(source)
-            where_clauses.append(f"ks.name = {source_param}")
-
-    # Category filter
-    if categories:
-        if not joins:
-            joins.append(
-                "JOIN knowledge_items ki ON kp.item_id = ki.id "
-                "JOIN knowledge_sources ks ON ki.source_id = ks.id"
-            )
         cat_param = next_param(categories)
         where_clauses.append(f"ks.category_ids && {cat_param}::uuid[]")
 
@@ -142,24 +138,22 @@ def build_fts_search_query(
 
     joins = []
 
+    # Source filter (exact match or prefix with *)
+    # Uses the denormalized source_name column for consistent, performant queries
     if source:
+        if source.endswith("*"):
+            prefix_param = next_param(source[:-1] + "%")
+            where_clauses.append(f"kp.source_name LIKE {prefix_param}")
+        else:
+            source_param = next_param(source)
+            where_clauses.append(f"kp.source_name = {source_param}")
+
+    # Category filter - requires JOIN to knowledge_sources
+    if categories:
         joins.append(
             "JOIN knowledge_items ki ON kp.item_id = ki.id "
             "JOIN knowledge_sources ks ON ki.source_id = ks.id"
         )
-        if source.endswith("*"):
-            prefix_param = next_param(source[:-1] + "%")
-            where_clauses.append(f"ks.name LIKE {prefix_param}")
-        else:
-            source_param = next_param(source)
-            where_clauses.append(f"ks.name = {source_param}")
-
-    if categories:
-        if not joins:
-            joins.append(
-                "JOIN knowledge_items ki ON kp.item_id = ki.id "
-                "JOIN knowledge_sources ks ON ki.source_id = ks.id"
-            )
         cat_param = next_param(categories)
         where_clauses.append(f"ks.category_ids && {cat_param}::uuid[]")
 

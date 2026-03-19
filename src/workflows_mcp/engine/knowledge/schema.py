@@ -178,6 +178,93 @@ MIGRATIONS: list[tuple[int, str, str]] = [
         END $$;
         """,
     ),
+    (
+        3,
+        "Add audit trail columns and knowledge_proposition_audits table",
+        """
+        DO $$
+        BEGIN
+            -- Add created_by column to knowledge_propositions
+            IF NOT EXISTS (
+                SELECT 1 FROM information_schema.columns
+                WHERE table_name = 'knowledge_propositions' AND column_name = 'created_by'
+            ) THEN
+                ALTER TABLE knowledge_propositions ADD COLUMN created_by UUID;
+            END IF;
+
+            -- Add archived_by column to knowledge_propositions
+            IF NOT EXISTS (
+                SELECT 1 FROM information_schema.columns
+                WHERE table_name = 'knowledge_propositions' AND column_name = 'archived_by'
+            ) THEN
+                ALTER TABLE knowledge_propositions ADD COLUMN archived_by UUID;
+            END IF;
+
+            -- Add auth_method column to knowledge_propositions
+            IF NOT EXISTS (
+                SELECT 1 FROM information_schema.columns
+                WHERE table_name = 'knowledge_propositions' AND column_name = 'auth_method'
+            ) THEN
+                ALTER TABLE knowledge_propositions ADD COLUMN auth_method VARCHAR(50);
+            END IF;
+
+            -- Add archive_reason column to knowledge_propositions
+            IF NOT EXISTS (
+                SELECT 1 FROM information_schema.columns
+                WHERE table_name = 'knowledge_propositions' AND column_name = 'archive_reason'
+            ) THEN
+                ALTER TABLE knowledge_propositions ADD COLUMN archive_reason VARCHAR(100);
+            END IF;
+        END $$;
+
+        -- Create knowledge_proposition_audits table
+        CREATE TABLE IF NOT EXISTS knowledge_proposition_audits (
+            id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+            proposition_id UUID NOT NULL REFERENCES knowledge_propositions(id) ON DELETE CASCADE,
+            action VARCHAR(50) NOT NULL,
+            performed_by UUID NOT NULL,
+            auth_method VARCHAR(50),
+            performed_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+            metadata JSONB DEFAULT '{}'::jsonb
+        );
+
+        -- Create indexes for audit columns
+        CREATE INDEX IF NOT EXISTS idx_kp_created_by ON knowledge_propositions(created_by);
+        CREATE INDEX IF NOT EXISTS idx_kp_archived_by ON knowledge_propositions(archived_by);
+        CREATE INDEX IF NOT EXISTS idx_knowledge_proposition_audits_proposition_id ON knowledge_proposition_audits(proposition_id);
+        CREATE INDEX IF NOT EXISTS idx_knowledge_proposition_audits_performed_by ON knowledge_proposition_audits(performed_by);
+        CREATE INDEX IF NOT EXISTS idx_knowledge_proposition_audits_performed_at ON knowledge_proposition_audits(performed_at);
+        """,
+    ),
+    (
+        4,
+        "Add source columns to knowledge_propositions for query optimization",
+        """
+        DO $$
+        BEGIN
+            -- Add source_name column for direct source filtering
+            IF NOT EXISTS (
+                SELECT 1 FROM information_schema.columns
+                WHERE table_name = 'knowledge_propositions' AND column_name = 'source_name'
+            ) THEN
+                ALTER TABLE knowledge_propositions ADD COLUMN source_name VARCHAR(500);
+            END IF;
+
+            -- Add source_type column for efficient categorization
+            IF NOT EXISTS (
+                SELECT 1 FROM information_schema.columns
+                WHERE table_name = 'knowledge_propositions' AND column_name = 'source_type'
+            ) THEN
+                ALTER TABLE knowledge_propositions ADD COLUMN source_type VARCHAR(50) DEFAULT 'DOCUMENT';
+            END IF;
+        END $$;
+
+        -- Create indexes for query optimization
+        CREATE INDEX IF NOT EXISTS idx_kp_source_name ON knowledge_propositions(source_name);
+        CREATE INDEX IF NOT EXISTS idx_kp_source_type ON knowledge_propositions(source_type);
+        CREATE INDEX IF NOT EXISTS idx_kp_source_name_lifecycle ON knowledge_propositions(source_name, lifecycle_state);
+        """,
+    ),
 ]
 
 SCHEMA_VERSION = MIGRATIONS[-1][0] if MIGRATIONS else 0

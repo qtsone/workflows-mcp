@@ -40,6 +40,48 @@ from .knowledge.search import (
 
 logger = logging.getLogger(__name__)
 
+# SECURITY: System user UUID for audit trail when no user context is available
+# (e.g., localhost bypass operations, SYSTEM auth)
+SYSTEM_USER_UUID = uuid.UUID("00000000-0000-0000-0000-000000000001")
+
+# SECURITY: Audit fail-closed configuration
+# When true, audit logging failures cause operations to fail (compliance mode)
+# When false (default for backward compatibility), audit failures are logged but operations continue
+AUDIT_FAIL_CLOSED = os.getenv("AUDIT_FAIL_CLOSED", "false").lower() == "true"
+
+
+# ===========================================================================
+# Audit Trail Helpers
+# ===========================================================================
+
+
+def _get_audit_user_id(context: Execution) -> uuid.UUID:
+    """Extract user_id from execution context for audit trail."""
+    exec_ctx = context.execution_context
+    if exec_ctx and exec_ctx.user_id:
+        return exec_ctx.user_id
+    return SYSTEM_USER_UUID
+
+
+def _get_user_string_id(context: Execution) -> str | None:
+    """Extract human-readable user identifier for audit metadata."""
+    exec_ctx = context.execution_context
+    if exec_ctx:
+        # Prefer user_string_id for OS users, fallback to UUID string
+        if exec_ctx.user_string_id:
+            return exec_ctx.user_string_id
+        if exec_ctx.user_id:
+            return str(exec_ctx.user_id)
+    return None
+
+
+def _get_auth_method(context: Execution) -> str:
+    """Extract auth_method from execution context."""
+    exec_ctx = context.execution_context
+    if exec_ctx and exec_ctx.auth_method:
+        return exec_ctx.auth_method
+    return "SYSTEM"
+
 
 # ===========================================================================
 # Input / Output Models
@@ -508,6 +550,8 @@ class KnowledgeExecutor(BlockExecutor):
           created because there is no backing document.
         - Source AND path:         upsert knowledge_sources + knowledge_items rows, then
           store proposition linked to that item for full provenance tracking.
+
+        SECURITY: Records created_by and auth_method for audit trail.
         """
         assert inputs.content is not None
 
@@ -527,9 +571,13 @@ class KnowledgeExecutor(BlockExecutor):
 
         item_id: str | None = None
         prop_metadata: dict[str, str] = {}
+        source_name: str | None = None
+        source_type: str = "DOCUMENT"
 
         if inputs.source and inputs.path:
             # Full provenance: upsert source + item, link proposition
+            source_name = inputs.source
+            source_type = "DOCUMENT"
             source_result = await backend.query(
                 """
                 INSERT INTO knowledge_sources
@@ -564,25 +612,37 @@ class KnowledgeExecutor(BlockExecutor):
                     item_id = str(item_result.rows[0]["id"])
 
         elif inputs.source:
-            # Source without path: record source name in metadata for provenance only;
+            # Source without path: record source name for provenance only;
             # do NOT create knowledge_sources or knowledge_items rows.
+            source_name = inputs.source
+            source_type = "TOOL"
             prop_metadata = {"source": inputs.source}
 
-        # Build metadata JSON string
+        # SECURITY: Get user attribution for audit trail
+        # Always populate created_by/auth_method - fallback to SYSTEM when no user context available
+        created_by = _get_audit_user_id(context)
+        auth_method = _get_auth_method(context)
+        user_string = _get_user_string_id(context)
+
+        # Build metadata JSON string with auth info
+        if auth_method and isinstance(auth_method, str):
+            prop_metadata["auth_method"] = auth_method
         metadata_json = json.dumps(prop_metadata)
 
-        # Insert proposition with server-side tsvector computation
+        # Insert proposition with server-side tsvector computation and audit trail
         await backend.execute(
             """
             INSERT INTO knowledge_propositions
                 (id, item_id, content, embedding, search_vector,
                  authority, lifecycle_state, confidence,
-                 embedding_model, embedding_dimensions, metadata)
+                 embedding_model, embedding_dimensions, metadata,
+                 created_by, auth_method, source_name, source_type)
             VALUES
                 ($1::uuid, $2::uuid, $3, $4::vector,
                  to_tsvector('english', $3),
                  $5, $6, $7,
-                 $8, $9, $10::jsonb)
+                 $8, $9, $10::jsonb,
+                 $11::uuid, $12, $13, $14)
             """,
             (
                 prop_id,
@@ -590,12 +650,27 @@ class KnowledgeExecutor(BlockExecutor):
                 inputs.content,
                 str(embedding),
                 "AGENT",
-                LifecycleState.ACTIVE,
+                LifecycleState.ACTIVE.value,
                 inputs.confidence,
                 model_name,
                 dimensions,
                 metadata_json,
+                str(created_by),
+                auth_method,
+                source_name,
+                source_type,
             ),
+        )
+
+        # SECURITY: Log to audit table
+        await self._log_audit_entry(
+            backend=backend,
+            proposition_id=prop_id,
+            action="CREATED",
+            performed_by=created_by,
+            auth_method=auth_method,
+            user_string=user_string,
+            metadata={"source": inputs.source, "path": inputs.path},
         )
 
         return KnowledgeOutput(
@@ -604,6 +679,56 @@ class KnowledgeExecutor(BlockExecutor):
             stored_count=1,
         )
 
+    async def _log_audit_entry(
+        self,
+        backend: Any,
+        proposition_id: str,
+        action: str,
+        performed_by: uuid.UUID,
+        auth_method: str,
+        user_string: str | None = None,
+        metadata: dict[str, Any] | None = None,
+    ) -> None:
+        """Log an audit entry for a proposition lifecycle event.
+
+        SECURITY: Records all significant changes for compliance auditing.
+        """
+        # Include user_string in metadata for human-readable audit trail
+        metadata_with_user = metadata or {}
+        if user_string:
+            metadata_with_user["user_identifier"] = user_string
+
+        try:
+            await backend.execute(
+                """
+                INSERT INTO knowledge_proposition_audits
+                    (proposition_id, action, performed_by, auth_method, metadata)
+                VALUES
+                    ($1::uuid, $2, $3::uuid, $4, $5::jsonb)
+                """,
+                (
+                    proposition_id,
+                    action,
+                    str(performed_by),
+                    auth_method,
+                    json.dumps(metadata_with_user),
+                ),
+            )
+        except Exception as e:
+            # SECURITY: Audit logging failure handling
+            # When AUDIT_FAIL_CLOSED=true, operation fails (compliance mode)
+            # When AUDIT_FAIL_CLOSED=false (default), log error but continue
+            logger.error(
+                f"CRITICAL: Failed to log audit entry for proposition {proposition_id}: {e}",
+                extra={
+                    "event": "knowledge.audit.failure",
+                    "proposition_id": proposition_id,
+                    "action": action,
+                },
+            )
+            if AUDIT_FAIL_CLOSED:
+                raise RuntimeError(f"Audit logging failed: {e}") from e
+
     async def _build_where_clause(
         self, inputs: KnowledgeInput, backend: Any
     ) -> tuple[str, str, list[Any]]:
@@ -611,6 +736,10 @@ class KnowledgeExecutor(BlockExecutor):
 
         Resolves category names to UUIDs if needed.
         Returns (where_clause, join_clause, params).
+
+        Source filtering uses the denormalized source_name column for consistent,
+        performant queries across both document-derived and agent observation
+        propositions.
         """
         params: list[Any] = []
         param_idx = 0
@@ -624,31 +753,53 @@ class KnowledgeExecutor(BlockExecutor):
         where_clauses: list[str] = []
         needs_join = False
 
-        if inputs.where:
-            if "source_name" in inputs.where:
-                needs_join = True
-                source_val = inputs.where["source_name"]
-                if isinstance(source_val, str) and source_val.endswith("*"):
-                    prefix_param = next_param(source_val[:-1] + "%")
-                    where_clauses.append(f"ks.name LIKE {prefix_param}")
-                else:
-                    where_clauses.append(f"ks.name = {next_param(source_val)}")
-            if "lifecycle_state" in inputs.where:
-                state = inputs.where["lifecycle_state"].upper()
-                where_clauses.append(f"kp.lifecycle_state = {next_param(state)}")
-            if "category" in inputs.where:
-                needs_join = True
-                cat_value = inputs.where["category"]
-                # Resolve name to UUID if needed
-                resolved = await self._resolve_categories([cat_value], backend)
-                cat_uuid = resolved[0] if resolved else cat_value
-                where_clauses.append(f"ks.category_ids && ARRAY[{next_param(cat_uuid)}]::uuid[]")
-            if "min_confidence" in inputs.where:
-                where_clauses.append(
-                    f"kp.confidence >= {next_param(float(inputs.where['min_confidence']))}"
-                )
+        # Handle source filter (top-level inputs.source or where.source_name)
+        source_filter = None
+        if inputs.source:
+            source_filter = inputs.source
+        elif inputs.where and "source_name" in inputs.where:
+            source_filter = inputs.where["source_name"]
+
+        if source_filter:
+            if isinstance(source_filter, str) and source_filter.endswith("*"):
+                prefix_param = next_param(source_filter[:-1] + "%")
+                # Use source_name column directly (denormalized for performance)
+                where_clauses.append(f"kp.source_name LIKE {prefix_param}")
+            else:
+                source_param = next_param(source_filter)
+                # Use source_name column directly (denormalized for performance)
+                where_clauses.append(f"kp.source_name = {source_param}")
+
+        # Handle category filter (requires JOIN to knowledge_sources)
+        if inputs.where and "category" in inputs.where:
+            needs_join = True
+            cat_value = inputs.where["category"]
+            # Resolve name to UUID if needed
+            resolved = await self._resolve_categories([cat_value], backend)
+            cat_uuid = resolved[0] if resolved else cat_value
+            where_clauses.append(f"ks.category_ids && ARRAY[{next_param(cat_uuid)}]::uuid[]")
+
+        # Handle lifecycle_state filter
+        if inputs.where and "lifecycle_state" in inputs.where:
+            state = inputs.where["lifecycle_state"].upper()
+            where_clauses.append(f"kp.lifecycle_state = {next_param(state)}")
         else:
+            # Always apply default lifecycle_state when not explicitly set in where
             where_clauses.append(f"kp.lifecycle_state = {next_param(inputs.lifecycle_state)}")
+
+        # Handle min_confidence filter
+        if inputs.where and "min_confidence" in inputs.where:
+            where_clauses.append(
+                f"kp.confidence >= {next_param(float(inputs.where['min_confidence']))}"
+            )
+
+        # Handle created_by filter
+        if inputs.where and "created_by" in inputs.where:
+            where_clauses.append(f"kp.created_by = {next_param(inputs.where['created_by'])}::uuid")
+
+        # Handle auth_method filter
+        if inputs.where and "auth_method" in inputs.where:
+            where_clauses.append(f"kp.auth_method = {next_param(inputs.where['auth_method'])}")
 
         # Date range filters (top-level fields, usable with or without where)
         if inputs.created_after:
@@ -676,7 +827,10 @@ class KnowledgeExecutor(BlockExecutor):
         context: Execution,
         backend: Any,
     ) -> KnowledgeOutput:
-        """Recall propositions by filter conditions."""
+        """Recall propositions by filter conditions.
+
+        SECURITY: Supports filtering by created_by and returns user attribution.
+        """
         limit = int(inputs.limit) if isinstance(inputs.limit, str) else inputs.limit
 
         where_sql, join_clause, params = await self._build_where_clause(inputs, backend)
@@ -697,6 +851,7 @@ class KnowledgeExecutor(BlockExecutor):
                     "confidence",
                     "retrieval_count",
                     "created_at",
+                    "updated_at",
                 }
                 if field in safe_fields:
                     order_parts.append(f"kp.{field} {direction}")
@@ -708,10 +863,12 @@ class KnowledgeExecutor(BlockExecutor):
         params.append(limit)
         limit_param = f"${param_idx}"
 
+        # SECURITY: Include created_by and auth_method in SELECT
         sql = f"""
             SELECT kp.id, kp.content, kp.confidence, kp.authority,
                    kp.lifecycle_state, kp.relevance_score, kp.retrieval_count,
-                   ki_ip.path AS item_path
+                   ki_ip.path AS item_path,
+                   kp.created_by, kp.auth_method
             FROM knowledge_propositions kp
             LEFT JOIN knowledge_items ki_ip ON kp.item_id = ki_ip.id
             {join_clause}
@@ -731,6 +888,8 @@ class KnowledgeExecutor(BlockExecutor):
                 "relevance_score": row.get("relevance_score"),
                 "retrieval_count": row.get("retrieval_count"),
                 "item_path": row.get("item_path"),
+                "created_by": str(row.get("created_by")) if row.get("created_by") else None,
+                "auth_method": row.get("auth_method"),
             }
             for row in result.rows
         ]
@@ -744,6 +903,8 @@ class KnowledgeExecutor(BlockExecutor):
             "relevance_score",
             "retrieval_count",
             "item_path",
+            "created_by",
+            "auth_method",
         ]
         return KnowledgeOutput(
             success=True,
@@ -758,7 +919,17 @@ class KnowledgeExecutor(BlockExecutor):
         context: Execution,
         backend: Any,
     ) -> KnowledgeOutput:
-        """Transition propositions to ARCHIVED state by IDs or filter."""
+        """Transition propositions to ARCHIVED state by IDs or filter.
+
+        SECURITY: Records archived_by and logs to audit table.
+        """
+        # Get user attribution for audit trail
+        archived_by = _get_audit_user_id(context)
+        auth_method = _get_auth_method(context)
+        user_string = _get_user_string_id(context)
+
+        # SECURITY: Archive reason - keep clean, archived_by stored in separate column
+        archive_reason = inputs.reason or "user_action"
 
         # Path 1: Archive by explicit IDs
         if inputs.proposition_ids:
@@ -772,16 +943,37 @@ class KnowledgeExecutor(BlockExecutor):
                 return KnowledgeOutput(success=True, archived_count=0, skipped_count=0)
 
             placeholders = ", ".join(f"${i + 1}::uuid" for i in range(len(ids)))
-            result = await backend.execute(
-                f"UPDATE knowledge_propositions "
-                f"SET lifecycle_state = '{LifecycleState.ARCHIVED}' "
-                f"WHERE id IN ({placeholders}) "
-                f"  AND authority != 'USER_VALIDATED'",
-                tuple(ids),
+            # SECURITY: Update with archived_by and archive_reason
+            update_sql = f"""
+                UPDATE knowledge_propositions
+                SET lifecycle_state = '{LifecycleState.ARCHIVED.value}',
+                    archived_by = ${len(ids) + 1}::uuid,
+                    archive_reason = ${len(ids) + 2}
+                WHERE id IN ({placeholders})
+                  AND authority != 'USER_VALIDATED'
+                RETURNING id
+            """
+            result = await backend.query(
+                update_sql,
+                tuple(ids) + (str(archived_by) if archived_by else None, archive_reason),
             )
 
-            archived = result.affected_rows if result else 0
+            archived = len(result.rows) if result and result.rows else 0
             skipped = len(ids) - archived
+
+            # SECURITY: Log to audit table for each archived proposition
+            if archived > 0:
+                archived_ids = [row["id"] for row in result.rows]
+                for prop_id in archived_ids:
+                    await self._log_audit_entry(
+                        backend=backend,
+                        proposition_id=prop_id,
+                        action="ARCHIVED",
+                        performed_by=archived_by,
+                        auth_method=auth_method,
+                        user_string=user_string,
+                        metadata={"reason": inputs.reason, "method": "explicit_ids"},
+                    )
 
             return KnowledgeOutput(
                 success=True,
@@ -804,27 +996,51 @@ class KnowledgeExecutor(BlockExecutor):
         # Archive with USER_VALIDATED immunity
         # Use subquery to handle JOIN-based filters in UPDATE
         if join_clause:
+            param_offset = len(params)
             update_sql = f"""
                 UPDATE knowledge_propositions
-                SET lifecycle_state = '{LifecycleState.ARCHIVED}'
+                SET lifecycle_state = '{LifecycleState.ARCHIVED.value}',
+                    archived_by = ${param_offset + 1}::uuid,
+                    archive_reason = ${param_offset + 2}
                 WHERE id IN (
                     SELECT kp.id FROM knowledge_propositions kp
                     {join_clause}
                     WHERE {where_sql}
                 )
                 AND authority != 'USER_VALIDATED'
+                RETURNING id
             """
+            params.extend([str(archived_by) if archived_by else None, archive_reason])
         else:
+            param_offset = len(params)
             update_sql = f"""
                 UPDATE knowledge_propositions kp
-                SET lifecycle_state = '{LifecycleState.ARCHIVED}'
+                SET lifecycle_state = '{LifecycleState.ARCHIVED.value}',
+                    archived_by = ${param_offset + 1}::uuid,
+                    archive_reason = ${param_offset + 2}
                 WHERE {where_sql}
                   AND authority != 'USER_VALIDATED'
+                RETURNING id
             """
+            params.extend([str(archived_by) if archived_by else None, archive_reason])
 
-        result = await backend.execute(update_sql, tuple(params))
-        archived = result.affected_rows if result else 0
+        result = await backend.query(update_sql, tuple(params))
+        archived = len(result.rows) if result and result.rows else 0
         skipped = total - archived
+
+        # SECURITY: Log to audit table for each archived proposition
+        if archived > 0:
+            archived_ids = [row["id"] for row in result.rows]
+            for prop_id in archived_ids:
+                await self._log_audit_entry(
+                    backend=backend,
+                    proposition_id=prop_id,
+                    action="ARCHIVED",
+                    performed_by=archived_by,
+                    auth_method=auth_method,
+                    user_string=user_string,
+                    metadata={"reason": inputs.reason, "method": "filter"},
+                )
 
         return KnowledgeOutput(
             success=True,

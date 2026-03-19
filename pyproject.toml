@@ -33,6 +33,7 @@ dependencies = [
     "sqlite-vec>=0.1.6",
     "pyjwt[crypto]>=2.8.0",
     "cryptography>=41.0.0",
+    "asyncpg>=0.31.0",
 ]
 [project.urls]
 Homepage = "https://github.com/qtsone/workflows-mcp"
@@ -49,9 +50,9 @@ dev = [
     "mypy>=1.8",
     "ruff>=0.1.0",
 ]
-postgresql = ["asyncpg>=0.29.0"]
+postgresql = []  # asyncpg moved to main dependencies
 mariadb = ["aiomysql>=0.2.0"]
-sql-all = ["asyncpg>=0.29.0", "aiomysql>=0.2.0"]
+sql-all = ["aiomysql>=0.2.0"]  # asyncpg moved to main dependencies
 
 [build-system]
 requires = ["hatchling>=1.26", "uv-dynamic-versioning"]
