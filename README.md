@@ -570,8 +570,7 @@ Set connection details once using environment variables in your MCP server confi
         "KNOWLEDGE_DB_PORT": "5432",
         "KNOWLEDGE_DB_NAME": "knowledge_db",
         "KNOWLEDGE_DB_USER": "postgres",
-        "KNOWLEDGE_DB_PASSWORD": "your_password",
-        "KNOWLEDGE_ORG_ID": "your-org-uuid"
+        "KNOWLEDGE_DB_PASSWORD": "your_password"
       }
     }
   }
@@ -873,7 +872,6 @@ Configure the server behavior with these environment variables:
 | `KNOWLEDGE_DB_NAME` | Knowledge DB database name | `knowledge_db` | Valid DB name |
 | `KNOWLEDGE_DB_USER` | Knowledge DB username | *(none)* | Any string |
 | `KNOWLEDGE_DB_PASSWORD` | Knowledge DB password | *(none)* | Any string |
-| `KNOWLEDGE_ORG_ID` | Organization ID for knowledge scoping | *(none)* | UUID string |
 
 ### Example Configuration
 

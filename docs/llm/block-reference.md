@@ -692,7 +692,6 @@ Without this, execution fails with configuration error.
 - **`database`** (string): PostgreSQL database name (env: KNOWLEDGE_DB_NAME)
 - **`username`** (any): PostgreSQL username (env: KNOWLEDGE_DB_USER)
 - **`password`** (any): PostgreSQL password (env: KNOWLEDGE_DB_PASSWORD)
-- **`org_id`** (any): Organization ID for scoping queries (env: KNOWLEDGE_ORG_ID)
 - **`query`** (any): Search query text (required for search/context)
 - **`source`** (any): Filter by source name (exact or prefix with *)
 - **`categories`** (any): Filter by category UUIDs

@@ -1990,18 +1990,6 @@
                       "description": "PostgreSQL password (env: KNOWLEDGE_DB_PASSWORD)",
                       "title": "Password"
                     },
-                    "org_id": {
-                      "anyOf": [
-                        {
-                          "type": "string"
-                        },
-                        {
-                          "type": "null"
-                        }
-                      ],
-                      "description": "Organization ID for scoping queries (env: KNOWLEDGE_ORG_ID)",
-                      "title": "Org Id"
-                    },
                     "query": {
                       "anyOf": [
                         {
@@ -3943,7 +3931,7 @@
     },
     "KnowledgeInput": {
       "additionalProperties": false,
-      "description": "Input schema for Knowledge block.\n\nSupports five operations: search, store, recall, forget, context.\n\nConnection config resolves with priority: YAML inputs > env vars > defaults.\nSet KNOWLEDGE_DB_* environment variables once in your MCP server config\nto avoid repeating connection details in every workflow.\n\nEnvironment variables:\n    KNOWLEDGE_DB_HOST: PostgreSQL host (default: localhost)\n    KNOWLEDGE_DB_PORT: PostgreSQL port (default: 5432)\n    KNOWLEDGE_DB_NAME: Database name (default: knowledge_db)\n    KNOWLEDGE_DB_USER: Username\n    KNOWLEDGE_DB_PASSWORD: Password\n    KNOWLEDGE_ORG_ID: Organization ID for multi-tenant scoping\n\nExamples:\n    ```yaml\n    - id: find_patterns\n      type: Knowledge\n      inputs:\n        op: search\n        query: \"deployment patterns for web services\"\n        source: \"internal-docs\"\n        limit: 10\n    ```",
+      "description": "Input schema for Knowledge block.\n\nSupports five operations: search, store, recall, forget, context.\n\nConnection config resolves with priority: YAML inputs > env vars > defaults.\nSet KNOWLEDGE_DB_* environment variables once in your MCP server config\nto avoid repeating connection details in every workflow.\n\nEnvironment variables:\n    KNOWLEDGE_DB_HOST: PostgreSQL host (default: localhost)\n    KNOWLEDGE_DB_PORT: PostgreSQL port (default: 5432)\n    KNOWLEDGE_DB_NAME: Database name (default: knowledge_db)\n    KNOWLEDGE_DB_USER: Username\n    KNOWLEDGE_DB_PASSWORD: Password\n\nExamples:\n    ```yaml\n    - id: find_patterns\n      type: Knowledge\n      inputs:\n        op: search\n        query: \"deployment patterns for web services\"\n        source: \"internal-docs\"\n        limit: 10\n    ```",
       "properties": {
         "op": {
           "description": "Operation to perform",
@@ -4002,18 +3990,6 @@
           ],
           "description": "PostgreSQL password (env: KNOWLEDGE_DB_PASSWORD)",
           "title": "Password"
-        },
-        "org_id": {
-          "anyOf": [
-            {
-              "type": "string"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "description": "Organization ID for scoping queries (env: KNOWLEDGE_ORG_ID)",
-          "title": "Org Id"
         },
         "query": {
           "anyOf": [

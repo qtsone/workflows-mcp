@@ -635,7 +635,6 @@ def create_default_registry() -> ExecutorRegistry:
     from .executors_http import HttpCallExecutor
     from .executors_image import ImageGenExecutor
     from .executors_interactive import PromptExecutor
-    from .executors_knowledge import KnowledgeExecutor
     from .executors_llm import EmbeddingExecutor, LLMCallExecutor
     from .executors_sql import SqlExecutor
     from .executors_state import (
@@ -677,7 +676,7 @@ def create_default_registry() -> ExecutorRegistry:
     # Register SQL executor
     registry.register(SqlExecutor())
 
-    # Register Knowledge executor
-    registry.register(KnowledgeExecutor())
+    # Note: KnowledgeExecutor is registered conditionally at server startup
+    # only when a knowledge database is configured (KNOWLEDGE_DB_HOST)
 
     return registry

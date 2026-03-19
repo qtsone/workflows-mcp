@@ -9,6 +9,7 @@ Pattern reference: executors_sql.py (SqlExecutor)
 
 from __future__ import annotations
 
+import json
 import logging
 import os
 import uuid
@@ -31,7 +32,6 @@ from .knowledge.constants import (
     LifecycleState,
 )
 from .knowledge.context import assemble_context
-from .knowledge.schema import get_init_schema_sql
 from .knowledge.search import (
     build_fts_search_query,
     build_vector_search_query,
@@ -61,7 +61,6 @@ class KnowledgeInput(BlockInput):
         KNOWLEDGE_DB_NAME: Database name (default: knowledge_db)
         KNOWLEDGE_DB_USER: Username
         KNOWLEDGE_DB_PASSWORD: Password
-        KNOWLEDGE_ORG_ID: Organization ID for multi-tenant scoping
 
     Examples:
         ```yaml
@@ -99,10 +98,6 @@ class KnowledgeInput(BlockInput):
     password: str | None = Field(
         default_factory=lambda: os.environ.get("KNOWLEDGE_DB_PASSWORD"),
         description="PostgreSQL password (env: KNOWLEDGE_DB_PASSWORD)",
-    )
-    org_id: str | None = Field(
-        default_factory=lambda: os.environ.get("KNOWLEDGE_ORG_ID"),
-        description="Organization ID for scoping queries (env: KNOWLEDGE_ORG_ID)",
     )
 
     # --- Search / Context fields ---
@@ -150,6 +145,15 @@ class KnowledgeInput(BlockInput):
         default=0.5,
         description="Confidence score for stored proposition",
     )
+    path: str | None = Field(
+        default=None,
+        description=(
+            "File path or identifier within the source "
+            "(e.g. 'docs/architecture.md'). When provided alongside 'source', "
+            "creates a provenance link to the source document. "
+            "Required for document-derived propositions; omit for agent observations."
+        ),
+    )
 
     # --- Recall fields ---
     where: dict[str, Any] | None = Field(
@@ -194,6 +198,8 @@ class KnowledgeInput(BlockInput):
             raise ValueError("'content' is required for op='store'")
         if self.op == "forget" and not self.proposition_ids and not self.where:
             raise ValueError("'proposition_ids' or 'where' is required for op='forget'")
+        if self.path is not None and not self.source:
+            raise ValueError("'source' is required when 'path' is provided")
         return self
 
 
@@ -257,7 +263,7 @@ class KnowledgeExecutor(BlockExecutor):
 
         Environment variables (set once in MCP server config):
             KNOWLEDGE_DB_HOST, KNOWLEDGE_DB_PORT, KNOWLEDGE_DB_NAME,
-            KNOWLEDGE_DB_USER, KNOWLEDGE_DB_PASSWORD, KNOWLEDGE_ORG_ID
+            KNOWLEDGE_DB_USER, KNOWLEDGE_DB_PASSWORD
 
         YAML inputs (override env vars per-block):
             ```yaml
@@ -303,9 +309,6 @@ class KnowledgeExecutor(BlockExecutor):
 
         try:
             await backend.connect(config)
-
-            # Auto-create schema on first use
-            await backend.execute_script(get_init_schema_sql())
 
             # Route to operation handler
             op_handlers = {
@@ -357,14 +360,13 @@ class KnowledgeExecutor(BlockExecutor):
     async def _resolve_categories(
         self,
         categories: list[str],
-        org_id: str,
         backend: Any,
     ) -> list[str]:
         """Resolve category names or UUIDs to a list of UUID strings.
 
         For each entry in categories:
         - If it's a valid UUID, use as-is.
-        - Otherwise, look up by (org_id, entity_type='category', name) in
+        - Otherwise, look up by (entity_type='category', name) in
           knowledge_entities. Auto-create the entity if missing.
         """
         resolved: list[str] = []
@@ -380,13 +382,13 @@ class KnowledgeExecutor(BlockExecutor):
             # Name-based resolution: upsert into knowledge_entities
             result = await backend.query(
                 """
-                INSERT INTO knowledge_entities (id, org_id, entity_type, name)
-                VALUES ($1::uuid, $2::uuid, 'category', $3)
-                ON CONFLICT (org_id, entity_type, name) DO UPDATE
+                INSERT INTO knowledge_entities (id, entity_type, name)
+                VALUES ($1::uuid, 'category', $2)
+                ON CONFLICT (entity_type, name) DO UPDATE
                     SET name = EXCLUDED.name
                 RETURNING id
                 """,
-                (str(uuid.uuid4()), org_id, entry),
+                (str(uuid.uuid4()), entry),
             )
             if result.rows:
                 resolved.append(str(result.rows[0]["id"]))
@@ -409,12 +411,11 @@ class KnowledgeExecutor(BlockExecutor):
         assert inputs.query is not None
 
         limit = int(inputs.limit) if isinstance(inputs.limit, str) else inputs.limit
-        org_id = inputs.org_id or str(uuid.UUID(int=0))
 
         # Resolve category names to UUIDs if provided
         resolved_categories = None
         if inputs.categories:
-            resolved_categories = await self._resolve_categories(inputs.categories, org_id, backend)
+            resolved_categories = await self._resolve_categories(inputs.categories, backend)
 
         # Compute query embedding
         embedding, _, _, _ = await compute_embedding(
@@ -425,7 +426,6 @@ class KnowledgeExecutor(BlockExecutor):
 
         # Vector search
         vector_sql, vector_params = build_vector_search_query(
-            org_id=org_id,
             query_embedding=embedding,
             source=inputs.source,
             categories=resolved_categories,
@@ -438,7 +438,6 @@ class KnowledgeExecutor(BlockExecutor):
 
         # FTS search
         fts_sql, fts_params = build_fts_search_query(
-            org_id=org_id,
             query_text=inputs.query,
             source=inputs.source,
             categories=resolved_categories,
@@ -473,10 +472,19 @@ class KnowledgeExecutor(BlockExecutor):
                     "authority": row.get("authority"),
                     "relevance_score": row.get("relevance_score"),
                     "rrf_score": row.get("rrf_score"),
+                    "item_path": row.get("item_path"),
                 }
             )
 
-        columns = ["id", "content", "confidence", "authority", "relevance_score", "rrf_score"]
+        columns = [
+            "id",
+            "content",
+            "confidence",
+            "authority",
+            "relevance_score",
+            "rrf_score",
+            "item_path",
+        ]
         return KnowledgeOutput(
             success=True,
             rows=output_rows,
@@ -490,16 +498,25 @@ class KnowledgeExecutor(BlockExecutor):
         context: Execution,
         backend: Any,
     ) -> KnowledgeOutput:
-        """Store a proposition with auto-computed embedding."""
+        """Store a proposition with auto-computed embedding.
+
+        Three modes based on (source, path) combination:
+
+        - Neither source nor path: store proposition with item_id=NULL, empty metadata.
+        - Source only (no path):   store proposition with item_id=NULL, source recorded
+          in metadata for provenance. No knowledge_sources or knowledge_items rows are
+          created because there is no backing document.
+        - Source AND path:         upsert knowledge_sources + knowledge_items rows, then
+          store proposition linked to that item for full provenance tracking.
+        """
         assert inputs.content is not None
 
-        org_id = inputs.org_id or str(uuid.UUID(int=0))
         prop_id = str(uuid.uuid4())
 
         # Resolve category names to UUIDs if provided
         category_ids: list[str] = []
         if inputs.categories:
-            category_ids = await self._resolve_categories(inputs.categories, org_id, backend)
+            category_ids = await self._resolve_categories(inputs.categories, backend)
 
         # Compute embedding for the content
         embedding, model_name, dimensions, _ = await compute_embedding(
@@ -508,16 +525,17 @@ class KnowledgeExecutor(BlockExecutor):
             profile=inputs.embedding_profile,
         )
 
-        # Find or create source if specified
         item_id: str | None = None
-        if inputs.source:
-            # Upsert source with category_ids, using unique (org_id, name)
+        prop_metadata: dict[str, str] = {}
+
+        if inputs.source and inputs.path:
+            # Full provenance: upsert source + item, link proposition
             source_result = await backend.query(
                 """
                 INSERT INTO knowledge_sources
-                    (id, org_id, name, source_type, category_ids)
-                VALUES ($1::uuid, $2::uuid, $3, 'WORKFLOW', $4::uuid[])
-                ON CONFLICT (org_id, name) DO UPDATE SET
+                    (id, name, source_type, category_ids)
+                VALUES ($1::uuid, $2, 'WORKFLOW', $3::uuid[])
+                ON CONFLICT (name) DO UPDATE SET
                     category_ids = CASE
                         WHEN EXCLUDED.category_ids != '{}'
                             THEN EXCLUDED.category_ids
@@ -526,41 +544,48 @@ class KnowledgeExecutor(BlockExecutor):
                     updated_at = NOW()
                 RETURNING id
                 """,
-                (str(uuid.uuid4()), org_id, inputs.source, category_ids),
+                (str(uuid.uuid4()), inputs.source, category_ids),
             )
             if source_result.rows:
                 actual_source_id = str(source_result.rows[0]["id"])
-                # Create an item for this store operation
-                item_id = str(uuid.uuid4())
-                await backend.execute(
+                item_title = os.path.basename(inputs.path) or inputs.path
+                item_result = await backend.query(
                     """
-                    INSERT INTO knowledge_items (id, org_id, source_id, title)
-                    VALUES ($1::uuid, $2::uuid, $3::uuid, $4)
+                    INSERT INTO knowledge_items (id, source_id, path, title)
+                    VALUES ($1::uuid, $2::uuid, $3, $4)
+                    ON CONFLICT (source_id, path) DO UPDATE SET
+                        title = EXCLUDED.title,
+                        updated_at = NOW()
+                    RETURNING id
                     """,
-                    (
-                        item_id,
-                        org_id,
-                        actual_source_id,
-                        f"workflow-store-{prop_id[:8]}",
-                    ),
+                    (str(uuid.uuid4()), actual_source_id, inputs.path, item_title),
                 )
+                if item_result.rows:
+                    item_id = str(item_result.rows[0]["id"])
+
+        elif inputs.source:
+            # Source without path: record source name in metadata for provenance only;
+            # do NOT create knowledge_sources or knowledge_items rows.
+            prop_metadata = {"source": inputs.source}
+
+        # Build metadata JSON string
+        metadata_json = json.dumps(prop_metadata)
 
         # Insert proposition with server-side tsvector computation
         await backend.execute(
             """
             INSERT INTO knowledge_propositions
-                (id, org_id, item_id, content, embedding, search_vector,
+                (id, item_id, content, embedding, search_vector,
                  authority, lifecycle_state, confidence,
-                 embedding_model, embedding_dimensions, metadata_)
+                 embedding_model, embedding_dimensions, metadata)
             VALUES
-                ($1::uuid, $2::uuid, $3::uuid, $4, $5::vector,
-                 to_tsvector('english', $4),
-                 $6, $7, $8,
-                 $9, $10, $11::jsonb)
+                ($1::uuid, $2::uuid, $3, $4::vector,
+                 to_tsvector('english', $3),
+                 $5, $6, $7,
+                 $8, $9, $10::jsonb)
             """,
             (
                 prop_id,
-                org_id,
                 item_id,
                 inputs.content,
                 str(embedding),
@@ -569,7 +594,7 @@ class KnowledgeExecutor(BlockExecutor):
                 inputs.confidence,
                 model_name,
                 dimensions,
-                "{}",
+                metadata_json,
             ),
         )
 
@@ -580,7 +605,7 @@ class KnowledgeExecutor(BlockExecutor):
         )
 
     async def _build_where_clause(
-        self, inputs: KnowledgeInput, org_id: str, backend: Any
+        self, inputs: KnowledgeInput, backend: Any
     ) -> tuple[str, str, list[Any]]:
         """Build WHERE and JOIN clauses from recall/forget filters.
 
@@ -596,7 +621,7 @@ class KnowledgeExecutor(BlockExecutor):
             params.append(value)
             return f"${param_idx}"
 
-        where_clauses = [f"kp.org_id = {next_param(org_id)}::uuid"]
+        where_clauses: list[str] = []
         needs_join = False
 
         if inputs.where:
@@ -615,7 +640,7 @@ class KnowledgeExecutor(BlockExecutor):
                 needs_join = True
                 cat_value = inputs.where["category"]
                 # Resolve name to UUID if needed
-                resolved = await self._resolve_categories([cat_value], org_id, backend)
+                resolved = await self._resolve_categories([cat_value], backend)
                 cat_uuid = resolved[0] if resolved else cat_value
                 where_clauses.append(f"ks.category_ids && ARRAY[{next_param(cat_uuid)}]::uuid[]")
             if "min_confidence" in inputs.where:
@@ -642,7 +667,7 @@ class KnowledgeExecutor(BlockExecutor):
             else ""
         )
 
-        where_sql = " AND ".join(where_clauses)
+        where_sql = " AND ".join(where_clauses) if where_clauses else "TRUE"
         return where_sql, join_clause, params
 
     async def _op_recall(
@@ -652,10 +677,9 @@ class KnowledgeExecutor(BlockExecutor):
         backend: Any,
     ) -> KnowledgeOutput:
         """Recall propositions by filter conditions."""
-        org_id = inputs.org_id or str(uuid.UUID(int=0))
         limit = int(inputs.limit) if isinstance(inputs.limit, str) else inputs.limit
 
-        where_sql, join_clause, params = await self._build_where_clause(inputs, org_id, backend)
+        where_sql, join_clause, params = await self._build_where_clause(inputs, backend)
 
         # Order clause
         order_clause = "ORDER BY kp.created_at DESC"
@@ -687,8 +711,10 @@ class KnowledgeExecutor(BlockExecutor):
 
         sql = f"""
             SELECT kp.id, kp.content, kp.confidence, kp.authority,
-                   kp.lifecycle_state, kp.relevance_score, kp.retrieval_count
+                   kp.lifecycle_state, kp.relevance_score, kp.retrieval_count,
+                   ki.path AS item_path
             FROM knowledge_propositions kp
+            LEFT JOIN knowledge_items ki ON kp.item_id = ki.id
             {join_clause}
             WHERE {where_sql}
             {order_clause}
@@ -705,6 +731,7 @@ class KnowledgeExecutor(BlockExecutor):
                 "lifecycle_state": row.get("lifecycle_state"),
                 "relevance_score": row.get("relevance_score"),
                 "retrieval_count": row.get("retrieval_count"),
+                "item_path": row.get("item_path"),
             }
             for row in result.rows
         ]
@@ -717,6 +744,7 @@ class KnowledgeExecutor(BlockExecutor):
             "lifecycle_state",
             "relevance_score",
             "retrieval_count",
+            "item_path",
         ]
         return KnowledgeOutput(
             success=True,
@@ -732,7 +760,6 @@ class KnowledgeExecutor(BlockExecutor):
         backend: Any,
     ) -> KnowledgeOutput:
         """Transition propositions to ARCHIVED state by IDs or filter."""
-        org_id = inputs.org_id or str(uuid.UUID(int=0))
 
         # Path 1: Archive by explicit IDs
         if inputs.proposition_ids:
@@ -765,7 +792,7 @@ class KnowledgeExecutor(BlockExecutor):
             )
 
         # Path 2: Archive by filter
-        where_sql, join_clause, params = await self._build_where_clause(inputs, org_id, backend)
+        where_sql, join_clause, params = await self._build_where_clause(inputs, backend)
 
         # Count total matching (for skipped_count calculation)
         count_sql = f"""

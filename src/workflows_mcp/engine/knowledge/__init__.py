@@ -6,7 +6,7 @@ and context assembly for the Knowledge executor.
 
 from .constants import Authority, LifecycleState
 from .context import assemble_context
-from .schema import get_init_schema_sql
+from .schema import ensure_schema
 from .search import build_fts_search_query, build_vector_search_query, rrf_fusion
 
 __all__ = [
@@ -15,6 +15,6 @@ __all__ = [
     "assemble_context",
     "build_fts_search_query",
     "build_vector_search_query",
-    "get_init_schema_sql",
+    "ensure_schema",
     "rrf_fusion",
 ]

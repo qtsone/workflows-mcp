@@ -3,6 +3,10 @@
 Tests validate input construction, response formatting, and error handling
 for all 5 knowledge MCP tools. KnowledgeExecutor.execute is mocked —
 no real PostgreSQL needed.
+
+Knowledge tools are conditionally registered at server startup via
+``register_knowledge_tools(mcp_server)``. For testing, we register them
+once at module load and retrieve function references from the server.
 """
 
 from __future__ import annotations
@@ -13,16 +17,33 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from workflows_mcp.engine.executors_knowledge import KnowledgeInput, KnowledgeOutput
-from workflows_mcp.tools import (
-    forget_knowledge,
-    knowledge_context,
-    recall_knowledge,
-    search_knowledge,
-    store_knowledge,
-)
+from workflows_mcp.server import mcp as _mcp_server
+from workflows_mcp.tools_knowledge import register_knowledge_tools
+
+# Register knowledge tools on the MCP server for testing.
+# This simulates what app_lifespan does when a knowledge DB is available.
+# Idempotent: if tools are already registered, re-registration overwrites.
+register_knowledge_tools(_mcp_server)
 
 # Patch target: the source module (local imports inside tool functions)
 _EXECUTOR_CLS = "workflows_mcp.engine.executors_knowledge.KnowledgeExecutor"
+
+
+def _get_tool_fn(name: str) -> Any:
+    """Get a registered tool function from the MCP server by name."""
+    tool_manager = _mcp_server._tool_manager
+    tool = tool_manager._tools.get(name)
+    if tool is None:
+        raise ValueError(f"Tool {name!r} not registered")
+    return tool.fn
+
+
+# Grab references to tool functions for direct invocation in tests
+search_knowledge = _get_tool_fn("search_knowledge")
+store_knowledge = _get_tool_fn("store_knowledge")
+recall_knowledge = _get_tool_fn("recall_knowledge")
+forget_knowledge = _get_tool_fn("forget_knowledge")
+knowledge_context = _get_tool_fn("knowledge_context")
 
 
 # ============================================================================
@@ -184,6 +205,7 @@ class TestStoreKnowledge:
             result = await store_knowledge(
                 content="Redis pooling reduces latency by 40%",
                 source="perf-tests",
+                path=None,
                 confidence=0.85,
                 categories=None,
                 ctx=mock_ctx,
@@ -204,6 +226,7 @@ class TestStoreKnowledge:
             await store_knowledge(
                 content="some fact",
                 source=None,
+                path=None,
                 confidence=0.8,
                 categories=None,
                 ctx=mock_ctx,
@@ -223,6 +246,7 @@ class TestStoreKnowledge:
             result = await store_knowledge(
                 content="test fact",
                 source=None,
+                path=None,
                 confidence=0.8,
                 categories=None,
                 ctx=mock_ctx,
@@ -231,6 +255,75 @@ class TestStoreKnowledge:
         content = result.content[0].text  # type: ignore[union-attr]
         assert "failure" in content
         assert "Embedding API error" in content
+
+    @pytest.mark.asyncio
+    async def test_path_passed_to_input(self, mock_ctx: MagicMock) -> None:
+        """path parameter is forwarded to KnowledgeInput."""
+        with patch(_EXECUTOR_CLS) as mock_cls:
+            mock_cls.return_value.execute = AsyncMock(return_value=_make_store_output())
+
+            await store_knowledge(
+                content="file-derived fact",
+                source="my-docs",
+                path="docs/architecture.md",
+                confidence=0.9,
+                categories=None,
+                ctx=mock_ctx,
+            )
+
+        inputs: KnowledgeInput = mock_cls.return_value.execute.call_args[0][0]
+        assert inputs.path == "docs/architecture.md"
+        assert inputs.source == "my-docs"
+
+    @pytest.mark.asyncio
+    async def test_path_none_by_default(self, mock_ctx: MagicMock) -> None:
+        """path defaults to None when not provided."""
+        with patch(_EXECUTOR_CLS) as mock_cls:
+            mock_cls.return_value.execute = AsyncMock(return_value=_make_store_output())
+
+            await store_knowledge(
+                content="agent observation",
+                source=None,
+                path=None,
+                confidence=0.8,
+                categories=None,
+                ctx=mock_ctx,
+            )
+
+        inputs: KnowledgeInput = mock_cls.return_value.execute.call_args[0][0]
+        assert inputs.path is None
+
+    @pytest.mark.asyncio
+    async def test_search_result_includes_item_path_column(self, mock_ctx: MagicMock) -> None:
+        """search_knowledge response rows should include item_path field."""
+        search_out = _make_search_output(
+            rows=[
+                {
+                    "id": "uuid-1",
+                    "content": "a fact from a file",
+                    "confidence": 0.9,
+                    "item_path": "docs/design.md",
+                }
+            ],
+            columns=["id", "content", "confidence", "item_path"],
+        )
+        with patch(_EXECUTOR_CLS) as mock_cls:
+            mock_cls.return_value.execute = AsyncMock(return_value=search_out)
+
+            result = await search_knowledge(
+                query="design",
+                source=None,
+                categories=None,
+                min_confidence=0.3,
+                limit=10,
+                ctx=mock_ctx,
+            )
+
+        import json as _j
+
+        data = _j.loads(result.content[0].text)  # type: ignore[union-attr]
+        assert "item_path" in data["columns"]
+        assert data["rows"][0]["item_path"] == "docs/design.md"
 
 
 # ============================================================================
@@ -410,48 +503,38 @@ class TestToolAnnotations:
 
     def test_search_is_read_only(self) -> None:
         """search_knowledge should be annotated as read-only."""
-        from workflows_mcp.server import mcp as server
-
-        tool = self._find_tool(server, "search_knowledge")
+        tool = self._find_tool("search_knowledge")
         assert tool is not None
         assert tool.annotations.readOnlyHint is True
         assert tool.annotations.destructiveHint is False
 
     def test_store_is_not_read_only(self) -> None:
         """store_knowledge should NOT be annotated as read-only."""
-        from workflows_mcp.server import mcp as server
-
-        tool = self._find_tool(server, "store_knowledge")
+        tool = self._find_tool("store_knowledge")
         assert tool is not None
         assert tool.annotations.readOnlyHint is False
         assert tool.annotations.destructiveHint is False
 
     def test_forget_is_destructive(self) -> None:
         """forget_knowledge should be annotated as destructive."""
-        from workflows_mcp.server import mcp as server
-
-        tool = self._find_tool(server, "forget_knowledge")
+        tool = self._find_tool("forget_knowledge")
         assert tool is not None
         assert tool.annotations.destructiveHint is True
 
     def test_recall_is_read_only(self) -> None:
         """recall_knowledge should be annotated as read-only."""
-        from workflows_mcp.server import mcp as server
-
-        tool = self._find_tool(server, "recall_knowledge")
+        tool = self._find_tool("recall_knowledge")
         assert tool is not None
         assert tool.annotations.readOnlyHint is True
 
     def test_context_is_read_only(self) -> None:
         """knowledge_context should be annotated as read-only."""
-        from workflows_mcp.server import mcp as server
-
-        tool = self._find_tool(server, "knowledge_context")
+        tool = self._find_tool("knowledge_context")
         assert tool is not None
         assert tool.annotations.readOnlyHint is True
 
     @staticmethod
-    def _find_tool(server: Any, name: str) -> Any:
+    def _find_tool(name: str) -> Any:
         """Find a tool by name in the FastMCP server."""
-        tool_manager = server._tool_manager
+        tool_manager = _mcp_server._tool_manager
         return tool_manager._tools.get(name)

@@ -58,6 +58,12 @@ CONFIGURATION_REQUIREMENTS: dict[str, dict[str, Any]] = {
 def extract_schemas() -> dict[str, dict[str, Any]]:
     """Extract schemas and metadata from all registered executors."""
     registry = create_default_registry()
+
+    # Add KnowledgeExecutor — conditionally loaded at runtime but always in docs
+    from workflows_mcp.engine.executors_knowledge import KnowledgeExecutor
+
+    registry.register(KnowledgeExecutor())
+
     result = {}
 
     for type_name in registry.list_types():

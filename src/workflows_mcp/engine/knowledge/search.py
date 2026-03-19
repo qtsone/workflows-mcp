@@ -23,7 +23,6 @@ logger = logging.getLogger(__name__)
 
 
 def build_vector_search_query(
-    org_id: str,
     query_embedding: list[float],
     *,
     source: str | None = None,
@@ -49,7 +48,6 @@ def build_vector_search_query(
 
     # Core query: cosine distance via <=> operator
     embedding_param = next_param(str(query_embedding))
-    org_param = next_param(org_id)
     state_param = next_param(lifecycle_state)
     confidence_param = next_param(min_confidence)
 
@@ -58,7 +56,6 @@ def build_vector_search_query(
     candidate_param = next_param(candidate_limit)
 
     where_clauses = [
-        f"kp.org_id = {org_param}::uuid",
         f"kp.lifecycle_state = {state_param}",
         f"kp.confidence >= {confidence_param}",
     ]
@@ -94,8 +91,10 @@ def build_vector_search_query(
     sql = f"""
         SELECT kp.id, kp.content, kp.confidence, kp.authority,
                kp.relevance_score, kp.retrieval_count,
-               1 - (kp.embedding <=> {embedding_param}::vector) AS similarity
+               1 - (kp.embedding <=> {embedding_param}::vector) AS similarity,
+               ki_path.path AS item_path
         FROM knowledge_propositions kp
+        LEFT JOIN knowledge_items ki_path ON kp.item_id = ki_path.id
         {join_clause}
         WHERE {where_clause}
           AND kp.embedding IS NOT NULL
@@ -107,7 +106,6 @@ def build_vector_search_query(
 
 
 def build_fts_search_query(
-    org_id: str,
     query_text: str,
     *,
     source: str | None = None,
@@ -130,7 +128,6 @@ def build_fts_search_query(
         params.append(value)
         return f"${param_idx}"
 
-    org_param = next_param(org_id)
     query_param = next_param(query_text)
     state_param = next_param(lifecycle_state)
     confidence_param = next_param(min_confidence)
@@ -138,7 +135,6 @@ def build_fts_search_query(
     candidate_param = next_param(candidate_limit)
 
     where_clauses = [
-        f"kp.org_id = {org_param}::uuid",
         f"kp.search_vector @@ plainto_tsquery('english', {query_param})",
         f"kp.lifecycle_state = {state_param}",
         f"kp.confidence >= {confidence_param}",
@@ -173,8 +169,10 @@ def build_fts_search_query(
     sql = f"""
         SELECT kp.id, kp.content, kp.confidence, kp.authority,
                kp.relevance_score, kp.retrieval_count,
-               ts_rank(kp.search_vector, plainto_tsquery('english', {query_param})) AS fts_rank
+               ts_rank(kp.search_vector, plainto_tsquery('english', {query_param})) AS fts_rank,
+               ki_path.path AS item_path
         FROM knowledge_propositions kp
+        LEFT JOIN knowledge_items ki_path ON kp.item_id = ki_path.id
         {join_clause}
         WHERE {where_clause}
         ORDER BY fts_rank DESC

@@ -261,6 +261,47 @@ async def app_lifespan(_server: FastMCP) -> AsyncIterator[AppContext]:
     else:
         logger.info("Job queue disabled")
 
+    # Initialize knowledge features if knowledge DB is configured
+    knowledge_db_host = os.getenv("KNOWLEDGE_DB_HOST")
+    if knowledge_db_host:
+        try:
+            from .engine.knowledge.schema import ensure_schema
+            from .engine.sql.backend import ConnectionConfig, DatabaseEngine
+            from .engine.sql.postgres_backend import PostgresBackend
+
+            backend = PostgresBackend()
+            await backend.connect(
+                ConnectionConfig(
+                    dialect=DatabaseEngine.POSTGRESQL,
+                    host=knowledge_db_host,
+                    port=int(os.getenv("KNOWLEDGE_DB_PORT", "5432")),
+                    database=os.getenv(
+                        "KNOWLEDGE_DB_NAME", "knowledge_db"
+                    ),
+                    username=os.getenv("KNOWLEDGE_DB_USER"),
+                    password=os.getenv("KNOWLEDGE_DB_PASSWORD"),
+                )
+            )
+            try:
+                await ensure_schema(backend)
+            finally:
+                await backend.disconnect()
+
+            # Schema OK — register executor and tools
+            from .engine.executors_knowledge import KnowledgeExecutor
+            from .tools_knowledge import register_knowledge_tools
+
+            executor_registry.register(KnowledgeExecutor())
+            register_knowledge_tools(mcp)
+            logger.info("Knowledge features enabled (DB ready)")
+        except Exception:
+            logger.warning(
+                "Knowledge features disabled (DB unreachable)",
+                exc_info=True,
+            )
+    else:
+        logger.info("Knowledge features disabled (KNOWLEDGE_DB_HOST not set)")
+
     try:
         # Make resources available to tools via AppContext
         yield app_context
