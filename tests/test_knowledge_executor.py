@@ -778,6 +778,22 @@ class TestForgetOperation:
         assert inp.where is not None
         assert inp.created_before == "2025-01-01"
 
+    def test_forget_update_sql_does_not_contain_updated_at(self) -> None:
+        """The forget UPDATE statements must NOT reference updated_at.
+
+        Some deployments omit updated_at from knowledge_propositions;
+        unconditionally setting it causes 'column does not exist' errors.
+        The only mutation needed is setting lifecycle_state = ARCHIVED.
+        """
+        import inspect
+
+        from workflows_mcp.engine.executors_knowledge import KnowledgeExecutor
+
+        source = inspect.getsource(KnowledgeExecutor._op_forget)
+        assert "updated_at" not in source, (
+            "_op_forget must not reference updated_at — not all schemas have that column"
+        )
+
 
 # ============================================================================
 # Recall Operation Tests
@@ -836,6 +852,22 @@ class TestRecallOperation:
         inp = KnowledgeInput(op="recall")
         assert inp.created_after is None
         assert inp.created_before is None
+
+    def test_recall_safe_fields_does_not_include_updated_at(self) -> None:
+        """updated_at must not be in the ORDER BY allowlist for _op_recall.
+
+        Not all deployments include updated_at in knowledge_propositions.
+        Allowing it silently generates broken SQL when the column is absent.
+        """
+        import inspect
+
+        from workflows_mcp.engine.executors_knowledge import KnowledgeExecutor
+
+        source = inspect.getsource(KnowledgeExecutor._op_recall)
+        # Locate the safe_fields set literal — we verify updated_at is absent
+        assert '"updated_at"' not in source and "'updated_at'" not in source, (
+            "_op_recall safe_fields must not include updated_at — not all schemas have that column"
+        )
 
 
 # ============================================================================

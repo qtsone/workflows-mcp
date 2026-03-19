@@ -697,7 +697,6 @@ class KnowledgeExecutor(BlockExecutor):
                     "confidence",
                     "retrieval_count",
                     "created_at",
-                    "updated_at",
                 }
                 if field in safe_fields:
                     order_parts.append(f"kp.{field} {direction}")
@@ -775,8 +774,7 @@ class KnowledgeExecutor(BlockExecutor):
             placeholders = ", ".join(f"${i + 1}::uuid" for i in range(len(ids)))
             result = await backend.execute(
                 f"UPDATE knowledge_propositions "
-                f"SET lifecycle_state = '{LifecycleState.ARCHIVED}', "
-                f"    updated_at = NOW() "
+                f"SET lifecycle_state = '{LifecycleState.ARCHIVED}' "
                 f"WHERE id IN ({placeholders}) "
                 f"  AND authority != 'USER_VALIDATED'",
                 tuple(ids),
@@ -808,8 +806,7 @@ class KnowledgeExecutor(BlockExecutor):
         if join_clause:
             update_sql = f"""
                 UPDATE knowledge_propositions
-                SET lifecycle_state = '{LifecycleState.ARCHIVED}',
-                    updated_at = NOW()
+                SET lifecycle_state = '{LifecycleState.ARCHIVED}'
                 WHERE id IN (
                     SELECT kp.id FROM knowledge_propositions kp
                     {join_clause}
@@ -820,8 +817,7 @@ class KnowledgeExecutor(BlockExecutor):
         else:
             update_sql = f"""
                 UPDATE knowledge_propositions kp
-                SET lifecycle_state = '{LifecycleState.ARCHIVED}',
-                    updated_at = NOW()
+                SET lifecycle_state = '{LifecycleState.ARCHIVED}'
                 WHERE {where_sql}
                   AND authority != 'USER_VALIDATED'
             """
