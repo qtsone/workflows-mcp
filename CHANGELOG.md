@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file.
 
+## [9.12.1](https://github.com/qtsone/workflows-mcp/compare/v9.12.0...v9.12.1) (2026-03-19)
+
+
+### Bug Fixes
+
+* **knowledge:** fix metadata column name, add path field, surface item_path in results ([bed9a46](https://github.com/qtsone/workflows-mcp/commit/bed9a466a4490c14a9160dc5bd64e7e0d55bd789))
+
 # [9.12.0](https://github.com/qtsone/workflows-mcp/compare/v9.11.0...v9.12.0) (2026-03-13)
 
 
