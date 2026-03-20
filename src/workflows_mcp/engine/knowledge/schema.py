@@ -255,7 +255,7 @@ MIGRATIONS: list[tuple[int, str, str]] = [
                 SELECT 1 FROM information_schema.columns
                 WHERE table_name = 'knowledge_propositions' AND column_name = 'source_type'
             ) THEN
-                ALTER TABLE knowledge_propositions ADD COLUMN source_type VARCHAR(50) DEFAULT 'DOCUMENT';
+                ALTER TABLE knowledge_propositions ADD COLUMN source_type VARCHAR(50) DEFAULT NULL;
             END IF;
         END $$;
 
@@ -315,6 +315,24 @@ MIGRATIONS: list[tuple[int, str, str]] = [
                     BEFORE UPDATE ON knowledge_propositions
                     FOR EACH ROW EXECUTE FUNCTION update_updated_at();
             END IF;
+        END $$;
+        """,
+    ),
+    (
+        7,
+        "Clarify knowledge_propositions.source_type semantics: drop misleading default, null-out stale values",
+        """
+        DO $$
+        BEGIN
+            -- Drop the misleading DEFAULT 'DOCUMENT' — source_type must be set explicitly by callers.
+            -- NULL means "origin unknown" (rows inserted before this was tracked correctly).
+            ALTER TABLE knowledge_propositions
+                ALTER COLUMN source_type DROP DEFAULT;
+
+            -- Null out the old heuristic values (DOCUMENT/TOOL were derived from source/path
+            -- presence, not from actual ingestion origin — they are semantically meaningless).
+            UPDATE knowledge_propositions SET source_type = NULL
+                WHERE source_type IN ('DOCUMENT', 'TOOL');
         END $$;
         """,
     ),
