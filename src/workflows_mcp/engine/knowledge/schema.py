@@ -265,6 +265,16 @@ MIGRATIONS: list[tuple[int, str, str]] = [
         CREATE INDEX IF NOT EXISTS idx_kp_source_name_lifecycle ON knowledge_propositions(source_name, lifecycle_state);
         """,
     ),
+    (
+        5,
+        "Add HNSW index on knowledge_propositions.embedding for ANN vector search",
+        """
+        CREATE INDEX IF NOT EXISTS idx_kp_embedding
+            ON knowledge_propositions
+            USING hnsw (embedding vector_cosine_ops)
+            WITH (m = 16, ef_construction = 64);
+        """,
+    ),
 ]
 
 SCHEMA_VERSION = MIGRATIONS[-1][0] if MIGRATIONS else 0
