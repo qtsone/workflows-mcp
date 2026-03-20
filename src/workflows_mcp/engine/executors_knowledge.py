@@ -852,18 +852,26 @@ class KnowledgeExecutor(BlockExecutor):
 
         # Category filter — EXISTS subquery on junction table.
         # Works for agent observations (item_id IS NULL) and document propositions alike.
-        if inputs.where and "category" in inputs.where:
-            cat_value = inputs.where["category"]
-            resolved = await self._resolve_categories([cat_value], backend)
-            cat_uuid = resolved[0] if resolved else cat_value
-            cat_param = next_param(cat_uuid)
-            where_clauses.append(
-                f"EXISTS ("
-                f"  SELECT 1 FROM knowledge_proposition_categories kpc"
-                f"  WHERE kpc.proposition_id = kp.id"
-                f"    AND kpc.category_id = {cat_param}::uuid"
-                f")"
-            )
+        # Priority: inputs.categories (top-level list) > where["categories"] (list) > where["category"] (single)
+        raw_cats: list[str] = []
+        if inputs.categories:
+            raw_cats = inputs.categories
+        elif inputs.where and "categories" in inputs.where:
+            raw_cats = list(inputs.where["categories"])
+        elif inputs.where and "category" in inputs.where:
+            raw_cats = [inputs.where["category"]]
+
+        if raw_cats:
+            resolved_cats = await self._resolve_categories(raw_cats, backend)
+            if resolved_cats:
+                cat_param = next_param(resolved_cats)
+                where_clauses.append(
+                    f"EXISTS ("
+                    f"  SELECT 1 FROM knowledge_proposition_categories kpc"
+                    f"  WHERE kpc.proposition_id = kp.id"
+                    f"    AND kpc.category_id = ANY({cat_param}::uuid[])"
+                    f")"
+                )
 
         # Handle lifecycle_state filter
         if inputs.where and "lifecycle_state" in inputs.where:

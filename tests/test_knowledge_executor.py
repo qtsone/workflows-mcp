@@ -843,9 +843,11 @@ class TestRecallFilters:
         backend.query = AsyncMock(return_value=query_result)
 
         where, params = await executor._build_where_clause(inputs, backend)
-        assert resolved_uuid in params
+        # params[0] is the resolved UUID list (passed as ::uuid[] for ANY())
+        assert params[0] == [resolved_uuid]
         assert "EXISTS" in where
         assert "knowledge_proposition_categories" in where
+        assert "ANY" in where
 
 
 # ============================================================================
