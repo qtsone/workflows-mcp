@@ -174,7 +174,7 @@ class KnowledgeInput(BlockInput):
         description="Token budget for context assembly",
     )
     diversity: bool = Field(
-        default=False,
+        default=True,
         description="Use MMR for diversity in context results",
     )
 

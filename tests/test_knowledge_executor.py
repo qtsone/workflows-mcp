@@ -539,7 +539,7 @@ class TestKnowledgeInputValidation:
         inp = KnowledgeInput(op="context", query="deployment patterns", max_tokens=2000)
         assert inp.op == "context"
         assert inp.max_tokens == 2000
-        assert inp.diversity is False
+        assert inp.diversity is True
 
     def test_default_lifecycle_state(self) -> None:
         """Default lifecycle state should be ACTIVE."""

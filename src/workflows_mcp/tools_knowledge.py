@@ -40,7 +40,14 @@ def _get_standalone_user_context() -> tuple[uuid.UUID | None, str | None, str]:
 
     from .engine.executors_knowledge import SYSTEM_USER_UUID
 
-    for env_var in ["WORKFLOWS_USER_ID", "WORKFLOWS_USER", "MCP_USER_ID", "USER", "USERNAME", "LOGNAME"]:  # noqa: E501
+    for env_var in [
+        "WORKFLOWS_USER_ID",
+        "WORKFLOWS_USER",
+        "MCP_USER_ID",
+        "USER",
+        "USERNAME",
+        "LOGNAME",
+    ]:  # noqa: E501
         if os_user := os.environ.get(env_var):
             os_user = os_user.strip()
             try:
@@ -530,7 +537,7 @@ def register_knowledge_tools(mcp_server: FastMCP) -> None:
             bool,
             Field(
                 description="Use MMR to spread results across different entities/sources",
-                default=False,
+                default=True,
             ),
         ],
         *,
