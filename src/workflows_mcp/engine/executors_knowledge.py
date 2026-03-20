@@ -187,6 +187,14 @@ class KnowledgeInput(BlockInput):
         default=0.5,
         description="Confidence score for stored proposition",
     )
+    source_type: str = Field(
+        default="WORKFLOW",
+        description=(
+            "Origin of this proposition: 'WORKFLOW' (Knowledge block in a YAML workflow), "
+            "'TOOL' (MCP store_knowledge call), 'DOCUMENT' (platform document ingestion), "
+            "'GITHUB_REPO' (platform GitHub ingestion), 'SUMMARY' (community summary)."
+        ),
+    )
     path: str | None = Field(
         default=None,
         description=(
@@ -572,12 +580,11 @@ class KnowledgeExecutor(BlockExecutor):
         item_id: str | None = None
         prop_metadata: dict[str, str] = {}
         source_name: str | None = None
-        source_type: str = "DOCUMENT"
+        source_type: str = inputs.source_type
 
         if inputs.source and inputs.path:
             # Full provenance: upsert source + item, link proposition
             source_name = inputs.source
-            source_type = "DOCUMENT"
             source_result = await backend.query(
                 """
                 INSERT INTO knowledge_sources
@@ -615,7 +622,6 @@ class KnowledgeExecutor(BlockExecutor):
             # Source without path: record source name for provenance only;
             # do NOT create knowledge_sources or knowledge_items rows.
             source_name = inputs.source
-            source_type = "TOOL"
             prop_metadata = {"source": inputs.source}
 
         # SECURITY: Get user attribution for audit trail

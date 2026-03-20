@@ -283,6 +283,7 @@ def register_knowledge_tools(mcp_server: FastMCP) -> None:
             path=path,
             confidence=confidence,
             categories=categories,
+            source_type="TOOL",
         )
         result = await executor.execute(inputs, context=execution)
 
