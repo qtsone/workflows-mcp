@@ -269,10 +269,19 @@ MIGRATIONS: list[tuple[int, str, str]] = [
         5,
         "Add HNSW index on knowledge_propositions.embedding for ANN vector search",
         """
-        CREATE INDEX IF NOT EXISTS idx_kp_embedding
-            ON knowledge_propositions
-            USING hnsw (embedding vector_cosine_ops)
-            WITH (m = 16, ef_construction = 64);
+        DO $$
+        BEGIN
+            -- HNSW indexes require the column to have fixed dimensions.
+            -- Newer pgvector (≥0.6) rejects dimensionless vector columns.
+            -- Wrap in exception so a dimensionless column degrades to sequential
+            -- scan rather than blocking server startup entirely.
+            CREATE INDEX IF NOT EXISTS idx_kp_embedding
+                ON knowledge_propositions
+                USING hnsw (embedding vector_cosine_ops)
+                WITH (m = 16, ef_construction = 64);
+        EXCEPTION WHEN others THEN
+            RAISE WARNING 'HNSW index on embedding skipped (column may lack fixed dimensions): %', SQLERRM;
+        END $$;
         """,
     ),
     (
