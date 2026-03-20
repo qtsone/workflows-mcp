@@ -627,6 +627,8 @@ class KnowledgeExecutor(BlockExecutor):
         # Build metadata JSON string with auth info
         if auth_method and isinstance(auth_method, str):
             prop_metadata["auth_method"] = auth_method
+        if user_string:
+            prop_metadata["user_identifier"] = user_string
         metadata_json = json.dumps(prop_metadata)
 
         # Insert proposition with server-side tsvector computation and audit trail
