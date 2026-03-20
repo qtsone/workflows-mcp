@@ -29,6 +29,7 @@ from .knowledge.constants import (
     DEFAULT_LIMIT,
     DEFAULT_MAX_TOKENS,
     DEFAULT_MIN_CONFIDENCE,
+    Authority,
     LifecycleState,
 )
 from .knowledge.context import assemble_context
@@ -186,6 +187,23 @@ class KnowledgeInput(BlockInput):
     confidence: float = Field(
         default=0.5,
         description="Confidence score for stored proposition",
+    )
+    authority: str = Field(
+        default=Authority.AGENT,
+        description=(
+            "Authority level for this proposition. Common values: EXTRACTED (document-derived), "
+            "AGENT (AI-generated), COMMUNITY_SUMMARY (aggregated insight), "
+            "USER_VALIDATED (human-reviewed, immune to archiving). "
+            "DB migration is the enforcement boundary."
+        ),
+    )
+    store_lifecycle_state: str = Field(
+        default=LifecycleState.ACTIVE,
+        description=(
+            "Initial lifecycle state for stored propositions. "
+            "Use QUARANTINED for uncertain facts pending review. "
+            "Values: ACTIVE, QUARANTINED. (ARCHIVED/FLAGGED are set by system operations.)"
+        ),
     )
     source_type: str = Field(
         default="WORKFLOW",
@@ -657,8 +675,8 @@ class KnowledgeExecutor(BlockExecutor):
                 item_id,
                 inputs.content,
                 str(embedding),
-                "AGENT",
-                LifecycleState.ACTIVE.value,
+                inputs.authority,
+                inputs.store_lifecycle_state,
                 inputs.confidence,
                 model_name,
                 dimensions,
@@ -958,7 +976,7 @@ class KnowledgeExecutor(BlockExecutor):
                     archived_by = ${len(ids) + 1}::uuid,
                     archive_reason = ${len(ids) + 2}
                 WHERE id IN ({placeholders})
-                  AND authority != 'USER_VALIDATED'
+                  AND authority != '{Authority.USER_VALIDATED}'
                 RETURNING id
             """
             result = await backend.query(
@@ -1015,7 +1033,7 @@ class KnowledgeExecutor(BlockExecutor):
                     {join_clause}
                     WHERE {where_sql}
                 )
-                AND authority != 'USER_VALIDATED'
+                AND authority != '{Authority.USER_VALIDATED}'
                 RETURNING id
             """
             params.extend([str(archived_by) if archived_by else None, archive_reason])
@@ -1027,7 +1045,7 @@ class KnowledgeExecutor(BlockExecutor):
                     archived_by = ${param_offset + 1}::uuid,
                     archive_reason = ${param_offset + 2}
                 WHERE {where_sql}
-                  AND authority != 'USER_VALIDATED'
+                  AND authority != '{Authority.USER_VALIDATED}'
                 RETURNING id
             """
             params.extend([str(archived_by) if archived_by else None, archive_reason])

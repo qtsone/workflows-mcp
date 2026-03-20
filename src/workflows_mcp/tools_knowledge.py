@@ -249,6 +249,29 @@ def register_knowledge_tools(mcp_server: FastMCP) -> None:
                 default=None,
             ),
         ],
+        authority: Annotated[
+            str,
+            Field(
+                description=(
+                    "Authority level for this fact. "
+                    "EXTRACTED: derived from a document or source file. "
+                    "AGENT: inferred by an AI agent (default). "
+                    "COMMUNITY_SUMMARY: aggregated or summarized insight. "
+                    "USER_VALIDATED: human-reviewed, immune to archiving."
+                ),
+                default="AGENT",
+            ),
+        ],
+        lifecycle_state: Annotated[
+            str,
+            Field(
+                description=(
+                    "Initial lifecycle state. ACTIVE (default): immediately searchable. "
+                    "QUARANTINED: stored but excluded from search, pending review."
+                ),
+                default="ACTIVE",
+            ),
+        ],
         *,
         ctx: AppContextType,
     ) -> CallToolResult:
@@ -267,6 +290,10 @@ def register_knowledge_tools(mcp_server: FastMCP) -> None:
           Omit for agent observations not tied to a specific file.
         - confidence: How confident you are in this fact (default 0.8)
         - categories: Optional category UUIDs
+        - authority: Who vouches for this fact (default AGENT). Use EXTRACTED for
+          document-derived facts, USER_VALIDATED to grant archive immunity.
+        - lifecycle_state: Initial state (default ACTIVE). Use QUARANTINED for
+          uncertain facts pending human review.
 
         RETURNS: {proposition_ids: [uuid], stored_count: 1}
 
@@ -284,6 +311,8 @@ def register_knowledge_tools(mcp_server: FastMCP) -> None:
             confidence=confidence,
             categories=categories,
             source_type="TOOL",
+            authority=authority,
+            store_lifecycle_state=lifecycle_state,
         )
         result = await executor.execute(inputs, context=execution)
 
