@@ -602,26 +602,21 @@ class KnowledgeExecutor(BlockExecutor):
 
         if inputs.source and inputs.path:
             # Full provenance: upsert source + item, link proposition.
-            # RETURNING also surfaces the pre-update category_ids so we can propagate
-            # any re-categorization to existing INHERITED junction rows.
+            # Per-proposition categories are EXPLICIT and go to the junction table only.
+            # We never write per-proposition categories back to source.category_ids —
+            # that column is a bulk-ingestion template managed by KnowledgeAdmin, not
+            # by individual store operations. Passing [] leaves category_ids unchanged.
             source_name = inputs.source
             source_result = await backend.query(
                 """
                 INSERT INTO knowledge_sources
                     (id, name, source_type, category_ids)
-                VALUES ($1::uuid, $2, 'WORKFLOW', $3::uuid[])
+                VALUES ($1::uuid, $2, 'WORKFLOW', '{}'::uuid[])
                 ON CONFLICT (name) DO UPDATE SET
-                    category_ids = CASE
-                        WHEN EXCLUDED.category_ids != '{}'
-                            THEN EXCLUDED.category_ids
-                        ELSE knowledge_sources.category_ids
-                    END,
                     updated_at = NOW()
-                RETURNING id,
-                    (SELECT category_ids FROM knowledge_sources
-                     WHERE name = $2) AS old_category_ids
+                RETURNING id
                 """,
-                (str(uuid.uuid4()), inputs.source, category_ids),
+                (str(uuid.uuid4()), inputs.source),
             )
             if source_result.rows:
                 actual_source_id = str(source_result.rows[0]["id"])
@@ -704,42 +699,6 @@ class KnowledgeExecutor(BlockExecutor):
                     """,
                     (prop_id, cat_id),
                 )
-
-        # Propagate source re-categorization to existing INHERITED junction rows.
-        # Only runs when the source UPSERT actually changed category_ids.
-        # EXPLICIT and INFERRED rows on the same propositions are never touched.
-        if inputs.source and inputs.path and source_result.rows and category_ids:
-            old_cat_ids = source_result.rows[0].get("old_category_ids") or []
-            old_cats = {str(c) for c in old_cat_ids}
-            new_cats = set(category_ids)
-            if old_cats != new_cats:
-                removed = old_cats - new_cats
-                if removed:
-                    await backend.execute(
-                        """
-                        DELETE FROM knowledge_proposition_categories
-                        WHERE category_id = ANY($1::uuid[])
-                          AND assigned_by = 'INHERITED'
-                          AND proposition_id IN (
-                              SELECT id FROM knowledge_propositions
-                              WHERE source_name = $2
-                          )
-                        """,
-                        (list(removed), inputs.source),
-                    )
-                added = new_cats - old_cats
-                for cat_id in added:
-                    await backend.execute(
-                        """
-                        INSERT INTO knowledge_proposition_categories
-                            (proposition_id, category_id, assigned_by)
-                        SELECT id, $1::uuid, 'INHERITED'
-                        FROM knowledge_propositions
-                        WHERE source_name = $2
-                        ON CONFLICT (proposition_id, category_id) DO NOTHING
-                        """,
-                        (cat_id, inputs.source),
-                    )
 
         # SECURITY: Log to audit table
         await self._log_audit_entry(
