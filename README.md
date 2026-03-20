@@ -844,7 +844,10 @@ When you configure workflows-mcp, your AI assistant gets these tools:
   - `source`, `categories`, `lifecycle_state`, `min_confidence`, `limit`, `order`
 
 - **forget_knowledge** - Archive propositions (transition to ARCHIVED state)
-  - `proposition_ids`, `reason`
+  - By ID: `proposition_ids` (list of UUIDs)
+  - By filter: `source` (exact or prefix `*`), `created_before`, `created_after`
+  - At least one of `proposition_ids` or `source` must be provided
+  - `reason` (optional, for audit trail)
 
 - **knowledge_context** - Token-budgeted context assembly for LLM prompts
   - `query`, `source`, `categories`, `max_tokens`, `diversity`

@@ -264,8 +264,18 @@ class KnowledgeInput(BlockInput):
             raise ValueError(f"'query' is required for op='{self.op}'")
         if self.op == "store" and not self.content:
             raise ValueError("'content' is required for op='store'")
-        if self.op == "forget" and not self.proposition_ids and not self.where:
-            raise ValueError("'proposition_ids' or 'where' is required for op='forget'")
+        if (
+            self.op == "forget"
+            and not self.proposition_ids
+            and not self.where
+            and not self.source
+            and not self.created_before
+            and not self.created_after
+        ):
+            raise ValueError(
+                "'proposition_ids', 'where', 'source', 'created_before', or 'created_after' "
+                "is required for op='forget'"
+            )
         if self.path is not None and not self.source:
             raise ValueError("'source' is required when 'path' is provided")
         return self

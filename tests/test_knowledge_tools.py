@@ -54,11 +54,15 @@ knowledge_context = _get_tool_fn("knowledge_context")
 @pytest.fixture
 def mock_ctx() -> MagicMock:
     """Create a mock AppContextType with all required nested attributes."""
+    import uuid
+
     ctx = MagicMock()
     app_ctx = MagicMock()
     ctx.request_context.lifespan_context = app_ctx
     exec_context = MagicMock()
+    exec_context.user_string_id = None
     app_ctx.create_execution_context.return_value = exec_context
+    app_ctx.get_user_context.return_value = (uuid.UUID(int=0), "test-user", "OS_USER")
     return ctx
 
 
@@ -208,6 +212,8 @@ class TestStoreKnowledge:
                 path=None,
                 confidence=0.85,
                 categories=None,
+                authority="AGENT",
+                lifecycle_state="ACTIVE",
                 ctx=mock_ctx,
             )
 
@@ -229,6 +235,8 @@ class TestStoreKnowledge:
                 path=None,
                 confidence=0.8,
                 categories=None,
+                authority="AGENT",
+                lifecycle_state="ACTIVE",
                 ctx=mock_ctx,
             )
 
@@ -249,6 +257,8 @@ class TestStoreKnowledge:
                 path=None,
                 confidence=0.8,
                 categories=None,
+                authority="AGENT",
+                lifecycle_state="ACTIVE",
                 ctx=mock_ctx,
             )
 
@@ -268,6 +278,8 @@ class TestStoreKnowledge:
                 path="docs/architecture.md",
                 confidence=0.9,
                 categories=None,
+                authority="AGENT",
+                lifecycle_state="ACTIVE",
                 ctx=mock_ctx,
             )
 
@@ -287,6 +299,8 @@ class TestStoreKnowledge:
                 path=None,
                 confidence=0.8,
                 categories=None,
+                authority="AGENT",
+                lifecycle_state="ACTIVE",
                 ctx=mock_ctx,
             )
 
@@ -347,6 +361,8 @@ class TestRecallKnowledge:
                 min_confidence=None,
                 limit=10,
                 order=None,
+                created_by=None,
+                auth_method=None,
                 ctx=mock_ctx,
             )
 
@@ -367,6 +383,8 @@ class TestRecallKnowledge:
                 min_confidence=0.7,
                 limit=5,
                 order=["confidence:desc"],
+                created_by=None,
+                auth_method=None,
                 ctx=mock_ctx,
             )
 
@@ -394,6 +412,9 @@ class TestForgetKnowledge:
 
             result = await forget_knowledge(
                 proposition_ids=["uuid-1", "uuid-2"],
+                source=None,
+                created_before=None,
+                created_after=None,
                 reason="Outdated information",
                 ctx=mock_ctx,
             )
@@ -414,12 +435,76 @@ class TestForgetKnowledge:
 
             result = await forget_knowledge(
                 proposition_ids=["uuid-1"],
+                source=None,
+                created_before=None,
+                created_after=None,
                 reason=None,
                 ctx=mock_ctx,
             )
 
         content = result.content[0].text  # type: ignore[union-attr]
         assert "Permission denied" in content
+
+    @pytest.mark.asyncio
+    async def test_filter_by_source(self, mock_ctx: MagicMock) -> None:
+        """forget_knowledge archives by source when no IDs provided."""
+        with patch(_EXECUTOR_CLS) as mock_cls:
+            mock_cls.return_value.execute = AsyncMock(return_value=_make_forget_output())
+
+            result = await forget_knowledge(
+                proposition_ids=None,
+                source="session:abc",
+                created_before=None,
+                created_after=None,
+                reason="Session cleanup",
+                ctx=mock_ctx,
+            )
+
+        assert result.isError is not True
+        inputs: KnowledgeInput = mock_cls.return_value.execute.call_args[0][0]
+        assert inputs.op == "forget"
+        assert inputs.proposition_ids is None
+        assert inputs.source == "session:abc"
+        assert inputs.reason == "Session cleanup"
+
+    @pytest.mark.asyncio
+    async def test_filter_by_date_range(self, mock_ctx: MagicMock) -> None:
+        """forget_knowledge passes created_before and created_after to executor."""
+        with patch(_EXECUTOR_CLS) as mock_cls:
+            mock_cls.return_value.execute = AsyncMock(return_value=_make_forget_output())
+
+            result = await forget_knowledge(
+                proposition_ids=None,
+                source="docs",
+                created_before="2026-01-01T00:00:00Z",
+                created_after=None,
+                reason=None,
+                ctx=mock_ctx,
+            )
+
+        assert result.isError is not True
+        inputs: KnowledgeInput = mock_cls.return_value.execute.call_args[0][0]
+        assert inputs.source == "docs"
+        assert inputs.created_before == "2026-01-01T00:00:00Z"
+
+    @pytest.mark.asyncio
+    async def test_no_filter_returns_error(self, mock_ctx: MagicMock) -> None:
+        """forget_knowledge returns error when no targeting criteria provided."""
+        result = await forget_knowledge(
+            proposition_ids=None,
+            source=None,
+            created_before=None,
+            created_after=None,
+            reason=None,
+            ctx=mock_ctx,
+        )
+
+        import json
+
+        content = result.content[0].text  # type: ignore[union-attr]
+        data = json.loads(content)
+        assert data["status"] == "failure"
+        assert "required" in data["error"]
 
 
 # ============================================================================

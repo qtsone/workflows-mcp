@@ -476,8 +476,33 @@ def register_knowledge_tools(mcp_server: FastMCP) -> None:
     )
     async def forget_knowledge(
         proposition_ids: Annotated[
-            list[str],
-            Field(description="UUIDs of propositions to archive"),
+            list[str] | None,
+            Field(description="UUIDs of propositions to archive", default=None),
+        ],
+        source: Annotated[
+            str | None,
+            Field(
+                description=(
+                    "Archive all propositions from this source "
+                    "(exact name or prefix with *, e.g. 'session:*'). "
+                    "At least one of proposition_ids or source must be provided."
+                ),
+                default=None,
+            ),
+        ],
+        created_before: Annotated[
+            str | None,
+            Field(
+                description="Archive propositions created before this ISO 8601 datetime",
+                default=None,
+            ),
+        ],
+        created_after: Annotated[
+            str | None,
+            Field(
+                description="Archive propositions created after this ISO 8601 datetime",
+                default=None,
+            ),
         ],
         reason: Annotated[
             str | None,
@@ -497,9 +522,19 @@ def register_knowledge_tools(mcp_server: FastMCP) -> None:
         database but are excluded from search. USER_VALIDATED propositions are immune
         and will be skipped.
 
+        Supports two archiving modes:
+        1. By IDs — provide proposition_ids to archive specific propositions.
+        2. By filter — provide source, created_before, and/or created_after to archive
+           in bulk. Useful for clearing all facts from a session or before a given date.
+
         PARAMETERS:
-        - proposition_ids: List of proposition UUIDs to archive
+        - proposition_ids: List of proposition UUIDs to archive (mode 1)
+        - source: Archive all propositions from this source, e.g. 'session:abc' or 'docs:*' (mode 2)
+        - created_before: Archive propositions created before this ISO datetime (mode 2)
+        - created_after: Archive propositions created after this ISO datetime (mode 2)
         - reason: Optional reason for the archival (audit trail)
+
+        At least one of proposition_ids or source must be provided.
 
         RETURNS: {archived_count: N, skipped_count: M}
 
@@ -507,11 +542,25 @@ def register_knowledge_tools(mcp_server: FastMCP) -> None:
         """
         from .engine.executors_knowledge import KnowledgeExecutor, KnowledgeInput
 
+        if not proposition_ids and not source and not created_before and not created_after:
+            return _json_response(
+                {
+                    "status": "failure",
+                    "error": (
+                        "At least one of proposition_ids, source, created_before, "
+                        "or created_after is required"
+                    ),
+                }
+            )
+
         execution = _create_knowledge_execution(ctx)
         executor = KnowledgeExecutor()
         inputs = KnowledgeInput(
             op="forget",
             proposition_ids=proposition_ids,
+            source=source,
+            created_before=created_before,
+            created_after=created_after,
             reason=reason,
         )
         result = await executor.execute(inputs, context=execution)
