@@ -1057,21 +1057,34 @@ class KnowledgeExecutor(BlockExecutor):
         backend: Any,
     ) -> KnowledgeOutput:
         """Token-budgeted, clean-content context assembly."""
-        # First, run a search to get candidate propositions
-        search_result = await self._op_search(inputs, context, backend)
-        if not search_result.success:
-            return search_result
+        assert inputs.query is not None
 
         max_tokens = (
             int(inputs.max_tokens) if isinstance(inputs.max_tokens, str) else inputs.max_tokens
         )
 
-        # Assemble context from search results
-        context_text, prop_count, tokens_used = assemble_context(
-            search_result.rows,
-            max_tokens=max_tokens,
-            diversity=inputs.diversity,
-        )
+        # When diversity=True we need embeddings for MMR reranking.
+        # Run the search pipeline directly so we can keep embeddings in-memory
+        # without ever exposing them in public API responses.
+        if inputs.diversity:
+            propositions, query_embedding = await self._search_with_embeddings(
+                inputs, context, backend
+            )
+            context_text, prop_count, tokens_used = assemble_context(
+                propositions,
+                max_tokens=max_tokens,
+                diversity=True,
+                query_embedding=query_embedding,
+            )
+        else:
+            search_result = await self._op_search(inputs, context, backend)
+            if not search_result.success:
+                return search_result
+            context_text, prop_count, tokens_used = assemble_context(
+                search_result.rows,
+                max_tokens=max_tokens,
+                diversity=False,
+            )
 
         return KnowledgeOutput(
             success=True,
@@ -1079,3 +1092,98 @@ class KnowledgeExecutor(BlockExecutor):
             proposition_count=prop_count,
             tokens_used=tokens_used,
         )
+
+    async def _search_with_embeddings(
+        self,
+        inputs: KnowledgeInput,
+        context: Execution,
+        backend: Any,
+    ) -> tuple[list[dict[str, Any]], list[float]]:
+        """Run hybrid search and return propositions with embedding vectors included.
+
+        Used internally by _op_context when diversity=True so that MMR reranking
+        has access to embeddings. Embeddings must be stripped before any public
+        API response is returned.
+
+        Returns:
+            Tuple of (propositions_with_embeddings, query_embedding).
+        """
+        assert inputs.query is not None
+
+        limit = int(inputs.limit) if isinstance(inputs.limit, str) else inputs.limit
+
+        resolved_categories = None
+        if inputs.categories:
+            resolved_categories = await self._resolve_categories(inputs.categories, backend)
+
+        query_embedding, _, _, _ = await compute_embedding(
+            text=inputs.query,
+            context=context,
+            profile=inputs.embedding_profile,
+        )
+
+        # Vector search with embeddings included in SELECT
+        vector_sql, vector_params = build_vector_search_query(
+            query_embedding=query_embedding,
+            source=inputs.source,
+            categories=resolved_categories,
+            min_confidence=inputs.min_confidence,
+            lifecycle_state=inputs.lifecycle_state,
+            limit=limit,
+            include_embeddings=True,
+        )
+        vector_result = await backend.query(vector_sql, tuple(vector_params))
+        vector_rows = [dict(row) for row in vector_result.rows]
+
+        # FTS search (no embeddings needed — only used for RRF scoring)
+        fts_sql, fts_params = build_fts_search_query(
+            query_text=inputs.query,
+            source=inputs.source,
+            categories=resolved_categories,
+            min_confidence=inputs.min_confidence,
+            lifecycle_state=inputs.lifecycle_state,
+            limit=limit,
+        )
+        fts_result = await backend.query(fts_sql, tuple(fts_params))
+        fts_rows = [dict(row) for row in fts_result.rows]
+
+        # RRF fusion (preserves embedding from vector_rows via results_by_id)
+        fused = rrf_fusion(vector_rows, fts_rows, limit=limit)
+
+        # Update retrieval counts
+        if fused:
+            ids = [row["id"] for row in fused]
+            placeholders = ", ".join(f"${i + 1}::uuid" for i in range(len(ids)))
+            await backend.execute(
+                f"UPDATE knowledge_propositions SET retrieval_count = retrieval_count + 1 "
+                f"WHERE id IN ({placeholders})",
+                tuple(str(id_) for id_ in ids),
+            )
+
+        # Build proposition dicts with embedding included (for MMR), plus clean fields
+        propositions = []
+        for row in fused:
+            prop: dict[str, Any] = {
+                "id": str(row.get("id", "")),
+                "content": row.get("content", ""),
+                "confidence": row.get("confidence"),
+                "authority": row.get("authority"),
+                "relevance_score": row.get("relevance_score"),
+                "rrf_score": row.get("rrf_score"),
+                "item_path": row.get("item_path"),
+            }
+            # Include embedding only when available (vector-matched rows have it)
+            if row.get("embedding") is not None:
+                embedding_val = row["embedding"]
+                # asyncpg may return a string representation; convert if needed
+                if isinstance(embedding_val, str):
+                    import ast
+
+                    try:
+                        embedding_val = ast.literal_eval(embedding_val)
+                    except Exception:
+                        embedding_val = None
+                prop["embedding"] = embedding_val
+            propositions.append(prop)
+
+        return propositions, query_embedding

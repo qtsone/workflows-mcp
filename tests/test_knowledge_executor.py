@@ -26,6 +26,7 @@ from workflows_mcp.engine.knowledge.constants import (
 )
 from workflows_mcp.engine.knowledge.context import (
     _cosine_similarity,
+    _mmr_rerank,
     assemble_context,
     estimate_tokens,
 )
@@ -387,6 +388,103 @@ class TestContextAssembly:
         """Empty vectors should return 0.0."""
         sim = _cosine_similarity([], [])
         assert sim == 0.0
+
+
+# ============================================================================
+# MMR Reranking Tests
+# ============================================================================
+
+
+class TestMMRRerank:
+    """Tests for _mmr_rerank and the diversity path in assemble_context.
+
+    Verifies TASK-340: MMR must actually reorder results when embeddings and
+    query_embedding are provided — it was silently falling back before.
+    """
+
+    def _make_prop(self, content: str, embedding: list[float]) -> dict[str, Any]:
+        return {"content": content, "embedding": embedding}
+
+    def test_mmr_fallback_when_no_embeddings(self) -> None:
+        """Should return original order when propositions lack embeddings."""
+        props = [{"content": "a"}, {"content": "b"}]
+        result = _mmr_rerank(props, query_embedding=[1.0, 0.0])
+        assert result == props
+
+    def test_mmr_fallback_when_query_embedding_none(self) -> None:
+        """Should return original order when query_embedding is None."""
+        props = [self._make_prop("a", [1.0, 0.0]), self._make_prop("b", [0.0, 1.0])]
+        result = _mmr_rerank(props, query_embedding=None)
+        assert result == props
+
+    def test_mmr_reorders_for_diversity(self) -> None:
+        """MMR must reorder results to maximise diversity.
+
+        Setup: query points along [1, 0].
+        - p1 is highly relevant (embedding == query), selected first.
+        - p2 is identical to p1 → after p1 selected, max_sim=1.0 → heavy penalty.
+        - p3 is orthogonal to p1 (max_sim=0) and irrelevant to query.
+
+        With mmr_lambda=0.3 (diversity-biased):
+            MMR(p2) = 0.3*1.0 - 0.7*1.0 = -0.4
+            MMR(p3) = 0.3*0.0 - 0.7*0.0 =  0.0   ← wins
+        """
+        query = [1.0, 0.0]
+        p1 = self._make_prop("relevant A", [1.0, 0.0])  # most relevant, selected first
+        p2 = self._make_prop("relevant B", [1.0, 0.0])  # identical to p1 → heavy penalty
+        p3 = self._make_prop("diverse C", [0.0, 1.0])  # orthogonal — no similarity penalty
+
+        result = _mmr_rerank([p1, p2, p3], query_embedding=query, mmr_lambda=0.3)
+
+        assert result[0]["content"] == "relevant A"
+        # p3 should be ranked above p2 because it is diverse
+        contents = [r["content"] for r in result]
+        assert contents.index("diverse C") < contents.index("relevant B")
+
+    def test_assemble_context_diversity_true_requires_embeddings(self) -> None:
+        """assemble_context with diversity=True but no embeddings falls back gracefully."""
+        props = [{"content": "fact A"}, {"content": "fact B"}]
+        # No embeddings, no query_embedding — should still assemble without error
+        text, count, tokens = assemble_context(props, diversity=True, query_embedding=None)
+        assert count == 2
+        assert "fact A" in text
+
+    def test_assemble_context_diversity_reorders_results(self) -> None:
+        """assemble_context with diversity=True and embeddings must change ordering.
+
+        Uses mmr_lambda=0.3 so the diversity penalty dominates (see test_mmr_reorders_for_diversity
+        for the MMR score derivation).
+        """
+        query = [1.0, 0.0]
+        # p1 and p2 are near-duplicates; p3 is orthogonal (diverse)
+        props = [
+            {"content": "near-dup A", "embedding": [1.0, 0.0]},
+            {"content": "near-dup B", "embedding": [1.0, 0.0]},
+            {"content": "diverse C", "embedding": [0.0, 1.0]},
+        ]
+        text_diverse, count, _ = assemble_context(
+            props, diversity=True, query_embedding=query, mmr_lambda=0.3
+        )
+        text_plain, _, _ = assemble_context(props, diversity=False)
+
+        # Diverse ordering should differ from plain ordering
+        assert text_diverse != text_plain
+        # "diverse C" should appear before "near-dup B" in the diverse output
+        assert text_diverse.index("diverse C") < text_diverse.index("near-dup B")
+
+    def test_build_vector_search_includes_embedding_column(self) -> None:
+        """build_vector_search_query with include_embeddings=True must SELECT kp.embedding."""
+        sql, _ = build_vector_search_query(
+            query_embedding=[0.1, 0.2],
+            include_embeddings=True,
+        )
+        assert ", kp.embedding" in sql
+
+    def test_build_vector_search_excludes_embedding_column_by_default(self) -> None:
+        """build_vector_search_query must NOT explicitly SELECT kp.embedding by default."""
+        sql, _ = build_vector_search_query(query_embedding=[0.1, 0.2])
+        # The explicit ", kp.embedding" column alias must not appear
+        assert ", kp.embedding" not in sql
 
 
 # ============================================================================

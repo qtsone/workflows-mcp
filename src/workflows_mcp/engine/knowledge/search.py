@@ -30,12 +30,18 @@ def build_vector_search_query(
     min_confidence: float = DEFAULT_MIN_CONFIDENCE,
     lifecycle_state: str = LifecycleState.ACTIVE,
     limit: int = DEFAULT_LIMIT,
+    include_embeddings: bool = False,
 ) -> tuple[str, list[Any]]:
     """Build a pgvector cosine similarity search query.
 
     Returns (sql, params) with asyncpg $N positional params.
     Includes JOINs through knowledge_items → knowledge_sources for
     source/category filtering.
+
+    Args:
+        include_embeddings: If True, include the raw embedding vector in SELECT.
+            Used internally by _op_context for MMR reranking. Never expose
+            embedding values in public API responses.
     """
     params: list[Any] = []
     param_idx = 0
@@ -84,11 +90,13 @@ def build_vector_search_query(
     join_clause = "\n".join(joins)
     where_clause = " AND ".join(where_clauses)
 
+    embedding_col = ", kp.embedding" if include_embeddings else ""
+
     sql = f"""
         SELECT kp.id, kp.content, kp.confidence, kp.authority,
                kp.relevance_score, kp.retrieval_count,
                1 - (kp.embedding <=> {embedding_param}::vector) AS similarity,
-               ki_path.path AS item_path
+               ki_path.path AS item_path{embedding_col}
         FROM knowledge_propositions kp
         LEFT JOIN knowledge_items ki_path ON kp.item_id = ki_path.id
         {join_clause}
