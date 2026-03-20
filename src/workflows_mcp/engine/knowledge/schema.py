@@ -275,6 +275,49 @@ MIGRATIONS: list[tuple[int, str, str]] = [
             WITH (m = 16, ef_construction = 64);
         """,
     ),
+    (
+        6,
+        "Add updated_at trigger to all knowledge tables that carry the column",
+        """
+        CREATE OR REPLACE FUNCTION update_updated_at()
+        RETURNS TRIGGER AS $$
+        BEGIN
+            NEW.updated_at = NOW();
+            RETURN NEW;
+        END;
+        $$ LANGUAGE plpgsql;
+
+        DO $$
+        BEGIN
+            IF NOT EXISTS (
+                SELECT 1 FROM pg_trigger
+                WHERE tgname = 'trg_ks_updated_at'
+            ) THEN
+                CREATE TRIGGER trg_ks_updated_at
+                    BEFORE UPDATE ON knowledge_sources
+                    FOR EACH ROW EXECUTE FUNCTION update_updated_at();
+            END IF;
+
+            IF NOT EXISTS (
+                SELECT 1 FROM pg_trigger
+                WHERE tgname = 'trg_ki_updated_at'
+            ) THEN
+                CREATE TRIGGER trg_ki_updated_at
+                    BEFORE UPDATE ON knowledge_items
+                    FOR EACH ROW EXECUTE FUNCTION update_updated_at();
+            END IF;
+
+            IF NOT EXISTS (
+                SELECT 1 FROM pg_trigger
+                WHERE tgname = 'trg_kp_updated_at'
+            ) THEN
+                CREATE TRIGGER trg_kp_updated_at
+                    BEFORE UPDATE ON knowledge_propositions
+                    FOR EACH ROW EXECUTE FUNCTION update_updated_at();
+            END IF;
+        END $$;
+        """,
+    ),
 ]
 
 SCHEMA_VERSION = MIGRATIONS[-1][0] if MIGRATIONS else 0

@@ -882,6 +882,7 @@ class TestForgetOperation:
         Some deployments omit updated_at from knowledge_propositions;
         unconditionally setting it causes 'column does not exist' errors.
         The only mutation needed is setting lifecycle_state = ARCHIVED.
+        updated_at is maintained by the trg_kp_updated_at trigger (migration v6).
         """
         import inspect
 
@@ -891,6 +892,21 @@ class TestForgetOperation:
         assert "updated_at" not in source, (
             "_op_forget must not reference updated_at — not all schemas have that column"
         )
+
+    def test_migration_v6_adds_updated_at_trigger(self) -> None:
+        """Migration v6 must wire updated_at triggers on all three knowledge tables.
+
+        Regression guard for TASK-341: archive operations were leaving updated_at
+        unchanged. One shared trigger function covers all tables that carry the column.
+        """
+        v6 = next((m for m in MIGRATIONS if m[0] == 6), None)
+        assert v6 is not None, "Migration v6 is missing from MIGRATIONS list"
+        _, description, sql = v6
+        assert "update_updated_at" in sql, "Migration v6 must create update_updated_at() function"
+        assert "BEFORE UPDATE" in sql, "Trigger must fire BEFORE UPDATE"
+        assert "trg_ks_updated_at" in sql, "Trigger missing for knowledge_sources"
+        assert "trg_ki_updated_at" in sql, "Trigger missing for knowledge_items"
+        assert "trg_kp_updated_at" in sql, "Trigger missing for knowledge_propositions"
 
 
 # ============================================================================
