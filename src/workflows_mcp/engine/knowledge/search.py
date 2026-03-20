@@ -66,8 +66,6 @@ def build_vector_search_query(
         f"kp.confidence >= {confidence_param}",
     ]
 
-    joins = []
-
     # Source filter (exact match or prefix with *)
     # Uses the denormalized source_name column for consistent, performant queries
     if source:
@@ -78,16 +76,19 @@ def build_vector_search_query(
             source_param = next_param(source)
             where_clauses.append(f"kp.source_name = {source_param}")
 
-    # Category filter - requires JOIN to knowledge_sources
+    # Category filter — EXISTS subquery on junction table.
+    # Works for all proposition types including agent observations (item_id IS NULL).
+    # No JOIN needed; no duplicate rows when a proposition matches multiple categories.
     if categories:
-        joins.append(
-            "JOIN knowledge_items ki ON kp.item_id = ki.id "
-            "JOIN knowledge_sources ks ON ki.source_id = ks.id"
-        )
         cat_param = next_param(categories)
-        where_clauses.append(f"ks.category_ids && {cat_param}::uuid[]")
+        where_clauses.append(
+            f"EXISTS ("
+            f"  SELECT 1 FROM knowledge_proposition_categories kpc"
+            f"  WHERE kpc.proposition_id = kp.id"
+            f"    AND kpc.category_id = ANY({cat_param}::uuid[])"
+            f")"
+        )
 
-    join_clause = "\n".join(joins)
     where_clause = " AND ".join(where_clauses)
 
     embedding_col = ", kp.embedding" if include_embeddings else ""
@@ -99,7 +100,6 @@ def build_vector_search_query(
                ki_path.path AS item_path{embedding_col}
         FROM knowledge_propositions kp
         LEFT JOIN knowledge_items ki_path ON kp.item_id = ki_path.id
-        {join_clause}
         WHERE {where_clause}
           AND kp.embedding IS NOT NULL
         ORDER BY kp.embedding <=> {embedding_param}::vector
@@ -144,8 +144,6 @@ def build_fts_search_query(
         f"kp.confidence >= {confidence_param}",
     ]
 
-    joins = []
-
     # Source filter (exact match or prefix with *)
     # Uses the denormalized source_name column for consistent, performant queries
     if source:
@@ -156,16 +154,19 @@ def build_fts_search_query(
             source_param = next_param(source)
             where_clauses.append(f"kp.source_name = {source_param}")
 
-    # Category filter - requires JOIN to knowledge_sources
+    # Category filter — EXISTS subquery on junction table.
+    # Works for all proposition types including agent observations (item_id IS NULL).
+    # No JOIN needed; no duplicate rows when a proposition matches multiple categories.
     if categories:
-        joins.append(
-            "JOIN knowledge_items ki ON kp.item_id = ki.id "
-            "JOIN knowledge_sources ks ON ki.source_id = ks.id"
-        )
         cat_param = next_param(categories)
-        where_clauses.append(f"ks.category_ids && {cat_param}::uuid[]")
+        where_clauses.append(
+            f"EXISTS ("
+            f"  SELECT 1 FROM knowledge_proposition_categories kpc"
+            f"  WHERE kpc.proposition_id = kp.id"
+            f"    AND kpc.category_id = ANY({cat_param}::uuid[])"
+            f")"
+        )
 
-    join_clause = "\n".join(joins)
     where_clause = " AND ".join(where_clauses)
 
     sql = f"""
@@ -175,7 +176,6 @@ def build_fts_search_query(
                ki_path.path AS item_path
         FROM knowledge_propositions kp
         LEFT JOIN knowledge_items ki_path ON kp.item_id = ki_path.id
-        {join_clause}
         WHERE {where_clause}
         ORDER BY fts_rank DESC
         LIMIT {candidate_param}

@@ -601,7 +601,9 @@ class KnowledgeExecutor(BlockExecutor):
         source_type: str = inputs.source_type
 
         if inputs.source and inputs.path:
-            # Full provenance: upsert source + item, link proposition
+            # Full provenance: upsert source + item, link proposition.
+            # RETURNING also surfaces the pre-update category_ids so we can propagate
+            # any re-categorization to existing INHERITED junction rows.
             source_name = inputs.source
             source_result = await backend.query(
                 """
@@ -615,7 +617,9 @@ class KnowledgeExecutor(BlockExecutor):
                         ELSE knowledge_sources.category_ids
                     END,
                     updated_at = NOW()
-                RETURNING id
+                RETURNING id,
+                    (SELECT category_ids FROM knowledge_sources
+                     WHERE name = $2) AS old_category_ids
                 """,
                 (str(uuid.uuid4()), inputs.source, category_ids),
             )
@@ -688,6 +692,55 @@ class KnowledgeExecutor(BlockExecutor):
             ),
         )
 
+        # Write category junction rows (EXPLICIT — caller specified these categories)
+        if category_ids:
+            for cat_id in category_ids:
+                await backend.execute(
+                    """
+                    INSERT INTO knowledge_proposition_categories
+                        (proposition_id, category_id, assigned_by)
+                    VALUES ($1::uuid, $2::uuid, 'EXPLICIT')
+                    ON CONFLICT (proposition_id, category_id) DO NOTHING
+                    """,
+                    (prop_id, cat_id),
+                )
+
+        # Propagate source re-categorization to existing INHERITED junction rows.
+        # Only runs when the source UPSERT actually changed category_ids.
+        # EXPLICIT and INFERRED rows on the same propositions are never touched.
+        if inputs.source and inputs.path and source_result.rows and category_ids:
+            old_cat_ids = source_result.rows[0].get("old_category_ids") or []
+            old_cats = {str(c) for c in old_cat_ids}
+            new_cats = set(category_ids)
+            if old_cats != new_cats:
+                removed = old_cats - new_cats
+                if removed:
+                    await backend.execute(
+                        """
+                        DELETE FROM knowledge_proposition_categories
+                        WHERE category_id = ANY($1::uuid[])
+                          AND assigned_by = 'INHERITED'
+                          AND proposition_id IN (
+                              SELECT id FROM knowledge_propositions
+                              WHERE source_name = $2
+                          )
+                        """,
+                        (list(removed), inputs.source),
+                    )
+                added = new_cats - old_cats
+                for cat_id in added:
+                    await backend.execute(
+                        """
+                        INSERT INTO knowledge_proposition_categories
+                            (proposition_id, category_id, assigned_by)
+                        SELECT id, $1::uuid, 'INHERITED'
+                        FROM knowledge_propositions
+                        WHERE source_name = $2
+                        ON CONFLICT (proposition_id, category_id) DO NOTHING
+                        """,
+                        (cat_id, inputs.source),
+                    )
+
         # SECURITY: Log to audit table
         await self._log_audit_entry(
             backend=backend,
@@ -757,15 +810,19 @@ class KnowledgeExecutor(BlockExecutor):
 
     async def _build_where_clause(
         self, inputs: KnowledgeInput, backend: Any
-    ) -> tuple[str, str, list[Any]]:
-        """Build WHERE and JOIN clauses from recall/forget filters.
+    ) -> tuple[str, list[Any]]:
+        """Build WHERE clause from recall/forget filters.
 
         Resolves category names to UUIDs if needed.
-        Returns (where_clause, join_clause, params).
+        Returns (where_clause, params).
 
         Source filtering uses the denormalized source_name column for consistent,
         performant queries across both document-derived and agent observation
         propositions.
+
+        Category filtering uses an EXISTS subquery on knowledge_proposition_categories,
+        which works for all proposition types (including agent observations with
+        item_id IS NULL) and never produces duplicate rows.
         """
         params: list[Any] = []
         param_idx = 0
@@ -777,7 +834,6 @@ class KnowledgeExecutor(BlockExecutor):
             return f"${param_idx}"
 
         where_clauses: list[str] = []
-        needs_join = False
 
         # Handle source filter (top-level inputs.source or where.source_name)
         source_filter = None
@@ -789,21 +845,25 @@ class KnowledgeExecutor(BlockExecutor):
         if source_filter:
             if isinstance(source_filter, str) and source_filter.endswith("*"):
                 prefix_param = next_param(source_filter[:-1] + "%")
-                # Use source_name column directly (denormalized for performance)
                 where_clauses.append(f"kp.source_name LIKE {prefix_param}")
             else:
                 source_param = next_param(source_filter)
-                # Use source_name column directly (denormalized for performance)
                 where_clauses.append(f"kp.source_name = {source_param}")
 
-        # Handle category filter (requires JOIN to knowledge_sources)
+        # Category filter — EXISTS subquery on junction table.
+        # Works for agent observations (item_id IS NULL) and document propositions alike.
         if inputs.where and "category" in inputs.where:
-            needs_join = True
             cat_value = inputs.where["category"]
-            # Resolve name to UUID if needed
             resolved = await self._resolve_categories([cat_value], backend)
             cat_uuid = resolved[0] if resolved else cat_value
-            where_clauses.append(f"ks.category_ids && ARRAY[{next_param(cat_uuid)}]::uuid[]")
+            cat_param = next_param(cat_uuid)
+            where_clauses.append(
+                f"EXISTS ("
+                f"  SELECT 1 FROM knowledge_proposition_categories kpc"
+                f"  WHERE kpc.proposition_id = kp.id"
+                f"    AND kpc.category_id = {cat_param}::uuid"
+                f")"
+            )
 
         # Handle lifecycle_state filter
         if inputs.where and "lifecycle_state" in inputs.where:
@@ -837,15 +897,8 @@ class KnowledgeExecutor(BlockExecutor):
                 f"kp.created_at <= {next_param(inputs.created_before)}::timestamptz"
             )
 
-        join_clause = (
-            "JOIN knowledge_items ki ON kp.item_id = ki.id "
-            "JOIN knowledge_sources ks ON ki.source_id = ks.id"
-            if needs_join
-            else ""
-        )
-
         where_sql = " AND ".join(where_clauses) if where_clauses else "TRUE"
-        return where_sql, join_clause, params
+        return where_sql, params
 
     async def _op_recall(
         self,
@@ -859,7 +912,7 @@ class KnowledgeExecutor(BlockExecutor):
         """
         limit = int(inputs.limit) if isinstance(inputs.limit, str) else inputs.limit
 
-        where_sql, join_clause, params = await self._build_where_clause(inputs, backend)
+        where_sql, params = await self._build_where_clause(inputs, backend)
 
         # Order clause
         order_clause = "ORDER BY kp.created_at DESC"
@@ -897,7 +950,6 @@ class KnowledgeExecutor(BlockExecutor):
                    kp.created_by, kp.auth_method
             FROM knowledge_propositions kp
             LEFT JOIN knowledge_items ki_ip ON kp.item_id = ki_ip.id
-            {join_clause}
             WHERE {where_sql}
             {order_clause}
             LIMIT {limit_param}
@@ -1008,47 +1060,28 @@ class KnowledgeExecutor(BlockExecutor):
             )
 
         # Path 2: Archive by filter
-        where_sql, join_clause, params = await self._build_where_clause(inputs, backend)
+        where_sql, params = await self._build_where_clause(inputs, backend)
 
         # Count total matching (for skipped_count calculation)
         count_sql = f"""
             SELECT COUNT(*) AS total FROM knowledge_propositions kp
-            {join_clause}
             WHERE {where_sql}
         """
         count_result = await backend.query(count_sql, tuple(params))
         total = count_result.rows[0]["total"] if count_result.rows else 0
 
         # Archive with USER_VALIDATED immunity
-        # Use subquery to handle JOIN-based filters in UPDATE
-        if join_clause:
-            param_offset = len(params)
-            update_sql = f"""
-                UPDATE knowledge_propositions
-                SET lifecycle_state = '{LifecycleState.ARCHIVED.value}',
-                    archived_by = ${param_offset + 1}::uuid,
-                    archive_reason = ${param_offset + 2}
-                WHERE id IN (
-                    SELECT kp.id FROM knowledge_propositions kp
-                    {join_clause}
-                    WHERE {where_sql}
-                )
-                AND authority != '{Authority.USER_VALIDATED}'
-                RETURNING id
-            """
-            params.extend([str(archived_by) if archived_by else None, archive_reason])
-        else:
-            param_offset = len(params)
-            update_sql = f"""
-                UPDATE knowledge_propositions kp
-                SET lifecycle_state = '{LifecycleState.ARCHIVED.value}',
-                    archived_by = ${param_offset + 1}::uuid,
-                    archive_reason = ${param_offset + 2}
-                WHERE {where_sql}
-                  AND authority != '{Authority.USER_VALIDATED}'
-                RETURNING id
-            """
-            params.extend([str(archived_by) if archived_by else None, archive_reason])
+        param_offset = len(params)
+        update_sql = f"""
+            UPDATE knowledge_propositions kp
+            SET lifecycle_state = '{LifecycleState.ARCHIVED.value}',
+                archived_by = ${param_offset + 1}::uuid,
+                archive_reason = ${param_offset + 2}
+            WHERE {where_sql}
+              AND authority != '{Authority.USER_VALIDATED}'
+            RETURNING id
+        """
+        params.extend([str(archived_by) if archived_by else None, archive_reason])
 
         result = await backend.query(update_sql, tuple(params))
         archived = len(result.rows) if result and result.rows else 0

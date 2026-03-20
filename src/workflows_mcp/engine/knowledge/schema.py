@@ -336,6 +336,38 @@ MIGRATIONS: list[tuple[int, str, str]] = [
         END $$;
         """,
     ),
+    (
+        8,
+        "Add knowledge_proposition_categories junction table for per-proposition categories",
+        """
+        CREATE TABLE IF NOT EXISTS knowledge_proposition_categories (
+            proposition_id UUID NOT NULL
+                REFERENCES knowledge_propositions(id) ON DELETE CASCADE,
+            category_id    UUID NOT NULL
+                REFERENCES knowledge_entities(id) ON DELETE CASCADE,
+            assigned_by    VARCHAR(20) NOT NULL DEFAULT 'EXPLICIT',
+            assigned_at    TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+            PRIMARY KEY (proposition_id, category_id)
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_kpc_category_id
+            ON knowledge_proposition_categories(category_id);
+        CREATE INDEX IF NOT EXISTS idx_kpc_proposition_id
+            ON knowledge_proposition_categories(proposition_id);
+
+        -- Backfill: inherit source-level categories onto existing document-derived propositions.
+        -- Agent observations (item_id IS NULL) are untouched — they had no categories before
+        -- and correctly get none unless explicitly set at store time.
+        INSERT INTO knowledge_proposition_categories (proposition_id, category_id, assigned_by)
+        SELECT kp.id, unnest(ks.category_ids), 'INHERITED'
+        FROM knowledge_propositions kp
+        JOIN knowledge_items ki ON kp.item_id = ki.id
+        JOIN knowledge_sources ks ON ki.source_id = ks.id
+        WHERE ks.category_ids IS NOT NULL
+          AND ks.category_ids != '{}'
+        ON CONFLICT (proposition_id, category_id) DO NOTHING;
+        """,
+    ),
 ]
 
 SCHEMA_VERSION = MIGRATIONS[-1][0] if MIGRATIONS else 0

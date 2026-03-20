@@ -177,15 +177,15 @@ class TestSearchQueryBuilder:
         assert len(params) == 4  # embedding, state, confidence, candidate_limit
 
     def test_vector_search_with_source_filter(self) -> None:
-        """Source filter should add JOIN and WHERE clause."""
+        """Source filter uses denormalized source_name column — no JOIN required."""
         sql, params = build_vector_search_query(
             query_embedding=[0.1, 0.2],
             source="internal-docs",
         )
 
-        assert "knowledge_sources" in sql
-        assert "ks.name =" in sql
+        assert "kp.source_name =" in sql
         assert "internal-docs" in params
+        assert "knowledge_sources" not in sql
 
     def test_vector_search_with_source_prefix(self) -> None:
         """Source prefix with * should use LIKE."""
@@ -208,14 +208,41 @@ class TestSearchQueryBuilder:
         assert "deployment patterns" in params
 
     def test_fts_search_with_categories(self) -> None:
-        """Category filter should add category overlap clause."""
+        """Category filter uses EXISTS subquery on junction table — no JOIN to knowledge_sources."""
         sql, params = build_fts_search_query(
             query_text="test",
             categories=["cat-uuid-1"],
         )
 
-        assert "&&" in sql  # Array overlap operator
-        assert "knowledge_sources" in sql
+        assert "EXISTS" in sql
+        assert "knowledge_proposition_categories" in sql
+        assert "knowledge_sources" not in sql
+
+    def test_vector_search_category_uses_exists_subquery(self) -> None:
+        """build_vector_search_query with categories uses EXISTS, not JOIN."""
+        sql, params = build_vector_search_query(
+            query_embedding=[0.1, 0.2],
+            categories=["550e8400-e29b-41d4-a716-446655440000"],
+        )
+
+        assert "EXISTS" in sql
+        assert "knowledge_proposition_categories" in sql
+        assert "kpc.proposition_id = kp.id" in sql
+        assert "knowledge_sources" not in sql
+        assert "JOIN knowledge_items ki " not in sql
+
+    def test_fts_search_category_uses_exists_subquery(self) -> None:
+        """build_fts_search_query with categories uses EXISTS, not JOIN."""
+        sql, params = build_fts_search_query(
+            query_text="test",
+            categories=["550e8400-e29b-41d4-a716-446655440000"],
+        )
+
+        assert "EXISTS" in sql
+        assert "knowledge_proposition_categories" in sql
+        assert "kpc.proposition_id = kp.id" in sql
+        assert "knowledge_sources" not in sql
+        assert "JOIN knowledge_items ki " not in sql
 
     def test_positional_params_are_sequential(self) -> None:
         """All $N params should be sequential in the SQL."""
@@ -693,7 +720,7 @@ class TestKnowledgeOutput:
 class TestRecallFilters:
     """Tests for _build_where_clause shared filter logic."""
 
-    async def _build(self, **kwargs: Any) -> tuple[str, str, list[Any]]:
+    async def _build(self, **kwargs: Any) -> tuple[str, list[Any]]:
         """Helper to build WHERE clause from KnowledgeInput kwargs."""
         executor = KnowledgeExecutor()
         inputs = KnowledgeInput(op="recall", **kwargs)
@@ -704,30 +731,39 @@ class TestRecallFilters:
 
     @pytest.mark.asyncio
     async def test_recall_source_name_exact(self) -> None:
-        """Exact source_name generates ks.name = $N."""
-        where, join, params = await self._build(where={"source_name": "internal-docs"})
-        assert "ks.name = $1" in where
+        """Exact source_name uses denormalized kp.source_name column."""
+        where, params = await self._build(where={"source_name": "internal-docs"})
+        assert "kp.source_name = $1" in where
         assert "internal-docs" in params
         assert "LIKE" not in where
 
     @pytest.mark.asyncio
     async def test_recall_source_name_prefix(self) -> None:
-        """Source name with * generates ks.name LIKE $N."""
-        where, join, params = await self._build(where={"source_name": "workflow:*"})
+        """Source name with * uses kp.source_name LIKE."""
+        where, params = await self._build(where={"source_name": "workflow:*"})
         assert "LIKE" in where
         assert "workflow:%" in params
 
     @pytest.mark.asyncio
+    async def test_build_where_clause_returns_two_values(self) -> None:
+        """_build_where_clause returns (where_sql, params) — no join_clause."""
+        result = await self._build()
+        assert len(result) == 2
+        where, params = result
+        assert isinstance(where, str)
+        assert isinstance(params, list)
+
+    @pytest.mark.asyncio
     async def test_recall_min_confidence(self) -> None:
         """min_confidence in where generates kp.confidence >= $N."""
-        where, join, params = await self._build(where={"min_confidence": 0.7})
+        where, params = await self._build(where={"min_confidence": 0.7})
         assert "kp.confidence >=" in where
         assert 0.7 in params
 
     @pytest.mark.asyncio
     async def test_recall_created_after(self) -> None:
         """created_after generates kp.created_at >= $N::timestamptz."""
-        where, join, params = await self._build(created_after="2026-03-01T00:00:00Z")
+        where, params = await self._build(created_after="2026-03-01T00:00:00Z")
         assert "kp.created_at >=" in where
         assert "timestamptz" in where
         assert "2026-03-01T00:00:00Z" in params
@@ -735,7 +771,7 @@ class TestRecallFilters:
     @pytest.mark.asyncio
     async def test_recall_created_before(self) -> None:
         """created_before generates kp.created_at <= $N::timestamptz."""
-        where, join, params = await self._build(created_before="2026-03-04T23:59:59Z")
+        where, params = await self._build(created_before="2026-03-04T23:59:59Z")
         assert "kp.created_at <=" in where
         assert "timestamptz" in where
         assert "2026-03-04T23:59:59Z" in params
@@ -743,7 +779,7 @@ class TestRecallFilters:
     @pytest.mark.asyncio
     async def test_recall_combined_filters(self) -> None:
         """Multiple filters produce correct AND-joined SQL."""
-        where, join, params = await self._build(
+        where, params = await self._build(
             where={"source_name": "docs", "lifecycle_state": "active", "min_confidence": 0.5},
             created_after="2026-01-01",
         )
@@ -752,39 +788,28 @@ class TestRecallFilters:
         assert where.count(" AND ") == 3  # 4 clauses, 3 ANDs
 
     @pytest.mark.asyncio
-    async def test_recall_needs_join_for_source(self) -> None:
-        """Source filter triggers JOIN clause."""
-        where, join, params = await self._build(where={"source_name": "test"})
-        assert "knowledge_items" in join
-        assert "knowledge_sources" in join
-
-    @pytest.mark.asyncio
-    async def test_recall_needs_join_for_category(self) -> None:
-        """Category filter triggers JOIN clause."""
-        # Use a valid UUID so _resolve_categories passes it through
-        where, join, params = await self._build(
+    async def test_recall_category_filter_uses_exists(self) -> None:
+        """Category filter uses EXISTS subquery on junction table — no JOIN, no &&."""
+        where, params = await self._build(
             where={"category": "550e8400-e29b-41d4-a716-446655440000"}
         )
-        assert "knowledge_items" in join
-        assert "knowledge_sources" in join
-
-    @pytest.mark.asyncio
-    async def test_recall_no_join_without_source_or_category(self) -> None:
-        """Lifecycle-only filter does not trigger JOIN."""
-        where, join, params = await self._build(where={"lifecycle_state": "ACTIVE"})
-        assert join == ""
+        assert "EXISTS" in where
+        assert "knowledge_proposition_categories" in where
+        assert "kpc.proposition_id = kp.id" in where
+        assert "knowledge_sources" not in where
+        assert "&&" not in where
 
     @pytest.mark.asyncio
     async def test_recall_default_lifecycle_fallback(self) -> None:
         """Without where dict, default lifecycle_state is applied."""
-        where, join, params = await self._build()
+        where, params = await self._build()
         assert "kp.lifecycle_state" in where
         assert "ACTIVE" in params
 
     @pytest.mark.asyncio
     async def test_recall_date_filters_work_without_where(self) -> None:
         """Date filters are top-level and work even without a where dict."""
-        where, join, params = await self._build(
+        where, params = await self._build(
             created_after="2026-01-01",
             created_before="2026-12-31",
         )
@@ -796,7 +821,7 @@ class TestRecallFilters:
     @pytest.mark.asyncio
     async def test_params_are_sequential(self) -> None:
         """All $N params should be sequential in the WHERE clause."""
-        where, join, params = await self._build(
+        where, params = await self._build(
             where={"source_name": "test:*", "min_confidence": 0.5},
             created_after="2026-01-01",
         )
@@ -805,22 +830,22 @@ class TestRecallFilters:
 
     @pytest.mark.asyncio
     async def test_recall_category_name_resolved(self) -> None:
-        """Category name in where dict triggers resolution via _resolve_categories."""
+        """Category name resolves to UUID; EXISTS subquery uses resolved UUID."""
         executor = KnowledgeExecutor()
         inputs = KnowledgeInput(
             op="recall",
             where={"category": "learnings"},
         )
-        # Mock backend to return a UUID for the category name lookup
         resolved_uuid = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"
         backend = MagicMock()
         query_result = MagicMock()
         query_result.rows = [{"id": resolved_uuid}]
         backend.query = AsyncMock(return_value=query_result)
 
-        where, join, params = await executor._build_where_clause(inputs, backend)
+        where, params = await executor._build_where_clause(inputs, backend)
         assert resolved_uuid in params
-        assert "&&" in where
+        assert "EXISTS" in where
+        assert "knowledge_proposition_categories" in where
 
 
 # ============================================================================
@@ -967,30 +992,28 @@ class TestRecallOperation:
         assert inp.created_after is None
         assert inp.created_before is None
 
-    def test_recall_safe_fields_does_not_include_updated_at(self) -> None:
-        """updated_at must not be in the ORDER BY allowlist for _op_recall.
+    def test_recall_safe_fields_include_expected_columns(self) -> None:
+        """ORDER BY allowlist for _op_recall must include known-safe sortable columns.
 
-        Not all deployments include updated_at in knowledge_propositions.
-        Allowing it silently generates broken SQL when the column is absent.
+        updated_at is part of the base DDL (knowledge_propositions has it from creation)
+        and is valid to include. The allowlist must never include unvetted column names.
         """
         import inspect
 
         from workflows_mcp.engine.executors_knowledge import KnowledgeExecutor
 
         source = inspect.getsource(KnowledgeExecutor._op_recall)
-        # Locate the safe_fields set literal — we verify updated_at is absent
-        assert '"updated_at"' not in source and "'updated_at'" not in source, (
-            "_op_recall safe_fields must not include updated_at — not all schemas have that column"
-        )
+        # All expected sortable columns must be in the allowlist
+        assert "'relevance_score'" in source or '"relevance_score"' in source
+        assert "'confidence'" in source or '"confidence"' in source
+        assert "'created_at'" in source or '"created_at"' in source
 
     @pytest.mark.asyncio
     async def test_recall_with_source_filter_and_item_path(self) -> None:
-        """Recall with source_name filter should use distinct aliases for JOINs.
+        """Recall with source_name filter uses kp.source_name directly (no extra JOIN).
 
-        This test verifies the fix for the alias collision bug where _op_recall's
-        LEFT JOIN for item_path used the same alias 'ki' as _build_where_clause's
-        JOIN for source filtering. The fix uses 'ki_ip' for the item_path LEFT JOIN
-        and 'ki' for the filter JOIN.
+        Source filtering uses the denormalized source_name column on knowledge_propositions,
+        so there is only one LEFT JOIN (for item_path). No alias collision is possible.
         """
         executor = KnowledgeExecutor()
         inputs = KnowledgeInput(
@@ -998,11 +1021,7 @@ class TestRecallOperation:
             where={"source_name": "test-source"},
         )
 
-        # Mock backend for _build_where_clause
         backend = MagicMock()
-        backend.query = AsyncMock(return_value=MagicMock(rows=[]))
-
-        # Capture the SQL generated by _op_recall
         captured_sql = ""
 
         async def capture_query(sql: str, params: tuple[Any, ...]) -> MagicMock:
@@ -1011,28 +1030,23 @@ class TestRecallOperation:
             return MagicMock(rows=[])
 
         backend.query = capture_query
-
-        # Create a minimal execution context
         exec_context = MagicMock()
 
         await executor._op_recall(inputs, exec_context, backend)
 
-        # Verify SQL contains both JOINs with distinct aliases
-        # The item_path LEFT JOIN should use 'ki_ip' alias
+        # Source filter uses denormalized column — no knowledge_sources JOIN needed
+        assert "kp.source_name" in captured_sql, (
+            "SQL must filter by kp.source_name (denormalized column)"
+        )
+        assert "knowledge_sources" not in captured_sql, (
+            "SQL must not JOIN knowledge_sources — filtering is done via kp.source_name"
+        )
+        # Only the item_path LEFT JOIN should be present
         assert "LEFT JOIN knowledge_items ki_ip" in captured_sql, (
             "SQL must use 'ki_ip' alias for item_path LEFT JOIN"
         )
-        # The filter JOIN should use 'ki' alias
-        assert "JOIN knowledge_items ki ON" in captured_sql, (
-            "SQL must use 'ki' alias for filter JOIN"
-        )
-        # Make sure there's no duplicate 'ki' alias usage that would cause error
-        ki_count = captured_sql.count("knowledge_items ki ")
-        ki_on_count = captured_sql.count("knowledge_items ki ON")
-        assert ki_count >= 1, "SQL should contain at least one 'knowledge_items ki' reference"
-        # The key assertion: both aliases should be present without collision
-        assert "ki_ip" in captured_sql and "ki ON" in captured_sql, (
-            "SQL must contain both 'ki_ip' (for item_path) and 'ki' (for filter) aliases"
+        assert "JOIN knowledge_items ki ON" not in captured_sql, (
+            "SQL must not have a separate 'ki' JOIN for source filtering"
         )
 
 
@@ -1167,7 +1181,12 @@ def _make_mock_backend(
 
 def _make_execution_context() -> MagicMock:
     """Build a minimal Execution mock for use in _op_store."""
-    return MagicMock()
+    ctx = MagicMock()
+    # execution_context must be None so _get_user_string_id / _get_audit_user_id
+    # fall through to the SYSTEM_USER_UUID fallback — a live MagicMock would
+    # cause json.dumps to fail when its attributes land in metadata_with_user.
+    ctx.execution_context = None
+    return ctx
 
 
 class TestStoreOperationBehaviour:
@@ -1195,7 +1214,8 @@ class TestStoreOperationBehaviour:
         backend.query.assert_not_called()
 
         # The INSERT must have item_id=NULL (second positional param is None)
-        execute_call = backend.execute.call_args
+        # call_args_list[0] = proposition INSERT; subsequent calls = audit entry
+        execute_call = backend.execute.call_args_list[0]
         params = execute_call[0][1]
         assert params[1] is None  # item_id param is None
 
@@ -1218,14 +1238,18 @@ class TestStoreOperationBehaviour:
         backend.query.assert_not_called()
 
         # Proposition INSERT: item_id param is None
-        execute_call = backend.execute.call_args
+        # call_args_list[0] = proposition INSERT; subsequent calls = audit entry
+        execute_call = backend.execute.call_args_list[0]
         params = execute_call[0][1]
         assert params[1] is None  # item_id
 
-        # metadata param (last) must contain source name
+        # metadata param (index 9) must contain source name
+        # Param order: id, item_id, content, embedding, authority, lifecycle_state,
+        #              confidence, embedding_model, dimensions, metadata, created_by,
+        #              auth_method, source_name, source_type
         import json as _j
 
-        metadata_param = params[-1]
+        metadata_param = params[9]
         metadata = _j.loads(metadata_param)
         assert metadata.get("source") == "my-workflow"
 
@@ -1275,7 +1299,8 @@ class TestStoreOperationBehaviour:
         assert "docs/arch.md" in item_params
 
         # Proposition INSERT links to item_id
-        execute_call = backend.execute.call_args
+        # call_args_list[0] = proposition INSERT; subsequent calls = audit entry
+        execute_call = backend.execute.call_args_list[0]
         params = execute_call[0][1]
         assert params[1] == item_id  # item_id param
 
@@ -1331,6 +1356,98 @@ class TestStoreOperationBehaviour:
         assert "metadata_)" not in sql
         assert "metadata_," not in sql
 
+    @pytest.mark.asyncio
+    async def test_store_inserts_junction_rows_explicit(self) -> None:
+        """When categories are provided, junction rows are inserted with assigned_by=EXPLICIT."""
+        executor = KnowledgeExecutor()
+        cat_uuid = "550e8400-e29b-41d4-a716-446655440000"
+
+        backend = MagicMock()
+        backend.execute = AsyncMock()
+        # _resolve_categories upserts into knowledge_entities and returns the UUID
+        cat_result = MagicMock()
+        cat_result.rows = [{"id": cat_uuid}]
+        backend.query = AsyncMock(return_value=cat_result)
+
+        inputs = KnowledgeInput(
+            op="store",
+            content="categorised agent note",
+            categories=[cat_uuid],  # valid UUID — passed through without upsert
+        )
+
+        with patch_embedding():
+            result = await executor._op_store(inputs, _make_execution_context(), backend)
+
+        assert result.success is True
+
+        # Find the junction INSERT among all execute calls
+        execute_calls = backend.execute.call_args_list
+        junction_sqls = [
+            c[0][0] for c in execute_calls if "knowledge_proposition_categories" in c[0][0]
+        ]
+        assert len(junction_sqls) >= 1, "Expected at least one junction INSERT"
+        assert "EXPLICIT" in junction_sqls[0]
+
+    @pytest.mark.asyncio
+    async def test_store_no_junction_rows_when_no_categories(self) -> None:
+        """Without categories, no junction rows are inserted."""
+        executor = KnowledgeExecutor()
+        backend = MagicMock()
+        backend.execute = AsyncMock()
+        backend.query = AsyncMock(return_value=MagicMock(rows=[]))
+
+        inputs = KnowledgeInput(op="store", content="uncategorised fact")
+
+        with patch_embedding():
+            await executor._op_store(inputs, _make_execution_context(), backend)
+
+        execute_calls = backend.execute.call_args_list
+        junction_sqls = [
+            c[0][0] for c in execute_calls if "knowledge_proposition_categories" in c[0][0]
+        ]
+        assert len(junction_sqls) == 0, "No junction rows should be inserted without categories"
+
+    @pytest.mark.asyncio
+    async def test_agent_observation_with_category_has_junction_row(self) -> None:
+        """Agent observation (no path, item_id=NULL) stores junction row when category given."""
+        executor = KnowledgeExecutor()
+        cat_uuid = "aaaaaaaa-bbbb-cccc-dddd-000000000001"
+
+        backend = MagicMock()
+        backend.execute = AsyncMock()
+        cat_result = MagicMock()
+        cat_result.rows = [{"id": cat_uuid}]
+        backend.query = AsyncMock(return_value=cat_result)
+
+        inputs = KnowledgeInput(
+            op="store",
+            content="incident observed: timeout on auth service",
+            source="incident-2026-03-20",
+            categories=[cat_uuid],
+        )
+
+        with patch_embedding():
+            result = await executor._op_store(inputs, _make_execution_context(), backend)
+
+        assert result.success is True
+
+        # Proposition INSERT must have item_id=None (source-only, no path)
+        prop_insert = next(
+            c
+            for c in backend.execute.call_args_list
+            if "knowledge_propositions" in c[0][0] and "INSERT" in c[0][0]
+        )
+        assert prop_insert[0][1][1] is None  # item_id param is None
+
+        # Junction INSERT must be present
+        junction_calls = [
+            c
+            for c in backend.execute.call_args_list
+            if "knowledge_proposition_categories" in c[0][0]
+        ]
+        assert len(junction_calls) >= 1
+        assert "EXPLICIT" in junction_calls[0][0][0]
+
 
 # ============================================================================
 # Search / Recall item_path Tests
@@ -1365,9 +1482,10 @@ class TestItemPathInResults:
         """build_vector_search_query SQL must SELECT ki_path.path AS item_path."""
         sql, _ = build_vector_search_query(query_embedding=[0.1, 0.2, 0.3])
         assert "item_path" in sql
-        assert "knowledge_items" in sql
-        # Must use LEFT JOIN so NULL-item_id propositions still appear
-        assert "LEFT JOIN" in sql
+        assert "LEFT JOIN knowledge_items ki_path" in sql
+        # Category JOIN to knowledge_sources must not be present (uses junction table instead)
+        assert "knowledge_sources" not in sql
+        assert "JOIN knowledge_items ki " not in sql
 
     def test_fts_search_sql_includes_item_path(self) -> None:
         """build_fts_search_query SQL must SELECT ki_path.path AS item_path."""
