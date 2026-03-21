@@ -2,6 +2,38 @@
 
 All notable changes to this project will be documented in this file.
 
+# [9.13.0](https://github.com/qtsone/workflows-mcp/compare/v9.12.2...v9.13.0) (2026-03-21)
+
+
+### Bug Fixes
+
+* **knowledge:** _build_where_clause must read inputs.categories for recall/forget ([35a2049](https://github.com/qtsone/workflows-mcp/commit/35a2049b8e39f18e4fac611e771dfd4839c3256b))
+* **knowledge:** _op_store must not mutate source.category_ids or propagate re-categorization ([bf89de8](https://github.com/qtsone/workflows-mcp/commit/bf89de8962b5dd7fefbb0720adede9345240ccba))
+* **knowledge:** auto-maintain updated_at via trigger on all knowledge tables ([6f5ec66](https://github.com/qtsone/workflows-mcp/commit/6f5ec66f5fd2f8edab530af73f20450238e0d45d))
+* **knowledge:** wrap HNSW index creation in exception handler for pgvector compat ([5f153b0](https://github.com/qtsone/workflows-mcp/commit/5f153b0ca801d9b464f3f3d59b9b097183a52494))
+* remove relevance_score ([8e7eea8](https://github.com/qtsone/workflows-mcp/commit/8e7eea8665b06edb07559aa58759d88f6673c7f0))
+* **workflows-mcp:** fix MMR diversity reranking silently doing nothing ([161d64f](https://github.com/qtsone/workflows-mcp/commit/161d64f3bb69e864bc5accedb9771ced185a2fa6))
+* **workflows-mcp:** source_type default NULL, migration v7 clears stale heuristic values ([43cfbf1](https://github.com/qtsone/workflows-mcp/commit/43cfbf1038badf16cbff99f202886b3c32145f25))
+* **workflows-mcp:** source_type reflects ingestion mechanism, not source/path presence ([8bf5b31](https://github.com/qtsone/workflows-mcp/commit/8bf5b31a848aa68f45e671e79f00a3062a672254))
+
+
+### Features
+
+* **knowledge:** audit trail, user attribution, and lifecycle filter fixes ([7440a6a](https://github.com/qtsone/workflows-mcp/commit/7440a6ad1505d97f0011c840edace5d36e8df167))
+* **knowledge:** expose authority and lifecycle_state in store operations ([503b25b](https://github.com/qtsone/workflows-mcp/commit/503b25be0936ac0830fe4608cbb3115c72e7c84d))
+* **knowledge:** introduce junction table for per-proposition category classification ([ce120c7](https://github.com/qtsone/workflows-mcp/commit/ce120c7e665b20f4a67de4c2d90cfe32550d272b))
+* **knowledge:** store user_identifier in proposition metadata ([795ae38](https://github.com/qtsone/workflows-mcp/commit/795ae385cbd2520b2a7cc35e4736a74ec412c764))
+* **workflows-mcp:** add filter-based archiving to forget_knowledge MCP tool ([4d5b760](https://github.com/qtsone/workflows-mcp/commit/4d5b7603b15e2ea02cc8ddb9fe7c9a8ea10f77f1)), closes [#8](https://github.com/qtsone/workflows-mcp/issues/8)
+* **workflows-mcp:** add validate_knowledge tool for USER_VALIDATED authority promotion ([7a49dd2](https://github.com/qtsone/workflows-mcp/commit/7a49dd286ddfce2f5866f046827076532e388a7f))
+* **workflows-mcp:** add validate/invalidate_knowledge tools with enum .value bugfix ([9ccf0ce](https://github.com/qtsone/workflows-mcp/commit/9ccf0ce0f0e4b552207587590f8d9216908fc505))
+* **workflows-mcp:** default diversity=True for knowledge_context ([ea2e8e8](https://github.com/qtsone/workflows-mcp/commit/ea2e8e817a9a5f22cf37444a8582524e3b890a30))
+* **workflows-mcp:** introduce knowledge_categories table (migration 10) ([2dd6290](https://github.com/qtsone/workflows-mcp/commit/2dd6290765666be306d4a9a416c33cab27279d11))
+
+
+### Performance Improvements
+
+* **knowledge:** add HNSW index on knowledge_propositions.embedding (migration v5) ([a9eb5e0](https://github.com/qtsone/workflows-mcp/commit/a9eb5e0cf11fac5802b4c90b615351c006d05a3f))
+
 ## [9.12.2](https://github.com/qtsone/workflows-mcp/compare/v9.12.1...v9.12.2) (2026-03-19)
 
 
