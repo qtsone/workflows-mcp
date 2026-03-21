@@ -572,6 +572,57 @@ def register_knowledge_tools(mcp_server: FastMCP) -> None:
 
     @mcp_server.tool(
         annotations=ToolAnnotations(
+            title="Validate Knowledge",
+            readOnlyHint=False,
+            destructiveHint=False,
+            idempotentHint=True,
+            openWorldHint=True,
+        )
+    )
+    async def validate_knowledge(
+        proposition_ids: Annotated[
+            list[str],
+            Field(description="UUIDs of propositions to promote to USER_VALIDATED authority"),
+        ],
+        *,
+        ctx: AppContextType,
+    ) -> CallToolResult:
+        """
+        Promote propositions to USER_VALIDATED authority, granting archive immunity.
+
+        WHEN TO USE: After a human has reviewed and confirmed a fact as permanently
+        trustworthy. USER_VALIDATED propositions are immune to forget_knowledge — they
+        cannot be archived by automated cleanup or bulk operations.
+
+        This is an in-place authority update, NOT a forget+store cycle. The original
+        proposition UUID, created_by, created_at, and category associations are all
+        preserved. Only the authority field is changed.
+
+        PARAMETERS:
+        - proposition_ids: List of proposition UUIDs to validate
+
+        RETURNS: {validated_count: N}
+
+        SEE ALSO: recall_knowledge (find propositions to validate), forget_knowledge (skips
+        USER_VALIDATED propositions automatically)
+        """
+        from .engine.executors_knowledge import KnowledgeExecutor, KnowledgeInput
+
+        execution = _create_knowledge_execution(ctx)
+        executor = KnowledgeExecutor()
+        inputs = KnowledgeInput(
+            op="validate",
+            proposition_ids=proposition_ids,
+        )
+        result = await executor.execute(inputs, context=execution)
+
+        if not result.success:
+            return _json_response({"status": "failure", "error": result.error})
+
+        return _json_response({"validated_count": result.validated_count})
+
+    @mcp_server.tool(
+        annotations=ToolAnnotations(
             title="Knowledge Context",
             readOnlyHint=True,
             destructiveHint=False,

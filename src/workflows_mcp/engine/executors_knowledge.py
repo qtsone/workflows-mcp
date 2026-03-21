@@ -117,7 +117,7 @@ class KnowledgeInput(BlockInput):
         ```
     """
 
-    op: Literal["search", "store", "recall", "forget", "context"] = Field(
+    op: Literal["search", "store", "recall", "forget", "context", "validate"] = Field(
         description="Operation to perform",
     )
 
@@ -276,6 +276,8 @@ class KnowledgeInput(BlockInput):
                 "'proposition_ids', 'where', 'source', 'created_before', or 'created_after' "
                 "is required for op='forget'"
             )
+        if self.op == "validate" and not self.proposition_ids:
+            raise ValueError("'proposition_ids' is required for op='validate'")
         if self.path is not None and not self.source:
             raise ValueError("'source' is required when 'path' is provided")
         return self
@@ -288,6 +290,7 @@ class KnowledgeOutput(BlockOutput):
     - search/recall: rows, columns, row_count
     - store: proposition_ids, stored_count
     - forget: archived_count, skipped_count
+    - validate: validated_count
     - context: context_text, proposition_count, tokens_used
     """
 
@@ -315,6 +318,9 @@ class KnowledgeOutput(BlockOutput):
     # Forget output
     archived_count: int = Field(default=0, description="Number archived")
     skipped_count: int = Field(default=0, description="Number skipped (immune)")
+
+    # Validate output
+    validated_count: int = Field(default=0, description="Number promoted to USER_VALIDATED")
 
     # Context output
     context_text: str = Field(default="", description="Clean content assembled text")
@@ -394,6 +400,7 @@ class KnowledgeExecutor(BlockExecutor):
                 "store": self._op_store,
                 "recall": self._op_recall,
                 "forget": self._op_forget,
+                "validate": self._op_validate,
                 "context": self._op_context,
             }
             handler = op_handlers[inputs.op]
@@ -1076,6 +1083,59 @@ class KnowledgeExecutor(BlockExecutor):
             archived_count=archived,
             skipped_count=skipped,
         )
+
+    async def _op_validate(
+        self,
+        inputs: KnowledgeInput,
+        context: Execution,
+        backend: Any,
+    ) -> KnowledgeOutput:
+        """Promote propositions to USER_VALIDATED authority (in-place update).
+
+        Unlike forget+store, this preserves the original UUID, created_by,
+        created_at, and category associations — making it the correct path for
+        authority promotion (metadata change) rather than belief replacement.
+
+        SECURITY: Records validated_by and logs to audit table.
+        """
+        ids: list[str] = []
+        if isinstance(inputs.proposition_ids, str):
+            ids = [s.strip() for s in inputs.proposition_ids.split(",") if s.strip()]
+        elif isinstance(inputs.proposition_ids, list):
+            ids = inputs.proposition_ids
+
+        if not ids:
+            return KnowledgeOutput(success=True, validated_count=0)
+
+        validated_by = _get_audit_user_id(context)
+        auth_method = _get_auth_method(context)
+        user_string = _get_user_string_id(context)
+
+        placeholders = ", ".join(f"${i + 1}::uuid" for i in range(len(ids)))
+        update_sql = f"""
+            UPDATE knowledge_propositions
+            SET authority = '{Authority.USER_VALIDATED}'
+            WHERE id IN ({placeholders})
+              AND lifecycle_state != '{LifecycleState.ARCHIVED}'
+            RETURNING id
+        """
+        result = await backend.query(update_sql, tuple(ids))
+        validated = len(result.rows) if result and result.rows else 0
+
+        if validated > 0:
+            validated_ids = [row["id"] for row in result.rows]
+            for prop_id in validated_ids:
+                await self._log_audit_entry(
+                    backend=backend,
+                    proposition_id=prop_id,
+                    action="VALIDATED",
+                    performed_by=validated_by,
+                    auth_method=auth_method,
+                    user_string=user_string,
+                    metadata={"previous_authority": "unknown", "method": "explicit_ids"},
+                )
+
+        return KnowledgeOutput(success=True, validated_count=validated)
 
     async def _op_context(
         self,

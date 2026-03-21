@@ -906,6 +906,23 @@ class TestForgetOperation:
         assert inp.where is not None
         assert inp.created_before == "2025-01-01"
 
+    def test_forget_sql_contains_user_validated_immunity(self) -> None:
+        """Both forget UPDATE paths must exclude USER_VALIDATED propositions.
+
+        Regression guard: if the immunity clause is removed, archived_count and
+        skipped_count would be wrong and human-validated facts could be wiped.
+        The SQL uses f-string interpolation of Authority.USER_VALIDATED, so we
+        check for the enum reference rather than the evaluated string value.
+        """
+        import inspect
+
+        from workflows_mcp.engine.executors_knowledge import KnowledgeExecutor
+
+        source = inspect.getsource(KnowledgeExecutor._op_forget)
+        assert source.count("Authority.USER_VALIDATED") == 2, (
+            "_op_forget must exclude USER_VALIDATED in BOTH update paths (by-ID and by-filter)"
+        )
+
     def test_forget_update_sql_does_not_contain_updated_at(self) -> None:
         """The forget UPDATE statements must NOT reference updated_at.
 
@@ -1575,3 +1592,207 @@ def patch_embedding() -> Any:
         "workflows_mcp.engine.executors_knowledge.compute_embedding",
         new=AsyncMock(return_value=(fake_embedding, "text-embedding-3-small", 3, None)),
     )
+
+
+# ============================================================================
+# Validate Operation Tests
+# ============================================================================
+
+
+class TestValidateOperation:
+    """Tests for validate op validation and output model."""
+
+    def test_validate_requires_proposition_ids(self) -> None:
+        """validate without proposition_ids should raise ValidationError."""
+        with pytest.raises(ValidationError, match="proposition_ids"):
+            KnowledgeInput(op="validate")
+
+    def test_validate_with_ids_passes(self) -> None:
+        """validate with proposition_ids passes validation."""
+        inp = KnowledgeInput(op="validate", proposition_ids=["uuid-1", "uuid-2"])
+        assert inp.op == "validate"
+        assert inp.proposition_ids == ["uuid-1", "uuid-2"]
+
+    def test_validate_output_model(self) -> None:
+        """Validate output populates validated_count."""
+        out = KnowledgeOutput(success=True, validated_count=2)
+        assert out.validated_count == 2
+        assert out.success is True
+
+    def test_validate_output_default_zero(self) -> None:
+        """validated_count defaults to zero."""
+        out = KnowledgeOutput(success=True)
+        assert out.validated_count == 0
+
+    def test_validate_sql_targets_user_validated_authority(self) -> None:
+        """_op_validate SQL must SET authority to USER_VALIDATED, not archive.
+
+        SQL uses f-string interpolation of Authority.USER_VALIDATED; check for
+        the enum reference rather than the evaluated string value.
+        """
+        import inspect
+
+        from workflows_mcp.engine.executors_knowledge import KnowledgeExecutor
+
+        source = inspect.getsource(KnowledgeExecutor._op_validate)
+        assert "Authority.USER_VALIDATED" in source
+        assert "lifecycle_state = " not in source, "_op_validate must not modify lifecycle_state"
+
+    def test_validate_sql_skips_archived_propositions(self) -> None:
+        """_op_validate must not promote ARCHIVED propositions."""
+        import inspect
+
+        from workflows_mcp.engine.executors_knowledge import KnowledgeExecutor
+
+        source = inspect.getsource(KnowledgeExecutor._op_validate)
+        assert "lifecycle_state != " in source or "lifecycle_state !=" in source
+
+    @pytest.mark.asyncio
+    async def test_validate_updates_authority_and_logs_audit(self) -> None:
+        """_op_validate updates authority and logs a VALIDATED audit entry."""
+        executor = KnowledgeExecutor()
+        prop_id = "aaaaaaaa-1111-2222-3333-444444444444"
+
+        update_result = MagicMock()
+        update_result.rows = [{"id": prop_id}]
+
+        backend = MagicMock()
+        backend.query = AsyncMock(return_value=update_result)
+        backend.execute = AsyncMock()  # audit INSERT
+
+        inputs = KnowledgeInput(op="validate", proposition_ids=[prop_id])
+        result = await executor._op_validate(inputs, _make_execution_context(), backend)
+
+        assert result.success is True
+        assert result.validated_count == 1
+
+        # Verify the UPDATE SQL targeted USER_VALIDATED
+        update_call = backend.query.call_args
+        update_sql = update_call[0][0]
+        assert "USER_VALIDATED" in update_sql
+        assert prop_id in update_call[0][1]
+
+        # Verify audit entry was written with action=VALIDATED
+        audit_call = backend.execute.call_args
+        audit_sql = audit_call[0][0]
+        assert "knowledge_proposition_audits" in audit_sql
+        audit_params = audit_call[0][1]
+        assert "VALIDATED" in audit_params
+
+    def test_validate_empty_list_rejected_by_validation(self) -> None:
+        """Empty proposition_ids list is rejected at validation time (not silently ignored)."""
+        with pytest.raises(ValidationError, match="proposition_ids"):
+            KnowledgeInput(op="validate", proposition_ids=[])
+
+
+# ============================================================================
+# USER_VALIDATED Immunity Behavioural Tests
+# ============================================================================
+
+
+class TestUserValidatedImmunity:
+    """Behavioural tests for USER_VALIDATED archive immunity in _op_forget.
+
+    These tests verify that the immunity SQL clause is correctly applied so that
+    skipped_count reflects propositions not archived due to USER_VALIDATED authority.
+    """
+
+    @pytest.mark.asyncio
+    async def test_forget_by_id_skips_user_validated(self) -> None:
+        """When 2 IDs are targeted but 1 is USER_VALIDATED, skipped_count=1."""
+        executor = KnowledgeExecutor()
+        prop_id_normal = "aaaaaaaa-1111-2222-3333-444444444444"
+        prop_id_immune = "bbbbbbbb-5555-6666-7777-888888888888"
+
+        # Simulate DB: only normal proposition is returned (immune one is skipped by SQL)
+        update_result = MagicMock()
+        update_result.rows = [{"id": prop_id_normal}]
+
+        backend = MagicMock()
+        backend.query = AsyncMock(return_value=update_result)
+        backend.execute = AsyncMock()  # audit INSERT
+
+        inputs = KnowledgeInput(
+            op="forget",
+            proposition_ids=[prop_id_normal, prop_id_immune],
+        )
+        result = await executor._op_forget(inputs, _make_execution_context(), backend)
+
+        assert result.success is True
+        assert result.archived_count == 1
+        assert result.skipped_count == 1  # immune proposition not returned by UPDATE ... RETURNING
+
+    @pytest.mark.asyncio
+    async def test_forget_by_id_all_immune_gives_zero_archived(self) -> None:
+        """When all targeted propositions are USER_VALIDATED, archived_count=0."""
+        executor = KnowledgeExecutor()
+
+        update_result = MagicMock()
+        update_result.rows = []  # DB skips all (all USER_VALIDATED)
+
+        backend = MagicMock()
+        backend.query = AsyncMock(return_value=update_result)
+        backend.execute = AsyncMock()
+
+        inputs = KnowledgeInput(
+            op="forget",
+            proposition_ids=["immune-1", "immune-2"],
+        )
+        result = await executor._op_forget(inputs, _make_execution_context(), backend)
+
+        assert result.success is True
+        assert result.archived_count == 0
+        assert result.skipped_count == 2
+
+    @pytest.mark.asyncio
+    async def test_forget_by_filter_skipped_count_reflects_immunity(self) -> None:
+        """Filter path: total=3, archived=2 → skipped_count=1 (one USER_VALIDATED)."""
+        executor = KnowledgeExecutor()
+
+        # COUNT(*) query returns 3 total
+        count_result = MagicMock()
+        count_result.rows = [{"total": 3}]
+
+        # UPDATE ... RETURNING only gives back 2 (one immune)
+        update_result = MagicMock()
+        update_result.rows = [{"id": "id-1"}, {"id": "id-2"}]
+
+        backend = MagicMock()
+        # First query: _build_where_clause category resolution (if any)
+        # For source-only filter: first call is COUNT, second is UPDATE
+        backend.query = AsyncMock(side_effect=[count_result, update_result])
+        backend.execute = AsyncMock()
+
+        inputs = KnowledgeInput(op="forget", source="old-session")
+        result = await executor._op_forget(inputs, _make_execution_context(), backend)
+
+        assert result.success is True
+        assert result.archived_count == 2
+        assert result.skipped_count == 1
+
+    @pytest.mark.asyncio
+    async def test_forget_by_filter_audit_logged_for_each_archived(self) -> None:
+        """Audit entries are written for each archived proposition, not for skipped ones."""
+        executor = KnowledgeExecutor()
+
+        count_result = MagicMock()
+        count_result.rows = [{"total": 2}]
+
+        archived_ids = ["id-arch-1", "id-arch-2"]
+        update_result = MagicMock()
+        update_result.rows = [{"id": i} for i in archived_ids]
+
+        backend = MagicMock()
+        backend.query = AsyncMock(side_effect=[count_result, update_result])
+        backend.execute = AsyncMock()
+
+        inputs = KnowledgeInput(op="forget", source="cleanup-session")
+        await executor._op_forget(inputs, _make_execution_context(), backend)
+
+        # One audit INSERT per archived proposition
+        audit_calls = [
+            c for c in backend.execute.call_args_list if "knowledge_proposition_audits" in c[0][0]
+        ]
+        assert len(audit_calls) == 2
+        audit_actions = [c[0][1][1] for c in audit_calls]  # action is second param
+        assert all(a == "ARCHIVED" for a in audit_actions)
