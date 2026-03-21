@@ -95,7 +95,7 @@ def build_vector_search_query(
 
     sql = f"""
         SELECT kp.id, kp.content, kp.confidence, kp.authority,
-               kp.relevance_score, kp.retrieval_count,
+               kp.retrieval_count,
                1 - (kp.embedding <=> {embedding_param}::vector) AS similarity,
                ki_path.path AS item_path{embedding_col}
         FROM knowledge_propositions kp
@@ -171,7 +171,7 @@ def build_fts_search_query(
 
     sql = f"""
         SELECT kp.id, kp.content, kp.confidence, kp.authority,
-               kp.relevance_score, kp.retrieval_count,
+               kp.retrieval_count,
                ts_rank(kp.search_vector, plainto_tsquery('english', {query_param})) AS fts_rank,
                ki_path.path AS item_path
         FROM knowledge_propositions kp

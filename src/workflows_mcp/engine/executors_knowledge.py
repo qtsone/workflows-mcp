@@ -230,7 +230,7 @@ class KnowledgeInput(BlockInput):
     )
     order: list[str] | None = Field(
         default=None,
-        description="Order by fields (e.g., ['relevance_score:desc'])",
+        description="Order by fields (e.g., ['confidence:desc'])",
     )
     created_after: str | None = Field(
         default=None,
@@ -552,7 +552,6 @@ class KnowledgeExecutor(BlockExecutor):
                     "content": row.get("content", ""),
                     "confidence": row.get("confidence"),
                     "authority": row.get("authority"),
-                    "relevance_score": row.get("relevance_score"),
                     "rrf_score": row.get("rrf_score"),
                     "item_path": row.get("item_path"),
                 }
@@ -563,7 +562,6 @@ class KnowledgeExecutor(BlockExecutor):
             "content",
             "confidence",
             "authority",
-            "relevance_score",
             "rrf_score",
             "item_path",
         ]
@@ -896,7 +894,6 @@ class KnowledgeExecutor(BlockExecutor):
                     field = o
                     direction = "ASC"
                 safe_fields = {
-                    "relevance_score",
                     "confidence",
                     "retrieval_count",
                     "created_at",
@@ -915,7 +912,7 @@ class KnowledgeExecutor(BlockExecutor):
         # SECURITY: Include created_by and auth_method in SELECT
         sql = f"""
             SELECT kp.id, kp.content, kp.confidence, kp.authority,
-                   kp.lifecycle_state, kp.relevance_score, kp.retrieval_count,
+                   kp.lifecycle_state, kp.retrieval_count,
                    ki_ip.path AS item_path,
                    kp.created_by, kp.auth_method
             FROM knowledge_propositions kp
@@ -933,7 +930,6 @@ class KnowledgeExecutor(BlockExecutor):
                 "confidence": row.get("confidence"),
                 "authority": row.get("authority"),
                 "lifecycle_state": row.get("lifecycle_state"),
-                "relevance_score": row.get("relevance_score"),
                 "retrieval_count": row.get("retrieval_count"),
                 "item_path": row.get("item_path"),
                 "created_by": str(row.get("created_by")) if row.get("created_by") else None,
@@ -948,7 +944,6 @@ class KnowledgeExecutor(BlockExecutor):
             "confidence",
             "authority",
             "lifecycle_state",
-            "relevance_score",
             "retrieval_count",
             "item_path",
             "created_by",
@@ -1199,7 +1194,6 @@ class KnowledgeExecutor(BlockExecutor):
                 "content": row.get("content", ""),
                 "confidence": row.get("confidence"),
                 "authority": row.get("authority"),
-                "relevance_score": row.get("relevance_score"),
                 "rrf_score": row.get("rrf_score"),
                 "item_path": row.get("item_path"),
             }

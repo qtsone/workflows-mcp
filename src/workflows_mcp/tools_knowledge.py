@@ -381,9 +381,8 @@ def register_knowledge_tools(mcp_server: FastMCP) -> None:
             list[str] | None,
             Field(
                 description=(
-                    "Order by fields, e.g. ['relevance_score:desc', 'created_at:asc']. "
-                    "Allowed: relevance_score, confidence, retrieval_count, "
-                    "created_at, updated_at"
+                    "Order by fields, e.g. ['confidence:desc', 'created_at:asc']. "
+                    "Allowed: confidence, retrieval_count, created_at, updated_at"
                 ),
                 default=None,
             ),
