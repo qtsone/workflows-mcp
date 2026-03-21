@@ -543,7 +543,7 @@ class TestKnowledgeInputValidation:
         assert inp.op == "search"
         assert inp.query == "test query"
         assert inp.limit == DEFAULT_LIMIT
-        assert inp.min_confidence == DEFAULT_MIN_CONFIDENCE
+        assert inp.min_confidence is None
 
     def test_store_valid(self) -> None:
         """Valid store input should pass validation."""
@@ -731,16 +731,16 @@ class TestRecallFilters:
 
     @pytest.mark.asyncio
     async def test_recall_source_name_exact(self) -> None:
-        """Exact source_name uses denormalized kp.source_name column."""
-        where, params = await self._build(where={"source_name": "internal-docs"})
+        """Exact source generates kp.source_name = $N."""
+        where, params = await self._build(source="internal-docs")
         assert "kp.source_name = $1" in where
         assert "internal-docs" in params
         assert "LIKE" not in where
 
     @pytest.mark.asyncio
     async def test_recall_source_name_prefix(self) -> None:
-        """Source name with * uses kp.source_name LIKE."""
-        where, params = await self._build(where={"source_name": "workflow:*"})
+        """Source with * generates kp.source_name LIKE."""
+        where, params = await self._build(source="workflow:*")
         assert "LIKE" in where
         assert "workflow:%" in params
 
@@ -755,8 +755,8 @@ class TestRecallFilters:
 
     @pytest.mark.asyncio
     async def test_recall_min_confidence(self) -> None:
-        """min_confidence in where generates kp.confidence >= $N."""
-        where, params = await self._build(where={"min_confidence": 0.7})
+        """min_confidence direct field generates kp.confidence >= $N."""
+        where, params = await self._build(min_confidence=0.7)
         assert "kp.confidence >=" in where
         assert 0.7 in params
 
@@ -780,7 +780,9 @@ class TestRecallFilters:
     async def test_recall_combined_filters(self) -> None:
         """Multiple filters produce correct AND-joined SQL."""
         where, params = await self._build(
-            where={"source_name": "docs", "lifecycle_state": "active", "min_confidence": 0.5},
+            source="docs",
+            lifecycle_state="active",
+            min_confidence=0.5,
             created_after="2026-01-01",
         )
         assert " AND " in where
@@ -822,7 +824,8 @@ class TestRecallFilters:
     async def test_params_are_sequential(self) -> None:
         """All $N params should be sequential in the WHERE clause."""
         where, params = await self._build(
-            where={"source_name": "test:*", "min_confidence": 0.5},
+            source="test:*",
+            min_confidence=0.5,
             created_after="2026-01-01",
         )
         for i in range(1, len(params) + 1):
@@ -877,7 +880,7 @@ class TestForgetOperation:
 
     def test_forget_validation_rejects_neither(self) -> None:
         """forget with neither proposition_ids nor where raises ValidationError."""
-        with pytest.raises(ValidationError, match="proposition_ids.*or.*where"):
+        with pytest.raises(ValidationError, match="proposition_ids.*where.*source.*created"):
             KnowledgeInput(op="forget")
 
     def test_forget_output_model(self) -> None:
@@ -974,12 +977,10 @@ class TestRecallOperation:
         """Recall with all possible filters passes validation."""
         inp = KnowledgeInput(
             op="recall",
-            where={
-                "source_name": "docs:*",
-                "lifecycle_state": "active",
-                "category": "550e8400-e29b-41d4-a716-446655440000",
-                "min_confidence": 0.8,
-            },
+            source="docs:*",
+            lifecycle_state="active",
+            min_confidence=0.8,
+            where={"category": "550e8400-e29b-41d4-a716-446655440000"},
             created_after="2026-01-01",
             created_before="2026-12-31",
             order=["confidence:desc"],
@@ -1020,7 +1021,7 @@ class TestRecallOperation:
         executor = KnowledgeExecutor()
         inputs = KnowledgeInput(
             op="recall",
-            where={"source_name": "test-source"},
+            source="test-source",
         )
 
         backend = MagicMock()

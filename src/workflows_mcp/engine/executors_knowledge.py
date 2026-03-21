@@ -156,8 +156,8 @@ class KnowledgeInput(BlockInput):
         default=None,
         description="Filter by category UUIDs",
     )
-    min_confidence: float = Field(
-        default=DEFAULT_MIN_CONFIDENCE,
+    min_confidence: float | None = Field(
+        default=None,
         description="Minimum confidence threshold",
     )
     lifecycle_state: str = Field(
@@ -507,7 +507,9 @@ class KnowledgeExecutor(BlockExecutor):
             query_embedding=embedding,
             source=inputs.source,
             categories=resolved_categories,
-            min_confidence=inputs.min_confidence,
+            min_confidence=inputs.min_confidence
+            if inputs.min_confidence is not None
+            else DEFAULT_MIN_CONFIDENCE,
             lifecycle_state=inputs.lifecycle_state,
             limit=limit,
         )
@@ -519,7 +521,9 @@ class KnowledgeExecutor(BlockExecutor):
             query_text=inputs.query,
             source=inputs.source,
             categories=resolved_categories,
-            min_confidence=inputs.min_confidence,
+            min_confidence=inputs.min_confidence
+            if inputs.min_confidence is not None
+            else DEFAULT_MIN_CONFIDENCE,
             lifecycle_state=inputs.lifecycle_state,
             limit=limit,
         )
@@ -804,12 +808,8 @@ class KnowledgeExecutor(BlockExecutor):
 
         where_clauses: list[str] = []
 
-        # Handle source filter (top-level inputs.source or where.source_name)
-        source_filter = None
-        if inputs.source:
-            source_filter = inputs.source
-        elif inputs.where and "source_name" in inputs.where:
-            source_filter = inputs.where["source_name"]
+        # Handle source filter
+        source_filter = inputs.source
 
         if source_filter:
             if isinstance(source_filter, str) and source_filter.endswith("*"):
@@ -843,18 +843,11 @@ class KnowledgeExecutor(BlockExecutor):
                 )
 
         # Handle lifecycle_state filter
-        if inputs.where and "lifecycle_state" in inputs.where:
-            state = inputs.where["lifecycle_state"].upper()
-            where_clauses.append(f"kp.lifecycle_state = {next_param(state)}")
-        else:
-            # Always apply default lifecycle_state when not explicitly set in where
-            where_clauses.append(f"kp.lifecycle_state = {next_param(inputs.lifecycle_state)}")
+        where_clauses.append(f"kp.lifecycle_state = {next_param(inputs.lifecycle_state.upper())}")
 
         # Handle min_confidence filter
-        if inputs.where and "min_confidence" in inputs.where:
-            where_clauses.append(
-                f"kp.confidence >= {next_param(float(inputs.where['min_confidence']))}"
-            )
+        if inputs.min_confidence is not None:
+            where_clauses.append(f"kp.confidence >= {next_param(inputs.min_confidence)}")
 
         # Handle created_by filter
         if inputs.where and "created_by" in inputs.where:
@@ -1161,7 +1154,9 @@ class KnowledgeExecutor(BlockExecutor):
             query_embedding=query_embedding,
             source=inputs.source,
             categories=resolved_categories,
-            min_confidence=inputs.min_confidence,
+            min_confidence=inputs.min_confidence
+            if inputs.min_confidence is not None
+            else DEFAULT_MIN_CONFIDENCE,
             lifecycle_state=inputs.lifecycle_state,
             limit=limit,
             include_embeddings=True,
@@ -1174,7 +1169,9 @@ class KnowledgeExecutor(BlockExecutor):
             query_text=inputs.query,
             source=inputs.source,
             categories=resolved_categories,
-            min_confidence=inputs.min_confidence,
+            min_confidence=inputs.min_confidence
+            if inputs.min_confidence is not None
+            else DEFAULT_MIN_CONFIDENCE,
             lifecycle_state=inputs.lifecycle_state,
             limit=limit,
         )

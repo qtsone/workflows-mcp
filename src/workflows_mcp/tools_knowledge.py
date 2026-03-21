@@ -433,12 +433,6 @@ def register_knowledge_tools(mcp_server: FastMCP) -> None:
         executor = KnowledgeExecutor()
 
         where: dict[str, Any] = {}
-        if source:
-            where["source_name"] = source
-        if lifecycle_state:
-            where["lifecycle_state"] = lifecycle_state
-        if min_confidence is not None:
-            where["min_confidence"] = min_confidence
         if created_by:
             where["created_by"] = created_by
         if auth_method:
@@ -446,6 +440,8 @@ def register_knowledge_tools(mcp_server: FastMCP) -> None:
 
         inputs = KnowledgeInput(
             op="recall",
+            source=source,
+            min_confidence=min_confidence,
             where=where if where else None,
             categories=categories,
             lifecycle_state=lifecycle_state,

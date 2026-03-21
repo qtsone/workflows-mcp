@@ -371,8 +371,8 @@ class TestRecallKnowledge:
         assert inputs.op == "recall"
 
     @pytest.mark.asyncio
-    async def test_source_filter_in_where(self, mock_ctx: MagicMock) -> None:
-        """Source filter is added to the where dict."""
+    async def test_source_and_lifecycle_routing(self, mock_ctx: MagicMock) -> None:
+        """Source and lifecycle_state are set as direct inputs fields, not routed through where."""
         with patch(_EXECUTOR_CLS) as mock_cls:
             mock_cls.return_value.execute = AsyncMock(return_value=_make_recall_output())
 
@@ -389,9 +389,10 @@ class TestRecallKnowledge:
             )
 
         inputs: KnowledgeInput = mock_cls.return_value.execute.call_args[0][0]
-        assert inputs.where is not None
-        assert inputs.where["source_name"] == "workflow:*"
-        assert inputs.where["min_confidence"] == 0.7
+        assert inputs.source == "workflow:*"
+        assert inputs.lifecycle_state == "ACTIVE"
+        assert inputs.min_confidence == 0.7
+        assert inputs.where is None  # created_by and auth_method both None, so no where dict
         assert inputs.limit == 5
         assert inputs.order == ["confidence:desc"]
 
