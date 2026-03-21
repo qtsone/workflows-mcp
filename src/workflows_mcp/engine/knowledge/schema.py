@@ -18,6 +18,14 @@ Adding a new migration
 Append a tuple to ``MIGRATIONS`` with ``(version, description, sql)``.
 The SQL **must** be idempotent (use IF EXISTS / IF NOT EXISTS guards)
 so it is safe on both fresh and existing databases.
+
+Schema ownership
+----------------
+This file defines and owns the **base schema** — only columns that this
+engine reads or writes.  Any application embedding this engine may extend
+the tables with additional columns by running its own ``ADD COLUMN IF NOT
+EXISTS`` statements after ``ensure_schema()`` completes.  Neither layer
+should touch the other's columns.
 """
 
 from __future__ import annotations
@@ -38,9 +46,7 @@ CREATE TABLE IF NOT EXISTS knowledge_sources (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     name VARCHAR(500) NOT NULL,
     source_type VARCHAR(50) NOT NULL DEFAULT 'DOCUMENT_UPLOAD',
-    config JSONB DEFAULT '{}'::jsonb,
     category_ids UUID[] DEFAULT '{}',
-    allowed_team_ids UUID[] DEFAULT '{}',
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
@@ -52,7 +58,6 @@ CREATE TABLE IF NOT EXISTS knowledge_items (
     source_id UUID REFERENCES knowledge_sources(id) ON DELETE CASCADE,
     path VARCHAR(1000),
     title VARCHAR(500),
-    content_hash VARCHAR(64),
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
@@ -67,12 +72,10 @@ CREATE TABLE IF NOT EXISTS knowledge_propositions (
     search_vector tsvector,
     authority VARCHAR(50) NOT NULL DEFAULT 'EXTRACTED',
     lifecycle_state VARCHAR(50) NOT NULL DEFAULT 'ACTIVE',
-    relevance_score FLOAT DEFAULT 0.5,
     confidence FLOAT DEFAULT 0.5,
     retrieval_count INTEGER DEFAULT 0,
     embedding_model VARCHAR(100),
     embedding_dimensions INTEGER,
-    source_section VARCHAR(500),
     metadata JSONB DEFAULT '{}'::jsonb,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
@@ -84,7 +87,6 @@ CREATE TABLE IF NOT EXISTS knowledge_entities (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     entity_type VARCHAR(50) NOT NULL,
     name VARCHAR(500) NOT NULL,
-    properties JSONB DEFAULT '{}'::jsonb,
     confidence FLOAT DEFAULT 1.0,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
@@ -375,6 +377,56 @@ MIGRATIONS: list[tuple[int, str, str]] = [
         WHERE ks.category_ids IS NOT NULL
           AND ks.category_ids != '{}'
         ON CONFLICT (proposition_id, category_id) DO NOTHING;
+        """,
+    ),
+    (
+        9,
+        "Remove unused columns from OSS schema",
+        """
+        DO $$
+        BEGIN
+            IF EXISTS (
+                SELECT 1 FROM information_schema.columns
+                WHERE table_name = 'knowledge_sources' AND column_name = 'allowed_team_ids'
+            ) THEN
+                ALTER TABLE knowledge_sources DROP COLUMN allowed_team_ids;
+            END IF;
+
+            IF EXISTS (
+                SELECT 1 FROM information_schema.columns
+                WHERE table_name = 'knowledge_sources' AND column_name = 'config'
+            ) THEN
+                ALTER TABLE knowledge_sources DROP COLUMN config;
+            END IF;
+
+            IF EXISTS (
+                SELECT 1 FROM information_schema.columns
+                WHERE table_name = 'knowledge_items' AND column_name = 'content_hash'
+            ) THEN
+                ALTER TABLE knowledge_items DROP COLUMN content_hash;
+            END IF;
+
+            IF EXISTS (
+                SELECT 1 FROM information_schema.columns
+                WHERE table_name = 'knowledge_propositions' AND column_name = 'source_section'
+            ) THEN
+                ALTER TABLE knowledge_propositions DROP COLUMN source_section;
+            END IF;
+
+            IF EXISTS (
+                SELECT 1 FROM information_schema.columns
+                WHERE table_name = 'knowledge_propositions' AND column_name = 'relevance_score'
+            ) THEN
+                ALTER TABLE knowledge_propositions DROP COLUMN relevance_score;
+            END IF;
+
+            IF EXISTS (
+                SELECT 1 FROM information_schema.columns
+                WHERE table_name = 'knowledge_entities' AND column_name = 'properties'
+            ) THEN
+                ALTER TABLE knowledge_entities DROP COLUMN properties;
+            END IF;
+        END $$;
         """,
     ),
 ]
