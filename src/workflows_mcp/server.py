@@ -275,9 +275,7 @@ async def app_lifespan(_server: FastMCP) -> AsyncIterator[AppContext]:
                     dialect=DatabaseEngine.POSTGRESQL,
                     host=knowledge_db_host,
                     port=int(os.getenv("KNOWLEDGE_DB_PORT", "5432")),
-                    database=os.getenv(
-                        "KNOWLEDGE_DB_NAME", "knowledge_db"
-                    ),
+                    database=os.getenv("KNOWLEDGE_DB_NAME", "knowledge_db"),
                     username=os.getenv("KNOWLEDGE_DB_USER"),
                     password=os.getenv("KNOWLEDGE_DB_PASSWORD"),
                 )
@@ -293,7 +291,12 @@ async def app_lifespan(_server: FastMCP) -> AsyncIterator[AppContext]:
 
             executor_registry.register(KnowledgeExecutor())
             register_knowledge_tools(mcp)
-            logger.info("Knowledge features enabled (DB ready)")
+            from .engine.executors_knowledge import AUDIT_FAIL_CLOSED
+
+            logger.info(
+                "Knowledge features enabled (DB ready)",
+                extra={"audit_fail_closed": AUDIT_FAIL_CLOSED},
+            )
         except Exception:
             logger.warning(
                 "Knowledge features disabled (DB unreachable)",

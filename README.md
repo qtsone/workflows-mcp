@@ -875,6 +875,7 @@ Configure the server behavior with these environment variables:
 | `KNOWLEDGE_DB_NAME` | Knowledge DB database name | `knowledge_db` | Valid DB name |
 | `KNOWLEDGE_DB_USER` | Knowledge DB username | *(none)* | Any string |
 | `KNOWLEDGE_DB_PASSWORD` | Knowledge DB password | *(none)* | Any string |
+| `AUDIT_FAIL_CLOSED` | Fail knowledge operations when audit log write fails (compliance mode) | `false` | true, false |
 
 ### Example Configuration
 
