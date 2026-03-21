@@ -623,6 +623,66 @@ def register_knowledge_tools(mcp_server: FastMCP) -> None:
 
     @mcp_server.tool(
         annotations=ToolAnnotations(
+            title="Invalidate Knowledge",
+            readOnlyHint=False,
+            destructiveHint=False,
+            idempotentHint=True,
+            openWorldHint=True,
+        )
+    )
+    async def invalidate_knowledge(
+        proposition_ids: Annotated[
+            list[str],
+            Field(description="UUIDs of USER_VALIDATED propositions to revoke"),
+        ],
+        reason: Annotated[
+            str | None,
+            Field(
+                description="Reason for revoking validation (for audit trail)",
+                default=None,
+            ),
+        ],
+        *,
+        ctx: AppContextType,
+    ) -> CallToolResult:
+        """
+        Revoke USER_VALIDATED authority, demoting propositions back to AGENT trust level.
+
+        WHEN TO USE: When a previously human-validated fact is no longer true or has
+        been superseded. After invalidation the proposition loses archive immunity and
+        can be removed with forget_knowledge. The content and full audit trail are
+        preserved — the audit log records that this was once USER_VALIDATED and when
+        and why that was revoked.
+
+        Only propositions currently holding USER_VALIDATED authority are affected.
+        Propositions with any other authority are silently skipped (idempotent).
+
+        PARAMETERS:
+        - proposition_ids: List of proposition UUIDs to invalidate
+        - reason: Optional reason for revocation (stored in audit trail)
+
+        RETURNS: {invalidated_count: N}
+
+        SEE ALSO: validate_knowledge (grant immunity), forget_knowledge (archive after invalidation)
+        """
+        from .engine.executors_knowledge import KnowledgeExecutor, KnowledgeInput
+
+        execution = _create_knowledge_execution(ctx)
+        executor = KnowledgeExecutor()
+        inputs = KnowledgeInput(
+            op="invalidate",
+            proposition_ids=proposition_ids,
+            reason=reason,
+        )
+        result = await executor.execute(inputs, context=execution)
+
+        if not result.success:
+            return _json_response({"status": "failure", "error": result.error})
+
+        return _json_response({"invalidated_count": result.invalidated_count})
+
+    @mcp_server.tool(
+        annotations=ToolAnnotations(
             title="Knowledge Context",
             readOnlyHint=True,
             destructiveHint=False,

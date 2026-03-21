@@ -117,7 +117,7 @@ class KnowledgeInput(BlockInput):
         ```
     """
 
-    op: Literal["search", "store", "recall", "forget", "context", "validate"] = Field(
+    op: Literal["search", "store", "recall", "forget", "context", "validate", "invalidate"] = Field(
         description="Operation to perform",
     )
 
@@ -278,6 +278,8 @@ class KnowledgeInput(BlockInput):
             )
         if self.op == "validate" and not self.proposition_ids:
             raise ValueError("'proposition_ids' is required for op='validate'")
+        if self.op == "invalidate" and not self.proposition_ids:
+            raise ValueError("'proposition_ids' is required for op='invalidate'")
         if self.path is not None and not self.source:
             raise ValueError("'source' is required when 'path' is provided")
         return self
@@ -319,8 +321,9 @@ class KnowledgeOutput(BlockOutput):
     archived_count: int = Field(default=0, description="Number archived")
     skipped_count: int = Field(default=0, description="Number skipped (immune)")
 
-    # Validate output
+    # Validate / Invalidate output
     validated_count: int = Field(default=0, description="Number promoted to USER_VALIDATED")
+    invalidated_count: int = Field(default=0, description="Number demoted from USER_VALIDATED")
 
     # Context output
     context_text: str = Field(default="", description="Clean content assembled text")
@@ -401,6 +404,7 @@ class KnowledgeExecutor(BlockExecutor):
                 "recall": self._op_recall,
                 "forget": self._op_forget,
                 "validate": self._op_validate,
+                "invalidate": self._op_invalidate,
                 "context": self._op_context,
             }
             handler = op_handlers[inputs.op]
@@ -1005,7 +1009,7 @@ class KnowledgeExecutor(BlockExecutor):
                     archived_by = ${len(ids) + 1}::uuid,
                     archive_reason = ${len(ids) + 2}
                 WHERE id IN ({placeholders})
-                  AND authority != '{Authority.USER_VALIDATED}'
+                  AND authority != '{Authority.USER_VALIDATED.value}'
                 RETURNING id
             """
             result = await backend.query(
@@ -1055,7 +1059,7 @@ class KnowledgeExecutor(BlockExecutor):
                 archived_by = ${param_offset + 1}::uuid,
                 archive_reason = ${param_offset + 2}
             WHERE {where_sql}
-              AND authority != '{Authority.USER_VALIDATED}'
+              AND authority != '{Authority.USER_VALIDATED.value}'
             RETURNING id
         """
         params.extend([str(archived_by) if archived_by else None, archive_reason])
@@ -1114,9 +1118,9 @@ class KnowledgeExecutor(BlockExecutor):
         placeholders = ", ".join(f"${i + 1}::uuid" for i in range(len(ids)))
         update_sql = f"""
             UPDATE knowledge_propositions
-            SET authority = '{Authority.USER_VALIDATED}'
+            SET authority = '{Authority.USER_VALIDATED.value}'
             WHERE id IN ({placeholders})
-              AND lifecycle_state != '{LifecycleState.ARCHIVED}'
+              AND lifecycle_state != '{LifecycleState.ARCHIVED.value}'
             RETURNING id
         """
         result = await backend.query(update_sql, tuple(ids))
@@ -1136,6 +1140,59 @@ class KnowledgeExecutor(BlockExecutor):
                 )
 
         return KnowledgeOutput(success=True, validated_count=validated)
+
+    async def _op_invalidate(
+        self,
+        inputs: KnowledgeInput,
+        context: Execution,
+        backend: Any,
+    ) -> KnowledgeOutput:
+        """Revoke USER_VALIDATED authority, demoting proposition to AGENT trust level.
+
+        This is the deliberate counterpart to _op_validate. After invalidation the
+        proposition is no longer archive-immune and can be archived via _op_forget.
+        Demotes to AGENT (not deleted) so the content and audit trail are preserved.
+
+        SECURITY: Records invalidated_by and logs INVALIDATED to audit table.
+        """
+        ids: list[str] = []
+        if isinstance(inputs.proposition_ids, str):
+            ids = [s.strip() for s in inputs.proposition_ids.split(",") if s.strip()]
+        elif isinstance(inputs.proposition_ids, list):
+            ids = inputs.proposition_ids
+
+        if not ids:
+            return KnowledgeOutput(success=True, invalidated_count=0)
+
+        invalidated_by = _get_audit_user_id(context)
+        auth_method = _get_auth_method(context)
+        user_string = _get_user_string_id(context)
+
+        placeholders = ", ".join(f"${i + 1}::uuid" for i in range(len(ids)))
+        update_sql = f"""
+            UPDATE knowledge_propositions
+            SET authority = '{Authority.AGENT.value}'
+            WHERE id IN ({placeholders})
+              AND authority = '{Authority.USER_VALIDATED.value}'
+            RETURNING id
+        """
+        result = await backend.query(update_sql, tuple(ids))
+        invalidated = len(result.rows) if result and result.rows else 0
+
+        if invalidated > 0:
+            invalidated_ids = [row["id"] for row in result.rows]
+            for prop_id in invalidated_ids:
+                await self._log_audit_entry(
+                    backend=backend,
+                    proposition_id=prop_id,
+                    action="INVALIDATED",
+                    performed_by=invalidated_by,
+                    auth_method=auth_method,
+                    user_string=user_string,
+                    metadata={"reason": inputs.reason, "method": "explicit_ids"},
+                )
+
+        return KnowledgeOutput(success=True, invalidated_count=invalidated)
 
     async def _op_context(
         self,

@@ -1686,6 +1686,148 @@ class TestValidateOperation:
 
 
 # ============================================================================
+# Invalidate Operation Tests
+# ============================================================================
+
+
+class TestInvalidateOperation:
+    """Tests for invalidate op — revokes USER_VALIDATED authority back to AGENT."""
+
+    def test_invalidate_requires_proposition_ids(self) -> None:
+        """invalidate without proposition_ids should raise ValidationError."""
+        with pytest.raises(ValidationError, match="proposition_ids"):
+            KnowledgeInput(op="invalidate")
+
+    def test_invalidate_with_ids_passes(self) -> None:
+        """invalidate with proposition_ids passes validation."""
+        inp = KnowledgeInput(op="invalidate", proposition_ids=["uuid-1"])
+        assert inp.op == "invalidate"
+        assert inp.proposition_ids == ["uuid-1"]
+
+    def test_invalidate_with_reason(self) -> None:
+        """invalidate accepts an optional reason."""
+        inp = KnowledgeInput(op="invalidate", proposition_ids=["uuid-1"], reason="no longer true")
+        assert inp.reason == "no longer true"
+
+    def test_invalidate_output_model(self) -> None:
+        """Invalidate output populates invalidated_count."""
+        out = KnowledgeOutput(success=True, invalidated_count=1)
+        assert out.invalidated_count == 1
+        assert out.success is True
+
+    def test_invalidate_output_default_zero(self) -> None:
+        """invalidated_count defaults to zero."""
+        out = KnowledgeOutput(success=True)
+        assert out.invalidated_count == 0
+
+    def test_invalidate_sql_demotes_to_agent(self) -> None:
+        """_op_invalidate must SET authority = 'AGENT', not archive."""
+        import inspect
+
+        from workflows_mcp.engine.executors_knowledge import KnowledgeExecutor
+
+        source = inspect.getsource(KnowledgeExecutor._op_invalidate)
+        assert "Authority.AGENT" in source
+        assert "lifecycle_state" not in source
+
+    def test_invalidate_sql_only_targets_user_validated(self) -> None:
+        """_op_invalidate must only update propositions that are currently USER_VALIDATED."""
+        import inspect
+
+        from workflows_mcp.engine.executors_knowledge import KnowledgeExecutor
+
+        source = inspect.getsource(KnowledgeExecutor._op_invalidate)
+        assert "Authority.USER_VALIDATED" in source
+
+    @pytest.mark.asyncio
+    async def test_invalidate_updates_authority_and_logs_audit(self) -> None:
+        """_op_invalidate demotes authority and logs an INVALIDATED audit entry."""
+        executor = KnowledgeExecutor()
+        prop_id = "cccccccc-1111-2222-3333-444444444444"
+
+        update_result = MagicMock()
+        update_result.rows = [{"id": prop_id}]
+
+        backend = MagicMock()
+        backend.query = AsyncMock(return_value=update_result)
+        backend.execute = AsyncMock()
+
+        inputs = KnowledgeInput(
+            op="invalidate",
+            proposition_ids=[prop_id],
+            reason="superseded by updated measurement",
+        )
+        result = await executor._op_invalidate(inputs, _make_execution_context(), backend)
+
+        assert result.success is True
+        assert result.invalidated_count == 1
+
+        # UPDATE SQL must target USER_VALIDATED and demote to AGENT
+        update_call = backend.query.call_args
+        update_sql = update_call[0][0]
+        assert "USER_VALIDATED" in update_sql
+        assert "AGENT" in update_sql
+        assert prop_id in update_call[0][1]
+
+        # Audit entry must use action=INVALIDATED
+        audit_call = backend.execute.call_args
+        assert "knowledge_proposition_audits" in audit_call[0][0]
+        assert "INVALIDATED" in audit_call[0][1]
+
+    @pytest.mark.asyncio
+    async def test_invalidate_skips_non_user_validated(self) -> None:
+        """Propositions that are not USER_VALIDATED are silently skipped (idempotent)."""
+        executor = KnowledgeExecutor()
+
+        # DB returns 0 rows — none were USER_VALIDATED
+        update_result = MagicMock()
+        update_result.rows = []
+
+        backend = MagicMock()
+        backend.query = AsyncMock(return_value=update_result)
+        backend.execute = AsyncMock()
+
+        inputs = KnowledgeInput(op="invalidate", proposition_ids=["agent-prop-id"])
+        result = await executor._op_invalidate(inputs, _make_execution_context(), backend)
+
+        assert result.success is True
+        assert result.invalidated_count == 0
+        backend.execute.assert_not_called()  # no audit entry for skipped propositions
+
+    @pytest.mark.asyncio
+    async def test_invalidate_then_forget_succeeds(self) -> None:
+        """After invalidation, a proposition can be archived by _op_forget.
+
+        This is the canonical two-step workflow for retiring a USER_VALIDATED fact.
+        """
+        executor = KnowledgeExecutor()
+        prop_id = "dddddddd-aaaa-bbbb-cccc-dddddddddddd"
+
+        # Step 1: invalidate — DB confirms 1 row updated
+        invalidate_result = MagicMock()
+        invalidate_result.rows = [{"id": prop_id}]
+
+        # Step 2: forget by ID — DB now archives the (formerly immune) proposition
+        forget_result = MagicMock()
+        forget_result.rows = [{"id": prop_id}]
+
+        backend = MagicMock()
+        backend.query = AsyncMock(side_effect=[invalidate_result, forget_result])
+        backend.execute = AsyncMock()
+
+        ctx = _make_execution_context()
+
+        inv_inputs = KnowledgeInput(op="invalidate", proposition_ids=[prop_id])
+        inv_out = await executor._op_invalidate(inv_inputs, ctx, backend)
+        assert inv_out.invalidated_count == 1
+
+        fgt_inputs = KnowledgeInput(op="forget", proposition_ids=[prop_id])
+        fgt_out = await executor._op_forget(fgt_inputs, ctx, backend)
+        assert fgt_out.archived_count == 1
+        assert fgt_out.skipped_count == 0
+
+
+# ============================================================================
 # USER_VALIDATED Immunity Behavioural Tests
 # ============================================================================
 

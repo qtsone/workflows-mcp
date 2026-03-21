@@ -670,7 +670,30 @@ Returns clean content only (no metadata) in `context_text`, ready for LLM prompt
       source_name: "deprecated-docs"
     created_before: "2025-01-01"
 ```
-Returns `archived_count` and `skipped_count` in the output.
+Returns `archived_count` and `skipped_count`. `USER_VALIDATED` propositions are immune and counted in `skipped_count`.
+
+**6. Validate — Grant a proposition permanent archive immunity:**
+```yaml
+- id: pin_finding
+  type: Knowledge
+  inputs:
+    op: validate
+    proposition_ids:
+      - "uuid-of-reviewed-fact"
+```
+Promotes `authority` to `USER_VALIDATED` in-place, preserving the original UUID, creator, and category associations. Returns `validated_count`.
+
+**7. Invalidate — Revoke USER_VALIDATED immunity:**
+```yaml
+- id: revoke_outdated
+  type: Knowledge
+  inputs:
+    op: invalidate
+    proposition_ids:
+      - "uuid-of-outdated-fact"
+    reason: "superseded by new measurement from 2026-03-21"
+```
+Demotes authority back to `AGENT` and logs an `INVALIDATED` audit entry with the reason. After this, `forget` can archive the proposition normally. Returns `invalidated_count`.
 
 **6. Chaining Operations — Store, search, and cleanup in one workflow:**
 ```yaml
@@ -839,6 +862,8 @@ When you configure workflows-mcp, your AI assistant gets these tools:
 
 - **store_knowledge** - Persist a new fact with auto-computed embedding
   - `content`, `source`, `confidence` (default 0.8), `categories`
+  - `authority`: `AGENT` (default), `EXTRACTED`, `COMMUNITY_SUMMARY`, or `USER_VALIDATED`
+  - `lifecycle_state`: `ACTIVE` (default) or `QUARANTINED`
 
 - **recall_knowledge** - Filter-based retrieval (no semantic search)
   - `source`, `categories`, `lifecycle_state`, `min_confidence`, `limit`, `order`
@@ -848,6 +873,18 @@ When you configure workflows-mcp, your AI assistant gets these tools:
   - By filter: `source` (exact or prefix `*`), `created_before`, `created_after`
   - At least one of `proposition_ids` or `source` must be provided
   - `reason` (optional, for audit trail)
+  - `USER_VALIDATED` propositions are immune and reported in `skipped_count`
+
+- **validate_knowledge** - Grant a proposition permanent archive immunity
+  - `proposition_ids` (required): UUIDs to promote to `USER_VALIDATED` authority
+  - In-place update — preserves UUID, creator, timestamp, and category associations
+  - Returns `validated_count`
+
+- **invalidate_knowledge** - Revoke USER_VALIDATED immunity
+  - `proposition_ids` (required): UUIDs to demote back to `AGENT` authority
+  - `reason` (optional, for audit trail)
+  - After invalidation, `forget_knowledge` can archive the proposition normally
+  - Returns `invalidated_count`
 
 - **knowledge_context** - Token-budgeted context assembly for LLM prompts
   - `query`, `source`, `categories`, `max_tokens`, `diversity`
