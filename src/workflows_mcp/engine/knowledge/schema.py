@@ -429,6 +429,56 @@ MIGRATIONS: list[tuple[int, str, str]] = [
         END $$;
         """,
     ),
+    (
+        10,
+        "Introduce knowledge_categories table; re-point knowledge_proposition_categories FK",
+        """
+        -- 1. Create dedicated category registry
+        CREATE TABLE IF NOT EXISTS knowledge_categories (
+            id         UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+            name       VARCHAR(500) NOT NULL,
+            created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+            CONSTRAINT uq_knowledge_categories_name UNIQUE (name)
+        );
+
+        -- 2. Migrate existing category entities (preserve UUIDs for FK integrity)
+        INSERT INTO knowledge_categories (id, name, created_at)
+        SELECT id, name, created_at
+        FROM knowledge_entities
+        WHERE entity_type = 'category'
+        ON CONFLICT (id) DO NOTHING;
+
+        DO $$
+        DECLARE
+            fk_name TEXT;
+        BEGIN
+            -- 3. Drop old FK: knowledge_proposition_categories.category_id → knowledge_entities
+            SELECT conname INTO fk_name
+            FROM pg_constraint c
+            JOIN pg_class t ON c.conrelid = t.oid
+            JOIN pg_attribute a ON a.attrelid = c.conrelid AND a.attnum = c.conkey[1]
+            WHERE t.relname = 'knowledge_proposition_categories'
+              AND c.contype = 'f'
+              AND a.attname = 'category_id';
+
+            IF fk_name IS NOT NULL THEN
+                EXECUTE 'ALTER TABLE knowledge_proposition_categories DROP CONSTRAINT ' || fk_name;
+            END IF;
+
+            -- 4. Add new FK → knowledge_categories
+            IF NOT EXISTS (
+                SELECT 1 FROM pg_constraint WHERE conname = 'kpc_category_id_fkey'
+            ) THEN
+                ALTER TABLE knowledge_proposition_categories
+                    ADD CONSTRAINT kpc_category_id_fkey
+                    FOREIGN KEY (category_id) REFERENCES knowledge_categories(id) ON DELETE CASCADE;
+            END IF;
+        END $$;
+
+        -- 5. Clean up migrated category rows from knowledge_entities
+        DELETE FROM knowledge_entities WHERE entity_type = 'category';
+        """,
+    ),
 ]
 
 SCHEMA_VERSION = MIGRATIONS[-1][0] if MIGRATIONS else 0

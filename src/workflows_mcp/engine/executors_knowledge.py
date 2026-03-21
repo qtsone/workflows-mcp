@@ -457,18 +457,23 @@ class KnowledgeExecutor(BlockExecutor):
             except ValueError:
                 pass
 
-            # Name-based resolution: upsert into knowledge_entities
+            # Name-based resolution: upsert into knowledge_categories.
+            # xmax::text = '0' distinguishes a freshly inserted row from a
+            # conflict-resolved row in a single round-trip — warns only on
+            # auto-create, not on routine lookup of an existing category.
             result = await backend.query(
                 """
-                INSERT INTO knowledge_entities (id, entity_type, name)
-                VALUES ($1::uuid, 'category', $2)
-                ON CONFLICT (entity_type, name) DO UPDATE
+                INSERT INTO knowledge_categories (id, name)
+                VALUES ($1::uuid, $2)
+                ON CONFLICT (name) DO UPDATE
                     SET name = EXCLUDED.name
-                RETURNING id
+                RETURNING id, (xmax::text = '0') AS was_inserted
                 """,
                 (str(uuid.uuid4()), entry),
             )
             if result.rows:
+                if result.rows[0].get("was_inserted"):
+                    logger.warning("Auto-creating new knowledge category: %r", entry)
                 resolved.append(str(result.rows[0]["id"]))
             else:
                 logger.warning("Category resolution returned no rows for %r", entry)

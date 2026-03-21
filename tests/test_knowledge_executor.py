@@ -1007,9 +1007,12 @@ class TestRecallOperation:
 
         source = inspect.getsource(KnowledgeExecutor._op_recall)
         # All expected sortable columns must be in the allowlist
-        assert "'relevance_score'" in source or '"relevance_score"' in source
         assert "'confidence'" in source or '"confidence"' in source
         assert "'created_at'" in source or '"created_at"' in source
+        assert "'retrieval_count'" in source or '"retrieval_count"' in source
+        assert "'updated_at'" in source or '"updated_at"' in source
+        # relevance_score was removed in migration 9 and must NOT be in the allowlist
+        assert "'relevance_score'" not in source and '"relevance_score"' not in source
 
     @pytest.mark.asyncio
     async def test_recall_with_source_filter_and_item_path(self) -> None:
@@ -1106,11 +1109,11 @@ class TestCategoryResolution:
 
     @pytest.mark.asyncio
     async def test_name_resolution(self) -> None:
-        """Non-UUID string should trigger upsert into knowledge_entities."""
+        """Non-UUID string should trigger upsert into knowledge_categories."""
         executor = KnowledgeExecutor()
         resolved_uuid = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"
         query_result = MagicMock()
-        query_result.rows = [{"id": resolved_uuid}]
+        query_result.rows = [{"id": resolved_uuid, "was_inserted": False}]
         backend = MagicMock()
         backend.query = AsyncMock(return_value=query_result)
 
@@ -1118,11 +1121,49 @@ class TestCategoryResolution:
 
         assert result == [resolved_uuid]
         backend.query.assert_called_once()
-        # Verify the SQL contains the upsert pattern
+        # Verify the SQL targets knowledge_categories (not knowledge_entities)
         call_args = backend.query.call_args
         sql = call_args[0][0]
-        assert "knowledge_entities" in sql
+        assert "knowledge_categories" in sql
+        assert "knowledge_entities" not in sql
         assert "ON CONFLICT" in sql
+        assert "xmax" in sql
+
+    @pytest.mark.asyncio
+    async def test_warning_emitted_on_auto_create(self, caplog: pytest.LogCaptureFixture) -> None:
+        """Warning should be emitted when a new category is inserted (was_inserted=True)."""
+        import logging
+
+        executor = KnowledgeExecutor()
+        resolved_uuid = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"
+        query_result = MagicMock()
+        query_result.rows = [{"id": resolved_uuid, "was_inserted": True}]
+        backend = MagicMock()
+        backend.query = AsyncMock(return_value=query_result)
+
+        with caplog.at_level(logging.WARNING, logger="workflows_mcp.engine.executors_knowledge"):
+            result = await executor._resolve_categories(["new-category"], backend)
+
+        assert result == [resolved_uuid]
+        assert any("Auto-creating new knowledge category" in r.message for r in caplog.records)
+
+    @pytest.mark.asyncio
+    async def test_no_warning_on_existing_category(self, caplog: pytest.LogCaptureFixture) -> None:
+        """No warning should be emitted when resolving an existing category (was_inserted=False)."""
+        import logging
+
+        executor = KnowledgeExecutor()
+        resolved_uuid = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"
+        query_result = MagicMock()
+        query_result.rows = [{"id": resolved_uuid, "was_inserted": False}]
+        backend = MagicMock()
+        backend.query = AsyncMock(return_value=query_result)
+
+        with caplog.at_level(logging.WARNING, logger="workflows_mcp.engine.executors_knowledge"):
+            result = await executor._resolve_categories(["existing-category"], backend)
+
+        assert result == [resolved_uuid]
+        assert not any("Auto-creating" in r.message for r in caplog.records)
 
     @pytest.mark.asyncio
     async def test_mixed_input(self) -> None:
