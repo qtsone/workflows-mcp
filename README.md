@@ -1014,6 +1014,37 @@ uv run ruff check src/workflows_mcp/
 uv run ruff format src/workflows_mcp/
 ```
 
+### Knowledge Benchmarks
+
+Baseline benchmark runners for LongMemEval and LoCoMo live under `benchmarks/`.
+
+```bash
+# Install benchmark dependency
+uv pip install fastembed
+
+# Fetch benchmark datasets
+uv run python benchmarks/fetch_benchmark_datasets.py --output-dir benchmarks/data
+
+# Run workflows-mcp LongMemEval baseline
+uv run python benchmarks/workflows_longmemeval_bench.py \
+  benchmarks/data/longmemeval_s_cleaned.json \
+  --granularity session \
+  --embed-model default \
+  --search-limit 50 \
+  --purge-prefix
+
+# Run workflows-mcp LoCoMo baseline
+uv run python benchmarks/workflows_locomo_bench.py \
+  benchmarks/data/locomo10.json \
+  --granularity session \
+  --top-k 10 \
+  --embed-model default \
+  --purge-prefix
+
+# Optional non-default model comparison
+# --embed-model bge-base
+```
+
 ### Testing the MCP Server
 
 For interactive testing and debugging:

@@ -50,6 +50,7 @@ dev = [
     "mypy>=1.8",
     "ruff>=0.1.0",
 ]
+benchmark = ["fastembed>=0.7.3"]
 postgresql = []  # asyncpg moved to main dependencies
 mariadb = ["aiomysql>=0.2.0"]
 sql-all = ["aiomysql>=0.2.0"]  # asyncpg moved to main dependencies
