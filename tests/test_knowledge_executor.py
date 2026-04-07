@@ -2094,3 +2094,644 @@ class TestUserValidatedImmunity:
         assert len(audit_calls) == 2
         audit_actions = [c[0][1][1] for c in audit_calls]  # action is second param
         assert all(a == "ARCHIVED" for a in audit_actions)
+
+
+# ============================================================================
+# Graph Operation Tests
+# ============================================================================
+
+
+def _make_entity_row(
+    entity_id: str,
+    name: str = "TestEntity",
+    entity_type: str = "concept",
+    confidence: float = 1.0,
+) -> dict[str, Any]:
+    """Build a fake knowledge_entities row dict."""
+    return {
+        "id": entity_id,
+        "entity_type": entity_type,
+        "name": name,
+        "confidence": confidence,
+    }
+
+
+def _make_relation_row(
+    rel_id: str,
+    source_id: str,
+    target_id: str,
+    relation_type: str = "related_to",
+    confidence: float = 1.0,
+    valid_from: Any = None,
+    valid_to: Any = None,
+) -> dict[str, Any]:
+    """Build a fake knowledge_relations row dict."""
+    return {
+        "id": rel_id,
+        "source_entity_id": source_id,
+        "target_entity_id": target_id,
+        "relation_type": relation_type,
+        "confidence": confidence,
+        "valid_from": valid_from,
+        "valid_to": valid_to,
+    }
+
+
+class TestMigrationV12:
+    """Tests for migration v12: knowledge_relations and knowledge_proposition_entities."""
+
+    def test_migration_12_present(self) -> None:
+        """MIGRATIONS list must contain version 12."""
+        versions = [m[0] for m in MIGRATIONS]
+        assert 12 in versions
+
+    def test_migration_12_creates_knowledge_relations(self) -> None:
+        """Migration v12 must create knowledge_relations table with IF NOT EXISTS."""
+        v12 = next(m for m in MIGRATIONS if m[0] == 12)
+        sql = v12[2]
+        assert "CREATE TABLE IF NOT EXISTS knowledge_relations" in sql
+
+    def test_migration_12_creates_knowledge_proposition_entities(self) -> None:
+        """Migration v12 must create knowledge_proposition_entities table."""
+        v12 = next(m for m in MIGRATIONS if m[0] == 12)
+        sql = v12[2]
+        assert "CREATE TABLE IF NOT EXISTS knowledge_proposition_entities" in sql
+
+    def test_migration_12_creates_graph_traversal_indexes(self) -> None:
+        """Migration v12 must create indexes for graph traversal performance."""
+        v12 = next(m for m in MIGRATIONS if m[0] == 12)
+        sql = v12[2]
+        assert "idx_kr_source_target" in sql
+        assert "idx_kr_relation_type" in sql
+        assert "idx_kpe_entity_id" in sql
+
+    def test_migration_12_is_idempotent(self) -> None:
+        """All CREATE statements in v12 must have IF NOT EXISTS guards."""
+        v12 = next(m for m in MIGRATIONS if m[0] == 12)
+        for line in v12[2].split("\n"):
+            line = line.strip()
+            if line.startswith("CREATE TABLE"):
+                assert "IF NOT EXISTS" in line, f"Missing IF NOT EXISTS: {line}"
+            if line.startswith("CREATE INDEX"):
+                assert "IF NOT EXISTS" in line, f"Missing IF NOT EXISTS: {line}"
+
+    def test_schema_version_is_12(self) -> None:
+        """SCHEMA_VERSION must equal the last migration version (12)."""
+        from workflows_mcp.engine.knowledge.schema import SCHEMA_VERSION
+
+        assert SCHEMA_VERSION == 12
+
+
+class TestKnowledgeInputGraphValidation:
+    """Tests for graph op field validation in KnowledgeInput."""
+
+    def test_graph_neighbors_requires_start_entity(self) -> None:
+        """graph_neighbors without start_entity should raise ValidationError."""
+        with pytest.raises(ValidationError, match="start_entity"):
+            KnowledgeInput(op="graph_neighbors")
+
+    def test_graph_traverse_requires_start_entity(self) -> None:
+        """graph_traverse without start_entity should raise ValidationError."""
+        with pytest.raises(ValidationError, match="start_entity"):
+            KnowledgeInput(op="graph_traverse")
+
+    def test_graph_path_requires_start_entity(self) -> None:
+        """graph_path without start_entity should raise ValidationError."""
+        with pytest.raises(ValidationError, match="start_entity"):
+            KnowledgeInput(op="graph_path")
+
+    def test_graph_stats_requires_start_entity(self) -> None:
+        """graph_stats without start_entity should raise ValidationError."""
+        with pytest.raises(ValidationError, match="start_entity"):
+            KnowledgeInput(op="graph_stats")
+
+    def test_graph_path_requires_end_entity(self) -> None:
+        """graph_path without end_entity should raise ValidationError."""
+        with pytest.raises(ValidationError, match="end_entity"):
+            KnowledgeInput(op="graph_path", start_entity="entity-a")
+
+    def test_graph_neighbors_valid_minimal(self) -> None:
+        """graph_neighbors with start_entity should pass validation."""
+        inp = KnowledgeInput(op="graph_neighbors", start_entity="entity-a")
+        assert inp.op == "graph_neighbors"
+        assert inp.start_entity == "entity-a"
+        assert inp.max_nodes == 100
+        assert inp.max_hops == 3
+        assert inp.relation_types is None
+        assert inp.min_edge_confidence is None
+
+    def test_graph_traverse_valid_with_options(self) -> None:
+        """graph_traverse accepts optional filters and depth limits."""
+        inp = KnowledgeInput(
+            op="graph_traverse",
+            start_entity="root-node",
+            max_hops=5,
+            max_nodes=50,
+            relation_types=["depends_on", "uses"],
+            min_edge_confidence=0.7,
+        )
+        assert inp.max_hops == 5
+        assert inp.max_nodes == 50
+        assert inp.relation_types == ["depends_on", "uses"]
+        assert inp.min_edge_confidence == 0.7
+
+    def test_graph_path_valid(self) -> None:
+        """graph_path with both start_entity and end_entity passes."""
+        inp = KnowledgeInput(
+            op="graph_path",
+            start_entity="entity-a",
+            end_entity="entity-b",
+        )
+        assert inp.op == "graph_path"
+        assert inp.end_entity == "entity-b"
+
+    def test_graph_stats_valid_with_as_of(self) -> None:
+        """graph_stats with temporal as_of filter passes."""
+        inp = KnowledgeInput(
+            op="graph_stats",
+            start_entity="entity-x",
+            as_of="2026-01-01T00:00:00Z",
+        )
+        assert inp.as_of == "2026-01-01T00:00:00Z"
+
+
+class TestKnowledgeOutputGraphDefaults:
+    """Tests for KnowledgeOutput default values on graph-related fields."""
+
+    def test_graph_fields_default_to_empty(self) -> None:
+        """Graph output fields should default to empty lists/dict/zero."""
+        out = KnowledgeOutput(success=True)
+        assert out.nodes == []
+        assert out.edges == []
+        assert out.paths == []
+        assert out.traversal_count == 0
+        assert out.diagnostics == {}
+
+    def test_graph_output_populated(self) -> None:
+        """KnowledgeOutput should store graph result fields correctly."""
+        out = KnowledgeOutput(
+            success=True,
+            nodes=[{"id": "e1", "name": "Alpha"}],
+            edges=[{"id": "r1", "source_entity_id": "e1", "target_entity_id": "e2"}],
+            traversal_count=2,
+            diagnostics={"expanded_nodes": 1, "pruned_edges": 0, "latency_ms": 3.5},
+        )
+        assert len(out.nodes) == 1
+        assert len(out.edges) == 1
+        assert out.traversal_count == 2
+        assert out.diagnostics["expanded_nodes"] == 1
+
+
+class TestGraphNeighborsOperation:
+    """Tests for _op_graph_neighbors executor handler."""
+
+    @pytest.mark.asyncio
+    async def test_unknown_entity_returns_empty(self) -> None:
+        """Unknown start_entity must return empty result, not raise."""
+        executor = KnowledgeExecutor()
+        backend = MagicMock()
+        # Both UUID existence check and name lookup return no rows
+        backend.query = AsyncMock(return_value=MagicMock(rows=[]))
+
+        inputs = KnowledgeInput(op="graph_neighbors", start_entity="nonexistent-entity")
+        result = await executor._op_graph_neighbors(inputs, _make_execution_context(), backend)
+
+        assert result.success is True
+        assert result.nodes == []
+        assert result.edges == []
+        assert result.traversal_count == 0
+
+    @pytest.mark.asyncio
+    async def test_single_hop_neighbor(self) -> None:
+        """graph_neighbors returns root + one neighbor connected by one edge."""
+        executor = KnowledgeExecutor()
+
+        root_id = "aaaaaaaa-0000-0000-0000-000000000001"
+        neighbor_id = "bbbbbbbb-0000-0000-0000-000000000002"
+        rel_id = "cccccccc-0000-0000-0000-000000000003"
+
+        root_row = _make_entity_row(root_id, name="Root")
+        neighbor_row = _make_entity_row(neighbor_id, name="Neighbor")
+        edge_row = _make_relation_row(rel_id, root_id, neighbor_id)
+
+        edge_result = MagicMock()
+        edge_result.rows = [edge_row]
+
+        backend = MagicMock()
+        # Call sequence:
+        #   1. _resolve_entity_id: UUID existence check → returns root row
+        #   2. _fetch_entity(root_id) → root_row
+        #   3. _build_neighbors_query → returns edge_row
+        #   4. _fetch_entity(neighbor_id) → neighbor_row
+        backend.query = AsyncMock(
+            side_effect=[
+                MagicMock(rows=[root_row]),  # UUID existence check in _resolve_entity_id
+                MagicMock(rows=[root_row]),  # _fetch_entity(root_id)
+                edge_result,  # neighbor edges query
+                MagicMock(rows=[neighbor_row]),  # _fetch_entity(neighbor_id)
+            ]
+        )
+
+        inputs = KnowledgeInput(op="graph_neighbors", start_entity=root_id)
+        result = await executor._op_graph_neighbors(inputs, _make_execution_context(), backend)
+
+        assert result.success is True
+        assert result.traversal_count == 1
+        assert len(result.nodes) == 2  # root + 1 neighbor
+        assert len(result.edges) == 1
+        assert result.diagnostics["expanded_nodes"] == 1
+
+    @pytest.mark.asyncio
+    async def test_max_nodes_prunes_excess_neighbors(self) -> None:
+        """Neighbors beyond max_nodes are pruned; pruned_edges count reflects this."""
+        executor = KnowledgeExecutor()
+
+        root_id = "aaaaaaaa-0000-0000-0000-000000000001"
+        n1_id = "bbbbbbbb-0000-0000-0000-000000000002"
+        n2_id = "cccccccc-0000-0000-0000-000000000003"
+        n3_id = "dddddddd-0000-0000-0000-000000000004"
+
+        root_row = _make_entity_row(root_id, name="Root")
+        edges = [
+            _make_relation_row(f"rel-{i}", root_id, nid)
+            for i, nid in enumerate([n1_id, n2_id, n3_id])
+        ]
+
+        edge_result = MagicMock()
+        edge_result.rows = edges
+
+        n1_row = _make_entity_row(n1_id, name="N1")
+        n2_row = _make_entity_row(n2_id, name="N2")
+
+        backend = MagicMock()
+        backend.query = AsyncMock(
+            side_effect=[
+                MagicMock(rows=[root_row]),  # resolve entity id
+                MagicMock(rows=[root_row]),  # fetch root
+                edge_result,  # neighbor edges (3 edges)
+                MagicMock(rows=[n1_row]),  # fetch n1
+                MagicMock(rows=[n2_row]),  # fetch n2
+                # n3 is pruned — no fetch call
+            ]
+        )
+
+        inputs = KnowledgeInput(op="graph_neighbors", start_entity=root_id, max_nodes=2)
+        result = await executor._op_graph_neighbors(inputs, _make_execution_context(), backend)
+
+        assert result.success is True
+        assert result.diagnostics["pruned_edges"] == 1
+        assert len(result.nodes) <= 3  # root + at most 2 neighbors
+
+
+class TestGraphTraverseOperation:
+    """Tests for _op_graph_traverse executor handler."""
+
+    @pytest.mark.asyncio
+    async def test_unknown_entity_returns_empty(self) -> None:
+        """Unknown start_entity must return empty result, not raise."""
+        executor = KnowledgeExecutor()
+        backend = MagicMock()
+        backend.query = AsyncMock(return_value=MagicMock(rows=[]))
+
+        inputs = KnowledgeInput(op="graph_traverse", start_entity="nonexistent-node")
+        result = await executor._op_graph_traverse(inputs, _make_execution_context(), backend)
+
+        assert result.success is True
+        assert result.nodes == []
+        assert result.edges == []
+        assert result.traversal_count == 0
+
+    @pytest.mark.asyncio
+    async def test_multihop_traversal(self) -> None:
+        """BFS expansion follows edges across multiple hops up to max_hops."""
+        executor = KnowledgeExecutor()
+
+        a_id = "aaaaaaaa-0000-0000-0000-000000000001"
+        b_id = "bbbbbbbb-0000-0000-0000-000000000002"
+        c_id = "cccccccc-0000-0000-0000-000000000003"
+
+        a_row = _make_entity_row(a_id, name="A")
+        b_row = _make_entity_row(b_id, name="B")
+        c_row = _make_entity_row(c_id, name="C")
+
+        ab_edge = _make_relation_row("rel-ab", a_id, b_id)
+        bc_edge = _make_relation_row("rel-bc", b_id, c_id)
+
+        # Hop 0 from A → B; hop 1 from B → C; hop 1 from C → nothing
+        backend = MagicMock()
+        backend.query = AsyncMock(
+            side_effect=[
+                MagicMock(rows=[a_row]),  # resolve a_id
+                MagicMock(rows=[a_row]),  # fetch A
+                MagicMock(rows=[ab_edge]),  # neighbors of A (hop 0)
+                MagicMock(rows=[b_row]),  # fetch B
+                MagicMock(rows=[bc_edge]),  # neighbors of B (hop 1)
+                MagicMock(rows=[c_row]),  # fetch C
+                MagicMock(rows=[]),  # neighbors of C (hop 2 — blocked by max_hops=2)
+            ]
+        )
+
+        inputs = KnowledgeInput(op="graph_traverse", start_entity=a_id, max_hops=2)
+        result = await executor._op_graph_traverse(inputs, _make_execution_context(), backend)
+
+        assert result.success is True
+        assert result.traversal_count >= 1
+        node_names = {n["name"] for n in result.nodes}
+        assert "A" in node_names
+        assert "B" in node_names
+
+    @pytest.mark.asyncio
+    async def test_cycle_safety(self) -> None:
+        """Traversal does not loop when graph contains cycles (A→B→A)."""
+        executor = KnowledgeExecutor()
+
+        a_id = "aaaaaaaa-0000-0000-0000-000000000001"
+        b_id = "bbbbbbbb-0000-0000-0000-000000000002"
+
+        a_row = _make_entity_row(a_id, name="A")
+        b_row = _make_entity_row(b_id, name="B")
+
+        # A→B and B→A (cycle)
+        ab_edge = _make_relation_row("rel-ab", a_id, b_id)
+        ba_edge = _make_relation_row("rel-ba", b_id, a_id)
+
+        backend = MagicMock()
+        backend.query = AsyncMock(
+            side_effect=[
+                MagicMock(rows=[a_row]),  # resolve a_id
+                MagicMock(rows=[a_row]),  # fetch A
+                MagicMock(rows=[ab_edge]),  # neighbors of A
+                MagicMock(rows=[b_row]),  # fetch B
+                MagicMock(rows=[ba_edge]),  # neighbors of B — A already visited
+                # No further expansion; cycle is broken
+            ]
+        )
+
+        inputs = KnowledgeInput(op="graph_traverse", start_entity=a_id, max_hops=5)
+        result = await executor._op_graph_traverse(inputs, _make_execution_context(), backend)
+
+        # Should terminate without error; exactly 2 distinct nodes
+        assert result.success is True
+        assert len(result.nodes) == 2
+
+
+class TestGraphPathOperation:
+    """Tests for _op_graph_path executor handler."""
+
+    @pytest.mark.asyncio
+    async def test_unknown_start_entity_returns_empty(self) -> None:
+        """Unknown start_entity must return empty result."""
+        executor = KnowledgeExecutor()
+        backend = MagicMock()
+        backend.query = AsyncMock(return_value=MagicMock(rows=[]))
+
+        inputs = KnowledgeInput(
+            op="graph_path",
+            start_entity="nonexistent-start",
+            end_entity="some-end",
+        )
+        result = await executor._op_graph_path(inputs, _make_execution_context(), backend)
+
+        assert result.success is True
+        assert result.paths == []
+        assert result.nodes == []
+
+    @pytest.mark.asyncio
+    async def test_same_entity_path_is_trivial(self) -> None:
+        """When start == end, result contains 1 path with 0 hops."""
+        executor = KnowledgeExecutor()
+
+        entity_id = "aaaaaaaa-0000-0000-0000-000000000001"
+        entity_row = _make_entity_row(entity_id, name="Self")
+
+        backend = MagicMock()
+        backend.query = AsyncMock(
+            side_effect=[
+                MagicMock(rows=[entity_row]),  # resolve start UUID
+                MagicMock(rows=[entity_row]),  # resolve end UUID
+                MagicMock(rows=[entity_row]),  # fetch entity for trivial path
+            ]
+        )
+
+        inputs = KnowledgeInput(
+            op="graph_path",
+            start_entity=entity_id,
+            end_entity=entity_id,
+        )
+        result = await executor._op_graph_path(inputs, _make_execution_context(), backend)
+
+        assert result.success is True
+        assert len(result.paths) == 1
+        assert result.paths[0]["hop_count"] == 0
+
+    @pytest.mark.asyncio
+    async def test_direct_path_one_hop(self) -> None:
+        """BFS finds a direct 1-hop path between two connected entities."""
+        executor = KnowledgeExecutor()
+
+        a_id = "aaaaaaaa-0000-0000-0000-000000000001"
+        b_id = "bbbbbbbb-0000-0000-0000-000000000002"
+
+        a_row = _make_entity_row(a_id, name="A")
+        b_row = _make_entity_row(b_id, name="B")
+        ab_edge = _make_relation_row("rel-ab", a_id, b_id)
+
+        backend = MagicMock()
+        backend.query = AsyncMock(
+            side_effect=[
+                MagicMock(rows=[a_row]),  # resolve start
+                MagicMock(rows=[b_row]),  # resolve end
+                MagicMock(rows=[ab_edge]),  # neighbors of A — finds B
+                MagicMock(rows=[a_row]),  # fetch A for path reconstruction
+                MagicMock(rows=[b_row]),  # fetch B for path reconstruction
+            ]
+        )
+
+        inputs = KnowledgeInput(op="graph_path", start_entity=a_id, end_entity=b_id)
+        result = await executor._op_graph_path(inputs, _make_execution_context(), backend)
+
+        assert result.success is True
+        assert len(result.paths) == 1
+        assert result.paths[0]["hop_count"] == 1
+        assert len(result.paths[0]["edges"]) == 1
+
+    @pytest.mark.asyncio
+    async def test_no_path_returns_empty_paths(self) -> None:
+        """When no path exists between entities, paths list is empty."""
+        executor = KnowledgeExecutor()
+
+        a_id = "aaaaaaaa-0000-0000-0000-000000000001"
+        b_id = "bbbbbbbb-0000-0000-0000-000000000002"
+
+        a_row = _make_entity_row(a_id, name="A")
+        b_row = _make_entity_row(b_id, name="B")
+
+        backend = MagicMock()
+        backend.query = AsyncMock(
+            side_effect=[
+                MagicMock(rows=[a_row]),  # resolve start
+                MagicMock(rows=[b_row]),  # resolve end
+                MagicMock(rows=[]),  # A has no neighbors — path not found
+            ]
+        )
+
+        inputs = KnowledgeInput(op="graph_path", start_entity=a_id, end_entity=b_id)
+        result = await executor._op_graph_path(inputs, _make_execution_context(), backend)
+
+        assert result.success is True
+        assert result.paths == []
+
+
+class TestGraphStatsOperation:
+    """Tests for _op_graph_stats executor handler."""
+
+    @pytest.mark.asyncio
+    async def test_unknown_entity_returns_empty(self) -> None:
+        """Unknown entity must return empty result."""
+        executor = KnowledgeExecutor()
+        backend = MagicMock()
+        backend.query = AsyncMock(return_value=MagicMock(rows=[]))
+
+        inputs = KnowledgeInput(op="graph_stats", start_entity="nonexistent")
+        result = await executor._op_graph_stats(inputs, _make_execution_context(), backend)
+
+        assert result.success is True
+        assert result.nodes == []
+        assert result.traversal_count == 0
+
+    @pytest.mark.asyncio
+    async def test_degree_stats_returned_in_diagnostics(self) -> None:
+        """graph_stats encodes out_degree, in_degree, total_degree in diagnostics."""
+        executor = KnowledgeExecutor()
+
+        entity_id = "aaaaaaaa-0000-0000-0000-000000000001"
+        entity_row = _make_entity_row(entity_id, name="Hub")
+
+        stats_row = {
+            "out_degree": 3,
+            "in_degree": 2,
+            "distinct_relation_types": 2,
+        }
+
+        backend = MagicMock()
+        backend.query = AsyncMock(
+            side_effect=[
+                MagicMock(rows=[entity_row]),  # resolve entity id
+                MagicMock(rows=[entity_row]),  # fetch entity
+                MagicMock(rows=[stats_row]),  # degree stats query
+            ]
+        )
+
+        inputs = KnowledgeInput(op="graph_stats", start_entity=entity_id)
+        result = await executor._op_graph_stats(inputs, _make_execution_context(), backend)
+
+        assert result.success is True
+        assert len(result.nodes) == 1
+        assert result.nodes[0]["name"] == "Hub"
+        assert result.diagnostics["out_degree"] == 3
+        assert result.diagnostics["in_degree"] == 2
+        assert result.diagnostics["total_degree"] == 5
+        assert result.diagnostics["distinct_relation_types"] == 2
+
+    @pytest.mark.asyncio
+    async def test_stats_with_temporal_as_of(self) -> None:
+        """graph_stats passes as_of correctly; result still has degree fields."""
+        executor = KnowledgeExecutor()
+
+        entity_id = "aaaaaaaa-0000-0000-0000-000000000001"
+        entity_row = _make_entity_row(entity_id, name="TemporalHub")
+
+        stats_row = {
+            "out_degree": 1,
+            "in_degree": 0,
+            "distinct_relation_types": 1,
+        }
+
+        backend = MagicMock()
+        backend.query = AsyncMock(
+            side_effect=[
+                MagicMock(rows=[entity_row]),
+                MagicMock(rows=[entity_row]),
+                MagicMock(rows=[stats_row]),
+            ]
+        )
+
+        inputs = KnowledgeInput(
+            op="graph_stats",
+            start_entity=entity_id,
+            as_of="2026-01-01T00:00:00Z",
+        )
+        result = await executor._op_graph_stats(inputs, _make_execution_context(), backend)
+
+        assert result.success is True
+        assert result.diagnostics["total_degree"] == 1
+
+
+class TestGraphTemporalFilter:
+    """Tests that verify temporal as_of is wired through to graph traversal."""
+
+    @pytest.mark.asyncio
+    async def test_graph_neighbors_as_of_forwarded(self) -> None:
+        """graph_neighbors with as_of passes a datetime to graph_neighbors()."""
+        from unittest.mock import patch
+
+        executor = KnowledgeExecutor()
+        backend = MagicMock()
+        backend.query = AsyncMock(return_value=MagicMock(rows=[]))
+
+        inputs = KnowledgeInput(
+            op="graph_neighbors",
+            start_entity="entity-x",
+            as_of="2026-03-15T12:00:00Z",
+        )
+
+        with patch(
+            "workflows_mcp.engine.executors_knowledge.graph_neighbors",
+            new=AsyncMock(
+                return_value={
+                    "nodes": [],
+                    "edges": [],
+                    "paths": [],
+                    "traversal_count": 0,
+                    "diagnostics": {"expanded_nodes": 0, "pruned_edges": 0, "latency_ms": 0.1},
+                }
+            ),
+        ) as mock_fn:
+            await executor._op_graph_neighbors(inputs, _make_execution_context(), backend)
+
+        call_kwargs = mock_fn.call_args.kwargs
+        assert call_kwargs["as_of"] is not None
+        assert isinstance(call_kwargs["as_of"], datetime)
+
+    @pytest.mark.asyncio
+    async def test_graph_traverse_as_of_forwarded(self) -> None:
+        """graph_traverse with as_of passes a datetime to graph_traverse()."""
+        from unittest.mock import patch
+
+        executor = KnowledgeExecutor()
+        backend = MagicMock()
+        backend.query = AsyncMock(return_value=MagicMock(rows=[]))
+
+        inputs = KnowledgeInput(
+            op="graph_traverse",
+            start_entity="entity-y",
+            as_of="2026-06-01T00:00:00Z",
+        )
+
+        with patch(
+            "workflows_mcp.engine.executors_knowledge.graph_traverse",
+            new=AsyncMock(
+                return_value={
+                    "nodes": [],
+                    "edges": [],
+                    "paths": [],
+                    "traversal_count": 0,
+                    "diagnostics": {"expanded_nodes": 0, "pruned_edges": 0, "latency_ms": 0.1},
+                }
+            ),
+        ) as mock_fn:
+            await executor._op_graph_traverse(inputs, _make_execution_context(), backend)
+
+        call_kwargs = mock_fn.call_args.kwargs
+        assert call_kwargs["as_of"] is not None
+        assert isinstance(call_kwargs["as_of"], datetime)

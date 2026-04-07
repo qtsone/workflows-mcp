@@ -34,6 +34,12 @@ from .knowledge.constants import (
     LifecycleState,
 )
 from .knowledge.context import assemble_context
+from .knowledge.graph import (
+    graph_neighbors,
+    graph_path,
+    graph_stats,
+    graph_traverse,
+)
 from .knowledge.search import (
     build_fts_search_query,
     build_vector_search_query,
@@ -129,7 +135,19 @@ class KnowledgeInput(BlockInput):
         ```
     """
 
-    op: Literal["search", "store", "recall", "forget", "context", "validate", "invalidate"] = Field(
+    op: Literal[
+        "search",
+        "store",
+        "recall",
+        "forget",
+        "context",
+        "validate",
+        "invalidate",
+        "graph_neighbors",
+        "graph_traverse",
+        "graph_path",
+        "graph_stats",
+    ] = Field(
         description="Operation to perform",
     )
 
@@ -275,6 +293,35 @@ class KnowledgeInput(BlockInput):
         description="Reason for archiving (stored in metadata)",
     )
 
+    # --- Graph operation fields ---
+    start_entity: str | None = Field(
+        default=None,
+        description=(
+            "Start entity UUID or name for graph ops "
+            "(graph_neighbors, graph_traverse, graph_path, graph_stats)"
+        ),
+    )
+    end_entity: str | None = Field(
+        default=None,
+        description="End entity UUID or name for graph_path",
+    )
+    relation_types: list[str] | None = Field(
+        default=None,
+        description="Filter graph traversal to these relation type strings",
+    )
+    max_hops: int = Field(
+        default=3,
+        description="Maximum hop depth for graph_traverse and graph_path",
+    )
+    max_nodes: int = Field(
+        default=100,
+        description="Maximum number of nodes to return in a graph traversal",
+    )
+    min_edge_confidence: float | None = Field(
+        default=None,
+        description="Minimum confidence to include a relation edge",
+    )
+
     # --- Embedding overrides ---
     embedding_profile: str = Field(
         default="embedding",
@@ -304,6 +351,19 @@ class KnowledgeInput(BlockInput):
             raise ValueError("'proposition_ids' is required for op='validate'")
         if self.op == "invalidate" and not self.proposition_ids:
             raise ValueError("'proposition_ids' is required for op='invalidate'")
+        if (
+            self.op
+            in (
+                "graph_neighbors",
+                "graph_traverse",
+                "graph_path",
+                "graph_stats",
+            )
+            and not self.start_entity
+        ):
+            raise ValueError(f"'start_entity' is required for op='{self.op}'")
+        if self.op == "graph_path" and not self.end_entity:
+            raise ValueError("'end_entity' is required for op='graph_path'")
         if self.path is not None and not self.source:
             raise ValueError("'source' is required when 'path' is provided")
         return self
@@ -318,6 +378,8 @@ class KnowledgeOutput(BlockOutput):
     - forget: archived_count, skipped_count
     - validate: validated_count
     - context: context_text, proposition_count, tokens_used
+    - graph_neighbors/graph_traverse/graph_path/graph_stats:
+        nodes, edges, paths, traversal_count, diagnostics
     """
 
     success: bool = Field(default=False, description="Whether the operation succeeded")
@@ -353,6 +415,28 @@ class KnowledgeOutput(BlockOutput):
     context_text: str = Field(default="", description="Clean content assembled text")
     proposition_count: int = Field(default=0, description="Propositions included in context")
     tokens_used: int = Field(default=0, description="Estimated tokens used")
+
+    # Graph output
+    nodes: list[dict[str, Any]] = Field(
+        default_factory=list,
+        description="Entity nodes (graph ops)",
+    )
+    edges: list[dict[str, Any]] = Field(
+        default_factory=list,
+        description="Relation edges (graph ops)",
+    )
+    paths: list[dict[str, Any]] = Field(
+        default_factory=list,
+        description="Paths between entities (graph_path op)",
+    )
+    traversal_count: int = Field(
+        default=0,
+        description="Number of entities visited during traversal",
+    )
+    diagnostics: dict[str, Any] = Field(
+        default_factory=dict,
+        description="Traversal diagnostics: expanded_nodes, pruned_edges, latency_ms",
+    )
 
 
 # ===========================================================================
@@ -430,6 +514,10 @@ class KnowledgeExecutor(BlockExecutor):
                 "validate": self._op_validate,
                 "invalidate": self._op_invalidate,
                 "context": self._op_context,
+                "graph_neighbors": self._op_graph_neighbors,
+                "graph_traverse": self._op_graph_traverse,
+                "graph_path": self._op_graph_path,
+                "graph_stats": self._op_graph_stats,
             }
             handler = op_handlers[inputs.op]
             return await handler(inputs, context, backend)
@@ -1379,3 +1467,126 @@ class KnowledgeExecutor(BlockExecutor):
             propositions.append(prop)
 
         return propositions, query_embedding
+
+    # ------------------------------------------------------------------
+    # Graph Operation Handlers
+    # ------------------------------------------------------------------
+
+    async def _op_graph_neighbors(
+        self,
+        inputs: KnowledgeInput,
+        context: Execution,
+        backend: Any,
+    ) -> KnowledgeOutput:
+        """Return all direct (1-hop) neighbors of start_entity."""
+        assert inputs.start_entity is not None
+        as_of = _coerce_iso_datetime(inputs.as_of, "as_of")
+
+        result = await graph_neighbors(
+            entity_ref=inputs.start_entity,
+            backend=backend,
+            relation_types=inputs.relation_types,
+            max_nodes=inputs.max_nodes,
+            min_edge_confidence=inputs.min_edge_confidence,
+            as_of=as_of,
+        )
+        return KnowledgeOutput(
+            success=True,
+            nodes=list(result["nodes"]),
+            edges=list(result["edges"]),
+            paths=[],
+            traversal_count=result["traversal_count"],
+            diagnostics=dict(result["diagnostics"]),
+        )
+
+    async def _op_graph_traverse(
+        self,
+        inputs: KnowledgeInput,
+        context: Execution,
+        backend: Any,
+    ) -> KnowledgeOutput:
+        """BFS subgraph traversal from start_entity."""
+        assert inputs.start_entity is not None
+        as_of = _coerce_iso_datetime(inputs.as_of, "as_of")
+
+        result = await graph_traverse(
+            start_entity_ref=inputs.start_entity,
+            backend=backend,
+            relation_types=inputs.relation_types,
+            max_hops=inputs.max_hops,
+            max_nodes=inputs.max_nodes,
+            min_edge_confidence=inputs.min_edge_confidence,
+            as_of=as_of,
+        )
+        return KnowledgeOutput(
+            success=True,
+            nodes=list(result["nodes"]),
+            edges=list(result["edges"]),
+            paths=[],
+            traversal_count=result["traversal_count"],
+            diagnostics=dict(result["diagnostics"]),
+        )
+
+    async def _op_graph_path(
+        self,
+        inputs: KnowledgeInput,
+        context: Execution,
+        backend: Any,
+    ) -> KnowledgeOutput:
+        """Find shortest path between start_entity and end_entity."""
+        assert inputs.start_entity is not None
+        assert inputs.end_entity is not None
+        as_of = _coerce_iso_datetime(inputs.as_of, "as_of")
+
+        result = await graph_path(
+            start_entity_ref=inputs.start_entity,
+            end_entity_ref=inputs.end_entity,
+            backend=backend,
+            relation_types=inputs.relation_types,
+            max_hops=inputs.max_hops,
+            max_nodes=inputs.max_nodes,
+            min_edge_confidence=inputs.min_edge_confidence,
+            as_of=as_of,
+        )
+        # Serialize GraphPath TypedDicts to plain dicts for output
+        paths_out: list[dict[str, Any]] = []
+        for p in result["paths"]:
+            paths_out.append(
+                {
+                    "nodes": list(p["nodes"]),
+                    "edges": list(p["edges"]),
+                    "hop_count": p["hop_count"],
+                }
+            )
+        return KnowledgeOutput(
+            success=True,
+            nodes=list(result["nodes"]),
+            edges=list(result["edges"]),
+            paths=paths_out,
+            traversal_count=result["traversal_count"],
+            diagnostics=dict(result["diagnostics"]),
+        )
+
+    async def _op_graph_stats(
+        self,
+        inputs: KnowledgeInput,
+        context: Execution,
+        backend: Any,
+    ) -> KnowledgeOutput:
+        """Return degree and connectivity statistics for start_entity."""
+        assert inputs.start_entity is not None
+        as_of = _coerce_iso_datetime(inputs.as_of, "as_of")
+
+        result = await graph_stats(
+            entity_ref=inputs.start_entity,
+            backend=backend,
+            as_of=as_of,
+        )
+        return KnowledgeOutput(
+            success=True,
+            nodes=list(result["nodes"]),
+            edges=[],
+            paths=[],
+            traversal_count=result["traversal_count"],
+            diagnostics=dict(result["diagnostics"]),
+        )

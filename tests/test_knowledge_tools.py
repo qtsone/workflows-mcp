@@ -669,3 +669,515 @@ class TestToolAnnotations:
         """Find a tool by name in the FastMCP server."""
         tool_manager = _mcp_server._tool_manager
         return tool_manager._tools.get(name)
+
+    def test_graph_neighbors_is_read_only(self) -> None:
+        """graph_neighbors should be annotated as read-only."""
+        tool = self._find_tool("graph_neighbors")
+        assert tool is not None
+        assert tool.annotations.readOnlyHint is True
+        assert tool.annotations.destructiveHint is False
+        assert tool.annotations.idempotentHint is True
+
+    def test_graph_traverse_is_read_only(self) -> None:
+        """graph_traverse should be annotated as read-only."""
+        tool = self._find_tool("graph_traverse")
+        assert tool is not None
+        assert tool.annotations.readOnlyHint is True
+        assert tool.annotations.destructiveHint is False
+        assert tool.annotations.idempotentHint is True
+
+    def test_graph_path_is_read_only(self) -> None:
+        """graph_path should be annotated as read-only."""
+        tool = self._find_tool("graph_path")
+        assert tool is not None
+        assert tool.annotations.readOnlyHint is True
+        assert tool.annotations.destructiveHint is False
+        assert tool.annotations.idempotentHint is True
+
+    def test_graph_stats_is_read_only(self) -> None:
+        """graph_stats should be annotated as read-only."""
+        tool = self._find_tool("graph_stats")
+        assert tool is not None
+        assert tool.annotations.readOnlyHint is True
+        assert tool.annotations.destructiveHint is False
+        assert tool.annotations.idempotentHint is True
+
+
+# ============================================================================
+# Graph Tool References
+# ============================================================================
+
+graph_neighbors = _get_tool_fn("graph_neighbors")
+graph_traverse = _get_tool_fn("graph_traverse")
+graph_path = _get_tool_fn("graph_path")
+graph_stats = _get_tool_fn("graph_stats")
+
+
+# ============================================================================
+# Graph Output Helpers
+# ============================================================================
+
+
+def _make_graph_neighbors_output(**overrides: Any) -> KnowledgeOutput:
+    defaults: dict[str, Any] = {
+        "success": True,
+        "nodes": [{"id": "entity-1", "name": "Alpha"}],
+        "edges": [
+            {"id": "rel-1", "source": "entity-0", "target": "entity-1", "relation_type": "is_a"}
+        ],
+        "paths": [],
+        "traversal_count": 1,
+        "diagnostics": {"expanded_nodes": 1, "pruned_edges": 0, "latency_ms": 5},
+    }
+    defaults.update(overrides)
+    return KnowledgeOutput(**defaults)
+
+
+def _make_graph_traverse_output(**overrides: Any) -> KnowledgeOutput:
+    defaults: dict[str, Any] = {
+        "success": True,
+        "nodes": [
+            {"id": "entity-1", "name": "Alpha"},
+            {"id": "entity-2", "name": "Beta"},
+        ],
+        "edges": [
+            {"id": "rel-1", "source": "entity-1", "target": "entity-2", "relation_type": "part_of"}
+        ],
+        "paths": [],
+        "traversal_count": 2,
+        "diagnostics": {"expanded_nodes": 2, "pruned_edges": 0, "latency_ms": 10},
+    }
+    defaults.update(overrides)
+    return KnowledgeOutput(**defaults)
+
+
+def _make_graph_path_output(**overrides: Any) -> KnowledgeOutput:
+    defaults: dict[str, Any] = {
+        "success": True,
+        "nodes": [{"id": "entity-1", "name": "Alpha"}, {"id": "entity-2", "name": "Beta"}],
+        "edges": [
+            {"id": "rel-1", "source": "entity-1", "target": "entity-2", "relation_type": "leads_to"}
+        ],
+        "paths": [
+            {
+                "nodes": ["entity-1", "entity-2"],
+                "edges": ["rel-1"],
+            }
+        ],
+        "traversal_count": 1,
+        "diagnostics": {"expanded_nodes": 2, "pruned_edges": 0, "latency_ms": 8},
+    }
+    defaults.update(overrides)
+    return KnowledgeOutput(**defaults)
+
+
+def _make_graph_stats_output(**overrides: Any) -> KnowledgeOutput:
+    defaults: dict[str, Any] = {
+        "success": True,
+        "nodes": [{"id": "entity-0", "name": "Root"}],
+        "edges": [],
+        "paths": [],
+        "traversal_count": 1,
+        "diagnostics": {
+            "out_degree": 3,
+            "in_degree": 1,
+            "total_degree": 4,
+            "distinct_relation_types": 2,
+            "expanded_nodes": 1,
+            "pruned_edges": 0,
+            "latency_ms": 3,
+        },
+    }
+    defaults.update(overrides)
+    return KnowledgeOutput(**defaults)
+
+
+# ============================================================================
+# graph_neighbors Tests
+# ============================================================================
+
+
+class TestGraphNeighbors:
+    """Tests for graph_neighbors MCP tool."""
+
+    @pytest.mark.asyncio
+    async def test_success_returns_nodes_and_edges(self, mock_ctx: MagicMock) -> None:
+        """Successful neighbors call returns nodes, edges, traversal_count, diagnostics."""
+        with patch(_EXECUTOR_CLS) as mock_cls:
+            mock_cls.return_value.execute = AsyncMock(return_value=_make_graph_neighbors_output())
+
+            result = await graph_neighbors(
+                start_entity="entity-0",
+                relation_types=None,
+                max_nodes=50,
+                min_edge_confidence=0.0,
+                as_of=None,
+                ctx=mock_ctx,
+            )
+
+        assert result.isError is not True
+        import json as _j
+
+        data = _j.loads(result.content[0].text)  # type: ignore[union-attr]
+        assert "nodes" in data
+        assert "edges" in data
+        assert "traversal_count" in data
+        assert "diagnostics" in data
+
+    @pytest.mark.asyncio
+    async def test_op_and_start_entity_wired(self, mock_ctx: MagicMock) -> None:
+        """op and start_entity are set correctly on KnowledgeInput."""
+        with patch(_EXECUTOR_CLS) as mock_cls:
+            mock_cls.return_value.execute = AsyncMock(return_value=_make_graph_neighbors_output())
+
+            await graph_neighbors(
+                start_entity="entity-0",
+                relation_types=None,
+                max_nodes=50,
+                min_edge_confidence=0.0,
+                as_of=None,
+                ctx=mock_ctx,
+            )
+
+        inputs: KnowledgeInput = mock_cls.return_value.execute.call_args[0][0]
+        assert inputs.op == "graph_neighbors"
+        assert inputs.start_entity == "entity-0"
+
+    @pytest.mark.asyncio
+    async def test_filters_passed_through(self, mock_ctx: MagicMock) -> None:
+        """relation_types, max_nodes, min_edge_confidence, as_of are forwarded."""
+        with patch(_EXECUTOR_CLS) as mock_cls:
+            mock_cls.return_value.execute = AsyncMock(return_value=_make_graph_neighbors_output())
+
+            await graph_neighbors(
+                start_entity="entity-0",
+                relation_types=["is_a", "part_of"],
+                max_nodes=25,
+                min_edge_confidence=0.5,
+                as_of="2026-06-01T00:00:00Z",
+                ctx=mock_ctx,
+            )
+
+        inputs: KnowledgeInput = mock_cls.return_value.execute.call_args[0][0]
+        assert inputs.relation_types == ["is_a", "part_of"]
+        assert inputs.max_nodes == 25
+        assert inputs.min_edge_confidence == 0.5
+        assert inputs.as_of == "2026-06-01T00:00:00Z"
+
+    @pytest.mark.asyncio
+    async def test_error_returns_failure(self, mock_ctx: MagicMock) -> None:
+        """Failed graph_neighbors returns error in response body."""
+        with patch(_EXECUTOR_CLS) as mock_cls:
+            mock_cls.return_value.execute = AsyncMock(
+                return_value=_make_error_output("Graph DB unavailable")
+            )
+
+            result = await graph_neighbors(
+                start_entity="entity-0",
+                relation_types=None,
+                max_nodes=50,
+                min_edge_confidence=0.0,
+                as_of=None,
+                ctx=mock_ctx,
+            )
+
+        import json as _j
+
+        data = _j.loads(result.content[0].text)  # type: ignore[union-attr]
+        assert data["status"] == "failure"
+        assert "Graph DB unavailable" in data["error"]
+
+
+# ============================================================================
+# graph_traverse Tests
+# ============================================================================
+
+
+class TestGraphTraverse:
+    """Tests for graph_traverse MCP tool."""
+
+    @pytest.mark.asyncio
+    async def test_success_returns_subgraph(self, mock_ctx: MagicMock) -> None:
+        """Successful traverse returns nodes, edges, traversal_count, diagnostics."""
+        with patch(_EXECUTOR_CLS) as mock_cls:
+            mock_cls.return_value.execute = AsyncMock(return_value=_make_graph_traverse_output())
+
+            result = await graph_traverse(
+                start_entity="entity-1",
+                relation_types=None,
+                max_hops=3,
+                max_nodes=100,
+                min_edge_confidence=0.0,
+                as_of=None,
+                ctx=mock_ctx,
+            )
+
+        assert result.isError is not True
+        import json as _j
+
+        data = _j.loads(result.content[0].text)  # type: ignore[union-attr]
+        assert "nodes" in data
+        assert "edges" in data
+        assert "traversal_count" in data
+        assert "diagnostics" in data
+
+    @pytest.mark.asyncio
+    async def test_op_and_fields_wired(self, mock_ctx: MagicMock) -> None:
+        """op, start_entity, max_hops, max_nodes are wired to KnowledgeInput."""
+        with patch(_EXECUTOR_CLS) as mock_cls:
+            mock_cls.return_value.execute = AsyncMock(return_value=_make_graph_traverse_output())
+
+            await graph_traverse(
+                start_entity="entity-1",
+                relation_types=["part_of"],
+                max_hops=4,
+                max_nodes=200,
+                min_edge_confidence=0.3,
+                as_of="2026-03-01T00:00:00Z",
+                ctx=mock_ctx,
+            )
+
+        inputs: KnowledgeInput = mock_cls.return_value.execute.call_args[0][0]
+        assert inputs.op == "graph_traverse"
+        assert inputs.start_entity == "entity-1"
+        assert inputs.relation_types == ["part_of"]
+        assert inputs.max_hops == 4
+        assert inputs.max_nodes == 200
+        assert inputs.min_edge_confidence == 0.3
+        assert inputs.as_of == "2026-03-01T00:00:00Z"
+
+    @pytest.mark.asyncio
+    async def test_error_returns_failure(self, mock_ctx: MagicMock) -> None:
+        """Failed graph_traverse returns error."""
+        with patch(_EXECUTOR_CLS) as mock_cls:
+            mock_cls.return_value.execute = AsyncMock(
+                return_value=_make_error_output("Timeout during traversal")
+            )
+
+            result = await graph_traverse(
+                start_entity="entity-1",
+                relation_types=None,
+                max_hops=3,
+                max_nodes=100,
+                min_edge_confidence=0.0,
+                as_of=None,
+                ctx=mock_ctx,
+            )
+
+        import json as _j
+
+        data = _j.loads(result.content[0].text)  # type: ignore[union-attr]
+        assert data["status"] == "failure"
+        assert "Timeout during traversal" in data["error"]
+
+
+# ============================================================================
+# graph_path Tests
+# ============================================================================
+
+
+class TestGraphPath:
+    """Tests for graph_path MCP tool."""
+
+    @pytest.mark.asyncio
+    async def test_success_returns_path(self, mock_ctx: MagicMock) -> None:
+        """Successful path call returns nodes, edges, paths, traversal_count, diagnostics."""
+        with patch(_EXECUTOR_CLS) as mock_cls:
+            mock_cls.return_value.execute = AsyncMock(return_value=_make_graph_path_output())
+
+            result = await graph_path(
+                start_entity="entity-1",
+                end_entity="entity-2",
+                relation_types=None,
+                max_hops=6,
+                min_edge_confidence=0.0,
+                as_of=None,
+                ctx=mock_ctx,
+            )
+
+        assert result.isError is not True
+        import json as _j
+
+        data = _j.loads(result.content[0].text)  # type: ignore[union-attr]
+        assert "nodes" in data
+        assert "edges" in data
+        assert "paths" in data
+        assert "traversal_count" in data
+        assert "diagnostics" in data
+
+    @pytest.mark.asyncio
+    async def test_op_and_endpoints_wired(self, mock_ctx: MagicMock) -> None:
+        """op, start_entity, and end_entity are set correctly on KnowledgeInput."""
+        with patch(_EXECUTOR_CLS) as mock_cls:
+            mock_cls.return_value.execute = AsyncMock(return_value=_make_graph_path_output())
+
+            await graph_path(
+                start_entity="entity-A",
+                end_entity="entity-B",
+                relation_types=["leads_to"],
+                max_hops=4,
+                min_edge_confidence=0.2,
+                as_of="2026-04-01T00:00:00Z",
+                ctx=mock_ctx,
+            )
+
+        inputs: KnowledgeInput = mock_cls.return_value.execute.call_args[0][0]
+        assert inputs.op == "graph_path"
+        assert inputs.start_entity == "entity-A"
+        assert inputs.end_entity == "entity-B"
+        assert inputs.relation_types == ["leads_to"]
+        assert inputs.max_hops == 4
+        assert inputs.min_edge_confidence == 0.2
+        assert inputs.as_of == "2026-04-01T00:00:00Z"
+
+    @pytest.mark.asyncio
+    async def test_paths_key_present_in_response(self, mock_ctx: MagicMock) -> None:
+        """Response includes 'paths' key with the path segments."""
+        with patch(_EXECUTOR_CLS) as mock_cls:
+            mock_cls.return_value.execute = AsyncMock(return_value=_make_graph_path_output())
+
+            result = await graph_path(
+                start_entity="entity-1",
+                end_entity="entity-2",
+                relation_types=None,
+                max_hops=6,
+                min_edge_confidence=0.0,
+                as_of=None,
+                ctx=mock_ctx,
+            )
+
+        import json as _j
+
+        data = _j.loads(result.content[0].text)  # type: ignore[union-attr]
+        assert isinstance(data["paths"], list)
+        assert len(data["paths"]) == 1
+        assert "nodes" in data["paths"][0]
+        assert "edges" in data["paths"][0]
+
+    @pytest.mark.asyncio
+    async def test_error_returns_failure(self, mock_ctx: MagicMock) -> None:
+        """Failed graph_path returns error."""
+        with patch(_EXECUTOR_CLS) as mock_cls:
+            mock_cls.return_value.execute = AsyncMock(
+                return_value=_make_error_output("No path found")
+            )
+
+            result = await graph_path(
+                start_entity="entity-1",
+                end_entity="entity-99",
+                relation_types=None,
+                max_hops=6,
+                min_edge_confidence=0.0,
+                as_of=None,
+                ctx=mock_ctx,
+            )
+
+        import json as _j
+
+        data = _j.loads(result.content[0].text)  # type: ignore[union-attr]
+        assert data["status"] == "failure"
+        assert "No path found" in data["error"]
+
+
+# ============================================================================
+# graph_stats Tests
+# ============================================================================
+
+
+class TestGraphStats:
+    """Tests for graph_stats MCP tool."""
+
+    @pytest.mark.asyncio
+    async def test_success_returns_stats(self, mock_ctx: MagicMock) -> None:
+        """Successful stats call returns nodes, traversal_count, diagnostics."""
+        with patch(_EXECUTOR_CLS) as mock_cls:
+            mock_cls.return_value.execute = AsyncMock(return_value=_make_graph_stats_output())
+
+            result = await graph_stats(
+                start_entity="entity-0",
+                as_of=None,
+                ctx=mock_ctx,
+            )
+
+        assert result.isError is not True
+        import json as _j
+
+        data = _j.loads(result.content[0].text)  # type: ignore[union-attr]
+        assert "nodes" in data
+        assert "traversal_count" in data
+        assert "diagnostics" in data
+
+    @pytest.mark.asyncio
+    async def test_op_and_entity_wired(self, mock_ctx: MagicMock) -> None:
+        """op and start_entity are set correctly on KnowledgeInput."""
+        with patch(_EXECUTOR_CLS) as mock_cls:
+            mock_cls.return_value.execute = AsyncMock(return_value=_make_graph_stats_output())
+
+            await graph_stats(
+                start_entity="entity-0",
+                as_of="2026-05-01T00:00:00Z",
+                ctx=mock_ctx,
+            )
+
+        inputs: KnowledgeInput = mock_cls.return_value.execute.call_args[0][0]
+        assert inputs.op == "graph_stats"
+        assert inputs.start_entity == "entity-0"
+        assert inputs.as_of == "2026-05-01T00:00:00Z"
+
+    @pytest.mark.asyncio
+    async def test_diagnostics_include_degree_metrics(self, mock_ctx: MagicMock) -> None:
+        """Diagnostics dict exposes out_degree, in_degree, total_degree."""
+        with patch(_EXECUTOR_CLS) as mock_cls:
+            mock_cls.return_value.execute = AsyncMock(return_value=_make_graph_stats_output())
+
+            result = await graph_stats(
+                start_entity="entity-0",
+                as_of=None,
+                ctx=mock_ctx,
+            )
+
+        import json as _j
+
+        data = _j.loads(result.content[0].text)  # type: ignore[union-attr]
+        diag = data["diagnostics"]
+        assert diag["out_degree"] == 3
+        assert diag["in_degree"] == 1
+        assert diag["total_degree"] == 4
+        assert diag["distinct_relation_types"] == 2
+
+    @pytest.mark.asyncio
+    async def test_no_edges_key_in_response(self, mock_ctx: MagicMock) -> None:
+        """graph_stats response does not include an 'edges' key (stats-only output)."""
+        with patch(_EXECUTOR_CLS) as mock_cls:
+            mock_cls.return_value.execute = AsyncMock(return_value=_make_graph_stats_output())
+
+            result = await graph_stats(
+                start_entity="entity-0",
+                as_of=None,
+                ctx=mock_ctx,
+            )
+
+        import json as _j
+
+        data = _j.loads(result.content[0].text)  # type: ignore[union-attr]
+        assert "edges" not in data
+
+    @pytest.mark.asyncio
+    async def test_error_returns_failure(self, mock_ctx: MagicMock) -> None:
+        """Failed graph_stats returns error."""
+        with patch(_EXECUTOR_CLS) as mock_cls:
+            mock_cls.return_value.execute = AsyncMock(
+                return_value=_make_error_output("Entity not found")
+            )
+
+            result = await graph_stats(
+                start_entity="unknown-entity",
+                as_of=None,
+                ctx=mock_ctx,
+            )
+
+        import json as _j
+
+        data = _j.loads(result.content[0].text)  # type: ignore[union-attr]
+        assert data["status"] == "failure"
+        assert "Entity not found" in data["error"]

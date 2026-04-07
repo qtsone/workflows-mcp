@@ -830,3 +830,369 @@ def register_knowledge_tools(mcp_server: FastMCP) -> None:
                 "tokens_used": result.tokens_used,
             }
         )
+
+    @mcp_server.tool(
+        annotations=ToolAnnotations(
+            title="Graph Neighbors",
+            readOnlyHint=True,
+            destructiveHint=False,
+            idempotentHint=True,
+            openWorldHint=True,
+        )
+    )
+    async def graph_neighbors(
+        start_entity: Annotated[
+            str,
+            Field(description="Starting entity UUID or name for neighbor lookup"),
+        ],
+        relation_types: Annotated[
+            list[str] | None,
+            Field(
+                description="Filter edges by relation type (e.g. ['is_a', 'part_of'])",
+                default=None,
+            ),
+        ],
+        max_nodes: Annotated[
+            int,
+            Field(
+                description="Maximum number of neighbor nodes to return",
+                default=50,
+                ge=1,
+                le=500,
+            ),
+        ],
+        min_edge_confidence: Annotated[
+            float,
+            Field(
+                description="Minimum confidence threshold for edges",
+                default=0.0,
+                ge=0.0,
+                le=1.0,
+            ),
+        ],
+        as_of: Annotated[
+            str | None,
+            Field(
+                description=(
+                    "Point-in-time filter (ISO datetime). Returns only edges valid at this"
+                    " timestamp based on valid_from/valid_to windows"
+                ),
+                default=None,
+            ),
+        ],
+        *,
+        ctx: AppContextType,
+    ) -> CallToolResult:
+        """
+        Retrieve direct (1-hop) neighbors of an entity in the knowledge graph.
+
+        WHEN TO USE: To explore what entities are directly connected to a given entity
+        and via which relation types.
+
+        PARAMETERS:
+        - start_entity: Entity UUID or name to start from
+        - relation_types: Optional filter by relation type(s)
+        - max_nodes: Maximum neighbor nodes to return (default 50)
+        - min_edge_confidence: Minimum edge confidence threshold (default 0.0)
+        - as_of: Optional ISO datetime for temporal edge filtering
+
+        RETURNS: {nodes: [...], edges: [...], traversal_count: N, diagnostics: {...}}
+
+        SEE ALSO: graph_traverse (multi-hop), graph_path (shortest path), graph_stats (metrics)
+        """
+        from .engine.executors_knowledge import KnowledgeExecutor, KnowledgeInput
+
+        execution = _create_knowledge_execution(ctx)
+        executor = KnowledgeExecutor()
+        inputs = KnowledgeInput(
+            op="graph_neighbors",
+            start_entity=start_entity,
+            relation_types=relation_types,
+            max_nodes=max_nodes,
+            min_edge_confidence=min_edge_confidence,
+            as_of=as_of,
+        )
+        result = await executor.execute(inputs, context=execution)
+
+        if not result.success:
+            return _json_response({"status": "failure", "error": result.error})
+
+        return _json_response(
+            {
+                "nodes": result.nodes,
+                "edges": result.edges,
+                "traversal_count": result.traversal_count,
+                "diagnostics": result.diagnostics,
+            }
+        )
+
+    @mcp_server.tool(
+        annotations=ToolAnnotations(
+            title="Graph Traverse",
+            readOnlyHint=True,
+            destructiveHint=False,
+            idempotentHint=True,
+            openWorldHint=True,
+        )
+    )
+    async def graph_traverse(
+        start_entity: Annotated[
+            str,
+            Field(description="Starting entity UUID or name for BFS traversal"),
+        ],
+        relation_types: Annotated[
+            list[str] | None,
+            Field(
+                description="Filter edges by relation type(s)",
+                default=None,
+            ),
+        ],
+        max_hops: Annotated[
+            int,
+            Field(
+                description="Maximum hop depth for traversal",
+                default=3,
+                ge=1,
+                le=10,
+            ),
+        ],
+        max_nodes: Annotated[
+            int,
+            Field(
+                description="Maximum number of nodes in the returned subgraph",
+                default=100,
+                ge=1,
+                le=1000,
+            ),
+        ],
+        min_edge_confidence: Annotated[
+            float,
+            Field(
+                description="Minimum confidence threshold for edges",
+                default=0.0,
+                ge=0.0,
+                le=1.0,
+            ),
+        ],
+        as_of: Annotated[
+            str | None,
+            Field(
+                description=(
+                    "Point-in-time filter (ISO datetime). Returns only edges valid at this"
+                    " timestamp based on valid_from/valid_to windows"
+                ),
+                default=None,
+            ),
+        ],
+        *,
+        ctx: AppContextType,
+    ) -> CallToolResult:
+        """
+        Perform a BFS multi-hop traversal from an entity, returning a subgraph.
+
+        WHEN TO USE: To explore the broader neighborhood of an entity across multiple
+        hops, with cycle safety and depth/size limits.
+
+        PARAMETERS:
+        - start_entity: Entity UUID or name to start from
+        - relation_types: Optional filter by relation type(s)
+        - max_hops: Maximum traversal depth (default 3)
+        - max_nodes: Maximum subgraph nodes (default 100)
+        - min_edge_confidence: Minimum edge confidence threshold (default 0.0)
+        - as_of: Optional ISO datetime for temporal edge filtering
+
+        RETURNS: {nodes: [...], edges: [...], traversal_count: N, diagnostics: {...}}
+
+        SEE ALSO: graph_neighbors (1-hop only), graph_path (shortest path), graph_stats (metrics)
+        """
+        from .engine.executors_knowledge import KnowledgeExecutor, KnowledgeInput
+
+        execution = _create_knowledge_execution(ctx)
+        executor = KnowledgeExecutor()
+        inputs = KnowledgeInput(
+            op="graph_traverse",
+            start_entity=start_entity,
+            relation_types=relation_types,
+            max_hops=max_hops,
+            max_nodes=max_nodes,
+            min_edge_confidence=min_edge_confidence,
+            as_of=as_of,
+        )
+        result = await executor.execute(inputs, context=execution)
+
+        if not result.success:
+            return _json_response({"status": "failure", "error": result.error})
+
+        return _json_response(
+            {
+                "nodes": result.nodes,
+                "edges": result.edges,
+                "traversal_count": result.traversal_count,
+                "diagnostics": result.diagnostics,
+            }
+        )
+
+    @mcp_server.tool(
+        annotations=ToolAnnotations(
+            title="Graph Path",
+            readOnlyHint=True,
+            destructiveHint=False,
+            idempotentHint=True,
+            openWorldHint=True,
+        )
+    )
+    async def graph_path(
+        start_entity: Annotated[
+            str,
+            Field(description="Source entity UUID or name"),
+        ],
+        end_entity: Annotated[
+            str,
+            Field(description="Target entity UUID or name"),
+        ],
+        relation_types: Annotated[
+            list[str] | None,
+            Field(
+                description="Filter edges by relation type(s)",
+                default=None,
+            ),
+        ],
+        max_hops: Annotated[
+            int,
+            Field(
+                description="Maximum hop depth for path search",
+                default=6,
+                ge=1,
+                le=10,
+            ),
+        ],
+        min_edge_confidence: Annotated[
+            float,
+            Field(
+                description="Minimum confidence threshold for edges",
+                default=0.0,
+                ge=0.0,
+                le=1.0,
+            ),
+        ],
+        as_of: Annotated[
+            str | None,
+            Field(
+                description=(
+                    "Point-in-time filter (ISO datetime). Returns only edges valid at this"
+                    " timestamp based on valid_from/valid_to windows"
+                ),
+                default=None,
+            ),
+        ],
+        *,
+        ctx: AppContextType,
+    ) -> CallToolResult:
+        """
+        Find the shortest path between two entities in the knowledge graph.
+
+        WHEN TO USE: To determine how two entities are related and via which
+        intermediate entities and relation types.
+
+        PARAMETERS:
+        - start_entity: Source entity UUID or name
+        - end_entity: Target entity UUID or name
+        - relation_types: Optional filter by relation type(s)
+        - max_hops: Maximum path length (default 6)
+        - min_edge_confidence: Minimum edge confidence threshold (default 0.0)
+        - as_of: Optional ISO datetime for temporal edge filtering
+
+        RETURNS: {nodes: [...], edges: [...], paths: [{nodes, edges}, ...], traversal_count: N, diagnostics: {...}}
+
+        SEE ALSO: graph_neighbors (1-hop), graph_traverse (subgraph), graph_stats (metrics)
+        """
+        from .engine.executors_knowledge import KnowledgeExecutor, KnowledgeInput
+
+        execution = _create_knowledge_execution(ctx)
+        executor = KnowledgeExecutor()
+        inputs = KnowledgeInput(
+            op="graph_path",
+            start_entity=start_entity,
+            end_entity=end_entity,
+            relation_types=relation_types,
+            max_hops=max_hops,
+            min_edge_confidence=min_edge_confidence,
+            as_of=as_of,
+        )
+        result = await executor.execute(inputs, context=execution)
+
+        if not result.success:
+            return _json_response({"status": "failure", "error": result.error})
+
+        return _json_response(
+            {
+                "nodes": result.nodes,
+                "edges": result.edges,
+                "paths": result.paths,
+                "traversal_count": result.traversal_count,
+                "diagnostics": result.diagnostics,
+            }
+        )
+
+    @mcp_server.tool(
+        annotations=ToolAnnotations(
+            title="Graph Stats",
+            readOnlyHint=True,
+            destructiveHint=False,
+            idempotentHint=True,
+            openWorldHint=True,
+        )
+    )
+    async def graph_stats(
+        start_entity: Annotated[
+            str,
+            Field(description="Entity UUID or name to compute degree/connectivity stats for"),
+        ],
+        as_of: Annotated[
+            str | None,
+            Field(
+                description=(
+                    "Point-in-time filter (ISO datetime). Returns only edges valid at this"
+                    " timestamp based on valid_from/valid_to windows"
+                ),
+                default=None,
+            ),
+        ],
+        *,
+        ctx: AppContextType,
+    ) -> CallToolResult:
+        """
+        Compute degree and connectivity statistics for an entity in the knowledge graph.
+
+        WHEN TO USE: To measure how connected an entity is — out-degree, in-degree,
+        total degree, and the set of distinct relation types it participates in.
+
+        PARAMETERS:
+        - start_entity: Entity UUID or name to analyze
+        - as_of: Optional ISO datetime for temporal edge filtering
+
+        RETURNS: {nodes: [{entity + stats}], traversal_count: N, diagnostics: {out_degree, in_degree, total_degree, distinct_relation_types, ...}}
+
+        SEE ALSO: graph_neighbors (1-hop exploration), graph_traverse (subgraph), graph_path (shortest path)
+        """
+        from .engine.executors_knowledge import KnowledgeExecutor, KnowledgeInput
+
+        execution = _create_knowledge_execution(ctx)
+        executor = KnowledgeExecutor()
+        inputs = KnowledgeInput(
+            op="graph_stats",
+            start_entity=start_entity,
+            as_of=as_of,
+        )
+        result = await executor.execute(inputs, context=execution)
+
+        if not result.success:
+            return _json_response({"status": "failure", "error": result.error})
+
+        return _json_response(
+            {
+                "nodes": result.nodes,
+                "traversal_count": result.traversal_count,
+                "diagnostics": result.diagnostics,
+            }
+        )

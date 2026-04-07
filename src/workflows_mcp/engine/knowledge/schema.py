@@ -501,6 +501,50 @@ MIGRATIONS: list[tuple[int, str, str]] = [
         END $$;
         """,
     ),
+    (
+        12,
+        "Add entity/relation backbone: knowledge_relations and knowledge_proposition_entities",
+        """
+        -- Relation graph: directed edges between knowledge entities
+        CREATE TABLE IF NOT EXISTS knowledge_relations (
+            id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+            source_entity_id UUID NOT NULL
+                REFERENCES knowledge_entities(id) ON DELETE CASCADE,
+            target_entity_id UUID NOT NULL
+                REFERENCES knowledge_entities(id) ON DELETE CASCADE,
+            relation_type VARCHAR(100) NOT NULL,
+            confidence FLOAT DEFAULT 1.0,
+            provenance_proposition_id UUID
+                REFERENCES knowledge_propositions(id) ON DELETE SET NULL,
+            valid_from TIMESTAMPTZ NULL,
+            valid_to TIMESTAMPTZ NULL,
+            created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+        );
+
+        -- Junction: which entities are mentioned/subject/object in a proposition
+        CREATE TABLE IF NOT EXISTS knowledge_proposition_entities (
+            proposition_id UUID NOT NULL
+                REFERENCES knowledge_propositions(id) ON DELETE CASCADE,
+            entity_id UUID NOT NULL
+                REFERENCES knowledge_entities(id) ON DELETE CASCADE,
+            role VARCHAR(100) NOT NULL DEFAULT 'mentioned',
+            confidence FLOAT DEFAULT 1.0,
+            PRIMARY KEY (proposition_id, entity_id)
+        );
+
+        -- Indexes for graph traversal performance
+        CREATE INDEX IF NOT EXISTS idx_kr_relation_type
+            ON knowledge_relations(relation_type);
+        CREATE INDEX IF NOT EXISTS idx_kr_source_target
+            ON knowledge_relations(source_entity_id, target_entity_id);
+        CREATE INDEX IF NOT EXISTS idx_kr_temporal
+            ON knowledge_relations(valid_from, valid_to);
+        CREATE INDEX IF NOT EXISTS idx_kpe_entity_id
+            ON knowledge_proposition_entities(entity_id);
+        CREATE INDEX IF NOT EXISTS idx_kpe_proposition_id
+            ON knowledge_proposition_entities(proposition_id);
+        """,
+    ),
 ]
 
 SCHEMA_VERSION = MIGRATIONS[-1][0] if MIGRATIONS else 0
