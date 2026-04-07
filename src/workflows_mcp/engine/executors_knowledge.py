@@ -13,6 +13,7 @@ import json
 import logging
 import os
 import uuid
+from datetime import datetime
 from typing import Any, ClassVar, Literal
 
 from pydantic import Field, model_validator
@@ -82,6 +83,17 @@ def _get_auth_method(context: Execution) -> str:
     if exec_ctx and exec_ctx.auth_method:
         return exec_ctx.auth_method
     return "SYSTEM"
+
+
+def _coerce_iso_datetime(value: str | None, field_name: str) -> datetime | None:
+    """Parse ISO datetime strings (including trailing Z) to datetime for DB bindings."""
+    if value is None:
+        return None
+    normalized = value[:-1] + "+00:00" if value.endswith("Z") else value
+    try:
+        return datetime.fromisoformat(normalized)
+    except ValueError as e:
+        raise ValueError(f"'{field_name}' must be a valid ISO datetime") from e
 
 
 # ===========================================================================
@@ -156,6 +168,10 @@ class KnowledgeInput(BlockInput):
         default=None,
         description="Filter by category UUIDs",
     )
+    as_of: str | None = Field(
+        default=None,
+        description="Point-in-time filter (ISO datetime) against proposition validity window",
+    )
     min_confidence: float | None = Field(
         default=None,
         description="Minimum confidence threshold",
@@ -221,6 +237,14 @@ class KnowledgeInput(BlockInput):
             "creates a provenance link to the source document. "
             "Required for document-derived propositions; omit for agent observations."
         ),
+    )
+    valid_from: str | None = Field(
+        default=None,
+        description="World-truth start datetime (ISO). NULL means open start",
+    )
+    valid_to: str | None = Field(
+        default=None,
+        description="World-truth end datetime (ISO). NULL means open end",
     )
 
     # --- Recall fields ---
@@ -510,6 +534,7 @@ class KnowledgeExecutor(BlockExecutor):
         resolved_categories = None
         if inputs.categories:
             resolved_categories = await self._resolve_categories(inputs.categories, backend)
+        as_of = _coerce_iso_datetime(inputs.as_of, "as_of")
 
         # Compute query embedding
         embedding, _, _, _ = await compute_embedding(
@@ -523,6 +548,7 @@ class KnowledgeExecutor(BlockExecutor):
             query_embedding=embedding,
             source=inputs.source,
             categories=resolved_categories,
+            as_of=as_of,
             min_confidence=inputs.min_confidence
             if inputs.min_confidence is not None
             else DEFAULT_MIN_CONFIDENCE,
@@ -537,6 +563,7 @@ class KnowledgeExecutor(BlockExecutor):
             query_text=inputs.query,
             source=inputs.source,
             categories=resolved_categories,
+            as_of=as_of,
             min_confidence=inputs.min_confidence
             if inputs.min_confidence is not None
             else DEFAULT_MIN_CONFIDENCE,
@@ -674,6 +701,8 @@ class KnowledgeExecutor(BlockExecutor):
         created_by = _get_audit_user_id(context)
         auth_method = _get_auth_method(context)
         user_string = _get_user_string_id(context)
+        valid_from = _coerce_iso_datetime(inputs.valid_from, "valid_from")
+        valid_to = _coerce_iso_datetime(inputs.valid_to, "valid_to")
 
         # Build metadata JSON string with auth info
         if auth_method and isinstance(auth_method, str):
@@ -689,13 +718,15 @@ class KnowledgeExecutor(BlockExecutor):
                 (id, item_id, content, embedding, search_vector,
                  authority, lifecycle_state, confidence,
                  embedding_model, embedding_dimensions, metadata,
+                 valid_from, valid_to,
                  created_by, auth_method, source_name, source_type)
             VALUES
                 ($1::uuid, $2::uuid, $3, $4::vector,
                  to_tsvector('english', $3),
                  $5, $6, $7,
                  $8, $9, $10::jsonb,
-                 $11::uuid, $12, $13, $14)
+                 $11::timestamptz, $12::timestamptz,
+                 $13::uuid, $14, $15, $16)
             """,
             (
                 prop_id,
@@ -708,6 +739,8 @@ class KnowledgeExecutor(BlockExecutor):
                 model_name,
                 dimensions,
                 metadata_json,
+                valid_from,
+                valid_to,
                 str(created_by),
                 auth_method,
                 source_name,
@@ -879,6 +912,15 @@ class KnowledgeExecutor(BlockExecutor):
         if inputs.created_before:
             where_clauses.append(
                 f"kp.created_at <= {next_param(inputs.created_before)}::timestamptz"
+            )
+
+        if inputs.as_of:
+            as_of_param = next_param(_coerce_iso_datetime(inputs.as_of, "as_of"))
+            where_clauses.append(
+                f"(kp.valid_from IS NULL OR kp.valid_from <= {as_of_param}::timestamptz)"
+            )
+            where_clauses.append(
+                f"(kp.valid_to IS NULL OR kp.valid_to >= {as_of_param}::timestamptz)"
             )
 
         where_sql = " AND ".join(where_clauses) if where_clauses else "TRUE"
@@ -1259,6 +1301,7 @@ class KnowledgeExecutor(BlockExecutor):
         resolved_categories = None
         if inputs.categories:
             resolved_categories = await self._resolve_categories(inputs.categories, backend)
+        as_of = _coerce_iso_datetime(inputs.as_of, "as_of")
 
         query_embedding, _, _, _ = await compute_embedding(
             text=inputs.query,
@@ -1271,6 +1314,7 @@ class KnowledgeExecutor(BlockExecutor):
             query_embedding=query_embedding,
             source=inputs.source,
             categories=resolved_categories,
+            as_of=as_of,
             min_confidence=inputs.min_confidence
             if inputs.min_confidence is not None
             else DEFAULT_MIN_CONFIDENCE,
@@ -1286,6 +1330,7 @@ class KnowledgeExecutor(BlockExecutor):
             query_text=inputs.query,
             source=inputs.source,
             categories=resolved_categories,
+            as_of=as_of,
             min_confidence=inputs.min_confidence
             if inputs.min_confidence is not None
             else DEFAULT_MIN_CONFIDENCE,

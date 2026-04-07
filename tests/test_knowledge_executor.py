@@ -7,6 +7,7 @@ require optional deps.
 
 from __future__ import annotations
 
+from datetime import datetime, timezone
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock
 
@@ -44,6 +45,15 @@ from workflows_mcp.engine.knowledge.search import (
     build_vector_search_query,
     rrf_fusion,
 )
+
+
+def _temporal_truth_matches(
+    as_of: str,
+    valid_from: str | None,
+    valid_to: str | None,
+) -> bool:
+    """Mirror RFC temporal semantics used in SQL predicates for test expectations."""
+    return (valid_from is None or valid_from <= as_of) and (valid_to is None or valid_to >= as_of)
 
 
 # ============================================================================
@@ -254,6 +264,35 @@ class TestSearchQueryBuilder:
 
         for i, _p in enumerate(params, start=1):
             assert f"${i}" in sql, f"Missing param ${i} in SQL"
+
+    def test_vector_search_with_as_of_applies_temporal_predicate(self) -> None:
+        """Vector query should include temporal validity predicate when as_of is set."""
+        sql, params = build_vector_search_query(
+            query_embedding=[0.1, 0.2],
+            as_of=datetime(2026, 4, 7, 12, 0, tzinfo=timezone.utc),
+        )
+        assert "kp.valid_from IS NULL OR kp.valid_from <=" in sql
+        assert "kp.valid_to IS NULL OR kp.valid_to >=" in sql
+        assert datetime(2026, 4, 7, 12, 0, tzinfo=timezone.utc) in params
+
+    def test_fts_search_with_as_of_applies_temporal_predicate(self) -> None:
+        """FTS query should include temporal validity predicate when as_of is set."""
+        sql, params = build_fts_search_query(
+            query_text="temporal test",
+            as_of=datetime(2026, 4, 7, 12, 0, tzinfo=timezone.utc),
+        )
+        assert "kp.valid_from IS NULL OR kp.valid_from <=" in sql
+        assert "kp.valid_to IS NULL OR kp.valid_to >=" in sql
+        assert datetime(2026, 4, 7, 12, 0, tzinfo=timezone.utc) in params
+
+    def test_search_queries_without_as_of_do_not_include_temporal_predicate(self) -> None:
+        """Temporal predicate should be omitted when as_of is not provided."""
+        vector_sql, _ = build_vector_search_query(query_embedding=[0.1, 0.2])
+        fts_sql, _ = build_fts_search_query(query_text="no temporal")
+        assert "kp.valid_from" not in vector_sql
+        assert "kp.valid_to" not in vector_sql
+        assert "kp.valid_from" not in fts_sql
+        assert "kp.valid_to" not in fts_sql
 
 
 # ============================================================================
@@ -514,6 +553,47 @@ class TestMMRRerank:
         assert ", kp.embedding" not in sql
 
 
+class TestTemporalCorrectness:
+    """Tests for temporal validity semantics (before/within/after/null bounds)."""
+
+    def test_temporal_before_within_after_and_null_bounds(self) -> None:
+        """RFC predicate should exclude before/after window and include null-bound rows."""
+        as_of = "2026-04-07T12:00:00Z"
+
+        assert (
+            _temporal_truth_matches(
+                as_of=as_of,
+                valid_from="2026-04-08T00:00:00Z",
+                valid_to=None,
+            )
+            is False
+        )
+        assert (
+            _temporal_truth_matches(
+                as_of=as_of,
+                valid_from="2026-04-01T00:00:00Z",
+                valid_to="2026-04-30T23:59:59Z",
+            )
+            is True
+        )
+        assert (
+            _temporal_truth_matches(
+                as_of=as_of,
+                valid_from=None,
+                valid_to="2026-04-01T00:00:00Z",
+            )
+            is False
+        )
+        assert (
+            _temporal_truth_matches(
+                as_of=as_of,
+                valid_from=None,
+                valid_to=None,
+            )
+            is True
+        )
+
+
 # ============================================================================
 # Input Validation Tests
 # ============================================================================
@@ -577,6 +657,30 @@ class TestKnowledgeInputValidation:
         """Default embedding profile should be 'embedding'."""
         inp = KnowledgeInput(op="search", query="test")
         assert inp.embedding_profile == "embedding"
+
+    def test_temporal_fields_shape(self) -> None:
+        """KnowledgeInput should expose as_of, valid_from, valid_to fields."""
+        inp = KnowledgeInput(
+            op="store",
+            content="temporal fact",
+            valid_from="2026-01-01T00:00:00Z",
+            valid_to="2026-12-31T23:59:59Z",
+            as_of="2026-04-07T12:00:00Z",
+        )
+        assert inp.as_of == "2026-04-07T12:00:00Z"
+        assert inp.valid_from == "2026-01-01T00:00:00Z"
+        assert inp.valid_to == "2026-12-31T23:59:59Z"
+
+    @pytest.mark.asyncio
+    async def test_invalid_iso_datetime_rejected_at_execution(self) -> None:
+        """Invalid as_of should produce an execution error instead of silent misuse."""
+        executor = KnowledgeExecutor()
+        backend = MagicMock()
+        backend.query = AsyncMock(return_value=MagicMock(rows=[]))
+        inputs = KnowledgeInput(op="recall", source="diag-source", as_of="not-a-date")
+
+        with pytest.raises(ValueError, match="as_of"):
+            await executor._build_where_clause(inputs, backend)
 
     def test_invalid_op_rejected(self) -> None:
         """Invalid operation should be rejected."""
@@ -832,6 +936,21 @@ class TestRecallFilters:
             assert f"${i}" in where, f"Missing param ${i} in WHERE clause"
 
     @pytest.mark.asyncio
+    async def test_recall_as_of_adds_temporal_predicate(self) -> None:
+        """_build_where_clause should append temporal predicate when as_of is provided."""
+        where, params = await self._build(as_of="2026-04-07T12:00:00Z")
+        assert "kp.valid_from IS NULL OR kp.valid_from <=" in where
+        assert "kp.valid_to IS NULL OR kp.valid_to >=" in where
+        assert datetime(2026, 4, 7, 12, 0, tzinfo=timezone.utc) in params
+
+    @pytest.mark.asyncio
+    async def test_recall_without_as_of_has_no_temporal_predicate(self) -> None:
+        """_build_where_clause should not include temporal predicate when as_of is absent."""
+        where, _ = await self._build()
+        assert "kp.valid_from" not in where
+        assert "kp.valid_to" not in where
+
+    @pytest.mark.asyncio
     async def test_recall_category_name_resolved(self) -> None:
         """Category name resolves to UUID; EXISTS subquery uses resolved UUID."""
         executor = KnowledgeExecutor()
@@ -954,6 +1073,18 @@ class TestForgetOperation:
         assert "trg_ks_updated_at" in sql, "Trigger missing for knowledge_sources"
         assert "trg_ki_updated_at" in sql, "Trigger missing for knowledge_items"
         assert "trg_kp_updated_at" in sql, "Trigger missing for knowledge_propositions"
+
+    def test_migration_v11_adds_temporal_validity_columns(self) -> None:
+        """Migration v11 should add valid_from/valid_to to knowledge_propositions idempotently."""
+        migration_versions = [m[0] for m in MIGRATIONS]
+        assert 11 in migration_versions, "Migration version 11 must exist"
+
+        v11 = next(m for m in MIGRATIONS if m[0] == 11)
+        sql = v11[2]
+        assert "valid_from" in sql
+        assert "valid_to" in sql
+        assert "knowledge_propositions" in sql
+        assert "IF NOT EXISTS" in sql
 
 
 # ============================================================================
@@ -1306,7 +1437,8 @@ class TestStoreOperationBehaviour:
 
         # metadata param (index 9) must contain source name
         # Param order: id, item_id, content, embedding, authority, lifecycle_state,
-        #              confidence, embedding_model, dimensions, metadata, created_by,
+        #              confidence, embedding_model, dimensions, metadata,
+        #              valid_from, valid_to, created_by,
         #              auth_method, source_name, source_type
         import json as _j
 
@@ -1397,6 +1529,30 @@ class TestStoreOperationBehaviour:
         item_call = backend.query.call_args_list[1]
         item_sql = item_call[0][0]
         assert "ON CONFLICT (source_id, path) DO UPDATE" in item_sql
+
+    @pytest.mark.asyncio
+    async def test_store_persists_valid_from_valid_to(self) -> None:
+        """store should persist valid_from and valid_to into proposition INSERT params."""
+        executor = KnowledgeExecutor()
+        backend = MagicMock()
+        backend.execute = AsyncMock()
+        backend.query = AsyncMock(return_value=MagicMock(rows=[]))
+
+        inputs = KnowledgeInput(
+            op="store",
+            content="temporal fact",
+            valid_from="2026-01-01T00:00:00Z",
+            valid_to="2026-12-31T23:59:59Z",
+        )
+
+        with patch_embedding():
+            result = await executor._op_store(inputs, _make_execution_context(), backend)
+
+        assert result.success is True
+        execute_call = backend.execute.call_args_list[0]
+        params = execute_call[0][1]
+        assert params[10] == datetime(2026, 1, 1, 0, 0, tzinfo=timezone.utc)
+        assert params[11] == datetime(2026, 12, 31, 23, 59, 59, tzinfo=timezone.utc)
 
     @pytest.mark.asyncio
     async def test_store_metadata_column_not_metadata_underscore(self) -> None:

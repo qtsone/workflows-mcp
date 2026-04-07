@@ -858,15 +858,15 @@ When you configure workflows-mcp, your AI assistant gets these tools:
 ### Knowledge Tools
 
 - **search_knowledge** - Hybrid search (vector + full-text + RRF fusion)
-  - `query`, `source`, `categories`, `min_confidence`, `limit`
+  - `query`, `source`, `categories`, `as_of`, `min_confidence`, `limit`
 
 - **store_knowledge** - Persist a new fact with auto-computed embedding
-  - `content`, `source`, `confidence` (default 0.8), `categories`
+  - `content`, `source`, `path`, `valid_from`, `valid_to`, `confidence` (default 0.8), `categories`
   - `authority`: `AGENT` (default), `EXTRACTED`, `COMMUNITY_SUMMARY`, or `USER_VALIDATED`
   - `lifecycle_state`: `ACTIVE` (default) or `QUARANTINED`
 
 - **recall_knowledge** - Filter-based retrieval (no semantic search)
-  - `source`, `categories`, `lifecycle_state`, `min_confidence`, `limit`, `order`
+  - `source`, `categories`, `as_of`, `lifecycle_state`, `min_confidence`, `limit`, `order`
 
 - **forget_knowledge** - Archive propositions (transition to ARCHIVED state)
   - By ID: `proposition_ids` (list of UUIDs)
@@ -887,7 +887,7 @@ When you configure workflows-mcp, your AI assistant gets these tools:
   - Returns `invalidated_count`
 
 - **knowledge_context** - Token-budgeted context assembly for LLM prompts
-  - `query`, `source`, `categories`, `max_tokens`, `diversity`
+  - `query`, `source`, `categories`, `as_of`, `max_tokens`, `diversity`
 
 ---
 

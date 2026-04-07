@@ -141,6 +141,7 @@ class TestSearchKnowledge:
                 query="deployment patterns",
                 source=None,
                 categories=None,
+                as_of=None,
                 min_confidence=0.3,
                 limit=10,
                 ctx=mock_ctx,
@@ -162,6 +163,7 @@ class TestSearchKnowledge:
                 query="test",
                 source="internal-docs",
                 categories=None,
+                as_of="2026-06-15T12:00:00Z",
                 min_confidence=0.3,
                 limit=10,
                 ctx=mock_ctx,
@@ -169,6 +171,7 @@ class TestSearchKnowledge:
 
         inputs: KnowledgeInput = mock_cls.return_value.execute.call_args[0][0]
         assert inputs.source == "internal-docs"
+        assert inputs.as_of == "2026-06-15T12:00:00Z"
 
     @pytest.mark.asyncio
     async def test_error_returns_failure(self, mock_ctx: MagicMock) -> None:
@@ -182,6 +185,7 @@ class TestSearchKnowledge:
                 query="test",
                 source=None,
                 categories=None,
+                as_of=None,
                 min_confidence=0.3,
                 limit=10,
                 ctx=mock_ctx,
@@ -210,6 +214,8 @@ class TestStoreKnowledge:
                 content="Redis pooling reduces latency by 40%",
                 source="perf-tests",
                 path=None,
+                valid_from=None,
+                valid_to=None,
                 confidence=0.85,
                 categories=None,
                 authority="AGENT",
@@ -233,6 +239,8 @@ class TestStoreKnowledge:
                 content="some fact",
                 source=None,
                 path=None,
+                valid_from=None,
+                valid_to=None,
                 confidence=0.8,
                 categories=None,
                 authority="AGENT",
@@ -255,6 +263,8 @@ class TestStoreKnowledge:
                 content="test fact",
                 source=None,
                 path=None,
+                valid_from=None,
+                valid_to=None,
                 confidence=0.8,
                 categories=None,
                 authority="AGENT",
@@ -276,6 +286,8 @@ class TestStoreKnowledge:
                 content="file-derived fact",
                 source="my-docs",
                 path="docs/architecture.md",
+                valid_from=None,
+                valid_to=None,
                 confidence=0.9,
                 categories=None,
                 authority="AGENT",
@@ -288,6 +300,29 @@ class TestStoreKnowledge:
         assert inputs.source == "my-docs"
 
     @pytest.mark.asyncio
+    async def test_validity_window_passed_to_input(self, mock_ctx: MagicMock) -> None:
+        """valid_from and valid_to are forwarded to KnowledgeInput."""
+        with patch(_EXECUTOR_CLS) as mock_cls:
+            mock_cls.return_value.execute = AsyncMock(return_value=_make_store_output())
+
+            await store_knowledge(
+                content="time-bound policy",
+                source="policy",
+                path=None,
+                valid_from="2026-01-01T00:00:00Z",
+                valid_to="2026-12-31T23:59:59Z",
+                confidence=0.9,
+                categories=None,
+                authority="AGENT",
+                lifecycle_state="ACTIVE",
+                ctx=mock_ctx,
+            )
+
+        inputs: KnowledgeInput = mock_cls.return_value.execute.call_args[0][0]
+        assert inputs.valid_from == "2026-01-01T00:00:00Z"
+        assert inputs.valid_to == "2026-12-31T23:59:59Z"
+
+    @pytest.mark.asyncio
     async def test_path_none_by_default(self, mock_ctx: MagicMock) -> None:
         """path defaults to None when not provided."""
         with patch(_EXECUTOR_CLS) as mock_cls:
@@ -297,6 +332,8 @@ class TestStoreKnowledge:
                 content="agent observation",
                 source=None,
                 path=None,
+                valid_from=None,
+                valid_to=None,
                 confidence=0.8,
                 categories=None,
                 authority="AGENT",
@@ -328,6 +365,7 @@ class TestStoreKnowledge:
                 query="design",
                 source=None,
                 categories=None,
+                as_of=None,
                 min_confidence=0.3,
                 limit=10,
                 ctx=mock_ctx,
@@ -357,6 +395,7 @@ class TestRecallKnowledge:
             result = await recall_knowledge(
                 source=None,
                 categories=None,
+                as_of=None,
                 lifecycle_state="ACTIVE",
                 min_confidence=None,
                 limit=10,
@@ -379,6 +418,7 @@ class TestRecallKnowledge:
             await recall_knowledge(
                 source="workflow:*",
                 categories=None,
+                as_of="2026-06-15T12:00:00Z",
                 lifecycle_state="ACTIVE",
                 min_confidence=0.7,
                 limit=5,
@@ -390,6 +430,7 @@ class TestRecallKnowledge:
 
         inputs: KnowledgeInput = mock_cls.return_value.execute.call_args[0][0]
         assert inputs.source == "workflow:*"
+        assert inputs.as_of == "2026-06-15T12:00:00Z"
         assert inputs.lifecycle_state == "ACTIVE"
         assert inputs.min_confidence == 0.7
         assert inputs.where is None  # created_by and auth_method both None, so no where dict
@@ -526,6 +567,7 @@ class TestKnowledgeContext:
                 query="database optimization",
                 source=None,
                 categories=None,
+                as_of=None,
                 max_tokens=4000,
                 diversity=False,
                 ctx=mock_ctx,
@@ -548,6 +590,7 @@ class TestKnowledgeContext:
                 query="test",
                 source="docs",
                 categories=None,
+                as_of="2026-06-15T12:00:00Z",
                 max_tokens=2000,
                 diversity=True,
                 ctx=mock_ctx,
@@ -557,6 +600,7 @@ class TestKnowledgeContext:
         assert inputs.diversity is True
         assert inputs.max_tokens == 2000
         assert inputs.source == "docs"
+        assert inputs.as_of == "2026-06-15T12:00:00Z"
 
     @pytest.mark.asyncio
     async def test_error_returns_failure(self, mock_ctx: MagicMock) -> None:
@@ -570,6 +614,7 @@ class TestKnowledgeContext:
                 query="test",
                 source=None,
                 categories=None,
+                as_of=None,
                 max_tokens=4000,
                 diversity=False,
                 ctx=mock_ctx,

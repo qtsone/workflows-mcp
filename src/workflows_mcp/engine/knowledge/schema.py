@@ -479,6 +479,28 @@ MIGRATIONS: list[tuple[int, str, str]] = [
         DELETE FROM knowledge_entities WHERE entity_type = 'category';
         """,
     ),
+    (
+        11,
+        "Add temporal validity window columns to knowledge_propositions",
+        """
+        DO $$
+        BEGIN
+            IF NOT EXISTS (
+                SELECT 1 FROM information_schema.columns
+                WHERE table_name = 'knowledge_propositions' AND column_name = 'valid_from'
+            ) THEN
+                ALTER TABLE knowledge_propositions ADD COLUMN valid_from TIMESTAMPTZ NULL;
+            END IF;
+
+            IF NOT EXISTS (
+                SELECT 1 FROM information_schema.columns
+                WHERE table_name = 'knowledge_propositions' AND column_name = 'valid_to'
+            ) THEN
+                ALTER TABLE knowledge_propositions ADD COLUMN valid_to TIMESTAMPTZ NULL;
+            END IF;
+        END $$;
+        """,
+    ),
 ]
 
 SCHEMA_VERSION = MIGRATIONS[-1][0] if MIGRATIONS else 0

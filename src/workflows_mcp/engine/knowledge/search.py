@@ -8,6 +8,7 @@ asyncpg positional params ($1, $2, ...).
 from __future__ import annotations
 
 import logging
+from datetime import datetime
 from typing import Any
 
 from .constants import (
@@ -27,6 +28,7 @@ def build_vector_search_query(
     *,
     source: str | None = None,
     categories: list[str] | None = None,
+    as_of: datetime | None = None,
     min_confidence: float = DEFAULT_MIN_CONFIDENCE,
     lifecycle_state: str = LifecycleState.ACTIVE,
     limit: int = DEFAULT_LIMIT,
@@ -89,6 +91,13 @@ def build_vector_search_query(
             f")"
         )
 
+    if as_of:
+        as_of_param = next_param(as_of)
+        where_clauses.append(
+            f"(kp.valid_from IS NULL OR kp.valid_from <= {as_of_param}::timestamptz)"
+        )
+        where_clauses.append(f"(kp.valid_to IS NULL OR kp.valid_to >= {as_of_param}::timestamptz)")
+
     where_clause = " AND ".join(where_clauses)
 
     embedding_col = ", kp.embedding" if include_embeddings else ""
@@ -114,6 +123,7 @@ def build_fts_search_query(
     *,
     source: str | None = None,
     categories: list[str] | None = None,
+    as_of: datetime | None = None,
     min_confidence: float = DEFAULT_MIN_CONFIDENCE,
     lifecycle_state: str = LifecycleState.ACTIVE,
     limit: int = DEFAULT_LIMIT,
@@ -166,6 +176,13 @@ def build_fts_search_query(
             f"    AND kpc.category_id = ANY({cat_param}::uuid[])"
             f")"
         )
+
+    if as_of:
+        as_of_param = next_param(as_of)
+        where_clauses.append(
+            f"(kp.valid_from IS NULL OR kp.valid_from <= {as_of_param}::timestamptz)"
+        )
+        where_clauses.append(f"(kp.valid_to IS NULL OR kp.valid_to >= {as_of_param}::timestamptz)")
 
     where_clause = " AND ".join(where_clauses)
 

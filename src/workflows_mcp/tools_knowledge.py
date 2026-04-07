@@ -132,6 +132,16 @@ def register_knowledge_tools(mcp_server: FastMCP) -> None:
                 default=None,
             ),
         ],
+        as_of: Annotated[
+            str | None,
+            Field(
+                description=(
+                    "Point-in-time filter (ISO datetime). Returns only propositions valid at this"
+                    " timestamp based on valid_from/valid_to windows"
+                ),
+                default=None,
+            ),
+        ],
         min_confidence: Annotated[
             float,
             Field(
@@ -164,6 +174,7 @@ def register_knowledge_tools(mcp_server: FastMCP) -> None:
         - query: What to search for (natural language)
         - source: Optional source filter (exact name or prefix like 'docs:*')
         - categories: Optional category UUID filter
+        - as_of: Optional ISO datetime for temporal validity filtering
         - min_confidence: Minimum confidence score (0.0-1.0, default 0.3)
         - limit: Max results (default 10)
 
@@ -180,6 +191,7 @@ def register_knowledge_tools(mcp_server: FastMCP) -> None:
             query=query,
             source=source,
             categories=categories,
+            as_of=as_of,
             min_confidence=min_confidence,
             limit=limit,
         )
@@ -229,6 +241,26 @@ def register_knowledge_tools(mcp_server: FastMCP) -> None:
                     "File path or identifier within the source "
                     "(e.g. 'docs/architecture.md'). Provide alongside 'source' to "
                     "link this fact to its source document for provenance tracking."
+                ),
+                default=None,
+            ),
+        ],
+        valid_from: Annotated[
+            str | None,
+            Field(
+                description=(
+                    "World-truth start datetime in ISO 8601 format. "
+                    "If omitted, validity has an open start."
+                ),
+                default=None,
+            ),
+        ],
+        valid_to: Annotated[
+            str | None,
+            Field(
+                description=(
+                    "World-truth end datetime in ISO 8601 format. "
+                    "If omitted, validity has an open end."
                 ),
                 default=None,
             ),
@@ -288,6 +320,8 @@ def register_knowledge_tools(mcp_server: FastMCP) -> None:
         - path: Optional file path within the source (e.g. 'docs/architecture.md').
           Provide alongside 'source' to link the fact to its source document.
           Omit for agent observations not tied to a specific file.
+        - valid_from: Optional ISO datetime when proposition becomes true
+        - valid_to: Optional ISO datetime when proposition stops being true
         - confidence: How confident you are in this fact (default 0.8)
         - categories: Optional category UUIDs
         - authority: Who vouches for this fact (default AGENT). Use EXTRACTED for
@@ -308,6 +342,8 @@ def register_knowledge_tools(mcp_server: FastMCP) -> None:
             content=content,
             source=source,
             path=path,
+            valid_from=valid_from,
+            valid_to=valid_to,
             confidence=confidence,
             categories=categories,
             source_type="TOOL",
@@ -347,6 +383,16 @@ def register_knowledge_tools(mcp_server: FastMCP) -> None:
             list[str] | None,
             Field(
                 description="Filter by category UUIDs",
+                default=None,
+            ),
+        ],
+        as_of: Annotated[
+            str | None,
+            Field(
+                description=(
+                    "Point-in-time filter (ISO datetime). Returns only propositions valid at this"
+                    " timestamp based on valid_from/valid_to windows"
+                ),
                 default=None,
             ),
         ],
@@ -414,6 +460,7 @@ def register_knowledge_tools(mcp_server: FastMCP) -> None:
         PARAMETERS:
         - source: Source name filter (exact or prefix with *)
         - categories: Category UUID filter
+        - as_of: Optional ISO datetime for temporal validity filtering
         - lifecycle_state: ACTIVE (default), QUARANTINED, FLAGGED, or ARCHIVED
         - min_confidence: Minimum confidence threshold
         - limit: Max results (default 10)
@@ -443,6 +490,7 @@ def register_knowledge_tools(mcp_server: FastMCP) -> None:
             min_confidence=min_confidence,
             where=where if where else None,
             categories=categories,
+            as_of=as_of,
             lifecycle_state=lifecycle_state,
             limit=limit,
             order=order,
@@ -709,6 +757,16 @@ def register_knowledge_tools(mcp_server: FastMCP) -> None:
                 default=None,
             ),
         ],
+        as_of: Annotated[
+            str | None,
+            Field(
+                description=(
+                    "Point-in-time filter (ISO datetime). Uses only propositions valid at this"
+                    " timestamp before token-budget assembly"
+                ),
+                default=None,
+            ),
+        ],
         max_tokens: Annotated[
             int,
             Field(
@@ -739,6 +797,7 @@ def register_knowledge_tools(mcp_server: FastMCP) -> None:
         - query: What topic to gather context about
         - source: Optional source filter
         - categories: Optional category filter
+        - as_of: Optional ISO datetime for temporal validity filtering
         - max_tokens: Token budget (default 4000, ensures fit within LLM context window)
         - diversity: If true, uses MMR to spread across different topics
 
@@ -755,6 +814,7 @@ def register_knowledge_tools(mcp_server: FastMCP) -> None:
             query=query,
             source=source,
             categories=categories,
+            as_of=as_of,
             max_tokens=max_tokens,
             diversity=diversity,
         )
