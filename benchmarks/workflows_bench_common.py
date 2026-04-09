@@ -194,8 +194,6 @@ async def ingest_corpus(
     await purge_benchmark_source(backend, source_name)
     source_id = await _upsert_source(backend, source_name, source_type)
 
-    embedding_dimensions = len(embeddings[0]) if embeddings else 0
-
     item_rows: list[tuple[str, str, str, str]] = []
     proposition_rows: list[tuple[Any, ...]] = []
 
@@ -217,7 +215,6 @@ async def ingest_corpus(
                 LifecycleState.ACTIVE,
                 confidence,
                 embedding_model,
-                embedding_dimensions,
                 "{}",
                 str(SYSTEM_USER_UUID),
                 "SYSTEM",
@@ -239,14 +236,14 @@ async def ingest_corpus(
         INSERT INTO knowledge_propositions
             (id, item_id, content, embedding, search_vector,
              authority, lifecycle_state, confidence,
-             embedding_model, embedding_dimensions, metadata,
+             embedding_model, metadata,
              created_by, auth_method, source_name, source_type)
         VALUES
             ($1::uuid, $2::uuid, $3, $4::vector,
              to_tsvector('english', $3),
              $5, $6, $7,
-             $8, $9, $10::jsonb,
-             $11::uuid, $12, $13, $14)
+             $8, $9::jsonb,
+             $10::uuid, $11, $12, $13)
         """,
         proposition_rows,
     )

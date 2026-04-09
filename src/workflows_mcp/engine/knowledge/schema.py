@@ -68,14 +68,13 @@ CREATE TABLE IF NOT EXISTS knowledge_propositions (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     item_id UUID REFERENCES knowledge_items(id) ON DELETE CASCADE,
     content TEXT NOT NULL,
-    embedding vector,
+    embedding vector(1536),
     search_vector tsvector,
     authority VARCHAR(50) NOT NULL DEFAULT 'EXTRACTED',
     lifecycle_state VARCHAR(50) NOT NULL DEFAULT 'ACTIVE',
     confidence FLOAT DEFAULT 0.5,
     retrieval_count INTEGER DEFAULT 0,
     embedding_model VARCHAR(100),
-    embedding_dimensions INTEGER,
     metadata JSONB DEFAULT '{}'::jsonb,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
@@ -543,6 +542,164 @@ MIGRATIONS: list[tuple[int, str, str]] = [
             ON knowledge_proposition_entities(entity_id);
         CREATE INDEX IF NOT EXISTS idx_kpe_proposition_id
             ON knowledge_proposition_entities(proposition_id);
+        """,
+    ),
+    (
+        13,
+        "Align junction table and relation column names with platform conventions",
+        """
+        -- Rename junction table: knowledge_proposition_entities → knowledge_entity_propositions
+        -- Platform convention: entity_id, proposition_id (entity-first naming, matches knowledge_admin.py)
+        DO $$
+        BEGIN
+            IF EXISTS (
+                SELECT 1 FROM information_schema.tables
+                WHERE table_name = 'knowledge_proposition_entities'
+            ) AND NOT EXISTS (
+                SELECT 1 FROM information_schema.tables
+                WHERE table_name = 'knowledge_entity_propositions'
+            ) THEN
+                ALTER TABLE knowledge_proposition_entities
+                    RENAME TO knowledge_entity_propositions;
+            END IF;
+        END $$;
+
+        -- Rename indexes to match new table name
+        DO $$
+        BEGIN
+            IF EXISTS (
+                SELECT 1 FROM pg_indexes WHERE indexname = 'idx_kpe_entity_id'
+            ) THEN
+                ALTER INDEX idx_kpe_entity_id RENAME TO idx_kep_entity_id;
+            END IF;
+
+            IF EXISTS (
+                SELECT 1 FROM pg_indexes WHERE indexname = 'idx_kpe_proposition_id'
+            ) THEN
+                ALTER INDEX idx_kpe_proposition_id RENAME TO idx_kep_proposition_id;
+            END IF;
+        END $$;
+
+        -- Rename knowledge_relations.provenance_proposition_id → evidence_proposition_id
+        -- Platform convention: evidence_proposition_id (matches knowledge_admin.py usage)
+        DO $$
+        BEGIN
+            IF EXISTS (
+                SELECT 1 FROM information_schema.columns
+                WHERE table_name = 'knowledge_relations'
+                  AND column_name = 'provenance_proposition_id'
+            ) THEN
+                ALTER TABLE knowledge_relations
+                    RENAME COLUMN provenance_proposition_id TO evidence_proposition_id;
+            END IF;
+        END $$;
+        """,
+    ),
+    (
+        14,
+        "Add room/topology columns to knowledge_propositions for retrieval routing",
+        """
+        DO $$
+        BEGIN
+            -- namespace: major domain or tenant compartment (e.g. 'engineering', 'finance')
+            IF NOT EXISTS (
+                SELECT 1 FROM information_schema.columns
+                WHERE table_name = 'knowledge_propositions' AND column_name = 'namespace'
+            ) THEN
+                ALTER TABLE knowledge_propositions ADD COLUMN namespace VARCHAR(200) NULL;
+            END IF;
+
+            -- room: task or topic compartment within the namespace (e.g. 'api-design', 'auth')
+            IF NOT EXISTS (
+                SELECT 1 FROM information_schema.columns
+                WHERE table_name = 'knowledge_propositions' AND column_name = 'room'
+            ) THEN
+                ALTER TABLE knowledge_propositions ADD COLUMN room VARCHAR(200) NULL;
+            END IF;
+
+            -- corridor: optional process lane within a room (e.g. 'sprint-42', 'incident-007')
+            IF NOT EXISTS (
+                SELECT 1 FROM information_schema.columns
+                WHERE table_name = 'knowledge_propositions' AND column_name = 'corridor'
+            ) THEN
+                ALTER TABLE knowledge_propositions ADD COLUMN corridor VARCHAR(200) NULL;
+            END IF;
+        END $$;
+
+        -- Indexes for room-scoped retrieval routing
+        CREATE INDEX IF NOT EXISTS idx_kp_namespace ON knowledge_propositions(namespace)
+            WHERE namespace IS NOT NULL;
+        CREATE INDEX IF NOT EXISTS idx_kp_room ON knowledge_propositions(room)
+            WHERE room IS NOT NULL;
+         CREATE INDEX IF NOT EXISTS idx_kp_namespace_room ON knowledge_propositions(namespace, room)
+             WHERE namespace IS NOT NULL AND room IS NOT NULL;
+         """,
+    ),
+    (
+        15,
+        "Enforce 1536-dim embeddings: vector(1536) column type",
+        """
+        -- Convert embedding column from dimensionless vector to vector(1536).
+        -- This is the authoritative enforcement: Postgres rejects any other dimension
+        -- at the type level, with no application-layer workaround needed.
+        -- Only runs if the column is still dimensionless (idempotent on vector(1536) DBs).
+        -- The sync trigger and HNSW index must be dropped first due to column dependencies;
+        -- the HNSW index is recreated below (the sync trigger is dropped permanently in v16).
+        DO $$
+        BEGIN
+            IF (
+                SELECT pg_catalog.format_type(atttypid, atttypmod)
+                FROM pg_attribute
+                WHERE attrelid = 'knowledge_propositions'::regclass
+                  AND attname = 'embedding'
+            ) = 'vector' THEN
+                DROP TRIGGER IF EXISTS trg_kp_sync_embedding_dimensions ON knowledge_propositions;
+                DROP INDEX IF EXISTS idx_kp_embedding;
+                ALTER TABLE knowledge_propositions
+                    ALTER COLUMN embedding TYPE vector(1536);
+            END IF;
+        END $$;
+
+        -- Drop the now-redundant CHECK constraint (superseded by vector(1536)).
+        DO $$
+        BEGIN
+            IF EXISTS (
+                SELECT 1 FROM pg_constraint
+                WHERE conname = 'chk_kp_embedding_dimensions_1536'
+                  AND conrelid = 'knowledge_propositions'::regclass
+            ) THEN
+                ALTER TABLE knowledge_propositions
+                    DROP CONSTRAINT chk_kp_embedding_dimensions_1536;
+            END IF;
+        END $$;
+
+        -- Recreate HNSW index on the now-typed vector(1536) column.
+        DO $$
+        BEGIN
+            CREATE INDEX IF NOT EXISTS idx_kp_embedding
+                ON knowledge_propositions
+                USING hnsw (embedding vector_cosine_ops)
+                WITH (m = 16, ef_construction = 64);
+        EXCEPTION WHEN others THEN
+            RAISE WARNING 'HNSW index on embedding skipped: %', SQLERRM;
+        END $$;
+        """,
+    ),
+    (
+        16,
+        "Drop embedding_dimensions: redundant after vector(1536) enforcement",
+        """
+        -- Drop the sync trigger and its backing function.
+        -- With vector(1536) enforced at the column type level, there is nothing to sync.
+        DROP TRIGGER IF EXISTS trg_kp_sync_embedding_dimensions ON knowledge_propositions;
+        DROP FUNCTION IF EXISTS sync_embedding_dimensions();
+
+        -- Drop the composite index that used embedding_dimensions as a filter column.
+        -- With a single valid dimension, that column has no selectivity.
+        DROP INDEX IF EXISTS idx_kp_namespace_room_embedding_dim;
+
+        -- Drop the column itself.
+        ALTER TABLE knowledge_propositions DROP COLUMN IF EXISTS embedding_dimensions;
         """,
     ),
 ]

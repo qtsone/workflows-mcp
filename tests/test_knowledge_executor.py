@@ -134,6 +134,15 @@ class TestSchemaDDL:
         assert "metadata JSONB" in _CREATE_KNOWLEDGE_PROPOSITIONS
         assert "metadata_" not in _CREATE_KNOWLEDGE_PROPOSITIONS
 
+    def test_ddl_propositions_uses_vector_1536(self) -> None:
+        """knowledge_propositions DDL must declare embedding as vector(1536), not dimensionless."""
+        assert "embedding vector(1536)" in _CREATE_KNOWLEDGE_PROPOSITIONS
+        assert "embedding vector," not in _CREATE_KNOWLEDGE_PROPOSITIONS
+
+    def test_ddl_propositions_has_no_embedding_dimensions_column(self) -> None:
+        """knowledge_propositions DDL must not include the redundant embedding_dimensions column."""
+        assert "embedding_dimensions" not in _CREATE_KNOWLEDGE_PROPOSITIONS
+
     def test_migration_2_renames_metadata_column(self) -> None:
         """Migration v2 should rename metadata_ to metadata in an idempotent DO block."""
         migration_versions = [m[0] for m in MIGRATIONS]
@@ -1402,8 +1411,8 @@ class TestStoreOperationBehaviour:
         assert len(result.proposition_ids) == 1
         assert result.stored_count == 1
 
-        # No source or item rows should be created
-        backend.query.assert_not_called()
+        # No read queries: dimension enforcement is handled by the DB CHECK constraint.
+        assert backend.query.call_count == 0
 
         # The INSERT must have item_id=NULL (second positional param is None)
         # call_args_list[0] = proposition INSERT; subsequent calls = audit entry
@@ -1426,8 +1435,8 @@ class TestStoreOperationBehaviour:
 
         assert result.success is True
 
-        # No DB queries for source/item lookup
-        backend.query.assert_not_called()
+        # No read queries: dimension enforcement is handled by the DB CHECK constraint.
+        assert backend.query.call_count == 0
 
         # Proposition INSERT: item_id param is None
         # call_args_list[0] = proposition INSERT; subsequent calls = audit entry
@@ -1435,14 +1444,14 @@ class TestStoreOperationBehaviour:
         params = execute_call[0][1]
         assert params[1] is None  # item_id
 
-        # metadata param (index 9) must contain source name
+        # metadata param (index 8) must contain source name
         # Param order: id, item_id, content, embedding, authority, lifecycle_state,
-        #              confidence, embedding_model, dimensions, metadata,
+        #              confidence, embedding_model, metadata,
         #              valid_from, valid_to, created_by,
         #              auth_method, source_name, source_type
         import json as _j
 
-        metadata_param = params[9]
+        metadata_param = params[8]
         metadata = _j.loads(metadata_param)
         assert metadata.get("source") == "my-workflow"
 
@@ -1460,6 +1469,7 @@ class TestStoreOperationBehaviour:
 
         backend = MagicMock()
         backend.execute = AsyncMock()
+        # Call order: source upsert, item upsert.
         backend.query = AsyncMock(side_effect=[source_result, item_result])
 
         inputs = KnowledgeInput(
@@ -1512,6 +1522,7 @@ class TestStoreOperationBehaviour:
         backend.execute = AsyncMock()
 
         # Both calls return the same item_id (idempotent upsert)
+        # Call order: source upsert, item upsert.
         backend.query = AsyncMock(side_effect=[source_result, item_result])
 
         inputs = KnowledgeInput(
@@ -1551,8 +1562,8 @@ class TestStoreOperationBehaviour:
         assert result.success is True
         execute_call = backend.execute.call_args_list[0]
         params = execute_call[0][1]
-        assert params[10] == datetime(2026, 1, 1, 0, 0, tzinfo=timezone.utc)
-        assert params[11] == datetime(2026, 12, 31, 23, 59, 59, tzinfo=timezone.utc)
+        assert params[9] == datetime(2026, 1, 1, 0, 0, tzinfo=timezone.utc)
+        assert params[10] == datetime(2026, 12, 31, 23, 59, 59, tzinfo=timezone.utc)
 
     @pytest.mark.asyncio
     async def test_store_metadata_column_not_metadata_underscore(self) -> None:
@@ -2175,11 +2186,374 @@ class TestMigrationV12:
             if line.startswith("CREATE INDEX"):
                 assert "IF NOT EXISTS" in line, f"Missing IF NOT EXISTS: {line}"
 
-    def test_schema_version_is_12(self) -> None:
-        """SCHEMA_VERSION must equal the last migration version (12)."""
+
+class TestMigrationV13:
+    """Tests for migration v13: align junction table and column names with platform conventions."""
+
+    def test_migration_13_present(self) -> None:
+        """MIGRATIONS list must contain version 13."""
+        versions = [m[0] for m in MIGRATIONS]
+        assert 13 in versions
+
+    def test_schema_version_is_14(self) -> None:
+        """SCHEMA_VERSION must equal the last migration version."""
         from workflows_mcp.engine.knowledge.schema import SCHEMA_VERSION
 
-        assert SCHEMA_VERSION == 12
+        assert SCHEMA_VERSION == MIGRATIONS[-1][0]
+
+    def test_migration_13_renames_junction_table(self) -> None:
+        """Migration v13 must rename knowledge_proposition_entities to knowledge_entity_propositions."""
+        v13 = next(m for m in MIGRATIONS if m[0] == 13)
+        sql = v13[2]
+        assert "knowledge_proposition_entities" in sql
+        assert "knowledge_entity_propositions" in sql
+        assert "RENAME TO knowledge_entity_propositions" in sql
+
+    def test_migration_13_renames_evidence_column(self) -> None:
+        """Migration v13 must rename provenance_proposition_id to evidence_proposition_id."""
+        v13 = next(m for m in MIGRATIONS if m[0] == 13)
+        sql = v13[2]
+        assert "provenance_proposition_id" in sql
+        assert "evidence_proposition_id" in sql
+        assert "RENAME COLUMN provenance_proposition_id TO evidence_proposition_id" in sql
+
+    def test_migration_13_is_idempotent(self) -> None:
+        """Migration v13 must use IF EXISTS guards for all DDL changes."""
+        v13 = next(m for m in MIGRATIONS if m[0] == 13)
+        sql = v13[2]
+        # All mutations are wrapped in DO $$ BEGIN ... IF EXISTS ... END $$
+        assert "IF EXISTS" in sql
+
+
+class TestMigrationV14:
+    """Tests for migration v14: room/topology columns on knowledge_propositions."""
+
+    def test_migration_14_present(self) -> None:
+        """MIGRATIONS list must contain version 14."""
+        versions = [m[0] for m in MIGRATIONS]
+        assert 14 in versions
+
+    def test_schema_version_is_14(self) -> None:
+        """SCHEMA_VERSION must equal the last migration version."""
+        from workflows_mcp.engine.knowledge.schema import SCHEMA_VERSION
+
+        assert SCHEMA_VERSION == MIGRATIONS[-1][0]
+
+    def test_migration_14_adds_namespace_column(self) -> None:
+        """Migration v14 must add namespace column with IF NOT EXISTS guard."""
+        v14 = next(m for m in MIGRATIONS if m[0] == 14)
+        sql = v14[2]
+        assert "namespace" in sql
+        assert "VARCHAR(200)" in sql
+
+    def test_migration_14_adds_room_column(self) -> None:
+        """Migration v14 must add room column with IF NOT EXISTS guard."""
+        v14 = next(m for m in MIGRATIONS if m[0] == 14)
+        sql = v14[2]
+        assert "room" in sql
+
+    def test_migration_14_adds_corridor_column(self) -> None:
+        """Migration v14 must add corridor column with IF NOT EXISTS guard."""
+        v14 = next(m for m in MIGRATIONS if m[0] == 14)
+        sql = v14[2]
+        assert "corridor" in sql
+
+    def test_migration_14_creates_namespace_index(self) -> None:
+        """Migration v14 must create partial index on namespace."""
+        v14 = next(m for m in MIGRATIONS if m[0] == 14)
+        sql = v14[2]
+        assert "idx_kp_namespace" in sql
+
+    def test_migration_14_creates_room_index(self) -> None:
+        """Migration v14 must create partial index on room."""
+        v14 = next(m for m in MIGRATIONS if m[0] == 14)
+        sql = v14[2]
+        assert "idx_kp_room" in sql
+
+    def test_migration_14_creates_namespace_room_composite_index(self) -> None:
+        """Migration v14 must create composite partial index on (namespace, room)."""
+        v14 = next(m for m in MIGRATIONS if m[0] == 14)
+        sql = v14[2]
+        assert "idx_kp_namespace_room" in sql
+
+    def test_migration_14_is_idempotent(self) -> None:
+        """All DDL in v14 must have IF NOT EXISTS guards."""
+        v14 = next(m for m in MIGRATIONS if m[0] == 14)
+        sql = v14[2]
+        assert "IF NOT EXISTS" in sql
+        for line in sql.split("\n"):
+            line = line.strip()
+            if line.startswith("CREATE INDEX"):
+                assert "IF NOT EXISTS" in line, f"Missing IF NOT EXISTS: {line}"
+
+
+class TestMigrationV15:
+    """Tests for migration v15: vector(1536) column type enforcement."""
+
+    def test_migration_15_present(self) -> None:
+        """MIGRATIONS list must contain version 15."""
+        versions = [m[0] for m in MIGRATIONS]
+        assert 15 in versions
+
+    def test_schema_version_tracks_latest_migration(self) -> None:
+        """SCHEMA_VERSION must equal the latest migration version."""
+        from workflows_mcp.engine.knowledge.schema import SCHEMA_VERSION
+
+        assert SCHEMA_VERSION == MIGRATIONS[-1][0]
+
+    def test_migration_15_converts_embedding_to_vector_1536(self) -> None:
+        """Migration v15 must alter the embedding column to vector(1536)."""
+        v15 = next(m for m in MIGRATIONS if m[0] == 15)
+        sql = v15[2]
+        assert "ALTER COLUMN embedding TYPE vector(1536)" in sql
+
+    def test_migration_15_drops_trigger_before_alter(self) -> None:
+        """Migration v15 must drop the sync trigger before altering the column (dependency order)."""
+        v15 = next(m for m in MIGRATIONS if m[0] == 15)
+        sql = v15[2]
+        alter_pos = sql.index("ALTER COLUMN embedding TYPE vector(1536)")
+        drop_trigger_pos = sql.index("DROP TRIGGER IF EXISTS trg_kp_sync_embedding_dimensions")
+        assert drop_trigger_pos < alter_pos
+
+    def test_migration_15_drops_check_constraint(self) -> None:
+        """Migration v15 must drop the redundant CHECK constraint superseded by vector(1536)."""
+        v15 = next(m for m in MIGRATIONS if m[0] == 15)
+        sql = v15[2]
+        assert "DROP CONSTRAINT chk_kp_embedding_dimensions_1536" in sql
+
+    def test_migration_15_does_not_add_check_constraint(self) -> None:
+        """Migration v15 must not add a CHECK constraint — vector(1536) type is the authority."""
+        v15 = next(m for m in MIGRATIONS if m[0] == 15)
+        sql = v15[2]
+        assert "ADD CONSTRAINT chk_kp_embedding_dimensions_1536" not in sql
+
+    def test_migration_15_does_not_add_scope_trigger(self) -> None:
+        """Migration v15 must not use the per-INSERT SELECT scope-consistency trigger."""
+        v15 = next(m for m in MIGRATIONS if m[0] == 15)
+        sql = v15[2]
+        assert "enforce_embedding_dimension_scope_consistency" not in sql
+        assert "trg_kp_enforce_embedding_scope_dim" not in sql
+
+
+class TestMigrationV16:
+    """Tests for migration v16: drop embedding_dimensions column and its supporting objects."""
+
+    def test_migration_16_present(self) -> None:
+        """MIGRATIONS list must contain version 16."""
+        versions = [m[0] for m in MIGRATIONS]
+        assert 16 in versions
+
+    def test_schema_version_is_16(self) -> None:
+        """SCHEMA_VERSION must equal 16 (the latest migration)."""
+        from workflows_mcp.engine.knowledge.schema import SCHEMA_VERSION
+
+        assert SCHEMA_VERSION == 16
+        assert SCHEMA_VERSION == MIGRATIONS[-1][0]
+
+    def test_migration_16_drops_sync_trigger(self) -> None:
+        """Migration v16 must drop trg_kp_sync_embedding_dimensions."""
+        v16 = next(m for m in MIGRATIONS if m[0] == 16)
+        sql = v16[2]
+        assert "DROP TRIGGER IF EXISTS trg_kp_sync_embedding_dimensions" in sql
+
+    def test_migration_16_drops_sync_function(self) -> None:
+        """Migration v16 must drop the sync_embedding_dimensions() function."""
+        v16 = next(m for m in MIGRATIONS if m[0] == 16)
+        sql = v16[2]
+        assert "DROP FUNCTION IF EXISTS sync_embedding_dimensions" in sql
+
+    def test_migration_16_drops_namespace_room_dim_index(self) -> None:
+        """Migration v16 must drop the now-useless composite index on namespace/room/embedding_dimensions."""
+        v16 = next(m for m in MIGRATIONS if m[0] == 16)
+        sql = v16[2]
+        assert "DROP INDEX IF EXISTS idx_kp_namespace_room_embedding_dim" in sql
+
+    def test_migration_16_drops_embedding_dimensions_column(self) -> None:
+        """Migration v16 must drop the embedding_dimensions column."""
+        v16 = next(m for m in MIGRATIONS if m[0] == 16)
+        sql = v16[2]
+        assert "DROP COLUMN IF EXISTS embedding_dimensions" in sql
+
+
+class TestKnowledgeInputRoomFields:
+    """Tests for namespace/room/corridor fields on KnowledgeInput."""
+
+    def test_room_fields_default_to_none(self) -> None:
+        """namespace, room, corridor must default to None."""
+        inp = KnowledgeInput(op="search", query="test")
+        assert inp.namespace is None
+        assert inp.room is None
+        assert inp.corridor is None
+
+    def test_store_accepts_room_fields(self) -> None:
+        """store op accepts namespace, room, corridor without error."""
+        inp = KnowledgeInput(
+            op="store",
+            content="fact about auth module",
+            namespace="engineering",
+            room="auth",
+            corridor="sprint-42",
+        )
+        assert inp.namespace == "engineering"
+        assert inp.room == "auth"
+        assert inp.corridor == "sprint-42"
+
+    def test_search_accepts_room_fields(self) -> None:
+        """search op accepts namespace and room for scoped retrieval."""
+        inp = KnowledgeInput(
+            op="search",
+            query="auth token expiry",
+            namespace="engineering",
+            room="auth",
+        )
+        assert inp.namespace == "engineering"
+        assert inp.room == "auth"
+
+    def test_room_without_namespace_is_valid(self) -> None:
+        """room can be set without namespace — valid input."""
+        inp = KnowledgeInput(op="search", query="test", room="auth")
+        assert inp.room == "auth"
+        assert inp.namespace is None
+
+    def test_namespace_without_room_is_valid(self) -> None:
+        """namespace can be set without room — valid input."""
+        inp = KnowledgeInput(op="search", query="test", namespace="engineering")
+        assert inp.namespace == "engineering"
+        assert inp.room is None
+
+
+class TestRoomScopedSearch:
+    """Tests for room_scoped_search routing logic."""
+
+    @pytest.mark.asyncio
+    async def test_no_room_runs_global_only(self) -> None:
+        """When namespace and room are both None, only the global lane runs (2 backend calls)."""
+        from workflows_mcp.engine.knowledge.search import room_scoped_search
+
+        backend = MagicMock()
+        empty_result = MagicMock()
+        empty_result.rows = []
+        backend.query = AsyncMock(return_value=empty_result)
+
+        await room_scoped_search(
+            query_embedding=[0.1, 0.2, 0.3],
+            query_text="test query",
+            backend=backend,
+            namespace=None,
+            room=None,
+        )
+
+        # Only global lane: 2 queries (vector + FTS)
+        assert backend.query.call_count == 2
+
+    @pytest.mark.asyncio
+    async def test_with_room_runs_four_queries(self) -> None:
+        """When namespace+room provided, room and global lanes each run vector+FTS (4 total)."""
+        from workflows_mcp.engine.knowledge.search import room_scoped_search
+
+        backend = MagicMock()
+        empty_result = MagicMock()
+        empty_result.rows = []
+        backend.query = AsyncMock(return_value=empty_result)
+
+        await room_scoped_search(
+            query_embedding=[0.1, 0.2, 0.3],
+            query_text="test query",
+            backend=backend,
+            namespace="engineering",
+            room="auth",
+        )
+
+        # Room lane (2) + global companion lane (2) = 4 total
+        assert backend.query.call_count == 4
+
+    @pytest.mark.asyncio
+    async def test_room_lane_includes_room_filter_in_sql(self) -> None:
+        """The room-scoped lane must pass namespace and room as WHERE conditions."""
+        from workflows_mcp.engine.knowledge.search import build_vector_search_query
+
+        sql, params = build_vector_search_query(
+            [0.1, 0.2],
+            namespace="engineering",
+            room="auth",
+        )
+        assert "kp.namespace" in sql
+        assert "kp.room" in sql
+        assert "engineering" in params
+        assert "auth" in params
+
+    @pytest.mark.asyncio
+    async def test_global_lane_no_room_filter(self) -> None:
+        """The global companion lane must NOT include namespace/room WHERE conditions."""
+        from workflows_mcp.engine.knowledge.search import build_vector_search_query
+
+        sql, params = build_vector_search_query([0.1, 0.2])
+        assert "kp.namespace" not in sql
+        assert "kp.room" not in sql
+
+    @pytest.mark.asyncio
+    async def test_room_scoped_returns_fused_results(self) -> None:
+        """Results from both lanes are fused and deduplicated by RRF."""
+        from workflows_mcp.engine.knowledge.search import room_scoped_search
+
+        row_a = {
+            "id": "aaaa-0001",
+            "content": "from room",
+            "confidence": 0.9,
+            "authority": "AGENT",
+            "retrieval_count": 0,
+            "similarity": 0.9,
+            "item_path": None,
+        }
+        row_b = {
+            "id": "bbbb-0002",
+            "content": "from global",
+            "confidence": 0.8,
+            "authority": "AGENT",
+            "retrieval_count": 0,
+            "similarity": 0.8,
+            "item_path": None,
+        }
+        row_c = {
+            "id": "aaaa-0001",
+            "content": "from room",
+            "confidence": 0.9,
+            "authority": "AGENT",
+            "retrieval_count": 0,
+            "fts_rank": 0.5,
+            "item_path": None,
+        }
+
+        room_vec_result = MagicMock(rows=[row_a])
+        room_fts_result = MagicMock(rows=[row_c])
+        global_vec_result = MagicMock(rows=[row_b])
+        global_fts_result = MagicMock(rows=[])
+
+        backend = MagicMock()
+        backend.query = AsyncMock(
+            side_effect=[
+                room_vec_result,
+                room_fts_result,
+                global_vec_result,
+                global_fts_result,
+            ]
+        )
+
+        results = await room_scoped_search(
+            query_embedding=[0.1, 0.2, 0.3],
+            query_text="test",
+            backend=backend,
+            namespace="engineering",
+            room="auth",
+            limit=10,
+        )
+
+        # Both ids should appear in results; row_a appears in both room lanes so scores higher
+        result_ids = [r["id"] for r in results]
+        assert "aaaa-0001" in result_ids
+        assert "bbbb-0002" in result_ids
+        # row_a (room hit) should rank above row_b (global-only)
+        assert result_ids.index("aaaa-0001") < result_ids.index("bbbb-0002")
 
 
 class TestKnowledgeInputGraphValidation:

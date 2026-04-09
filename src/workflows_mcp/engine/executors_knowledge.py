@@ -40,11 +40,7 @@ from .knowledge.graph import (
     graph_stats,
     graph_traverse,
 )
-from .knowledge.search import (
-    build_fts_search_query,
-    build_vector_search_query,
-    rrf_fusion,
-)
+from .knowledge.search import room_scoped_search
 
 logger = logging.getLogger(__name__)
 
@@ -320,6 +316,29 @@ class KnowledgeInput(BlockInput):
     min_edge_confidence: float | None = Field(
         default=None,
         description="Minimum confidence to include a relation edge",
+    )
+
+    # --- Room/topology routing fields ---
+    namespace: str | None = Field(
+        default=None,
+        description=(
+            "Major domain or tenant compartment for this proposition "
+            "(e.g. 'engineering', 'finance'). Used by room-scoped retrieval routing."
+        ),
+    )
+    room: str | None = Field(
+        default=None,
+        description=(
+            "Task or topic compartment within the namespace "
+            "(e.g. 'api-design', 'auth'). Used by room-scoped retrieval routing."
+        ),
+    )
+    corridor: str | None = Field(
+        default=None,
+        description=(
+            "Optional process lane within a room "
+            "(e.g. 'sprint-42', 'incident-007'). Stored for future routing use."
+        ),
     )
 
     # --- Embedding overrides ---
@@ -613,7 +632,11 @@ class KnowledgeExecutor(BlockExecutor):
         context: Execution,
         backend: Any,
     ) -> KnowledgeOutput:
-        """Hybrid search: pgvector cosine + tsvector FTS + RRF fusion."""
+        """Hybrid search: pgvector cosine + tsvector FTS + RRF fusion.
+
+        When namespace or room are provided, runs room-scoped and global
+        companion lanes in parallel before fusing results.
+        """
         assert inputs.query is not None
 
         limit = int(inputs.limit) if isinstance(inputs.limit, str) else inputs.limit
@@ -631,38 +654,23 @@ class KnowledgeExecutor(BlockExecutor):
             profile=inputs.embedding_profile,
         )
 
-        # Vector search
-        vector_sql, vector_params = build_vector_search_query(
+        min_confidence = (
+            inputs.min_confidence if inputs.min_confidence is not None else DEFAULT_MIN_CONFIDENCE
+        )
+
+        fused = await room_scoped_search(
             query_embedding=embedding,
-            source=inputs.source,
-            categories=resolved_categories,
-            as_of=as_of,
-            min_confidence=inputs.min_confidence
-            if inputs.min_confidence is not None
-            else DEFAULT_MIN_CONFIDENCE,
-            lifecycle_state=inputs.lifecycle_state,
-            limit=limit,
-        )
-        vector_result = await backend.query(vector_sql, tuple(vector_params))
-        vector_rows = [dict(row) for row in vector_result.rows]
-
-        # FTS search
-        fts_sql, fts_params = build_fts_search_query(
             query_text=inputs.query,
+            backend=backend,
+            namespace=inputs.namespace,
+            room=inputs.room,
             source=inputs.source,
             categories=resolved_categories,
             as_of=as_of,
-            min_confidence=inputs.min_confidence
-            if inputs.min_confidence is not None
-            else DEFAULT_MIN_CONFIDENCE,
+            min_confidence=min_confidence,
             lifecycle_state=inputs.lifecycle_state,
             limit=limit,
         )
-        fts_result = await backend.query(fts_sql, tuple(fts_params))
-        fts_rows = [dict(row) for row in fts_result.rows]
-
-        # RRF fusion
-        fused = rrf_fusion(vector_rows, fts_rows, limit=limit)
 
         # Update retrieval counts for returned propositions
         if fused:
@@ -732,7 +740,7 @@ class KnowledgeExecutor(BlockExecutor):
             category_ids = await self._resolve_categories(inputs.categories, backend)
 
         # Compute embedding for the content
-        embedding, model_name, dimensions, _ = await compute_embedding(
+        embedding, model_name, _, _ = await compute_embedding(
             text=inputs.content,
             context=context,
             profile=inputs.embedding_profile,
@@ -805,16 +813,18 @@ class KnowledgeExecutor(BlockExecutor):
             INSERT INTO knowledge_propositions
                 (id, item_id, content, embedding, search_vector,
                  authority, lifecycle_state, confidence,
-                 embedding_model, embedding_dimensions, metadata,
+                 embedding_model, metadata,
                  valid_from, valid_to,
-                 created_by, auth_method, source_name, source_type)
+                 created_by, auth_method, source_name, source_type,
+                 namespace, room, corridor)
             VALUES
                 ($1::uuid, $2::uuid, $3, $4::vector,
                  to_tsvector('english', $3),
                  $5, $6, $7,
-                 $8, $9, $10::jsonb,
-                 $11::timestamptz, $12::timestamptz,
-                 $13::uuid, $14, $15, $16)
+                 $8, $9::jsonb,
+                 $10::timestamptz, $11::timestamptz,
+                 $12::uuid, $13, $14, $15,
+                 $16, $17, $18)
             """,
             (
                 prop_id,
@@ -825,7 +835,6 @@ class KnowledgeExecutor(BlockExecutor):
                 inputs.store_lifecycle_state,
                 inputs.confidence,
                 model_name,
-                dimensions,
                 metadata_json,
                 valid_from,
                 valid_to,
@@ -833,6 +842,9 @@ class KnowledgeExecutor(BlockExecutor):
                 auth_method,
                 source_name,
                 source_type,
+                inputs.namespace,
+                inputs.room,
+                inputs.corridor,
             ),
         )
 
@@ -1397,39 +1409,24 @@ class KnowledgeExecutor(BlockExecutor):
             profile=inputs.embedding_profile,
         )
 
-        # Vector search with embeddings included in SELECT
-        vector_sql, vector_params = build_vector_search_query(
+        min_confidence = (
+            inputs.min_confidence if inputs.min_confidence is not None else DEFAULT_MIN_CONFIDENCE
+        )
+
+        fused = await room_scoped_search(
             query_embedding=query_embedding,
+            query_text=inputs.query,
+            backend=backend,
+            namespace=inputs.namespace,
+            room=inputs.room,
             source=inputs.source,
             categories=resolved_categories,
             as_of=as_of,
-            min_confidence=inputs.min_confidence
-            if inputs.min_confidence is not None
-            else DEFAULT_MIN_CONFIDENCE,
+            min_confidence=min_confidence,
             lifecycle_state=inputs.lifecycle_state,
             limit=limit,
             include_embeddings=True,
         )
-        vector_result = await backend.query(vector_sql, tuple(vector_params))
-        vector_rows = [dict(row) for row in vector_result.rows]
-
-        # FTS search (no embeddings needed — only used for RRF scoring)
-        fts_sql, fts_params = build_fts_search_query(
-            query_text=inputs.query,
-            source=inputs.source,
-            categories=resolved_categories,
-            as_of=as_of,
-            min_confidence=inputs.min_confidence
-            if inputs.min_confidence is not None
-            else DEFAULT_MIN_CONFIDENCE,
-            lifecycle_state=inputs.lifecycle_state,
-            limit=limit,
-        )
-        fts_result = await backend.query(fts_sql, tuple(fts_params))
-        fts_rows = [dict(row) for row in fts_result.rows]
-
-        # RRF fusion (preserves embedding from vector_rows via results_by_id)
-        fused = rrf_fusion(vector_rows, fts_rows, limit=limit)
 
         # Update retrieval counts
         if fused:

@@ -3,10 +3,29 @@
 Builds parameterized SQL queries for pgvector cosine similarity and
 PostgreSQL full-text search, with RRF rank fusion. All queries use
 asyncpg positional params ($1, $2, ...).
+
+Room-scoped retrieval
+---------------------
+When ``namespace`` and/or ``room`` are provided, the search pipeline runs two
+lanes in parallel:
+
+1. **Room-scoped lane** — restricts candidates to propositions matching the
+   supplied namespace/room before running the full vector + FTS + RRF
+   pipeline. Improves precision for topic-scoped queries.
+
+2. **Global companion lane** — runs a fixed-size global retrieval (no room
+   filter) in parallel to preserve recall for cross-room knowledge.
+
+Results from both lanes are fused via a second RRF pass so the final ranked
+list benefits from both precision and global recall.  The companion lane is
+always active; it is never a fallback.  If benchmarks show it degrades
+quality, it is removed and room-only retrieval becomes the single
+implementation (no runtime toggle).
 """
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from datetime import datetime
 from typing import Any
@@ -22,6 +41,10 @@ from .constants import (
 
 logger = logging.getLogger(__name__)
 
+# Fixed candidate cap for the global companion lane so it never dominates
+# the result set at the expense of the room-scoped lane.
+_COMPANION_LANE_CANDIDATES = 20
+
 
 def build_vector_search_query(
     query_embedding: list[float],
@@ -33,6 +56,8 @@ def build_vector_search_query(
     lifecycle_state: str = LifecycleState.ACTIVE,
     limit: int = DEFAULT_LIMIT,
     include_embeddings: bool = False,
+    namespace: str | None = None,
+    room: str | None = None,
 ) -> tuple[str, list[Any]]:
     """Build a pgvector cosine similarity search query.
 
@@ -44,6 +69,8 @@ def build_vector_search_query(
         include_embeddings: If True, include the raw embedding vector in SELECT.
             Used internally by _op_context for MMR reranking. Never expose
             embedding values in public API responses.
+        namespace: When provided, restrict candidates to propositions in this namespace.
+        room: When provided, restrict candidates to propositions in this room.
     """
     params: list[Any] = []
     param_idx = 0
@@ -98,6 +125,12 @@ def build_vector_search_query(
         )
         where_clauses.append(f"(kp.valid_to IS NULL OR kp.valid_to >= {as_of_param}::timestamptz)")
 
+    # Room-scope filters
+    if namespace is not None:
+        where_clauses.append(f"kp.namespace = {next_param(namespace)}")
+    if room is not None:
+        where_clauses.append(f"kp.room = {next_param(room)}")
+
     where_clause = " AND ".join(where_clauses)
 
     embedding_col = ", kp.embedding" if include_embeddings else ""
@@ -127,11 +160,17 @@ def build_fts_search_query(
     min_confidence: float = DEFAULT_MIN_CONFIDENCE,
     lifecycle_state: str = LifecycleState.ACTIVE,
     limit: int = DEFAULT_LIMIT,
+    namespace: str | None = None,
+    room: str | None = None,
 ) -> tuple[str, list[Any]]:
     """Build a PostgreSQL full-text search query.
 
     Returns (sql, params) with asyncpg $N positional params.
     Uses plainto_tsquery for natural-language query parsing.
+
+    Args:
+        namespace: When provided, restrict candidates to propositions in this namespace.
+        room: When provided, restrict candidates to propositions in this room.
     """
     params: list[Any] = []
     param_idx = 0
@@ -183,6 +222,12 @@ def build_fts_search_query(
             f"(kp.valid_from IS NULL OR kp.valid_from <= {as_of_param}::timestamptz)"
         )
         where_clauses.append(f"(kp.valid_to IS NULL OR kp.valid_to >= {as_of_param}::timestamptz)")
+
+    # Room-scope filters
+    if namespace is not None:
+        where_clauses.append(f"kp.namespace = {next_param(namespace)}")
+    if room is not None:
+        where_clauses.append(f"kp.room = {next_param(room)}")
 
     where_clause = " AND ".join(where_clauses)
 
@@ -240,3 +285,111 @@ def rrf_fusion(
         fused.append(result)
 
     return fused
+
+
+async def room_scoped_search(
+    query_embedding: list[float],
+    query_text: str,
+    backend: Any,
+    *,
+    namespace: str | None,
+    room: str | None,
+    source: str | None = None,
+    categories: list[str] | None = None,
+    as_of: datetime | None = None,
+    min_confidence: float = DEFAULT_MIN_CONFIDENCE,
+    lifecycle_state: str = LifecycleState.ACTIVE,
+    limit: int = DEFAULT_LIMIT,
+    include_embeddings: bool = False,
+) -> list[dict[str, Any]]:
+    """Run room-scoped and global companion lanes in parallel, then fuse.
+
+    Both lanes run concurrently via asyncio.gather.  The room-scoped lane
+    restricts candidates to the supplied namespace/room; the global companion
+    lane runs a fixed-size global retrieval to preserve cross-room recall.
+
+    Results are merged via a single RRF pass over all four candidate lists
+    (room-vector, room-fts, global-vector, global-fts).
+
+    When namespace and room are both None this degrades to a standard global
+    search (no room-scoped lane is issued; only the global lane runs).
+    """
+    has_room_scope = namespace is not None or room is not None
+
+    # ---- Room-scoped lane ------------------------------------------------
+    async def _run_room_lane() -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+        if not has_room_scope:
+            return [], []
+        vec_sql, vec_params = build_vector_search_query(
+            query_embedding,
+            source=source,
+            categories=categories,
+            as_of=as_of,
+            min_confidence=min_confidence,
+            lifecycle_state=lifecycle_state,
+            limit=limit,
+            include_embeddings=include_embeddings,
+            namespace=namespace,
+            room=room,
+        )
+        fts_sql, fts_params = build_fts_search_query(
+            query_text,
+            source=source,
+            categories=categories,
+            as_of=as_of,
+            min_confidence=min_confidence,
+            lifecycle_state=lifecycle_state,
+            limit=limit,
+            namespace=namespace,
+            room=room,
+        )
+        vec_res, fts_res = await asyncio.gather(
+            backend.query(vec_sql, tuple(vec_params)),
+            backend.query(fts_sql, tuple(fts_params)),
+        )
+        return [dict(r) for r in vec_res.rows], [dict(r) for r in fts_res.rows]
+
+    # ---- Global companion lane -------------------------------------------
+    async def _run_global_lane() -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+        companion_limit = _COMPANION_LANE_CANDIDATES if has_room_scope else limit
+        vec_sql, vec_params = build_vector_search_query(
+            query_embedding,
+            source=source,
+            categories=categories,
+            as_of=as_of,
+            min_confidence=min_confidence,
+            lifecycle_state=lifecycle_state,
+            limit=companion_limit,
+            include_embeddings=include_embeddings,
+        )
+        fts_sql, fts_params = build_fts_search_query(
+            query_text,
+            source=source,
+            categories=categories,
+            as_of=as_of,
+            min_confidence=min_confidence,
+            lifecycle_state=lifecycle_state,
+            limit=companion_limit,
+        )
+        vec_res, fts_res = await asyncio.gather(
+            backend.query(vec_sql, tuple(vec_params)),
+            backend.query(fts_sql, tuple(fts_params)),
+        )
+        return [dict(r) for r in vec_res.rows], [dict(r) for r in fts_res.rows]
+
+    # Run both lanes concurrently
+    (room_vec, room_fts), (global_vec, global_fts) = await asyncio.gather(
+        _run_room_lane(),
+        _run_global_lane(),
+    )
+
+    if has_room_scope:
+        # Two-pass RRF: first fuse within each lane, then fuse the two lane
+        # winners together to produce the final ranked list.
+        room_fused = rrf_fusion(room_vec, room_fts, limit=limit)
+        global_fused = rrf_fusion(global_vec, global_fts, limit=_COMPANION_LANE_CANDIDATES)
+        # Final fusion treats room_fused as "vector" lane and global_fused as "fts" lane
+        # with equal weights so neither dominates.
+        return rrf_fusion(room_fused, global_fused, limit=limit)
+    else:
+        return rrf_fusion(global_vec, global_fts, limit=limit)

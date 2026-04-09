@@ -144,6 +144,8 @@ class TestSearchKnowledge:
                 as_of=None,
                 min_confidence=0.3,
                 limit=10,
+                namespace=None,
+                room=None,
                 ctx=mock_ctx,
             )
 
@@ -166,6 +168,8 @@ class TestSearchKnowledge:
                 as_of="2026-06-15T12:00:00Z",
                 min_confidence=0.3,
                 limit=10,
+                namespace=None,
+                room=None,
                 ctx=mock_ctx,
             )
 
@@ -188,6 +192,8 @@ class TestSearchKnowledge:
                 as_of=None,
                 min_confidence=0.3,
                 limit=10,
+                namespace=None,
+                room=None,
                 ctx=mock_ctx,
             )
 
@@ -220,6 +226,9 @@ class TestStoreKnowledge:
                 categories=None,
                 authority="AGENT",
                 lifecycle_state="ACTIVE",
+                namespace=None,
+                room=None,
+                corridor=None,
                 ctx=mock_ctx,
             )
 
@@ -245,6 +254,9 @@ class TestStoreKnowledge:
                 categories=None,
                 authority="AGENT",
                 lifecycle_state="ACTIVE",
+                namespace=None,
+                room=None,
+                corridor=None,
                 ctx=mock_ctx,
             )
 
@@ -269,6 +281,9 @@ class TestStoreKnowledge:
                 categories=None,
                 authority="AGENT",
                 lifecycle_state="ACTIVE",
+                namespace=None,
+                room=None,
+                corridor=None,
                 ctx=mock_ctx,
             )
 
@@ -292,6 +307,9 @@ class TestStoreKnowledge:
                 categories=None,
                 authority="AGENT",
                 lifecycle_state="ACTIVE",
+                namespace=None,
+                room=None,
+                corridor=None,
                 ctx=mock_ctx,
             )
 
@@ -315,6 +333,9 @@ class TestStoreKnowledge:
                 categories=None,
                 authority="AGENT",
                 lifecycle_state="ACTIVE",
+                namespace=None,
+                room=None,
+                corridor=None,
                 ctx=mock_ctx,
             )
 
@@ -338,11 +359,68 @@ class TestStoreKnowledge:
                 categories=None,
                 authority="AGENT",
                 lifecycle_state="ACTIVE",
+                namespace=None,
+                room=None,
+                corridor=None,
                 ctx=mock_ctx,
             )
 
         inputs: KnowledgeInput = mock_cls.return_value.execute.call_args[0][0]
         assert inputs.path is None
+
+    @pytest.mark.asyncio
+    async def test_namespace_room_corridor_passed_to_input(self, mock_ctx: MagicMock) -> None:
+        """namespace, room, and corridor are forwarded to KnowledgeInput."""
+        with patch(_EXECUTOR_CLS) as mock_cls:
+            mock_cls.return_value.execute = AsyncMock(return_value=_make_store_output())
+
+            await store_knowledge(
+                content="JWT tokens expire after 15 minutes",
+                source="auth-docs",
+                path=None,
+                valid_from=None,
+                valid_to=None,
+                confidence=0.9,
+                categories=None,
+                authority="EXTRACTED",
+                lifecycle_state="ACTIVE",
+                namespace="engineering",
+                room="auth",
+                corridor="tokens",
+                ctx=mock_ctx,
+            )
+
+        inputs: KnowledgeInput = mock_cls.return_value.execute.call_args[0][0]
+        assert inputs.namespace == "engineering"
+        assert inputs.room == "auth"
+        assert inputs.corridor == "tokens"
+
+    @pytest.mark.asyncio
+    async def test_namespace_room_corridor_default_none(self, mock_ctx: MagicMock) -> None:
+        """namespace, room, and corridor default to None."""
+        with patch(_EXECUTOR_CLS) as mock_cls:
+            mock_cls.return_value.execute = AsyncMock(return_value=_make_store_output())
+
+            await store_knowledge(
+                content="generic fact",
+                source=None,
+                path=None,
+                valid_from=None,
+                valid_to=None,
+                confidence=0.8,
+                categories=None,
+                authority="AGENT",
+                lifecycle_state="ACTIVE",
+                namespace=None,
+                room=None,
+                corridor=None,
+                ctx=mock_ctx,
+            )
+
+        inputs: KnowledgeInput = mock_cls.return_value.execute.call_args[0][0]
+        assert inputs.namespace is None
+        assert inputs.room is None
+        assert inputs.corridor is None
 
     @pytest.mark.asyncio
     async def test_search_result_includes_item_path_column(self, mock_ctx: MagicMock) -> None:
@@ -368,6 +446,8 @@ class TestStoreKnowledge:
                 as_of=None,
                 min_confidence=0.3,
                 limit=10,
+                namespace=None,
+                room=None,
                 ctx=mock_ctx,
             )
 
@@ -376,6 +456,50 @@ class TestStoreKnowledge:
         data = _j.loads(result.content[0].text)  # type: ignore[union-attr]
         assert "item_path" in data["columns"]
         assert data["rows"][0]["item_path"] == "docs/design.md"
+
+    @pytest.mark.asyncio
+    async def test_namespace_and_room_passed_to_input(self, mock_ctx: MagicMock) -> None:
+        """namespace and room are forwarded to KnowledgeInput for room-scoped routing."""
+        with patch(_EXECUTOR_CLS) as mock_cls:
+            mock_cls.return_value.execute = AsyncMock(return_value=_make_search_output())
+
+            await search_knowledge(
+                query="JWT expiry handling",
+                source=None,
+                categories=None,
+                as_of=None,
+                min_confidence=0.3,
+                limit=10,
+                namespace="engineering",
+                room="auth",
+                ctx=mock_ctx,
+            )
+
+        inputs: KnowledgeInput = mock_cls.return_value.execute.call_args[0][0]
+        assert inputs.namespace == "engineering"
+        assert inputs.room == "auth"
+
+    @pytest.mark.asyncio
+    async def test_namespace_room_default_none(self, mock_ctx: MagicMock) -> None:
+        """namespace and room default to None (global search, no room scoping)."""
+        with patch(_EXECUTOR_CLS) as mock_cls:
+            mock_cls.return_value.execute = AsyncMock(return_value=_make_search_output())
+
+            await search_knowledge(
+                query="any query",
+                source=None,
+                categories=None,
+                as_of=None,
+                min_confidence=0.3,
+                limit=10,
+                namespace=None,
+                room=None,
+                ctx=mock_ctx,
+            )
+
+        inputs: KnowledgeInput = mock_cls.return_value.execute.call_args[0][0]
+        assert inputs.namespace is None
+        assert inputs.room is None
 
 
 # ============================================================================

@@ -160,6 +160,27 @@ def register_knowledge_tools(mcp_server: FastMCP) -> None:
                 le=100,
             ),
         ],
+        namespace: Annotated[
+            str | None,
+            Field(
+                description=(
+                    "Topology namespace to scope search (e.g. 'engineering', 'product'). "
+                    "When combined with room, activates room-scoped routing with a "
+                    "global companion lane for broader recall."
+                ),
+                default=None,
+            ),
+        ],
+        room: Annotated[
+            str | None,
+            Field(
+                description=(
+                    "Topology room within the namespace to scope search "
+                    "(e.g. 'auth', 'billing'). Must be used with namespace."
+                ),
+                default=None,
+            ),
+        ],
         *,
         ctx: AppContextType,
     ) -> CallToolResult:
@@ -177,6 +198,8 @@ def register_knowledge_tools(mcp_server: FastMCP) -> None:
         - as_of: Optional ISO datetime for temporal validity filtering
         - min_confidence: Minimum confidence score (0.0-1.0, default 0.3)
         - limit: Max results (default 10)
+        - namespace: Optional topology namespace for room-scoped routing
+        - room: Optional topology room within namespace for room-scoped routing
 
         RETURNS: {rows: [{id, content, confidence, authority, ...}], row_count: N}
 
@@ -194,6 +217,8 @@ def register_knowledge_tools(mcp_server: FastMCP) -> None:
             as_of=as_of,
             min_confidence=min_confidence,
             limit=limit,
+            namespace=namespace,
+            room=room,
         )
         result = await executor.execute(inputs, context=execution)
 
@@ -304,6 +329,35 @@ def register_knowledge_tools(mcp_server: FastMCP) -> None:
                 default="ACTIVE",
             ),
         ],
+        namespace: Annotated[
+            str | None,
+            Field(
+                description=(
+                    "Topology namespace for this fact (e.g. 'engineering', 'product'). "
+                    "Used to scope storage and enable room-scoped retrieval later."
+                ),
+                default=None,
+            ),
+        ],
+        room: Annotated[
+            str | None,
+            Field(
+                description=(
+                    "Topology room within the namespace (e.g. 'auth', 'billing'). "
+                    "Must be used with namespace."
+                ),
+                default=None,
+            ),
+        ],
+        corridor: Annotated[
+            str | None,
+            Field(
+                description=(
+                    "Topology corridor (sub-area within a room) for fine-grained scoping."
+                ),
+                default=None,
+            ),
+        ],
         *,
         ctx: AppContextType,
     ) -> CallToolResult:
@@ -328,6 +382,9 @@ def register_knowledge_tools(mcp_server: FastMCP) -> None:
           document-derived facts, USER_VALIDATED to grant archive immunity.
         - lifecycle_state: Initial state (default ACTIVE). Use QUARANTINED for
           uncertain facts pending human review.
+        - namespace: Optional topology namespace (e.g. 'engineering')
+        - room: Optional topology room within namespace (e.g. 'auth')
+        - corridor: Optional topology corridor for fine-grained scoping
 
         RETURNS: {proposition_ids: [uuid], stored_count: 1}
 
@@ -349,6 +406,9 @@ def register_knowledge_tools(mcp_server: FastMCP) -> None:
             source_type="TOOL",
             authority=authority,
             store_lifecycle_state=lifecycle_state,
+            namespace=namespace,
+            room=room,
+            corridor=corridor,
         )
         result = await executor.execute(inputs, context=execution)
 
