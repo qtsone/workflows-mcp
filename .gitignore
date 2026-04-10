@@ -228,3 +228,4 @@ docs/*
 .agent/
 .workflows-state/
 .DS_Store
+.serena/
