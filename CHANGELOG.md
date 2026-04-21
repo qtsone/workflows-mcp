@@ -2,6 +2,17 @@
 
 All notable changes to this project will be documented in this file.
 
+# [9.14.0](https://github.com/qtsone/workflows-mcp/compare/v9.13.0...v9.14.0) (2026-04-21)
+
+
+### Features
+
+* enhance knowledge propositions with room and namespace support ([c769b8c](https://github.com/qtsone/workflows-mcp/commit/c769b8c1a40c75a0596c6ee18b2a9ed7395e430e))
+* **knowledge:** add entity/relation backbone and graph traversal APIs ([85686cc](https://github.com/qtsone/workflows-mcp/commit/85686cc30f345bbdbda6f903c0940d2ca5699e61))
+* **knowledge:** add temporal validity windows and as-of filtering ([fbad611](https://github.com/qtsone/workflows-mcp/commit/fbad611f4f9470db194f8da0891a7e6f89419e95))
+* **memory:** finalize production memory workflows and onboarding guidance ([936b304](https://github.com/qtsone/workflows-mcp/commit/936b30440c58bd920b1f6a4fb7ea4f5c5bfcf2b5))
+* **tests:** add comprehensive tests for memory service operations ([b4e774b](https://github.com/qtsone/workflows-mcp/commit/b4e774b18becf2fbf4dd5c6c5a4878b432118849))
+
 # [9.13.0](https://github.com/qtsone/workflows-mcp/compare/v9.12.2...v9.13.0) (2026-03-21)
 
 
