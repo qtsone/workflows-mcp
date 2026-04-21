@@ -48,6 +48,7 @@ from unittest.mock import MagicMock
 import pytest
 from mcp import ClientSession, StdioServerParameters
 from mcp.client.stdio import stdio_client
+from mcp.server.fastmcp import FastMCP
 from mcp.types import CallToolResult, TextContent
 from test_utils import format_diff, normalize_dynamic_fields
 
@@ -65,6 +66,7 @@ from workflows_mcp.tools import (
     list_workflows,
     validate_workflow_yaml,
 )
+from workflows_mcp.tools_memory import register_memory_tools
 
 # Test configuration
 SNAPSHOTS_DIR = Path(__file__).parent / "snapshots"
@@ -222,6 +224,106 @@ class TestMCPServerHealth:
 
             assert isinstance(workflows, list), "list_workflows should return a list"
             assert len(workflows) > 0, "No test workflows discovered"
+
+
+class TestProjectMemoryToolsMetadata:
+    def test_project_tools_expose_actionable_descriptions(self) -> None:
+        server = FastMCP("metadata-test")
+        register_memory_tools(server, enable_project_tools=True)
+
+        onboard = server._tool_manager._tools.get("project_onboard")
+        assert onboard is not None
+        assert onboard.description
+        assert "start or continue project memory onboarding" in onboard.description.lower()
+
+        sync = server._tool_manager._tools.get("project_sync")
+        assert sync is not None
+        assert sync.description
+        assert "continue project memory synchronization" in sync.description.lower()
+
+
+class TestProjectMemoryToolsExposureInOssMode:
+    @pytest.mark.asyncio
+    async def test_app_lifespan_exposes_project_tools_when_oss_mode_enabled(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from workflows_mcp import server as server_mod
+
+        class _FakeBackend:
+            async def disconnect(self) -> None:
+                return None
+
+        class _FakeMemoryExecutor:
+            type_name = "Memory"
+
+        register_calls: list[bool] = []
+
+        async def _fake_prepare_memory_schema(_memory_db_host: str) -> _FakeBackend:
+            return _FakeBackend()
+
+        def _fake_register_memory_tools(
+            _mcp: Any, *, enable_project_tools: bool = True
+        ) -> None:
+            register_calls.append(enable_project_tools)
+
+        import workflows_mcp.engine.executors_memory as executors_memory_mod
+        import workflows_mcp.tools_memory as tools_memory_mod
+
+        monkeypatch.setattr(server_mod, "_prepare_memory_schema", _fake_prepare_memory_schema)
+        monkeypatch.setattr(server_mod, "load_workflows", lambda _registry: None)
+        monkeypatch.setattr(executors_memory_mod, "MemoryExecutor", _FakeMemoryExecutor)
+        monkeypatch.setattr(tools_memory_mod, "register_memory_tools", _fake_register_memory_tools)
+        monkeypatch.setenv("MEMORY_DB_HOST", "localhost")
+        monkeypatch.setenv("WORKFLOWS_IO_QUEUE_ENABLED", "false")
+        monkeypatch.setenv("WORKFLOWS_JOB_QUEUE_ENABLED", "false")
+        monkeypatch.setenv("WORKFLOWS_OSS_MODE", "true")
+        monkeypatch.setenv("WORKFLOWS_ENABLE_PROJECT_TOOLS", "true")
+
+        async with server_mod.app_lifespan(server_mod.mcp):
+            pass
+
+        assert register_calls == [True]
+
+    @pytest.mark.asyncio
+    async def test_app_lifespan_disables_project_tools_when_oss_mode_disabled(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from workflows_mcp import server as server_mod
+
+        class _FakeBackend:
+            async def disconnect(self) -> None:
+                return None
+
+        class _FakeMemoryExecutor:
+            type_name = "Memory"
+
+        register_calls: list[bool] = []
+
+        async def _fake_prepare_memory_schema(_memory_db_host: str) -> _FakeBackend:
+            return _FakeBackend()
+
+        def _fake_register_memory_tools(
+            _mcp: Any, *, enable_project_tools: bool = True
+        ) -> None:
+            register_calls.append(enable_project_tools)
+
+        import workflows_mcp.engine.executors_memory as executors_memory_mod
+        import workflows_mcp.tools_memory as tools_memory_mod
+
+        monkeypatch.setattr(server_mod, "_prepare_memory_schema", _fake_prepare_memory_schema)
+        monkeypatch.setattr(server_mod, "load_workflows", lambda _registry: None)
+        monkeypatch.setattr(executors_memory_mod, "MemoryExecutor", _FakeMemoryExecutor)
+        monkeypatch.setattr(tools_memory_mod, "register_memory_tools", _fake_register_memory_tools)
+        monkeypatch.setenv("MEMORY_DB_HOST", "localhost")
+        monkeypatch.setenv("WORKFLOWS_IO_QUEUE_ENABLED", "false")
+        monkeypatch.setenv("WORKFLOWS_JOB_QUEUE_ENABLED", "false")
+        monkeypatch.setenv("WORKFLOWS_OSS_MODE", "false")
+        monkeypatch.setenv("WORKFLOWS_ENABLE_PROJECT_TOOLS", "true")
+
+        async with server_mod.app_lifespan(server_mod.mcp):
+            pass
+
+        assert register_calls == [False]
 
 
 # =============================================================================

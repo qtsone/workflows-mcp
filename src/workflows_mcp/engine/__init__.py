@@ -38,8 +38,8 @@ from . import (  # noqa: F401
     executors_http,  # HTTP/REST API executor
     executors_image,  # Image generation executor
     executors_interactive,  # Interactive executors
-    executors_memory,  # Memory executor
     executors_llm,  # LLM call executor
+    executors_memory,  # Memory executor
     executors_sql,  # SQL database executor
     executors_state,  # JSON state executors
     executors_workflow,  # Workflow executor (ADR-008)

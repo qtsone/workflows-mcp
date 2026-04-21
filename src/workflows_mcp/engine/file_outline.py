@@ -14,7 +14,7 @@ import re
 import tomllib
 import xml.etree.ElementTree as ET
 from pathlib import Path
-from typing import Literal
+from typing import Any, Literal, cast
 
 import pathspec
 import yaml
@@ -83,6 +83,8 @@ BASE64_ENCODE_EXTENSIONS: set[str] = {
     ".mkv",
     ".webm",
 }
+
+OutlineDict = dict[str, Any]
 
 
 def is_binary(file_path: Path) -> bool:
@@ -482,7 +484,7 @@ def extract_markdown_outline(file_path: Path) -> str:
     return "\n".join(lines) if lines else "  [No headers found]"
 
 
-def extract_markdown_frontmatter(content: str) -> dict | None:
+def extract_markdown_frontmatter(content: str) -> dict[str, Any] | None:
     """Extract YAML frontmatter from Markdown content.
 
     Parses the optional YAML block between ``---`` fences at the start
@@ -529,12 +531,15 @@ def extract_markdown_frontmatter(content: str) -> dict | None:
                 return [_sanitize(v) for v in obj]
             return obj
 
-        return _sanitize(result)  # type: ignore[return-value]
+        sanitized = _sanitize(result)
+        if isinstance(sanitized, dict):
+            return cast(dict[str, Any], sanitized)
+        return None
     except Exception:
         return None
 
 
-def extract_markdown_references(content: str) -> list[dict]:
+def extract_markdown_references(content: str) -> list[dict[str, Any]]:
     """Extract references from Markdown content.
 
     Finds wikilinks (``[[target]]``) and explicit file paths
@@ -546,7 +551,7 @@ def extract_markdown_references(content: str) -> list[dict]:
     Returns:
         List of dicts with 'type' and 'target' keys.
     """
-    refs: list[dict] = []
+    refs: list[dict[str, Any]] = []
     seen: set[str] = set()
 
     # Wikilinks: [[target]] or [[target|label]]
@@ -567,7 +572,7 @@ def extract_markdown_references(content: str) -> list[dict]:
     return refs
 
 
-def extract_markdown_code_blocks(content: str) -> list[dict]:
+def extract_markdown_code_blocks(content: str) -> list[dict[str, Any]]:
     """Extract fenced code block locations from Markdown content.
 
     Args:
@@ -576,7 +581,7 @@ def extract_markdown_code_blocks(content: str) -> list[dict]:
     Returns:
         List of dicts with 'lang', 'start_line', 'end_line' keys.
     """
-    blocks: list[dict] = []
+    blocks: list[dict[str, Any]] = []
     lines = content.split("\n")
     in_block = False
     block_start = 0
@@ -608,7 +613,7 @@ def extract_markdown_code_blocks(content: str) -> list[dict]:
 
 
 def annotate_section_tokens(
-    sections: list[dict], total_lines: int, avg_chars_per_line: int = 10
+    sections: list[OutlineDict], total_lines: int, avg_chars_per_line: int = 10
 ) -> None:
     """Add token estimates to each section node in-place.
 
@@ -636,7 +641,7 @@ def annotate_section_tokens(
         section["subtree_tokens"] = section["own_tokens"] + child_tokens
 
 
-def extract_markdown_sections(file_path: Path) -> list[dict]:
+def extract_markdown_sections(file_path: Path) -> list[OutlineDict]:
     """Extract structured section tree from Markdown headers.
 
     Parses heading hierarchy into a nested tree suitable for recursive
@@ -665,7 +670,7 @@ def extract_markdown_sections(file_path: Path) -> list[dict]:
         return []
 
     # Parse all headers with their line numbers and levels
-    headers: list[dict] = []
+    headers: list[dict[str, Any]] = []
     in_code_block = False
     for i, line in enumerate(all_lines, 1):
         stripped = line.strip()
@@ -714,10 +719,10 @@ def extract_markdown_sections(file_path: Path) -> list[dict]:
 
     # Build nested tree, passing section boundaries from parent context
     def _build_tree(
-        headers: list[dict],
+        headers: list[dict[str, Any]],
         parent_path: str = "",
         section_end: int = total_lines,
-    ) -> list[dict]:
+    ) -> list[OutlineDict]:
         """Build nested section tree from flat header list.
 
         Args:
@@ -729,7 +734,7 @@ def extract_markdown_sections(file_path: Path) -> list[dict]:
         if not headers:
             return []
 
-        result: list[dict] = []
+        result: list[OutlineDict] = []
         i = 0
 
         while i < len(headers):
@@ -739,7 +744,7 @@ def extract_markdown_sections(file_path: Path) -> list[dict]:
             section_path = f"{parent_path} > {heading}" if parent_path else heading
 
             # Collect children: all consecutive headers at deeper levels
-            children_headers: list[dict] = []
+            children_headers: list[dict[str, Any]] = []
             j = i + 1
             while j < len(headers) and headers[j]["level"] > level:
                 children_headers.append(headers[j])
@@ -1238,7 +1243,7 @@ def generate_file_outline(file_path: Path, mode: Literal["outline", "summary"]) 
 
 def generate_file_outline_with_sections(
     file_path: Path, mode: Literal["outline", "summary"]
-) -> tuple[str, list[dict], int, int]:
+) -> tuple[str, list[OutlineDict], int, int]:
     """Generate outline for a file AND return structured sections tree.
 
     Extends generate_file_outline() with structured section metadata
@@ -1288,7 +1293,7 @@ def generate_file_outline_with_sections(
             sections = []
 
     # Compute max_depth and total_sections from the tree
-    def _count_tree(nodes: list[dict], depth: int = 1) -> tuple[int, int]:
+    def _count_tree(nodes: list[OutlineDict], depth: int = 1) -> tuple[int, int]:
         max_d = depth if nodes else 0
         total = len(nodes)
         for node in nodes:

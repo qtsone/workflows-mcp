@@ -2000,6 +2000,32 @@
                       "description": "Scope envelope (room/corridor/global and retrieval boundaries).",
                       "title": "Scope"
                     },
+                    "scope_token": {
+                      "anyOf": [
+                        {
+                          "type": "string"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ],
+                      "default": null,
+                      "description": "Optional scope token used for scope fallback resolution.",
+                      "title": "Scope Token"
+                    },
+                    "context_id": {
+                      "anyOf": [
+                        {
+                          "type": "string"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ],
+                      "default": null,
+                      "description": "Optional context identifier used for scope fallback resolution.",
+                      "title": "Context Id"
+                    },
                     "query": {
                       "anyOf": [
                         {
@@ -3881,6 +3907,32 @@
           "default": null,
           "description": "Scope envelope (room/corridor/global and retrieval boundaries).",
           "title": "Scope"
+        },
+        "scope_token": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Optional scope token used for scope fallback resolution.",
+          "title": "Scope Token"
+        },
+        "context_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Optional context identifier used for scope fallback resolution.",
+          "title": "Context Id"
         },
         "query": {
           "anyOf": [

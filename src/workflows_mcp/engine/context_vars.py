@@ -39,4 +39,3 @@ current_block_id: ContextVar[str | None] = ContextVar("current_block_id", defaul
 # Set by: WorkflowRunner._execute_block() and orchestrator.execute_iteration()
 # Read by: WorkflowExecutor.execute() to set parent_node_id on child context
 current_node_id: ContextVar[str | None] = ContextVar("current_node_id", default=None)
-

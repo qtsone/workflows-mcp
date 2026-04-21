@@ -387,7 +387,7 @@ class ReadFilesOutput(BlockOutput):
         description="Total number of files matching patterns before filtering",
     )
 
-    sections: list[dict] = Field(
+    sections: list[dict[str, Any]] = Field(
         default_factory=list,
         description="Structured section tree from outline mode (nested dicts with children)",
     )
@@ -402,17 +402,17 @@ class ReadFilesOutput(BlockOutput):
         description="Total number of sections across all levels",
     )
 
-    frontmatter: dict | None = Field(
+    frontmatter: dict[str, Any] | None = Field(
         default=None,
         description="Parsed YAML frontmatter from document (None if absent)",
     )
 
-    references: list[dict] = Field(
+    references: list[dict[str, Any]] = Field(
         default_factory=list,
         description="Extracted references (wikilinks, file paths) from document content",
     )
 
-    code_blocks: list[dict] = Field(
+    code_blocks: list[dict[str, Any]] = Field(
         default_factory=list,
         description="Fenced code block locations (lang, start_line, end_line)",
     )
@@ -558,6 +558,7 @@ class ReadFilesExecutor(BlockExecutor):
         )
 
         # 4. Resolve and validate base_path
+        assert inputs.base_path is not None
         base_path_result = PathResolver.resolve_and_validate(inputs.base_path, allow_traversal=True)
         if not base_path_result.is_success:
             raise ValueError(f"Invalid base_path: {base_path_result.error}")
@@ -768,12 +769,12 @@ class ReadFilesExecutor(BlockExecutor):
         # Read file content based on mode
         file_ext = file_path.suffix.lower()
         file_content: str
-        sections: list[dict] = []
+        sections: list[dict[str, Any]] = []
         max_depth = 0
         total_sections = 0
-        frontmatter: dict | None = None
-        references: list[dict] = []
-        code_blocks: list[dict] = []
+        frontmatter: dict[str, Any] | None = None
+        references: list[dict[str, Any]] = []
+        code_blocks: list[dict[str, Any]] = []
 
         if mode == "outline" or mode == "summary":
             file_content, sections, max_depth, total_sections = generate_file_outline_with_sections(

@@ -47,6 +47,7 @@ from workflows_bench_common import (
     purge_benchmark_sources,
     run_hybrid_search,
 )
+
 from workflows_mcp.engine.knowledge.constants import Authority, LifecycleState
 from workflows_mcp.engine.knowledge.search import room_scoped_search
 
@@ -186,7 +187,7 @@ async def _ingest_conversation_with_room(
         item_rows.append((item_id, source_id, item_path, pid))
         memory_rows.append(
             (
-            memory_id,
+                memory_id,
                 item_id,
                 text,
                 str(vector),

@@ -92,7 +92,12 @@ async def test_app_lifespan_reuses_single_memory_backend_and_disconnects_on_shut
         prepare_calls["count"] += 1
         return fake_backend
 
-    def _fake_register_memory_tools(_mcp_server: Any) -> None:
+    def _fake_register_memory_tools(
+        _mcp_server: Any,
+        *,
+        enable_project_tools: bool = True,
+    ) -> None:
+        assert isinstance(enable_project_tools, bool)
         register_calls["count"] += 1
 
     class _FakeMemoryExecutor:

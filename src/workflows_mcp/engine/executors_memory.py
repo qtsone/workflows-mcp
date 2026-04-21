@@ -55,6 +55,14 @@ class MemoryInput(BlockInput):
         default=None,
         description="Scope envelope (room/corridor/global and retrieval boundaries).",
     )
+    scope_token: str | None = Field(
+        default=None,
+        description="Optional scope token used for scope fallback resolution.",
+    )
+    context_id: str | None = Field(
+        default=None,
+        description="Optional context identifier used for scope fallback resolution.",
+    )
     query: dict[str, Any] | None = Field(
         default=None,
         description="Query payload for retrieval operations (text, strategy, and limits).",
@@ -73,7 +81,9 @@ class MemoryInput(BlockInput):
     )
     response: dict[str, Any] | None = Field(
         default=None,
-        description="Response shaping controls (include sections, verbosity, and formatting flags).",
+        description=(
+            "Response shaping controls (include sections, verbosity, and formatting flags)."
+        ),
     )
 
 
@@ -113,6 +123,8 @@ class MemoryExecutor(BlockExecutor):
                 {
                     "operation": inputs.operation,
                     "scope": inputs.scope or {},
+                    "scope_token": inputs.scope_token,
+                    "context_id": inputs.context_id,
                     "query": inputs.query,
                     "record": inputs.record,
                     "graph": inputs.graph,

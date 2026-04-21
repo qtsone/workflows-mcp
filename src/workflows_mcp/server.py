@@ -15,6 +15,7 @@ import os
 import sys
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
+from importlib import import_module
 from pathlib import Path
 from typing import Any
 
@@ -44,7 +45,7 @@ def _is_enabled_env_flag(name: str, *, default: bool) -> bool:
 
 def _quote_pg_identifier(identifier: str) -> str:
     """Safely quote a PostgreSQL identifier for CREATE DATABASE statements."""
-    return f'"{identifier.replace("\"", "\"\"")}"'
+    return f'"{identifier.replace('"', '""')}"'
 
 
 def _is_duplicate_database_error(exc: BaseException) -> bool:
@@ -135,9 +136,9 @@ async def _prepare_memory_schema(memory_db_host: str) -> Any:
         await backend.connect(config)
         connected = True
     except Exception as exc:
-        asyncpg_module = None
+        asyncpg_module: Any | None = None
         try:
-            import asyncpg as asyncpg_module  # type: ignore[import-not-found]
+            asyncpg_module = import_module("asyncpg")
         except ImportError:
             asyncpg_module = None
 
@@ -434,13 +435,33 @@ async def app_lifespan(_server: FastMCP) -> AsyncIterator[AppContext]:
             from .engine.executors_memory import MemoryExecutor
             from .tools_memory import register_memory_tools
 
+            oss_mode_enabled = _is_enabled_env_flag("WORKFLOWS_OSS_MODE", default=True)
+            project_tools_enabled = _is_enabled_env_flag(
+                "WORKFLOWS_ENABLE_PROJECT_TOOLS", default=True
+            )
+            if "WORKFLOWS_ENABLE_PROJECT_TOOLS" not in os.environ and (
+                "WORKFLOWS_ENABLE_TEMP_PROJECT_TOOLS" in os.environ
+            ):
+                project_tools_enabled = _is_enabled_env_flag(
+                    "WORKFLOWS_ENABLE_TEMP_PROJECT_TOOLS", default=True
+                )
+
+            expose_project_tools = oss_mode_enabled and project_tools_enabled
             executor_registry.register(MemoryExecutor())
-            register_memory_tools(mcp)
+            register_memory_tools(
+                mcp,
+                enable_project_tools=expose_project_tools,
+            )
             from .engine.memory_service import AUDIT_FAIL_CLOSED
 
             logger.info(
                 "Memory features enabled (DB ready)",
-                extra={"audit_fail_closed": AUDIT_FAIL_CLOSED},
+                extra={
+                    "audit_fail_closed": AUDIT_FAIL_CLOSED,
+                    "oss_mode_enabled": oss_mode_enabled,
+                    "project_tools_enabled": project_tools_enabled,
+                    "expose_project_tools": expose_project_tools,
+                },
             )
         except Exception as exc:
             if app_context.memory_backend is not None:
@@ -450,7 +471,9 @@ async def app_lifespan(_server: FastMCP) -> AsyncIterator[AppContext]:
                     app_context.memory_backend = None
                     app_context.memory_backend_lock = None
 
-            if isinstance(exc, RuntimeError) and "Incompatible knowledge schema detected" in str(exc):
+            if isinstance(exc, RuntimeError) and "Incompatible knowledge schema detected" in str(
+                exc
+            ):
                 logger.warning(
                     "Memory features disabled (schema incompatible). "
                     "Apply the documented migration path, then restart.",

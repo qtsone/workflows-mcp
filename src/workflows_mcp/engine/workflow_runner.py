@@ -797,6 +797,9 @@ class WorkflowRunner:
 
         # 5. Notify observer: block starting
         if self.on_block_transition:
+            execution_ctx = exec_context.execution_context
+            if execution_ctx is None:
+                raise RuntimeError("ExecutionContext not found in Execution._internal")
             event: dict[str, Any] = {
                 "event": "block_started",
                 "block_id": block_id,
@@ -804,9 +807,9 @@ class WorkflowRunner:
                 "depth": exec_context.depth,
                 "metadata": {"type": block_def.type},
                 "inputs": resolved_inputs,
-                "context_id": exec_context.execution_context.context_id,
+                "context_id": execution_ctx.context_id,
                 "node_id": node_id,
-                "parent_node_id": exec_context.execution_context.parent_node_id,
+                "parent_node_id": execution_ctx.parent_node_id,
             }
             if block_def.depends_on:
                 deps = [dep.model_dump() for dep in block_def.depends_on]
@@ -876,7 +879,10 @@ class WorkflowRunner:
 
         # 8. Notify observer: block completed
         if self.on_block_transition:
-            event: dict[str, Any] = {
+            execution_ctx = exec_context.execution_context
+            if execution_ctx is None:
+                raise RuntimeError("ExecutionContext not found in Execution._internal")
+            event = {
                 "event": "block_completed",
                 "block_id": block_id,
                 "block_type": block_def.type,
@@ -884,9 +890,9 @@ class WorkflowRunner:
                 "metadata": block_execution.metadata.model_dump(),
                 "outputs": self._get_block_outputs(block_execution.output),
                 "inputs": resolved_inputs,
-                "context_id": exec_context.execution_context.context_id,
+                "context_id": execution_ctx.context_id,
                 "node_id": node_id,
-                "parent_node_id": exec_context.execution_context.parent_node_id,
+                "parent_node_id": execution_ctx.parent_node_id,
             }
             if block_def.depends_on:
                 deps = [dep.model_dump() for dep in block_def.depends_on]
@@ -927,15 +933,18 @@ class WorkflowRunner:
 
         # Notify observer: for_each block starting
         if self.on_block_transition:
+            execution_ctx = exec_context.execution_context
+            if execution_ctx is None:
+                raise RuntimeError("ExecutionContext not found in Execution._internal")
             event: dict[str, Any] = {
                 "event": "block_started",
                 "block_id": block_id,
                 "block_type": block_def.type,
                 "depth": exec_context.depth,
                 "metadata": {"type": block_def.type},
-                "context_id": exec_context.execution_context.context_id,
+                "context_id": execution_ctx.context_id,
                 "node_id": node_id,
-                "parent_node_id": exec_context.execution_context.parent_node_id,
+                "parent_node_id": execution_ctx.parent_node_id,
             }
             if block_def.depends_on:
                 event["depends_on"] = [dep.model_dump() for dep in block_def.depends_on]
@@ -1017,6 +1026,9 @@ class WorkflowRunner:
 
             # Notify observer: for_each block completed
             if self.on_block_transition:
+                execution_ctx = exec_context.execution_context
+                if execution_ctx is None:
+                    raise RuntimeError("ExecutionContext not found in Execution._internal")
                 # Aggregate iteration outputs for detail panel visibility
                 aggregated_outputs: dict[str, Any] = {}
                 for iter_key, iter_result in iteration_results.items():
@@ -1038,9 +1050,9 @@ class WorkflowRunner:
                         "for_each_mode": block_def.for_each_mode,
                         **block_def.inputs,
                     },
-                    "context_id": exec_context.execution_context.context_id,
+                    "context_id": execution_ctx.context_id,
                     "node_id": node_id,
-                    "parent_node_id": exec_context.execution_context.parent_node_id,
+                    "parent_node_id": execution_ctx.parent_node_id,
                 }
                 if block_def.depends_on:
                     event["depends_on"] = [dep.model_dump() for dep in block_def.depends_on]
@@ -1055,15 +1067,18 @@ class WorkflowRunner:
         except Exception as e:
             # Notify observer: for_each block failed
             if self.on_block_transition:
+                execution_ctx = exec_context.execution_context
+                if execution_ctx is None:
+                    raise RuntimeError("ExecutionContext not found in Execution._internal")
                 event = {
                     "event": "block_failed",
                     "block_id": block_id,
                     "block_type": block_def.type,
                     "depth": exec_context.depth,
                     "error": str(e),
-                    "context_id": exec_context.execution_context.context_id,
+                    "context_id": execution_ctx.context_id,
                     "node_id": node_id,
-                    "parent_node_id": exec_context.execution_context.parent_node_id,
+                    "parent_node_id": execution_ctx.parent_node_id,
                 }
                 if block_def.depends_on:
                     event["depends_on"] = [dep.model_dump() for dep in block_def.depends_on]
@@ -1122,6 +1137,9 @@ class WorkflowRunner:
         )
 
         if self.on_block_transition:
+            execution_ctx = exec_context.execution_context
+            if execution_ctx is None:
+                raise RuntimeError("ExecutionContext not found in Execution._internal")
             event: dict[str, Any] = {
                 "event": "block_skipped",
                 "block_id": block_id,
@@ -1130,9 +1148,9 @@ class WorkflowRunner:
                 "reason": reason,
                 "metadata": metadata.model_dump(),
                 "outputs": default_outputs,
-                "context_id": exec_context.execution_context.context_id,
+                "context_id": execution_ctx.context_id,
                 "node_id": str(uuid.uuid4()),
-                "parent_node_id": exec_context.execution_context.parent_node_id,
+                "parent_node_id": execution_ctx.parent_node_id,
             }
             if block_def.depends_on:
                 deps = [dep.model_dump() for dep in block_def.depends_on]
@@ -1175,6 +1193,9 @@ class WorkflowRunner:
         )
 
         if self.on_block_transition:
+            execution_ctx = exec_context.execution_context
+            if execution_ctx is None:
+                raise RuntimeError("ExecutionContext not found in Execution._internal")
             event: dict[str, Any] = {
                 "event": "block_failed",
                 "block_id": block_id,
@@ -1183,9 +1204,9 @@ class WorkflowRunner:
                 "error": error,
                 "metadata": metadata.model_dump(),
                 "outputs": default_outputs,
-                "context_id": exec_context.execution_context.context_id,
+                "context_id": execution_ctx.context_id,
                 "node_id": str(uuid.uuid4()),
-                "parent_node_id": exec_context.execution_context.parent_node_id,
+                "parent_node_id": execution_ctx.parent_node_id,
             }
             if block_def.depends_on:
                 deps = [dep.model_dump() for dep in block_def.depends_on]
@@ -1585,7 +1606,7 @@ class WorkflowRunner:
         # Workflow blocks return Execution — only include declared outputs, not the full tree
         if isinstance(block_output, Execution):
             return block_output.outputs or {}
-        return block_output.model_dump()
+        return cast(dict[str, Any], block_output.model_dump())
 
 
 __all__ = ["WorkflowRunner"]

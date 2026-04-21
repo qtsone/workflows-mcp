@@ -693,6 +693,8 @@ Without this, execution fails with configuration error.
 - **`username`** (string): Memory PostgreSQL username. Defaults to MEMORY_DB_USER when set.
 - **`password`** (string): Memory PostgreSQL password. Defaults to MEMORY_DB_PASSWORD when set.
 - **`scope`** (object): Scope envelope (room/corridor/global and retrieval boundaries).
+- **`scope_token`** (string): Optional scope token used for scope fallback resolution.
+- **`context_id`** (string): Optional context identifier used for scope fallback resolution.
 - **`query`** (object): Query payload for retrieval operations (text, strategy, and limits).
 - **`record`** (object): Record payload for ingest/update operations (memory content and metadata).
 - **`graph`** (object): Graph mutation payload (entities/relations for upsert or delete).

@@ -78,7 +78,7 @@ def build_corpus_from_sessions(
             for dialog in session["dialogs"]:
                 speaker = dialog.get("speaker", "?")
                 text = dialog.get("text", "")
-                texts.append(f"{speaker} said, \"{text}\"")
+                texts.append(f'{speaker} said, "{text}"')
             corpus.append("\n".join(texts))
             corpus_ids.append(f"session_{session['session_num']}")
             corpus_timestamps.append(str(session["date"]))
@@ -88,7 +88,7 @@ def build_corpus_from_sessions(
             dialog_id = str(dialog.get("dia_id", f"D{session['session_num']}:?"))
             speaker = dialog.get("speaker", "?")
             text = dialog.get("text", "")
-            corpus.append(f"{speaker} said, \"{text}\"")
+            corpus.append(f'{speaker} said, "{text}"')
             corpus_ids.append(dialog_id)
             corpus_timestamps.append(str(session["date"]))
 
@@ -169,10 +169,7 @@ async def run_benchmark(args: argparse.Namespace) -> None:
             )
 
             if not corpus:
-                print(
-                    f"[{conversation_index:2}/{len(data)}] {sample_id:<24} "
-                    "SKIP (empty corpus)"
-                )
+                print(f"[{conversation_index:2}/{len(data)}] {sample_id:<24} SKIP (empty corpus)")
                 continue
 
             source_name = f"{args.source_prefix}:{sample_id}"

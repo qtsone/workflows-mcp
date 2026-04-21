@@ -34,7 +34,7 @@ class TestStructuredIngestService:
     async def test_ingest_structured_writes_memories_entities_relations_and_links_atomically(
         self,
     ) -> None:
-        """Structured ingest writes all graph tables in one transaction and reports affected upsert IDs/counts."""
+        """Structured ingest writes graph tables atomically and reports IDs/counts."""
         backend = MagicMock()
         backend.begin_transaction = AsyncMock()
         backend.commit = AsyncMock()
@@ -133,11 +133,13 @@ class TestStructuredIngestService:
         assert any("INSERT INTO knowledge_memories" in sql for sql in executed_sql)
         assert any("INSERT INTO knowledge_entity_memories" in sql for sql in executed_sql)
         assert any(
-            "INSERT INTO knowledge_entity_memories" in sql and call.args[1] == ("memory-0-id", "entity-alice-id", "mentioned", 0.95)
+            "INSERT INTO knowledge_entity_memories" in sql
+            and call.args[1] == ("memory-0-id", "entity-alice-id", "mentioned", 0.95)
             for call, sql in zip(backend.execute.await_args_list, executed_sql, strict=False)
         )
         assert any(
-            "INSERT INTO knowledge_entity_memories" in sql and call.args[1] == ("memory-0-id", "entity-acme-id", "mentioned", 0.89)
+            "INSERT INTO knowledge_entity_memories" in sql
+            and call.args[1] == ("memory-0-id", "entity-acme-id", "mentioned", 0.89)
             for call, sql in zip(backend.execute.await_args_list, executed_sql, strict=False)
         )
 
@@ -182,7 +184,9 @@ class TestStructuredIngestService:
 
         assert result.success is True
         memory_insert_calls = [
-            call for call in backend.execute.await_args_list if "INSERT INTO knowledge_memories" in call.args[0]
+            call
+            for call in backend.execute.await_args_list
+            if "INSERT INTO knowledge_memories" in call.args[0]
         ]
         assert len(memory_insert_calls) == 1
         memory_insert_sql = memory_insert_calls[0].args[0]
@@ -190,18 +194,26 @@ class TestStructuredIngestService:
         assert "embedding" in memory_insert_sql
         assert "search_vector" in memory_insert_sql
         assert "embedding_model" in memory_insert_sql
+        assert "memory_tier" in memory_insert_sql
+        assert "derived_kind" in memory_insert_sql
+        assert "parent_memory_ids" in memory_insert_sql
         assert "to_tsvector('english', $3)" in memory_insert_sql
         assert memory_insert_params[3] == "[0.1, 0.2, 0.3]"
         assert memory_insert_params[7] == "embed-model"
+        assert memory_insert_params[16] == "direct"
+        assert memory_insert_params[17] is None
+        assert memory_insert_params[18] == []
 
         audit_calls = [
-            call for call in backend.execute.await_args_list if "INSERT INTO knowledge_memory_audits" in call.args[0]
+            call
+            for call in backend.execute.await_args_list
+            if "INSERT INTO knowledge_memory_audits" in call.args[0]
         ]
         assert len(audit_calls) == 1
 
     @pytest.mark.asyncio
     async def test_ingest_structured_defaults_entities_and_relations_when_omitted(self) -> None:
-        """Structured ingest should accept payloads with only memories and default graph inputs to empty."""
+        """Structured ingest accepts memory-only payloads and defaults graph inputs."""
         backend = MagicMock()
         backend.begin_transaction = AsyncMock()
         backend.commit = AsyncMock()
@@ -240,7 +252,7 @@ class TestStructuredIngestService:
 
     @pytest.mark.asyncio
     async def test_ingest_structured_without_memories_returns_explicit_error(self) -> None:
-        """Structured ingest should fail with an explicit contract error when memories is omitted."""
+        """Structured ingest fails when memories is omitted."""
         backend = MagicMock()
         backend.begin_transaction = AsyncMock()
         backend.commit = AsyncMock()
@@ -326,7 +338,12 @@ class TestStructuredIngestService:
         with (
             patch(
                 "workflows_mcp.engine.memory_service.uuid.uuid4",
-                side_effect=["memory-0-id", "entity-alice-upsert-id", "entity-acme-upsert-id", "relation-upsert-id"],
+                side_effect=[
+                    "memory-0-id",
+                    "entity-alice-upsert-id",
+                    "entity-acme-upsert-id",
+                    "relation-upsert-id",
+                ],
             ),
             self._embedding_patch(),
         ):
@@ -357,6 +374,104 @@ class TestStructuredIngestService:
         ]
         assert ("memory-0-id", "entity-alice-id", "mentioned", 0.88) in link_params
         assert ("memory-0-id", "entity-acme-id", "mentioned", 0.88) in link_params
+
+    @pytest.mark.asyncio
+    async def test_ingest_structured_corridor_relation_populates_evidence_memory_ids_array(
+        self,
+    ) -> None:
+        """Structured CORRIDOR writes set evidence_memory_ids for DB constraints."""
+        backend = MagicMock()
+        backend.begin_transaction = AsyncMock()
+        backend.commit = AsyncMock()
+        backend.rollback = AsyncMock()
+        backend.execute = AsyncMock()
+        backend.query = AsyncMock(
+            side_effect=[
+                MagicMock(rows=[{"id": "entity-a-id"}]),
+                MagicMock(rows=[{"id": "entity-b-id"}]),
+                MagicMock(rows=[{"id": "relation-id"}]),
+            ]
+        )
+
+        context = MagicMock()
+        context.execution_context = None
+        service = MemoryService(backend=backend, context=context)
+
+        with (
+            patch(
+                "workflows_mcp.engine.memory_service.uuid.uuid4",
+                side_effect=[
+                    "memory-0-id",
+                    "entity-a-upsert-id",
+                    "entity-b-upsert-id",
+                    "relation-upsert-id",
+                ],
+            ),
+            self._embedding_patch(),
+        ):
+            result = await service.manage(
+                ManageMemoryRequest(
+                    operation="ingest_structured",
+                    memories=[{"content": "A corridor relation."}],
+                    entities=[],
+                    relations=[
+                        {
+                            "source_name": "Service A",
+                            "source_type": "SERVICE",
+                            "target_name": "Service B",
+                            "target_type": "SERVICE",
+                            "relation_type": "CORRIDOR",
+                            "evidence_memory_index": 0,
+                        }
+                    ],
+                )
+            )
+
+        assert result.success is True
+        relation_insert_call = next(
+            call
+            for call in backend.query.await_args_list
+            if "INSERT INTO knowledge_relations" in call.args[0]
+        )
+        assert "evidence_memory_ids" in relation_insert_call.args[0]
+        assert relation_insert_call.args[1][5] == "memory-0-id"
+        assert relation_insert_call.args[1][6] == ["memory-0-id"]
+
+    @pytest.mark.asyncio
+    async def test_ingest_structured_rejects_corridor_relation_without_evidence_memory_index(
+        self,
+    ) -> None:
+        """Structured CORRIDOR relation must fail fast when evidence memory linkage is missing."""
+        backend = MagicMock()
+        backend.begin_transaction = AsyncMock()
+        backend.commit = AsyncMock()
+        backend.rollback = AsyncMock()
+
+        context = MagicMock()
+        context.execution_context = None
+        service = MemoryService(backend=backend, context=context)
+
+        result = await service.manage(
+            ManageMemoryRequest(
+                operation="ingest_structured",
+                memories=[{"content": "A corridor relation."}],
+                entities=[],
+                relations=[
+                    {
+                        "source_name": "Service A",
+                        "source_type": "SERVICE",
+                        "target_name": "Service B",
+                        "target_type": "SERVICE",
+                        "relation_type": "CORRIDOR",
+                    }
+                ],
+            )
+        )
+
+        assert result.success is False
+        assert result.error is not None
+        assert result.error.startswith("MEM_GRAPH_EVIDENCE_REQUIRED")
+        backend.begin_transaction.assert_not_awaited()
 
     @pytest.mark.asyncio
     async def test_ingest_structured_reports_actual_memory_count(self) -> None:
@@ -396,8 +511,10 @@ class TestStructuredIngestService:
         assert result.stored_count == 2
 
     @pytest.mark.asyncio
-    async def test_ingest_structured_uses_request_confidence_when_nested_confidence_missing(self) -> None:
-        """Omitted entity and relation confidence should fall back to request.confidence, not 1.0."""
+    async def test_ingest_structured_uses_request_confidence_when_nested_confidence_missing(
+        self,
+    ) -> None:
+        """Missing nested confidence falls back to request.confidence."""
         backend = MagicMock()
         backend.begin_transaction = AsyncMock()
         backend.commit = AsyncMock()
@@ -418,7 +535,12 @@ class TestStructuredIngestService:
         with (
             patch(
                 "workflows_mcp.engine.memory_service.uuid.uuid4",
-                side_effect=["memory-0-id", "entity-alice-upsert-id", "entity-acme-upsert-id", "relation-upsert-id"],
+                side_effect=[
+                    "memory-0-id",
+                    "entity-alice-upsert-id",
+                    "entity-acme-upsert-id",
+                    "relation-upsert-id",
+                ],
             ),
             self._embedding_patch(),
         ):
@@ -443,7 +565,9 @@ class TestStructuredIngestService:
 
         assert result.success is True
         relation_insert_call = next(
-            call for call in backend.query.await_args_list if "INSERT INTO knowledge_relations" in call.args[0]
+            call
+            for call in backend.query.await_args_list
+            if "INSERT INTO knowledge_relations" in call.args[0]
         )
         assert relation_insert_call.args[1][4] == 0.8
         link_params = [
@@ -456,7 +580,7 @@ class TestStructuredIngestService:
 
     @pytest.mark.asyncio
     async def test_ingest_structured_propagates_source_type_to_knowledge_sources(self) -> None:
-        """Structured ingest should classify source rows with the same source_type as memory rows."""
+        """Structured ingest propagates source_type to knowledge_sources rows."""
         backend = MagicMock()
         backend.begin_transaction = AsyncMock()
         backend.commit = AsyncMock()
@@ -494,7 +618,9 @@ class TestStructuredIngestService:
 
         assert result.success is True
         source_insert_call = next(
-            call for call in backend.query.await_args_list if "INSERT INTO knowledge_sources" in call.args[0]
+            call
+            for call in backend.query.await_args_list
+            if "INSERT INTO knowledge_sources" in call.args[0]
         )
         assert source_insert_call.args[1][2] == "WORKFLOW"
 
@@ -531,7 +657,7 @@ class TestStructuredIngestService:
 
     @pytest.mark.asyncio
     async def test_ingest_structured_scopes_entity_upsert_by_topology(self) -> None:
-        """Entity upserts must include namespace/room/corridor scope to avoid cross-service collisions."""
+        """Entity upserts include topology scope to avoid collisions."""
         backend = MagicMock()
         backend.begin_transaction = AsyncMock()
         backend.commit = AsyncMock()
@@ -570,7 +696,9 @@ class TestStructuredIngestService:
 
         assert result.success is True
         entity_insert_call = next(
-            call for call in backend.query.await_args_list if "INSERT INTO knowledge_entities" in call.args[0]
+            call
+            for call in backend.query.await_args_list
+            if "INSERT INTO knowledge_entities" in call.args[0]
         )
         entity_insert_sql = entity_insert_call.args[0]
         entity_insert_params = entity_insert_call.args[1]
@@ -618,7 +746,10 @@ class TestStructuredIngestService:
         service = MemoryService(backend=backend, context=context)
 
         with (
-            patch("workflows_mcp.engine.memory_service.uuid.uuid4", side_effect=["cat-upsert-id", "memory-0-id"]),
+            patch(
+                "workflows_mcp.engine.memory_service.uuid.uuid4",
+                side_effect=["cat-upsert-id", "memory-0-id"],
+            ),
             self._embedding_patch(),
         ):
             result = await service.manage(
@@ -632,7 +763,9 @@ class TestStructuredIngestService:
 
         assert result.success is True
         category_upsert_call = next(
-            call for call in backend.query.await_args_list if "INSERT INTO knowledge_categories" in call.args[0]
+            call
+            for call in backend.query.await_args_list
+            if "INSERT INTO knowledge_categories" in call.args[0]
         )
         assert category_upsert_call.args[1][1] == "incident response"
 
@@ -654,7 +787,9 @@ class TestStructuredIngestService:
         context.execution_context = None
         service = MemoryService(backend=backend, context=context)
 
-        with patch("workflows_mcp.engine.memory_service.uuid.uuid4", return_value="relation-upsert-id"):
+        with patch(
+            "workflows_mcp.engine.memory_service.uuid.uuid4", return_value="relation-upsert-id"
+        ):
             result = await service.manage(
                 ManageMemoryRequest(
                     operation="graph_store_relation",
@@ -675,7 +810,12 @@ class TestStructuredIngestService:
         assert "room = $3" in source_lookup_sql
         assert "corridor = $4" in source_lookup_sql
         assert "namespace = $2" in target_lookup_sql
-        assert backend.query.await_args_list[0].args[1] == ("Alice", "service-a", "auth", "incident")
+        assert backend.query.await_args_list[0].args[1] == (
+            "Alice",
+            "service-a",
+            "auth",
+            "incident",
+        )
         assert backend.query.await_args_list[1].args[1] == ("Acme", "service-a", "auth", "incident")
 
     @pytest.mark.asyncio
@@ -701,7 +841,12 @@ class TestStructuredIngestService:
     async def test_supersede_auto_closes_validity_to_now_when_not_provided(self) -> None:
         """Supersede should close validity window immediately when valid_to is omitted."""
         backend = MagicMock()
-        backend.query = AsyncMock(return_value=MagicMock(rows=[{"id": "m-1"}]))
+        backend.query = AsyncMock(
+            side_effect=[
+                MagicMock(rows=[{"id": "22222222-2222-2222-2222-222222222222"}]),
+                MagicMock(rows=[{"id": "m-1"}]),
+            ]
+        )
         context = MagicMock()
         context.execution_context = None
         service = MemoryService(backend=backend, context=context)
@@ -715,15 +860,23 @@ class TestStructuredIngestService:
         )
 
         assert result.success is True
-        update_call = backend.query.await_args_list[0]
+        update_call = backend.query.await_args_list[1]
         assert "valid_to = COALESCE" in update_call.args[0]
+        assert "superseded_by_memory_id" in update_call.args[0]
+        assert "superseded_by_memory_id IS NULL" in update_call.args[0]
+        assert "lifecycle_state NOT IN ('SUPERSEDED', 'ARCHIVED')" in update_call.args[0]
         assert update_call.args[1][-1] is None
 
     @pytest.mark.asyncio
     async def test_supersede_honors_explicit_valid_to_override(self) -> None:
         """Supersede should use caller-provided valid_to when provided."""
         backend = MagicMock()
-        backend.query = AsyncMock(return_value=MagicMock(rows=[{"id": "m-1"}]))
+        backend.query = AsyncMock(
+            side_effect=[
+                MagicMock(rows=[{"id": "22222222-2222-2222-2222-222222222222"}]),
+                MagicMock(rows=[{"id": "m-1"}]),
+            ]
+        )
         context = MagicMock()
         context.execution_context = None
         service = MemoryService(backend=backend, context=context)
@@ -738,9 +891,31 @@ class TestStructuredIngestService:
         )
 
         assert result.success is True
-        update_call = backend.query.await_args_list[0]
+        update_call = backend.query.await_args_list[1]
         assert "valid_to = COALESCE" in update_call.args[0]
+        assert "superseded_by_memory_id" in update_call.args[0]
         assert str(update_call.args[1][-1]) == "2026-04-30 23:59:59+00:00"
+
+    @pytest.mark.asyncio
+    async def test_supersede_fails_when_replacement_memory_does_not_exist(self) -> None:
+        """Supersede fails when superseded_by does not reference existing memory."""
+        backend = MagicMock()
+        backend.query = AsyncMock(return_value=MagicMock(rows=[]))
+        context = MagicMock()
+        context.execution_context = None
+        service = MemoryService(backend=backend, context=context)
+
+        result = await service.manage(
+            ManageMemoryRequest(
+                operation="supersede",
+                memory_ids=["11111111-1111-1111-1111-111111111111"],
+                superseded_by="22222222-2222-2222-2222-222222222222",
+            )
+        )
+
+        assert result.success is False
+        assert result.error is not None
+        assert result.error.startswith("MEM_SUPERSEDE_REFERENCE_NOT_FOUND:")
 
     @pytest.mark.asyncio
     async def test_archive_auto_closes_validity_to_now_when_not_provided(self) -> None:
@@ -795,7 +970,7 @@ class TestStructuredIngestService:
 
     @pytest.mark.asyncio
     async def test_graph_upsert_link_is_idempotent_for_same_semantic_edge(self) -> None:
-        """Repeated link upserts for the same edge should update existing relation instead of inserting duplicates."""
+        """Repeated link upserts update existing relation instead of duplicating."""
         backend = MagicMock()
         relation_id_by_edge: dict[tuple[str, str, str], str] = {}
 
@@ -830,7 +1005,9 @@ class TestStructuredIngestService:
         context.execution_context = None
         service = MemoryService(backend=backend, context=context)
 
-        with patch("workflows_mcp.engine.memory_service.uuid.uuid4", return_value="relation-created-id"):
+        with patch(
+            "workflows_mcp.engine.memory_service.uuid.uuid4", return_value="relation-created-id"
+        ):
             first = await service.execute(
                 MemoryRequest(
                     operation="graph_upsert",
@@ -858,7 +1035,9 @@ class TestStructuredIngestService:
         assert second.manage is not None
         assert first.manage.relation_id == second.manage.relation_id
         relation_insert_calls = [
-            call for call in backend.query.await_args_list if "INSERT INTO knowledge_relations" in call.args[0]
+            call
+            for call in backend.query.await_args_list
+            if "INSERT INTO knowledge_relations" in call.args[0]
         ]
         assert len(relation_insert_calls) == 1
 

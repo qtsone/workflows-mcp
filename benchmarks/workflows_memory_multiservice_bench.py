@@ -373,8 +373,7 @@ async def run_benchmark(args: argparse.Namespace) -> dict[str, Any]:
                     "Observed latency spike mitigation and rollback checklist."
                 )
                 path = (
-                    f"{scope.wing}/{scope.room}/{scope.hall}/"
-                    f"rolling-{dynamic_ingest_index:06d}.md"
+                    f"{scope.wing}/{scope.room}/{scope.hall}/rolling-{dynamic_ingest_index:06d}.md"
                 )
                 record = [(scope, content, path)]
                 emb = encoder.encode([content])

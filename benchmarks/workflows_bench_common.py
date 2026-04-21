@@ -207,7 +207,7 @@ async def ingest_corpus(
         item_rows.append((item_id, source_id, item_path, corpus_id))
         memory_rows.append(
             (
-            memory_id,
+                memory_id,
                 item_id,
                 text,
                 str(vector),

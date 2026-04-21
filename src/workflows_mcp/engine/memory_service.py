@@ -13,6 +13,7 @@ import math
 import os
 import uuid
 from collections import defaultdict
+from collections.abc import Mapping
 from datetime import UTC, datetime
 from typing import Any, Literal, cast
 
@@ -29,6 +30,7 @@ from .knowledge.constants import (
 )
 from .knowledge.context import assemble_context
 from .knowledge.graph import (
+    GraphResult,
     graph_neighbors,
     graph_path,
     graph_stats,
@@ -43,6 +45,58 @@ SYSTEM_USER_UUID = uuid.UUID("00000000-0000-0000-0000-000000000001")
 
 # SECURITY: Audit fail-closed configuration
 AUDIT_FAIL_CLOSED = os.getenv("AUDIT_FAIL_CLOSED", "false").lower() == "true"
+
+
+MemoryOperation = Literal[
+    "query",
+    "ingest",
+    "validate",
+    "supersede",
+    "archive",
+    "maintain",
+    "graph_upsert",
+    "graph_delete",
+]
+
+
+MEMORY_OPERATION_ENUM: tuple[MemoryOperation, ...] = (
+    "query",
+    "ingest",
+    "validate",
+    "supersede",
+    "archive",
+    "maintain",
+    "graph_upsert",
+    "graph_delete",
+)
+
+MEMORY_SECTION_REQUIRED_BY_OPERATION: dict[MemoryOperation, str] = {
+    "query": "query",
+    "ingest": "record",
+    "validate": "record",
+    "supersede": "record",
+    "archive": "record",
+    "graph_upsert": "graph",
+    "graph_delete": "graph",
+}
+
+CONTRACT_SCOPE_FIELDS: tuple[str, str, str, str] = ("palace", "wing", "room", "compartment")
+
+SCOPE_REQUIRED_OPERATIONS: frozenset[MemoryOperation] = frozenset({"query", "ingest"})
+
+
+class MemoryContractError(ValueError):
+    """Deterministic contract error with machine-readable code."""
+
+    def __init__(self, *, code: str, message: str, retryable: bool = False) -> None:
+        super().__init__(message)
+        self.code = code
+        self.message = message
+        self.retryable = retryable
+
+
+def _raise_contract_error(*, code: str, message: str, retryable: bool = False) -> None:
+    raise MemoryContractError(code=code, message=f"{code}: {message}", retryable=retryable)
 
 
 def _get_audit_user_id(context: Execution) -> uuid.UUID:
@@ -126,6 +180,11 @@ def _normalize_category_name(value: str) -> str:
     return normalized
 
 
+def _is_corridor_relation(relation_type: str | None) -> bool:
+    """Return True when relation_type denotes a corridor edge."""
+    return (relation_type or "").strip().upper() == "CORRIDOR"
+
+
 async def _resolve_entity_id_manage(
     entity_ref: str,
     backend: Any,
@@ -156,8 +215,7 @@ async def _resolve_entity_id_manage(
     )
     if len(result.rows) > 1:
         raise ValueError(
-            "Entity name is ambiguous in this scope. Use an entity UUID instead: "
-            f"{entity_ref!r}"
+            f"Entity name is ambiguous in this scope. Use an entity UUID instead: {entity_ref!r}"
         )
     return str(result.rows[0]["id"]) if result.rows else None
 
@@ -204,7 +262,64 @@ def _build_scope_diagnostics(
     }
 
 
+def _build_retrieval_diagnostics(
+    *,
+    candidate_generation: str,
+    algorithm: str,
+    s2_enabled: bool,
+    s2_requested: bool,
+    s2_strategy: str,
+) -> dict[str, Any]:
+    """Build a stable retrieval diagnostics envelope across all query strategies."""
+    return {
+        "s1": {
+            "candidate_generation": candidate_generation,
+            "algorithm": algorithm,
+        },
+        "s2": {
+            "enabled": s2_enabled,
+            "requested": s2_requested,
+            "strategy": s2_strategy,
+        },
+    }
+
+
+def _base_query_diagnostics(
+    *,
+    scope_mode: str,
+    scope_applied: bool,
+    has_results: bool,
+    missing_scope: bool = False,
+    strategy: str | None = None,
+    retrieval: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Build normalized diagnostics contract for query-mode responses."""
+    diagnostics: dict[str, Any] = {
+        **_build_scope_diagnostics(
+            scope_mode=scope_mode,
+            scope_applied=scope_applied,
+            has_results=has_results,
+            missing_scope=missing_scope,
+        ),
+        "retrieval": retrieval
+        or _build_retrieval_diagnostics(
+            candidate_generation="not_applicable",
+            algorithm="not_applicable",
+            s2_enabled=False,
+            s2_requested=False,
+            s2_strategy="not_applicable",
+        ),
+    }
+    if strategy is not None:
+        diagnostics["strategy"] = strategy
+    return diagnostics
+
+
 _AUTHORITY_ROUTING_FACTS_USER_VALIDATED = "facts_user_validated"
+
+_MEMORY_TIER_DIRECT = "direct"
+_MEMORY_TIER_DERIVED = "derived"
+_DERIVED_KIND_COMMUNITY = "community"
 
 
 def _build_memory_scope_filters(
@@ -343,6 +458,10 @@ class QueryMemoryRequest(BaseModel):
         default="compact",
         description="Response shape",
     )
+    s2_enabled: bool = Field(
+        default=True,
+        description="Enable S2 companion-lane retrieval for scoped hybrid searches",
+    )
     scope: dict[str, Any] | None = Field(
         default=None,
         description="Optional scope: palace, wing, room, corridor, time window",
@@ -351,7 +470,9 @@ class QueryMemoryRequest(BaseModel):
         default=None,
         description="Point-in-time filter (ISO datetime)",
     )
-    from_: str | None = Field(default=None, alias="from", description="Interval start (ISO datetime)")
+    from_: str | None = Field(
+        default=None, alias="from", description="Interval start (ISO datetime)"
+    )
     to: str | None = Field(default=None, description="Interval end (ISO datetime)")
     max_tokens: int = Field(
         default=DEFAULT_MAX_TOKENS,
@@ -401,6 +522,7 @@ class QueryMemoryRequest(BaseModel):
 
 class QueryMemoryResult(BaseModel):
     """Recollection-first unified memory retrieval result."""
+
     facts: list[dict[str, Any]] = Field(
         default_factory=list,
         description="Top atomic memories at VALIDATED trust state",
@@ -504,7 +626,9 @@ class ManageMemoryRequest(BaseModel):
     # Context
     query: str | None = Field(default=None, description="Query for context assembly")
     as_of: str | None = Field(default=None, description="Point-in-time filter (ISO datetime)")
-    from_: str | None = Field(default=None, alias="from", description="Interval start (ISO datetime)")
+    from_: str | None = Field(
+        default=None, alias="from", description="Interval start (ISO datetime)"
+    )
     to: str | None = Field(default=None, description="Interval end (ISO datetime)")
     max_items: int = Field(default=DEFAULT_LIMIT, description="Maximum memories to return")
     min_confidence: float = Field(default=DEFAULT_MIN_CONFIDENCE, ge=0.0, le=1.0)
@@ -553,6 +677,17 @@ class ManageMemoryRequest(BaseModel):
     )
     evidence_memory_id: str | None = Field(
         default=None, description="Optional memory UUID as evidence for the relation"
+    )
+    evidence_memory_ids: list[str] | None = Field(
+        default=None,
+        description="Optional memory UUIDs as supporting evidence for the relation",
+    )
+    curated: bool = Field(
+        default=False,
+        description=(
+            "When false, relation writes must provide evidence linkage. "
+            "When true, relation is explicitly curated."
+        ),
     )
     entity_ids: list[str] | None = Field(
         default=None, description="Entity UUIDs for graph_forget_entity"
@@ -642,9 +777,10 @@ class MemoryScope(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
+    palace: str | None = Field(default=None, description="Organization-level scope")
     wing: str | None = Field(default=None, description="Service/project scope")
     room: str | None = Field(default=None, description="Component scope")
-    hall: str | None = Field(default=None, description="Topic lane scope")
+    compartment: str | None = Field(default=None, description="Compartment scope")
 
 
 class MemoryLimits(BaseModel):
@@ -675,9 +811,13 @@ class MemoryQueryInput(BaseModel):
     model_config = ConfigDict(extra="forbid", populate_by_name=True)
 
     text: str = Field(description="Search text")
-    mode: Literal["search", "context", "graph"] = Field(default="search")
+    mode: Literal["search", "context", "graph", "hybrid", "communities"] = Field(default="search")
     radius: int = Field(default=1, ge=0, description="Topology expansion distance")
     precision: float = Field(default=0.5, ge=0.0, le=1.0, description="Semantic strictness")
+    s2_enabled: bool = Field(
+        default=True,
+        description="Enable S2 companion-lane retrieval for scoped hybrid searches",
+    )
     as_of: str | None = Field(default=None)
     from_: str | None = Field(default=None, alias="from")
     to: str | None = Field(default=None)
@@ -698,6 +838,7 @@ class MemoryRecordInput(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     format: Literal["raw", "structured"] = Field(default="raw")
+    memory_tier: Literal["direct", "derived"] = Field(default="direct")
     content: str | None = Field(default=None)
     memories: list[dict[str, Any]] | None = Field(default=None)
     entities: list[dict[str, Any]] | None = Field(default=None)
@@ -734,6 +875,8 @@ class MemoryGraphInput(BaseModel):
     to_ref: str | None = Field(default=None, alias="to")
     link_type: str | None = Field(default=None)
     evidence_memory_id: str | None = Field(default=None)
+    evidence_memory_ids: list[str] | None = Field(default=None)
+    curated: bool = Field(default=False)
     ids: list[str] | None = Field(default=None)
 
     model_config = ConfigDict(extra="forbid", populate_by_name=True)
@@ -773,28 +916,81 @@ class MemoryRequest(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    operation: Literal[
-        "query",
-        "ingest",
-        "validate",
-        "supersede",
-        "archive",
-        "maintain",
-        "graph_upsert",
-        "graph_delete",
-    ]
+    operation: MemoryOperation
     scope: MemoryScope = Field(default_factory=MemoryScope)
+    scope_token: str | None = Field(default=None)
+    context_id: str | None = Field(default=None)
     query: MemoryQueryInput | None = Field(default=None)
     record: MemoryRecordInput | None = Field(default=None)
     graph: MemoryGraphInput | None = Field(default=None)
     maintenance: MemoryMaintenanceInput | None = Field(default=None)
     response: MemoryResponseInput = Field(default_factory=MemoryResponseInput)
 
+    @model_validator(mode="before")
+    @classmethod
+    def validate_operation(cls, data: Any) -> Any:
+        if not isinstance(data, dict):
+            return data
+
+        operation = data.get("operation")
+        if not isinstance(operation, str) or operation not in MEMORY_OPERATION_ENUM:
+            _raise_contract_error(
+                code="MEM_INVALID_OPERATION",
+                message=(f"operation must be one of: {', '.join(MEMORY_OPERATION_ENUM)}"),
+            )
+        return data
+
+    @model_validator(mode="before")
+    @classmethod
+    def validate_scope_taxonomy_keys(cls, data: Any) -> Any:
+        if not isinstance(data, dict):
+            return data
+        raw_scope = data.get("scope")
+        if not isinstance(raw_scope, dict):
+            return data
+
+        if "hall" in raw_scope:
+            _raise_contract_error(
+                code="MEM_INVALID_TAXONOMY_KEY",
+                message="'hall' is invalid in memory.v2 scope; use 'compartment'",
+            )
+
+        invalid_keys = sorted(key for key in raw_scope if key not in CONTRACT_SCOPE_FIELDS)
+        if invalid_keys:
+            _raise_contract_error(
+                code="MEM_INVALID_TAXONOMY_KEY",
+                message=f"Unsupported scope keys: {', '.join(invalid_keys)}",
+            )
+
+        return data
+
+    @model_validator(mode="after")
+    def validate_contract_envelope(self) -> MemoryRequest:
+        required_section = MEMORY_SECTION_REQUIRED_BY_OPERATION.get(self.operation)
+        if required_section is not None and getattr(self, required_section) is None:
+            _raise_contract_error(
+                code="MEM_MISSING_REQUIRED_FIELD",
+                message=(
+                    f"'{required_section}' payload is required for operation='{self.operation}'"
+                ),
+            )
+
+        if self.operation == "ingest" and self.record is not None:
+            if self.record.memory_tier != "direct":
+                _raise_contract_error(
+                    code="MEM_BOUNDARY_VIOLATION",
+                    message="record.memory_tier must be 'direct' for ingest",
+                )
+
+        return self
+
 
 class MemoryResult(BaseModel):
     """Canonical result envelope."""
 
-    operation: str
+    operation: MemoryOperation
+    resolved_scope: MemoryScope | None = Field(default=None)
+    scope_source: dict[str, Literal["request", "token", "context"]] = Field(default_factory=dict)
     query: QueryMemoryResult | None = Field(default=None)
     manage: ManageMemoryResult | None = Field(default=None)
 
@@ -836,6 +1032,92 @@ class StructuredRelationRecord(BaseModel):
     evidence_memory_index: int | None = Field(default=None)
 
 
+def _resolve_scope_from_context(
+    *,
+    request: MemoryRequest,
+    context: Execution,
+    required_fields: tuple[str, ...] = CONTRACT_SCOPE_FIELDS,
+) -> tuple[MemoryScope, dict[str, Literal["request", "token", "context"]]]:
+    """Resolve contract scope using precedence request > token > context."""
+    exec_context = context.execution_context
+
+    token_scopes = getattr(exec_context, "memory_scope_tokens", None) if exec_context else None
+    context_scopes = getattr(exec_context, "memory_context_scopes", None) if exec_context else None
+
+    token_scope = _lookup_scope_values(
+        scopes=token_scopes,
+        scope_key=request.scope_token,
+        source_name="memory_scope_tokens",
+    )
+    context_scope = _lookup_scope_values(
+        scopes=context_scopes,
+        scope_key=request.context_id,
+        source_name="memory_context_scopes",
+    )
+    request_scope = request.scope.model_dump(exclude_none=True)
+
+    resolved: dict[str, str] = {}
+    sources: dict[str, Literal["request", "token", "context"]] = {}
+    required = set(required_fields)
+    for field in CONTRACT_SCOPE_FIELDS:
+        req_val = request_scope.get(field)
+        token_val = token_scope.get(field) if isinstance(token_scope, dict) else None
+        context_val = context_scope.get(field) if isinstance(context_scope, dict) else None
+        if isinstance(req_val, str) and req_val:
+            resolved[field] = req_val
+            sources[field] = "request"
+        elif isinstance(token_val, str) and token_val:
+            resolved[field] = token_val
+            sources[field] = "token"
+        elif isinstance(context_val, str) and context_val:
+            resolved[field] = context_val
+            sources[field] = "context"
+        elif field in required:
+            _raise_contract_error(
+                code="SCOPE_UNRESOLVED",
+                message=(
+                    f"Unable to resolve scope field '{field}' from request/scope_token/context_id"
+                ),
+            )
+
+    return MemoryScope.model_validate(resolved), sources
+
+
+def _lookup_scope_values(
+    *,
+    scopes: Any,
+    scope_key: str | None,
+    source_name: str,
+) -> dict[str, Any]:
+    """Safely resolve keyed scope payloads from execution context."""
+    if scope_key is None:
+        return {}
+    if scopes is None:
+        return {}
+    if not isinstance(scopes, Mapping):
+        _raise_contract_error(
+            code="MEM_INVALID_CONTEXT_SCOPE",
+            message=(
+                f"execution context '{source_name}' must be a mapping; "
+                f"received {type(scopes).__name__}"
+            ),
+        )
+
+    scoped_value = scopes.get(scope_key)
+    if scoped_value is None:
+        return {}
+    if not isinstance(scoped_value, Mapping):
+        _raise_contract_error(
+            code="MEM_INVALID_CONTEXT_SCOPE",
+            message=(
+                f"execution context '{source_name}[{scope_key}]' must be a mapping; "
+                f"received {type(scoped_value).__name__}"
+            ),
+        )
+
+    return dict(scoped_value)
+
+
 # ---------------------------------------------------------------------------
 # Service
 # ---------------------------------------------------------------------------
@@ -860,6 +1142,21 @@ class MemoryService:
     async def execute(self, request: MemoryRequest) -> MemoryResult:
         """Execute unified memory operation envelope."""
         op = request.operation
+        required_scope_fields: tuple[str, ...] = ()
+        if op == "query":
+            required_scope_fields = CONTRACT_SCOPE_FIELDS
+        elif op == "ingest":
+            # Ingest requires the three topology tiers eagerly and resolves
+            # compartment via request scope or context-derived fallbacks.
+            required_scope_fields = ("palace", "wing", "room")
+        elif op == "graph_upsert" and request.graph is not None and request.graph.kind == "place":
+            required_scope_fields = CONTRACT_SCOPE_FIELDS
+
+        resolved_scope, scope_source = _resolve_scope_from_context(
+            request=request,
+            context=self._context,
+            required_fields=required_scope_fields,
+        )
 
         if op == "query":
             if request.query is None:
@@ -871,52 +1168,77 @@ class MemoryService:
                 strategy = "context"
             elif query_mode == "graph":
                 strategy = "graph"
+            elif query_mode == "communities":
+                strategy = "communities"
+            elif query_mode == "hybrid":
+                strategy = "auto"
             elif request.query.radius == 0 and (
-                request.scope.wing or request.scope.room or request.scope.hall
+                resolved_scope.wing or resolved_scope.room or resolved_scope.compartment
             ):
                 strategy = "palace"
             else:
                 strategy = "auto"
 
             query_result = await self.query(
-                QueryMemoryRequest(
-                    query=request.query.text,
-                    strategy=strategy,
-                    as_of=request.query.as_of,
-                    from_=request.query.from_,
-                    to=request.query.to,
-                    max_tokens=request.query.limits.tokens,
-                    max_items=request.query.limits.items,
-                    namespace=request.scope.wing,
-                    room=request.scope.room,
-                    source=request.query.source,
-                    categories=request.query.categories,
-                    min_confidence=request.query.precision,
-                    start_entity=request.query.graph.start,
-                    end_entity=request.query.graph.end,
-                    graph_op=request.query.graph.op,
-                    relation_types=request.query.graph.relation_types,
-                    max_hops=request.query.limits.hops,
-                    max_nodes=request.query.limits.nodes,
-                    scope={"corridor": request.scope.hall},
+                QueryMemoryRequest.model_validate(
+                    {
+                        "query": request.query.text,
+                        "strategy": strategy,
+                        "as_of": request.query.as_of,
+                        "from": request.query.from_,
+                        "to": request.query.to,
+                        "max_tokens": request.query.limits.tokens,
+                        "max_items": request.query.limits.items,
+                        "namespace": resolved_scope.wing,
+                        "room": resolved_scope.room,
+                        "source": request.query.source,
+                        "categories": request.query.categories,
+                        "min_confidence": request.query.precision,
+                        "start_entity": request.query.graph.start,
+                        "end_entity": request.query.graph.end,
+                        "graph_op": request.query.graph.op,
+                        "relation_types": request.query.graph.relation_types,
+                        "max_hops": request.query.limits.hops,
+                        "max_nodes": request.query.limits.nodes,
+                        "s2_enabled": request.query.s2_enabled,
+                        "scope": {"corridor": resolved_scope.compartment},
+                    }
                 )
             )
-            return MemoryResult(operation=op, query=query_result)
+
+            normalized_diagnostics = dict(query_result.diagnostics)
+            normalized_diagnostics["effective_strategy"] = strategy
+            query_result = query_result.model_copy(update={"diagnostics": normalized_diagnostics})
+
+            return MemoryResult(
+                operation=op,
+                query=query_result,
+                resolved_scope=resolved_scope,
+                scope_source=scope_source,
+            )
 
         if op == "ingest":
             if request.record is None:
                 raise ValueError("'record' payload is required for operation='ingest'")
+            if not resolved_scope.compartment:
+                _raise_contract_error(
+                    code="COMPARTMENT_REQUIRED",
+                    message=(
+                        "Direct ingest requires scope.compartment "
+                        "(via scope, scope_token, or context_id)"
+                    ),
+                )
             if request.record.format == "structured":
                 manage_request = ManageMemoryRequest(
                     operation="ingest_structured",
                     source=request.record.source,
                     path=request.record.path,
-                    namespace=request.scope.wing,
-                    room=request.scope.room,
-                    corridor=request.scope.hall,
-                    memories=request.record.memories,
-                    entities=request.record.entities,
-                    relations=request.record.relations,
+                    namespace=resolved_scope.wing,
+                    room=resolved_scope.room,
+                    corridor=resolved_scope.compartment,
+                    memories=cast(list[StructuredMemoryRecord] | None, request.record.memories),
+                    entities=cast(list[StructuredEntityRecord] | None, request.record.entities),
+                    relations=cast(list[StructuredRelationRecord] | None, request.record.relations),
                     confidence=request.record.confidence,
                     authority=request.record.authority,
                     lifecycle_state=request.record.lifecycle_state,
@@ -931,9 +1253,9 @@ class MemoryService:
                     path=request.record.path,
                     valid_from=request.record.valid_from,
                     valid_to=request.record.valid_to,
-                    namespace=request.scope.wing,
-                    room=request.scope.room,
-                    corridor=request.scope.hall,
+                    namespace=resolved_scope.wing,
+                    room=resolved_scope.room,
+                    corridor=resolved_scope.compartment,
                     confidence=request.record.confidence,
                     authority=request.record.authority,
                     lifecycle_state=request.record.lifecycle_state,
@@ -941,7 +1263,12 @@ class MemoryService:
                     allow_create_categories=request.record.allow_create_categories,
                 )
             manage_result = await self.manage(manage_request)
-            return MemoryResult(operation=op, manage=manage_result)
+            return MemoryResult(
+                operation=op,
+                manage=manage_result,
+                resolved_scope=resolved_scope,
+                scope_source=scope_source,
+            )
 
         if op in {"validate", "supersede", "archive"}:
             if request.record is None:
@@ -956,7 +1283,12 @@ class MemoryService:
                     valid_to=request.record.valid_to,
                 )
             )
-            return MemoryResult(operation=op, manage=manage_result)
+            return MemoryResult(
+                operation=op,
+                manage=manage_result,
+                resolved_scope=resolved_scope,
+                scope_source=scope_source,
+            )
 
         if op == "maintain":
             maintenance = request.maintenance or MemoryMaintenanceInput()
@@ -971,7 +1303,12 @@ class MemoryService:
                     grace_days=maintenance.grace_days,
                 )
             )
-            return MemoryResult(operation=op, manage=manage_result)
+            return MemoryResult(
+                operation=op,
+                manage=manage_result,
+                resolved_scope=resolved_scope,
+                scope_source=scope_source,
+            )
 
         if op == "graph_upsert":
             if request.graph is None:
@@ -981,23 +1318,48 @@ class MemoryService:
                     operation="graph_store_entity",
                     entity_name=request.graph.place_name,
                     entity_type=request.graph.place_type,
-                    namespace=request.scope.wing,
-                    room=request.scope.room,
-                    corridor=request.scope.hall,
+                    namespace=resolved_scope.wing,
+                    room=resolved_scope.room,
+                    corridor=resolved_scope.compartment,
                 )
             else:
+                effective_evidence_ids = list(request.graph.evidence_memory_ids or [])
+                if request.graph.evidence_memory_id:
+                    effective_evidence_ids.append(request.graph.evidence_memory_id)
+                effective_evidence_ids = list(dict.fromkeys(effective_evidence_ids))
+
+                if (
+                    _is_corridor_relation(request.graph.link_type)
+                    and not request.graph.curated
+                    and not effective_evidence_ids
+                ):
+                    _raise_contract_error(
+                        code="MEM_GRAPH_EVIDENCE_REQUIRED",
+                        message=(
+                            "graph_upsert CORRIDOR link requires evidence_memory_ids "
+                            "when curated=false"
+                        ),
+                    )
+
                 manage_request = ManageMemoryRequest(
                     operation="graph_store_relation",
                     source_entity=request.graph.from_ref,
                     target_entity=request.graph.to_ref,
                     relation_type=request.graph.link_type,
                     evidence_memory_id=request.graph.evidence_memory_id,
-                    namespace=request.scope.wing,
-                    room=request.scope.room,
-                    corridor=request.scope.hall,
+                    evidence_memory_ids=effective_evidence_ids,
+                    curated=request.graph.curated,
+                    namespace=resolved_scope.wing,
+                    room=resolved_scope.room,
+                    corridor=resolved_scope.compartment,
                 )
             manage_result = await self.manage(manage_request)
-            return MemoryResult(operation=op, manage=manage_result)
+            return MemoryResult(
+                operation=op,
+                manage=manage_result,
+                resolved_scope=resolved_scope,
+                scope_source=scope_source,
+            )
 
         if op == "graph_delete":
             if request.graph is None:
@@ -1013,7 +1375,12 @@ class MemoryService:
                     relation_ids=request.graph.ids,
                 )
             manage_result = await self.manage(manage_request)
-            return MemoryResult(operation=op, manage=manage_result)
+            return MemoryResult(
+                operation=op,
+                manage=manage_result,
+                resolved_scope=resolved_scope,
+                scope_source=scope_source,
+            )
 
         raise ValueError(f"Unsupported operation: {op}")
 
@@ -1051,6 +1418,8 @@ class MemoryService:
         """Run hybrid search and fuse into recollection-first result."""
         limit = request.max_items
         corridor = _get_corridor(request)
+        has_explicit_scope = _has_explicit_scope(request)
+        s2_effective = request.s2_enabled and has_explicit_scope
 
         resolved_categories: list[str] | None = None
         if request.categories:
@@ -1081,6 +1450,7 @@ class MemoryService:
             min_confidence=request.min_confidence,
             lifecycle_state=request.lifecycle_state,
             limit=limit,
+            include_global_companion=s2_effective,
         )
 
         if rows:
@@ -1108,25 +1478,37 @@ class MemoryService:
                 "source": row.get("source_name") or None,
                 "namespace": row.get("namespace") or None,
             }
-            # Lane contract: USER_VALIDATED is promoted to facts; other authorities stay in memories.
+            # Lane contract:
+            # USER_VALIDATED is promoted to facts; other authorities stay in memories.
             if row.get("authority") == Authority.USER_VALIDATED:
                 facts.append(cleaned)
             else:
                 memories.append(cleaned)
 
-        scope_applied = _has_explicit_scope(request)
-        scope_diagnostics = _build_scope_diagnostics(
-            scope_mode="dual_lane_with_companion",
-            scope_applied=scope_applied,
-            has_results=bool(facts or memories),
-        )
+        scope_applied = has_explicit_scope
 
         return QueryMemoryResult(
             facts=facts,
             memories=memories,
             diagnostics={
-                **scope_diagnostics,
+                **_base_query_diagnostics(
+                    # Keep auto-mode scope diagnostics stable with Task 4 contract:
+                    # mode reflects requested retrieval posture, while retrieval.s2.enabled
+                    # reflects whether companion lane is effective for this scope.
+                    scope_mode="dual_lane_with_companion"
+                    if request.s2_enabled
+                    else "strict_scoped",
+                    scope_applied=scope_applied,
+                    has_results=bool(facts or memories),
+                ),
                 "authority_routing": _AUTHORITY_ROUTING_FACTS_USER_VALIDATED,
+                "retrieval": _build_retrieval_diagnostics(
+                    candidate_generation="deterministic",
+                    algorithm="rrf",
+                    s2_enabled=s2_effective,
+                    s2_requested=request.s2_enabled,
+                    s2_strategy="companion_lane",
+                ),
             },
         )
 
@@ -1184,17 +1566,23 @@ class MemoryService:
 
         if as_of is not None:
             as_of_index = len(params) + 1
-            clauses.append(f"(km.valid_from IS NULL OR km.valid_from <= ${as_of_index}::timestamptz)")
+            clauses.append(
+                f"(km.valid_from IS NULL OR km.valid_from <= ${as_of_index}::timestamptz)"
+            )
             clauses.append(f"(km.valid_to IS NULL OR km.valid_to >= ${as_of_index}::timestamptz)")
             params.append(as_of)
         else:
             if from_dt is not None:
                 from_index = len(params) + 1
-                clauses.append(f"(km.valid_to IS NULL OR km.valid_to >= ${from_index}::timestamptz)")
+                clauses.append(
+                    f"(km.valid_to IS NULL OR km.valid_to >= ${from_index}::timestamptz)"
+                )
                 params.append(from_dt)
             if to_dt is not None:
                 to_index = len(params) + 1
-                clauses.append(f"(km.valid_from IS NULL OR km.valid_from <= ${to_index}::timestamptz)")
+                clauses.append(
+                    f"(km.valid_from IS NULL OR km.valid_from <= ${to_index}::timestamptz)"
+                )
                 params.append(to_dt)
 
         limit_index = len(params) + 1
@@ -1287,18 +1675,14 @@ class MemoryService:
                     "source": row.get("source_name") or None,
                     "namespace": row.get("namespace") or None,
                 }
-                # Lane contract: USER_VALIDATED is promoted to facts; other authorities stay in memories.
+                # Lane contract:
+                # USER_VALIDATED is promoted to facts; other authorities stay in memories.
                 if row.get("authority") == Authority.USER_VALIDATED:
                     facts.append(cleaned)
                 else:
                     memories.append(cleaned)
 
         scope_applied = _has_explicit_scope(request)
-        scope_diagnostics = _build_scope_diagnostics(
-            scope_mode="community_exists_filter",
-            scope_applied=scope_applied,
-            has_results=bool(facts or memories or communities),
-        )
 
         return QueryMemoryResult(
             facts=facts,
@@ -1306,8 +1690,19 @@ class MemoryService:
             communities=communities,
             diagnostics={
                 "strategy": "communities",
-                **scope_diagnostics,
+                **_base_query_diagnostics(
+                    scope_mode="community_exists_filter",
+                    scope_applied=scope_applied,
+                    has_results=bool(facts or memories or communities),
+                ),
                 "authority_routing": _AUTHORITY_ROUTING_FACTS_USER_VALIDATED,
+                "retrieval": _build_retrieval_diagnostics(
+                    candidate_generation="deterministic",
+                    algorithm="rrf",
+                    s2_enabled=False,
+                    s2_requested=request.s2_enabled,
+                    s2_strategy="not_applicable",
+                ),
             },
         )
 
@@ -1319,15 +1714,13 @@ class MemoryService:
         if not request.namespace and not request.room:
             return QueryMemoryResult(
                 diagnostics={
-                    **_build_scope_diagnostics(
+                    **_base_query_diagnostics(
                         scope_mode="strict_scoped",
                         scope_applied=False,
                         has_results=False,
                         missing_scope=True,
                     ),
-                    "error": (
-                        "palace strategy requires namespace or room for scoped retrieval"
-                    )
+                    "error": ("palace strategy requires namespace or room for scoped retrieval"),
                 }
             )
 
@@ -1386,24 +1779,30 @@ class MemoryService:
                 "source": row.get("source_name") or None,
                 "namespace": row.get("namespace") or None,
             }
-            # Lane contract: USER_VALIDATED is promoted to facts; other authorities stay in memories.
+            # Lane contract:
+            # USER_VALIDATED is promoted to facts; other authorities stay in memories.
             if row.get("authority") == Authority.USER_VALIDATED:
                 facts.append(cleaned)
             else:
                 memories.append(cleaned)
 
-        scope_diagnostics = _build_scope_diagnostics(
-            scope_mode="strict_scoped",
-            scope_applied=True,
-            has_results=bool(facts or memories),
-        )
-
         return QueryMemoryResult(
             facts=facts,
             memories=memories,
             diagnostics={
-                **scope_diagnostics,
+                **_base_query_diagnostics(
+                    scope_mode="strict_scoped",
+                    scope_applied=True,
+                    has_results=bool(facts or memories),
+                ),
                 "authority_routing": _AUTHORITY_ROUTING_FACTS_USER_VALIDATED,
+                "retrieval": _build_retrieval_diagnostics(
+                    candidate_generation="deterministic",
+                    algorithm="rrf",
+                    s2_enabled=False,
+                    s2_requested=request.s2_enabled,
+                    s2_strategy="not_applicable",
+                ),
             },
         )
 
@@ -1456,6 +1855,19 @@ class MemoryService:
                     "tokens_used": tokens_used,
                 }
             ],
+            diagnostics=_base_query_diagnostics(
+                scope_mode="context_assembly",
+                scope_applied=_has_explicit_scope(request),
+                has_results=included_count > 0,
+                strategy="context",
+                retrieval=_build_retrieval_diagnostics(
+                    candidate_generation="deterministic",
+                    algorithm="context_assembly",
+                    s2_enabled=False,
+                    s2_requested=request.s2_enabled,
+                    s2_strategy="not_applicable",
+                ),
+            ),
         )
 
     async def _query_graph(self, request: QueryMemoryRequest) -> QueryMemoryResult:
@@ -1463,18 +1875,180 @@ class MemoryService:
         op = request.graph_op
         start_entity = request.start_entity
         end_entity = request.end_entity
+        namespace = request.namespace
+        room = request.room
+        corridor = _get_corridor(request)
+        scope_applied = bool(namespace or room or corridor)
+        scope_mode = "graph_scoped" if scope_applied else "graph_global"
+
+        async def _resolve_scoped_graph_entity(
+            entity_ref: str,
+        ) -> str | None:
+            if not scope_applied:
+                return entity_ref
+
+            normalized_namespace = _normalize_scope_value(namespace)
+            normalized_room = _normalize_scope_value(room)
+            normalized_corridor = _normalize_scope_value(corridor)
+
+            try:
+                entity_uuid = str(uuid.UUID(entity_ref))
+            except (ValueError, AttributeError):
+                entity_uuid = None
+
+            if entity_uuid is not None:
+                scoped_uuid_result = await self._backend.query(
+                    "SELECT id FROM knowledge_entities "
+                    "WHERE id = $1::uuid AND namespace = $2 AND room = $3 AND corridor = $4",
+                    (
+                        entity_uuid,
+                        normalized_namespace,
+                        normalized_room,
+                        normalized_corridor,
+                    ),
+                )
+                if not scoped_uuid_result.rows:
+                    return None
+                return str(scoped_uuid_result.rows[0]["id"])
+
+            resolved = await _resolve_entity_id_manage(
+                entity_ref,
+                self._backend,
+                namespace=namespace,
+                room=room,
+                corridor=corridor,
+            )
+            if resolved is None:
+                return None
+            return resolved
+
+        async def _filter_graph_result_to_scope(
+            raw_result: GraphResult,
+        ) -> tuple[GraphResult, dict[str, int]]:
+            if not scope_applied:
+                return raw_result, {"dropped_nodes": 0, "dropped_edges": 0, "dropped_paths": 0}
+
+            raw_nodes = [dict(node) for node in raw_result.get("nodes", [])]
+            if not raw_nodes:
+                return raw_result, {"dropped_nodes": 0, "dropped_edges": 0, "dropped_paths": 0}
+
+            raw_node_ids = [str(node["id"]) for node in raw_nodes if node.get("id")]
+            normalized_namespace = _normalize_scope_value(namespace)
+            normalized_room = _normalize_scope_value(room)
+            normalized_corridor = _normalize_scope_value(corridor)
+            scoped_nodes_result = await self._backend.query(
+                "SELECT id FROM knowledge_entities "
+                "WHERE id = ANY($1::uuid[]) AND namespace = $2 AND room = $3 AND corridor = $4",
+                (raw_node_ids, normalized_namespace, normalized_room, normalized_corridor),
+            )
+            scoped_node_ids = {str(row["id"]) for row in scoped_nodes_result.rows}
+
+            filtered_nodes = [node for node in raw_nodes if str(node.get("id")) in scoped_node_ids]
+
+            raw_edges = [dict(edge) for edge in raw_result.get("edges", [])]
+            filtered_edges = [
+                edge
+                for edge in raw_edges
+                if str(edge.get("source_entity_id")) in scoped_node_ids
+                and str(edge.get("target_entity_id")) in scoped_node_ids
+            ]
+
+            raw_paths = [dict(path) for path in raw_result.get("paths", [])]
+            filtered_paths: list[dict[str, Any]] = []
+            for path in raw_paths:
+                path_nodes_raw = path.get("nodes")
+                path_edges_raw = path.get("edges")
+                path_nodes: list[dict[str, Any]] = []
+                if isinstance(path_nodes_raw, list):
+                    path_nodes = [dict(node) for node in path_nodes_raw if isinstance(node, dict)]
+
+                path_edges: list[dict[str, Any]] = []
+                if isinstance(path_edges_raw, list):
+                    path_edges = [dict(edge) for edge in path_edges_raw if isinstance(edge, dict)]
+                node_ids = {str(node.get("id")) for node in path_nodes if node.get("id")}
+                if node_ids and not node_ids.issubset(scoped_node_ids):
+                    continue
+                if any(
+                    str(edge.get("source_entity_id")) not in scoped_node_ids
+                    or str(edge.get("target_entity_id")) not in scoped_node_ids
+                    for edge in path_edges
+                ):
+                    continue
+                filtered_paths.append(path)
+
+            filtered_result = dict(raw_result)
+            filtered_result["nodes"] = filtered_nodes
+            filtered_result["edges"] = filtered_edges
+            filtered_result["paths"] = filtered_paths
+
+            return cast(GraphResult, filtered_result), {
+                "dropped_nodes": max(len(raw_nodes) - len(filtered_nodes), 0),
+                "dropped_edges": max(len(raw_edges) - len(filtered_edges), 0),
+                "dropped_paths": max(len(raw_paths) - len(filtered_paths), 0),
+            }
+
+        async def _scoped_graph_stats(as_of: datetime | None) -> dict[str, int]:
+            normalized_namespace = _normalize_scope_value(namespace)
+            normalized_room = _normalize_scope_value(room)
+            normalized_corridor = _normalize_scope_value(corridor)
+
+            temporal_clause = ""
+            params: list[Any] = [normalized_namespace, normalized_room, normalized_corridor]
+            if as_of is not None:
+                temporal_clause = (
+                    "WHERE (kr.valid_from IS NULL OR kr.valid_from <= $4::timestamptz) "
+                    "AND (kr.valid_to IS NULL OR kr.valid_to >= $4::timestamptz)"
+                )
+                params.append(as_of)
+
+            result = await self._backend.query(
+                f"""
+                WITH scoped_entities AS (
+                    SELECT id
+                    FROM knowledge_entities
+                    WHERE namespace = $1 AND room = $2 AND corridor = $3
+                )
+                SELECT
+                    (SELECT COUNT(*)::bigint FROM scoped_entities) AS entity_count,
+                    COUNT(*)::bigint AS relation_count,
+                    COUNT(DISTINCT kr.relation_type)::bigint AS distinct_relation_types
+                FROM knowledge_relations kr
+                JOIN scoped_entities src ON src.id = kr.source_entity_id
+                JOIN scoped_entities dst ON dst.id = kr.target_entity_id
+                {temporal_clause}
+                """,
+                tuple(params),
+            )
+
+            row = result.rows[0] if result.rows else {}
+            return {
+                "entity_count": int(row.get("entity_count") or 0),
+                "relation_count": int(row.get("relation_count") or 0),
+                "distinct_relation_types": int(row.get("distinct_relation_types") or 0),
+            }
 
         if op in ("traverse", "neighbors") and not start_entity:
             return QueryMemoryResult(
-                diagnostics={"error": "start_entity required for graph strategy"},
+                diagnostics={
+                    **_base_query_diagnostics(
+                        scope_mode=scope_mode,
+                        scope_applied=scope_applied,
+                        has_results=False,
+                        strategy="graph",
+                    ),
+                    "error": "start_entity required for graph strategy",
+                },
             )
         if op == "path" and (not start_entity or not end_entity):
             return QueryMemoryResult(
                 diagnostics={
-                    "error": (
-                        "start_entity and end_entity required for "
-                        "graph_op='path'"
-                    )
+                    **_base_query_diagnostics(
+                        scope_mode=scope_mode,
+                        scope_applied=scope_applied,
+                        has_results=False,
+                        strategy="graph",
+                    ),
+                    "error": ("start_entity and end_entity required for graph_op='path'"),
                 },
             )
 
@@ -1484,9 +2058,51 @@ class MemoryService:
         if from_dt is not None or to_dt is not None:
             return QueryMemoryResult(
                 diagnostics={
-                    "error": "graph strategy supports 'as_of' only; 'from'/'to' is not supported"
+                    **_base_query_diagnostics(
+                        scope_mode=scope_mode,
+                        scope_applied=scope_applied,
+                        has_results=False,
+                        strategy="graph",
+                    ),
+                    "error": "graph strategy supports 'as_of' only; 'from'/'to' is not supported",
                 },
             )
+
+        if start_entity:
+            resolved_start = await _resolve_scoped_graph_entity(
+                start_entity,
+            )
+            if resolved_start is None:
+                return QueryMemoryResult(
+                    diagnostics={
+                        **_base_query_diagnostics(
+                            scope_mode=scope_mode,
+                            scope_applied=scope_applied,
+                            has_results=False,
+                            strategy="graph",
+                        ),
+                        "error": "start_entity not found in scoped graph",
+                    }
+                )
+            start_entity = resolved_start
+
+        if end_entity:
+            resolved_end = await _resolve_scoped_graph_entity(
+                end_entity,
+            )
+            if resolved_end is None:
+                return QueryMemoryResult(
+                    diagnostics={
+                        **_base_query_diagnostics(
+                            scope_mode=scope_mode,
+                            scope_applied=scope_applied,
+                            has_results=False,
+                            strategy="graph",
+                        ),
+                        "error": "end_entity not found in scoped graph",
+                    }
+                )
+            end_entity = resolved_end
 
         if op == "traverse":
             assert start_entity is not None
@@ -1498,11 +2114,36 @@ class MemoryService:
                 max_nodes=request.max_nodes,
                 as_of=as_of,
             )
+            result, scope_filter_stats = await _filter_graph_result_to_scope(result)
+            hydrated_edges, hydrated_memories = await self._hydrate_graph_supporting_memories(
+                [dict(edge) for edge in result["edges"]]
+            )
             paths: list[dict[str, Any]] = [dict(p) for p in result["paths"]]
             return QueryMemoryResult(
                 paths=paths,
-                evidence=[{"nodes": result["nodes"], "edges": result["edges"]}],
-                diagnostics=dict(result["diagnostics"]),
+                memories=hydrated_memories,
+                evidence=[{"nodes": result["nodes"], "edges": hydrated_edges}],
+                diagnostics={
+                    **_base_query_diagnostics(
+                        scope_mode=scope_mode,
+                        scope_applied=scope_applied,
+                        has_results=bool(paths or hydrated_memories),
+                        strategy="graph",
+                    ),
+                    **dict(result["diagnostics"]),
+                    "scope_filter_stats": scope_filter_stats,
+                    "fusion_version": "graph-only.v1",
+                    "algorithm_versions": {
+                        "graph": "bfs-traverse.v1",
+                    },
+                    "retrieval": _build_retrieval_diagnostics(
+                        candidate_generation="not_applicable",
+                        algorithm="graph_traverse",
+                        s2_enabled=False,
+                        s2_requested=request.s2_enabled,
+                        s2_strategy="not_applicable",
+                    ),
+                },
             )
 
         if op == "neighbors":
@@ -1514,10 +2155,35 @@ class MemoryService:
                 max_nodes=request.max_nodes,
                 as_of=as_of,
             )
+            result, scope_filter_stats = await _filter_graph_result_to_scope(result)
+            hydrated_edges, hydrated_memories = await self._hydrate_graph_supporting_memories(
+                [dict(edge) for edge in result["edges"]]
+            )
             return QueryMemoryResult(
                 paths=[],
-                evidence=[{"nodes": result["nodes"], "edges": result["edges"]}],
-                diagnostics=dict(result["diagnostics"]),
+                memories=hydrated_memories,
+                evidence=[{"nodes": result["nodes"], "edges": hydrated_edges}],
+                diagnostics={
+                    **_base_query_diagnostics(
+                        scope_mode=scope_mode,
+                        scope_applied=scope_applied,
+                        has_results=bool(hydrated_memories),
+                        strategy="graph",
+                    ),
+                    **dict(result["diagnostics"]),
+                    "scope_filter_stats": scope_filter_stats,
+                    "fusion_version": "graph-only.v1",
+                    "algorithm_versions": {
+                        "graph": "neighbors-1hop.v1",
+                    },
+                    "retrieval": _build_retrieval_diagnostics(
+                        candidate_generation="not_applicable",
+                        algorithm="graph_neighbors",
+                        s2_enabled=False,
+                        s2_requested=request.s2_enabled,
+                        s2_strategy="not_applicable",
+                    ),
+                },
             )
 
         if op == "path":
@@ -1532,26 +2198,115 @@ class MemoryService:
                 max_nodes=request.max_nodes,
                 as_of=as_of,
             )
+            result, scope_filter_stats = await _filter_graph_result_to_scope(result)
+            hydrated_edges, hydrated_memories = await self._hydrate_graph_supporting_memories(
+                [dict(edge) for edge in result["edges"]]
+            )
             paths = [dict(p) for p in result["paths"]]
             return QueryMemoryResult(
                 paths=paths,
-                evidence=[{"nodes": result["nodes"], "edges": result["edges"]}],
-                diagnostics=dict(result["diagnostics"]),
+                memories=hydrated_memories,
+                evidence=[{"nodes": result["nodes"], "edges": hydrated_edges}],
+                diagnostics={
+                    **_base_query_diagnostics(
+                        scope_mode=scope_mode,
+                        scope_applied=scope_applied,
+                        has_results=bool(paths or hydrated_memories),
+                        strategy="graph",
+                    ),
+                    **dict(result["diagnostics"]),
+                    "scope_filter_stats": scope_filter_stats,
+                    "fusion_version": "graph-only.v1",
+                    "algorithm_versions": {
+                        "graph": "bfs-shortest-path.v1",
+                    },
+                    "retrieval": _build_retrieval_diagnostics(
+                        candidate_generation="not_applicable",
+                        algorithm="graph_path",
+                        s2_enabled=False,
+                        s2_requested=request.s2_enabled,
+                        s2_strategy="not_applicable",
+                    ),
+                },
             )
 
         if op == "stats":
+            if scope_applied and not start_entity:
+                scoped_stats = await _scoped_graph_stats(as_of)
+                has_scoped_results = bool(
+                    scoped_stats["entity_count"] or scoped_stats["relation_count"]
+                )
+                return QueryMemoryResult(
+                    paths=[],
+                    evidence=[{"nodes": [], "edges": []}],
+                    diagnostics={
+                        **_base_query_diagnostics(
+                            scope_mode=scope_mode,
+                            scope_applied=scope_applied,
+                            has_results=has_scoped_results,
+                            strategy="graph",
+                        ),
+                        **scoped_stats,
+                        "fusion_version": "graph-only.v1",
+                        "algorithm_versions": {
+                            "graph": "degree-stats.v1",
+                        },
+                        "retrieval": _build_retrieval_diagnostics(
+                            candidate_generation="not_applicable",
+                            algorithm="graph_stats",
+                            s2_enabled=False,
+                            s2_requested=request.s2_enabled,
+                            s2_strategy="not_applicable",
+                        ),
+                    },
+                )
+
             result = await graph_stats(
                 start_entity,
                 self._backend,
                 as_of=as_of,
             )
+            stats_has_results = bool(
+                result["paths"]
+                or result["diagnostics"].get("entity_count")
+                or result["diagnostics"].get("relation_count")
+            )
             return QueryMemoryResult(
                 paths=[dict(p) for p in result["paths"]],
                 evidence=[{"nodes": result["nodes"], "edges": result["edges"]}],
-                diagnostics=dict(result["diagnostics"]),
+                diagnostics={
+                    **_base_query_diagnostics(
+                        scope_mode=scope_mode,
+                        scope_applied=scope_applied,
+                        has_results=stats_has_results,
+                        strategy="graph",
+                    ),
+                    **dict(result["diagnostics"]),
+                    "fusion_version": "graph-only.v1",
+                    "algorithm_versions": {
+                        "graph": "degree-stats.v1",
+                    },
+                    "retrieval": _build_retrieval_diagnostics(
+                        candidate_generation="not_applicable",
+                        algorithm="graph_stats",
+                        s2_enabled=False,
+                        s2_requested=request.s2_enabled,
+                        s2_strategy="not_applicable",
+                    ),
+                },
             )
 
-        return QueryMemoryResult(diagnostics={"error": f"Unknown graph_op: {op!r}"})
+        return QueryMemoryResult(
+            diagnostics={
+                **_base_query_diagnostics(
+                    scope_mode=scope_mode,
+                    scope_applied=scope_applied,
+                    has_results=False,
+                    strategy="graph",
+                ),
+                "error": f"Unknown graph_op: {op!r}",
+            }
+        )
 
     # ------------------------------------------------------------------
     # Manage
@@ -1576,14 +2331,10 @@ class MemoryService:
         }
         handler = handlers.get(op)
         if handler is None:
-            return ManageMemoryResult(
-                operation=op, success=False, error=f"Unknown operation: {op}"
-            )
+            return ManageMemoryResult(operation=op, success=False, error=f"Unknown operation: {op}")
         return await handler(request)
 
-    async def _manage_ingest_structured(
-        self, request: ManageMemoryRequest
-    ) -> ManageMemoryResult:
+    async def _manage_ingest_structured(self, request: ManageMemoryRequest) -> ManageMemoryResult:
         """Store structured memories, entities, relations, and links atomically."""
         if not request.memories:
             return ManageMemoryResult(
@@ -1594,6 +2345,20 @@ class MemoryService:
 
         entities = request.entities or []
         relations = request.relations or []
+
+        for relation in relations:
+            if (
+                _is_corridor_relation(relation.relation_type)
+                and relation.evidence_memory_index is None
+            ):
+                return ManageMemoryResult(
+                    operation="ingest_structured",
+                    success=False,
+                    error=(
+                        "MEM_GRAPH_EVIDENCE_REQUIRED: ingest_structured CORRIDOR relations "
+                        "require evidence_memory_index"
+                    ),
+                )
 
         transaction_started = False
         try:
@@ -1654,14 +2419,16 @@ class MemoryService:
                          authority, lifecycle_state, confidence, embedding_model,
                          metadata, created_by, auth_method,
                          source_name, source_type,
-                         namespace, room, corridor)
+                         namespace, room, corridor,
+                         memory_tier, derived_kind, parent_memory_ids)
                     VALUES
                         ($1::uuid, $2::uuid, $3, $4::vector,
                          to_tsvector('english', $3),
                          $5, $6, $7, $8,
                          $9::jsonb, $10::uuid, $11,
                          $12, $13,
-                         $14, $15, $16)
+                         $14, $15, $16,
+                         $17, $18, $19::uuid[])
                     """,
                     (
                         memory_id,
@@ -1680,6 +2447,9 @@ class MemoryService:
                         request.namespace,
                         request.room,
                         request.corridor,
+                        _MEMORY_TIER_DIRECT,
+                        None,
+                        [],
                     ),
                 )
                 await self._log_audit_entry(
@@ -1699,7 +2469,9 @@ class MemoryService:
                 entity_id = await self._upsert_structured_entity(
                     entity_name=entity.name,
                     entity_type=entity.entity_type,
-                    confidence=entity.confidence if entity.confidence is not None else request.confidence,
+                    confidence=entity.confidence
+                    if entity.confidence is not None
+                    else request.confidence,
                     namespace=entity_scope_namespace,
                     room=entity_scope_room,
                     corridor=entity_scope_corridor,
@@ -1714,7 +2486,9 @@ class MemoryService:
                     await self._link_memory_entity(
                         memory_id=memory_id,
                         entity_id=entity_id,
-                        confidence=entity.confidence if entity.confidence is not None else request.confidence,
+                        confidence=entity.confidence
+                        if entity.confidence is not None
+                        else request.confidence,
                     )
 
             for relation in relations:
@@ -1751,21 +2525,25 @@ class MemoryService:
                     await self._link_memory_entity(
                         memory_id=evidence_memory_id,
                         entity_id=source_entity_id,
-                        confidence=relation.confidence if relation.confidence is not None else request.confidence,
+                        confidence=relation.confidence
+                        if relation.confidence is not None
+                        else request.confidence,
                     )
                     await self._link_memory_entity(
                         memory_id=evidence_memory_id,
                         entity_id=target_entity_id,
-                        confidence=relation.confidence if relation.confidence is not None else request.confidence,
+                        confidence=relation.confidence
+                        if relation.confidence is not None
+                        else request.confidence,
                     )
                 relation_result = await self._backend.query(
                     """
                     INSERT INTO knowledge_relations
                         (id, source_entity_id, target_entity_id, relation_type,
-                         confidence, evidence_memory_id)
+                         confidence, evidence_memory_id, evidence_memory_ids)
                     VALUES
                         ($1::uuid, $2::uuid, $3::uuid, $4,
-                         $5, $6::uuid)
+                         $5, $6::uuid, $7::uuid[])
                     RETURNING id
                     """,
                     (
@@ -1773,8 +2551,11 @@ class MemoryService:
                         source_entity_id,
                         target_entity_id,
                         relation.relation_type,
-                        relation.confidence if relation.confidence is not None else request.confidence,
+                        relation.confidence
+                        if relation.confidence is not None
+                        else request.confidence,
                         evidence_memory_id,
+                        [evidence_memory_id] if evidence_memory_id else [],
                     ),
                 )
                 if relation_result.rows:
@@ -1886,7 +2667,8 @@ class MemoryService:
                  embedding_model, metadata,
                  valid_from, valid_to,
                  created_by, auth_method, source_name, source_type,
-                 namespace, room, corridor)
+                 namespace, room, corridor,
+                 memory_tier, derived_kind, parent_memory_ids)
             VALUES
                 ($1::uuid, $2::uuid, $3, $4::vector,
                  to_tsvector('english', $3),
@@ -1894,7 +2676,8 @@ class MemoryService:
                  $8, $9::jsonb,
                  $10::timestamptz, $11::timestamptz,
                  $12::uuid, $13, $14, $15,
-                 $16, $17, $18)
+                 $16, $17, $18,
+                 $19, $20, $21::uuid[])
             """,
             (
                 memory_id,
@@ -1915,6 +2698,9 @@ class MemoryService:
                 request.namespace,
                 request.room,
                 request.corridor,
+                _MEMORY_TIER_DIRECT,
+                None,
+                [],
             ),
         )
 
@@ -1998,7 +2784,29 @@ class MemoryService:
                 success=False,
                 error="'superseded_by' is required for supersede operation",
             )
+
+        replacement_result = await self._backend.query(
+            "SELECT id FROM knowledge_memories WHERE id = $1::uuid",
+            (request.superseded_by,),
+        )
+        if not replacement_result.rows:
+            return ManageMemoryResult(
+                operation="supersede",
+                success=False,
+                error=(
+                    "MEM_SUPERSEDE_REFERENCE_NOT_FOUND: "
+                    "'superseded_by' must reference an existing memory"
+                ),
+            )
+
         ids = [str(i) for i in request.memory_ids]
+        if request.superseded_by in ids:
+            return ManageMemoryResult(
+                operation="supersede",
+                success=False,
+                error="MEM_SUPERSEDE_SELF_REFERENCE: replacement memory cannot supersede itself",
+            )
+
         placeholders = ", ".join(f"${i + 1}::uuid" for i in range(len(ids)))
         metadata = json.dumps(
             {"reason": request.reason or "superseded", "superseded_by": request.superseded_by}
@@ -2009,13 +2817,16 @@ class MemoryService:
             UPDATE knowledge_memories
             SET lifecycle_state = 'SUPERSEDED',
                 metadata = metadata || ${len(ids) + 1}::jsonb,
-                valid_to = COALESCE(${len(ids) + 2}::timestamptz, NOW()),
+                superseded_by_memory_id = ${len(ids) + 2}::uuid,
+                valid_to = COALESCE(${len(ids) + 3}::timestamptz, NOW()),
                 updated_at = NOW()
             WHERE id IN ({placeholders})
+              AND id != ${len(ids) + 2}::uuid
+              AND superseded_by_memory_id IS NULL
               AND lifecycle_state NOT IN ('SUPERSEDED', 'ARCHIVED')
             RETURNING id
             """,
-            tuple(ids) + (metadata, explicit_valid_to),
+            tuple(ids) + (metadata, request.superseded_by, explicit_valid_to),
         )
         superseded = [str(r["id"]) for r in (result.rows or [])]
         if superseded:
@@ -2145,9 +2956,12 @@ class MemoryService:
             community_count = 0
             for component in components:
                 memory_rows = await self._load_component_memories(component, request)
-                community_id = await self._insert_community(component, entity_names, memory_rows, request)
+                community_id = await self._insert_community(
+                    component, entity_names, memory_rows, request
+                )
                 await self._backend.execute(
-                    "UPDATE knowledge_entities SET community_id = $1::uuid WHERE id = ANY($2::uuid[])",
+                    "UPDATE knowledge_entities SET community_id = $1::uuid "
+                    "WHERE id = ANY($2::uuid[])",
                     (community_id, component),
                 )
                 community_count += 1
@@ -2162,6 +2976,18 @@ class MemoryService:
                     "status": "ok",
                     "entity_count": len(entity_rows),
                     "community_count": community_count,
+                },
+            )
+        except MemoryContractError as exc:
+            await self._backend.rollback()
+            return ManageMemoryResult(
+                operation="consolidate",
+                success=False,
+                error=exc.message,
+                diagnostics={
+                    "mode": request.mode,
+                    "status": "failed",
+                    "error_code": exc.code,
                 },
             )
         except Exception:
@@ -2201,9 +3027,7 @@ class MemoryService:
             "expire_quarantine, expire_flags",
         )
 
-    async def _maintain_decay_scan(
-        self, request: ManageMemoryRequest
-    ) -> ManageMemoryResult:
+    async def _maintain_decay_scan(self, request: ManageMemoryRequest) -> ManageMemoryResult:
         """Batch recompute relevance_score using exponential decay formula.
 
         Formula: relevance_score = base_score × auth_factor × recency_factor
@@ -2273,9 +3097,7 @@ class MemoryService:
                         last_retrieved = datetime.fromisoformat(last_retrieved)
                     if last_retrieved.tzinfo is None:
                         last_retrieved = last_retrieved.replace(tzinfo=UTC)
-                    days_since_retrieval = max(
-                        (now - last_retrieved).total_seconds() / 86400, 0
-                    )
+                    days_since_retrieval = max((now - last_retrieved).total_seconds() / 86400, 0)
                 elif created_at:
                     days_since_retrieval = max(prop_age_days - grace_period, 0)
                 decay_penalty = decay_rate * days_since_retrieval
@@ -2314,9 +3136,7 @@ class MemoryService:
             below_threshold_count=below_threshold,
         )
 
-    async def _maintain_prune_candidates(
-        self, request: ManageMemoryRequest
-    ) -> ManageMemoryResult:
+    async def _maintain_prune_candidates(self, request: ManageMemoryRequest) -> ManageMemoryResult:
         """Identify propositions eligible for pruning.
 
         Two-tier split:
@@ -2387,9 +3207,7 @@ class MemoryService:
             prune_candidates=needs_review,
         )
 
-    async def _maintain_expire_quarantine(
-        self, request: ManageMemoryRequest
-    ) -> ManageMemoryResult:
+    async def _maintain_expire_quarantine(self, request: ManageMemoryRequest) -> ManageMemoryResult:
         """Archive quarantined propositions that exceeded the grace period."""
         result = await self._backend.query(
             "UPDATE knowledge_memories "
@@ -2421,9 +3239,7 @@ class MemoryService:
             archived_count=archived,
         )
 
-    async def _maintain_expire_flags(
-        self, request: ManageMemoryRequest
-    ) -> ManageMemoryResult:
+    async def _maintain_expire_flags(self, request: ManageMemoryRequest) -> ManageMemoryResult:
         """Unflag expired flagged propositions and auto-resolve their conflicts."""
         expired_rows = await self._backend.query(
             "UPDATE knowledge_memories "
@@ -2451,9 +3267,7 @@ class MemoryService:
 
         resolved_count = 0
         if expired_ids:
-            id_placeholders = ", ".join(
-                f"${i + 1}::uuid" for i in range(len(expired_ids))
-            )
+            id_placeholders = ", ".join(f"${i + 1}::uuid" for i in range(len(expired_ids)))
             conflict_rows = await self._backend.query(
                 "SELECT id FROM knowledge_conflicts "
                 f"WHERE new_memory_id IN ({id_placeholders}) "
@@ -2462,9 +3276,7 @@ class MemoryService:
             )
             if conflict_rows.rows:
                 conflict_ids = [str(row["id"]) for row in conflict_rows.rows]
-                c_placeholders = ", ".join(
-                    f"${i + 1}::uuid" for i in range(len(conflict_ids))
-                )
+                c_placeholders = ", ".join(f"${i + 1}::uuid" for i in range(len(conflict_ids)))
                 resolve_result = await self._backend.execute(
                     "UPDATE knowledge_conflicts "
                     "SET resolved_at = NOW(), resolution = 'auto_expired' "
@@ -2488,22 +3300,24 @@ class MemoryService:
                 error="'query' is required for context operation",
             )
         result = await self._query_context(
-            QueryMemoryRequest(
-                query=request.query,
-                strategy="context",
-                scope={"corridor": request.corridor} if request.corridor else None,
-                as_of=request.as_of,
-                from_=request.from_,
-                to=request.to,
-                max_items=request.max_items,
-                max_tokens=request.max_tokens,
-                namespace=request.namespace,
-                room=request.room,
-                source=request.source,
-                categories=request.categories,
-                min_confidence=request.min_confidence,
-                lifecycle_state=request.lifecycle_state,
-                embedding_profile=request.embedding_profile,
+            QueryMemoryRequest.model_validate(
+                {
+                    "query": request.query,
+                    "strategy": "context",
+                    "scope": {"corridor": request.corridor} if request.corridor else None,
+                    "as_of": request.as_of,
+                    "from": request.from_,
+                    "to": request.to,
+                    "max_items": request.max_items,
+                    "max_tokens": request.max_tokens,
+                    "namespace": request.namespace,
+                    "room": request.room,
+                    "source": request.source,
+                    "categories": request.categories,
+                    "min_confidence": request.min_confidence,
+                    "lifecycle_state": request.lifecycle_state,
+                    "embedding_profile": request.embedding_profile,
+                }
             )
         )
         ctx_text = ""
@@ -2522,9 +3336,7 @@ class MemoryService:
             tokens_used=tokens,
         )
 
-    async def _manage_graph_store_entity(
-        self, request: ManageMemoryRequest
-    ) -> ManageMemoryResult:
+    async def _manage_graph_store_entity(self, request: ManageMemoryRequest) -> ManageMemoryResult:
         """Upsert a named entity into knowledge_entities."""
         if not request.entity_name:
             return ManageMemoryResult(
@@ -2541,7 +3353,9 @@ class MemoryService:
 
         result = await self._backend.query(
             """
-            INSERT INTO knowledge_entities (id, entity_type, name, namespace, room, corridor, confidence)
+            INSERT INTO knowledge_entities (
+                id, entity_type, name, namespace, room, corridor, confidence
+            )
             VALUES ($1::uuid, $2, $3, $4, $5, $6, $7)
             ON CONFLICT (namespace, room, corridor, entity_type, name) DO UPDATE
                 SET confidence = GREATEST(knowledge_entities.confidence, EXCLUDED.confidence)
@@ -2581,6 +3395,25 @@ class MemoryService:
                 operation="graph_store_relation",
                 success=False,
                 error="'relation_type' is required",
+            )
+
+        evidence_ids = list(request.evidence_memory_ids or [])
+        if request.evidence_memory_id:
+            evidence_ids.append(request.evidence_memory_id)
+        evidence_ids = list(dict.fromkeys(evidence_ids))
+
+        if (
+            _is_corridor_relation(request.relation_type)
+            and not request.curated
+            and not evidence_ids
+        ):
+            return ManageMemoryResult(
+                operation="graph_store_relation",
+                success=False,
+                error=(
+                    "MEM_GRAPH_EVIDENCE_REQUIRED: "
+                    "non-curated CORRIDOR graph relations require evidence_memory_ids"
+                ),
             )
 
         try:
@@ -2625,7 +3458,23 @@ class MemoryService:
             )
 
         valid_from, valid_to = _validate_temporal_window(request.valid_from, request.valid_to)
-        evidence_id = request.evidence_memory_id or None
+        evidence_id = evidence_ids[0] if evidence_ids else None
+
+        if evidence_ids:
+            evidence_count_result = await self._backend.query(
+                "SELECT COUNT(*) AS cnt FROM knowledge_memories WHERE id = ANY($1::uuid[])",
+                (evidence_ids,),
+            )
+            evidence_count = (
+                int(evidence_count_result.rows[0]["cnt"]) if evidence_count_result.rows else 0
+            )
+            if evidence_count != len(evidence_ids):
+                return ManageMemoryResult(
+                    operation="graph_store_relation",
+                    success=False,
+                    error="MEM_NOT_FOUND: one or more evidence_memory_ids "
+                    "do not reference existing memories",
+                )
 
         existing_result = await self._backend.query(
             """
@@ -2650,8 +3499,16 @@ class MemoryService:
                 UPDATE knowledge_relations
                 SET confidence = GREATEST(confidence, $2),
                     evidence_memory_id = COALESCE($3::uuid, evidence_memory_id),
-                    valid_from = COALESCE($4::timestamptz, valid_from),
-                    valid_to = COALESCE($5::timestamptz, valid_to)
+                    evidence_memory_ids = CASE
+                        WHEN cardinality($4::uuid[]) > 0 THEN $4::uuid[]
+                        ELSE evidence_memory_ids
+                    END,
+                    curated = CASE
+                        WHEN curated AND NOT $5 THEN TRUE
+                        ELSE $5
+                    END,
+                    valid_from = COALESCE($6::timestamptz, valid_from),
+                    valid_to = COALESCE($7::timestamptz, valid_to)
                 WHERE id = $1::uuid
                 RETURNING id
                 """,
@@ -2659,6 +3516,8 @@ class MemoryService:
                     str(existing_result.rows[0]["id"]),
                     request.confidence,
                     evidence_id,
+                    evidence_ids,
+                    request.curated,
                     valid_from,
                     valid_to,
                 ),
@@ -2668,10 +3527,11 @@ class MemoryService:
                 """
                 INSERT INTO knowledge_relations
                     (id, source_entity_id, target_entity_id, relation_type,
-                     confidence, evidence_memory_id, valid_from, valid_to)
+                     confidence, evidence_memory_id, evidence_memory_ids, curated,
+                     valid_from, valid_to)
                 VALUES
                     ($1::uuid, $2::uuid, $3::uuid, $4, $5, $6::uuid,
-                     $7::timestamptz, $8::timestamptz)
+                     $7::uuid[], $8, $9::timestamptz, $10::timestamptz)
                 RETURNING id
                 """,
                 (
@@ -2681,6 +3541,8 @@ class MemoryService:
                     request.relation_type,
                     request.confidence,
                     evidence_id,
+                    evidence_ids,
+                    request.curated,
                     valid_from,
                     valid_to,
                 ),
@@ -2688,9 +3550,75 @@ class MemoryService:
         rid = str(result.rows[0]["id"]) if result.rows else None
         return ManageMemoryResult(operation="graph_store_relation", success=True, relation_id=rid)
 
-    async def _manage_graph_forget_entity(
-        self, request: ManageMemoryRequest
-    ) -> ManageMemoryResult:
+    async def _hydrate_graph_supporting_memories(
+        self,
+        edges: list[dict[str, Any]],
+    ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+        """Hydrate graph edges with supporting memory rows."""
+        memory_ids: list[str] = []
+        for edge in edges:
+            edge_ids: list[str] = []
+            single_id = edge.get("evidence_memory_id")
+            if isinstance(single_id, str) and single_id:
+                edge_ids.append(single_id)
+            raw_ids = edge.get("evidence_memory_ids")
+            if isinstance(raw_ids, list):
+                edge_ids.extend(str(item) for item in raw_ids if item)
+            deduped = list(dict.fromkeys(edge_ids))
+            edge["evidence_memory_ids"] = deduped
+            memory_ids.extend(deduped)
+
+        unique_ids = list(dict.fromkeys(memory_ids))
+        if not unique_ids:
+            for edge in edges:
+                edge["supporting_memories"] = []
+            return edges, []
+
+        result = await self._backend.query(
+            """
+            SELECT
+                km.id,
+                km.content,
+                km.confidence,
+                km.authority,
+                km.source_name,
+                ki.path AS item_path,
+                km.namespace,
+                km.room,
+                km.corridor
+            FROM knowledge_memories km
+            LEFT JOIN knowledge_items ki ON ki.id = km.item_id
+            WHERE km.id = ANY($1::uuid[])
+            """,
+            (unique_ids,),
+        )
+
+        memories_by_id: dict[str, dict[str, Any]] = {}
+        for row in result.rows:
+            memory_id = str(row["id"])
+            memories_by_id[memory_id] = {
+                "id": memory_id,
+                "content": row.get("content", ""),
+                "confidence": row.get("confidence"),
+                "authority": row.get("authority"),
+                "path": row.get("item_path") or None,
+                "source": row.get("source_name") or None,
+                "namespace": row.get("namespace") or None,
+                "room": row.get("room") or None,
+                "corridor": row.get("corridor") or None,
+            }
+
+        for edge in edges:
+            edge["supporting_memories"] = [
+                memories_by_id[mid]
+                for mid in edge.get("evidence_memory_ids", [])
+                if mid in memories_by_id
+            ]
+
+        hydrated_memories = [memories_by_id[mid] for mid in unique_ids if mid in memories_by_id]
+        return edges, hydrated_memories
+
+    async def _manage_graph_forget_entity(self, request: ManageMemoryRequest) -> ManageMemoryResult:
         """Delete entities by UUID list (cascades to relations)."""
         ids = request.entity_ids or []
         if not ids:
@@ -2711,7 +3639,9 @@ class MemoryService:
             """,
             tuple(ids) + tuple(ids),
         )
-        deleted_relations = int(relation_count_result.rows[0]["cnt"]) if relation_count_result.rows else 0
+        deleted_relations = (
+            int(relation_count_result.rows[0]["cnt"]) if relation_count_result.rows else 0
+        )
         result = await self._backend.query(
             f"DELETE FROM knowledge_entities WHERE id IN ({placeholders}) RETURNING id",
             tuple(ids),
@@ -2801,17 +3731,22 @@ class MemoryService:
             )
             if result.rows:
                 if result.rows[0].get("was_inserted"):
-                    logger.warning("Creating new knowledge category via explicit opt-in: %r", normalized_name)
+                    logger.warning(
+                        "Creating new knowledge category via explicit opt-in: %r", normalized_name
+                    )
                 resolved.append(str(result.rows[0]["id"]))
             else:
                 logger.warning("Category resolution returned no rows for %r", normalized_name)
 
         if missing_names:
             missing = ", ".join(repr(name) for name in missing_names)
-            raise ValueError(
-                "Unknown categories: "
-                f"{missing}. "
-                "Set allow_create_categories=true to explicitly create missing categories."
+            _raise_contract_error(
+                code="MEM_UNKNOWN_CATEGORY",
+                message=(
+                    "Unknown categories: "
+                    f"{missing}. "
+                    "Set allow_create_categories=true to explicitly create missing categories."
+                ),
             )
         return resolved
 
@@ -2904,9 +3839,7 @@ class MemoryService:
             clauses.append(
                 "EXISTS ("
                 "SELECT 1 FROM knowledge_memories km "
-                "WHERE km.id = kr.evidence_memory_id AND "
-                + " AND ".join(scope_clauses)
-                + ")"
+                "WHERE km.id = kr.evidence_memory_id AND " + " AND ".join(scope_clauses) + ")"
             )
             params.extend(scope_params)
 
@@ -2966,7 +3899,8 @@ class MemoryService:
         )
         if scope_clauses:
             await self._backend.execute(
-                "UPDATE knowledge_memories SET community_id = NULL WHERE " + " AND ".join(scope_clauses),
+                "UPDATE knowledge_memories SET community_id = NULL WHERE "
+                + " AND ".join(scope_clauses),
                 tuple(scope_params),
             )
         else:
@@ -3002,7 +3936,9 @@ class MemoryService:
             unique_vectors[str(row["id"])] = parsed
         centroid = _average_embeddings(list(unique_vectors.values()))
 
-        ordered_names = sorted(entity_names[entity_id] for entity_id in entity_ids if entity_names.get(entity_id))
+        ordered_names = sorted(
+            entity_names[entity_id] for entity_id in entity_ids if entity_names.get(entity_id)
+        )
         summary_names = ordered_names[:5]
         content = "Community: " + ", ".join(summary_names) if summary_names else "Community"
 
@@ -3027,7 +3963,116 @@ class MemoryService:
         )
         if not result.rows:
             raise RuntimeError("community insert returned no id")
-        return str(result.rows[0]["id"])
+        community_id = str(result.rows[0]["id"])
+
+        parent_memory_ids = sorted(
+            {str(row["id"]) for row in memory_rows if row.get("id") is not None}
+        )
+        await self._insert_derived_memory(
+            content=content,
+            community_id=community_id,
+            parent_memory_ids=parent_memory_ids,
+            request=request,
+            derived_kind=_DERIVED_KIND_COMMUNITY,
+        )
+
+        return community_id
+
+    async def _insert_derived_memory(
+        self,
+        *,
+        content: str,
+        community_id: str,
+        parent_memory_ids: list[str],
+        request: ManageMemoryRequest,
+        derived_kind: str,
+    ) -> str:
+        """Persist a derived memory with explicit lineage constraints."""
+        await self._assert_valid_parent_lineage(parent_memory_ids)
+
+        derived_memory_id = str(uuid.uuid4())
+        created_by = _get_audit_user_id(self._context)
+        auth_method = _get_auth_method(self._context)
+        embedding, model_name, _, _ = await compute_embedding(
+            text=content,
+            context=self._context,
+            profile=request.embedding_profile,
+        )
+
+        await self._backend.execute(
+            """
+            INSERT INTO knowledge_memories
+                (id, community_id, content, embedding, search_vector,
+                 authority, lifecycle_state, confidence, embedding_model,
+                 metadata, created_by, auth_method,
+                 namespace, room, corridor,
+                 memory_tier, derived_kind, parent_memory_ids)
+            VALUES
+                ($1::uuid, $2::uuid, $3, $4::vector,
+                 to_tsvector('english', $3),
+                 $5, $6, $7, $8,
+                 $9::jsonb, $10::uuid, $11,
+                 $12, $13, $14,
+                 $15, $16, $17::uuid[])
+            """,
+            (
+                derived_memory_id,
+                community_id,
+                content,
+                str(embedding),
+                Authority.COMMUNITY_SUMMARY,
+                LifecycleState.ACTIVE,
+                request.confidence,
+                model_name,
+                json.dumps(
+                    {
+                        "derived_from": "community_refresh",
+                        "lineage_parent_count": len(parent_memory_ids),
+                    }
+                ),
+                str(created_by),
+                auth_method,
+                request.namespace,
+                request.room,
+                _get_corridor(request),
+                _MEMORY_TIER_DERIVED,
+                derived_kind,
+                parent_memory_ids,
+            ),
+        )
+        return derived_memory_id
+
+    async def _assert_valid_parent_lineage(self, parent_memory_ids: list[str]) -> None:
+        """Validate derived memory lineage points to existing direct memories."""
+        normalized = sorted({memory_id for memory_id in parent_memory_ids if memory_id})
+        if not normalized:
+            _raise_contract_error(
+                code="MEM_LINEAGE_PARENT_REQUIRED",
+                message="derived memories require at least one parent memory reference",
+            )
+
+        result = await self._backend.query(
+            "SELECT id, memory_tier FROM knowledge_memories WHERE id = ANY($1::uuid[])",
+            (normalized,),
+        )
+        found_ids = {str(row["id"]) for row in result.rows}
+        missing_ids = sorted(set(normalized) - found_ids)
+        if missing_ids:
+            _raise_contract_error(
+                code="MEM_LINEAGE_PARENT_NOT_FOUND",
+                message=f"unknown parent memories: {', '.join(missing_ids)}",
+            )
+
+        non_direct_ids = sorted(
+            str(row["id"])
+            for row in result.rows
+            if str(row.get("memory_tier") or _MEMORY_TIER_DIRECT) != _MEMORY_TIER_DIRECT
+        )
+        if non_direct_ids:
+            _raise_contract_error(
+                code="MEM_LINEAGE_PARENT_NOT_DIRECT",
+                message=f"derived parents must be direct memories: {', '.join(non_direct_ids)}",
+            )
 
     async def _propagate_memory_communities(self, request: ManageMemoryRequest) -> None:
         """Propagate one dominant community assignment per memory from linked entities."""
@@ -3081,7 +4126,9 @@ class MemoryService:
         """Upsert a structured entity and return its UUID string."""
         result = await self._backend.query(
             """
-            INSERT INTO knowledge_entities (id, entity_type, name, namespace, room, corridor, confidence)
+            INSERT INTO knowledge_entities (
+                id, entity_type, name, namespace, room, corridor, confidence
+            )
             VALUES ($1::uuid, $2, $3, $4, $5, $6, $7)
             ON CONFLICT (namespace, room, corridor, entity_type, name) DO UPDATE
                 SET confidence = GREATEST(knowledge_entities.confidence, EXCLUDED.confidence)

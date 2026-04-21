@@ -1,0 +1,14 @@
+version: "1"
+name: hello-workflow
+description: Simple greeting workflow
+
+inputs:
+  name:
+    type: string
+    required: true
+
+blocks:
+  - id: greet
+    type: Shell
+    inputs:
+      command: "echo Hello, {{inputs.name}}"

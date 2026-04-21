@@ -1,0 +1,9 @@
+{
+  "MEMORY_DB_HOST": "localhost",
+  "MEMORY_DB_PORT": "5432",
+  "MEMORY_DB_NAME": "memory_db",
+  "MEMORY_DB_USER": "postgres",
+  "MEMORY_DB_PASSWORD": "replace-with-your-password",
+  "MEMORY_DB_AUTO_CREATE": "true",
+  "MEMORY_DB_ADMIN_DATABASE": "postgres"
+}

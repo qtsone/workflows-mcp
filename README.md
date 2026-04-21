@@ -104,17 +104,17 @@ execute_workflow(workflow="python-ci-pipeline", inputs={...}, mode="async")
 
 | Tool | When to call | Typical call pattern |
 | --- | --- | --- |
-| `list_workflows` | First step in most sessions | `list_workflows(tags=[], format="json")` |
-| `get_workflow_info` | Before execution to confirm inputs/outputs | `get_workflow_info(workflow="name", format="json")` |
+| `list_workflows` | List registered workflows | `list_workflows(tags=[], format="json")` |
+| `get_workflow_info` | Exploratory to confirm inputs/outputs | `get_workflow_info(workflow="name", format="json")` |
 | `execute_workflow` | Run a registered workflow | `execute_workflow(workflow="name", inputs={...}, mode="sync")` |
 | `execute_inline_workflow` | Test one-off YAML without registering | `execute_inline_workflow(workflow_yaml="...", inputs={...})` |
-| `reload_workflows` | After editing YAML files on disk | `reload_workflows()` |
+| `reload_workflows` | After editing workflow YAML files on disk | `reload_workflows()` |
 
 ### Authoring and validation
 
 | Tool | When to call | Typical call pattern |
 | --- | --- | --- |
-| `get_workflow_schema` | Need full JSON schema for authoring | `get_workflow_schema()` |
+| `get_workflow_schema` | Debugging only. Retrieve full JSON schema for authoring | `get_workflow_schema()` |
 | `validate_workflow_yaml` | Validate YAML before execution | `validate_workflow_yaml(yaml_content="...")` |
 
 ### Async, queue, and interactive control
@@ -132,34 +132,165 @@ execute_workflow(workflow="python-ci-pipeline", inputs={...}, mode="async")
 | Tool | When to call | Typical call pattern |
 | --- | --- | --- |
 | `memory` | Unified memory query/ingest/maintenance/graph operations | `memory(operation="query", scope={...}, query={...})` |
+| `project_onboard` | Current memory onboarding flow with checkpoints | `project_onboard(scope={...}, ingest={...}, max_operations=1)` |
+| `project_sync` | Current memory checkpoint resume/continuation | `project_sync(checkpoint={...}, max_operations=3)` |
 
-The `memory` tool is registered only when memory DB setup is available and valid at startup.
+IMPORTANT: The `memory` tool is registered only when memory DB setup is available and valid at startup (see [below](#memory))
 
 Memory contract highlights:
 
 - Unified envelope: `operation` + optional `scope/query/record/graph/maintenance/response`.
+- Current memory taxonomy: `scope` accepts only `palace`, `wing`, `room`, `compartment`.
+- Context activation and scope defaulting:
+  - Resolution precedence is `scope` → `scope_token` → `context_id` (per-field merge).
+  - `scope_token` resolves from execution context `memory_scope_tokens`; `context_id` resolves from `memory_context_scopes`.
+  - Responses include `resolved_scope` and `scope_source` when available.
+  - Required scope by operation:
+    - `query`: all four fields must resolve.
+    - `ingest`: all four fields must resolve (including `compartment`).
+    - `graph_upsert` with `graph.kind="place"`: all four fields must resolve.
+    - `validate|supersede|archive|maintain|graph_delete|graph_upsert(kind="link")`: scope is optional.
 - Temporal query semantics:
   - `operation="query"` supports either `query.as_of` OR interval `query.from/query.to` (mutually exclusive).
   - `query.mode="graph"` supports `query.as_of` only; `query.from/query.to` are rejected.
   - `operation="ingest"` with `record.format="raw"` supports `record.valid_from` and `record.valid_to` with ordering validation (`valid_from <= valid_to`).
 - Strict validation: unknown/extra fields are rejected.
+- Direct vs derived boundaries:
+  - `operation="ingest"` is direct-only (`record.memory_tier` must be `direct`).
+  - Category governance for ingest is explicit:
+    - Unknown `record.categories` fail deterministically with `MEM_UNKNOWN_CATEGORY` when `record.allow_create_categories=false` (default behavior).
+    - Setting `record.allow_create_categories=true` opts into category creation and allows ingest to proceed when categories are otherwise valid.
+  - Derived/community artifacts are produced by maintenance flows (for example `maintenance.mode="community_refresh"`).
+  - `query.mode="communities"` uses the dedicated communities strategy.
 - Lifecycle semantics:
   - Archived records are excluded by default query behavior.
   - `operation="supersede"` requires `record.superseded_by`.
   - `operation="archive"` maps to forget semantics; repeating archive on already archived records is safe/idempotent.
 - Graph semantics:
   - `operation="graph_upsert"` with `graph.kind="link"` is idempotent.
-  - `operation="graph_delete"` with `graph.kind="place"` includes cascaded `deleted_relation_count` in the response.
+  - `operation="graph_delete"` returns compact delete counters (`deleted_places` for `kind="place"`, `deleted_links` for `kind="link"`); optional debug output adds diagnostics metadata.
+
+Validation note: this ingest category behavior (`MEM_UNKNOWN_CATEGORY` with create disabled, successful ingest with `allow_create_categories=true`) was live-validated on 2026-04-21 via production-like direct MCP `memory` calls.
 
 Direct-call JSON examples:
 
-Valid (point-in-time query):
+`query`:
 
 ```json
 {
   "operation": "query",
-  "scope": {"wing": "workflows", "room": "memory-engine"},
-  "query": {"mode": "search", "text": "schema epoch", "as_of": "2026-04-20T00:00:00Z"}
+  "scope": {"palace": "acme", "wing": "workflows", "room": "memory-engine", "compartment": "contract-r2"},
+  "query": {"mode": "search", "text": "schema epoch", "as_of": "2026-04-20T00:00:00Z", "radius": 1}
+}
+```
+
+`ingest`:
+
+```json
+{
+  "operation": "ingest",
+  "scope": {"palace": "acme", "wing": "workflows", "room": "memory-engine", "compartment": "contract-r2"},
+  "record": {"format": "raw", "content": "Memory active", "memory_tier": "direct"}
+}
+```
+
+`validate`:
+
+```json
+{
+  "operation": "validate",
+  "record": {"ids": ["11111111-1111-1111-1111-111111111111"]}
+}
+```
+
+`supersede`:
+
+```json
+{
+  "operation": "supersede",
+  "record": {
+    "ids": ["11111111-1111-1111-1111-111111111111"],
+    "superseded_by": "22222222-2222-2222-2222-222222222222"
+  }
+}
+```
+
+`archive`:
+
+```json
+{
+  "operation": "archive",
+  "record": {"ids": ["11111111-1111-1111-1111-111111111111"]}
+}
+```
+
+`maintain`:
+
+```json
+{
+  "operation": "maintain",
+  "maintenance": {"mode": "community_refresh"}
+}
+```
+
+`graph_upsert` (`kind=place`):
+
+```json
+{
+  "operation": "graph_upsert",
+  "scope": {"palace": "acme", "wing": "workflows", "room": "memory-engine", "compartment": "contract-r2"},
+  "graph": {"kind": "place", "place_name": "Memory API (current)", "place_type": "feature"}
+}
+```
+
+`graph_upsert` (`kind=link`):
+
+```json
+{
+  "operation": "graph_upsert",
+  "graph": {
+    "kind": "link",
+    "from": "11111111-1111-1111-1111-111111111111",
+    "to": "22222222-2222-2222-2222-222222222222",
+    "link_type": "depends_on"
+  }
+}
+```
+
+`graph_delete`:
+
+```json
+{
+  "operation": "graph_delete",
+  "graph": {"kind": "place", "ids": ["33333333-3333-3333-3333-333333333333"]}
+}
+```
+
+`project_onboard`:
+
+```json
+{
+  "scope": {"palace": "acme", "wing": "workflows", "room": "memory-engine", "compartment": "contract-r2"},
+  "ingest": {"format": "raw", "content": "Initial baseline", "memory_tier": "direct"},
+  "supersede": {"ids": ["11111111-1111-1111-1111-111111111111"], "superseded_by": "22222222-2222-2222-2222-222222222222"},
+  "archive": {"ids": ["33333333-3333-3333-3333-333333333333"]},
+  "maintain": {"mode": "community_refresh"},
+  "max_operations": 1
+}
+```
+
+`project_sync`:
+
+```json
+{
+  "checkpoint": {
+    "version": "oss-r2",
+    "scope": {"palace": "acme", "wing": "workflows", "room": "memory-engine", "compartment": "contract-r2"},
+    "plan": [{"operation": "ingest", "payload": {"format": "raw", "content": "Initial baseline", "memory_tier": "direct"}}],
+    "next_index": 0,
+    "completed": []
+  },
+  "max_operations": 3
 }
 ```
 
@@ -168,6 +299,7 @@ Invalid (mutually exclusive temporal filters):
 ```json
 {
   "operation": "query",
+  "scope": {"palace": "acme", "wing": "workflows", "room": "memory-engine", "compartment": "contract-r2"},
   "query": {
     "mode": "search",
     "text": "maintenance",
@@ -183,12 +315,23 @@ Invalid (graph query rejects interval filters):
 ```json
 {
   "operation": "query",
+  "scope": {"palace": "acme", "wing": "workflows", "room": "memory-engine", "compartment": "contract-r2"},
   "query": {
     "mode": "graph",
     "text": "service graph",
     "from": "2026-04-01T00:00:00Z",
     "to": "2026-04-20T00:00:00Z"
   }
+}
+```
+
+Invalid (legacy taxonomy key):
+
+```json
+{
+  "operation": "query",
+  "scope": {"palace": "acme", "wing": "svc", "room": "component", "hall": "legacy"},
+  "query": {"text": "find this", "mode": "search"}
 }
 ```
 
@@ -233,36 +376,43 @@ Memory is an optional persistent storage feature that lets agents and workflows 
 ### What memory provides
 
 - **`memory` MCP tool** — direct call interface for LLM agents to store and query information without writing workflow YAML.
+- **`project_onboard` / `project_sync` MCP tools** — Current memory contract helpers for checkpointed onboarding/sync sequences.
 - **`Memory` workflow block** — use inside YAML workflows to automate memory operations as part of larger pipelines.
-- **Three-level memory palace scoping** (`wing` → `room` → `hall`) — a strict containment hierarchy: `wing` is a service/project, `room` is a component/module inside that wing, and `hall` is a topic lane inside that room. All three levels are optional and independently filterable. Providing only `wing` returns everything in that wing; adding `room` or `hall` narrows the scope further. `hall` is a sub-partition of a room, not a connection between rooms — cross-room recall is preserved separately by the global companion lane in `auto` queries.
+- **Memory topology scoping** (`palace` → `wing` → `room` → `compartment`) — current memory scope keys are strict and legacy keys (for example `hall`) are rejected. Scope can be supplied directly and/or resolved from context (`scope_token`, `context_id`) using deterministic precedence.
 - **Temporal tracking** — records carry `valid_from` / `valid_to` timestamps supporting point-in-time and interval queries.
 - **Knowledge graph** — link memories to places, entities, or concepts and query the resulting graph.
 - **Lifecycle management** — archive or supersede records without deletion; archived records are excluded from default queries.
 
 ### Retrieval strategies
 
-Two strategies are available via the `memory` tool. The correct one is selected automatically based on the call:
+Current memory behavior exposes query modes that map to retrieval strategies internally:
 
-| Strategy | When it triggers | Scope behavior |
+| Query mode / trigger | Effective strategy | Behavior |
 | --- | --- | --- |
-| `auto` | Default for most queries (any `radius ≥ 1` or unscoped) | Runs a scoped lane (filtered by `wing`/`room`/`hall`) **plus** a global companion lane of up to 20 items; results are fused via RRF. Cross-scope recall is preserved. |
-| `palace` | When `radius == 0` **and** at least one scope field is set | Strict scoped retrieval only — no global companion lane. Requires at least `wing` or `room` to be set; returns an error if both are absent. Use when you want hard isolation. |
+| `query.mode="search"` + `radius=0` | `palace` | Strict scoped retrieval lane (no companion lane). |
+| `query.mode="search"` + `radius>=1` | `auto` | Scoped lane + optional S2 companion lane (`s2_enabled=true` by default). |
+| `query.mode="hybrid"` | `auto` | Same retrieval family as `auto` with fused ranking. |
+| `query.mode="context"` | `context` | Context assembly retrieval path. |
+| `query.mode="graph"` | `graph` | Graph traversal/path/stats retrieval. |
+| `query.mode="communities"` | `communities` | Community-focused retrieval strategy. |
 
-`graph` mode (`query.mode="graph"`) bypasses scope filtering and traverses the entity graph by ID.
+Every `query` call still requires a fully resolved current memory scope (`palace/wing/room/compartment`) resolved from request and/or context sources.
 
-#### Scope call shape
+#### Scope call shape (with context activation)
 
-All three scope levels are passed under the `scope` key:
+Scope fields can be passed directly and/or resolved from `scope_token` / `context_id`:
 
 ```json
 {
   "operation": "query",
-  "scope": {"wing": "my-service", "room": "auth", "hall": "tokens"},
-  "query": {"text": "refresh token lifetime"}
+  "scope": {"palace": "acme", "wing": "my-service"},
+  "scope_token": "st_auth",
+  "context_id": "ctx_default",
+  "query": {"text": "refresh token lifetime", "mode": "context"}
 }
 ```
 
-Any of the three fields can be omitted. Filters that are present are applied with `AND` semantics.
+Resolution precedence is `scope` → `scope_token` → `context_id` for each field.
 
 ### Prerequisites
 
@@ -316,8 +466,8 @@ On first boot with `MEMORY_DB_AUTO_CREATE=true` (the default), the server create
 ```json
 {
   "operation": "ingest",
-  "scope": {"wing": "test", "room": "setup"},
-  "record": {"format": "raw", "content": "Memory is working."}
+  "scope": {"palace": "acme", "wing": "test", "room": "setup", "compartment": "smoke"},
+  "record": {"format": "raw", "content": "Memory is working.", "memory_tier": "direct"}
 }
 ```
 
@@ -349,6 +499,7 @@ Example block families include `Shell`, `ReadFiles`, `HttpCall`, `LLMCall`, `Sql
 ## Documentation map
 
 - `README.md`: install, usage, and tool catalog.
+- `docs/guides/memory-tools-cheatsheet.md`: Current memory contract quick reference, detailed guide, and examples.
 - `docs/llm/block-reference.md`: exact block inputs/outputs for workflow authoring.
 - `docs/TESTING.md`: test strategy and test commands.
 - `ARCHITECTURE.md`: architecture overview.

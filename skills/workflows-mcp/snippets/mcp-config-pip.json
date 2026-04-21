@@ -1,0 +1,12 @@
+{
+  "mcpServers": {
+    "workflows": {
+      "command": "workflows-mcp",
+      "env": {
+        "WORKFLOWS_TEMPLATE_PATHS": "/absolute/path/to/workflows",
+        "WORKFLOWS_LOG_LEVEL": "INFO",
+        "WORKFLOW_SECRET_API_KEY": "replace-with-your-secret"
+      }
+    }
+  }
+}

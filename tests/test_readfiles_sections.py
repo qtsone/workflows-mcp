@@ -307,7 +307,17 @@ class TestExtractMarkdownFrontmatter:
 
     def test_basic_frontmatter(self) -> None:
         """Parse standard YAML frontmatter."""
-        content = "---\nid: TASK-276\nstatus: backlog\ntags:\n  - document\n  - knowledge\n---\n# Title\nContent\n"
+        content = (
+            "---\n"
+            "id: TASK-276\n"
+            "status: backlog\n"
+            "tags:\n"
+            "  - document\n"
+            "  - knowledge\n"
+            "---\n"
+            "# Title\n"
+            "Content\n"
+        )
         result = extract_markdown_frontmatter(content)
 
         assert result is not None

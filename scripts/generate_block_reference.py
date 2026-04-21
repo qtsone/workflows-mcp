@@ -73,7 +73,9 @@ def _split_union_types(type_text: str) -> list[str]:
     return [part for part in type_text.split("|") if part]
 
 
-def extract_type_and_description(field_info: dict[str, Any], schema: dict[str, Any]) -> tuple[str, str]:
+def extract_type_and_description(
+    field_info: dict[str, Any], schema: dict[str, Any]
+) -> tuple[str, str]:
     """Extract a human-readable type and description from a JSON schema field.
 
     Handles type (string/list), anyOf/oneOf/allOf unions, $refs, and
@@ -173,11 +175,13 @@ def extract_schemas() -> dict[str, dict[str, Any]]:
         output_fields = []
         for k, v in out_props.items():
             t, d = extract_type_and_description(v, output_schema)
-            output_fields.append({
-                "name": k,
-                "type": t,
-                "description": d,
-            })
+            output_fields.append(
+                {
+                    "name": k,
+                    "type": t,
+                    "description": d,
+                }
+            )
 
         # Extract description from docstring (first line)
         description = "Execute block operations"

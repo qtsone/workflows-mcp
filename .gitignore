@@ -218,6 +218,7 @@ __marimo__/
 .mcp.json
 .scratch/
 .workflows/
+.worktrees/
 ARCHITECTURE.md
 CLAUDE.md
 

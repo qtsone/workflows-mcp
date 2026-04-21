@@ -444,6 +444,13 @@ class LLMCallExecutor(BlockExecutor):
         prepared_schema: dict[str, Any] | None = None
         validation_schema: dict[str, Any] | None = None
         if needs_validation:
+            if effective_inputs.provider is None:
+                raise ValueError(
+                    "provider must be specified when response_schema is provided"
+                )
+            if not isinstance(effective_inputs.response_schema, dict):
+                raise ValueError("response_schema must resolve to a JSON object")
+
             prepared_schema = self._prepare_schema_for_openai(effective_inputs.response_schema)
             # Resolve effective provider to determine which schema to validate against
             _provider = resolve_interpolatable_enum(
@@ -1280,7 +1287,7 @@ class LLMCallExecutor(BlockExecutor):
         # Explicitly name the required fields so models without strict grammar enforcement
         # still know what keys to include.
         user_content = prompt
-        if inputs.response_schema:
+        if isinstance(inputs.response_schema, dict):
             required_fields = inputs.response_schema.get("required", [])
             if required_fields:
                 fields_hint = ", ".join(required_fields)
@@ -1299,7 +1306,7 @@ class LLMCallExecutor(BlockExecutor):
         # Use raw inputs.response_schema (NOT prepared_schema) because llama.cpp's grammar
         # engine can't reliably handle OpenAI-specific patterns like anyOf, additionalProperties.
         # prepared_schema is still used for client-side validation in execute().
-        if inputs.response_schema:
+        if isinstance(inputs.response_schema, dict):
             body["format"] = inputs.response_schema
             # Ollama tip: force temperature=0 for deterministic structured output
             body["options"] = {"temperature": 0}

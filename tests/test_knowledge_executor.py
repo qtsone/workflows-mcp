@@ -7,7 +7,7 @@ PostgreSQL-specific tests require optional deps.
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -20,8 +20,6 @@ from workflows_mcp.engine.executors_memory import (
     MemoryOutput,
 )
 from workflows_mcp.engine.knowledge.constants import (
-    DEFAULT_LIMIT,
-    DEFAULT_MIN_CONFIDENCE,
     Authority,
     LifecycleState,
 )
@@ -32,9 +30,6 @@ from workflows_mcp.engine.knowledge.context import (
     estimate_tokens,
 )
 from workflows_mcp.engine.knowledge.schema import (
-    MIGRATIONS,
-    SCHEMA_EPOCH,
-    SCHEMA_VERSION,
     _CREATE_EXTENSION,
     _CREATE_INDEXES,
     _CREATE_KNOWLEDGE_COMMUNITIES,
@@ -44,6 +39,10 @@ from workflows_mcp.engine.knowledge.schema import (
     _CREATE_KNOWLEDGE_MEMORIES,
     _CREATE_KNOWLEDGE_SOURCES,
     _V1_BASELINE_SQL,
+    _V3_MEMORY_LINEAGE_INTEGRITY_SQL,
+    MIGRATIONS,
+    SCHEMA_EPOCH,
+    SCHEMA_VERSION,
     ensure_schema,
 )
 from workflows_mcp.engine.knowledge.search import (
@@ -169,6 +168,37 @@ class TestSchemaDDL:
         assert "last_retrieved_at" in _CREATE_KNOWLEDGE_MEMORIES
         assert "quarantined_at" in _CREATE_KNOWLEDGE_MEMORIES
         assert "flagged_at" in _CREATE_KNOWLEDGE_MEMORIES
+
+    def test_migration_v3_normalizes_dirty_rows_before_constraints(self) -> None:
+        """v3 migration normalizes legacy rows before lineage constraints are added."""
+        assert "UPDATE knowledge_memories" in _V3_MEMORY_LINEAGE_INTEGRITY_SQL
+        assert "SET memory_tier = CASE" in _V3_MEMORY_LINEAGE_INTEGRITY_SQL
+        assert "SET derived_kind = CASE" in _V3_MEMORY_LINEAGE_INTEGRITY_SQL
+        assert "WHERE parent_memory_ids IS NULL" in _V3_MEMORY_LINEAGE_INTEGRITY_SQL
+        assert "SET parent_memory_ids = '{}'" in _V3_MEMORY_LINEAGE_INTEGRITY_SQL
+        assert "SET lifecycle_state = 'SUPERSEDED'" in _V3_MEMORY_LINEAGE_INTEGRITY_SQL
+        assert "ADD CONSTRAINT ck_km_lineage_integrity" in _V3_MEMORY_LINEAGE_INTEGRITY_SQL
+        assert "ADD CONSTRAINT ck_km_supersede_state" in _V3_MEMORY_LINEAGE_INTEGRITY_SQL
+
+    def test_migration_v3_defines_append_only_supersede_trigger_guards(self) -> None:
+        """v3 migration must enforce append-only supersede semantics via trigger guards."""
+        assert (
+            "CREATE OR REPLACE FUNCTION enforce_km_supersede_append_only()"
+            in _V3_MEMORY_LINEAGE_INTEGRITY_SQL
+        )
+        assert "OLD.lifecycle_state = 'SUPERSEDED'" in _V3_MEMORY_LINEAGE_INTEGRITY_SQL
+        assert "NEW.lifecycle_state <> 'SUPERSEDED'" in _V3_MEMORY_LINEAGE_INTEGRITY_SQL
+        assert "OLD.superseded_by_memory_id IS NOT NULL" in _V3_MEMORY_LINEAGE_INTEGRITY_SQL
+        assert (
+            "NEW.superseded_by_memory_id IS DISTINCT FROM OLD.superseded_by_memory_id"
+            in _V3_MEMORY_LINEAGE_INTEGRITY_SQL
+        )
+        assert "MEM_SUPERSEDE_APPEND_ONLY" in _V3_MEMORY_LINEAGE_INTEGRITY_SQL
+        assert (
+            "DROP TRIGGER IF EXISTS trg_km_supersede_append_only"
+            in _V3_MEMORY_LINEAGE_INTEGRITY_SQL
+        )
+        assert "CREATE TRIGGER trg_km_supersede_append_only" in _V3_MEMORY_LINEAGE_INTEGRITY_SQL
 
 
 class TestMigrationV1:
@@ -337,30 +367,30 @@ class TestSearchQueryBuilder:
         """Vector query should include temporal validity predicate when as_of is set."""
         sql, params = build_vector_search_query(
             query_embedding=[0.1, 0.2],
-            as_of=datetime(2026, 4, 7, 12, 0, tzinfo=timezone.utc),
+            as_of=datetime(2026, 4, 7, 12, 0, tzinfo=UTC),
         )
         assert "WITH lifecycle_filtered AS" in sql
         assert "WHERE kp.lifecycle_state =" in sql
         assert "kp.valid_from IS NULL OR kp.valid_from <=" in sql
         assert "kp.valid_to IS NULL OR kp.valid_to >=" in sql
-        assert datetime(2026, 4, 7, 12, 0, tzinfo=timezone.utc) in params
+        assert datetime(2026, 4, 7, 12, 0, tzinfo=UTC) in params
 
     def test_fts_search_with_as_of_applies_temporal_predicate(self) -> None:
         """FTS query should include temporal validity predicate when as_of is set."""
         sql, params = build_fts_search_query(
             query_text="temporal test",
-            as_of=datetime(2026, 4, 7, 12, 0, tzinfo=timezone.utc),
+            as_of=datetime(2026, 4, 7, 12, 0, tzinfo=UTC),
         )
         assert "WITH lifecycle_filtered AS" in sql
         assert "WHERE kp.lifecycle_state =" in sql
         assert "kp.valid_from IS NULL OR kp.valid_from <=" in sql
         assert "kp.valid_to IS NULL OR kp.valid_to >=" in sql
-        assert datetime(2026, 4, 7, 12, 0, tzinfo=timezone.utc) in params
+        assert datetime(2026, 4, 7, 12, 0, tzinfo=UTC) in params
 
     def test_vector_search_with_interval_applies_overlap_predicate(self) -> None:
         """Vector query should support temporal interval overlap filtering."""
-        range_from = datetime(2026, 4, 1, 0, 0, tzinfo=timezone.utc)
-        range_to = datetime(2026, 4, 30, 23, 59, tzinfo=timezone.utc)
+        range_from = datetime(2026, 4, 1, 0, 0, tzinfo=UTC)
+        range_to = datetime(2026, 4, 30, 23, 59, tzinfo=UTC)
         sql, params = build_vector_search_query(
             query_embedding=[0.1, 0.2],
             from_dt=range_from,
@@ -374,8 +404,8 @@ class TestSearchQueryBuilder:
 
     def test_fts_search_with_interval_applies_overlap_predicate(self) -> None:
         """FTS query should support temporal interval overlap filtering."""
-        range_from = datetime(2026, 4, 1, 0, 0, tzinfo=timezone.utc)
-        range_to = datetime(2026, 4, 30, 23, 59, tzinfo=timezone.utc)
+        range_from = datetime(2026, 4, 1, 0, 0, tzinfo=UTC)
+        range_to = datetime(2026, 4, 30, 23, 59, tzinfo=UTC)
         sql, params = build_fts_search_query(
             query_text="temporal test",
             from_dt=range_from,
@@ -806,7 +836,6 @@ class TestMemoryOutput:
         assert out.result["manage"]["memory_ids"] == ["uuid-1"]
 
 
-
 class TestSchemaBootstrapReset:
     """Tests for fail-fast schema compatibility behavior in ensure_schema."""
 
@@ -825,7 +854,9 @@ class TestSchemaBootstrapReset:
             ]
         )
 
-        with pytest.raises(RuntimeError, match="Incompatible knowledge schema detected") as exc_info:
+        with pytest.raises(
+            RuntimeError, match="Incompatible knowledge schema detected"
+        ) as exc_info:
             await ensure_schema(backend)
 
         error_message = str(exc_info.value)
@@ -1024,7 +1055,11 @@ class TestMemoryService:
 
     def test_memory_service_importable(self) -> None:
         """MemoryService must be importable from memory_service module."""
-        from workflows_mcp.engine.memory_service import ManageMemoryRequest, MemoryService, QueryMemoryRequest
+        from workflows_mcp.engine.memory_service import (
+            ManageMemoryRequest,
+            MemoryService,
+            QueryMemoryRequest,
+        )
 
         assert MemoryService is not None
         assert QueryMemoryRequest is not None
@@ -1107,7 +1142,11 @@ class TestMemoryService:
     @pytest.mark.asyncio
     async def test_execute_ingest_raw_forwards_validity_window_to_store(self) -> None:
         """Unified ingest must forward valid_from/valid_to from record to store request."""
-        from workflows_mcp.engine.memory_service import ManageMemoryResult, MemoryRequest, MemoryService
+        from workflows_mcp.engine.memory_service import (
+            ManageMemoryResult,
+            MemoryRequest,
+            MemoryService,
+        )
 
         backend = MagicMock()
         context = MagicMock()
@@ -1120,7 +1159,12 @@ class TestMemoryService:
         await service.execute(
             MemoryRequest(
                 operation="ingest",
-                scope={"wing": "engineering", "room": "memory", "hall": "temporal"},
+                scope={
+                    "palace": "acme",
+                    "wing": "engineering",
+                    "room": "memory",
+                    "compartment": "temporal",
+                },
                 record={
                     "format": "raw",
                     "content": "temporal fact",
@@ -1159,10 +1203,7 @@ class TestMemoryService:
                 )
 
         assert mock_search.await_count == 1
-        assert (
-            mock_search.await_args.kwargs["as_of"]
-            == datetime(2026, 4, 7, 12, 0, tzinfo=timezone.utc)
-        )
+        assert mock_search.await_args.kwargs["as_of"] == datetime(2026, 4, 7, 12, 0, tzinfo=UTC)
 
     @pytest.mark.asyncio
     async def test_query_with_interval_passes_temporal_range_to_search_layer(self) -> None:
@@ -1189,13 +1230,9 @@ class TestMemoryService:
                 )
 
         assert mock_search.await_count == 1
-        assert (
-            mock_search.await_args.kwargs["from_dt"]
-            == datetime(2026, 4, 1, 0, 0, tzinfo=timezone.utc)
-        )
-        assert (
-            mock_search.await_args.kwargs["to_dt"]
-            == datetime(2026, 4, 30, 23, 59, 59, tzinfo=timezone.utc)
+        assert mock_search.await_args.kwargs["from_dt"] == datetime(2026, 4, 1, 0, 0, tzinfo=UTC)
+        assert mock_search.await_args.kwargs["to_dt"] == datetime(
+            2026, 4, 30, 23, 59, 59, tzinfo=UTC
         )
 
     @pytest.mark.asyncio
@@ -1355,16 +1392,17 @@ class TestMemoryExecutorManageWiring:
         context = MagicMock()
         context.execution_context = None
 
-        with patch.object(MemoryExecutor, "_create_backend", return_value=backend), patch(
-            "workflows_mcp.engine.executors_memory.MemoryService"
-        ) as mock_service_cls:
+        with (
+            patch.object(MemoryExecutor, "_create_backend", return_value=backend),
+            patch("workflows_mcp.engine.executors_memory.MemoryService") as mock_service_cls,
+        ):
             mock_service_cls.return_value.execute = capture_execute
 
             executor = MemoryExecutor()
             result = await executor.execute(
                 MemoryInput(
                     operation="ingest",
-                    scope={"wing": "engineering", "room": "memory"},
+                    scope={"wing": "engineering", "room": "memory", "compartment": "ingest"},
                     record={
                         "format": "structured",
                         "source": "spec-tests",
@@ -1394,6 +1432,7 @@ class TestMemoryExecutorManageWiring:
         assert captured_requests[0].operation == "ingest"
         assert captured_requests[0].scope.wing == "engineering"
         assert captured_requests[0].scope.room == "memory"
+        assert captured_requests[0].scope.compartment == "ingest"
         assert captured_requests[0].record is not None
         assert captured_requests[0].record.format == "structured"
         assert captured_requests[0].record.memories is not None

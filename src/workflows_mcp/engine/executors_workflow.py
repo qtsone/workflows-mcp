@@ -185,6 +185,11 @@ class WorkflowExecutor(BlockExecutor):
         child_context.parent_node_id = current_node_id.get(None)
 
         try:
+            if not isinstance(inputs.inputs, dict):
+                raise ValueError(
+                    "Workflow inputs must resolve to an object/dict after interpolation"
+                )
+
             # Execute child workflow
             child_execution_result = await runner.execute(
                 workflow=workflow,

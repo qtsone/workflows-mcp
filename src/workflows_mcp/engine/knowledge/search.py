@@ -17,10 +17,9 @@ lanes in parallel:
    filter) in parallel to preserve recall for cross-room knowledge.
 
 Results from both lanes are fused via a second RRF pass so the final ranked
-list benefits from both precision and global recall.  The companion lane is
-always active; it is never a fallback.  If benchmarks show it degrades
-quality, it is removed and room-only retrieval becomes the single
-implementation (no runtime toggle).
+list benefits from both precision and global recall. The companion lane is
+the default behavior for scoped auto retrieval and can be disabled explicitly
+by callers that require strict scoped-only retrieval.
 """
 
 from __future__ import annotations
@@ -62,7 +61,9 @@ def _append_temporal_filters(
 
     if as_of is not None:
         as_of_param = next_param(as_of)
-        where_clauses.append(f"(kp.valid_from IS NULL OR kp.valid_from <= {as_of_param}::timestamptz)")
+        where_clauses.append(
+            f"(kp.valid_from IS NULL OR kp.valid_from <= {as_of_param}::timestamptz)"
+        )
         where_clauses.append(f"(kp.valid_to IS NULL OR kp.valid_to >= {as_of_param}::timestamptz)")
         return
 
@@ -186,7 +187,7 @@ def build_vector_search_query(
         LEFT JOIN knowledge_items ki_path ON kp.item_id = ki_path.id
         WHERE {post_where_clause}
           AND kp.embedding IS NOT NULL
-        ORDER BY kp.embedding <=> {embedding_param}::vector
+        ORDER BY kp.embedding <=> {embedding_param}::vector, kp.id
         LIMIT {candidate_param}
     """
 
@@ -297,7 +298,7 @@ def build_fts_search_query(
         FROM lifecycle_filtered kp
         LEFT JOIN knowledge_items ki_path ON kp.item_id = ki_path.id
         WHERE {post_where_clause}
-        ORDER BY fts_rank DESC
+        ORDER BY fts_rank DESC, kp.id
         LIMIT {candidate_param}
     """
 
@@ -333,8 +334,9 @@ def rrf_fusion(
         if row_id not in results_by_id:
             results_by_id[row_id] = row
 
-    # Sort by fused score descending
-    sorted_ids = sorted(scores.keys(), key=lambda x: scores[x], reverse=True)
+    # Sort by fused score descending with deterministic id tie-breaker.
+    # This preserves stable ordering across runs when scores are equal.
+    sorted_ids = sorted(scores.keys(), key=lambda row_id: (-scores[row_id], row_id))
 
     fused = []
     for row_id in sorted_ids[:limit]:

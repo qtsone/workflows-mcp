@@ -119,10 +119,34 @@ CREATE TABLE IF NOT EXISTS knowledge_memories (
     -- Temporal validity window
     valid_from TIMESTAMPTZ,
     valid_to   TIMESTAMPTZ,
+    -- Memory provenance model
+    memory_tier VARCHAR(20) NOT NULL DEFAULT 'direct',
+    derived_kind VARCHAR(20),
+    parent_memory_ids UUID[] NOT NULL DEFAULT '{}',
+    superseded_by_memory_id UUID REFERENCES knowledge_memories(id) ON DELETE RESTRICT,
     -- Topology / room system
     namespace VARCHAR(200),
     room      VARCHAR(200),
     corridor  VARCHAR(200),
+    CONSTRAINT ck_km_memory_tier
+        CHECK (memory_tier IN ('direct', 'derived')),
+    CONSTRAINT ck_km_derived_kind
+        CHECK (derived_kind IS NULL OR derived_kind IN ('community', 'summary')),
+    CONSTRAINT ck_km_lineage_integrity
+        CHECK (
+            (
+                memory_tier = 'direct'
+                AND derived_kind IS NULL
+                AND cardinality(parent_memory_ids) = 0
+            )
+            OR (
+                memory_tier = 'derived'
+                AND derived_kind IS NOT NULL
+                AND cardinality(parent_memory_ids) > 0
+            )
+        ),
+    CONSTRAINT ck_km_supersede_state
+        CHECK (superseded_by_memory_id IS NULL OR lifecycle_state = 'SUPERSEDED'),
     -- Housekeeping
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
@@ -182,9 +206,17 @@ CREATE TABLE IF NOT EXISTS knowledge_relations (
     relation_type           VARCHAR(100) NOT NULL,
     confidence              FLOAT DEFAULT 1.0,
     evidence_memory_id UUID REFERENCES knowledge_memories(id) ON DELETE SET NULL,
+    evidence_memory_ids UUID[] NOT NULL DEFAULT '{}',
+    curated BOOLEAN NOT NULL DEFAULT FALSE,
     valid_from              TIMESTAMPTZ,
     valid_to                TIMESTAMPTZ,
-    created_at              TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    created_at              TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    CONSTRAINT ck_kr_corridor_evidence_required
+        CHECK (
+            UPPER(BTRIM(relation_type)) <> 'CORRIDOR'
+            OR curated
+            OR cardinality(evidence_memory_ids) > 0
+        )
 );
 """
 
@@ -246,44 +278,78 @@ END $$;
 _CREATE_INDEXES = """
 -- knowledge_memories
 CREATE INDEX IF NOT EXISTS idx_km_lifecycle              ON knowledge_memories(lifecycle_state);
-CREATE INDEX IF NOT EXISTS idx_km_community_id           ON knowledge_memories(community_id)   WHERE community_id IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_km_community_id
+    ON knowledge_memories(community_id)
+    WHERE community_id IS NOT NULL;
 CREATE INDEX IF NOT EXISTS idx_km_item_id                ON knowledge_memories(item_id);
-CREATE INDEX IF NOT EXISTS idx_km_search_vector          ON knowledge_memories USING gin(search_vector);
+CREATE INDEX IF NOT EXISTS idx_km_search_vector
+    ON knowledge_memories USING gin(search_vector);
 CREATE INDEX IF NOT EXISTS idx_km_created_by             ON knowledge_memories(created_by);
 CREATE INDEX IF NOT EXISTS idx_km_archived_by            ON knowledge_memories(archived_by);
 CREATE INDEX IF NOT EXISTS idx_km_source_name            ON knowledge_memories(source_name);
 CREATE INDEX IF NOT EXISTS idx_km_source_type            ON knowledge_memories(source_type);
-CREATE INDEX IF NOT EXISTS idx_km_source_name_lifecycle  ON knowledge_memories(source_name, lifecycle_state);
-CREATE INDEX IF NOT EXISTS idx_km_namespace              ON knowledge_memories(namespace)       WHERE namespace IS NOT NULL;
-CREATE INDEX IF NOT EXISTS idx_km_room                   ON knowledge_memories(room)            WHERE room IS NOT NULL;
-CREATE INDEX IF NOT EXISTS idx_km_namespace_room         ON knowledge_memories(namespace, room) WHERE namespace IS NOT NULL AND room IS NOT NULL;
-CREATE INDEX IF NOT EXISTS idx_km_relevance_score        ON knowledge_memories(relevance_score ASC) WHERE relevance_score IS NOT NULL;
-CREATE INDEX IF NOT EXISTS idx_km_quarantined_at         ON knowledge_memories(quarantined_at)  WHERE quarantined_at IS NOT NULL;
-CREATE INDEX IF NOT EXISTS idx_km_flagged_at             ON knowledge_memories(flagged_at)      WHERE flagged_at IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_km_source_name_lifecycle
+    ON knowledge_memories(source_name, lifecycle_state);
+CREATE INDEX IF NOT EXISTS idx_km_namespace
+    ON knowledge_memories(namespace)
+    WHERE namespace IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_km_room
+    ON knowledge_memories(room)
+    WHERE room IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_km_namespace_room
+    ON knowledge_memories(namespace, room)
+    WHERE namespace IS NOT NULL AND room IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_km_superseded_by
+    ON knowledge_memories(superseded_by_memory_id)
+    WHERE superseded_by_memory_id IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_km_relevance_score
+    ON knowledge_memories(relevance_score ASC)
+    WHERE relevance_score IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_km_quarantined_at
+    ON knowledge_memories(quarantined_at)
+    WHERE quarantined_at IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_km_flagged_at
+    ON knowledge_memories(flagged_at)
+    WHERE flagged_at IS NOT NULL;
 -- knowledge_sources
-CREATE INDEX  IF NOT EXISTS idx_ks_category_ids          ON knowledge_sources USING gin(category_ids);
+CREATE INDEX  IF NOT EXISTS idx_ks_category_ids
+    ON knowledge_sources USING gin(category_ids);
 CREATE UNIQUE INDEX IF NOT EXISTS idx_ks_name            ON knowledge_sources(name);
 -- knowledge_items
 CREATE INDEX  IF NOT EXISTS idx_ki_source_id             ON knowledge_items(source_id);
 CREATE UNIQUE INDEX IF NOT EXISTS idx_ki_source_path     ON knowledge_items(source_id, path);
 -- knowledge_communities
-CREATE INDEX IF NOT EXISTS idx_kc_namespace              ON knowledge_communities(namespace) WHERE namespace IS NOT NULL;
-CREATE INDEX IF NOT EXISTS idx_kc_room                   ON knowledge_communities(room)      WHERE room IS NOT NULL;
-CREATE INDEX IF NOT EXISTS idx_kc_namespace_room         ON knowledge_communities(namespace, room) WHERE namespace IS NOT NULL AND room IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_kc_namespace
+    ON knowledge_communities(namespace)
+    WHERE namespace IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_kc_room
+    ON knowledge_communities(room)
+    WHERE room IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_kc_namespace_room
+    ON knowledge_communities(namespace, room)
+    WHERE namespace IS NOT NULL AND room IS NOT NULL;
 -- knowledge_entities
-CREATE INDEX IF NOT EXISTS idx_ke_community_id           ON knowledge_entities(community_id) WHERE community_id IS NOT NULL;
-CREATE UNIQUE INDEX IF NOT EXISTS idx_ke_type_name       ON knowledge_entities(namespace, room, corridor, entity_type, name);
+CREATE INDEX IF NOT EXISTS idx_ke_community_id
+    ON knowledge_entities(community_id)
+    WHERE community_id IS NOT NULL;
+CREATE UNIQUE INDEX IF NOT EXISTS idx_ke_type_name
+    ON knowledge_entities(namespace, room, corridor, entity_type, name);
 -- knowledge_memory_audits
 CREATE INDEX IF NOT EXISTS idx_kma_memory_id             ON knowledge_memory_audits(memory_id);
 CREATE INDEX IF NOT EXISTS idx_kma_performed_by          ON knowledge_memory_audits(performed_by);
 CREATE INDEX IF NOT EXISTS idx_kma_performed_at          ON knowledge_memory_audits(performed_at);
 -- knowledge_memory_categories
-CREATE INDEX IF NOT EXISTS idx_kmc_category_id           ON knowledge_memory_categories(category_id);
+CREATE INDEX IF NOT EXISTS idx_kmc_category_id
+    ON knowledge_memory_categories(category_id);
 CREATE INDEX IF NOT EXISTS idx_kmc_memory_id             ON knowledge_memory_categories(memory_id);
 -- knowledge_relations
 CREATE INDEX IF NOT EXISTS idx_kr_relation_type          ON knowledge_relations(relation_type);
-CREATE INDEX IF NOT EXISTS idx_kr_source_target          ON knowledge_relations(source_entity_id, target_entity_id);
-CREATE INDEX IF NOT EXISTS idx_kr_temporal               ON knowledge_relations(valid_from, valid_to);
+CREATE INDEX IF NOT EXISTS idx_kr_source_target
+    ON knowledge_relations(source_entity_id, target_entity_id);
+CREATE INDEX IF NOT EXISTS idx_kr_temporal
+    ON knowledge_relations(valid_from, valid_to);
+CREATE INDEX IF NOT EXISTS idx_kr_evidence_memory_ids
+    ON knowledge_relations USING gin(evidence_memory_ids);
 -- knowledge_entity_memories
 CREATE INDEX IF NOT EXISTS idx_kem_entity_id             ON knowledge_entity_memories(entity_id);
 CREATE INDEX IF NOT EXISTS idx_kem_memory_id             ON knowledge_entity_memories(memory_id);
@@ -342,6 +408,188 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_ke_type_name
     ON knowledge_entities(namespace, room, corridor, entity_type, name);
 """
 
+_V3_MEMORY_LINEAGE_INTEGRITY_SQL = """
+ALTER TABLE knowledge_memories
+    ADD COLUMN IF NOT EXISTS memory_tier VARCHAR(20) NOT NULL DEFAULT 'direct';
+ALTER TABLE knowledge_memories
+    ADD COLUMN IF NOT EXISTS derived_kind VARCHAR(20);
+ALTER TABLE knowledge_memories
+    ADD COLUMN IF NOT EXISTS parent_memory_ids UUID[] NOT NULL DEFAULT '{}';
+ALTER TABLE knowledge_memories
+    ADD COLUMN IF NOT EXISTS superseded_by_memory_id UUID
+        REFERENCES knowledge_memories(id)
+        ON DELETE RESTRICT;
+
+-- Deterministic pre-normalization for dirty pre-v3 rows before enabling constraints.
+-- Safety policy: preserve data, collapse ambiguous lineage to direct, and only keep
+-- derived rows when they already carry explicit valid lineage hints.
+UPDATE knowledge_memories
+SET memory_tier = CASE
+    WHEN memory_tier IN ('direct', 'derived') THEN memory_tier
+    WHEN derived_kind IN ('community', 'summary') THEN 'derived'
+    WHEN COALESCE(array_length(parent_memory_ids, 1), 0) > 0 THEN 'derived'
+    ELSE 'direct'
+END;
+
+UPDATE knowledge_memories
+SET derived_kind = CASE
+    WHEN memory_tier = 'derived' AND derived_kind IN ('community', 'summary') THEN derived_kind
+    WHEN memory_tier = 'derived' THEN 'summary'
+    ELSE NULL
+END;
+
+UPDATE knowledge_memories
+SET parent_memory_ids = '{}'
+WHERE parent_memory_ids IS NULL;
+
+UPDATE knowledge_memories
+SET parent_memory_ids = '{}'
+WHERE memory_tier = 'direct';
+
+UPDATE knowledge_memories
+SET memory_tier = 'direct',
+    derived_kind = NULL,
+    parent_memory_ids = '{}'
+WHERE memory_tier = 'derived'
+  AND COALESCE(array_length(parent_memory_ids, 1), 0) = 0;
+
+UPDATE knowledge_memories
+SET lifecycle_state = 'SUPERSEDED'
+WHERE superseded_by_memory_id IS NOT NULL
+  AND lifecycle_state <> 'SUPERSEDED';
+
+DO $$
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1 FROM pg_constraint WHERE conname = 'ck_km_memory_tier'
+    ) THEN
+        ALTER TABLE knowledge_memories
+            ADD CONSTRAINT ck_km_memory_tier
+            CHECK (memory_tier IN ('direct', 'derived'));
+    END IF;
+END $$;
+
+DO $$
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1 FROM pg_constraint WHERE conname = 'ck_km_derived_kind'
+    ) THEN
+        ALTER TABLE knowledge_memories
+            ADD CONSTRAINT ck_km_derived_kind
+            CHECK (derived_kind IS NULL OR derived_kind IN ('community', 'summary'));
+    END IF;
+END $$;
+
+DO $$
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1 FROM pg_constraint WHERE conname = 'ck_km_lineage_integrity'
+    ) THEN
+        ALTER TABLE knowledge_memories
+            ADD CONSTRAINT ck_km_lineage_integrity
+            CHECK (
+                (
+                    memory_tier = 'direct'
+                    AND derived_kind IS NULL
+                    AND cardinality(parent_memory_ids) = 0
+                )
+                OR (
+                    memory_tier = 'derived'
+                    AND derived_kind IS NOT NULL
+                    AND cardinality(parent_memory_ids) > 0
+                )
+            );
+    END IF;
+END $$;
+
+DO $$
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1 FROM pg_constraint WHERE conname = 'ck_km_supersede_state'
+    ) THEN
+        ALTER TABLE knowledge_memories
+            ADD CONSTRAINT ck_km_supersede_state
+            CHECK (superseded_by_memory_id IS NULL OR lifecycle_state = 'SUPERSEDED');
+    END IF;
+END $$;
+
+CREATE OR REPLACE FUNCTION enforce_km_supersede_append_only()
+RETURNS TRIGGER AS $$
+BEGIN
+    IF OLD.lifecycle_state = 'SUPERSEDED' AND NEW.lifecycle_state <> 'SUPERSEDED' THEN
+        RAISE EXCEPTION 'MEM_SUPERSEDE_APPEND_ONLY: superseded lifecycle state cannot be reverted';
+    END IF;
+
+    IF OLD.superseded_by_memory_id IS NOT NULL
+       AND NEW.superseded_by_memory_id IS DISTINCT FROM OLD.superseded_by_memory_id THEN
+        RAISE EXCEPTION 'MEM_SUPERSEDE_APPEND_ONLY: superseded_by_memory_id is immutable once set';
+    END IF;
+
+    IF NEW.superseded_by_memory_id IS NOT NULL
+       AND NEW.lifecycle_state <> 'SUPERSEDED' THEN
+        RAISE EXCEPTION
+            'MEM_SUPERSEDE_STATE_REQUIRED: superseded_by_memory_id requires '
+            'SUPERSEDED lifecycle_state';
+    END IF;
+
+    RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+DROP TRIGGER IF EXISTS trg_km_supersede_append_only ON knowledge_memories;
+CREATE TRIGGER trg_km_supersede_append_only
+    BEFORE UPDATE ON knowledge_memories
+    FOR EACH ROW EXECUTE FUNCTION enforce_km_supersede_append_only();
+
+CREATE INDEX IF NOT EXISTS idx_km_superseded_by
+    ON knowledge_memories(superseded_by_memory_id)
+    WHERE superseded_by_memory_id IS NOT NULL;
+"""
+
+_V4_RELATION_EVIDENCE_LINKAGE_SQL = """
+ALTER TABLE knowledge_relations
+    ADD COLUMN IF NOT EXISTS evidence_memory_ids UUID[] NOT NULL DEFAULT '{}';
+
+ALTER TABLE knowledge_relations
+    ADD COLUMN IF NOT EXISTS curated BOOLEAN NOT NULL DEFAULT FALSE;
+
+UPDATE knowledge_relations
+SET evidence_memory_ids = ARRAY[evidence_memory_id]::uuid[]
+WHERE evidence_memory_id IS NOT NULL
+  AND cardinality(evidence_memory_ids) = 0;
+
+UPDATE knowledge_relations
+SET curated = CASE
+    WHEN cardinality(evidence_memory_ids) > 0 THEN FALSE
+    ELSE COALESCE(curated, FALSE)
+END;
+
+-- Startup-safe normalization: legacy corridor edges that have no evidence linkage
+-- are promoted to curated=true before enabling corridor evidence constraints.
+UPDATE knowledge_relations
+SET curated = TRUE
+WHERE UPPER(BTRIM(relation_type)) = 'CORRIDOR'
+  AND NOT COALESCE(curated, FALSE)
+  AND cardinality(evidence_memory_ids) = 0;
+
+ALTER TABLE knowledge_relations
+    DROP CONSTRAINT IF EXISTS ck_kr_corridor_evidence_required;
+
+DO $$
+BEGIN
+    ALTER TABLE knowledge_relations
+        ADD CONSTRAINT ck_kr_corridor_evidence_required
+        CHECK (
+            UPPER(BTRIM(relation_type)) <> 'CORRIDOR'
+            OR curated
+            OR cardinality(evidence_memory_ids) > 0
+        );
+END $$;
+
+CREATE INDEX IF NOT EXISTS idx_kr_evidence_memory_ids
+    ON knowledge_relations USING gin(evidence_memory_ids);
+"""
+
 _HAS_KNOWLEDGE_TABLES_SQL = """
 SELECT EXISTS (
         SELECT 1
@@ -384,6 +632,16 @@ MIGRATIONS: list[tuple[int, str, str]] = [
         "Scope knowledge entity uniqueness by topology keys",
         _V2_SCOPED_ENTITY_UNIQUENESS_SQL,
     ),
+    (
+        3,
+        "Enforce memory lineage integrity and append-only supersede semantics",
+        _V3_MEMORY_LINEAGE_INTEGRITY_SQL,
+    ),
+    (
+        4,
+        "Add relation evidence linkage for non-curated corridor edges",
+        _V4_RELATION_EVIDENCE_LINKAGE_SQL,
+    ),
 ]
 
 SCHEMA_VERSION = MIGRATIONS[-1][0] if MIGRATIONS else 0
@@ -400,6 +658,7 @@ def _has_executable_sql(sql: str) -> bool:
         if stripped and not stripped.startswith("--"):
             return True
     return False
+
 
 # ---------------------------------------------------------------------------
 # ensure_schema
@@ -419,8 +678,7 @@ async def ensure_schema(backend: Any) -> None:
     """
     # 1. Create version-tracking meta table
     await backend.execute_script(
-        "CREATE TABLE IF NOT EXISTS _knowledge_meta "
-        "(key TEXT PRIMARY KEY, value TEXT NOT NULL);"
+        "CREATE TABLE IF NOT EXISTS _knowledge_meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);"
     )
 
     # 2. Acquire schema lock so only one startup mutates schema at a time.
@@ -463,9 +721,7 @@ async def ensure_schema(backend: Any) -> None:
         for version, description, sql in MIGRATIONS:
             if version <= current_version:
                 continue
-            logger.info(
-                "Applying knowledge schema migration v%d: %s", version, description
-            )
+            logger.info("Applying knowledge schema migration v%d: %s", version, description)
             if not _has_executable_sql(sql):
                 logger.info(
                     "Skipping no-op knowledge schema migration v%d: %s",
@@ -477,15 +733,15 @@ async def ensure_schema(backend: Any) -> None:
 
         # 6. Persist current epoch/version markers.
         await backend.execute_script(
-            f"INSERT INTO _knowledge_meta (key, value) VALUES ('{_META_SCHEMA_VERSION_KEY}', '{SCHEMA_VERSION}') "
+            f"INSERT INTO _knowledge_meta (key, value) VALUES "
+            f"('{_META_SCHEMA_VERSION_KEY}', '{SCHEMA_VERSION}') "
             f"ON CONFLICT (key) DO UPDATE SET value = '{SCHEMA_VERSION}';"
         )
         await backend.execute_script(
-            f"INSERT INTO _knowledge_meta (key, value) VALUES ('{_META_SCHEMA_EPOCH_KEY}', '{SCHEMA_EPOCH}') "
+            f"INSERT INTO _knowledge_meta (key, value) VALUES "
+            f"('{_META_SCHEMA_EPOCH_KEY}', '{SCHEMA_EPOCH}') "
             f"ON CONFLICT (key) DO UPDATE SET value = '{SCHEMA_EPOCH}';"
         )
-        logger.info(
-            "Knowledge schema is at epoch %d version %d", SCHEMA_EPOCH, SCHEMA_VERSION
-        )
+        logger.info("Knowledge schema is at epoch %d version %d", SCHEMA_EPOCH, SCHEMA_VERSION)
     finally:
         await backend.query(_SCHEMA_UNLOCK_SQL)

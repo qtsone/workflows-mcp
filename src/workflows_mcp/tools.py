@@ -420,9 +420,9 @@ async def list_workflows(
     ctx: AppContextType,
 ) -> CallToolResult:
     """
-    Discover available workflows in the registry.
+    Discover available registered workflows.
 
-    WHEN TO USE: Call this FIRST before execute_workflow to find valid workflow names.
+    WHEN TO USE: When you need to find valid workflow names, call this first before execute_workflow
 
     PARAMETERS:
     - tags: Filter by tags (e.g., ["build", "ci"]). Empty list returns all.
@@ -491,7 +491,7 @@ async def get_workflow_info(
     """
     Inspect a workflow's structure including required inputs and block sequence.
 
-    WHEN TO USE: After list_workflows, before execute_workflow - to understand
+    WHEN TO USE: before execute_workflow - to understand
     what inputs a workflow expects and what outputs it produces.
 
     PARAMETERS:
@@ -589,7 +589,7 @@ async def get_workflow_schema(
     """
     Get the complete JSON Schema for workflow YAML authoring.
 
-    WHEN TO USE: When writing new workflow YAML to understand:
+    WHEN TO USE: Only for debugging purposes. WARNING: The schema is very large.
     - Available block types: Shell, LLM, SQL, ReadFiles, EditFile, Workflow, etc.
     - Required fields for each block type
     - Valid workflow structure
@@ -1206,7 +1206,6 @@ async def get_queue_stats(
     return _json_response(stats)
 
 
-
 # =============================================================================
 # Exports
 # =============================================================================
@@ -1227,4 +1226,3 @@ __all__ = [
     "list_jobs",
     "get_queue_stats",
 ]
-

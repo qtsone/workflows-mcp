@@ -31,7 +31,7 @@ import logging
 import time
 from collections import deque
 from datetime import datetime
-from typing import Any, TypedDict
+from typing import Any, NotRequired, TypedDict
 
 logger = logging.getLogger(__name__)
 
@@ -58,6 +58,9 @@ class GraphEdge(TypedDict):
     target_entity_id: str
     relation_type: str
     confidence: float
+    evidence_memory_id: str | None
+    evidence_memory_ids: list[str]
+    curated: bool
     valid_from: str | None
     valid_to: str | None
 
@@ -76,6 +79,13 @@ class GraphDiagnostics(TypedDict):
     expanded_nodes: int
     pruned_edges: int
     latency_ms: float
+    # Optional operation-specific diagnostics.
+    entity_count: NotRequired[int]
+    relation_count: NotRequired[int]
+    distinct_relation_types: NotRequired[int]
+    out_degree: NotRequired[int]
+    in_degree: NotRequired[int]
+    total_degree: NotRequired[int]
 
 
 class GraphResult(TypedDict):
@@ -112,6 +122,9 @@ _NEIGHBORS_SQL_TEMPLATE = """
         kr.target_entity_id,
         kr.relation_type,
         kr.confidence,
+        kr.evidence_memory_id,
+        kr.evidence_memory_ids,
+        kr.curated,
         kr.valid_from,
         kr.valid_to
     FROM knowledge_relations kr
@@ -224,8 +237,23 @@ def _row_to_edge(row: dict[str, Any]) -> GraphEdge:
         target_entity_id=str(row["target_entity_id"]),
         relation_type=row["relation_type"],
         confidence=float(row["confidence"] or 1.0),
-        valid_from=vf.isoformat() if hasattr(vf, "isoformat") else (str(vf) if vf else None),
-        valid_to=vt.isoformat() if hasattr(vt, "isoformat") else (str(vt) if vt else None),
+        evidence_memory_id=(
+            str(row["evidence_memory_id"]) if row.get("evidence_memory_id") else None
+        ),
+        evidence_memory_ids=[
+            str(item) for item in (row.get("evidence_memory_ids") or []) if item is not None
+        ],
+        curated=bool(row.get("curated") or False),
+        valid_from=(
+            vf.isoformat()
+            if vf is not None and hasattr(vf, "isoformat")
+            else (str(vf) if vf else None)
+        ),
+        valid_to=(
+            vt.isoformat()
+            if vt is not None and hasattr(vt, "isoformat")
+            else (str(vt) if vt else None)
+        ),
     )
 
 
@@ -604,7 +632,7 @@ async def graph_stats(
         result = await backend.query(global_sql, tuple(params))
         row = result.rows[0] if result.rows else {}
 
-        diag: dict[str, Any] = {
+        diag: GraphDiagnostics = {
             "expanded_nodes": 0,
             "pruned_edges": 0,
             "latency_ms": (time.monotonic() - start_ms) * 1000,
@@ -618,7 +646,7 @@ async def graph_stats(
             edges=[],
             paths=[],
             traversal_count=0,
-            diagnostics=diag,  # type: ignore[arg-type]
+            diagnostics=diag,
         )
 
     entity_id = await _resolve_entity_id(entity_ref, backend)
@@ -658,7 +686,7 @@ async def graph_stats(
 
     # Encode stats as extra diagnostics fields beyond the standard three.
     # We use a plain dict here (TypedDict only enforces at type-check time).
-    diag: dict[str, Any] = {
+    stats_diag: GraphDiagnostics = {
         "expanded_nodes": 1,
         "pruned_edges": 0,
         "latency_ms": (time.monotonic() - start_ms) * 1000,
@@ -673,5 +701,5 @@ async def graph_stats(
         edges=[],
         paths=[],
         traversal_count=1,
-        diagnostics=diag,  # type: ignore[arg-type]
+        diagnostics=stats_diag,
     )

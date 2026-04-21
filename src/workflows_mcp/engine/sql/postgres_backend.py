@@ -17,12 +17,10 @@ Note:
 from __future__ import annotations
 
 import logging
-from typing import TYPE_CHECKING, Any
+from importlib import import_module
+from typing import Any
 
 from .backend import ConnectionConfig, DatabaseBackendBase, DatabaseEngine, Params, QueryResult
-
-if TYPE_CHECKING:
-    import asyncpg  # type: ignore[import-not-found]
 
 logger = logging.getLogger(__name__)
 
@@ -30,9 +28,7 @@ logger = logging.getLogger(__name__)
 def _import_asyncpg() -> Any:
     """Import asyncpg with helpful error message if not installed."""
     try:
-        import asyncpg
-
-        return asyncpg
+        return import_module("asyncpg")
     except ImportError as e:
         raise ImportError(
             "PostgreSQL backend requires 'asyncpg' package. "
@@ -68,8 +64,8 @@ class PostgresBackend(DatabaseBackendBase):
 
     def __init__(self) -> None:
         """Initialize PostgreSQL backend."""
-        self._pool: asyncpg.Pool | None = None
-        self._conn: asyncpg.Connection | None = None
+        self._pool: Any | None = None
+        self._conn: Any | None = None
         self._in_transaction: bool = False
         self._config: ConnectionConfig | None = None
 

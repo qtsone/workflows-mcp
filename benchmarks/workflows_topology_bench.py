@@ -44,6 +44,7 @@ from workflows_bench_common import (
     db_config_from_args,
     purge_benchmark_sources,
 )
+
 from workflows_mcp.engine.knowledge.constants import Authority, LifecycleState
 from workflows_mcp.engine.knowledge.search import room_scoped_search
 
@@ -1288,8 +1289,6 @@ async def run_benchmark(args: argparse.Namespace) -> None:
     prop_to_corpus = await purge_and_ingest(backend, CORPUS, corpus_embeddings, encoder.model_name)
     print(f"done ({len(prop_to_corpus)} memory facts)")
 
-    # Build room membership map: corpus_id → (ns, room)
-    corpus_id_to_room: dict[str, str] = {f["id"]: f["room"] for f in CORPUS}
     # room-key → set of corpus IDs
     room_to_corpus_ids: dict[str, set[str]] = {}
     for f in CORPUS:
@@ -1370,9 +1369,12 @@ async def run_benchmark(args: argparse.Namespace) -> None:
     all_sr: list[float] = []
 
     per_room_summary: list[dict[str, Any]] = []
+
+    def avg(values: list[float]) -> float:
+        return sum(values) / len(values) if values else 0.0
+
     for rk_key in room_keys:
         s = stats[rk_key]
-        avg = lambda lst: sum(lst) / len(lst) if lst else 0.0
         gp_avg = avg(s["global_p"])
         sp_avg = avg(s["room_p"])
         gr_avg = avg(s["global_r"])
@@ -1395,15 +1397,12 @@ async def run_benchmark(args: argparse.Namespace) -> None:
                 "room": rk_key,
                 f"global_p@{pk}": round(gp_avg, 4),
                 f"scoped_p@{pk}": round(sp_avg, 4),
-                f"p_lift": round(p_lift, 4),
+                "p_lift": round(p_lift, 4),
                 f"global_r@{rk}": round(gr_avg, 4),
                 f"scoped_r@{rk}": round(sr_avg, 4),
-                f"r_delta": round(r_delta, 4),
+                "r_delta": round(r_delta, 4),
             }
         )
-
-    def avg(lst: list[float]) -> float:
-        return sum(lst) / len(lst) if lst else 0.0
 
     overall_gp = avg(all_gp)
     overall_sp = avg(all_sp)

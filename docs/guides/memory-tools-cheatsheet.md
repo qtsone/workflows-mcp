@@ -1,19 +1,28 @@
-# Memory Tool Cheatsheet (Guide)
+# Memory Tools Cheatsheet (Current Memory Contract)
 
-Purpose: practical usage guide for the unified MCP memory tool.
+Practical guide for the current public memory contract.
 
-Active tool:
+Active MCP tools:
 
-- `memory`
+- `memory` (stable unified tool)
+- `project_onboard`
+- `project_sync`
 
-Legacy note: `query_memory` and `manage_memory` references are legacy-only and not the active public tool contract.
+Legacy tool names (`query_memory`, `manage_memory`) are not part of the active public contract.
 
-## 1) Canonical request envelope
+## 1) Canonical request envelope (`memory`)
 
 ```json
 {
   "operation": "query|ingest|validate|supersede|archive|maintain|graph_upsert|graph_delete",
-  "scope": {"wing": "string|null", "room": "string|null", "hall": "string|null"},
+  "scope": {
+    "palace": "string|null",
+    "wing": "string|null",
+    "room": "string|null",
+    "compartment": "string|null"
+  },
+  "scope_token": "string|null",
+  "context_id": "string|null",
   "query": {},
   "record": {},
   "graph": {},
@@ -22,123 +31,142 @@ Legacy note: `query_memory` and `manage_memory` references are legacy-only and n
 }
 ```
 
-Populate only the sub-objects required by the selected `operation`.
+Populate only the sections required by the selected `operation`.
 
-## 2) Operation matrix
+## 2) Taxonomy and scope key rules
 
-| Operation | Required payload |
+- Current memory topology keys are: `palace`, `wing`, `room`, `compartment`.
+- Legacy `hall` is rejected with `MEM_INVALID_TAXONOMY_KEY`.
+- Unknown scope keys are rejected.
+
+## 3) Context activation and scope defaulting
+
+Scope resolution precedence is deterministic, field by field:
+
+1. explicit `scope` in request
+2. `scope_token` lookup from execution context (`memory_scope_tokens`)
+3. `context_id` lookup from execution context (`memory_context_scopes`)
+
+The tool returns:
+
+- `resolved_scope` (effective values after merge)
+- `scope_source` (`request|token|context` per field)
+
+### Scope requirements by operation
+
+| Operation | Scope requirement |
 | --- | --- |
-| `query` | `query.text` |
-| `ingest` | `record.format=raw` + `record.content` OR `record.format=structured` + `record.memories` |
-| `validate` | `record.ids` |
-| `supersede` | `record.ids` + `record.superseded_by` |
-| `archive` | `record.ids` |
-| `maintain` | optional `maintenance.mode` (default: `community_refresh`) |
-| `graph_upsert` | `graph.kind=place` with `graph.place_name/place_type` OR `graph.kind=link` with `graph.from/graph.to/graph.link_type` |
-| `graph_delete` | `graph.kind` + `graph.ids` |
+| `query` | all four fields must resolve (`palace/wing/room/compartment`) |
+| `ingest` | all four fields must resolve (includes required direct-ingest `compartment`) |
+| `graph_upsert` + `graph.kind=place` | all four fields must resolve |
+| `validate`, `supersede`, `archive`, `maintain`, `graph_delete`, `graph_upsert` + `graph.kind=link` | no scope required |
 
-## 3) Query behavior and scoping
+If a required scope field cannot be resolved from `scope`/`scope_token`/`context_id`, request fails with `SCOPE_UNRESOLVED`, except direct ingest missing `compartment`, which returns `COMPARTMENT_REQUIRED`.
 
-`operation=query` supports:
+## 4) Direct vs derived memory rules and community semantics
 
-- `query.mode=search`
-- `query.mode=context`
-- `query.mode=graph`
+- `ingest` is a direct-memory boundary: `record.memory_tier` must be `direct`.
+- `record.memory_tier="derived"` is rejected for ingest (`MEM_BOUNDARY_VIOLATION`).
+- Category governance for ingest is explicit:
+  - Unknown `record.categories` fail deterministically with `MEM_UNKNOWN_CATEGORY` when `record.allow_create_categories=false`.
+  - Set `record.allow_create_categories=true` to explicitly allow category creation and let ingest proceed when categories are otherwise valid.
+- Derived community memories are created by maintenance flows (`operation=maintain`, mode `community_refresh`).
+- `query.mode="communities"` maps to community retrieval strategy.
+- `maintain` in `community_refresh` mode returns `communities_updated` in compact output; diagnostics are available when `response.debug=true` (and in mode-specific shapes such as `graph`).
 
-Scoping/filter controls apply consistently, including context mode:
+Validation note (2026-04-21): this category behavior was live-validated via production-like direct MCP `memory` calls.
 
-- `scope.wing`, `scope.room`, `scope.hall`
-- `query.source`, `query.categories`, `query.as_of`, `query.from`, `query.to`, `query.precision`
-- `query.limits.tokens` for context budget
+## 5) Operation matrix and minimum payloads
 
-Temporal semantics:
+| Operation | Required section | Minimum payload |
+| --- | --- | --- |
+| `query` | `query` | `query.text` |
+| `ingest` | `record` | `record.format=raw` + `record.content` (or structured payload) |
+| `validate` | `record` | `record.ids` |
+| `supersede` | `record` | `record.ids` + `record.superseded_by` |
+| `archive` | `record` | `record.ids` |
+| `maintain` | none (defaults apply) | optional `maintenance.mode` (default `community_refresh`) |
+| `graph_upsert` | `graph` | `graph.kind=place` or `graph.kind=link` |
+| `graph_delete` | `graph` | `graph.kind` + `graph.ids` |
 
-- Use `query.as_of` for point-in-time lookup.
-- Use `query.from`/`query.to` for interval overlap lookup.
-- `query.as_of` cannot be combined with `query.from`/`query.to`.
-- `query.mode=graph` supports `query.as_of` only; `query.from`/`query.to` are rejected.
-- Archived records are excluded by default query behavior.
+## 6) Example payloads (`memory`) for all operations
 
-Graph extras (`query.mode=graph`):
-
-- `query.graph.op = traverse|neighbors|path|stats`
-- `query.graph.start`, `query.graph.end`, `query.graph.relation_types`
-- `query.limits.hops`, `query.limits.nodes`
-
-## 4) Category governance (ingest)
-
-- `record.categories` must resolve to existing categories by default.
-- Unknown categories fail ingest unless explicitly opted in.
-- Use `record.allow_create_categories=true` to create missing categories intentionally.
-
-## 5) Topology-scoped entity uniqueness (graph)
-
-- Graph entity uniqueness is scoped by topology (`wing/room/hall`) plus entity type and name.
-- The same entity name/type can exist in different topology scopes without collision.
-- Name-based linking should use matching scope; prefer UUID references when names are ambiguous.
-
-## 6) Migration and startup posture
-
-- Memory schema compatibility is validated during server startup.
-- Incompatible schema epochs fail fast.
-- Apply documented migrations and restart the MCP server.
-- No runtime destructive reset fallback is part of the supported behavior.
-
-## 7) Lifecycle semantics and strictness
-
-- `supersede` requires `record.superseded_by`.
-- `archive` maps to forget semantics.
-- Repeating `archive` on already archived records is safe/idempotent.
-- Request payloads are strict (`extra=forbid`): unknown fields are rejected.
-
-## 8) Temporal fields on ingest (raw)
-
-- `operation=ingest` with `record.format=raw` supports `record.valid_from` and `record.valid_to`.
-- Ordering is validated (`valid_from <= valid_to`).
-
-## 9) Graph semantics
-
-- `graph_upsert` with `graph.kind=link` is idempotent.
-- `graph_delete` with `graph.kind=place` returns cascaded `deleted_relation_count`.
-
-## 10) Direct-call JSON examples (valid and invalid)
-
-Scoped context assembly:
+### query
 
 ```json
 {
   "operation": "query",
-  "scope": {"wing": "workflows", "room": "memory-engine"},
-  "query": {
-    "text": "Summarize current maintenance behavior",
-    "mode": "context",
-    "categories": ["memory"],
-    "limits": {"tokens": 2000}
-  }
+  "scope": {"palace": "acme", "wing": "workflows", "room": "memory", "compartment": "contract-r2"},
+  "query": {"text": "scope precedence", "mode": "search", "radius": 1}
 }
 ```
 
-Valid: ingest raw with temporal bounds:
+### ingest
 
 ```json
 {
   "operation": "ingest",
-  "scope": {"wing": "payments-service", "room": "ledger"},
+  "scope": {"palace": "acme", "wing": "workflows", "room": "memory", "compartment": "contract-r2"},
+  "record": {"format": "raw", "content": "Current memory contract enabled", "memory_tier": "direct"}
+}
+```
+
+### validate
+
+```json
+{
+  "operation": "validate",
+  "record": {"ids": ["11111111-1111-1111-1111-111111111111"]}
+}
+```
+
+### supersede
+
+```json
+{
+  "operation": "supersede",
   "record": {
-    "format": "raw",
-    "content": "Final RCA approved.",
-    "valid_from": "2026-04-01T00:00:00Z",
-    "valid_to": "2026-04-30T00:00:00Z"
+    "ids": ["11111111-1111-1111-1111-111111111111"],
+    "superseded_by": "22222222-2222-2222-2222-222222222222",
+    "reason": "Replaced by corrected incident summary"
   }
 }
 ```
 
-Valid: idempotent link upsert:
+### archive
+
+```json
+{
+  "operation": "archive",
+  "record": {"ids": ["11111111-1111-1111-1111-111111111111"], "reason": "No longer relevant"}
+}
+```
+
+### maintain
+
+```json
+{
+  "operation": "maintain",
+  "maintenance": {"mode": "community_refresh"},
+  "response": {"mode": "compact", "debug": false}
+}
+```
+
+### graph_upsert (place)
 
 ```json
 {
   "operation": "graph_upsert",
-  "scope": {"wing": "workflows", "room": "memory-engine"},
+  "scope": {"palace": "acme", "wing": "workflows", "room": "memory", "compartment": "contract-r2"},
+  "graph": {"kind": "place", "place_name": "Memory API (current)", "place_type": "feature"}
+}
+```
+
+### graph_upsert (link)
+
+```json
+{
+  "operation": "graph_upsert",
   "graph": {
     "kind": "link",
     "from": "11111111-1111-1111-1111-111111111111",
@@ -148,77 +176,105 @@ Valid: idempotent link upsert:
 }
 ```
 
-Valid: delete place request (response includes cascaded `deleted_relation_count`):
+### graph_delete
 
 ```json
 {
   "operation": "graph_delete",
-  "scope": {"wing": "workflows", "room": "memory-engine"},
-  "graph": {
-    "kind": "place",
-    "ids": ["33333333-3333-3333-3333-333333333333"]
-  }
+  "graph": {"kind": "place", "ids": ["33333333-3333-3333-3333-333333333333"]}
 }
 ```
 
-Response excerpt:
+## 7) Example payloads (Current memory project tools)
+
+### project_onboard
 
 ```json
 {
-  "deleted_place_count": 1,
-  "deleted_relation_count": 3
+  "scope": {"palace": "acme", "wing": "workflows", "room": "memory", "compartment": "contract-r2"},
+  "ingest": {"format": "raw", "content": "Initial baseline", "memory_tier": "direct"},
+  "supersede": {"ids": ["11111111-1111-1111-1111-111111111111"], "superseded_by": "22222222-2222-2222-2222-222222222222"},
+  "archive": {"ids": ["33333333-3333-3333-3333-333333333333"]},
+  "maintain": {"mode": "community_refresh"},
+  "max_operations": 1
 }
 ```
 
-Invalid: mutually exclusive temporal query fields:
+### project_sync (resume from checkpoint)
+
+```json
+{
+  "checkpoint": {
+    "version": "oss-r2",
+    "scope": {"palace": "acme", "wing": "workflows", "room": "memory", "compartment": "contract-r2"},
+    "plan": [{"operation": "ingest", "payload": {"format": "raw", "content": "Initial baseline", "memory_tier": "direct"}}],
+    "next_index": 0,
+    "completed": []
+  },
+  "max_operations": 3
+}
+```
+
+## 8) Common invalid payloads
+
+Invalid: legacy key `hall`.
 
 ```json
 {
   "operation": "query",
+  "scope": {"palace": "acme", "wing": "svc", "room": "comp", "hall": "legacy"},
+  "query": {"text": "incident", "mode": "search"}
+}
+```
+
+## 9) Additional query and lifecycle controls
+
+- `query.mode` supports `search`, `context`, `graph`, and `communities`.
+- Retrieval tuning:
+  - `query.radius` controls scope expansion distance (`0` = exact container only).
+  - `query.precision` controls semantic strictness (`0.0-1.0`, higher = stricter).
+- Temporal controls:
+  - Point-in-time: `query.as_of`
+  - Interval overlap: `query.from`, `query.to` (either bound may be omitted)
+  - `query.as_of` cannot be combined with `query.from`/`query.to`
+- Graph query extras (`query.mode=graph`):
+  - `query.graph.op = traverse|neighbors|path|stats`
+  - `query.graph.start`, `query.graph.end`, `query.graph.relation_types`
+  - `query.limits.hops`, `query.limits.nodes`
+- Context query behavior (`query.mode=context`):
+  - Uses the same scoping/filter controls as search mode.
+  - Returns prompt-ready text in `query.context`, with token budgeting from `query.limits.tokens`.
+- Lifecycle close semantics:
+  - `supersede` and `archive` set `record.valid_to=NOW()` when `record.valid_to` is omitted.
+  - If `record.valid_to` is provided, that explicit timestamp is honored.
+- Strict request validation:
+  - Unknown fields are rejected (`extra=forbid`) across the request envelope.
+- Topology-scoped graph uniqueness:
+  - Entities are unique per resolved topology scope + entity type + name.
+  - The same entity name can exist in different scopes without collision.
+
+Invalid: ingest with non-direct tier.
+
+```json
+{
+  "operation": "ingest",
+  "scope": {"palace": "acme", "wing": "svc", "room": "comp", "compartment": "topic"},
+  "record": {"format": "raw", "content": "derived sample", "memory_tier": "derived"}
+}
+```
+
+Invalid: mutually-exclusive temporal query fields.
+
+```json
+{
+  "operation": "query",
+  "scope": {"palace": "acme", "wing": "svc", "room": "comp", "compartment": "topic"},
   "query": {
     "mode": "search",
     "text": "maintenance",
     "as_of": "2026-04-20T00:00:00Z",
     "from": "2026-04-01T00:00:00Z",
     "to": "2026-04-20T00:00:00Z"
-  }
-}
-```
-
-Invalid: graph query rejects `from`/`to`:
-
-```json
-{
-  "operation": "query",
-  "query": {
-    "mode": "graph",
-    "text": "service graph",
-    "from": "2026-04-01T00:00:00Z",
-    "to": "2026-04-20T00:00:00Z"
-  }
-}
-```
-
-Invalid: unknown/extra field rejected:
-
-```json
-{
-  "operation": "query",
-  "query": {
-    "mode": "search",
-    "text": "status",
-    "unexpected": true
-  }
-}
-```
-
-Invalid: supersede missing required `record.superseded_by`:
-
-```json
-{
-  "operation": "supersede",
-  "record": {
-    "ids": ["11111111-1111-1111-1111-111111111111"]
   }
 }
 ```

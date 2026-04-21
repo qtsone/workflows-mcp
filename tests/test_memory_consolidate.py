@@ -7,6 +7,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from workflows_mcp.engine.knowledge.constants import Authority
 from workflows_mcp.engine.memory_service import (
     ManageMemoryRequest,
     MemoryRequest,
@@ -42,10 +43,29 @@ class TestCommunityRefresh:
                         {"id": "entity-acme", "entity_type": "ORG", "name": "Acme"},
                     ]
                 ),
-                MagicMock(rows=[{"source_entity_id": "entity-alice", "target_entity_id": "entity-acme"}]),
-                MagicMock(rows=[{"id": "memory-1", "content": "Alice works at Acme.", "embedding": "[0.1,0.3]"}]),
+                MagicMock(
+                    rows=[{"source_entity_id": "entity-alice", "target_entity_id": "entity-acme"}]
+                ),
+                MagicMock(
+                    rows=[
+                        {
+                            "id": "memory-1",
+                            "content": "Alice works at Acme.",
+                            "embedding": "[0.1,0.3]",
+                        }
+                    ]
+                ),
                 MagicMock(rows=[{"id": "community-1"}]),
-                MagicMock(rows=[{"memory_id": "memory-1", "community_id": "community-1", "link_confidence": 0.95}]),
+                MagicMock(rows=[{"id": "memory-1", "memory_tier": "direct"}]),
+                MagicMock(
+                    rows=[
+                        {
+                            "memory_id": "memory-1",
+                            "community_id": "community-1",
+                            "link_confidence": 0.95,
+                        }
+                    ]
+                ),
             ]
         )
 
@@ -53,12 +73,13 @@ class TestCommunityRefresh:
         context.execution_context = None
         service = MemoryService(backend=backend, context=context)
 
-        result = await service.manage(
-            ManageMemoryRequest(
-                operation="consolidate",
-                mode="community_refresh",
+        with _embedding_patch():
+            result = await service.manage(
+                ManageMemoryRequest(
+                    operation="consolidate",
+                    mode="community_refresh",
+                )
             )
-        )
 
         assert result.success is True
         assert result.communities_updated == 1
@@ -72,6 +93,13 @@ class TestCommunityRefresh:
         assert any("INSERT INTO knowledge_communities" in sql for sql in query_sql)
         assert any("UPDATE knowledge_entities" in call.args[0] for call in execute_calls)
         assert any("UPDATE knowledge_memories" in call.args[0] for call in execute_calls)
+        derived_insert_calls = [
+            call for call in execute_calls if "INSERT INTO knowledge_memories" in call.args[0]
+        ]
+        assert len(derived_insert_calls) == 1
+        assert derived_insert_calls[0].args[1][4] == Authority.COMMUNITY_SUMMARY
+        assert derived_insert_calls[0].args[1][14] == "derived"
+        assert derived_insert_calls[0].args[1][15] == "community"
 
     @pytest.mark.asyncio
     async def test_community_refresh_honors_namespace_and_room_scope(self) -> None:
@@ -105,7 +133,9 @@ class TestCommunityRefresh:
         assert first_query.args[1] == ("engineering", "memory")
 
     @pytest.mark.asyncio
-    async def test_community_refresh_propagates_memories_by_strongest_linked_community(self) -> None:
+    async def test_community_refresh_propagates_memories_by_strongest_linked_community(
+        self,
+    ) -> None:
         """Memories linked to multiple communities should keep the strongest linked community."""
         backend = MagicMock()
         backend.begin_transaction = AsyncMock()
@@ -121,17 +151,61 @@ class TestCommunityRefresh:
                         {"id": "entity-ops", "entity_type": "TEAM", "name": "Ops"},
                     ]
                 ),
-                MagicMock(rows=[{"source_entity_id": "entity-alice", "target_entity_id": "entity-acme"}]),
-                MagicMock(rows=[{"id": "memory-1", "content": "Alice works at Acme.", "embedding": "[0.1,0.3]"}, {"id": "memory-2", "content": "Acme roadmap.", "embedding": "[0.1,0.4]"}]),
+                MagicMock(
+                    rows=[{"source_entity_id": "entity-alice", "target_entity_id": "entity-acme"}]
+                ),
+                MagicMock(
+                    rows=[
+                        {
+                            "id": "memory-1",
+                            "content": "Alice works at Acme.",
+                            "embedding": "[0.1,0.3]",
+                        },
+                        {"id": "memory-2", "content": "Acme roadmap.", "embedding": "[0.1,0.4]"},
+                    ]
+                ),
                 MagicMock(rows=[{"id": "community-1"}]),
-                MagicMock(rows=[{"id": "memory-1", "content": "Ops update.", "embedding": "[0.9,0.9]"}, {"id": "memory-3", "content": "Ops status.", "embedding": "[0.8,0.8]"}]),
+                MagicMock(
+                    rows=[
+                        {"id": "memory-1", "memory_tier": "direct"},
+                        {"id": "memory-2", "memory_tier": "direct"},
+                    ]
+                ),
+                MagicMock(
+                    rows=[
+                        {"id": "memory-1", "content": "Ops update.", "embedding": "[0.9,0.9]"},
+                        {"id": "memory-3", "content": "Ops status.", "embedding": "[0.8,0.8]"},
+                    ]
+                ),
                 MagicMock(rows=[{"id": "community-2"}]),
                 MagicMock(
                     rows=[
-                        {"memory_id": "memory-1", "community_id": "community-1", "link_confidence": 0.95},
-                        {"memory_id": "memory-1", "community_id": "community-2", "link_confidence": 0.35},
-                        {"memory_id": "memory-2", "community_id": "community-1", "link_confidence": 0.7},
-                        {"memory_id": "memory-3", "community_id": "community-2", "link_confidence": 0.6},
+                        {"id": "memory-1", "memory_tier": "direct"},
+                        {"id": "memory-3", "memory_tier": "direct"},
+                    ]
+                ),
+                MagicMock(
+                    rows=[
+                        {
+                            "memory_id": "memory-1",
+                            "community_id": "community-1",
+                            "link_confidence": 0.95,
+                        },
+                        {
+                            "memory_id": "memory-1",
+                            "community_id": "community-2",
+                            "link_confidence": 0.35,
+                        },
+                        {
+                            "memory_id": "memory-2",
+                            "community_id": "community-1",
+                            "link_confidence": 0.7,
+                        },
+                        {
+                            "memory_id": "memory-3",
+                            "community_id": "community-2",
+                            "link_confidence": 0.6,
+                        },
                     ]
                 ),
             ]
@@ -141,12 +215,13 @@ class TestCommunityRefresh:
         context.execution_context = None
         service = MemoryService(backend=backend, context=context)
 
-        result = await service.manage(
-            ManageMemoryRequest(
-                operation="consolidate",
-                mode="community_refresh",
+        with _embedding_patch():
+            result = await service.manage(
+                ManageMemoryRequest(
+                    operation="consolidate",
+                    mode="community_refresh",
+                )
             )
-        )
 
         assert result.success is True
         assert result.communities_updated == 2
@@ -163,7 +238,7 @@ class TestCommunityRefresh:
 
     @pytest.mark.asyncio
     async def test_execute_maintain_community_refresh_routes_to_refresh_semantics(self) -> None:
-        """Unified maintain operation should accept community_refresh and return refresh-shaped data."""
+        """Maintain accepts community_refresh and returns refresh-shaped data."""
         backend = MagicMock()
         backend.begin_transaction = AsyncMock()
         backend.commit = AsyncMock()
@@ -177,10 +252,29 @@ class TestCommunityRefresh:
                         {"id": "entity-acme", "entity_type": "ORG", "name": "Acme"},
                     ]
                 ),
-                MagicMock(rows=[{"source_entity_id": "entity-alice", "target_entity_id": "entity-acme"}]),
-                MagicMock(rows=[{"id": "memory-1", "content": "Alice works at Acme.", "embedding": "[0.1,0.3]"}]),
+                MagicMock(
+                    rows=[{"source_entity_id": "entity-alice", "target_entity_id": "entity-acme"}]
+                ),
+                MagicMock(
+                    rows=[
+                        {
+                            "id": "memory-1",
+                            "content": "Alice works at Acme.",
+                            "embedding": "[0.1,0.3]",
+                        }
+                    ]
+                ),
                 MagicMock(rows=[{"id": "community-1"}]),
-                MagicMock(rows=[{"memory_id": "memory-1", "community_id": "community-1", "link_confidence": 0.95}]),
+                MagicMock(rows=[{"id": "memory-1", "memory_tier": "direct"}]),
+                MagicMock(
+                    rows=[
+                        {
+                            "memory_id": "memory-1",
+                            "community_id": "community-1",
+                            "link_confidence": 0.95,
+                        }
+                    ]
+                ),
             ]
         )
 
@@ -188,9 +282,10 @@ class TestCommunityRefresh:
         context.execution_context = None
         service = MemoryService(backend=backend, context=context)
 
-        result = await service.execute(
-            MemoryRequest(operation="maintain", maintenance={"mode": "community_refresh"})
-        )
+        with _embedding_patch():
+            result = await service.execute(
+                MemoryRequest(operation="maintain", maintenance={"mode": "community_refresh"})
+            )
 
         assert result.operation == "maintain"
         assert result.manage is not None
@@ -199,6 +294,40 @@ class TestCommunityRefresh:
         assert result.manage.communities_updated == 1
         assert result.manage.diagnostics["mode"] == "community_refresh"
         assert result.manage.diagnostics["community_count"] == result.manage.communities_updated
+
+    @pytest.mark.asyncio
+    async def test_community_refresh_fails_deterministically_without_parent_memories(self) -> None:
+        """Derived community summaries fail when no parent memories exist."""
+        backend = MagicMock()
+        backend.begin_transaction = AsyncMock()
+        backend.commit = AsyncMock()
+        backend.rollback = AsyncMock()
+        backend.execute = AsyncMock()
+        backend.query = AsyncMock(
+            side_effect=[
+                MagicMock(rows=[{"id": "entity-alice", "entity_type": "PERSON", "name": "Alice"}]),
+                MagicMock(rows=[]),
+                MagicMock(rows=[]),
+                MagicMock(rows=[{"id": "community-1"}]),
+            ]
+        )
+
+        context = MagicMock()
+        context.execution_context = None
+        service = MemoryService(backend=backend, context=context)
+
+        result = await service.manage(
+            ManageMemoryRequest(
+                operation="consolidate",
+                mode="community_refresh",
+            )
+        )
+
+        assert result.success is False
+        assert result.error is not None
+        assert result.error.startswith("MEM_LINEAGE_PARENT_REQUIRED:")
+        backend.commit.assert_not_awaited()
+        backend.rollback.assert_awaited_once()
 
 
 class TestCommunityRetrieval:
@@ -443,7 +572,7 @@ class TestCommunityRetrieval:
 
     @pytest.mark.asyncio
     async def test_strategy_auto_forwards_corridor_scope_to_room_search(self) -> None:
-        """Auto strategy should forward corridor scope so scoped diagnostics match retrieval scope."""
+        """Auto strategy forwards corridor scope to room search."""
         backend = MagicMock()
         backend.query = AsyncMock()
         backend.execute = AsyncMock()
