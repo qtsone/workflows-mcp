@@ -2,6 +2,16 @@
 
 All notable changes to this project will be documented in this file.
 
+# [10.0.0](https://github.com/qtsone/workflows-mcp/compare/v9.14.0...v10.0.0) (2026-04-21)
+
+
+* chore(release)!: mark memory contract cutover as breaking ([4912e0b](https://github.com/qtsone/workflows-mcp/commit/4912e0b1b65727117b87aa9be666e551636df566))
+
+
+### BREAKING CHANGES
+
+* Memory tools and docs now enforce the new memory contract semantics (taxonomy, checkpoint/version flow, error envelope behavior, and project onboarding/sync metadata). Legacy wording and legacy contract assumptions are no longer supported.
+
 # [9.14.0](https://github.com/qtsone/workflows-mcp/compare/v9.13.0...v9.14.0) (2026-04-21)
 
 
