@@ -676,7 +676,7 @@ def create_default_registry() -> ExecutorRegistry:
     # Register SQL executor
     registry.register(SqlExecutor())
 
-    # Note: KnowledgeExecutor is registered conditionally at server startup
-    # only when a knowledge database is configured (KNOWLEDGE_DB_HOST)
+    # Note: MemoryExecutor is registered conditionally at server startup
+    # only when a memory database is configured (MEMORY_DB_HOST)
 
     return registry

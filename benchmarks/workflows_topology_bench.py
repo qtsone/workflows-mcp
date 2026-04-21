@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Memory Palace Topology Routing Benchmark.
+"""Memory Topology Routing Benchmark.
 
 Measures the retrieval precision and recall improvement from namespace/room
 scoping compared to unscoped (global) hybrid search.
@@ -484,9 +484,9 @@ CORPUS: list[dict[str, str]] = [
         "ns": "engineering",
         "room": "search",
         "content": (
-            "Knowledge proposition embeddings use sentence-transformers/"
+            "Memory fact embeddings use sentence-transformers/"
             "all-MiniLM-L6-v2 (384 dimensions) by default. The model name "
-            "is stored per-proposition so multi-model corpora are supported."
+            "is stored per-memory so multi-model corpora are supported."
         ),
     },
     {
@@ -544,7 +544,7 @@ CORPUS: list[dict[str, str]] = [
         "ns": "engineering",
         "room": "search",
         "content": (
-            "knowledge_propositions has a GIN index on search_vector for fast "
+            "The memory facts table has a GIN index on search_vector for fast "
             "full-text lookups. The HNSW vector index supports approximate "
             "nearest-neighbour queries."
         ),
@@ -564,7 +564,7 @@ CORPUS: list[dict[str, str]] = [
         "room": "search",
         "content": (
             "MMR (Maximal Marginal Relevance) re-ranking is applied in "
-            "knowledge_context to maximise diversity of the assembled context. "
+            "query_memory strategy=context to maximise diversity of the assembled context. "
             "Embeddings are returned from search only for MMR."
         ),
     },
@@ -574,7 +574,7 @@ CORPUS: list[dict[str, str]] = [
         "room": "search",
         "content": (
             "Category filters use an EXISTS subquery on the junction table to "
-            "avoid row duplication when a proposition belongs to multiple categories."
+            "avoid row duplication when a memory belongs to multiple categories."
         ),
     },
     {
@@ -602,7 +602,7 @@ CORPUS: list[dict[str, str]] = [
         "room": "search",
         "content": (
             "Lifecycle state (ACTIVE / QUARANTINED / ARCHIVED) is applied as a "
-            "WHERE clause before vector search so archived propositions never "
+            "WHERE clause before vector search so archived memories never "
             "appear in results."
         ),
     },
@@ -611,7 +611,7 @@ CORPUS: list[dict[str, str]] = [
         "ns": "engineering",
         "room": "search",
         "content": (
-            "The retrieval_count column is incremented per proposition on each "
+            "The retrieval_count column is incremented per memory on each "
             "successful retrieval for usage analytics and potential future "
             "popularity-based re-ranking."
         ),
@@ -997,7 +997,7 @@ QUERIES: list[dict[str, Any]] = [
     },
     # ── search ────────────────────────────────────────────────────────────────
     {
-        "query": "What embedding model is used for knowledge propositions?",
+        "query": "What embedding model is used for memory facts?",
         "ns": "engineering",
         "room": "search",
         "relevant": ["search-00", "search-06"],
@@ -1106,7 +1106,7 @@ async def purge_and_ingest(
     embeddings: list[list[float]],
     embedding_model: str,
 ) -> dict[str, str]:
-    """Insert corpus facts with namespace/room set.  Returns proposition_id→corpus_id map."""
+    """Insert corpus facts with namespace/room set. Returns memory_id-to-corpus_id map."""
     await purge_benchmark_sources(backend, SOURCE_PREFIX)
 
     # Upsert source
@@ -1114,7 +1114,7 @@ async def purge_and_ingest(
 
     item_rows: list[tuple[Any, ...]] = []
     prop_rows: list[tuple[Any, ...]] = []
-    prop_id_map: dict[str, str] = {}  # proposition_id → corpus_id
+    prop_id_map: dict[str, str] = {}  # memory_id -> corpus_id
 
     for pos, (fact, vec) in enumerate(zip(corpus, embeddings, strict=True)):
         item_id = str(uuid.uuid4())
@@ -1149,7 +1149,7 @@ async def purge_and_ingest(
     )
     await backend.execute_many(
         """
-        INSERT INTO knowledge_propositions
+        INSERT INTO knowledge_memories
             (id, item_id, content, embedding, search_vector,
              authority, lifecycle_state, confidence,
              embedding_model, metadata,
@@ -1286,7 +1286,7 @@ async def run_benchmark(args: argparse.Namespace) -> None:
     # Ingest
     print("Ingesting into PostgreSQL... ", end="", flush=True)
     prop_to_corpus = await purge_and_ingest(backend, CORPUS, corpus_embeddings, encoder.model_name)
-    print(f"done ({len(prop_to_corpus)} propositions)")
+    print(f"done ({len(prop_to_corpus)} memory facts)")
 
     # Build room membership map: corpus_id → (ns, room)
     corpus_id_to_room: dict[str, str] = {f["id"]: f["room"] for f in CORPUS}
@@ -1457,7 +1457,7 @@ async def run_benchmark(args: argparse.Namespace) -> None:
 
 def main() -> None:
     parser = argparse.ArgumentParser(
-        description="Topology routing precision benchmark for workflows-mcp knowledge."
+        description="Topology routing precision benchmark for workflows-mcp memory retrieval."
     )
     add_db_args(parser)
     parser.add_argument(

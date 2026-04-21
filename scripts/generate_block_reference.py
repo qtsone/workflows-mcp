@@ -55,14 +55,83 @@ CONFIGURATION_REQUIREMENTS: dict[str, dict[str, Any]] = {
 }
 
 
+def _resolve_ref(ref: str, schema: dict[str, Any]) -> dict[str, Any]:
+    """Resolve a local JSON schema reference (e.g. #/$defs/Foo)."""
+    if not ref.startswith("#/"):
+        return {}
+
+    node: Any = schema
+    for token in ref[2:].split("/"):
+        if not isinstance(node, dict) or token not in node:
+            return {}
+        node = node[token]
+
+    return node if isinstance(node, dict) else {}
+
+
+def _split_union_types(type_text: str) -> list[str]:
+    return [part for part in type_text.split("|") if part]
+
+
+def extract_type_and_description(field_info: dict[str, Any], schema: dict[str, Any]) -> tuple[str, str]:
+    """Extract a human-readable type and description from a JSON schema field.
+
+    Handles type (string/list), anyOf/oneOf/allOf unions, $refs, and
+    title/description fallback.
+    """
+    direct_desc = field_info.get("description") or field_info.get("title") or ""
+
+    # Handle $ref
+    if "$ref" in field_info:
+        resolved = _resolve_ref(str(field_info["$ref"]), schema)
+        if not resolved:
+            return "object", direct_desc
+        resolved_type, resolved_desc = extract_type_and_description(resolved, schema)
+        return resolved_type, direct_desc or resolved_desc
+
+    # Handle unions and composed schemas
+    for union_key in ["anyOf", "oneOf", "allOf"]:
+        if union_key in field_info:
+            collected_types: list[str] = []
+            nested_desc = ""
+            for sub_schema in field_info[union_key]:
+                if not isinstance(sub_schema, dict):
+                    continue
+                sub_type, sub_desc = extract_type_and_description(sub_schema, schema)
+                for part in _split_union_types(sub_type):
+                    if part != "null" and part not in collected_types:
+                        collected_types.append(part)
+                if not nested_desc and sub_desc:
+                    nested_desc = sub_desc
+
+            type_text = "|".join(collected_types) if collected_types else "any"
+            return type_text, direct_desc or nested_desc
+
+    # Handle direct type
+    field_type = field_info.get("type")
+    if isinstance(field_type, list):
+        types = [str(t) for t in field_type if t != "null"]
+        return ("|".join(types) if types else "any"), direct_desc
+    if isinstance(field_type, str):
+        return field_type, direct_desc
+
+    # Structural fallback when explicit type is omitted
+    if "properties" in field_info or "additionalProperties" in field_info:
+        return "object", direct_desc
+    if "items" in field_info:
+        return "array", direct_desc
+
+    return "any", direct_desc
+
+
 def extract_schemas() -> dict[str, dict[str, Any]]:
     """Extract schemas and metadata from all registered executors."""
     registry = create_default_registry()
 
-    # Add KnowledgeExecutor — conditionally loaded at runtime but always in docs
-    from workflows_mcp.engine.executors_knowledge import KnowledgeExecutor
+    # Add MemoryExecutor — conditionally loaded at runtime but always in docs
+    from workflows_mcp.engine.executors_memory import MemoryExecutor
 
-    registry.register(KnowledgeExecutor())
+    registry.register(MemoryExecutor())
 
     result = {}
 
@@ -87,15 +156,10 @@ def extract_schemas() -> dict[str, dict[str, Any]]:
         optional_fields = []
 
         for field_name, field_info in properties.items():
-            field_type = field_info.get("type", "any")
-            if isinstance(field_type, list):
-                types = [t.get("type", "any") if isinstance(t, dict) else t for t in field_type]
-                field_type = "|".join(str(t) for t in types if t != "null")
-
-            desc = field_info.get("description", "")
+            field_type, desc = extract_type_and_description(field_info, input_schema)
             default = field_info.get("default")
 
-            entry = {"name": field_name, "type": str(field_type), "description": desc}
+            entry = {"name": field_name, "type": field_type, "description": desc}
             if default is not None and field_name not in required:
                 entry["default"] = default
 
@@ -106,14 +170,14 @@ def extract_schemas() -> dict[str, dict[str, Any]]:
 
         # Get output fields
         out_props = output_schema.get("properties", {})
-        output_fields = [
-            {
+        output_fields = []
+        for k, v in out_props.items():
+            t, d = extract_type_and_description(v, output_schema)
+            output_fields.append({
                 "name": k,
-                "type": str(v.get("type", "any")),
-                "description": v.get("description", ""),
-            }
-            for k, v in out_props.items()
-        ]
+                "type": t,
+                "description": d,
+            })
 
         # Extract description from docstring (first line)
         description = "Execute block operations"

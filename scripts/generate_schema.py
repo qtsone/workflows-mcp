@@ -21,10 +21,10 @@ def main() -> None:
     # Create registry with all built-in executors
     registry = create_default_registry()
 
-    # Add KnowledgeExecutor — conditionally loaded at runtime but always in schema
-    from workflows_mcp.engine.executors_knowledge import KnowledgeExecutor
+    # Add MemoryExecutor — conditionally loaded at runtime but always in schema
+    from workflows_mcp.engine.executors_memory import MemoryExecutor
 
-    registry.register(KnowledgeExecutor())
+    registry.register(MemoryExecutor())
 
     # Generate complete schema
     schema = registry.generate_workflow_schema()

@@ -1,12 +1,12 @@
-"""Graph traversal engine for the Knowledge executor.
+"""Graph traversal engine for Memory and graph retrieval handlers.
 
 Provides BFS/DFS subgraph traversal, shortest-path search, and per-entity
 statistics against the ``knowledge_relations`` and ``knowledge_entities``
 tables.
 
 All public helpers accept a connected ``DatabaseBackendBase`` instance and
-return typed ``GraphResult`` payloads.  The executor handlers in
-``executors_knowledge.py`` delegate here and remain thin.
+return typed ``GraphResult`` payloads.  The memory service and executor
+handlers delegate here and remain thin.
 
 Temporal semantics
 ------------------
@@ -207,7 +207,7 @@ async def _resolve_entity_id(entity_ref: str, backend: Any) -> str | None:
         # Verify existence
         result = await backend.query(_ENTITY_SELECT, (entity_ref,))
         return str(result.rows[0]["id"]) if result.rows else None
-    except (ValueError, AttributeError):
+    except (ValueError, TypeError, AttributeError):
         pass
 
     # Name-based lookup
@@ -558,28 +558,68 @@ async def graph_path(
 
 
 async def graph_stats(
-    entity_ref: str,
+    entity_ref: str | None,
     backend: Any,
     *,
     as_of: datetime | None = None,
 ) -> GraphResult:
     """Return degree and connectivity statistics for an entity.
 
-    Computes:
+    When ``entity_ref`` is provided, computes:
     - ``out_degree``: number of outgoing edges
     - ``in_degree``: number of incoming edges
     - ``total_degree``: sum of in + out
     - ``distinct_relation_types``: count of unique relation types on all edges
 
     The ``nodes`` list contains the queried entity; ``edges`` is empty.
-    All counts are returned in the first ``nodes`` entry's metadata via a
-    separate ``diagnostics`` key — the caller reads them from ``diagnostics``
-    extended fields (we encode them into the diagnostics mapping as
-    additional keys beyond the standard three).
+    All counts are returned in ``diagnostics`` as additional keys.
+
+    When ``entity_ref`` is omitted, returns global graph statistics:
+    - ``entity_count``: total entities
+    - ``relation_count``: total relations (time-filtered when ``as_of`` is set)
+    - ``distinct_relation_types``: unique relation types (time-filtered)
 
     Unknown entities produce an empty result (not an error).
     """
     start_ms = time.monotonic()
+
+    if not entity_ref:
+        temporal_clause = ""
+        params: list[Any] = []
+        if as_of is not None:
+            temporal_clause = (
+                "WHERE (kr.valid_from IS NULL OR kr.valid_from <= $1::timestamptz)\n"
+                "  AND (kr.valid_to IS NULL OR kr.valid_to >= $1::timestamptz)"
+            )
+            params.append(as_of)
+
+        global_sql = f"""
+            SELECT
+                (SELECT COUNT(*)::bigint FROM knowledge_entities) AS entity_count,
+                COUNT(*)::bigint AS relation_count,
+                COUNT(DISTINCT kr.relation_type)::bigint AS distinct_relation_types
+            FROM knowledge_relations kr
+            {temporal_clause}
+        """
+        result = await backend.query(global_sql, tuple(params))
+        row = result.rows[0] if result.rows else {}
+
+        diag: dict[str, Any] = {
+            "expanded_nodes": 0,
+            "pruned_edges": 0,
+            "latency_ms": (time.monotonic() - start_ms) * 1000,
+            "entity_count": int(row.get("entity_count") or 0),
+            "relation_count": int(row.get("relation_count") or 0),
+            "distinct_relation_types": int(row.get("distinct_relation_types") or 0),
+        }
+
+        return GraphResult(
+            nodes=[],
+            edges=[],
+            paths=[],
+            traversal_count=0,
+            diagnostics=diag,  # type: ignore[arg-type]
+        )
 
     entity_id = await _resolve_entity_id(entity_ref, backend)
     if entity_id is None:

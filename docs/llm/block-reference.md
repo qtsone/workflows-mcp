@@ -24,7 +24,7 @@ Field names are **exact** - use them precisely in your workflows.
 | WriteJSONState | path, data |
 | MergeJSONState | path, updates |
 | Sql | engine |
-| Knowledge | op |
+| Memory | operation |
 
 ### Common Field Name Mistakes
 
@@ -48,7 +48,7 @@ Field names are **exact** - use them precisely in your workflows.
 ### Optional Inputs
 
 - **`working_dir`** (string) *(default: ``)*: Working directory (empty = current dir)
-- **`timeout`** (any) *(default: `120`)*: Timeout in seconds (or interpolation string)
+- **`timeout`** (integer|string) *(default: `120`)*: Timeout in seconds (or interpolation string)
 - **`env`** (object): Environment variables
 - **`capture_output`** (boolean) *(default: `True`)*: Capture stdout/stderr
 - **`shell`** (boolean) *(default: `True`)*: Execute via shell
@@ -81,8 +81,8 @@ Field names are **exact** - use them precisely in your workflows.
 
 ### Optional Inputs
 
-- **`inputs`** (any): Inputs to pass to child workflow (variables resolved in parent context)
-- **`timeout_ms`** (any): Optional timeout for child execution in milliseconds
+- **`inputs`** (object|string): Inputs to pass to child workflow (variables resolved in parent context)
+- **`timeout_ms`** (integer): Optional timeout for child execution in milliseconds
 
 ### Example
 
@@ -109,9 +109,9 @@ Field names are **exact** - use them precisely in your workflows.
 ### Optional Inputs
 
 - **`encoding`** (string) *(default: `utf-8`)*: Text encoding
-- **`mode`** (any): File permissions (Unix only, e.g., 0o644, 644, or '644')
-- **`overwrite`** (any) *(default: `True`)*: Whether to overwrite existing file (or interpolation string)
-- **`create_parents`** (any) *(default: `True`)*: Create parent directories if missing (or interpolation string)
+- **`mode`** (integer|string): File permissions (Unix only, e.g., 0o644, 644, or '644')
+- **`overwrite`** (boolean|string) *(default: `True`)*: Whether to overwrite existing file (or interpolation string)
+- **`create_parents`** (boolean|string) *(default: `True`)*: Create parent directories if missing (or interpolation string)
 
 ### Outputs
 
@@ -140,15 +140,15 @@ Field names are **exact** - use them precisely in your workflows.
 ### Required Inputs
 
 - **`path`** (string): Path to file to edit (relative or absolute)
-- **`operations`** (any): List of edit operations to apply sequentially
+- **`operations`** (array|string): List of edit operations to apply sequentially
 
 ### Optional Inputs
 
 - **`encoding`** (string) *(default: `utf-8`)*: File encoding
-- **`create_if_missing`** (any) *(default: `False`)*: Create file if it doesn't exist (or interpolation string)
-- **`backup`** (any) *(default: `True`)*: Create .bak backup before editing (or interpolation string)
-- **`dry_run`** (any) *(default: `False`)*: Preview changes without applying (returns diff) (or interpolation string)
-- **`atomic`** (any) *(default: `True`)*: All operations succeed or none applied (or interpolation string)
+- **`create_if_missing`** (boolean|string) *(default: `False`)*: Create file if it doesn't exist (or interpolation string)
+- **`backup`** (boolean|string) *(default: `True`)*: Create .bak backup before editing (or interpolation string)
+- **`dry_run`** (boolean|string) *(default: `False`)*: Preview changes without applying (returns diff) (or interpolation string)
+- **`atomic`** (boolean|string) *(default: `True`)*: All operations succeed or none applied (or interpolation string)
 
 ### Outputs
 
@@ -157,8 +157,8 @@ Field names are **exact** - use them precisely in your workflows.
 - **`lines_added`** (integer): Number of lines added
 - **`lines_removed`** (integer): Number of lines removed
 - **`lines_modified`** (integer): Number of lines modified
-- **`diff`** (any): Unified diff of changes (always provided)
-- **`backup_path`** (any): Path to backup file (if backup=true)
+- **`diff`** (string): Unified diff of changes (always provided)
+- **`backup_path`** (string): Path to backup file (if backup=true)
 - **`success`** (boolean): True if all operations succeeded
 - **`errors`** (array): Error messages if atomic=false and some operations failed
 
@@ -183,17 +183,17 @@ Field names are **exact** - use them precisely in your workflows.
 
 ### Optional Inputs
 
-- **`path`** (any): Single file path to read (absolute or relative). Mutually exclusive with patterns. Use for single-file reads.
-- **`patterns`** (any): Glob patterns for files to read (e.g., ['*.py', '**/*.ts', 'docs/**/*.md'])
-- **`base_path`** (any) *(default: `.`)*: Base directory to search from (relative or absolute). Used with patterns.
-- **`mode`** (any) *(default: `full`)*: Output mode: 'full' (complete content), 'outline' (symbol tree with line ranges), 'summary' (outline + docstrings)
+- **`path`** (string): Single file path to read (absolute or relative). Mutually exclusive with patterns. Use for single-file reads.
+- **`patterns`** (array|string): Glob patterns for files to read (e.g., ['*.py', '**/*.ts', 'docs/**/*.md'])
+- **`base_path`** (string) *(default: `.`)*: Base directory to search from (relative or absolute). Used with patterns.
+- **`mode`** (string) *(default: `full`)*: Output mode: 'full' (complete content), 'outline' (symbol tree with line ranges), 'summary' (outline + docstrings)
 - **`exclude_patterns`** (array): Additional patterns to exclude beyond defaults (e.g., ['*test*', '*.min.js'])
-- **`max_files`** (any) *(default: `20`)*: Maximum number of files to read (1-100, supports interpolation)
-- **`max_file_size_kb`** (any) *(default: `100`)*: Maximum individual file size in KB (supports interpolation)
-- **`respect_gitignore`** (any) *(default: `True`)*: Whether to respect .gitignore patterns (supports interpolation)
+- **`max_files`** (integer|string) *(default: `20`)*: Maximum number of files to read (1-100, supports interpolation)
+- **`max_file_size_kb`** (integer|string) *(default: `100`)*: Maximum individual file size in KB (supports interpolation)
+- **`respect_gitignore`** (boolean|string) *(default: `True`)*: Whether to respect .gitignore patterns (supports interpolation)
 - **`encoding`** (string) *(default: `utf-8`)*: Text encoding for reading files
-- **`line_start`** (any): Start line for line-range reading (1-indexed, inclusive). Only used with 'path' in 'full' mode. Supports interpolation.
-- **`line_end`** (any): End line for line-range reading (1-indexed, inclusive). Only used with 'path' in 'full' mode. Supports interpolation.
+- **`line_start`** (integer|string): Start line for line-range reading (1-indexed, inclusive). Only used with 'path' in 'full' mode. Supports interpolation.
+- **`line_end`** (integer|string): End line for line-range reading (1-indexed, inclusive). Only used with 'path' in 'full' mode. Supports interpolation.
 
 ### Outputs
 
@@ -206,7 +206,7 @@ Field names are **exact** - use them precisely in your workflows.
 - **`sections`** (array): Structured section tree from outline mode (nested dicts with children)
 - **`max_depth`** (integer): Maximum heading depth in document structure
 - **`total_sections`** (integer): Total number of sections across all levels
-- **`frontmatter`** (any): Parsed YAML frontmatter from document (None if absent)
+- **`frontmatter`** (object): Parsed YAML frontmatter from document (None if absent)
 - **`references`** (array): Extracted references (wikilinks, file paths) from document content
 - **`code_blocks`** (array): Fenced code block locations (lang, start_line, end_line)
 
@@ -234,11 +234,11 @@ Field names are **exact** - use them precisely in your workflows.
 
 - **`method`** (string) *(default: `POST`)*: HTTP method (GET, POST, PUT, DELETE, PATCH, etc.)
 - **`headers`** (object): HTTP headers (supports ${ENV_VAR} substitution in values)
-- **`json`** (any): JSON request body (mutually exclusive with content). Use 'json' in YAML for httpx compatibility.
-- **`content`** (any): Text or binary request body (mutually exclusive with json). Matches httpx parameter name.
-- **`timeout`** (any) *(default: `30`)*: Request timeout in seconds (or interpolation string)
-- **`follow_redirects`** (any) *(default: `True`)*: Whether to follow HTTP redirects (or interpolation string)
-- **`verify_ssl`** (any) *(default: `True`)*: Whether to verify SSL certificates (or interpolation string)
+- **`json`** (object): JSON request body (mutually exclusive with content). Use 'json' in YAML for httpx compatibility.
+- **`content`** (string): Text or binary request body (mutually exclusive with json). Matches httpx parameter name.
+- **`timeout`** (integer|string) *(default: `30`)*: Request timeout in seconds (or interpolation string)
+- **`follow_redirects`** (boolean|string) *(default: `True`)*: Whether to follow HTTP redirects (or interpolation string)
+- **`verify_ssl`** (boolean|string) *(default: `True`)*: Whether to verify SSL certificates (or interpolation string)
 
 ### Outputs
 
@@ -280,19 +280,19 @@ Without this, execution fails with 'LLM configuration required' error.
 
 ### Optional Inputs
 
-- **`profile`** (any): Profile name from ~/.workflows/llm-config.yml (e.g., 'cloud', 'local', 'default'). If specified, provider/model are loaded from config. Mutually exclusive with direct provider/model specification.
-- **`provider`** (any): LLM provider (enum or interpolation string). Required if profile not specified. Ignored if profile specified.
-- **`model`** (any): Model name (e.g., gpt-4o, claude-3-5-sonnet-20241022, gemini-2.0-flash-exp). Required if profile not specified. Can override profile model if both specified.
-- **`system_instructions`** (any): System instructions (optional)
-- **`api_key`** (any): API key (pre-resolved from {{secrets.PROVIDER_API_KEY}})
-- **`api_url`** (any): Custom API endpoint URL (optional, for custom deployments)
+- **`profile`** (string): Profile name from ~/.workflows/llm-config.yml (e.g., 'cloud', 'local', 'default'). If specified, provider/model are loaded from config. Mutually exclusive with direct provider/model specification.
+- **`provider`** (string): LLM provider (enum or interpolation string). Required if profile not specified. Ignored if profile specified.
+- **`model`** (string): Model name (e.g., gpt-4o, claude-3-5-sonnet-20241022, gemini-2.0-flash-exp). Required if profile not specified. Can override profile model if both specified.
+- **`system_instructions`** (string): System instructions (optional)
+- **`api_key`** (string): API key (pre-resolved from {{secrets.PROVIDER_API_KEY}})
+- **`api_url`** (string): Custom API endpoint URL (optional, for custom deployments)
 - **`extra_headers`** (object): Custom HTTP headers for provider requests (resolved from config)
-- **`response_schema`** (any): JSON Schema for expected response structure (dict or JSON string, enables validation and retry)
-- **`max_retries`** (any) *(default: `3`)*: Maximum number of retry attempts (or interpolation string)
-- **`retry_delay`** (any) *(default: `2.0`)*: Initial retry delay in seconds (exponential backoff, or interpolation string)
-- **`timeout`** (any) *(default: `60`)*: Request timeout in seconds (or interpolation string)
-- **`temperature`** (any): Sampling temperature 0.0-2.0 (or interpolation string)
-- **`max_tokens`** (any): Maximum tokens to generate (or interpolation string)
+- **`response_schema`** (object|string): JSON Schema for expected response structure (dict or JSON string, enables validation and retry)
+- **`max_retries`** (integer|string) *(default: `3`)*: Maximum number of retry attempts (or interpolation string)
+- **`retry_delay`** (number|string) *(default: `2.0`)*: Initial retry delay in seconds (exponential backoff, or interpolation string)
+- **`timeout`** (integer|string) *(default: `60`)*: Request timeout in seconds (or interpolation string)
+- **`temperature`** (number|string): Sampling temperature 0.0-2.0 (or interpolation string)
+- **`max_tokens`** (integer|string): Maximum tokens to generate (or interpolation string)
 - **`validation_prompt_template`** (string) *(default: `Your previous response failed JSON schema validation.
 
 Error: {validation_error}
@@ -328,12 +328,12 @@ Please provide a valid response that conforms to the schema.`)*: Template for va
 ### Optional Inputs
 
 - **`profile`** (string) *(default: `embedding`)*: Profile name from ~/.workflows/llm-config.yml (defaults to 'embedding')
-- **`model`** (any): Override embedding model (uses profile model if not specified)
-- **`text`** (any): Single text to generate embedding for. Mutually exclusive with 'texts'.
-- **`texts`** (any): List of texts to embed in a single API call (batch mode). Mutually exclusive with 'text'.
-- **`api_key`** (any): Override API key (uses profile api_key_secret if not specified)
-- **`api_url`** (any): Override API endpoint URL (uses profile api_url if not specified)
-- **`timeout`** (any) *(default: `30`)*: Request timeout in seconds
+- **`model`** (string): Override embedding model (uses profile model if not specified)
+- **`text`** (string): Single text to generate embedding for. Mutually exclusive with 'texts'.
+- **`texts`** (array): List of texts to embed in a single API call (batch mode). Mutually exclusive with 'text'.
+- **`api_key`** (string): Override API key (uses profile api_key_secret if not specified)
+- **`api_url`** (string): Override API endpoint URL (uses profile api_url if not specified)
+- **`timeout`** (integer|string) *(default: `30`)*: Request timeout in seconds
 
 ### Outputs
 
@@ -377,21 +377,21 @@ Without this, execution fails with configuration error.
 
 ### Optional Inputs
 
-- **`prompt`** (any): Text prompt (required for generate/edit, not used for variation)
-- **`profile`** (any): Profile name from ~/.workflows/llm-config.yml. If specified, provider/model are loaded from config. Mutually exclusive with direct provider/model specification.
-- **`provider`** (any): Image provider (openai, openai_compatible). Required if profile not specified.
-- **`model`** (any) *(default: `dall-e-3`)*: Model to use (dall-e-3, dall-e-2, or custom model name)
-- **`api_url`** (any): Custom API endpoint URL (required for openai_compatible)
-- **`api_key`** (any): API key (pre-resolved from {{secrets.OPENAI_API_KEY}})
+- **`prompt`** (string): Text prompt (required for generate/edit, not used for variation)
+- **`profile`** (string): Profile name from ~/.workflows/llm-config.yml. If specified, provider/model are loaded from config. Mutually exclusive with direct provider/model specification.
+- **`provider`** (string): Image provider (openai, openai_compatible). Required if profile not specified.
+- **`model`** (string) *(default: `dall-e-3`)*: Model to use (dall-e-3, dall-e-2, or custom model name)
+- **`api_url`** (string): Custom API endpoint URL (required for openai_compatible)
+- **`api_key`** (string): API key (pre-resolved from {{secrets.OPENAI_API_KEY}})
 - **`operation`** (string) *(default: `generate`)*: Operation to perform
 - **`size`** (string) *(default: `1024x1024`)*: Image size (e.g., 1024x1024, 256x256, 512x512)
-- **`quality`** (any) *(default: `standard`)*: Image quality (dall-e-3 only)
-- **`style`** (any) *(default: `vivid`)*: Image style (dall-e-3 only)
+- **`quality`** (string) *(default: `standard`)*: Image quality (dall-e-3 only)
+- **`style`** (string) *(default: `vivid`)*: Image style (dall-e-3 only)
 - **`response_format`** (string) *(default: `url`)*: Format of the response
-- **`n`** (any) *(default: `1`)*: Number of images to generate (supports interpolation)
-- **`image`** (any): Path to base image (required for edit/variation)
-- **`mask`** (any): Path to mask image (optional for edit)
-- **`output_file`** (any): Path to save the generated image(s). If n>1, appends index.
+- **`n`** (integer|string) *(default: `1`)*: Number of images to generate (supports interpolation)
+- **`image`** (string): Path to base image (required for edit/variation)
+- **`mask`** (string): Path to mask image (optional for edit)
+- **`output_file`** (string): Path to save the generated image(s). If n>1, appends index.
 
 ### Outputs
 
@@ -450,7 +450,7 @@ Without this, execution fails with configuration error.
 
 ### Optional Inputs
 
-- **`required`** (any) *(default: `False`)*: Whether file must exist (False returns empty dict, or interpolation string)
+- **`required`** (boolean|string) *(default: `False`)*: Whether file must exist (False returns empty dict, or interpolation string)
 
 ### Outputs
 
@@ -481,7 +481,7 @@ Without this, execution fails with configuration error.
 
 ### Optional Inputs
 
-- **`create_parents`** (any) *(default: `True`)*: Create parent directories if missing (or interpolation string)
+- **`create_parents`** (boolean|string) *(default: `True`)*: Create parent directories if missing (or interpolation string)
 
 ### Outputs
 
@@ -514,8 +514,8 @@ Without this, execution fails with configuration error.
 
 ### Optional Inputs
 
-- **`create_if_missing`** (any) *(default: `True`)*: Create file if it doesn't exist (or interpolation string)
-- **`create_parents`** (any) *(default: `True`)*: Create parent directories if missing (or interpolation string)
+- **`create_if_missing`** (boolean|string) *(default: `True`)*: Create file if it doesn't exist (or interpolation string)
+- **`create_parents`** (boolean|string) *(default: `True`)*: Create parent directories if missing (or interpolation string)
 
 ### Outputs
 
@@ -547,25 +547,25 @@ Without this, execution fails with configuration error.
 
 ### Optional Inputs
 
-- **`path`** (any): SQLite: Database file path. Use ':memory:' for in-memory DB.
-- **`host`** (any): Database host
-- **`port`** (any): Database port (default: 5432 for PostgreSQL, 3306 for MariaDB)
-- **`database`** (any): Database name
-- **`username`** (any): Database username
-- **`password`** (any): Database password. Use {{secrets.DB_PASSWORD}} for security.
-- **`sql`** (any): 
+- **`path`** (string): SQLite: Database file path. Use ':memory:' for in-memory DB.
+- **`host`** (string): Database host
+- **`port`** (integer|string): Database port (default: 5432 for PostgreSQL, 3306 for MariaDB)
+- **`database`** (string): Database name
+- **`username`** (string): Database username
+- **`password`** (string): Database password. Use {{secrets.DB_PASSWORD}} for security.
+- **`sql`** (string): 
         SQL statement(s) to execute (Raw SQL mode).
         - Use ? for positional params (SQLite) or $1, $2 for PostgreSQL
         - MariaDB uses %s for positional params
         - Multi-statement scripts: separate with semicolons
         Mutually exclusive with 'model' field.
         
-- **`params`** (any): 
+- **`params`** (array|object): 
         Query parameters for raw SQL (prevents SQL injection).
         - List for positional: [value1, value2]
         - Dict for named: {"name": value} (PostgreSQL/MariaDB)
         
-- **`model`** (any): 
+- **`model`** (object|string): 
         Model schema for CRUD operations (Model mode).
         Defines table structure with columns, types, indexes.
         Mutually exclusive with 'sql' field.
@@ -578,7 +578,7 @@ Without this, execution fails with configuration error.
             indexes:
               - columns: [name]
         
-- **`op`** (any): 
+- **`op`** (string): 
         CRUD operation (required when using model mode).
         - schema: Create table + indexes
         - insert: Insert row (requires data)
@@ -587,33 +587,33 @@ Without this, execution fails with configuration error.
         - delete: Delete rows (requires where)
         - upsert: Insert or update on conflict (requires data and conflict)
         
-- **`data`** (any): Row data for insert/update/upsert operations.
-- **`where`** (any): 
+- **`data`** (object): Row data for insert/update/upsert operations.
+- **`where`** (object): 
         Filter conditions for select/update/delete.
         - Simple equality: {status: running}
         - Operators: {priority: {">": 5}}
         - IN: {type: {in: [a, b, c]}}
         - IS NULL: {deleted_at: {is: null}}
         
-- **`order`** (any): Sort order for select. Format: ["column:asc", "column:desc"]
-- **`limit`** (any): Maximum rows to return (select).
-- **`offset`** (any): Rows to skip (select).
-- **`columns`** (any): Specific columns to select (default: all columns).
-- **`conflict`** (any): Conflict columns for upsert (usually primary key).
-- **`init_sql`** (any): 
+- **`order`** (array|string): Sort order for select. Format: ["column:asc", "column:desc"]
+- **`limit`** (integer|string): Maximum rows to return (select).
+- **`offset`** (integer|string): Rows to skip (select).
+- **`columns`** (array|string): Specific columns to select (default: all columns).
+- **`conflict`** (array): Conflict columns for upsert (usually primary key).
+- **`init_sql`** (string): 
         DDL to execute before the main operation (idempotent).
         Use CREATE TABLE IF NOT EXISTS, CREATE INDEX IF NOT EXISTS, etc.
         
-- **`isolation_level`** (any): 
+- **`isolation_level`** (string): 
         Transaction isolation level.
         - PostgreSQL/MariaDB: read_uncommitted, read_committed, repeatable_read, serializable
         - SQLite: immediate (recommended for writes), exclusive, or default (deferred)
         
-- **`ssl`** (any) *(default: `False`)*: Enable SSL/TLS. Boolean or sslmode string (require, verify-ca, verify-full)
-- **`timeout`** (any) *(default: `30`)*: Query execution timeout in seconds
-- **`connect_timeout`** (any) *(default: `10`)*: Connection establishment timeout in seconds
-- **`pool_size`** (any) *(default: `5`)*: Connection pool size (PostgreSQL/MariaDB only)
-- **`sqlite_pragmas`** (any): 
+- **`ssl`** (boolean|string) *(default: `False`)*: Enable SSL/TLS. Boolean or sslmode string (require, verify-ca, verify-full)
+- **`timeout`** (integer|string) *(default: `30`)*: Query execution timeout in seconds
+- **`connect_timeout`** (integer|string) *(default: `10`)*: Connection establishment timeout in seconds
+- **`pool_size`** (integer|string) *(default: `5`)*: Connection pool size (PostgreSQL/MariaDB only)
+- **`sqlite_pragmas`** (object): 
         SQLite PRAGMA settings applied on connection.
         Defaults: journal_mode=WAL, busy_timeout=30000, synchronous=NORMAL, foreign_keys=ON
         
@@ -625,7 +625,7 @@ Without this, execution fails with configuration error.
 - **`columns`** (array): Column names from result set
 - **`row_count`** (integer): Number of rows returned (select) or affected (insert/update/delete)
 - **`affected_rows`** (integer): Rows affected by INSERT/UPDATE/DELETE
-- **`last_insert_id`** (any): Last inserted row ID (auto-increment)
+- **`last_insert_id`** (integer): Last inserted row ID (auto-increment)
 - **`success`** (boolean): Operation completed successfully
 - **`engine`** (string): Database engine used
 - **`execution_time_ms`** (number): Query execution time in milliseconds
@@ -677,65 +677,35 @@ Without this, execution fails with configuration error.
 
 ---
 
-## Knowledge
+## Memory
 
-**Description**: Executor for knowledge operations against PostgreSQL.
+**Description**: Unified memory block executor.
 
 ### Required Inputs
 
-- **`op`** (string): Operation to perform
+- **`operation`** (string): Memory operation
 
 ### Optional Inputs
 
-- **`host`** (string): PostgreSQL host (env: KNOWLEDGE_DB_HOST)
-- **`port`** (any): PostgreSQL port (env: KNOWLEDGE_DB_PORT)
-- **`database`** (string): PostgreSQL database name (env: KNOWLEDGE_DB_NAME)
-- **`username`** (any): PostgreSQL username (env: KNOWLEDGE_DB_USER)
-- **`password`** (any): PostgreSQL password (env: KNOWLEDGE_DB_PASSWORD)
-- **`query`** (any): Search query text (required for search/context)
-- **`source`** (any): Filter by source name (exact or prefix with *)
-- **`categories`** (any): Filter by category UUIDs
-- **`min_confidence`** (number) *(default: `0.3`)*: Minimum confidence threshold
-- **`lifecycle_state`** (string) *(default: `ACTIVE`)*: Filter by lifecycle state (default: ACTIVE)
-- **`limit`** (any) *(default: `10`)*: Maximum number of results
-- **`max_tokens`** (any) *(default: `4000`)*: Token budget for context assembly
-- **`diversity`** (boolean) *(default: `False`)*: Use MMR for diversity in context results
-- **`content`** (any): Proposition content to store
-- **`confidence`** (number) *(default: `0.5`)*: Confidence score for stored proposition
-- **`where`** (any): Filter conditions for recall/forget (key-value pairs)
-- **`order`** (any): Order by fields (e.g., ['relevance_score:desc'])
-- **`created_after`** (any): Filter: propositions created after this ISO date (recall/forget)
-- **`created_before`** (any): Filter: propositions created before this ISO date (recall/forget)
-- **`proposition_ids`** (any): UUIDs of propositions to archive
-- **`reason`** (any): Reason for archiving (stored in metadata)
-- **`embedding_profile`** (string) *(default: `embedding`)*: LLM config profile for embeddings
+- **`host`** (string): Memory PostgreSQL host. Defaults to MEMORY_DB_HOST or localhost.
+- **`port`** (integer): Memory PostgreSQL port. Defaults to MEMORY_DB_PORT or 5432.
+- **`database`** (string): Memory PostgreSQL database name. Defaults to MEMORY_DB_NAME or memory_db.
+- **`username`** (string): Memory PostgreSQL username. Defaults to MEMORY_DB_USER when set.
+- **`password`** (string): Memory PostgreSQL password. Defaults to MEMORY_DB_PASSWORD when set.
+- **`scope`** (object): Scope envelope (room/corridor/global and retrieval boundaries).
+- **`query`** (object): Query payload for retrieval operations (text, strategy, and limits).
+- **`record`** (object): Record payload for ingest/update operations (memory content and metadata).
+- **`graph`** (object): Graph mutation payload (entities/relations for upsert or delete).
+- **`maintenance`** (object): Maintenance payload for validate/supersede/archive/maintain operations.
+- **`response`** (object): Response shaping controls (include sections, verbosity, and formatting flags).
 
 ### Outputs
 
 - **`meta`** (object): Executor-specific metadata fields (exit_code, tokens_used, etc.)
-- **`success`** (boolean): Whether the operation succeeded
-- **`error`** (any): Error message if failed
-- **`rows`** (array): Result rows (search/recall)
-- **`columns`** (array): Column names in the result rows
-- **`row_count`** (integer): Number of result rows
-- **`proposition_ids`** (array): UUIDs of stored propositions
-- **`stored_count`** (integer): Number of propositions stored
-- **`archived_count`** (integer): Number archived
-- **`skipped_count`** (integer): Number skipped (immune)
-- **`context_text`** (string): Clean content assembled text
-- **`proposition_count`** (integer): Propositions included in context
-- **`tokens_used`** (integer): Estimated tokens used
-
-### Example
-
-```yaml
-- id: search_kb
-  type: Knowledge
-  inputs:
-    op: search
-    query: "deployment patterns"
-    limit: 10
-```
+- **`success`** (boolean): Success
+- **`error`** (string): Error message when the operation fails.
+- **`operation`** (string): Operation
+- **`result`** (object): Operation result envelope returned by the memory service.
 
 ---
 

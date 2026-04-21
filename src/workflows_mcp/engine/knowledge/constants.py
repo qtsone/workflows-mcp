@@ -1,13 +1,13 @@
 """Constants for the Knowledge executor.
 
-Enums and defaults for knowledge proposition management.
+Enums and defaults for knowledge memory management.
 """
 
 from enum import Enum
 
 
 class LifecycleState(str, Enum):
-    """Proposition lifecycle states matching knowledge_propositions.lifecycle_state."""
+    """Memory lifecycle states matching knowledge_memories.lifecycle_state."""
 
     ACTIVE = "ACTIVE"
     QUARANTINED = "QUARANTINED"
@@ -16,7 +16,7 @@ class LifecycleState(str, Enum):
 
 
 class Authority(str, Enum):
-    """Proposition authority levels matching knowledge_propositions.authority."""
+    """Memory authority levels matching knowledge_memories.authority."""
 
     EXTRACTED = "EXTRACTED"
     COMMUNITY_SUMMARY = "COMMUNITY_SUMMARY"

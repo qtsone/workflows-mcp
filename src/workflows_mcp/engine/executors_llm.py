@@ -1656,7 +1656,7 @@ async def compute_embedding(
 ) -> tuple[list[float], str, int, dict[str, int] | None]:
     """Compute a text embedding using the configured LLM profile.
 
-    Shared helper used by both EmbeddingExecutor and KnowledgeExecutor.
+    Shared helper used by both EmbeddingExecutor and MemoryExecutor.
     Resolves profile configuration via LLMConfigLoader and calls the
     OpenAI-compatible embeddings endpoint.
 

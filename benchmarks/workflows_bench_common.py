@@ -44,30 +44,30 @@ class BenchmarkDbConfig:
 def add_db_args(parser: argparse.ArgumentParser) -> None:
     parser.add_argument(
         "--db-host",
-        default=_env_default("KNOWLEDGE_DB_HOST", "PGHOST", default="localhost"),
+        default=_env_default("MEMORY_DB_HOST", "PGHOST", default="localhost"),
     )
     parser.add_argument(
         "--db-port",
         type=int,
-        default=int(_env_default("KNOWLEDGE_DB_PORT", "PGPORT", default="5432") or "5432"),
+        default=int(_env_default("MEMORY_DB_PORT", "PGPORT", default="5432") or "5432"),
     )
     parser.add_argument(
         "--db-name",
         default=_env_default(
-            "KNOWLEDGE_DB_NAME",
+            "MEMORY_DB_NAME",
             "PGDATABASE",
             "PGUSER",
-            default="knowledge_db",
+            default="memory_db",
         ),
-        help="PostgreSQL database used by workflows-mcp knowledge.",
+        help="PostgreSQL database used by the workflows-mcp memory store.",
     )
     parser.add_argument(
         "--db-user",
-        default=_env_default("KNOWLEDGE_DB_USER", "PGUSER"),
+        default=_env_default("MEMORY_DB_USER", "PGUSER"),
     )
     parser.add_argument(
         "--db-password",
-        default=_env_default("KNOWLEDGE_DB_PASSWORD", "PGPASSWORD"),
+        default=_env_default("MEMORY_DB_PASSWORD", "PGPASSWORD"),
     )
     parser.add_argument(
         "--db-ssl",
@@ -168,7 +168,7 @@ async def _upsert_source(backend: Any, source_name: str, source_type: str) -> st
         (str(uuid.uuid4()), source_name, source_type),
     )
     if not result.rows:
-        raise RuntimeError(f"Failed to upsert knowledge source: {source_name}")
+        raise RuntimeError(f"Failed to upsert memory source: {source_name}")
     return str(result.rows[0]["id"])
 
 
@@ -195,19 +195,19 @@ async def ingest_corpus(
     source_id = await _upsert_source(backend, source_name, source_type)
 
     item_rows: list[tuple[str, str, str, str]] = []
-    proposition_rows: list[tuple[Any, ...]] = []
+    memory_rows: list[tuple[Any, ...]] = []
 
     for position, (text, corpus_id, vector) in enumerate(
         zip(corpus_texts, corpus_ids, embeddings, strict=True)
     ):
         item_id = str(uuid.uuid4())
-        proposition_id = str(uuid.uuid4())
+        memory_id = str(uuid.uuid4())
         item_path = f"{position}:{corpus_id}"
 
         item_rows.append((item_id, source_id, item_path, corpus_id))
-        proposition_rows.append(
+        memory_rows.append(
             (
-                proposition_id,
+            memory_id,
                 item_id,
                 text,
                 str(vector),
@@ -233,7 +233,7 @@ async def ingest_corpus(
 
     await backend.execute_many(
         """
-        INSERT INTO knowledge_propositions
+        INSERT INTO knowledge_memories
             (id, item_id, content, embedding, search_vector,
              authority, lifecycle_state, confidence,
              embedding_model, metadata,
@@ -245,7 +245,7 @@ async def ingest_corpus(
              $8, $9::jsonb,
              $10::uuid, $11, $12, $13)
         """,
-        proposition_rows,
+        memory_rows,
     )
 
 

@@ -175,18 +175,18 @@ async def _ingest_conversation_with_room(
         return
 
     item_rows: list[tuple[str, str, str, str]] = []
-    proposition_rows: list[tuple[Any, ...]] = []
+    memory_rows: list[tuple[Any, ...]] = []
 
     for position, (text, pid, vector) in enumerate(
         zip(corpus_texts, prefixed_ids, embeddings, strict=True)
     ):
         item_id = str(uuid.uuid4())
-        proposition_id = str(uuid.uuid4())
+        memory_id = str(uuid.uuid4())
         item_path = f"{position}:{pid}"
         item_rows.append((item_id, source_id, item_path, pid))
-        proposition_rows.append(
+        memory_rows.append(
             (
-                proposition_id,
+            memory_id,
                 item_id,
                 text,
                 str(vector),
@@ -213,7 +213,7 @@ async def _ingest_conversation_with_room(
     )
     await backend.execute_many(
         """
-        INSERT INTO knowledge_propositions
+        INSERT INTO knowledge_memories
             (id, item_id, content, embedding, search_vector,
              authority, lifecycle_state, confidence,
              embedding_model, metadata,
@@ -225,7 +225,7 @@ async def _ingest_conversation_with_room(
              $5, $6, $7, $8, $9::jsonb,
              $10::uuid, $11, $12, $13, $14, $15)
         """,
-        proposition_rows,
+        memory_rows,
     )
 
 

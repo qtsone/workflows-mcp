@@ -1,1392 +1,379 @@
 # Workflows MCP
 
-**Automate anything with simple YAML workflows for your AI assistant.**
+Run YAML workflows as MCP tools so agents can automate real tasks with one server.
 
-Workflows MCP is a [Model Context Protocol](https://modelcontextprotocol.io/) (MCP) server that lets you define powerful, reusable automation workflows in YAML and execute them through AI assistants like Claude. Think of it as GitHub Actions for your AI assistant—define your automation once, run it anywhere.
+## Why this project
 
----
+`workflows-mcp` gives MCP clients a reusable automation layer:
 
-## Table of Contents
+- Define tasks once in YAML and run them from any MCP-compatible client.
+- Orchestrate multi-step work with dependency-aware execution.
+- Support interactive runs (`Prompt` blocks) with pause/resume.
+- Keep secrets server-side via `WORKFLOW_SECRET_*` with redacted outputs.
+- Run synchronous or async jobs with queue visibility and cancellation.
 
-- [What Does This Give Me?](#what-does-this-give-me)
-- [Why Should I Use This?](#why-should-i-use-this)
-- [Quick Start](#quick-start)
-- [How It Works](#how-it-works)
-- [What Can I Build?](#what-can-i-build)
-- [Creating Your First Workflow](#creating-your-first-workflow)
-- [Key Features](#key-features)
-- [Built-in Workflows](#built-in-workflows)
-- [Available MCP Tools](#available-mcp-tools)
-- [Configuration Reference](#configuration-reference)
-- [Examples](#examples)
-- [Development](#development)
-- [Troubleshooting](#troubleshooting)
-- [License](#license)
+## Quickstart (5 minutes)
 
----
+### 1) Install
 
-## What Does This Give Me?
+Requires Python 3.12+.
 
-Workflows MCP transforms your AI assistant into an automation powerhouse. Instead of manually running commands or writing repetitive scripts, you define workflows in YAML, and your AI assistant executes them for you.
-
-**Real-world example:**
-```text
-You: "Run the Python CI pipeline on my project"
-Claude: *Executes workflow that sets up environment, runs linting, and runs tests*
-Claude: "✓ All checks passed! Linting: ✓, Tests: ✓, Coverage: 92%"
-```
-
----
-
-## Why Should I Use This?
-
-### For Non-Technical Users
-- **No coding required** - Define automation in simple YAML
-- **Reusable templates** - Use pre-built workflows for common tasks
-- **AI-powered execution** - Just ask your AI assistant in plain English
-
-### For Developers
-- **DRY principle** - Define once, use everywhere
-- **Parallel execution** - Automatic optimization of independent tasks
-- **Type-safe** - Validated inputs and outputs
-- **Composable** - Build complex workflows from simple building blocks
-
-### For Teams
-- **Shared automation** - Version control your workflows
-- **Consistent processes** - Everyone uses the same tested workflows
-- **Custom templates** - Build company-specific automation libraries
-
----
-
-## Quick Start
-
-### Step 1: Install
-
-Choose one of these installation methods:
-
-**Option A: Using `uv` (Recommended - Faster)**
 ```bash
 uv pip install workflows-mcp
 ```
 
-**Option B: Using `pip`**
+or:
+
 ```bash
 pip install workflows-mcp
 ```
 
-**Requirements:**
-- Python 3.12 or higher
-- That's it!
+### 2) Add to your MCP client
 
-### Step 2: Configure Your AI Assistant
-
-#### For Claude Desktop or Claude Code
-
-**Method 1: QTS Marketplace (Easiest)**
-
-Install the complete workflows plugin with agent, skills, and auto-configuration:
-
-```bash
-# Add the marketplace (one-time setup)
-/plugin marketplace add qtsone/marketplace
-
-# Install the workflows plugin
-/plugin install workflows@qtsone
-```
-
-This automatically configures the MCP server to look for custom workflows in `~/.workflows` and `./.workflows` (optional directories you can create if you want to add custom workflows).
-
-**Method 2: Manual Configuration**
-
-Add this to your Claude Desktop config file:
-- **macOS**: `~/Library/Application Support/Claude/claude_desktop_config.json`
-- **Windows**: `%APPDATA%\Claude\claude_desktop_config.json`
+Example (`claude_desktop_config.json`):
 
 ```json
 {
   "mcpServers": {
     "workflows": {
       "command": "uvx",
-      "args": ["workflows-mcp", "--refresh"],
+      "args": ["workflows-mcp"],
       "env": {
-        "WORKFLOWS_TEMPLATE_PATHS": "~/.workflows,./.workflows"
+        "WORKFLOWS_TEMPLATE_PATHS": "/path/to/your/workflows",
+        "WORKFLOWS_LOG_LEVEL": "INFO",
+        "WORKFLOW_SECRET_API_KEY": "your-secret-value"
       }
     }
   }
 }
 ```
 
-**Note:** The `WORKFLOWS_TEMPLATE_PATHS` directories are optional. Only create them if you want to add custom workflows. The server works perfectly fine with just the built-in workflows. We recommend using `~/.workflows` as it's also the default location for optional LLM configuration (`llm-config.yml`).
-
-#### For Other MCP-Compatible AI Assistants
-
-The configuration is similar. For example, Gemini CLI users would add this to `~/.gemini/settings.json` with the same structure.
-
-### Step 3: Restart and Test
-
-1. Restart your AI assistant (e.g., Claude Desktop)
-2. Try it out:
-
-```text
-You: "List all available workflows"
-```
-
-Your AI assistant will show you all the built-in workflows ready to use!
-
----
-
-## How It Works
-
-Workflows MCP operates on three simple concepts:
-
-### 1. **Workflows** (The What)
-YAML files that define what you want to automate. Each workflow has:
-- **Inputs** - Parameters users can customize
-- **Blocks** - Individual tasks to execute
-- **Outputs** - Results returned to the user
-
-### 2. **Blocks** (The How)
-Individual tasks within a workflow. Available block types:
-- `Shell` - Run shell commands
-- `LLMCall` - Call AI/LLM APIs
-- `HttpCall` - Make HTTP requests
-- `CreateFile`, `ReadFiles`, `EditFile` - File operations
-- `Workflow` - Call other workflows (composition)
-- `Prompt` - Interactive user prompts
-- `ImageGen` - Generate and edit images (DALL-E, Stable Diffusion)
-- `ReadJSONState`, `WriteJSONState`, `MergeJSONState` - State management
-
-### 3. **Execution** (The Magic)
-The server automatically:
-- Analyzes dependencies between blocks
-- Runs independent blocks in parallel
-- Handles errors gracefully
-- Substitutes variables dynamically
-
-**Example Flow:**
-```yaml
-# Python CI Pipeline
-setup_env → run_linting ↘
-                         → validate_results
-setup_env → run_tests   ↗
-```
-
-Tasks run in parallel when possible, saving time!
-
----
-
-## What Can I Build?
-
-The possibilities are endless. Here are some examples:
-
-### Development Automation
-- **CI/CD Pipelines** - Automated testing, linting, building
-- **Code Quality Checks** - Run multiple linters and formatters in parallel
-- **Deployment Workflows** - Build, test, and deploy applications
-
-### Git Operations
-- **Smart Branch Management** - Create feature branches with proper naming
-- **Automated Commits** - Stage files and commit with generated messages
-- **Repository Analysis** - Analyze changes, detect patterns
-
-### Data Processing
-- **File Transformations** - Process and transform files in batch
-- **API Orchestration** - Chain multiple API calls together
-- **Report Generation** - Generate reports from templates
-
-### AI-Powered Tasks
-- **Content Analysis** - Use LLMs to analyze and extract insights
-- **Code Generation** - Generate code based on specifications
-- **Automated Review** - Review code, documents, or data
-
----
-
-## Creating Your First Workflow
-
-Let's create a simple workflow that greets a user:
-
-### 1. Create a YAML file
-
-First, create the workflows directory (if it doesn't exist):
-```bash
-mkdir -p ~/.workflows
-```
-
-Then save this as `~/.workflows/greet-user.yaml`:
-
-```yaml
-name: greet-user
-description: A friendly greeting workflow
-tags: [example, greeting]
-
-inputs:
-  name:
-    type: str
-    description: Name of the person to greet
-    default: "World"
-
-  language:
-    type: str
-    description: Language for greeting (en, es, fr)
-    default: "en"
-
-blocks:
-  - id: create_greeting
-    type: Shell
-    inputs:
-      command: |
-        case "{{inputs.language}}" in
-          es) echo "¡Hola, {{inputs.name}}!" ;;
-          fr) echo "Bonjour, {{inputs.name}}!" ;;
-          *) echo "Hello, {{inputs.name}}!" ;;
-        esac
-
-outputs:
-  greeting:
-    value: "{{blocks.create_greeting.outputs.stdout}}"
-    type: str
-    description: The personalized greeting
-```
-
-### 2. Restart your AI assistant
-
-The workflow is automatically discovered from `~/.workflows/`
-
-### 3. Use it!
-
-```text
-You: "Run the greet-user workflow with name=Alice and language=es"
-Claude: *Executes workflow*
-Claude: "¡Hola, Alice!"
-```
-
-### Understanding the Workflow
-
-- **inputs** - Define customizable parameters
-- **blocks** - Each block is a task (here, running a shell command)
-- **{{inputs.name}}** - Variable substitution (replaced at runtime)
-- **outputs** - What gets returned to the user
-
----
-
-## Key Features
-
-### 🚀 Smart Parallel Execution
-
-The server automatically detects which tasks can run in parallel. Use `depends_on` to specify dependencies—independent tasks run concurrently for maximum efficiency.
-
-**See examples:** `tests/workflows/core/dag-execution/parallel-execution.yaml`
-
-### 🔐 Secure Secrets Management
-
-Store sensitive data like API keys securely using environment variables. Secrets are resolved server-side and never exposed to the LLM context.
+If installed with `pip`:
 
 ```json
 {
   "mcpServers": {
     "workflows": {
+      "command": "workflows-mcp",
       "env": {
-        "WORKFLOW_SECRET_GITHUB_TOKEN": "ghp_your_token_here",
-        "WORKFLOW_SECRET_OPENAI_API_KEY": "sk-your_key_here"
+        "WORKFLOWS_TEMPLATE_PATHS": "/path/to/your/workflows",
+        "WORKFLOWS_LOG_LEVEL": "INFO",
+        "WORKFLOW_SECRET_API_KEY": "your-secret-value"
       }
     }
   }
 }
 ```
 
-Use in workflows: `{{secrets.GITHUB_TOKEN}}`
+### 3) Restart your MCP client and run first calls
 
-**Security features:**
-- ✅ Secrets never appear in LLM context
-- ✅ Automatic redaction in all outputs
-- ✅ Server-side resolution only
-- ✅ Fail-fast on missing secrets
+1. `list_workflows`
+2. `get_workflow_info`
+3. `execute_workflow`
 
-**See examples:** `tests/workflows/core/secrets/`
 
-### 🎨 Full Jinja2 Template Support
+## Instructions for LLM Agents
 
-All workflow fields are Jinja2 templates with support for:
-- **Variable expressions**: `{{inputs.name}}`, `{{blocks.test.outputs.result}}`
-- **Control structures**: `{% if condition %}...{% endif %}`, `{% for item in list %}...{% endfor %}`
-- **Custom filters**: `quote`, `prettyjson`, `b64encode`, `hash`, `trim`, `upper`, `lower`, `replace`
-- **Global functions**: `now()`, `render()`, `get()`, `len()`, `range()`
-- **Safe accessor**: `get(obj, 'path.to.key', default)` - dotted paths, JSON auto-parse, never throws
-- **Filter chaining**: `{{inputs.text | trim | lower | replace(' ', '_')}}`
+Use this call order for reliable results:
 
-**See examples:** `tests/workflows/core/filters/filters-chaining.yaml`
+1. **Discover**: call `list_workflows`.
+2. **Inspect**: call `get_workflow_info` for required inputs.
+3. **Execute**: call `execute_workflow`.
+4. **Track async runs** (if `mode="async"`): call `get_job_status` (or `list_jobs`).
+5. **Resume interactive workflows**: call `resume_workflow` only for `paused` jobs (typically from `Prompt` blocks).
+6. **Reload definitions after YAML edits**: call `reload_workflows`.
 
-### 📂 ReadFiles Block with Outline Extraction
+When authoring workflows, validate first:
 
-Read files with glob patterns, multiple output modes, and automatic outline extraction:
+- `validate_workflow_yaml` before `execute_inline_workflow`.
+- Use `get_workflow_schema` for current schema details.
+- Use the block reference for exact field names and required inputs: `docs/llm/block-reference.md`.
 
-**Features:**
-- Glob pattern support (`*.py`, `**/*.ts`)
-- Three output modes:
-  - `full` - Complete file content (with optional line-range slicing)
-  - `outline` - Structural outline + structured sections tree (90-97% context reduction)
-  - `summary` - Outline + docstrings/comments
-- **Structured sections tree** — Outline mode returns a nested `sections` tree with line ranges, suitable for recursive section-by-section processing
-- **Markdown intelligence** (outline/summary mode for `.md` files):
-  - **Frontmatter extraction** — Parses YAML frontmatter into a dict
-  - **Reference detection** — Extracts wikilinks (`[[target]]`) and file paths in backticks
-  - **Code block identification** — Locates fenced code blocks with language tags
-  - **Per-section token estimation** — `own_tokens` and `subtree_tokens` on every section node
-- **Line-range reading** — `line_start`/`line_end` parameters in full mode to read specific portions of a file
-- Gitignore integration and file filtering
-- Size limits and file count limits
-- Multi-file reading in single block
-- Smart output format:
-  - Single file: Direct content (string)
-  - Multiple files: YAML-formatted structure
-  - No files: Empty string
+Async mini-flow example:
 
-**Outline mode outputs:**
-
-| Output | Description |
-|--------|-------------|
-| `content` | Display outline string |
-| `sections` | Nested section tree with `id`, `heading`, `path`, `level`, `line_start`, `line_end`, `own_start`, `own_end`, `is_leaf`, `children`, `own_tokens`, `subtree_tokens` |
-| `max_depth` | Maximum heading depth in document structure |
-| `total_sections` | Total number of sections across all levels |
-| `frontmatter` | Parsed YAML frontmatter dict (None if absent) |
-| `references` | List of `{type, target}` dicts — wikilinks and file paths |
-| `code_blocks` | List of `{lang, start_line, end_line}` dicts |
-
-**Example — Structured sections:**
-```yaml
-- id: read_outline
-  type: ReadFiles
-  inputs:
-    path: "/path/to/document.md"
-    mode: outline
-
-- id: show_structure
-  type: Shell
-  depends_on: [read_outline]
-  inputs:
-    command: echo "Found {{blocks.read_outline.outputs.total_sections}} sections"
+```text
+execute_workflow(workflow="python-ci-pipeline", inputs={...}, mode="async")
+→ returns job_id
+→ get_job_status(job_id="job_...") until completed/failed/paused
+→ if paused, resume_workflow(job_id="job_...", response="...")
 ```
 
-**Example — Line-range reading:**
-```yaml
-- id: read_section
-  type: ReadFiles
-  inputs:
-    path: "/path/to/document.md"
-    mode: full
-    line_start: 10
-    line_end: 25
-```
+## Available MCP tools (catalog + call patterns)
 
-**See examples:** `tests/workflows/core/file-operations/readfiles-test.yaml`
+### Workflow discovery and execution
 
-### ✏️ Deterministic File Editing
+| Tool | When to call | Typical call pattern |
+| --- | --- | --- |
+| `list_workflows` | First step in most sessions | `list_workflows(tags=[], format="json")` |
+| `get_workflow_info` | Before execution to confirm inputs/outputs | `get_workflow_info(workflow="name", format="json")` |
+| `execute_workflow` | Run a registered workflow | `execute_workflow(workflow="name", inputs={...}, mode="sync")` |
+| `execute_inline_workflow` | Test one-off YAML without registering | `execute_inline_workflow(workflow_yaml="...", inputs={...})` |
+| `reload_workflows` | After editing YAML files on disk | `reload_workflows()` |
 
-The `EditFile` block provides powerful deterministic file editing with multiple operation strategies:
+### Authoring and validation
 
-**Features:**
-- 6 operation types (replace_text, replace_lines, insert_lines, delete_lines, patch, regex_replace)
-- Atomic transactions (all-or-nothing by default)
-- Automatic backup creation before editing
-- Dry-run mode for previewing changes
-- Comprehensive diff generation
-- Path traversal protection
+| Tool | When to call | Typical call pattern |
+| --- | --- | --- |
+| `get_workflow_schema` | Need full JSON schema for authoring | `get_workflow_schema()` |
+| `validate_workflow_yaml` | Validate YAML before execution | `validate_workflow_yaml(yaml_content="...")` |
 
-**See examples:** `tests/workflows/core/file-operations/editfile-operations-test.yaml`
+### Async, queue, and interactive control
 
-### 🤖 LLM Integration
+| Tool | When to call | Typical call pattern |
+| --- | --- | --- |
+| `get_job_status` | Poll a specific async job | `get_job_status(job_id="job_...")` |
+| `list_jobs` | Find jobs by status (especially paused) | `list_jobs(status="paused", limit=100)` |
+| `cancel_job` | Stop queued/running jobs | `cancel_job(job_id="job_...")` |
+| `get_queue_stats` | Monitor queue health/capacity | `get_queue_stats()` |
+| `resume_workflow` | Continue paused `Prompt` workflows | `resume_workflow(job_id="job_...", response="...")` |
 
-Call AI models directly from workflows with automatic retry and validation. Configure providers using `~/.workflows/llm-config.yml` (optional).
+### Memory (conditional)
 
-**Supported providers:** OpenAI, Anthropic, Gemini, Ollama, OpenAI-compatible (LM Studio, vLLM)
+| Tool | When to call | Typical call pattern |
+| --- | --- | --- |
+| `memory` | Unified memory query/ingest/maintenance/graph operations | `memory(operation="query", scope={...}, query={...})` |
 
-**Example:**
-```yaml
-- id: analyze
-  type: LLMCall
-  inputs:
-    profile: default  # Existing profile from ~/.workflows/llm-config.yml
-    prompt: "Analyze this text: {{inputs.text}}"
-    response_schema:
-      type: object
-      required: [sentiment, summary]
-      properties:
-        sentiment:
-          type: string
-          enum: [positive, negative, neutral]
-        summary:
-          type: string
-```
+The `memory` tool is registered only when memory DB setup is available and valid at startup.
 
-**Profile Fallback for Portable Workflows:**
+Memory contract highlights:
 
-When a workflow requests a profile that doesn't exist in your config, the system automatically falls back to `default_profile` with a warning. This enables **workflow portability** - authors can write workflows with semantic profile names (like `cloud-mini`, `cloud-thinking`, `local`) without requiring specific user configurations.
+- Unified envelope: `operation` + optional `scope/query/record/graph/maintenance/response`.
+- Temporal query semantics:
+  - `operation="query"` supports either `query.as_of` OR interval `query.from/query.to` (mutually exclusive).
+  - `query.mode="graph"` supports `query.as_of` only; `query.from/query.to` are rejected.
+  - `operation="ingest"` with `record.format="raw"` supports `record.valid_from` and `record.valid_to` with ordering validation (`valid_from <= valid_to`).
+- Strict validation: unknown/extra fields are rejected.
+- Lifecycle semantics:
+  - Archived records are excluded by default query behavior.
+  - `operation="supersede"` requires `record.superseded_by`.
+  - `operation="archive"` maps to forget semantics; repeating archive on already archived records is safe/idempotent.
+- Graph semantics:
+  - `operation="graph_upsert"` with `graph.kind="link"` is idempotent.
+  - `operation="graph_delete"` with `graph.kind="place"` includes cascaded `deleted_relation_count` in the response.
 
-```yaml
-# ~/.workflows/llm-config.yml
-profiles:
-  my-model:
-    provider: openai-cloud
-    model: gpt-4o
-    max_tokens: 4000
+Direct-call JSON examples:
 
-default_profile: my-model
-```
-
-### 🎨 Image Generation
-
-Generate, edit, and create variations of images using OpenAI DALL-E or compatible providers (like local Stable Diffusion via OpenAI-compatible API).
-
-**Key Features:**
-- **Model Capability System**: Automatic validation of operations and parameters based on model support
-- **Profile Support**: Use `~/.workflows/llm-config.yml` to manage providers and models (same as LLMCall)
-- **Direct File Saving**: Save generated images directly to disk with `output_file`
-- **Pluggable Providers**: Support for OpenAI (DALL-E 2/3) and any OpenAI-compatible image API
-
-**Model Compatibility:**
-
-The executor validates operations and parameters based on model capabilities:
-
-| Model | Generate | Edit | Variation | Optional Parameters |
-|-------|----------|------|-----------|---------------------|
-| `dall-e-3` | ✓ | ✗ | ✗ | `response_format`, `quality`, `style` |
-| `dall-e-2` | ✓ | ✓ | ✓ | `response_format` |
-| `gpt-image-1` | ✓ | ✓ | ✗ | None |
-| `gpt-image-*` | ✓ | ✓ | ✗ | None |
-
-The executor automatically filters parameters and provides clear error messages when operations are not supported.
-
-**Configuration:**
-
-| Input | Description | Default |
-|-------|-------------|---------|
-| `prompt` | Text description (required for generate/edit) | - |
-| `profile` | Profile name from config (recommended) | `default` |
-| `operation` | `generate`, `edit`, or `variation` | `generate` |
-| `model` | Model name (e.g., `dall-e-3`) | `dall-e-3` |
-| `size` | Image dimensions (e.g., `1024x1024`) | `1024x1024` |
-| `quality` | `standard` or `hd` (dall-e-3 only) | `standard` |
-| `style` | `vivid` or `natural` (dall-e-3 only) | `vivid` |
-| `response_format` | `url` or `b64_json` | `url` |
-| `n` | Number of images to generate | `1` |
-| `output_file` | Path to save image (e.g., `{{tmp}}/img.png`) | - |
-| `image` | Path to base image (for edit/variation) | - |
-| `mask` | Path to mask image (transparent areas define where to edit) | - |
-
-**Examples:**
-
-**1. Basic Generation (using profile):**
-```yaml
-- id: generate_art
-  type: ImageGen
-  inputs:
-    prompt: "A cyberpunk city at night"
-    profile: default
-    size: "1024x1024"
-    output_file: "{{tmp}}/city.png"
-```
-
-**2. Image Editing with DALL-E 2:**
-```yaml
-- id: edit_photo
-  type: ImageGen
-  inputs:
-    operation: edit
-    model: dall-e-2  # DALL-E 3 does not support edit
-    prompt: "Add a red hat to the person"
-    image: "/path/to/photo.png"
-    mask: "/path/to/mask.png"
-    output_file: "{{tmp}}/edited.png"
-```
-
-**3. Using Custom Provider (e.g., Local SD):**
-```yaml
-- id: local_gen
-  type: ImageGen
-  inputs:
-    prompt: "A medieval castle"
-    provider: openai_compatible
-    api_url: "http://localhost:8000/v1"
-    model: "sd-xl"
-    output_file: "{{tmp}}/castle.png"
-```
-
-### 🔢 Text Embeddings
-
-Generate embeddings for text using any OpenAI-compatible embedding API. Supports **single** and **batch** modes — batch mode sends all texts in a single API call for efficient bulk processing.
-
-**Single text:**
-```yaml
-- id: embed_query
-  type: Embedding
-  inputs:
-    text: "{{inputs.search_query}}"
-```
-
-**Batch mode — embed multiple texts in one API call:**
-```yaml
-- id: embed_documents
-  type: Embedding
-  inputs:
-    texts:
-      - "First document content"
-      - "Second document content"
-      - "Third document content"
-```
-
-**Output access:**
-
-| Mode | Field | Description |
-|------|-------|-------------|
-| Single | `embedding` | The embedding vector |
-| Single | `embeddings` | `[embedding]` for convenience |
-| Batch | `embedding` | Empty `[]` |
-| Batch | `embeddings` | List of vectors (same order as input) |
-| Both | `dimensions` | Vector dimensionality |
-| Both | `metadata.count` | Number of embeddings generated |
-
-Configuration uses `~/.workflows/llm-config.yml` profiles (defaults to `embedding` profile).
-
-### 🧠 Knowledge Store
-
-Store and retrieve knowledge propositions using PostgreSQL with pgvector for semantic search. The `Knowledge` block type provides hybrid search (vector + full-text), storage with auto-computed embeddings, and token-budgeted context assembly for LLM prompts.
-
-**Requirements:**
-- PostgreSQL with `pgvector` extension
-- `asyncpg` dependency: `pip install workflows-mcp[postgresql]`
-- Embedding profile in `~/.workflows/llm-config.yml`
-
-**Configuration:**
-
-Set connection details once using environment variables in your MCP server config:
+Valid (point-in-time query):
 
 ```json
 {
-  "mcpServers": {
-    "workflows": {
-      "env": {
-        "KNOWLEDGE_DB_HOST": "localhost",
-        "KNOWLEDGE_DB_PORT": "5432",
-        "KNOWLEDGE_DB_NAME": "knowledge_db",
-        "KNOWLEDGE_DB_USER": "postgres",
-        "KNOWLEDGE_DB_PASSWORD": "your_password"
-      }
-    }
+  "operation": "query",
+  "scope": {"wing": "workflows", "room": "memory-engine"},
+  "query": {"mode": "search", "text": "schema epoch", "as_of": "2026-04-20T00:00:00Z"}
+}
+```
+
+Invalid (mutually exclusive temporal filters):
+
+```json
+{
+  "operation": "query",
+  "query": {
+    "mode": "search",
+    "text": "maintenance",
+    "as_of": "2026-04-20T00:00:00Z",
+    "from": "2026-04-01T00:00:00Z",
+    "to": "2026-04-20T00:00:00Z"
   }
 }
 ```
 
-Tables and the pgvector extension are created automatically on first use.
+Invalid (graph query rejects interval filters):
 
-| Input | Description | Default |
-|-------|-------------|---------|
-| `op` | Operation: `search`, `store`, `recall`, `forget`, `context` | Required |
-| `query` | Search text (required for search/context) | - |
-| `content` | Text to store (required for store) | - |
-| `source` | Filter by source name (exact or prefix with `*`) | - |
-| `categories` | Filter by category UUIDs | - |
-| `min_confidence` | Minimum confidence threshold | `0.3` |
-| `limit` | Maximum results | `10` |
-| `max_tokens` | Token budget for context assembly | `4000` |
-| `diversity` | Use MMR for diverse context results | `false` |
-| `where` | Filter dict for recall/forget (`source_name`, `lifecycle_state`, `category`, `min_confidence`) | - |
-| `order` | Order by fields (e.g., `["relevance_score:desc"]`) | `["created_at:desc"]` |
-| `created_after` | Filter: propositions created after this ISO date (recall/forget) | - |
-| `created_before` | Filter: propositions created before this ISO date (recall/forget) | - |
-| `proposition_ids` | UUIDs of propositions to archive (forget) | - |
-| `embedding_profile` | LLM config profile for embeddings | `embedding` |
-
-**Operations:**
-
-**1. Search — Hybrid vector + full-text with RRF fusion:**
-```yaml
-- id: search_docs
-  type: Knowledge
-  inputs:
-    op: search
-    query: "deployment strategies for microservices"
-    source: "engineering-docs"
-    limit: 10
+```json
+{
+  "operation": "query",
+  "query": {
+    "mode": "graph",
+    "text": "service graph",
+    "from": "2026-04-01T00:00:00Z",
+    "to": "2026-04-20T00:00:00Z"
+  }
+}
 ```
 
-**2. Store — Persist with auto-computed embedding:**
-```yaml
-- id: save_finding
-  type: Knowledge
-  inputs:
-    op: store
-    content: "Redis connection pooling reduces latency by 40% under load"
-    source: "performance-tests"
-    confidence: 0.85
+Invalid (supersede missing required `superseded_by`):
+
+```json
+{
+  "operation": "supersede",
+  "record": {
+    "ids": ["11111111-1111-1111-1111-111111111111"]
+  }
+}
 ```
 
-**3. Context — Token-budgeted assembly for LLM prompts:**
-```yaml
-- id: gather_context
-  type: Knowledge
-  inputs:
-    op: context
-    query: "database optimization techniques"
-    max_tokens: 2000
-    diversity: true
-```
-Returns clean content only (no metadata) in `context_text`, ready for LLM prompt injection.
+## Configuration
 
-**4. Recall — Filtered retrieval with source prefix, confidence, and date ranges:**
-```yaml
-- id: recent_items
-  type: Knowledge
-  inputs:
-    op: recall
-    where:
-      source_name: "daily-reports"       # exact match
-      # source_name: "workflow:*"         # or prefix match
-      # min_confidence: 0.7              # confidence threshold
-      # lifecycle_state: active
-      # category: "cat-uuid"
-    created_after: "2026-01-01"          # ISO date range
-    order: ["created_at:desc"]
-    limit: 5
-```
+### Workflow loading and execution
 
-**5. Forget — Archive propositions by IDs or filter:**
-```yaml
-# By explicit IDs
-- id: cleanup_ids
-  type: Knowledge
-  inputs:
-    op: forget
-    proposition_ids:
-      - "uuid-1"
-      - "uuid-2"
+- `WORKFLOWS_TEMPLATE_PATHS`: Comma-separated workflow directories to load.
+- `WORKFLOWS_MAX_RECURSION_DEPTH`: Max workflow composition depth (default: `50`).
+- `WORKFLOWS_LOG_LEVEL`: Logging level (`DEBUG`, `INFO`, `WARNING`, `ERROR`, `CRITICAL`; default: `INFO`).
 
-# By filter (archive all from a source)
-- id: cleanup_source
-  type: Knowledge
-  inputs:
-    op: forget
-    where:
-      source_name: "deprecated-docs"
-    created_before: "2025-01-01"
-```
-Returns `archived_count` and `skipped_count`. `USER_VALIDATED` propositions are immune and counted in `skipped_count`.
+### Queue and async settings
 
-**6. Validate — Grant a proposition permanent archive immunity:**
-```yaml
-- id: pin_finding
-  type: Knowledge
-  inputs:
-    op: validate
-    proposition_ids:
-      - "uuid-of-reviewed-fact"
-```
-Promotes `authority` to `USER_VALIDATED` in-place, preserving the original UUID, creator, and category associations. Returns `validated_count`.
+- `WORKFLOWS_IO_QUEUE_ENABLED`: Enable serialized I/O queue (default: `true`).
+- `WORKFLOWS_JOB_QUEUE_ENABLED`: Enable async job queue (default: `true`).
+- `WORKFLOWS_JOB_QUEUE_WORKERS`: Queue workers (default: `3`).
+- `WORKFLOWS_MAX_CONCURRENT_JOBS`: Max active + queued jobs (default: `500`).
+- `WORKFLOWS_JOB_TIMEOUT`: Default async timeout in seconds (default: `3600`).
+- `WORKFLOWS_JOB_HISTORY_MAX`: Max retained job records (default: `1000`).
+- `WORKFLOWS_JOB_HISTORY_TTL`: Job retention TTL in seconds (default: `86400`).
 
-**7. Invalidate — Revoke USER_VALIDATED immunity:**
-```yaml
-- id: revoke_outdated
-  type: Knowledge
-  inputs:
-    op: invalidate
-    proposition_ids:
-      - "uuid-of-outdated-fact"
-    reason: "superseded by new measurement from 2026-03-21"
-```
-Demotes authority back to `AGENT` and logs an `INVALIDATED` audit entry with the reason. After this, `forget` can archive the proposition normally. Returns `invalidated_count`.
+### Secrets and LLM config
 
-**6. Chaining Operations — Store, search, and cleanup in one workflow:**
-```yaml
-blocks:
-  - id: store_finding
-    type: Knowledge
-    inputs:
-      op: store
-      content: "Redis connection pooling reduces latency by 40% under load"
-      source: "perf-tests"
-      confidence: 0.85
+- `WORKFLOW_SECRET_<NAME>`: Secret value exposed as `{{secrets.NAME}}`.
+- `WORKFLOWS_LLM_CONFIG`: Optional path override for LLM config.
 
-  - id: search_related
-    type: Knowledge
-    depends_on: [store_finding]
-    inputs:
-      op: search
-      query: "database performance optimization"
-      limit: 5
+## Memory
 
-  - id: build_context
-    type: Knowledge
-    depends_on: [store_finding]
-    inputs:
-      op: context
-      query: "performance tuning recommendations"
-      max_tokens: 2000
+Memory is an optional persistent storage feature that lets agents and workflows record, retrieve, and organize information across sessions. It is backed by PostgreSQL and gives each agent a structured, scoped, and temporally-aware knowledge store.
 
-  - id: use_results
-    type: Shell
-    depends_on: [search_related, build_context]
-    inputs:
-      command: |
-        echo "Found: {{blocks.search_related.outputs.row_count}} results"
-        echo "IDs: {{blocks.search_related.outputs.rows | map(attribute='id') | list}}"
-        echo "Context ({{blocks.build_context.outputs.tokens_used}} tokens):"
-        echo "{{blocks.build_context.outputs.context_text}}"
+### What memory provides
+
+- **`memory` MCP tool** — direct call interface for LLM agents to store and query information without writing workflow YAML.
+- **`Memory` workflow block** — use inside YAML workflows to automate memory operations as part of larger pipelines.
+- **Three-level memory palace scoping** (`wing` → `room` → `hall`) — a strict containment hierarchy: `wing` is a service/project, `room` is a component/module inside that wing, and `hall` is a topic lane inside that room. All three levels are optional and independently filterable. Providing only `wing` returns everything in that wing; adding `room` or `hall` narrows the scope further. `hall` is a sub-partition of a room, not a connection between rooms — cross-room recall is preserved separately by the global companion lane in `auto` queries.
+- **Temporal tracking** — records carry `valid_from` / `valid_to` timestamps supporting point-in-time and interval queries.
+- **Knowledge graph** — link memories to places, entities, or concepts and query the resulting graph.
+- **Lifecycle management** — archive or supersede records without deletion; archived records are excluded from default queries.
+
+### Retrieval strategies
+
+Two strategies are available via the `memory` tool. The correct one is selected automatically based on the call:
+
+| Strategy | When it triggers | Scope behavior |
+| --- | --- | --- |
+| `auto` | Default for most queries (any `radius ≥ 1` or unscoped) | Runs a scoped lane (filtered by `wing`/`room`/`hall`) **plus** a global companion lane of up to 20 items; results are fused via RRF. Cross-scope recall is preserved. |
+| `palace` | When `radius == 0` **and** at least one scope field is set | Strict scoped retrieval only — no global companion lane. Requires at least `wing` or `room` to be set; returns an error if both are absent. Use when you want hard isolation. |
+
+`graph` mode (`query.mode="graph"`) bypasses scope filtering and traverses the entity graph by ID.
+
+#### Scope call shape
+
+All three scope levels are passed under the `scope` key:
+
+```json
+{
+  "operation": "query",
+  "scope": {"wing": "my-service", "room": "auth", "hall": "tokens"},
+  "query": {"text": "refresh token lifetime"}
+}
 ```
 
-Use `map(attribute='id') | list` to extract values from result rows — this works with any attribute (`id`, `content`, `confidence`, etc.).
+Any of the three fields can be omitted. Filters that are present are applied with `AND` semantics.
 
-**Embedding Configuration:**
+### Prerequisites
 
-Add an `embedding` profile to `~/.workflows/llm-config.yml`:
+- PostgreSQL 13 or later, network-accessible from the server process.
+- A database user with `CREATE DATABASE` rights on the admin database (typically `postgres`) if auto-create is enabled, **or** a pre-existing database that the user can connect to.
 
-```yaml
-profiles:
-  embedding:
-    provider: openai-cloud
-    model: text-embedding-3-small
-    api_key: sk-your-key
-```
+### Configuration
 
-Supports any OpenAI-compatible embedding API (OpenAI, Ollama, vLLM, etc.).
+| Variable | Default | Required | Description |
+| --- | --- | --- | --- |
+| `MEMORY_DB_HOST` | — | Yes | PostgreSQL hostname or IP. Setting this variable enables memory features. |
+| `MEMORY_DB_PORT` | `5432` | No | PostgreSQL port. |
+| `MEMORY_DB_NAME` | `memory_db` | No | Target database name. |
+| `MEMORY_DB_USER` | — | Yes | Database username. |
+| `MEMORY_DB_PASSWORD` | — | Yes | Database password. |
+| `MEMORY_DB_AUTO_CREATE` | `true` | No | Auto-create the target database on first boot if it does not exist. Requires the user to have `CREATE DATABASE` rights on the admin database. |
+| `MEMORY_DB_ADMIN_DATABASE` | `postgres` | No | Admin database used to issue the `CREATE DATABASE` statement when auto-create is enabled. |
+| `AUDIT_FAIL_CLOSED` | `false` | No | When `true`, audit-logging failures abort the entire memory operation (compliance mode). Default is log-and-continue. |
 
-### 🔁 Universal Iteration (for_each)
+### Enabling memory
 
-Iterate over collections with ANY block type using `for_each`. Supports parallel and sequential execution modes with error handling.
-
-**Iteration variables:**
-- `{{each.key}}` - Current key
-- `{{each.value}}` - Current value
-- `{{each.index}}` - Zero-based position
-- `{{each.count}}` - Total iterations
-
-**See examples:** `tests/workflows/core/for_each/for-each-comprehensive.yaml`
-
-### 🔄 Workflow Composition
-
-Build complex workflows from simple reusable pieces using the `Workflow` block type. Supports recursion with configurable depth limits.
-
-**See examples:** `tests/workflows/core/composition/`
-
-### 📝 Conditional Execution
-
-Run blocks only when conditions are met using the `condition` field. Conditions are evaluated as Jinja2 expressions.
-
-**See examples:** `tests/workflows/core/conditionals/`
-
-### 💬 Interactive Workflows
-
-Pause workflows to get user input using the `Prompt` block. Use `resume_workflow(job_id, response)` to continue execution with the user's input.
-
-**See examples:** `tests/workflows/interactive-simple-approval.yaml`
-
-### ⚡ Async Execution
-
-Execute long-running workflows without blocking using `mode="async"`. Track progress with `get_job_status(job_id)` and cancel with `cancel_job(job_id)`.
-
-**Use cases:**
-- Long CI/CD pipelines
-- Large-scale data processing
-- Multi-stage deployments
-- Resource-intensive analysis
-
----
-
-## Built-in Workflows
-
-The server includes many ready-to-use workflows for common tasks.
-
-### 📋 Quality & Testing
-
-**Core workflows** (Python CI, Git operations, file operations) are actively used and thoroughly tested. Some advanced workflows are still being refined.
-
-**Best practice:** Always inspect a workflow before using it (`get_workflow_info` tool) and test on non-production systems first.
-
-**Battle-tested examples:** The workflows in `tests/workflows/core/` are comprehensively tested in CI and demonstrate all core features reliably.
-
-### Discovering Workflows
-
-**List all workflows:**
-```text
-You: "List all available workflows"
-```
-
-**Get detailed information:**
-```text
-You: "Show me details about the python-ci-pipeline workflow"
-```
-
-**Filter by category:**
-```text
-You: "List workflows tagged with 'python'"
-You: "Show me all git workflows"
-```
-
-**Popular workflows include:** Python CI pipelines, Git operations (checkout, commit, status), linting tools, test runners, and file operations.
-
----
-
-## Available MCP Tools
-
-When you configure workflows-mcp, your AI assistant gets these tools:
-
-### Workflow Execution
-
-- **execute_workflow** - Run a registered workflow by name
-  - `mode`: "sync" (default) or "async"
-  - `timeout`: Optional timeout in seconds for async mode (default: 3600, max: 86400)
-
-- **execute_inline_workflow** - Execute YAML directly without registration
-
-### Workflow Discovery
-
-- **list_workflows** - List all available workflows (optional tag filtering)
-- **get_workflow_info** - Get detailed information about a workflow
-
-### Workflow Validation
-
-- **validate_workflow_yaml** - Validate YAML before execution
-- **get_workflow_schema** - Get the complete JSON schema
-
-### Job Management
-
-- **get_job_status** - Get status and outputs of a workflow job
-- **cancel_job** - Cancel a pending or running job
-- **list_jobs** - List workflow jobs with optional filtering
-- **get_queue_stats** - Get queue statistics for monitoring
-- **resume_workflow** - Resume a paused workflow
-
-### Knowledge Tools
-
-- **search_knowledge** - Hybrid search (vector + full-text + RRF fusion)
-  - `query`, `source`, `categories`, `as_of`, `min_confidence`, `limit`
-
-- **store_knowledge** - Persist a new fact with auto-computed embedding
-  - `content`, `source`, `path`, `valid_from`, `valid_to`, `confidence` (default 0.8), `categories`
-  - `authority`: `AGENT` (default), `EXTRACTED`, `COMMUNITY_SUMMARY`, or `USER_VALIDATED`
-  - `lifecycle_state`: `ACTIVE` (default) or `QUARANTINED`
-
-- **recall_knowledge** - Filter-based retrieval (no semantic search)
-  - `source`, `categories`, `as_of`, `lifecycle_state`, `min_confidence`, `limit`, `order`
-
-- **forget_knowledge** - Archive propositions (transition to ARCHIVED state)
-  - By ID: `proposition_ids` (list of UUIDs)
-  - By filter: `source` (exact or prefix `*`), `created_before`, `created_after`
-  - At least one of `proposition_ids` or `source` must be provided
-  - `reason` (optional, for audit trail)
-  - `USER_VALIDATED` propositions are immune and reported in `skipped_count`
-
-- **validate_knowledge** - Grant a proposition permanent archive immunity
-  - `proposition_ids` (required): UUIDs to promote to `USER_VALIDATED` authority
-  - In-place update — preserves UUID, creator, timestamp, and category associations
-  - Returns `validated_count`
-
-- **invalidate_knowledge** - Revoke USER_VALIDATED immunity
-  - `proposition_ids` (required): UUIDs to demote back to `AGENT` authority
-  - `reason` (optional, for audit trail)
-  - After invalidation, `forget_knowledge` can archive the proposition normally
-  - Returns `invalidated_count`
-
-- **knowledge_context** - Token-budgeted context assembly for LLM prompts
-  - `query`, `source`, `categories`, `as_of`, `max_tokens`, `diversity`
-
----
-
-## Configuration Reference
-
-### Environment Variables
-
-Configure the server behavior with these environment variables:
-
-| Variable | Description | Default | Range |
-|----------|-------------|---------|-------|
-| `WORKFLOWS_TEMPLATE_PATHS` | Comma-separated workflow directories | *(none)* | Valid paths |
-| `WORKFLOWS_MAX_RECURSION_DEPTH` | Maximum workflow recursion depth | `50` | `1-10000` |
-| `WORKFLOWS_LOG_LEVEL` | Logging verbosity | `INFO` | DEBUG, INFO, WARNING, ERROR, CRITICAL |
-| `WORKFLOW_SECRET_<NAME>` | Secret value (e.g., `WORKFLOW_SECRET_API_KEY`) | *(none)* | Any string |
-| `WORKFLOWS_IO_QUEUE_ENABLED` | Enable serialized I/O operations | `true` | true, false |
-| `WORKFLOWS_JOB_QUEUE_ENABLED` | Enable async workflow execution | `true` | true, false |
-| `WORKFLOWS_JOB_QUEUE_WORKERS` | Worker pool size for async jobs | `3` | 1-100 |
-| `WORKFLOWS_MAX_CONCURRENT_JOBS` | Maximum concurrent jobs | `100` | 1-10000 |
-| `KNOWLEDGE_DB_HOST` | Knowledge DB PostgreSQL host | `localhost` | Hostname/IP |
-| `KNOWLEDGE_DB_PORT` | Knowledge DB PostgreSQL port | `5432` | 1-65535 |
-| `KNOWLEDGE_DB_NAME` | Knowledge DB database name | `knowledge_db` | Valid DB name |
-| `KNOWLEDGE_DB_USER` | Knowledge DB username | *(none)* | Any string |
-| `KNOWLEDGE_DB_PASSWORD` | Knowledge DB password | *(none)* | Any string |
-| `AUDIT_FAIL_CLOSED` | Fail knowledge operations when audit log write fails (compliance mode) | `false` | true, false |
-
-### Example Configuration
+Add the following variables to your MCP client config:
 
 ```json
 {
   "mcpServers": {
     "workflows": {
       "command": "uvx",
-      "args": ["workflows-mcp", "--refresh"],
+      "args": ["workflows-mcp"],
       "env": {
-        "WORKFLOWS_TEMPLATE_PATHS": "~/.workflows,./project-workflows",
-        "WORKFLOWS_LOG_LEVEL": "DEBUG",
-        "WORKFLOWS_MAX_RECURSION_DEPTH": "100",
-        "WORKFLOWS_IO_QUEUE_ENABLED": "true",
-        "WORKFLOWS_JOB_QUEUE_ENABLED": "true",
-        "WORKFLOWS_JOB_QUEUE_WORKERS": "5",
-        "WORKFLOWS_MAX_CONCURRENT_JOBS": "200",
-        "WORKFLOW_SECRET_GITHUB_TOKEN": "ghp_xxxxx",
-        "WORKFLOW_SECRET_OPENAI_API_KEY": "sk-xxxxx"
+        "MEMORY_DB_HOST": "localhost",
+        "MEMORY_DB_PORT": "5432",
+        "MEMORY_DB_NAME": "memory_db",
+        "MEMORY_DB_USER": "postgres",
+        "MEMORY_DB_PASSWORD": "your-password"
       }
     }
   }
 }
 ```
 
-### Custom Workflow Directories
+On first boot with `MEMORY_DB_AUTO_CREATE=true` (the default), the server creates the target database and applies the schema automatically. Restart your MCP client after adding the variables.
 
-The server loads workflows from:
-1. Built-in templates (always loaded)
-2. Custom directories (specified in `WORKFLOWS_TEMPLATE_PATHS`, optional)
+### Verifying memory is active
 
-**Note:** Custom workflow directories are not created automatically. You need to create them manually if you want to add your own workflows. The server works fine without them using only built-in workflows.
+1. Restart your MCP client.
+2. Call `list_workflows` — confirm the server started without errors in the client logs.
+3. Check that the `memory` tool appears in the available tool list.
+4. Run a test ingest:
 
-**Load order priority:** Later directories override earlier ones by workflow name.
-
----
-
-## Examples
-
-For comprehensive examples demonstrating all features, see the test workflows in `tests/workflows/core/`:
-
-- **File operations**: `tests/workflows/core/file-operations/`
-- **Parallel execution**: `tests/workflows/core/dag-execution/`
-- **Conditionals**: `tests/workflows/core/conditionals/`
-- **Composition**: `tests/workflows/core/composition/`
-- **Secrets**: `tests/workflows/core/secrets/`
-- **Filters**: `tests/workflows/core/filters/`
-- **Iteration**: `tests/workflows/core/for_each/`
-
-### Quick Example: Simple Shell Command
-
-```yaml
-name: disk-usage
-description: Check disk usage
-tags: [utility, system]
-
-blocks:
-  - id: check_disk
-    type: Shell
-    inputs:
-      command: "df -h"
-
-outputs:
-  disk_info:
-    value: "{{blocks.check_disk.outputs.stdout}}"
-    type: str
-```
-
----
-
-## Development
-
-### Running Tests
-
-```bash
-# Install development dependencies
-uv sync --all-extras
-
-# Run all tests
-uv run pytest
-
-# With coverage
-uv run pytest --cov=workflows_mcp --cov-report=term-missing
-
-# Run specific test
-uv run pytest tests/test_mcp_client.py -v
-```
-
-### Code Quality
-
-```bash
-# Type checking
-uv run mypy src/workflows_mcp/
-
-# Linting
-uv run ruff check src/workflows_mcp/
-
-# Formatting
-uv run ruff format src/workflows_mcp/
-```
-
-### Knowledge Benchmarks
-
-Baseline benchmark runners for LongMemEval and LoCoMo live under `benchmarks/`.
-
-```bash
-# Install benchmark dependency
-uv pip install fastembed
-
-# Fetch benchmark datasets
-uv run python benchmarks/fetch_benchmark_datasets.py --output-dir benchmarks/data
-
-# Run workflows-mcp LongMemEval baseline
-uv run python benchmarks/workflows_longmemeval_bench.py \
-  benchmarks/data/longmemeval_s_cleaned.json \
-  --granularity session \
-  --embed-model default \
-  --search-limit 50 \
-  --purge-prefix
-
-# Run workflows-mcp LoCoMo baseline
-uv run python benchmarks/workflows_locomo_bench.py \
-  benchmarks/data/locomo10.json \
-  --granularity session \
-  --top-k 10 \
-  --embed-model default \
-  --purge-prefix
-
-# Optional non-default model comparison
-# --embed-model bge-base
-```
-
-### Testing the MCP Server
-
-For interactive testing and debugging:
-
-**1. Create `.mcp.json`:**
 ```json
 {
-  "mcpServers": {
-    "workflows": {
-      "command": "uv",
-      "args": ["run", "workflows-mcp"],
-      "env": {
-        "WORKFLOWS_LOG_LEVEL": "DEBUG",
-        "WORKFLOWS_TEMPLATE_PATHS": "~/.workflows"
-      }
-    }
-  }
+  "operation": "ingest",
+  "scope": {"wing": "test", "room": "setup"},
+  "record": {"format": "raw", "content": "Memory is working."}
 }
 ```
 
-**2. Run MCP Inspector:**
-```bash
-npx @modelcontextprotocol/inspector --config .mcp.json --server workflows
-```
+If the tool is absent, check server logs for `MEMORY_DB_*` startup errors — the most common causes are an unreachable host, incorrect credentials, or a schema epoch mismatch.
 
-This opens a web interface for testing tool calls and debugging workflow execution.
+### Schema compatibility
 
-### Project Structure
+Memory schema versions are tracked by epoch. If the epoch in the database does not match the server version:
 
-```bash
-workflows-mcp/
-├── src/workflows_mcp/          # Main source code
-│   ├── engine/                  # Workflow execution engine
-│   │   ├── executor_base.py     # Base executor class
-│   │   ├── executors_core.py    # Shell, Workflow executors
-│   │   ├── executors_file.py    # File operation executors (CreateFile, ReadFiles, EditFile)
-│   │   ├── file_outline.py      # File outline extraction utilities
-│   │   ├── executors_http.py    # HTTP call executor
-│   │   ├── executors_llm.py     # LLM call executor
-│   │   ├── executors_knowledge.py # Knowledge store executor
-│   │   ├── knowledge/            # Knowledge subpackage
-│   │   │   ├── constants.py      # Enums and defaults
-│   │   │   ├── schema.py         # Idempotent DDL
-│   │   │   ├── search.py         # Hybrid search + RRF
-│   │   │   └── context.py        # Token-budgeted assembly
-│   │   ├── executors_state.py   # State management executors
-│   │   ├── workflow_runner.py   # Main workflow orchestrator
-│   │   ├── dag.py               # DAG resolution
-│   │   ├── resolver/            # Unified variable resolver (Jinja2)
-│   │   └── secrets/             # Secrets management
-│   ├── templates/               # Built-in workflow templates
-│   │   ├── python/              # Python workflows
-│   │   ├── git/                 # Git workflows
-│   │   ├── node/                # Node.js workflows
-│   │   └── ...
-│   ├── server.py                # MCP server setup
-│   ├── tools.py                 # MCP tool implementations
-│   └── __main__.py              # Entry point
-├── tests/                       # Test suite
-├── pyproject.toml               # Project configuration
-└── README.md                    # This file
-```
+- Startup fails with an explicit error.
+- Apply the documented migration and restart.
+- No automatic destructive reset is performed. Set `MEMORY_SCHEMA_RESET_MODE` only if you intend a one-time destructive reset on a non-production instance.
 
 ---
 
-## Troubleshooting
+## Workflows for users
 
-### Installation Issues
+Use registered workflows for repeatable automation, and inline workflows for experiments.
 
-**Problem:** `command not found: workflows-mcp`
+- **Registered workflows**: best for shared, reusable operations.
+- **Inline workflows**: best for quick tests and prototyping.
 
-**Solution:**
-```bash
-# Ensure Python 3.12+ is installed
-python --version  # Should be 3.12 or higher
+Author workflow YAML with exact block input names from:
 
-# Reinstall with uv
-uv pip install --force-reinstall workflows-mcp
+- `docs/llm/block-reference.md`
 
-# Or verify installation
-pip show workflows-mcp
-```
+Example block families include `Shell`, `ReadFiles`, `HttpCall`, `LLMCall`, `Sql`, `Workflow`, `Prompt`, and `Memory`.
 
-**Problem:** Python version too old
+## Documentation map
 
-**Solution:**
-```bash
-# Install Python 3.12+ using your package manager
-# macOS (Homebrew)
-brew install python@3.12
-
-# Ubuntu/Debian
-sudo apt install python3.12
-
-# Update uv to use Python 3.12
-uv venv --python 3.12
-```
-
-### Configuration Issues
-
-**Problem:** Workflows not loading in Claude
-
-**Solution:**
-1. Verify config file location (see [Quick Start](#quick-start))
-2. Check JSON syntax with a validator
-3. Restart Claude Desktop completely
-4. Check Claude Desktop logs:
-   - macOS: `~/Library/Logs/Claude/`
-   - Windows: `%APPDATA%\Claude\logs\`
-
-**Problem:** Custom workflows not found
-
-**Solution:**
-```bash
-# First, make sure you created the directory
-mkdir -p ~/.workflows
-
-# Verify WORKFLOWS_TEMPLATE_PATHS is correct
-# Paths should exist and contain .yaml files
-
-# Check directory exists and contains workflows
-ls ~/.workflows/
-
-# Check YAML syntax
-python -c "import yaml; yaml.safe_load(open('~/.workflows/my-workflow.yaml'))"
-```
-
-### Workflow Execution Issues
-
-**Problem:** Workflow fails with "not found" error
-
-**Solution:**
-```text
-You: "List all workflows"
-# This shows exact workflow names
-# Use the exact name from the list
-```
-
-**Problem:** Variables not substituting
-
-**Solution:**
-- Check syntax: `{{inputs.name}}` not `{inputs.name}`
-- Ensure input is defined in `inputs:` section
-- For block outputs: `{{blocks.block_id.outputs.field_name}}`
-
-**Problem:** Secrets not working
-
-**Solution:**
-1. Check environment variable name: `WORKFLOW_SECRET_<NAME>`
-2. Reference in workflow: `{{secrets.NAME}}` (without prefix)
-3. Verify secrets are in MCP server config, not workflow YAML
-4. Restart MCP server after adding secrets
-
-### Performance Issues
-
-**Problem:** Workflows running slowly
-
-**Solution:**
-- Check if tasks can run in parallel (remove unnecessary `depends_on`)
-- Enable debug logging to see execution waves:
-  ```text
-  You: "Run workflow X with debug=true"
-  ```
-
-- Review task dependencies—too many serialized tasks slow execution
-
-**Problem:** Shell commands timing out
-
-**Solution:**
-```yaml
-blocks:
-  - id: long_task
-    type: Shell
-    inputs:
-      command: "./long-script.sh"
-      timeout: 600  # Increase timeout (default: 120 seconds)
-```
-
-### Debug Mode
-
-Enable detailed logging for troubleshooting:
-
-**Method 1: Environment variable**
-```json
-{
-  "mcpServers": {
-    "workflows": {
-      "env": {
-        "WORKFLOWS_LOG_LEVEL": "DEBUG"
-      }
-    }
-  }
-}
-```
-
-**Method 2: Per-execution debug**
-```text
-You: "Run python-ci-pipeline with debug=true"
-```
-
-Debug logs are written to `/tmp/<workflow>-<timestamp>.json` with:
-- Block execution details
-- Variable resolution steps
-- DAG wave analysis
-- Timing information
-
----
-
-## Architecture
-
-Workflows MCP uses a **fractal execution model** where workflows and blocks share the same execution context structure. This enables clean composition and recursive workflows.
-
-### Key Components
-
-- **WorkflowRunner** - Orchestrates workflow execution
-- **BlockOrchestrator** - Executes individual blocks with error handling
-- **DAGResolver** - Resolves dependencies and computes parallel execution waves
-- **UnifiedVariableResolver** - Jinja2-based variable resolution with four namespaces:
-  - `inputs` - Workflow runtime inputs
-  - `blocks` - Block outputs and metadata
-  - `metadata` - Workflow metadata
-  - `secrets` - Server-side secrets (never exposed to LLM)
-
-### Execution Model
-
-Workflows execute in **waves**—groups of blocks that can run in parallel:
-
-```text
-Wave 1: [setup]
-Wave 2: [lint, test]      ← Parallel execution
-Wave 3: [validate]
-```
-
-This maximizes efficiency by running independent tasks concurrently.
-
----
+- `README.md`: install, usage, and tool catalog.
+- `docs/llm/block-reference.md`: exact block inputs/outputs for workflow authoring.
+- `docs/TESTING.md`: test strategy and test commands.
+- `ARCHITECTURE.md`: architecture overview.
+- `docs/adr/`: design decisions and rationale.
+- `CHANGELOG.md`: release history.
 
 ## Contributing
 
-We welcome contributions! Here's how you can help:
+1. Fork the repository and create a focused branch.
+2. Add or update tests with your change.
+3. Run quality checks before opening a PR:
 
-### Report Issues
-- [GitHub Issues](https://github.com/qtsone/workflows-mcp/issues)
+```bash
+uv run pytest
+uv run ruff check src/workflows_mcp/
+uv run mypy src/workflows_mcp/
+```
 
-### Contribute Workflows
-1. Create a new workflow in appropriate category
-2. Test thoroughly
-3. Submit a pull request
+4. Describe behavior changes and config impact clearly in the PR.
 
-### Improve Documentation
-- Fix typos or unclear explanations
-- Add examples
-- Improve troubleshooting guides
+## Support and community
 
-### Code Contributions
-- Follow existing code style
-- Add tests for new features
-- Update documentation
-
----
-
-## Links
-
-- **GitHub**: [github.com/qtsone/workflows-mcp](https://github.com/qtsone/workflows-mcp)
-- **Issues**: [github.com/qtsone/workflows-mcp/issues](https://github.com/qtsone/workflows-mcp/issues)
-- **Changelog**: [CHANGELOG.md](./CHANGELOG.md)
-- **MCP Protocol**: [modelcontextprotocol.io](https://modelcontextprotocol.io/)
-
----
+- Issues and bug reports: https://github.com/qtsone/workflows-mcp/issues
+- Project repository: https://github.com/qtsone/workflows-mcp
 
 ## License
 
-[AGPL-3.0-or-later](./LICENSE)
-
-### Workflow Files and Your IP
-
-**YAML workflow files that use the workflows-mcp engine are NOT considered derivative works under AGPL-3.0.** Users retain full ownership and may license their workflow files under any terms they choose.
-
-This clarification applies to:
-- `.yaml`/`.yml` workflow definition files
-- Configuration files (e.g., `llm-config.yml`)
-- Workflow documentation and examples you create
-
-This does NOT apply to:
-- Modifications to the engine source code
-- Custom block executors (Python code)
-- Forks of the engine itself
-
----
-
-## FAQ
-
-### Do I need to know Python to use this?
-
-No! You only need to:
-1. Install the package (one command)
-2. Configure your AI assistant (copy-paste JSON)
-3. Write simple YAML workflows (or use built-in ones)
-
-### Do I need to know what MCP is?
-
-No! Just think of it as a way for your AI assistant to run workflows. The technical details are handled for you.
-
-### Can I use this without Claude?
-
-Yes! Any MCP-compatible AI assistant can use workflows-mcp. The configuration is similar across different assistants.
-
-### Are workflows secure?
-
-Yes! The server includes:
-- Server-side secret resolution (secrets never reach the AI)
-- Automatic redaction of sensitive data
-- Sandboxed execution contexts
-- Audit logging
-
-### Are all built-in workflows production-ready?
-
-The core workflows (Python CI, Git operations, basic file operations) are actively used and reliable. Some advanced workflows are still being refined and tested.
-
-**Best practice:** Always inspect a workflow before using it (`get_workflow_info` tool) and test on non-production systems first. The workflows in `tests/workflows/` are thoroughly tested in CI and are great examples to learn from.
-
-### Can I share workflows with my team?
-
-Absolutely! Workflows are just YAML files. You can:
-- Commit them to version control
-- Share them in a company repository
-- Publish them as packages
-
-### What's the performance like?
-
-Excellent! The DAG-based execution model automatically parallelizes independent tasks. Many users see 2-3x speedup compared to sequential execution.
-
-### Can workflows call other workflows?
-
-Yes! Use the `Workflow` block type to compose workflows. Recursion is supported with configurable depth limits.
-
-### How do I get help?
-
-1. Check [Troubleshooting](#troubleshooting)
-2. Search [GitHub Issues](https://github.com/qtsone/workflows-mcp/issues)
-3. Open a new issue with details
-
----
-
-**Ready to automate?** Install workflows-mcp and start building powerful automation workflows today! 🚀
+AGPL-3.0-or-later. See [LICENSE](./LICENSE).

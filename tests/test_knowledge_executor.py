@@ -1,23 +1,23 @@
 """Tests for the Knowledge executor and supporting modules.
 
 Tests focus on pure logic (RRF fusion, context assembly, schema DDL,
-input validation) — no real database needed. PostgreSQL-specific tests
-require optional deps.
+migration correctness) and Memory executor registration — no real database needed.
+PostgreSQL-specific tests require optional deps.
 """
 
 from __future__ import annotations
 
 from datetime import datetime, timezone
 from typing import Any
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from pydantic import ValidationError
 
-from workflows_mcp.engine.executors_knowledge import (
-    KnowledgeExecutor,
-    KnowledgeInput,
-    KnowledgeOutput,
+from workflows_mcp.engine.executors_memory import (
+    MemoryExecutor,
+    MemoryInput,
+    MemoryOutput,
 )
 from workflows_mcp.engine.knowledge.constants import (
     DEFAULT_LIMIT,
@@ -33,12 +33,18 @@ from workflows_mcp.engine.knowledge.context import (
 )
 from workflows_mcp.engine.knowledge.schema import (
     MIGRATIONS,
+    SCHEMA_EPOCH,
+    SCHEMA_VERSION,
     _CREATE_EXTENSION,
     _CREATE_INDEXES,
+    _CREATE_KNOWLEDGE_COMMUNITIES,
+    _CREATE_KNOWLEDGE_CONFLICTS,
     _CREATE_KNOWLEDGE_ENTITIES,
     _CREATE_KNOWLEDGE_ITEMS,
-    _CREATE_KNOWLEDGE_PROPOSITIONS,
+    _CREATE_KNOWLEDGE_MEMORIES,
     _CREATE_KNOWLEDGE_SOURCES,
+    _V1_BASELINE_SQL,
+    ensure_schema,
 )
 from workflows_mcp.engine.knowledge.search import (
     build_fts_search_query,
@@ -56,9 +62,18 @@ def _temporal_truth_matches(
     return (valid_from is None or valid_from <= as_of) and (valid_to is None or valid_to >= as_of)
 
 
-# ============================================================================
-# Constants Tests
-# ============================================================================
+# All DDL combined — used by test_ddl_is_idempotent to check IF NOT EXISTS guards.
+_ALL_DDL = "\n".join(
+    [
+        _CREATE_EXTENSION,
+        _CREATE_KNOWLEDGE_SOURCES,
+        _CREATE_KNOWLEDGE_ITEMS,
+        _CREATE_KNOWLEDGE_COMMUNITIES,
+        _CREATE_KNOWLEDGE_MEMORIES,
+        _CREATE_KNOWLEDGE_ENTITIES,
+        _CREATE_INDEXES,
+    ]
+)
 
 
 class TestConstants:
@@ -79,24 +94,14 @@ class TestConstants:
         assert Authority.AGENT == "AGENT"
 
 
-# ============================================================================
-# Schema DDL Tests
-# ============================================================================
-
-_ALL_DDL = "\n".join(
-    [
-        _CREATE_EXTENSION,
-        _CREATE_KNOWLEDGE_SOURCES,
-        _CREATE_KNOWLEDGE_ITEMS,
-        _CREATE_KNOWLEDGE_PROPOSITIONS,
-        _CREATE_KNOWLEDGE_ENTITIES,
-        _CREATE_INDEXES,
-    ]
-)
-
-
 class TestSchemaDDL:
     """Tests for idempotent schema DDL constants."""
+
+    def test_schema_uses_memory_table_names(self) -> None:
+        """Canonical baseline DDL should use memory table names only."""
+        assert "CREATE TABLE IF NOT EXISTS knowledge_memories" in _V1_BASELINE_SQL
+        assert "CREATE TABLE IF NOT EXISTS knowledge_entity_memories" in _V1_BASELINE_SQL
+        assert "knowledge_propositions" not in _V1_BASELINE_SQL
 
     def test_ddl_contains_extension(self) -> None:
         """DDL should create pgvector extension."""
@@ -106,13 +111,22 @@ class TestSchemaDDL:
         """DDL should create all knowledge tables."""
         assert "CREATE TABLE IF NOT EXISTS knowledge_sources" in _CREATE_KNOWLEDGE_SOURCES
         assert "CREATE TABLE IF NOT EXISTS knowledge_items" in _CREATE_KNOWLEDGE_ITEMS
-        assert "CREATE TABLE IF NOT EXISTS knowledge_propositions" in _CREATE_KNOWLEDGE_PROPOSITIONS
+        assert "CREATE TABLE IF NOT EXISTS knowledge_communities" in _CREATE_KNOWLEDGE_COMMUNITIES
+        assert "CREATE TABLE IF NOT EXISTS knowledge_memories" in _CREATE_KNOWLEDGE_MEMORIES
         assert "CREATE TABLE IF NOT EXISTS knowledge_entities" in _CREATE_KNOWLEDGE_ENTITIES
+        assert "CREATE TABLE IF NOT EXISTS knowledge_conflicts" in _CREATE_KNOWLEDGE_CONFLICTS
+
+    def test_ddl_contains_community_id_columns(self) -> None:
+        """Entity and memory tables should persist community assignments directly."""
+        assert "community_id" in _CREATE_KNOWLEDGE_MEMORIES
+        assert "REFERENCES knowledge_communities(id)" in _CREATE_KNOWLEDGE_MEMORIES
+        assert "community_id" in _CREATE_KNOWLEDGE_ENTITIES
+        assert "REFERENCES knowledge_communities(id)" in _CREATE_KNOWLEDGE_ENTITIES
 
     def test_ddl_contains_indexes(self) -> None:
         """DDL should create necessary indexes."""
-        assert "CREATE INDEX IF NOT EXISTS idx_kp_lifecycle" in _CREATE_INDEXES
-        assert "CREATE INDEX IF NOT EXISTS idx_kp_search_vector" in _CREATE_INDEXES
+        assert "CREATE INDEX IF NOT EXISTS idx_km_lifecycle" in _CREATE_INDEXES
+        assert "CREATE INDEX IF NOT EXISTS idx_km_search_vector" in _CREATE_INDEXES
 
     def test_ddl_contains_unique_source_index(self) -> None:
         """DDL should create unique index on knowledge_sources(name)."""
@@ -120,9 +134,9 @@ class TestSchemaDDL:
         assert "knowledge_sources(name)" in _CREATE_INDEXES
 
     def test_ddl_contains_unique_entity_index(self) -> None:
-        """DDL should create unique index on knowledge_entities(entity_type, name)."""
+        """DDL should scope entity uniqueness by topology + type + name."""
         assert "idx_ke_type_name" in _CREATE_INDEXES
-        assert "knowledge_entities(entity_type, name)" in _CREATE_INDEXES
+        assert "knowledge_entities(namespace, room, corridor, entity_type, name)" in _CREATE_INDEXES
 
     def test_ddl_contains_unique_source_path_index(self) -> None:
         """DDL should create unique index on knowledge_items(source_id, path)."""
@@ -130,38 +144,46 @@ class TestSchemaDDL:
         assert "knowledge_items(source_id, path)" in _CREATE_INDEXES
 
     def test_ddl_propositions_uses_metadata_not_metadata_underscore(self) -> None:
-        """knowledge_propositions DDL must use 'metadata' column, not 'metadata_'."""
-        assert "metadata JSONB" in _CREATE_KNOWLEDGE_PROPOSITIONS
-        assert "metadata_" not in _CREATE_KNOWLEDGE_PROPOSITIONS
+        """knowledge_memories DDL must use 'metadata' column, not 'metadata_'."""
+        assert "metadata JSONB" in _CREATE_KNOWLEDGE_MEMORIES
+        assert "metadata_" not in _CREATE_KNOWLEDGE_MEMORIES
 
     def test_ddl_propositions_uses_vector_1536(self) -> None:
-        """knowledge_propositions DDL must declare embedding as vector(1536), not dimensionless."""
-        assert "embedding vector(1536)" in _CREATE_KNOWLEDGE_PROPOSITIONS
-        assert "embedding vector," not in _CREATE_KNOWLEDGE_PROPOSITIONS
+        """knowledge_memories DDL must declare embedding as vector(1536), not dimensionless."""
+        assert "embedding" in _CREATE_KNOWLEDGE_MEMORIES
+        assert "vector(1536)" in _CREATE_KNOWLEDGE_MEMORIES
+        assert "embedding vector," not in _CREATE_KNOWLEDGE_MEMORIES
 
     def test_ddl_propositions_has_no_embedding_dimensions_column(self) -> None:
-        """knowledge_propositions DDL must not include the redundant embedding_dimensions column."""
-        assert "embedding_dimensions" not in _CREATE_KNOWLEDGE_PROPOSITIONS
+        """knowledge_memories DDL must not include the redundant embedding_dimensions column."""
+        assert "embedding_dimensions" not in _CREATE_KNOWLEDGE_MEMORIES
 
-    def test_migration_2_renames_metadata_column(self) -> None:
-        """Migration v2 should rename metadata_ to metadata in an idempotent DO block."""
-        migration_versions = [m[0] for m in MIGRATIONS]
-        assert 2 in migration_versions, "Migration version 2 must exist"
+    def test_ddl_includes_content_updated_at(self) -> None:
+        """Base DDL for knowledge_items must include content_updated_at."""
+        assert "content_updated_at" in _CREATE_KNOWLEDGE_ITEMS
 
-        v2 = next(m for m in MIGRATIONS if m[0] == 2)
-        sql = v2[2]
-        assert "metadata_" in sql, "Migration v2 SQL must reference metadata_ column"
-        assert "RENAME COLUMN" in sql, "Migration v2 must use RENAME COLUMN"
-        assert "metadata" in sql, "Migration v2 must rename to 'metadata'"
-        # Must be idempotent: guarded by IF EXISTS
-        assert "IF EXISTS" in sql, "Migration v2 must be idempotent (IF EXISTS guard)"
+    def test_ddl_includes_decay_and_lifecycle_columns(self) -> None:
+        """Base DDL must include decay and lifecycle support columns."""
+        assert "base_score" in _CREATE_KNOWLEDGE_MEMORIES
+        assert "relevance_score" in _CREATE_KNOWLEDGE_MEMORIES
+        assert "last_retrieved_at" in _CREATE_KNOWLEDGE_MEMORIES
+        assert "quarantined_at" in _CREATE_KNOWLEDGE_MEMORIES
+        assert "flagged_at" in _CREATE_KNOWLEDGE_MEMORIES
 
-    def test_migration_2_is_idempotent_do_block(self) -> None:
-        """Migration v2 SQL must be wrapped in a DO $$ BEGIN ... END $$ block."""
-        v2 = next(m for m in MIGRATIONS if m[0] == 2)
-        sql = v2[2]
-        assert "DO $$" in sql or "DO $" in sql
-        assert "END $$" in sql or "END $" in sql
+
+class TestMigrationV1:
+    """Tests for the consolidated clean-slate baseline migration."""
+
+    def test_migration_v1_present(self) -> None:
+        """MIGRATIONS must include v1 consolidated clean-slate baseline."""
+        assert MIGRATIONS[0][0] == 1
+        assert MIGRATIONS[0][1] == "Initial schema (consolidated clean-slate release)"
+        assert "CREATE TABLE IF NOT EXISTS knowledge_sources" in MIGRATIONS[0][2]
+
+    def test_schema_version_is_latest_declared_migration(self) -> None:
+        """SCHEMA_VERSION must match the latest migration marker."""
+        assert SCHEMA_VERSION >= 1
+        assert SCHEMA_VERSION == MIGRATIONS[-1][0]
 
     def test_ddl_is_idempotent(self) -> None:
         """All DDL statements should use IF NOT EXISTS guards."""
@@ -173,11 +195,6 @@ class TestSchemaDDL:
                 assert "IF NOT EXISTS" in line, f"Missing IF NOT EXISTS: {line}"
             if line.startswith("CREATE EXTENSION"):
                 assert "IF NOT EXISTS" in line, f"Missing IF NOT EXISTS: {line}"
-
-
-# ============================================================================
-# Search Query Builder Tests
-# ============================================================================
 
 
 class TestSearchQueryBuilder:
@@ -192,7 +209,7 @@ class TestSearchQueryBuilder:
 
         assert "$1" in sql  # embedding param
         assert "<=>" in sql  # cosine distance
-        assert "knowledge_propositions" in sql
+        assert "knowledge_memories" in sql
         assert len(params) == 4  # embedding, state, confidence, candidate_limit
 
     def test_vector_search_with_source_filter(self) -> None:
@@ -234,8 +251,50 @@ class TestSearchQueryBuilder:
         )
 
         assert "EXISTS" in sql
-        assert "knowledge_proposition_categories" in sql
+        assert "knowledge_memory_categories" in sql
         assert "knowledge_sources" not in sql
+
+    def test_vector_search_with_community_ids_filter(self) -> None:
+        """Vector search should support community_id restriction with uuid[] binding."""
+        sql, params = build_vector_search_query(
+            query_embedding=[0.1, 0.2],
+            community_ids=["550e8400-e29b-41d4-a716-446655440000"],
+        )
+
+        assert "kp.community_id = ANY(" in sql
+        assert "::uuid[]" in sql
+        assert ["550e8400-e29b-41d4-a716-446655440000"] in params
+
+    def test_fts_search_with_community_ids_filter(self) -> None:
+        """FTS search should support community_id restriction with uuid[] binding."""
+        sql, params = build_fts_search_query(
+            query_text="test",
+            community_ids=["550e8400-e29b-41d4-a716-446655440000"],
+        )
+
+        assert "kp.community_id = ANY(" in sql
+        assert "::uuid[]" in sql
+        assert ["550e8400-e29b-41d4-a716-446655440000"] in params
+
+    def test_vector_search_with_corridor_filter(self) -> None:
+        """Vector search should support corridor restriction."""
+        sql, params = build_vector_search_query(
+            query_embedding=[0.1, 0.2],
+            corridor="cluster-a",
+        )
+
+        assert "kp.corridor =" in sql
+        assert "cluster-a" in params
+
+    def test_fts_search_with_corridor_filter(self) -> None:
+        """FTS search should support corridor restriction."""
+        sql, params = build_fts_search_query(
+            query_text="test",
+            corridor="cluster-a",
+        )
+
+        assert "kp.corridor =" in sql
+        assert "cluster-a" in params
 
     def test_vector_search_category_uses_exists_subquery(self) -> None:
         """build_vector_search_query with categories uses EXISTS, not JOIN."""
@@ -245,8 +304,8 @@ class TestSearchQueryBuilder:
         )
 
         assert "EXISTS" in sql
-        assert "knowledge_proposition_categories" in sql
-        assert "kpc.proposition_id = kp.id" in sql
+        assert "knowledge_memory_categories" in sql
+        assert "kpc.memory_id = kp.id" in sql
         assert "knowledge_sources" not in sql
         assert "JOIN knowledge_items ki " not in sql
 
@@ -258,8 +317,8 @@ class TestSearchQueryBuilder:
         )
 
         assert "EXISTS" in sql
-        assert "knowledge_proposition_categories" in sql
-        assert "kpc.proposition_id = kp.id" in sql
+        assert "knowledge_memory_categories" in sql
+        assert "kpc.memory_id = kp.id" in sql
         assert "knowledge_sources" not in sql
         assert "JOIN knowledge_items ki " not in sql
 
@@ -280,6 +339,8 @@ class TestSearchQueryBuilder:
             query_embedding=[0.1, 0.2],
             as_of=datetime(2026, 4, 7, 12, 0, tzinfo=timezone.utc),
         )
+        assert "WITH lifecycle_filtered AS" in sql
+        assert "WHERE kp.lifecycle_state =" in sql
         assert "kp.valid_from IS NULL OR kp.valid_from <=" in sql
         assert "kp.valid_to IS NULL OR kp.valid_to >=" in sql
         assert datetime(2026, 4, 7, 12, 0, tzinfo=timezone.utc) in params
@@ -290,9 +351,41 @@ class TestSearchQueryBuilder:
             query_text="temporal test",
             as_of=datetime(2026, 4, 7, 12, 0, tzinfo=timezone.utc),
         )
+        assert "WITH lifecycle_filtered AS" in sql
+        assert "WHERE kp.lifecycle_state =" in sql
         assert "kp.valid_from IS NULL OR kp.valid_from <=" in sql
         assert "kp.valid_to IS NULL OR kp.valid_to >=" in sql
         assert datetime(2026, 4, 7, 12, 0, tzinfo=timezone.utc) in params
+
+    def test_vector_search_with_interval_applies_overlap_predicate(self) -> None:
+        """Vector query should support temporal interval overlap filtering."""
+        range_from = datetime(2026, 4, 1, 0, 0, tzinfo=timezone.utc)
+        range_to = datetime(2026, 4, 30, 23, 59, tzinfo=timezone.utc)
+        sql, params = build_vector_search_query(
+            query_embedding=[0.1, 0.2],
+            from_dt=range_from,
+            to_dt=range_to,
+        )
+
+        assert "(kp.valid_to IS NULL OR kp.valid_to >=" in sql
+        assert "(kp.valid_from IS NULL OR kp.valid_from <=" in sql
+        assert range_from in params
+        assert range_to in params
+
+    def test_fts_search_with_interval_applies_overlap_predicate(self) -> None:
+        """FTS query should support temporal interval overlap filtering."""
+        range_from = datetime(2026, 4, 1, 0, 0, tzinfo=timezone.utc)
+        range_to = datetime(2026, 4, 30, 23, 59, tzinfo=timezone.utc)
+        sql, params = build_fts_search_query(
+            query_text="temporal test",
+            from_dt=range_from,
+            to_dt=range_to,
+        )
+
+        assert "(kp.valid_to IS NULL OR kp.valid_to >=" in sql
+        assert "(kp.valid_from IS NULL OR kp.valid_from <=" in sql
+        assert range_from in params
+        assert range_to in params
 
     def test_search_queries_without_as_of_do_not_include_temporal_predicate(self) -> None:
         """Temporal predicate should be omitted when as_of is not provided."""
@@ -302,11 +395,6 @@ class TestSearchQueryBuilder:
         assert "kp.valid_to" not in vector_sql
         assert "kp.valid_from" not in fts_sql
         assert "kp.valid_to" not in fts_sql
-
-
-# ============================================================================
-# RRF Fusion Tests
-# ============================================================================
 
 
 class TestRRFFusion:
@@ -369,15 +457,10 @@ class TestRRFFusion:
         assert isinstance(result[0]["rrf_score"], float)
 
 
-# ============================================================================
-# Context Assembly Tests
-# ============================================================================
-
-
 class TestContextAssembly:
     """Tests for context assembly with token budgeting."""
 
-    def _make_proposition(self, content: str, **kwargs: Any) -> dict[str, Any]:
+    def _make_memory(self, content: str, **kwargs: Any) -> dict[str, Any]:
         return {"content": content, **kwargs}
 
     def test_empty_propositions(self) -> None:
@@ -390,8 +473,8 @@ class TestContextAssembly:
     def test_basic_assembly(self) -> None:
         """Propositions should be joined as markdown bullets."""
         props = [
-            self._make_proposition("fact one"),
-            self._make_proposition("fact two"),
+            self._make_memory("fact one"),
+            self._make_memory("fact two"),
         ]
         text, count, tokens = assemble_context(props)
 
@@ -404,7 +487,7 @@ class TestContextAssembly:
         """Assembly should stop when token budget is reached."""
         # Each line "- short" ≈ 2 tokens (7 chars / 4)
         # Generate enough props to exceed a small budget
-        props = [self._make_proposition(f"fact number {i}") for i in range(100)]
+        props = [self._make_memory(f"fact number {i}") for i in range(100)]
 
         text, count, tokens = assemble_context(props, max_tokens=10)
 
@@ -414,10 +497,10 @@ class TestContextAssembly:
     def test_skips_empty_content(self) -> None:
         """Properties with empty content should be skipped."""
         props = [
-            self._make_proposition("real fact"),
-            self._make_proposition(""),
-            self._make_proposition("  "),
-            self._make_proposition("another fact"),
+            self._make_memory("real fact"),
+            self._make_memory(""),
+            self._make_memory("  "),
+            self._make_memory("another fact"),
         ]
         text, count, tokens = assemble_context(props)
 
@@ -428,7 +511,7 @@ class TestContextAssembly:
     def test_no_metadata_in_output(self) -> None:
         """Output should contain only content, never metadata."""
         props = [
-            self._make_proposition(
+            self._make_memory(
                 "clean fact",
                 id="uuid-123",
                 confidence=0.9,
@@ -463,11 +546,6 @@ class TestContextAssembly:
         """Empty vectors should return 0.0."""
         sim = _cosine_similarity([], [])
         assert sim == 0.0
-
-
-# ============================================================================
-# MMR Reranking Tests
-# ============================================================================
 
 
 class TestMMRRerank:
@@ -604,1822 +682,180 @@ class TestTemporalCorrectness:
 
 
 # ============================================================================
-# Input Validation Tests
-# ============================================================================
-
-
-class TestKnowledgeInputValidation:
-    """Tests for KnowledgeInput Pydantic model validation."""
-
-    def test_search_requires_query(self) -> None:
-        """Search operation requires a query."""
-        with pytest.raises(ValidationError, match="query"):
-            KnowledgeInput(op="search")
-
-    def test_store_requires_content(self) -> None:
-        """Store operation requires content."""
-        with pytest.raises(ValidationError, match="content"):
-            KnowledgeInput(op="store")
-
-    def test_forget_requires_proposition_ids(self) -> None:
-        """Forget operation requires proposition_ids."""
-        with pytest.raises(ValidationError, match="proposition_ids"):
-            KnowledgeInput(op="forget")
-
-    def test_search_valid(self) -> None:
-        """Valid search input should pass validation."""
-        inp = KnowledgeInput(op="search", query="test query")
-        assert inp.op == "search"
-        assert inp.query == "test query"
-        assert inp.limit == DEFAULT_LIMIT
-        assert inp.min_confidence is None
-
-    def test_store_valid(self) -> None:
-        """Valid store input should pass validation."""
-        inp = KnowledgeInput(op="store", content="new fact")
-        assert inp.op == "store"
-        assert inp.content == "new fact"
-
-    def test_recall_valid(self) -> None:
-        """Recall does not require extra fields."""
-        inp = KnowledgeInput(op="recall")
-        assert inp.op == "recall"
-
-    def test_context_requires_query(self) -> None:
-        """Context operation requires a query."""
-        with pytest.raises(ValidationError, match="query"):
-            KnowledgeInput(op="context")
-
-    def test_context_valid(self) -> None:
-        """Valid context input should pass validation."""
-        inp = KnowledgeInput(op="context", query="deployment patterns", max_tokens=2000)
-        assert inp.op == "context"
-        assert inp.max_tokens == 2000
-        assert inp.diversity is True
-
-    def test_default_lifecycle_state(self) -> None:
-        """Default lifecycle state should be ACTIVE."""
-        inp = KnowledgeInput(op="recall")
-        assert inp.lifecycle_state == LifecycleState.ACTIVE
-
-    def test_default_embedding_profile(self) -> None:
-        """Default embedding profile should be 'embedding'."""
-        inp = KnowledgeInput(op="search", query="test")
-        assert inp.embedding_profile == "embedding"
-
-    def test_temporal_fields_shape(self) -> None:
-        """KnowledgeInput should expose as_of, valid_from, valid_to fields."""
-        inp = KnowledgeInput(
-            op="store",
-            content="temporal fact",
-            valid_from="2026-01-01T00:00:00Z",
-            valid_to="2026-12-31T23:59:59Z",
-            as_of="2026-04-07T12:00:00Z",
-        )
-        assert inp.as_of == "2026-04-07T12:00:00Z"
-        assert inp.valid_from == "2026-01-01T00:00:00Z"
-        assert inp.valid_to == "2026-12-31T23:59:59Z"
-
-    @pytest.mark.asyncio
-    async def test_invalid_iso_datetime_rejected_at_execution(self) -> None:
-        """Invalid as_of should produce an execution error instead of silent misuse."""
-        executor = KnowledgeExecutor()
-        backend = MagicMock()
-        backend.query = AsyncMock(return_value=MagicMock(rows=[]))
-        inputs = KnowledgeInput(op="recall", source="diag-source", as_of="not-a-date")
-
-        with pytest.raises(ValueError, match="as_of"):
-            await executor._build_where_clause(inputs, backend)
-
-    def test_invalid_op_rejected(self) -> None:
-        """Invalid operation should be rejected."""
-        with pytest.raises(ValidationError):
-            KnowledgeInput(op="invalid_op")  # type: ignore[arg-type]
-
-    def test_store_path_without_source_rejected(self) -> None:
-        """path without source should raise ValidationError."""
-        with pytest.raises(ValidationError, match="source"):
-            KnowledgeInput(op="store", content="fact", path="docs/file.md")
-
-    def test_store_path_with_source_valid(self) -> None:
-        """path alongside source is valid."""
-        inp = KnowledgeInput(
-            op="store",
-            content="fact",
-            source="my-source",
-            path="docs/file.md",
-        )
-        assert inp.path == "docs/file.md"
-        assert inp.source == "my-source"
-
-    def test_store_source_without_path_valid(self) -> None:
-        """source without path is valid (agent observation with provenance label)."""
-        inp = KnowledgeInput(op="store", content="observation", source="my-source")
-        assert inp.source == "my-source"
-        assert inp.path is None
-
-    def test_store_neither_source_nor_path_valid(self) -> None:
-        """Neither source nor path is valid (pure agent observation)."""
-        inp = KnowledgeInput(op="store", content="raw fact")
-        assert inp.source is None
-        assert inp.path is None
-
-
-# ============================================================================
-# Environment Variable Tests
-# ============================================================================
-
-
-class TestEnvironmentVariableDefaults:
-    """Tests for KNOWLEDGE_DB_* environment variable integration."""
-
-    def test_defaults_without_env_vars(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        """Without env vars, fields should use hardcoded defaults."""
-        monkeypatch.delenv("KNOWLEDGE_DB_HOST", raising=False)
-        monkeypatch.delenv("KNOWLEDGE_DB_PORT", raising=False)
-        monkeypatch.delenv("KNOWLEDGE_DB_NAME", raising=False)
-        monkeypatch.delenv("KNOWLEDGE_DB_USER", raising=False)
-        monkeypatch.delenv("KNOWLEDGE_DB_PASSWORD", raising=False)
-
-        inp = KnowledgeInput(op="recall")
-        assert inp.host == "localhost"
-        assert inp.port == 5432
-        assert inp.database == "knowledge_db"
-        assert inp.username is None
-        assert inp.password is None
-
-    def test_env_vars_are_used(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        """Env vars should provide defaults when set."""
-        monkeypatch.setenv("KNOWLEDGE_DB_HOST", "kb.example.com")
-        monkeypatch.setenv("KNOWLEDGE_DB_PORT", "5433")
-        monkeypatch.setenv("KNOWLEDGE_DB_NAME", "my_knowledge")
-        monkeypatch.setenv("KNOWLEDGE_DB_USER", "kb_user")
-        monkeypatch.setenv("KNOWLEDGE_DB_PASSWORD", "kb_pass")
-
-        inp = KnowledgeInput(op="recall")
-        assert inp.host == "kb.example.com"
-        assert inp.port == 5433
-        assert inp.database == "my_knowledge"
-        assert inp.username == "kb_user"
-        assert inp.password == "kb_pass"
-
-    def test_yaml_inputs_override_env_vars(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        """Explicit YAML inputs should override env vars."""
-        monkeypatch.setenv("KNOWLEDGE_DB_HOST", "env-host")
-        monkeypatch.setenv("KNOWLEDGE_DB_NAME", "env-db")
-
-        inp = KnowledgeInput(op="recall", host="yaml-host", database="yaml-db")
-        assert inp.host == "yaml-host"
-        assert inp.database == "yaml-db"
-
-
-# ============================================================================
-# Output Model Tests
-# ============================================================================
-
-
-class TestKnowledgeOutput:
-    """Tests for KnowledgeOutput Pydantic model."""
-
-    def test_default_values(self) -> None:
-        """Default output should have empty values."""
-        out = KnowledgeOutput()
-        assert out.success is False
-        assert out.error is None
-        assert out.rows == []
-        assert out.row_count == 0
-        assert out.proposition_ids == []
-        assert out.stored_count == 0
-        assert out.context_text == ""
-        assert out.tokens_used == 0
-
-    def test_search_output(self) -> None:
-        """Search output should populate rows."""
-        out = KnowledgeOutput(
-            success=True,
-            rows=[{"id": "123", "content": "fact"}],
-            columns=["id", "content"],
-            row_count=1,
-        )
-        assert out.success
-        assert out.row_count == 1
-
-    def test_store_output(self) -> None:
-        """Store output should populate proposition_ids."""
-        out = KnowledgeOutput(
-            success=True,
-            proposition_ids=["uuid-1"],
-            stored_count=1,
-        )
-        assert out.stored_count == 1
-
-    def test_context_output(self) -> None:
-        """Context output should populate context_text."""
-        out = KnowledgeOutput(
-            success=True,
-            context_text="- fact one\n- fact two",
-            proposition_count=2,
-            tokens_used=12,
-        )
-        assert out.proposition_count == 2
-        assert "fact one" in out.context_text
-
-
-# ============================================================================
-# Recall Filter Builder Tests
-# ============================================================================
-
-
-class TestRecallFilters:
-    """Tests for _build_where_clause shared filter logic."""
-
-    async def _build(self, **kwargs: Any) -> tuple[str, list[Any]]:
-        """Helper to build WHERE clause from KnowledgeInput kwargs."""
-        executor = KnowledgeExecutor()
-        inputs = KnowledgeInput(op="recall", **kwargs)
-        # Mock backend for category resolution (not used in most tests)
-        backend = MagicMock()
-        backend.query = AsyncMock(return_value=MagicMock(rows=[]))
-        return await executor._build_where_clause(inputs, backend)
-
-    @pytest.mark.asyncio
-    async def test_recall_source_name_exact(self) -> None:
-        """Exact source generates kp.source_name = $N."""
-        where, params = await self._build(source="internal-docs")
-        assert "kp.source_name = $1" in where
-        assert "internal-docs" in params
-        assert "LIKE" not in where
-
-    @pytest.mark.asyncio
-    async def test_recall_source_name_prefix(self) -> None:
-        """Source with * generates kp.source_name LIKE."""
-        where, params = await self._build(source="workflow:*")
-        assert "LIKE" in where
-        assert "workflow:%" in params
-
-    @pytest.mark.asyncio
-    async def test_build_where_clause_returns_two_values(self) -> None:
-        """_build_where_clause returns (where_sql, params) — no join_clause."""
-        result = await self._build()
-        assert len(result) == 2
-        where, params = result
-        assert isinstance(where, str)
-        assert isinstance(params, list)
-
-    @pytest.mark.asyncio
-    async def test_recall_min_confidence(self) -> None:
-        """min_confidence direct field generates kp.confidence >= $N."""
-        where, params = await self._build(min_confidence=0.7)
-        assert "kp.confidence >=" in where
-        assert 0.7 in params
-
-    @pytest.mark.asyncio
-    async def test_recall_created_after(self) -> None:
-        """created_after generates kp.created_at >= $N::timestamptz."""
-        where, params = await self._build(created_after="2026-03-01T00:00:00Z")
-        assert "kp.created_at >=" in where
-        assert "timestamptz" in where
-        assert "2026-03-01T00:00:00Z" in params
-
-    @pytest.mark.asyncio
-    async def test_recall_created_before(self) -> None:
-        """created_before generates kp.created_at <= $N::timestamptz."""
-        where, params = await self._build(created_before="2026-03-04T23:59:59Z")
-        assert "kp.created_at <=" in where
-        assert "timestamptz" in where
-        assert "2026-03-04T23:59:59Z" in params
-
-    @pytest.mark.asyncio
-    async def test_recall_combined_filters(self) -> None:
-        """Multiple filters produce correct AND-joined SQL."""
-        where, params = await self._build(
-            source="docs",
-            lifecycle_state="active",
-            min_confidence=0.5,
-            created_after="2026-01-01",
-        )
-        assert " AND " in where
-        # Should have: source_name, lifecycle_state, min_confidence, created_after
-        assert where.count(" AND ") == 3  # 4 clauses, 3 ANDs
-
-    @pytest.mark.asyncio
-    async def test_recall_category_filter_uses_exists(self) -> None:
-        """Category filter uses EXISTS subquery on junction table — no JOIN, no &&."""
-        where, params = await self._build(
-            where={"category": "550e8400-e29b-41d4-a716-446655440000"}
-        )
-        assert "EXISTS" in where
-        assert "knowledge_proposition_categories" in where
-        assert "kpc.proposition_id = kp.id" in where
-        assert "knowledge_sources" not in where
-        assert "&&" not in where
-
-    @pytest.mark.asyncio
-    async def test_recall_default_lifecycle_fallback(self) -> None:
-        """Without where dict, default lifecycle_state is applied."""
-        where, params = await self._build()
-        assert "kp.lifecycle_state" in where
-        assert "ACTIVE" in params
-
-    @pytest.mark.asyncio
-    async def test_recall_date_filters_work_without_where(self) -> None:
-        """Date filters are top-level and work even without a where dict."""
-        where, params = await self._build(
-            created_after="2026-01-01",
-            created_before="2026-12-31",
-        )
-        assert "kp.created_at >=" in where
-        assert "kp.created_at <=" in where
-        # Default lifecycle also applied since no where dict
-        assert "kp.lifecycle_state" in where
-
-    @pytest.mark.asyncio
-    async def test_params_are_sequential(self) -> None:
-        """All $N params should be sequential in the WHERE clause."""
-        where, params = await self._build(
-            source="test:*",
-            min_confidence=0.5,
-            created_after="2026-01-01",
-        )
-        for i in range(1, len(params) + 1):
-            assert f"${i}" in where, f"Missing param ${i} in WHERE clause"
-
-    @pytest.mark.asyncio
-    async def test_recall_as_of_adds_temporal_predicate(self) -> None:
-        """_build_where_clause should append temporal predicate when as_of is provided."""
-        where, params = await self._build(as_of="2026-04-07T12:00:00Z")
-        assert "kp.valid_from IS NULL OR kp.valid_from <=" in where
-        assert "kp.valid_to IS NULL OR kp.valid_to >=" in where
-        assert datetime(2026, 4, 7, 12, 0, tzinfo=timezone.utc) in params
-
-    @pytest.mark.asyncio
-    async def test_recall_without_as_of_has_no_temporal_predicate(self) -> None:
-        """_build_where_clause should not include temporal predicate when as_of is absent."""
-        where, _ = await self._build()
-        assert "kp.valid_from" not in where
-        assert "kp.valid_to" not in where
-
-    @pytest.mark.asyncio
-    async def test_recall_category_name_resolved(self) -> None:
-        """Category name resolves to UUID; EXISTS subquery uses resolved UUID."""
-        executor = KnowledgeExecutor()
-        inputs = KnowledgeInput(
-            op="recall",
-            where={"category": "learnings"},
-        )
-        resolved_uuid = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"
-        backend = MagicMock()
-        query_result = MagicMock()
-        query_result.rows = [{"id": resolved_uuid}]
-        backend.query = AsyncMock(return_value=query_result)
-
-        where, params = await executor._build_where_clause(inputs, backend)
-        # params[0] is the resolved UUID list (passed as ::uuid[] for ANY())
-        assert params[0] == [resolved_uuid]
-        assert "EXISTS" in where
-        assert "knowledge_proposition_categories" in where
-        assert "ANY" in where
-
-
-# ============================================================================
-# Forget Operation Tests
-# ============================================================================
-
-
-class TestForgetOperation:
-    """Tests for forget validation and output model."""
-
-    def test_forget_proposition_ids_string_normalization(self) -> None:
-        """Comma-separated string should be accepted by validation."""
-        inp = KnowledgeInput(op="forget", proposition_ids="id-1, id-2, id-3")
-        assert inp.proposition_ids == "id-1, id-2, id-3"
-
-    def test_forget_proposition_ids_list(self) -> None:
-        """List of IDs should pass validation."""
-        inp = KnowledgeInput(op="forget", proposition_ids=["id-1", "id-2"])
-        assert inp.proposition_ids == ["id-1", "id-2"]
-
-    def test_forget_validation_accepts_where(self) -> None:
-        """forget with where dict (no proposition_ids) passes validation."""
-        inp = KnowledgeInput(op="forget", where={"source_name": "old-docs"})
-        assert inp.op == "forget"
-        assert inp.where == {"source_name": "old-docs"}
-        assert inp.proposition_ids is None
-
-    def test_forget_validation_rejects_neither(self) -> None:
-        """forget with neither proposition_ids nor where raises ValidationError."""
-        with pytest.raises(ValidationError, match="proposition_ids.*where.*source.*created"):
-            KnowledgeInput(op="forget")
-
-    def test_forget_output_model(self) -> None:
-        """Forget output fields are set correctly."""
-        out = KnowledgeOutput(success=True, archived_count=3, skipped_count=1)
-        assert out.archived_count == 3
-        assert out.skipped_count == 1
-        assert out.success is True
-
-    def test_forget_output_defaults_zero(self) -> None:
-        """Forget output defaults to zero counts."""
-        out = KnowledgeOutput(success=True)
-        assert out.archived_count == 0
-        assert out.skipped_count == 0
-
-    def test_forget_with_where_has_date_filters(self) -> None:
-        """forget with where + date filters passes validation."""
-        inp = KnowledgeInput(
-            op="forget",
-            where={"source_name": "stale-source"},
-            created_before="2025-01-01",
-        )
-        assert inp.where is not None
-        assert inp.created_before == "2025-01-01"
-
-    def test_forget_sql_contains_user_validated_immunity(self) -> None:
-        """Both forget UPDATE paths must exclude USER_VALIDATED propositions.
-
-        Regression guard: if the immunity clause is removed, archived_count and
-        skipped_count would be wrong and human-validated facts could be wiped.
-        The SQL uses f-string interpolation of Authority.USER_VALIDATED, so we
-        check for the enum reference rather than the evaluated string value.
-        """
-        import inspect
-
-        from workflows_mcp.engine.executors_knowledge import KnowledgeExecutor
-
-        source = inspect.getsource(KnowledgeExecutor._op_forget)
-        assert source.count("Authority.USER_VALIDATED") == 2, (
-            "_op_forget must exclude USER_VALIDATED in BOTH update paths (by-ID and by-filter)"
-        )
-
-    def test_forget_update_sql_does_not_contain_updated_at(self) -> None:
-        """The forget UPDATE statements must NOT reference updated_at.
-
-        Some deployments omit updated_at from knowledge_propositions;
-        unconditionally setting it causes 'column does not exist' errors.
-        The only mutation needed is setting lifecycle_state = ARCHIVED.
-        updated_at is maintained by the trg_kp_updated_at trigger (migration v6).
-        """
-        import inspect
-
-        from workflows_mcp.engine.executors_knowledge import KnowledgeExecutor
-
-        source = inspect.getsource(KnowledgeExecutor._op_forget)
-        assert "updated_at" not in source, (
-            "_op_forget must not reference updated_at — not all schemas have that column"
-        )
-
-    def test_migration_v6_adds_updated_at_trigger(self) -> None:
-        """Migration v6 must wire updated_at triggers on all three knowledge tables.
-
-        Regression guard for TASK-341: archive operations were leaving updated_at
-        unchanged. One shared trigger function covers all tables that carry the column.
-        """
-        v6 = next((m for m in MIGRATIONS if m[0] == 6), None)
-        assert v6 is not None, "Migration v6 is missing from MIGRATIONS list"
-        _, description, sql = v6
-        assert "update_updated_at" in sql, "Migration v6 must create update_updated_at() function"
-        assert "BEFORE UPDATE" in sql, "Trigger must fire BEFORE UPDATE"
-        assert "trg_ks_updated_at" in sql, "Trigger missing for knowledge_sources"
-        assert "trg_ki_updated_at" in sql, "Trigger missing for knowledge_items"
-        assert "trg_kp_updated_at" in sql, "Trigger missing for knowledge_propositions"
-
-    def test_migration_v11_adds_temporal_validity_columns(self) -> None:
-        """Migration v11 should add valid_from/valid_to to knowledge_propositions idempotently."""
-        migration_versions = [m[0] for m in MIGRATIONS]
-        assert 11 in migration_versions, "Migration version 11 must exist"
-
-        v11 = next(m for m in MIGRATIONS if m[0] == 11)
-        sql = v11[2]
-        assert "valid_from" in sql
-        assert "valid_to" in sql
-        assert "knowledge_propositions" in sql
-        assert "IF NOT EXISTS" in sql
-
-
-# ============================================================================
-# Recall Operation Tests
-# ============================================================================
-
-
-class TestRecallOperation:
-    """Tests for recall output and order field safety."""
-
-    def test_recall_output_model(self) -> None:
-        """Recall output has correct rows, columns, row_count fields."""
-        out = KnowledgeOutput(
-            success=True,
-            rows=[{"id": "1", "content": "fact"}],
-            columns=["id", "content"],
-            row_count=1,
-        )
-        assert out.row_count == 1
-        assert out.columns == ["id", "content"]
-        assert out.rows[0]["content"] == "fact"
-
-    def test_recall_order_safe_fields_accepted(self) -> None:
-        """Whitelisted order fields pass validation."""
-        inp = KnowledgeInput(op="recall", order=["relevance_score:desc", "created_at:asc"])
-        assert inp.order == ["relevance_score:desc", "created_at:asc"]
-
-    def test_recall_order_unsafe_field_ignored(self) -> None:
-        """Non-whitelisted fields in order should not break input validation.
-
-        The actual filtering happens at SQL generation time, not during input validation.
-        This test just confirms the input model accepts arbitrary order strings.
-        """
-        inp = KnowledgeInput(op="recall", order=["DROP TABLE; --:desc"])
-        assert inp.order is not None  # passes validation (filtered at SQL generation)
-
-    def test_recall_with_all_filters(self) -> None:
-        """Recall with all possible filters passes validation."""
-        inp = KnowledgeInput(
-            op="recall",
-            source="docs:*",
-            lifecycle_state="active",
-            min_confidence=0.8,
-            where={"category": "550e8400-e29b-41d4-a716-446655440000"},
-            created_after="2026-01-01",
-            created_before="2026-12-31",
-            order=["confidence:desc"],
-            limit=50,
-        )
-        assert inp.op == "recall"
-        assert inp.limit == 50
-
-    def test_recall_input_created_fields_default_none(self) -> None:
-        """created_after and created_before default to None."""
-        inp = KnowledgeInput(op="recall")
-        assert inp.created_after is None
-        assert inp.created_before is None
-
-    def test_recall_safe_fields_include_expected_columns(self) -> None:
-        """ORDER BY allowlist for _op_recall must include known-safe sortable columns.
-
-        updated_at is part of the base DDL (knowledge_propositions has it from creation)
-        and is valid to include. The allowlist must never include unvetted column names.
-        """
-        import inspect
-
-        from workflows_mcp.engine.executors_knowledge import KnowledgeExecutor
-
-        source = inspect.getsource(KnowledgeExecutor._op_recall)
-        # All expected sortable columns must be in the allowlist
-        assert "'confidence'" in source or '"confidence"' in source
-        assert "'created_at'" in source or '"created_at"' in source
-        assert "'retrieval_count'" in source or '"retrieval_count"' in source
-        assert "'updated_at'" in source or '"updated_at"' in source
-        # relevance_score was removed in migration 9 and must NOT be in the allowlist
-        assert "'relevance_score'" not in source and '"relevance_score"' not in source
-
-    @pytest.mark.asyncio
-    async def test_recall_with_source_filter_and_item_path(self) -> None:
-        """Recall with source_name filter uses kp.source_name directly (no extra JOIN).
-
-        Source filtering uses the denormalized source_name column on knowledge_propositions,
-        so there is only one LEFT JOIN (for item_path). No alias collision is possible.
-        """
-        executor = KnowledgeExecutor()
-        inputs = KnowledgeInput(
-            op="recall",
-            source="test-source",
-        )
-
-        backend = MagicMock()
-        captured_sql = ""
-
-        async def capture_query(sql: str, params: tuple[Any, ...]) -> MagicMock:
-            nonlocal captured_sql
-            captured_sql = sql
-            return MagicMock(rows=[])
-
-        backend.query = capture_query
-        exec_context = MagicMock()
-
-        await executor._op_recall(inputs, exec_context, backend)
-
-        # Source filter uses denormalized column — no knowledge_sources JOIN needed
-        assert "kp.source_name" in captured_sql, (
-            "SQL must filter by kp.source_name (denormalized column)"
-        )
-        assert "knowledge_sources" not in captured_sql, (
-            "SQL must not JOIN knowledge_sources — filtering is done via kp.source_name"
-        )
-        # Only the item_path LEFT JOIN should be present
-        assert "LEFT JOIN knowledge_items ki_ip" in captured_sql, (
-            "SQL must use 'ki_ip' alias for item_path LEFT JOIN"
-        )
-        assert "JOIN knowledge_items ki ON" not in captured_sql, (
-            "SQL must not have a separate 'ki' JOIN for source filtering"
-        )
-
-
-# ============================================================================
-# Executor Registration Test
+# Executor Registration Tests
 # ============================================================================
 
 
 class TestExecutorRegistration:
-    """Tests for KnowledgeExecutor registration (conditional, not in default registry)."""
+    """Tests for MemoryExecutor registration."""
 
-    def test_knowledge_executor_not_in_default_registry(self) -> None:
-        """KnowledgeExecutor should NOT be in the default registry (conditional loading)."""
+    def test_memory_executor_not_in_default_registry(self) -> None:
+        """MemoryExecutor should NOT be in the default registry (conditional loading)."""
         from workflows_mcp.engine.executor_base import create_default_registry
 
         registry = create_default_registry()
-        assert not registry.has("Knowledge")
+        assert not registry.has("Memory")
 
-    def test_knowledge_executor_can_be_registered(self) -> None:
-        """KnowledgeExecutor can be registered manually (as done at server startup)."""
+    def test_memory_executor_can_be_registered(self) -> None:
+        """MemoryExecutor can be registered manually (as done at server startup)."""
         from workflows_mcp.engine.executor_base import ExecutorRegistry
 
         registry = ExecutorRegistry()
-        registry.register(KnowledgeExecutor())
-        executor = registry.get("Knowledge")
-        assert isinstance(executor, KnowledgeExecutor)
+        registry.register(MemoryExecutor())
+        executor = registry.get("Memory")
+        assert isinstance(executor, MemoryExecutor)
 
     def test_executor_type_name(self) -> None:
-        """Type name should be 'Knowledge'."""
-        executor = KnowledgeExecutor()
-        assert executor.type_name == "Knowledge"
+        """Type name should be 'Memory'."""
+        executor = MemoryExecutor()
+        assert executor.type_name == "Memory"
 
 
 # ============================================================================
-# Category Resolution Tests
+# MemoryInput Validation Tests
 # ============================================================================
 
 
-class TestCategoryResolution:
-    """Tests for _resolve_categories helper."""
+class TestMemoryInputValidation:
+    """Tests for MemoryInput Pydantic model validation."""
 
-    @pytest.mark.asyncio
-    async def test_uuid_passthrough(self) -> None:
-        """Valid UUIDs should be returned as-is without DB calls."""
-        executor = KnowledgeExecutor()
-        backend = MagicMock()
-        backend.query = AsyncMock()
+    def test_requires_operation(self) -> None:
+        """Missing operation field raises validation error."""
+        with pytest.raises(ValidationError):
+            MemoryInput()  # type: ignore[call-arg]
 
-        test_uuid = "550e8400-e29b-41d4-a716-446655440000"
-        result = await executor._resolve_categories([test_uuid], backend)
+    def test_query_operation_valid(self) -> None:
+        """operation=query with query envelope is valid."""
+        inp = MemoryInput(operation="query", query={"text": "test query"})
+        assert inp.operation == "query"
+        assert inp.query == {"text": "test query"}
 
-        assert result == [test_uuid]
-        backend.query.assert_not_called()
+    def test_ingest_operation_valid(self) -> None:
+        """operation=ingest with record envelope is valid."""
+        inp = MemoryInput(operation="ingest", record={"format": "raw", "content": "some fact"})
+        assert inp.operation == "ingest"
+        assert inp.record == {"format": "raw", "content": "some fact"}
 
-    @pytest.mark.asyncio
-    async def test_name_resolution(self) -> None:
-        """Non-UUID string should trigger upsert into knowledge_categories."""
-        executor = KnowledgeExecutor()
-        resolved_uuid = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"
-        query_result = MagicMock()
-        query_result.rows = [{"id": resolved_uuid, "was_inserted": False}]
-        backend = MagicMock()
-        backend.query = AsyncMock(return_value=query_result)
-
-        result = await executor._resolve_categories(["learnings"], backend)
-
-        assert result == [resolved_uuid]
-        backend.query.assert_called_once()
-        # Verify the SQL targets knowledge_categories (not knowledge_entities)
-        call_args = backend.query.call_args
-        sql = call_args[0][0]
-        assert "knowledge_categories" in sql
-        assert "knowledge_entities" not in sql
-        assert "ON CONFLICT" in sql
-        assert "xmax" in sql
-
-    @pytest.mark.asyncio
-    async def test_warning_emitted_on_auto_create(self, caplog: pytest.LogCaptureFixture) -> None:
-        """Warning should be emitted when a new category is inserted (was_inserted=True)."""
-        import logging
-
-        executor = KnowledgeExecutor()
-        resolved_uuid = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"
-        query_result = MagicMock()
-        query_result.rows = [{"id": resolved_uuid, "was_inserted": True}]
-        backend = MagicMock()
-        backend.query = AsyncMock(return_value=query_result)
-
-        with caplog.at_level(logging.WARNING, logger="workflows_mcp.engine.executors_knowledge"):
-            result = await executor._resolve_categories(["new-category"], backend)
-
-        assert result == [resolved_uuid]
-        assert any("Auto-creating new knowledge category" in r.message for r in caplog.records)
-
-    @pytest.mark.asyncio
-    async def test_no_warning_on_existing_category(self, caplog: pytest.LogCaptureFixture) -> None:
-        """No warning should be emitted when resolving an existing category (was_inserted=False)."""
-        import logging
-
-        executor = KnowledgeExecutor()
-        resolved_uuid = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"
-        query_result = MagicMock()
-        query_result.rows = [{"id": resolved_uuid, "was_inserted": False}]
-        backend = MagicMock()
-        backend.query = AsyncMock(return_value=query_result)
-
-        with caplog.at_level(logging.WARNING, logger="workflows_mcp.engine.executors_knowledge"):
-            result = await executor._resolve_categories(["existing-category"], backend)
-
-        assert result == [resolved_uuid]
-        assert not any("Auto-creating" in r.message for r in caplog.records)
-
-    @pytest.mark.asyncio
-    async def test_mixed_input(self) -> None:
-        """Mix of UUIDs and names should resolve correctly."""
-        executor = KnowledgeExecutor()
-        test_uuid = "550e8400-e29b-41d4-a716-446655440000"
-        resolved_uuid = "bbbbbbbb-cccc-dddd-eeee-ffffffffffff"
-        query_result = MagicMock()
-        query_result.rows = [{"id": resolved_uuid}]
-        backend = MagicMock()
-        backend.query = AsyncMock(return_value=query_result)
-
-        result = await executor._resolve_categories(
-            [test_uuid, "deployment-patterns"],
-            backend,
+    def test_ingest_structured_record_envelope_valid(self) -> None:
+        """operation=ingest accepts structured content via record envelope."""
+        inp = MemoryInput(
+            operation="ingest",
+            record={
+                "format": "structured",
+                "memories": [{"content": "Alice works at Acme."}],
+                "entities": [
+                    {
+                        "name": "Alice",
+                        "entity_type": "PERSON",
+                        "memory_indices": [0],
+                    }
+                ],
+                "relations": [],
+            },
         )
+        assert inp.operation == "ingest"
+        assert inp.record is not None
+        assert inp.record["format"] == "structured"
+        assert inp.record["memories"][0]["content"] == "Alice works at Acme."
 
-        assert result == [test_uuid, resolved_uuid]
-        # Only one DB call for the name, not the UUID
-        assert backend.query.call_count == 1
+    def test_db_defaults_from_env(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """MEMORY_DB_HOST and MEMORY_DB_NAME env vars set defaults."""
+        monkeypatch.setenv("MEMORY_DB_HOST", "db.example.com")
+        monkeypatch.setenv("MEMORY_DB_NAME", "my_memory")
 
-    @pytest.mark.asyncio
-    async def test_empty_list(self) -> None:
-        """Empty categories list should return empty list."""
-        executor = KnowledgeExecutor()
-        backend = MagicMock()
-        backend.query = AsyncMock()
+        inp = MemoryInput(operation="query", query={"text": "test"})
+        assert inp.host == "db.example.com"
+        assert inp.database == "my_memory"
 
-        result = await executor._resolve_categories([], backend)
+    def test_defaults_without_env_vars(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Without env vars, defaults to localhost/memory_db."""
+        monkeypatch.delenv("MEMORY_DB_HOST", raising=False)
+        monkeypatch.delenv("MEMORY_DB_NAME", raising=False)
 
-        assert result == []
-        backend.query.assert_not_called()
+        inp = MemoryInput(operation="query", query={"text": "test"})
+        assert inp.host == "localhost"
+        assert inp.database == "memory_db"
 
 
 # ============================================================================
-# Store Operation Behaviour Tests (mocked backend)
+# MemoryOutput Tests
 # ============================================================================
 
 
-def _make_mock_backend(
-    *,
-    source_id: str = "src-uuid-1111",
-    item_id: str = "item-uuid-2222",
-) -> MagicMock:
-    """Build a mock backend that returns predictable IDs for source / item upserts."""
-    backend = MagicMock()
-    backend.execute = AsyncMock()
-
-    source_result = MagicMock()
-    source_result.rows = [{"id": source_id}]
-
-    item_result = MagicMock()
-    item_result.rows = [{"id": item_id}]
-
-    # query() is used for source upsert (RETURNING id) and item upsert (RETURNING id)
-    backend.query = AsyncMock(side_effect=[source_result, item_result])
-    return backend
-
-
-def _make_execution_context() -> MagicMock:
-    """Build a minimal Execution mock for use in _op_store."""
-    ctx = MagicMock()
-    # execution_context must be None so _get_user_string_id / _get_audit_user_id
-    # fall through to the SYSTEM_USER_UUID fallback — a live MagicMock would
-    # cause json.dumps to fail when its attributes land in metadata_with_user.
-    ctx.execution_context = None
-    return ctx
-
-
-class TestStoreOperationBehaviour:
-    """Tests for _op_store mocked-backend behaviour (no real DB needed)."""
-
-    @pytest.mark.asyncio
-    async def test_store_no_source_no_path_null_item_id(self) -> None:
-        """store with no source and no path → item_id=NULL in INSERT, no source/item rows."""
-        executor = KnowledgeExecutor()
-        backend = MagicMock()
-        backend.execute = AsyncMock()
-        backend.query = AsyncMock(return_value=MagicMock(rows=[]))
-
-        inputs = KnowledgeInput(op="store", content="raw observation")
-
-        # Patch compute_embedding to avoid real LLM call
-        with patch_embedding():
-            result = await executor._op_store(inputs, _make_execution_context(), backend)
-
-        assert result.success is True
-        assert len(result.proposition_ids) == 1
-        assert result.stored_count == 1
-
-        # No read queries: dimension enforcement is handled by the DB CHECK constraint.
-        assert backend.query.call_count == 0
-
-        # The INSERT must have item_id=NULL (second positional param is None)
-        # call_args_list[0] = proposition INSERT; subsequent calls = audit entry
-        execute_call = backend.execute.call_args_list[0]
-        params = execute_call[0][1]
-        assert params[1] is None  # item_id param is None
-
-    @pytest.mark.asyncio
-    async def test_store_source_only_no_item_row(self) -> None:
-        """store with source but no path → no source/item DB rows, source in metadata."""
-        executor = KnowledgeExecutor()
-        backend = MagicMock()
-        backend.execute = AsyncMock()
-        backend.query = AsyncMock(return_value=MagicMock(rows=[]))
-
-        inputs = KnowledgeInput(op="store", content="agent note", source="my-workflow")
-
-        with patch_embedding():
-            result = await executor._op_store(inputs, _make_execution_context(), backend)
-
-        assert result.success is True
-
-        # No read queries: dimension enforcement is handled by the DB CHECK constraint.
-        assert backend.query.call_count == 0
-
-        # Proposition INSERT: item_id param is None
-        # call_args_list[0] = proposition INSERT; subsequent calls = audit entry
-        execute_call = backend.execute.call_args_list[0]
-        params = execute_call[0][1]
-        assert params[1] is None  # item_id
-
-        # metadata param (index 8) must contain source name
-        # Param order: id, item_id, content, embedding, authority, lifecycle_state,
-        #              confidence, embedding_model, metadata,
-        #              valid_from, valid_to, created_by,
-        #              auth_method, source_name, source_type
-        import json as _j
-
-        metadata_param = params[8]
-        metadata = _j.loads(metadata_param)
-        assert metadata.get("source") == "my-workflow"
-
-    @pytest.mark.asyncio
-    async def test_store_source_and_path_creates_item(self) -> None:
-        """store with source AND path → source/item rows created, proposition linked."""
-        executor = KnowledgeExecutor()
-        source_id = "aaaaaaaa-1111-2222-3333-444444444444"
-        item_id = "bbbbbbbb-5555-6666-7777-888888888888"
-
-        source_result = MagicMock()
-        source_result.rows = [{"id": source_id}]
-        item_result = MagicMock()
-        item_result.rows = [{"id": item_id}]
-
-        backend = MagicMock()
-        backend.execute = AsyncMock()
-        # Call order: source upsert, item upsert.
-        backend.query = AsyncMock(side_effect=[source_result, item_result])
-
-        inputs = KnowledgeInput(
-            op="store",
-            content="file fact",
-            source="my-docs",
-            path="docs/arch.md",
-        )
-
-        with patch_embedding():
-            result = await executor._op_store(inputs, _make_execution_context(), backend)
-
-        assert result.success is True
-
-        # Two query calls: source upsert + item upsert
-        assert backend.query.call_count == 2
-
-        # First call: source upsert
-        source_call = backend.query.call_args_list[0]
-        source_sql = source_call[0][0]
-        assert "knowledge_sources" in source_sql
-        assert "ON CONFLICT (name)" in source_sql
-
-        # Second call: item upsert with path
-        item_call = backend.query.call_args_list[1]
-        item_sql = item_call[0][0]
-        assert "knowledge_items" in item_sql
-        assert "ON CONFLICT (source_id, path)" in item_sql
-        item_params = item_call[0][1]
-        assert "docs/arch.md" in item_params
-
-        # Proposition INSERT links to item_id
-        # call_args_list[0] = proposition INSERT; subsequent calls = audit entry
-        execute_call = backend.execute.call_args_list[0]
-        params = execute_call[0][1]
-        assert params[1] == item_id  # item_id param
-
-    @pytest.mark.asyncio
-    async def test_store_source_and_path_idempotent(self) -> None:
-        """Calling store twice with same source+path returns the same item_id (ON CONFLICT)."""
-        executor = KnowledgeExecutor()
-        item_id = "cccccccc-dddd-eeee-ffff-000000000000"
-
-        source_result = MagicMock()
-        source_result.rows = [{"id": "src-static-id"}]
-        item_result = MagicMock()
-        item_result.rows = [{"id": item_id}]
-
-        backend = MagicMock()
-        backend.execute = AsyncMock()
-
-        # Both calls return the same item_id (idempotent upsert)
-        # Call order: source upsert, item upsert.
-        backend.query = AsyncMock(side_effect=[source_result, item_result])
-
-        inputs = KnowledgeInput(
-            op="store",
-            content="idempotent fact",
-            source="stable-source",
-            path="same/file.md",
-        )
-
-        with patch_embedding():
-            result = await executor._op_store(inputs, _make_execution_context(), backend)
-
-        assert result.success is True
-        # The item upsert SQL uses ON CONFLICT (source_id, path) — verify
-        item_call = backend.query.call_args_list[1]
-        item_sql = item_call[0][0]
-        assert "ON CONFLICT (source_id, path) DO UPDATE" in item_sql
-
-    @pytest.mark.asyncio
-    async def test_store_persists_valid_from_valid_to(self) -> None:
-        """store should persist valid_from and valid_to into proposition INSERT params."""
-        executor = KnowledgeExecutor()
-        backend = MagicMock()
-        backend.execute = AsyncMock()
-        backend.query = AsyncMock(return_value=MagicMock(rows=[]))
-
-        inputs = KnowledgeInput(
-            op="store",
-            content="temporal fact",
-            valid_from="2026-01-01T00:00:00Z",
-            valid_to="2026-12-31T23:59:59Z",
-        )
-
-        with patch_embedding():
-            result = await executor._op_store(inputs, _make_execution_context(), backend)
-
-        assert result.success is True
-        execute_call = backend.execute.call_args_list[0]
-        params = execute_call[0][1]
-        assert params[9] == datetime(2026, 1, 1, 0, 0, tzinfo=timezone.utc)
-        assert params[10] == datetime(2026, 12, 31, 23, 59, 59, tzinfo=timezone.utc)
-
-    @pytest.mark.asyncio
-    async def test_store_metadata_column_not_metadata_underscore(self) -> None:
-        """The INSERT SQL must use 'metadata' column, not 'metadata_'."""
-        executor = KnowledgeExecutor()
-        backend = MagicMock()
-        backend.execute = AsyncMock()
-        backend.query = AsyncMock(return_value=MagicMock(rows=[]))
-
-        inputs = KnowledgeInput(op="store", content="check column name")
-
-        with patch_embedding():
-            await executor._op_store(inputs, _make_execution_context(), backend)
-
-        execute_call = backend.execute.call_args
-        sql = execute_call[0][0]
-        assert "metadata)" in sql or "metadata\n" in sql or "metadata," in sql
-        assert "metadata_)" not in sql
-        assert "metadata_," not in sql
-
-    @pytest.mark.asyncio
-    async def test_store_inserts_junction_rows_explicit(self) -> None:
-        """When categories are provided, junction rows are inserted with assigned_by=EXPLICIT."""
-        executor = KnowledgeExecutor()
-        cat_uuid = "550e8400-e29b-41d4-a716-446655440000"
-
-        backend = MagicMock()
-        backend.execute = AsyncMock()
-        # _resolve_categories upserts into knowledge_entities and returns the UUID
-        cat_result = MagicMock()
-        cat_result.rows = [{"id": cat_uuid}]
-        backend.query = AsyncMock(return_value=cat_result)
-
-        inputs = KnowledgeInput(
-            op="store",
-            content="categorised agent note",
-            categories=[cat_uuid],  # valid UUID — passed through without upsert
-        )
-
-        with patch_embedding():
-            result = await executor._op_store(inputs, _make_execution_context(), backend)
-
-        assert result.success is True
-
-        # Find the junction INSERT among all execute calls
-        execute_calls = backend.execute.call_args_list
-        junction_sqls = [
-            c[0][0] for c in execute_calls if "knowledge_proposition_categories" in c[0][0]
-        ]
-        assert len(junction_sqls) >= 1, "Expected at least one junction INSERT"
-        assert "EXPLICIT" in junction_sqls[0]
-
-    @pytest.mark.asyncio
-    async def test_store_no_junction_rows_when_no_categories(self) -> None:
-        """Without categories, no junction rows are inserted."""
-        executor = KnowledgeExecutor()
-        backend = MagicMock()
-        backend.execute = AsyncMock()
-        backend.query = AsyncMock(return_value=MagicMock(rows=[]))
-
-        inputs = KnowledgeInput(op="store", content="uncategorised fact")
-
-        with patch_embedding():
-            await executor._op_store(inputs, _make_execution_context(), backend)
-
-        execute_calls = backend.execute.call_args_list
-        junction_sqls = [
-            c[0][0] for c in execute_calls if "knowledge_proposition_categories" in c[0][0]
-        ]
-        assert len(junction_sqls) == 0, "No junction rows should be inserted without categories"
-
-    @pytest.mark.asyncio
-    async def test_agent_observation_with_category_has_junction_row(self) -> None:
-        """Agent observation (no path, item_id=NULL) stores junction row when category given."""
-        executor = KnowledgeExecutor()
-        cat_uuid = "aaaaaaaa-bbbb-cccc-dddd-000000000001"
-
-        backend = MagicMock()
-        backend.execute = AsyncMock()
-        cat_result = MagicMock()
-        cat_result.rows = [{"id": cat_uuid}]
-        backend.query = AsyncMock(return_value=cat_result)
-
-        inputs = KnowledgeInput(
-            op="store",
-            content="incident observed: timeout on auth service",
-            source="incident-2026-03-20",
-            categories=[cat_uuid],
-        )
-
-        with patch_embedding():
-            result = await executor._op_store(inputs, _make_execution_context(), backend)
-
-        assert result.success is True
-
-        # Proposition INSERT must have item_id=None (source-only, no path)
-        prop_insert = next(
-            c
-            for c in backend.execute.call_args_list
-            if "knowledge_propositions" in c[0][0] and "INSERT" in c[0][0]
-        )
-        assert prop_insert[0][1][1] is None  # item_id param is None
-
-        # Junction INSERT must be present
-        junction_calls = [
-            c
-            for c in backend.execute.call_args_list
-            if "knowledge_proposition_categories" in c[0][0]
-        ]
-        assert len(junction_calls) >= 1
-        assert "EXPLICIT" in junction_calls[0][0][0]
-
-
-# ============================================================================
-# Search / Recall item_path Tests
-# ============================================================================
-
-
-class TestItemPathInResults:
-    """Tests that item_path is included in search and recall output columns."""
-
-    def test_search_output_columns_include_item_path(self) -> None:
-        """search output columns list must include 'item_path'."""
-        out = KnowledgeOutput(
+class TestMemoryOutput:
+    """Tests for MemoryOutput Pydantic model."""
+
+    def test_defaults(self) -> None:
+        """All default values are correct."""
+        out = MemoryOutput()
+        assert out.success is False
+        assert out.error is None
+        assert out.operation == ""
+        assert out.result == {}
+
+    def test_success_flag(self) -> None:
+        """success=True exposes payload through result envelope."""
+        out = MemoryOutput(
             success=True,
-            rows=[{"id": "1", "content": "fact", "item_path": "docs/file.md"}],
-            columns=["id", "content", "item_path"],
-            row_count=1,
+            operation="ingest",
+            result={"manage": {"stored_count": 1, "memory_ids": ["uuid-1"]}},
         )
-        assert "item_path" in out.columns
-        assert out.rows[0]["item_path"] == "docs/file.md"
-
-    def test_search_output_item_path_may_be_none(self) -> None:
-        """item_path=None is valid for propositions without a backing document."""
-        out = KnowledgeOutput(
-            success=True,
-            rows=[{"id": "1", "content": "agent obs", "item_path": None}],
-            columns=["id", "content", "item_path"],
-            row_count=1,
-        )
-        assert out.rows[0]["item_path"] is None
-
-    def test_vector_search_sql_includes_item_path(self) -> None:
-        """build_vector_search_query SQL must SELECT ki_path.path AS item_path."""
-        sql, _ = build_vector_search_query(query_embedding=[0.1, 0.2, 0.3])
-        assert "item_path" in sql
-        assert "LEFT JOIN knowledge_items ki_path" in sql
-        # Category JOIN to knowledge_sources must not be present (uses junction table instead)
-        assert "knowledge_sources" not in sql
-        assert "JOIN knowledge_items ki " not in sql
-
-    def test_fts_search_sql_includes_item_path(self) -> None:
-        """build_fts_search_query SQL must SELECT ki_path.path AS item_path."""
-        sql, _ = build_fts_search_query(query_text="test")
-        assert "item_path" in sql
-        assert "knowledge_items" in sql
-        assert "LEFT JOIN" in sql
-
-    def test_recall_sql_includes_item_path(self) -> None:
-        """_op_recall SQL must LEFT JOIN knowledge_items and select item_path."""
-        # We verify via the output columns definition — no real DB needed
-        # The columns list in _op_recall must include 'item_path'
-        # We indirectly verify by checking a KnowledgeOutput with item_path
-        out = KnowledgeOutput(
-            success=True,
-            rows=[{"id": "r1", "content": "recalled", "item_path": "src/main.py"}],
-            columns=[
-                "id",
-                "content",
-                "confidence",
-                "authority",
-                "lifecycle_state",
-                "relevance_score",
-                "retrieval_count",
-                "item_path",
-            ],
-            row_count=1,
-        )
-        assert "item_path" in out.columns
-
-
-# ============================================================================
-# Patch helper for embedding (avoid real LLM in unit tests)
-# ============================================================================
-
-
-def patch_embedding() -> Any:
-    """Return a context manager that patches compute_embedding with a no-op."""
-    from unittest.mock import patch
-
-    fake_embedding = [0.1, 0.2, 0.3]
-    return patch(
-        "workflows_mcp.engine.executors_knowledge.compute_embedding",
-        new=AsyncMock(return_value=(fake_embedding, "text-embedding-3-small", 3, None)),
-    )
-
-
-# ============================================================================
-# Validate Operation Tests
-# ============================================================================
-
-
-class TestValidateOperation:
-    """Tests for validate op validation and output model."""
-
-    def test_validate_requires_proposition_ids(self) -> None:
-        """validate without proposition_ids should raise ValidationError."""
-        with pytest.raises(ValidationError, match="proposition_ids"):
-            KnowledgeInput(op="validate")
-
-    def test_validate_with_ids_passes(self) -> None:
-        """validate with proposition_ids passes validation."""
-        inp = KnowledgeInput(op="validate", proposition_ids=["uuid-1", "uuid-2"])
-        assert inp.op == "validate"
-        assert inp.proposition_ids == ["uuid-1", "uuid-2"]
-
-    def test_validate_output_model(self) -> None:
-        """Validate output populates validated_count."""
-        out = KnowledgeOutput(success=True, validated_count=2)
-        assert out.validated_count == 2
         assert out.success is True
+        assert out.operation == "ingest"
+        assert out.result["manage"]["stored_count"] == 1
+        assert out.result["manage"]["memory_ids"] == ["uuid-1"]
 
-    def test_validate_output_default_zero(self) -> None:
-        """validated_count defaults to zero."""
-        out = KnowledgeOutput(success=True)
-        assert out.validated_count == 0
 
-    def test_validate_sql_targets_user_validated_authority(self) -> None:
-        """_op_validate SQL must SET authority to USER_VALIDATED, not archive.
 
-        SQL uses f-string interpolation of Authority.USER_VALIDATED; check for
-        the enum reference rather than the evaluated string value.
-        """
-        import inspect
-
-        from workflows_mcp.engine.executors_knowledge import KnowledgeExecutor
-
-        source = inspect.getsource(KnowledgeExecutor._op_validate)
-        assert "Authority.USER_VALIDATED" in source
-        assert "lifecycle_state = " not in source, "_op_validate must not modify lifecycle_state"
-
-    def test_validate_sql_skips_archived_propositions(self) -> None:
-        """_op_validate must not promote ARCHIVED propositions."""
-        import inspect
-
-        from workflows_mcp.engine.executors_knowledge import KnowledgeExecutor
-
-        source = inspect.getsource(KnowledgeExecutor._op_validate)
-        assert "lifecycle_state != " in source or "lifecycle_state !=" in source
+class TestSchemaBootstrapReset:
+    """Tests for fail-fast schema compatibility behavior in ensure_schema."""
 
     @pytest.mark.asyncio
-    async def test_validate_updates_authority_and_logs_audit(self) -> None:
-        """_op_validate updates authority and logs a VALIDATED audit entry."""
-        executor = KnowledgeExecutor()
-        prop_id = "aaaaaaaa-1111-2222-3333-444444444444"
-
-        update_result = MagicMock()
-        update_result.rows = [{"id": prop_id}]
-
+    async def test_incompatible_schema_fails_fast_with_migration_guidance(self) -> None:
+        """Any existing incompatible schema must fail fast with migration guidance."""
         backend = MagicMock()
-        backend.query = AsyncMock(return_value=update_result)
-        backend.execute = AsyncMock()  # audit INSERT
-
-        inputs = KnowledgeInput(op="validate", proposition_ids=[prop_id])
-        result = await executor._op_validate(inputs, _make_execution_context(), backend)
-
-        assert result.success is True
-        assert result.validated_count == 1
-
-        # Verify the UPDATE SQL targeted USER_VALIDATED
-        update_call = backend.query.call_args
-        update_sql = update_call[0][0]
-        assert "USER_VALIDATED" in update_sql
-        assert prop_id in update_call[0][1]
-
-        # Verify audit entry was written with action=VALIDATED
-        audit_call = backend.execute.call_args
-        audit_sql = audit_call[0][0]
-        assert "knowledge_proposition_audits" in audit_sql
-        audit_params = audit_call[0][1]
-        assert "VALIDATED" in audit_params
-
-    def test_validate_empty_list_rejected_by_validation(self) -> None:
-        """Empty proposition_ids list is rejected at validation time (not silently ignored)."""
-        with pytest.raises(ValidationError, match="proposition_ids"):
-            KnowledgeInput(op="validate", proposition_ids=[])
-
-
-# ============================================================================
-# Invalidate Operation Tests
-# ============================================================================
-
-
-class TestInvalidateOperation:
-    """Tests for invalidate op — revokes USER_VALIDATED authority back to AGENT."""
-
-    def test_invalidate_requires_proposition_ids(self) -> None:
-        """invalidate without proposition_ids should raise ValidationError."""
-        with pytest.raises(ValidationError, match="proposition_ids"):
-            KnowledgeInput(op="invalidate")
-
-    def test_invalidate_with_ids_passes(self) -> None:
-        """invalidate with proposition_ids passes validation."""
-        inp = KnowledgeInput(op="invalidate", proposition_ids=["uuid-1"])
-        assert inp.op == "invalidate"
-        assert inp.proposition_ids == ["uuid-1"]
-
-    def test_invalidate_with_reason(self) -> None:
-        """invalidate accepts an optional reason."""
-        inp = KnowledgeInput(op="invalidate", proposition_ids=["uuid-1"], reason="no longer true")
-        assert inp.reason == "no longer true"
-
-    def test_invalidate_output_model(self) -> None:
-        """Invalidate output populates invalidated_count."""
-        out = KnowledgeOutput(success=True, invalidated_count=1)
-        assert out.invalidated_count == 1
-        assert out.success is True
-
-    def test_invalidate_output_default_zero(self) -> None:
-        """invalidated_count defaults to zero."""
-        out = KnowledgeOutput(success=True)
-        assert out.invalidated_count == 0
-
-    def test_invalidate_sql_demotes_to_agent(self) -> None:
-        """_op_invalidate must SET authority = 'AGENT', not archive."""
-        import inspect
-
-        from workflows_mcp.engine.executors_knowledge import KnowledgeExecutor
-
-        source = inspect.getsource(KnowledgeExecutor._op_invalidate)
-        assert "Authority.AGENT" in source
-        assert "lifecycle_state" not in source
-
-    def test_invalidate_sql_only_targets_user_validated(self) -> None:
-        """_op_invalidate must only update propositions that are currently USER_VALIDATED."""
-        import inspect
-
-        from workflows_mcp.engine.executors_knowledge import KnowledgeExecutor
-
-        source = inspect.getsource(KnowledgeExecutor._op_invalidate)
-        assert "Authority.USER_VALIDATED" in source
-
-    @pytest.mark.asyncio
-    async def test_invalidate_updates_authority_and_logs_audit(self) -> None:
-        """_op_invalidate demotes authority and logs an INVALIDATED audit entry."""
-        executor = KnowledgeExecutor()
-        prop_id = "cccccccc-1111-2222-3333-444444444444"
-
-        update_result = MagicMock()
-        update_result.rows = [{"id": prop_id}]
-
-        backend = MagicMock()
-        backend.query = AsyncMock(return_value=update_result)
-        backend.execute = AsyncMock()
-
-        inputs = KnowledgeInput(
-            op="invalidate",
-            proposition_ids=[prop_id],
-            reason="superseded by updated measurement",
+        backend.execute_script = AsyncMock()
+        backend.query = AsyncMock(
+            side_effect=[
+                MagicMock(rows=[]),
+                MagicMock(rows=[{"value": "1"}]),
+                MagicMock(rows=[]),
+                MagicMock(rows=[{"has_tables": True}]),
+                MagicMock(rows=[]),
+            ]
         )
-        result = await executor._op_invalidate(inputs, _make_execution_context(), backend)
 
-        assert result.success is True
-        assert result.invalidated_count == 1
+        with pytest.raises(RuntimeError, match="Incompatible knowledge schema detected") as exc_info:
+            await ensure_schema(backend)
 
-        # UPDATE SQL must target USER_VALIDATED and demote to AGENT
-        update_call = backend.query.call_args
-        update_sql = update_call[0][0]
-        assert "USER_VALIDATED" in update_sql
-        assert "AGENT" in update_sql
-        assert prop_id in update_call[0][1]
-
-        # Audit entry must use action=INVALIDATED
-        audit_call = backend.execute.call_args
-        assert "knowledge_proposition_audits" in audit_call[0][0]
-        assert "INVALIDATED" in audit_call[0][1]
+        error_message = str(exc_info.value)
+        assert "migration" in error_message.lower()
+        assert "memory_schema_reset_mode" not in error_message.lower()
+        executed = [call.args[0] for call in backend.execute_script.await_args_list]
+        assert not any("DROP TABLE" in sql for sql in executed)
+        assert not any("DELETE FROM _knowledge_meta" in sql for sql in executed)
 
     @pytest.mark.asyncio
-    async def test_invalidate_skips_non_user_validated(self) -> None:
-        """Propositions that are not USER_VALIDATED are silently skipped (idempotent)."""
-        executor = KnowledgeExecutor()
-
-        # DB returns 0 rows — none were USER_VALIDATED
-        update_result = MagicMock()
-        update_result.rows = []
-
+    async def test_new_db_applies_v1_and_stamps_version_and_epoch(self) -> None:
+        """Fresh databases should apply v1 migration and stamp both meta keys."""
         backend = MagicMock()
-        backend.query = AsyncMock(return_value=update_result)
-        backend.execute = AsyncMock()
-
-        inputs = KnowledgeInput(op="invalidate", proposition_ids=["agent-prop-id"])
-        result = await executor._op_invalidate(inputs, _make_execution_context(), backend)
-
-        assert result.success is True
-        assert result.invalidated_count == 0
-        backend.execute.assert_not_called()  # no audit entry for skipped propositions
-
-    @pytest.mark.asyncio
-    async def test_invalidate_then_forget_succeeds(self) -> None:
-        """After invalidation, a proposition can be archived by _op_forget.
-
-        This is the canonical two-step workflow for retiring a USER_VALIDATED fact.
-        """
-        executor = KnowledgeExecutor()
-        prop_id = "dddddddd-aaaa-bbbb-cccc-dddddddddddd"
-
-        # Step 1: invalidate — DB confirms 1 row updated
-        invalidate_result = MagicMock()
-        invalidate_result.rows = [{"id": prop_id}]
-
-        # Step 2: forget by ID — DB now archives the (formerly immune) proposition
-        forget_result = MagicMock()
-        forget_result.rows = [{"id": prop_id}]
-
-        backend = MagicMock()
-        backend.query = AsyncMock(side_effect=[invalidate_result, forget_result])
-        backend.execute = AsyncMock()
-
-        ctx = _make_execution_context()
-
-        inv_inputs = KnowledgeInput(op="invalidate", proposition_ids=[prop_id])
-        inv_out = await executor._op_invalidate(inv_inputs, ctx, backend)
-        assert inv_out.invalidated_count == 1
-
-        fgt_inputs = KnowledgeInput(op="forget", proposition_ids=[prop_id])
-        fgt_out = await executor._op_forget(fgt_inputs, ctx, backend)
-        assert fgt_out.archived_count == 1
-        assert fgt_out.skipped_count == 0
-
-
-# ============================================================================
-# USER_VALIDATED Immunity Behavioural Tests
-# ============================================================================
-
-
-class TestUserValidatedImmunity:
-    """Behavioural tests for USER_VALIDATED archive immunity in _op_forget.
-
-    These tests verify that the immunity SQL clause is correctly applied so that
-    skipped_count reflects propositions not archived due to USER_VALIDATED authority.
-    """
-
-    @pytest.mark.asyncio
-    async def test_forget_by_id_skips_user_validated(self) -> None:
-        """When 2 IDs are targeted but 1 is USER_VALIDATED, skipped_count=1."""
-        executor = KnowledgeExecutor()
-        prop_id_normal = "aaaaaaaa-1111-2222-3333-444444444444"
-        prop_id_immune = "bbbbbbbb-5555-6666-7777-888888888888"
-
-        # Simulate DB: only normal proposition is returned (immune one is skipped by SQL)
-        update_result = MagicMock()
-        update_result.rows = [{"id": prop_id_normal}]
-
-        backend = MagicMock()
-        backend.query = AsyncMock(return_value=update_result)
-        backend.execute = AsyncMock()  # audit INSERT
-
-        inputs = KnowledgeInput(
-            op="forget",
-            proposition_ids=[prop_id_normal, prop_id_immune],
+        backend.execute_script = AsyncMock()
+        backend.query = AsyncMock(
+            side_effect=[
+                MagicMock(rows=[]),
+                MagicMock(rows=[{"value": "0"}]),
+                MagicMock(rows=[]),
+                MagicMock(rows=[{"has_tables": False}]),
+                MagicMock(rows=[]),
+            ]
         )
-        result = await executor._op_forget(inputs, _make_execution_context(), backend)
 
-        assert result.success is True
-        assert result.archived_count == 1
-        assert result.skipped_count == 1  # immune proposition not returned by UPDATE ... RETURNING
+        await ensure_schema(backend)
 
-    @pytest.mark.asyncio
-    async def test_forget_by_id_all_immune_gives_zero_archived(self) -> None:
-        """When all targeted propositions are USER_VALIDATED, archived_count=0."""
-        executor = KnowledgeExecutor()
-
-        update_result = MagicMock()
-        update_result.rows = []  # DB skips all (all USER_VALIDATED)
-
-        backend = MagicMock()
-        backend.query = AsyncMock(return_value=update_result)
-        backend.execute = AsyncMock()
-
-        inputs = KnowledgeInput(
-            op="forget",
-            proposition_ids=["immune-1", "immune-2"],
-        )
-        result = await executor._op_forget(inputs, _make_execution_context(), backend)
-
-        assert result.success is True
-        assert result.archived_count == 0
-        assert result.skipped_count == 2
-
-    @pytest.mark.asyncio
-    async def test_forget_by_filter_skipped_count_reflects_immunity(self) -> None:
-        """Filter path: total=3, archived=2 → skipped_count=1 (one USER_VALIDATED)."""
-        executor = KnowledgeExecutor()
-
-        # COUNT(*) query returns 3 total
-        count_result = MagicMock()
-        count_result.rows = [{"total": 3}]
-
-        # UPDATE ... RETURNING only gives back 2 (one immune)
-        update_result = MagicMock()
-        update_result.rows = [{"id": "id-1"}, {"id": "id-2"}]
-
-        backend = MagicMock()
-        # First query: _build_where_clause category resolution (if any)
-        # For source-only filter: first call is COUNT, second is UPDATE
-        backend.query = AsyncMock(side_effect=[count_result, update_result])
-        backend.execute = AsyncMock()
-
-        inputs = KnowledgeInput(op="forget", source="old-session")
-        result = await executor._op_forget(inputs, _make_execution_context(), backend)
-
-        assert result.success is True
-        assert result.archived_count == 2
-        assert result.skipped_count == 1
-
-    @pytest.mark.asyncio
-    async def test_forget_by_filter_audit_logged_for_each_archived(self) -> None:
-        """Audit entries are written for each archived proposition, not for skipped ones."""
-        executor = KnowledgeExecutor()
-
-        count_result = MagicMock()
-        count_result.rows = [{"total": 2}]
-
-        archived_ids = ["id-arch-1", "id-arch-2"]
-        update_result = MagicMock()
-        update_result.rows = [{"id": i} for i in archived_ids]
-
-        backend = MagicMock()
-        backend.query = AsyncMock(side_effect=[count_result, update_result])
-        backend.execute = AsyncMock()
-
-        inputs = KnowledgeInput(op="forget", source="cleanup-session")
-        await executor._op_forget(inputs, _make_execution_context(), backend)
-
-        # One audit INSERT per archived proposition
-        audit_calls = [
-            c for c in backend.execute.call_args_list if "knowledge_proposition_audits" in c[0][0]
-        ]
-        assert len(audit_calls) == 2
-        audit_actions = [c[0][1][1] for c in audit_calls]  # action is second param
-        assert all(a == "ARCHIVED" for a in audit_actions)
-
-
-# ============================================================================
-# Graph Operation Tests
-# ============================================================================
-
-
-def _make_entity_row(
-    entity_id: str,
-    name: str = "TestEntity",
-    entity_type: str = "concept",
-    confidence: float = 1.0,
-) -> dict[str, Any]:
-    """Build a fake knowledge_entities row dict."""
-    return {
-        "id": entity_id,
-        "entity_type": entity_type,
-        "name": name,
-        "confidence": confidence,
-    }
-
-
-def _make_relation_row(
-    rel_id: str,
-    source_id: str,
-    target_id: str,
-    relation_type: str = "related_to",
-    confidence: float = 1.0,
-    valid_from: Any = None,
-    valid_to: Any = None,
-) -> dict[str, Any]:
-    """Build a fake knowledge_relations row dict."""
-    return {
-        "id": rel_id,
-        "source_entity_id": source_id,
-        "target_entity_id": target_id,
-        "relation_type": relation_type,
-        "confidence": confidence,
-        "valid_from": valid_from,
-        "valid_to": valid_to,
-    }
-
-
-class TestMigrationV12:
-    """Tests for migration v12: knowledge_relations and knowledge_proposition_entities."""
-
-    def test_migration_12_present(self) -> None:
-        """MIGRATIONS list must contain version 12."""
-        versions = [m[0] for m in MIGRATIONS]
-        assert 12 in versions
-
-    def test_migration_12_creates_knowledge_relations(self) -> None:
-        """Migration v12 must create knowledge_relations table with IF NOT EXISTS."""
-        v12 = next(m for m in MIGRATIONS if m[0] == 12)
-        sql = v12[2]
-        assert "CREATE TABLE IF NOT EXISTS knowledge_relations" in sql
-
-    def test_migration_12_creates_knowledge_proposition_entities(self) -> None:
-        """Migration v12 must create knowledge_proposition_entities table."""
-        v12 = next(m for m in MIGRATIONS if m[0] == 12)
-        sql = v12[2]
-        assert "CREATE TABLE IF NOT EXISTS knowledge_proposition_entities" in sql
-
-    def test_migration_12_creates_graph_traversal_indexes(self) -> None:
-        """Migration v12 must create indexes for graph traversal performance."""
-        v12 = next(m for m in MIGRATIONS if m[0] == 12)
-        sql = v12[2]
-        assert "idx_kr_source_target" in sql
-        assert "idx_kr_relation_type" in sql
-        assert "idx_kpe_entity_id" in sql
-
-    def test_migration_12_is_idempotent(self) -> None:
-        """All CREATE statements in v12 must have IF NOT EXISTS guards."""
-        v12 = next(m for m in MIGRATIONS if m[0] == 12)
-        for line in v12[2].split("\n"):
-            line = line.strip()
-            if line.startswith("CREATE TABLE"):
-                assert "IF NOT EXISTS" in line, f"Missing IF NOT EXISTS: {line}"
-            if line.startswith("CREATE INDEX"):
-                assert "IF NOT EXISTS" in line, f"Missing IF NOT EXISTS: {line}"
-
-
-class TestMigrationV13:
-    """Tests for migration v13: align junction table and column names with platform conventions."""
-
-    def test_migration_13_present(self) -> None:
-        """MIGRATIONS list must contain version 13."""
-        versions = [m[0] for m in MIGRATIONS]
-        assert 13 in versions
-
-    def test_schema_version_is_14(self) -> None:
-        """SCHEMA_VERSION must equal the last migration version."""
-        from workflows_mcp.engine.knowledge.schema import SCHEMA_VERSION
-
-        assert SCHEMA_VERSION == MIGRATIONS[-1][0]
-
-    def test_migration_13_renames_junction_table(self) -> None:
-        """Migration v13 must rename knowledge_proposition_entities to knowledge_entity_propositions."""
-        v13 = next(m for m in MIGRATIONS if m[0] == 13)
-        sql = v13[2]
-        assert "knowledge_proposition_entities" in sql
-        assert "knowledge_entity_propositions" in sql
-        assert "RENAME TO knowledge_entity_propositions" in sql
-
-    def test_migration_13_renames_evidence_column(self) -> None:
-        """Migration v13 must rename provenance_proposition_id to evidence_proposition_id."""
-        v13 = next(m for m in MIGRATIONS if m[0] == 13)
-        sql = v13[2]
-        assert "provenance_proposition_id" in sql
-        assert "evidence_proposition_id" in sql
-        assert "RENAME COLUMN provenance_proposition_id TO evidence_proposition_id" in sql
-
-    def test_migration_13_is_idempotent(self) -> None:
-        """Migration v13 must use IF EXISTS guards for all DDL changes."""
-        v13 = next(m for m in MIGRATIONS if m[0] == 13)
-        sql = v13[2]
-        # All mutations are wrapped in DO $$ BEGIN ... IF EXISTS ... END $$
-        assert "IF EXISTS" in sql
-
-
-class TestMigrationV14:
-    """Tests for migration v14: room/topology columns on knowledge_propositions."""
-
-    def test_migration_14_present(self) -> None:
-        """MIGRATIONS list must contain version 14."""
-        versions = [m[0] for m in MIGRATIONS]
-        assert 14 in versions
-
-    def test_schema_version_is_14(self) -> None:
-        """SCHEMA_VERSION must equal the last migration version."""
-        from workflows_mcp.engine.knowledge.schema import SCHEMA_VERSION
-
-        assert SCHEMA_VERSION == MIGRATIONS[-1][0]
-
-    def test_migration_14_adds_namespace_column(self) -> None:
-        """Migration v14 must add namespace column with IF NOT EXISTS guard."""
-        v14 = next(m for m in MIGRATIONS if m[0] == 14)
-        sql = v14[2]
-        assert "namespace" in sql
-        assert "VARCHAR(200)" in sql
-
-    def test_migration_14_adds_room_column(self) -> None:
-        """Migration v14 must add room column with IF NOT EXISTS guard."""
-        v14 = next(m for m in MIGRATIONS if m[0] == 14)
-        sql = v14[2]
-        assert "room" in sql
-
-    def test_migration_14_adds_corridor_column(self) -> None:
-        """Migration v14 must add corridor column with IF NOT EXISTS guard."""
-        v14 = next(m for m in MIGRATIONS if m[0] == 14)
-        sql = v14[2]
-        assert "corridor" in sql
-
-    def test_migration_14_creates_namespace_index(self) -> None:
-        """Migration v14 must create partial index on namespace."""
-        v14 = next(m for m in MIGRATIONS if m[0] == 14)
-        sql = v14[2]
-        assert "idx_kp_namespace" in sql
-
-    def test_migration_14_creates_room_index(self) -> None:
-        """Migration v14 must create partial index on room."""
-        v14 = next(m for m in MIGRATIONS if m[0] == 14)
-        sql = v14[2]
-        assert "idx_kp_room" in sql
-
-    def test_migration_14_creates_namespace_room_composite_index(self) -> None:
-        """Migration v14 must create composite partial index on (namespace, room)."""
-        v14 = next(m for m in MIGRATIONS if m[0] == 14)
-        sql = v14[2]
-        assert "idx_kp_namespace_room" in sql
-
-    def test_migration_14_is_idempotent(self) -> None:
-        """All DDL in v14 must have IF NOT EXISTS guards."""
-        v14 = next(m for m in MIGRATIONS if m[0] == 14)
-        sql = v14[2]
-        assert "IF NOT EXISTS" in sql
-        for line in sql.split("\n"):
-            line = line.strip()
-            if line.startswith("CREATE INDEX"):
-                assert "IF NOT EXISTS" in line, f"Missing IF NOT EXISTS: {line}"
-
-
-class TestMigrationV15:
-    """Tests for migration v15: vector(1536) column type enforcement."""
-
-    def test_migration_15_present(self) -> None:
-        """MIGRATIONS list must contain version 15."""
-        versions = [m[0] for m in MIGRATIONS]
-        assert 15 in versions
-
-    def test_schema_version_tracks_latest_migration(self) -> None:
-        """SCHEMA_VERSION must equal the latest migration version."""
-        from workflows_mcp.engine.knowledge.schema import SCHEMA_VERSION
-
-        assert SCHEMA_VERSION == MIGRATIONS[-1][0]
-
-    def test_migration_15_converts_embedding_to_vector_1536(self) -> None:
-        """Migration v15 must alter the embedding column to vector(1536)."""
-        v15 = next(m for m in MIGRATIONS if m[0] == 15)
-        sql = v15[2]
-        assert "ALTER COLUMN embedding TYPE vector(1536)" in sql
-
-    def test_migration_15_drops_trigger_before_alter(self) -> None:
-        """Migration v15 must drop the sync trigger before altering the column (dependency order)."""
-        v15 = next(m for m in MIGRATIONS if m[0] == 15)
-        sql = v15[2]
-        alter_pos = sql.index("ALTER COLUMN embedding TYPE vector(1536)")
-        drop_trigger_pos = sql.index("DROP TRIGGER IF EXISTS trg_kp_sync_embedding_dimensions")
-        assert drop_trigger_pos < alter_pos
-
-    def test_migration_15_drops_check_constraint(self) -> None:
-        """Migration v15 must drop the redundant CHECK constraint superseded by vector(1536)."""
-        v15 = next(m for m in MIGRATIONS if m[0] == 15)
-        sql = v15[2]
-        assert "DROP CONSTRAINT chk_kp_embedding_dimensions_1536" in sql
-
-    def test_migration_15_does_not_add_check_constraint(self) -> None:
-        """Migration v15 must not add a CHECK constraint — vector(1536) type is the authority."""
-        v15 = next(m for m in MIGRATIONS if m[0] == 15)
-        sql = v15[2]
-        assert "ADD CONSTRAINT chk_kp_embedding_dimensions_1536" not in sql
-
-    def test_migration_15_does_not_add_scope_trigger(self) -> None:
-        """Migration v15 must not use the per-INSERT SELECT scope-consistency trigger."""
-        v15 = next(m for m in MIGRATIONS if m[0] == 15)
-        sql = v15[2]
-        assert "enforce_embedding_dimension_scope_consistency" not in sql
-        assert "trg_kp_enforce_embedding_scope_dim" not in sql
-
-
-class TestMigrationV16:
-    """Tests for migration v16: drop embedding_dimensions column and its supporting objects."""
-
-    def test_migration_16_present(self) -> None:
-        """MIGRATIONS list must contain version 16."""
-        versions = [m[0] for m in MIGRATIONS]
-        assert 16 in versions
-
-    def test_schema_version_is_16(self) -> None:
-        """SCHEMA_VERSION must equal 16 (the latest migration)."""
-        from workflows_mcp.engine.knowledge.schema import SCHEMA_VERSION
-
-        assert SCHEMA_VERSION == 16
-        assert SCHEMA_VERSION == MIGRATIONS[-1][0]
-
-    def test_migration_16_drops_sync_trigger(self) -> None:
-        """Migration v16 must drop trg_kp_sync_embedding_dimensions."""
-        v16 = next(m for m in MIGRATIONS if m[0] == 16)
-        sql = v16[2]
-        assert "DROP TRIGGER IF EXISTS trg_kp_sync_embedding_dimensions" in sql
-
-    def test_migration_16_drops_sync_function(self) -> None:
-        """Migration v16 must drop the sync_embedding_dimensions() function."""
-        v16 = next(m for m in MIGRATIONS if m[0] == 16)
-        sql = v16[2]
-        assert "DROP FUNCTION IF EXISTS sync_embedding_dimensions" in sql
-
-    def test_migration_16_drops_namespace_room_dim_index(self) -> None:
-        """Migration v16 must drop the now-useless composite index on namespace/room/embedding_dimensions."""
-        v16 = next(m for m in MIGRATIONS if m[0] == 16)
-        sql = v16[2]
-        assert "DROP INDEX IF EXISTS idx_kp_namespace_room_embedding_dim" in sql
-
-    def test_migration_16_drops_embedding_dimensions_column(self) -> None:
-        """Migration v16 must drop the embedding_dimensions column."""
-        v16 = next(m for m in MIGRATIONS if m[0] == 16)
-        sql = v16[2]
-        assert "DROP COLUMN IF EXISTS embedding_dimensions" in sql
-
-
-class TestKnowledgeInputRoomFields:
-    """Tests for namespace/room/corridor fields on KnowledgeInput."""
-
-    def test_room_fields_default_to_none(self) -> None:
-        """namespace, room, corridor must default to None."""
-        inp = KnowledgeInput(op="search", query="test")
-        assert inp.namespace is None
-        assert inp.room is None
-        assert inp.corridor is None
-
-    def test_store_accepts_room_fields(self) -> None:
-        """store op accepts namespace, room, corridor without error."""
-        inp = KnowledgeInput(
-            op="store",
-            content="fact about auth module",
-            namespace="engineering",
-            room="auth",
-            corridor="sprint-42",
-        )
-        assert inp.namespace == "engineering"
-        assert inp.room == "auth"
-        assert inp.corridor == "sprint-42"
-
-    def test_search_accepts_room_fields(self) -> None:
-        """search op accepts namespace and room for scoped retrieval."""
-        inp = KnowledgeInput(
-            op="search",
-            query="auth token expiry",
-            namespace="engineering",
-            room="auth",
-        )
-        assert inp.namespace == "engineering"
-        assert inp.room == "auth"
-
-    def test_room_without_namespace_is_valid(self) -> None:
-        """room can be set without namespace — valid input."""
-        inp = KnowledgeInput(op="search", query="test", room="auth")
-        assert inp.room == "auth"
-        assert inp.namespace is None
-
-    def test_namespace_without_room_is_valid(self) -> None:
-        """namespace can be set without room — valid input."""
-        inp = KnowledgeInput(op="search", query="test", namespace="engineering")
-        assert inp.namespace == "engineering"
-        assert inp.room is None
+        executed = [call.args[0] for call in backend.execute_script.await_args_list]
+        assert any("CREATE TABLE IF NOT EXISTS knowledge_sources" in sql for sql in executed)
+        assert any(f"VALUES ('schema_version', '{SCHEMA_VERSION}')" in sql for sql in executed)
+        assert any(f"VALUES ('schema_epoch', '{SCHEMA_EPOCH}')" in sql for sql in executed)
 
 
 class TestRoomScopedSearch:
@@ -2468,6 +904,32 @@ class TestRoomScopedSearch:
         assert backend.query.call_count == 4
 
     @pytest.mark.asyncio
+    async def test_with_scope_and_strict_mode_runs_room_lane_only(self) -> None:
+        """Strict mode should disable companion global lane and keep scoped hybrid search."""
+        from workflows_mcp.engine.knowledge.search import room_scoped_search
+
+        backend = MagicMock()
+        empty_result = MagicMock()
+        empty_result.rows = []
+        backend.query = AsyncMock(return_value=empty_result)
+
+        await room_scoped_search(
+            query_embedding=[0.1, 0.2, 0.3],
+            query_text="test query",
+            backend=backend,
+            namespace="engineering",
+            room="auth",
+            corridor="cluster-a",
+            include_global_companion=False,
+        )
+
+        assert backend.query.call_count == 2
+        called_sql = [call.args[0] for call in backend.query.await_args_list]
+        assert all("kp.namespace =" in sql for sql in called_sql)
+        assert all("kp.room =" in sql for sql in called_sql)
+        assert all("kp.corridor =" in sql for sql in called_sql)
+
+    @pytest.mark.asyncio
     async def test_room_lane_includes_room_filter_in_sql(self) -> None:
         """The room-scoped lane must pass namespace and room as WHERE conditions."""
         from workflows_mcp.engine.knowledge.search import build_vector_search_query
@@ -2488,8 +950,9 @@ class TestRoomScopedSearch:
         from workflows_mcp.engine.knowledge.search import build_vector_search_query
 
         sql, params = build_vector_search_query([0.1, 0.2])
-        assert "kp.namespace" not in sql
-        assert "kp.room" not in sql
+        # kp.namespace appears in the SELECT list but must not appear in a WHERE predicate
+        assert "kp.namespace =" not in sql
+        assert "kp.room =" not in sql
 
     @pytest.mark.asyncio
     async def test_room_scoped_returns_fused_results(self) -> None:
@@ -2556,556 +1019,385 @@ class TestRoomScopedSearch:
         assert result_ids.index("aaaa-0001") < result_ids.index("bbbb-0002")
 
 
-class TestKnowledgeInputGraphValidation:
-    """Tests for graph op field validation in KnowledgeInput."""
+class TestMemoryService:
+    """Tests that MemoryService orchestrates query and manage paths."""
 
-    def test_graph_neighbors_requires_start_entity(self) -> None:
-        """graph_neighbors without start_entity should raise ValidationError."""
-        with pytest.raises(ValidationError, match="start_entity"):
-            KnowledgeInput(op="graph_neighbors")
+    def test_memory_service_importable(self) -> None:
+        """MemoryService must be importable from memory_service module."""
+        from workflows_mcp.engine.memory_service import ManageMemoryRequest, MemoryService, QueryMemoryRequest
 
-    def test_graph_traverse_requires_start_entity(self) -> None:
-        """graph_traverse without start_entity should raise ValidationError."""
-        with pytest.raises(ValidationError, match="start_entity"):
-            KnowledgeInput(op="graph_traverse")
-
-    def test_graph_path_requires_start_entity(self) -> None:
-        """graph_path without start_entity should raise ValidationError."""
-        with pytest.raises(ValidationError, match="start_entity"):
-            KnowledgeInput(op="graph_path")
-
-    def test_graph_stats_requires_start_entity(self) -> None:
-        """graph_stats without start_entity should raise ValidationError."""
-        with pytest.raises(ValidationError, match="start_entity"):
-            KnowledgeInput(op="graph_stats")
-
-    def test_graph_path_requires_end_entity(self) -> None:
-        """graph_path without end_entity should raise ValidationError."""
-        with pytest.raises(ValidationError, match="end_entity"):
-            KnowledgeInput(op="graph_path", start_entity="entity-a")
-
-    def test_graph_neighbors_valid_minimal(self) -> None:
-        """graph_neighbors with start_entity should pass validation."""
-        inp = KnowledgeInput(op="graph_neighbors", start_entity="entity-a")
-        assert inp.op == "graph_neighbors"
-        assert inp.start_entity == "entity-a"
-        assert inp.max_nodes == 100
-        assert inp.max_hops == 3
-        assert inp.relation_types is None
-        assert inp.min_edge_confidence is None
-
-    def test_graph_traverse_valid_with_options(self) -> None:
-        """graph_traverse accepts optional filters and depth limits."""
-        inp = KnowledgeInput(
-            op="graph_traverse",
-            start_entity="root-node",
-            max_hops=5,
-            max_nodes=50,
-            relation_types=["depends_on", "uses"],
-            min_edge_confidence=0.7,
-        )
-        assert inp.max_hops == 5
-        assert inp.max_nodes == 50
-        assert inp.relation_types == ["depends_on", "uses"]
-        assert inp.min_edge_confidence == 0.7
-
-    def test_graph_path_valid(self) -> None:
-        """graph_path with both start_entity and end_entity passes."""
-        inp = KnowledgeInput(
-            op="graph_path",
-            start_entity="entity-a",
-            end_entity="entity-b",
-        )
-        assert inp.op == "graph_path"
-        assert inp.end_entity == "entity-b"
-
-    def test_graph_stats_valid_with_as_of(self) -> None:
-        """graph_stats with temporal as_of filter passes."""
-        inp = KnowledgeInput(
-            op="graph_stats",
-            start_entity="entity-x",
-            as_of="2026-01-01T00:00:00Z",
-        )
-        assert inp.as_of == "2026-01-01T00:00:00Z"
-
-
-class TestKnowledgeOutputGraphDefaults:
-    """Tests for KnowledgeOutput default values on graph-related fields."""
-
-    def test_graph_fields_default_to_empty(self) -> None:
-        """Graph output fields should default to empty lists/dict/zero."""
-        out = KnowledgeOutput(success=True)
-        assert out.nodes == []
-        assert out.edges == []
-        assert out.paths == []
-        assert out.traversal_count == 0
-        assert out.diagnostics == {}
-
-    def test_graph_output_populated(self) -> None:
-        """KnowledgeOutput should store graph result fields correctly."""
-        out = KnowledgeOutput(
-            success=True,
-            nodes=[{"id": "e1", "name": "Alpha"}],
-            edges=[{"id": "r1", "source_entity_id": "e1", "target_entity_id": "e2"}],
-            traversal_count=2,
-            diagnostics={"expanded_nodes": 1, "pruned_edges": 0, "latency_ms": 3.5},
-        )
-        assert len(out.nodes) == 1
-        assert len(out.edges) == 1
-        assert out.traversal_count == 2
-        assert out.diagnostics["expanded_nodes"] == 1
-
-
-class TestGraphNeighborsOperation:
-    """Tests for _op_graph_neighbors executor handler."""
+        assert MemoryService is not None
+        assert QueryMemoryRequest is not None
+        assert ManageMemoryRequest is not None
 
     @pytest.mark.asyncio
-    async def test_unknown_entity_returns_empty(self) -> None:
-        """Unknown start_entity must return empty result, not raise."""
-        executor = KnowledgeExecutor()
-        backend = MagicMock()
-        # Both UUID existence check and name lookup return no rows
-        backend.query = AsyncMock(return_value=MagicMock(rows=[]))
+    async def test_memory_service_handles_query_path(self) -> None:
+        """MemoryService.query returns structured facts/memories without summary."""
+        from unittest.mock import AsyncMock, MagicMock, patch
 
-        inputs = KnowledgeInput(op="graph_neighbors", start_entity="nonexistent-entity")
-        result = await executor._op_graph_neighbors(inputs, _make_execution_context(), backend)
-
-        assert result.success is True
-        assert result.nodes == []
-        assert result.edges == []
-        assert result.traversal_count == 0
-
-    @pytest.mark.asyncio
-    async def test_single_hop_neighbor(self) -> None:
-        """graph_neighbors returns root + one neighbor connected by one edge."""
-        executor = KnowledgeExecutor()
-
-        root_id = "aaaaaaaa-0000-0000-0000-000000000001"
-        neighbor_id = "bbbbbbbb-0000-0000-0000-000000000002"
-        rel_id = "cccccccc-0000-0000-0000-000000000003"
-
-        root_row = _make_entity_row(root_id, name="Root")
-        neighbor_row = _make_entity_row(neighbor_id, name="Neighbor")
-        edge_row = _make_relation_row(rel_id, root_id, neighbor_id)
-
-        edge_result = MagicMock()
-        edge_result.rows = [edge_row]
-
-        backend = MagicMock()
-        # Call sequence:
-        #   1. _resolve_entity_id: UUID existence check → returns root row
-        #   2. _fetch_entity(root_id) → root_row
-        #   3. _build_neighbors_query → returns edge_row
-        #   4. _fetch_entity(neighbor_id) → neighbor_row
-        backend.query = AsyncMock(
-            side_effect=[
-                MagicMock(rows=[root_row]),  # UUID existence check in _resolve_entity_id
-                MagicMock(rows=[root_row]),  # _fetch_entity(root_id)
-                edge_result,  # neighbor edges query
-                MagicMock(rows=[neighbor_row]),  # _fetch_entity(neighbor_id)
-            ]
-        )
-
-        inputs = KnowledgeInput(op="graph_neighbors", start_entity=root_id)
-        result = await executor._op_graph_neighbors(inputs, _make_execution_context(), backend)
-
-        assert result.success is True
-        assert result.traversal_count == 1
-        assert len(result.nodes) == 2  # root + 1 neighbor
-        assert len(result.edges) == 1
-        assert result.diagnostics["expanded_nodes"] == 1
-
-    @pytest.mark.asyncio
-    async def test_max_nodes_prunes_excess_neighbors(self) -> None:
-        """Neighbors beyond max_nodes are pruned; pruned_edges count reflects this."""
-        executor = KnowledgeExecutor()
-
-        root_id = "aaaaaaaa-0000-0000-0000-000000000001"
-        n1_id = "bbbbbbbb-0000-0000-0000-000000000002"
-        n2_id = "cccccccc-0000-0000-0000-000000000003"
-        n3_id = "dddddddd-0000-0000-0000-000000000004"
-
-        root_row = _make_entity_row(root_id, name="Root")
-        edges = [
-            _make_relation_row(f"rel-{i}", root_id, nid)
-            for i, nid in enumerate([n1_id, n2_id, n3_id])
-        ]
-
-        edge_result = MagicMock()
-        edge_result.rows = edges
-
-        n1_row = _make_entity_row(n1_id, name="N1")
-        n2_row = _make_entity_row(n2_id, name="N2")
+        from workflows_mcp.engine.memory_service import MemoryService, QueryMemoryRequest
 
         backend = MagicMock()
         backend.query = AsyncMock(
-            side_effect=[
-                MagicMock(rows=[root_row]),  # resolve entity id
-                MagicMock(rows=[root_row]),  # fetch root
-                edge_result,  # neighbor edges (3 edges)
-                MagicMock(rows=[n1_row]),  # fetch n1
-                MagicMock(rows=[n2_row]),  # fetch n2
-                # n3 is pruned — no fetch call
-            ]
+            return_value=MagicMock(
+                rows=[
+                    {
+                        "id": "abc",
+                        "content": "test fact",
+                        "confidence": 0.9,
+                        "authority": "AGENT",
+                        "rrf_score": 0.5,
+                        "item_path": None,
+                    }
+                ]
+            )
         )
+        backend.execute = AsyncMock()
 
-        inputs = KnowledgeInput(op="graph_neighbors", start_entity=root_id, max_nodes=2)
-        result = await executor._op_graph_neighbors(inputs, _make_execution_context(), backend)
+        context = MagicMock()
+        context.execution_context = None
 
-        assert result.success is True
-        assert result.diagnostics["pruned_edges"] == 1
-        assert len(result.nodes) <= 3  # root + at most 2 neighbors
+        with patch("workflows_mcp.engine.memory_service.compute_embedding") as mock_embed:
+            mock_embed.return_value = ([0.1, 0.2, 0.3], "text-embedding-3-small", 3, None)
+            with patch("workflows_mcp.engine.memory_service.room_scoped_search") as mock_search:
+                mock_search.return_value = [
+                    {
+                        "id": "abc",
+                        "content": "test fact",
+                        "confidence": 0.9,
+                        "authority": "AGENT",
+                        "rrf_score": 0.5,
+                        "item_path": None,
+                    }
+                ]
+                service = MemoryService(backend=backend, context=context)
+                result = await service.query(QueryMemoryRequest(query="test query"))
 
-
-class TestGraphTraverseOperation:
-    """Tests for _op_graph_traverse executor handler."""
+        assert hasattr(result, "memories")
+        assert hasattr(result, "facts")
+        assert len(result.memories) >= 0
 
     @pytest.mark.asyncio
-    async def test_unknown_entity_returns_empty(self) -> None:
-        """Unknown start_entity must return empty result, not raise."""
-        executor = KnowledgeExecutor()
+    async def test_memory_service_handles_manage_path(self) -> None:
+        """MemoryService.manage returns a result with operation field."""
+        from unittest.mock import AsyncMock, MagicMock, patch
+
+        from workflows_mcp.engine.memory_service import ManageMemoryRequest, MemoryService
+
         backend = MagicMock()
         backend.query = AsyncMock(return_value=MagicMock(rows=[]))
+        backend.execute = AsyncMock()
 
-        inputs = KnowledgeInput(op="graph_traverse", start_entity="nonexistent-node")
-        result = await executor._op_graph_traverse(inputs, _make_execution_context(), backend)
+        context = MagicMock()
+        context.execution_context = None
 
-        assert result.success is True
-        assert result.nodes == []
-        assert result.edges == []
-        assert result.traversal_count == 0
+        with patch("workflows_mcp.engine.memory_service.compute_embedding") as mock_embed:
+            mock_embed.return_value = ([0.1, 0.2, 0.3], "text-embedding-3-small", 3, None)
+            service = MemoryService(backend=backend, context=context)
+            result = await service.manage(
+                ManageMemoryRequest(
+                    operation="store",
+                    content="A fact to store",
+                )
+            )
 
-    @pytest.mark.asyncio
-    async def test_multihop_traversal(self) -> None:
-        """BFS expansion follows edges across multiple hops up to max_hops."""
-        executor = KnowledgeExecutor()
-
-        a_id = "aaaaaaaa-0000-0000-0000-000000000001"
-        b_id = "bbbbbbbb-0000-0000-0000-000000000002"
-        c_id = "cccccccc-0000-0000-0000-000000000003"
-
-        a_row = _make_entity_row(a_id, name="A")
-        b_row = _make_entity_row(b_id, name="B")
-        c_row = _make_entity_row(c_id, name="C")
-
-        ab_edge = _make_relation_row("rel-ab", a_id, b_id)
-        bc_edge = _make_relation_row("rel-bc", b_id, c_id)
-
-        # Hop 0 from A → B; hop 1 from B → C; hop 1 from C → nothing
-        backend = MagicMock()
-        backend.query = AsyncMock(
-            side_effect=[
-                MagicMock(rows=[a_row]),  # resolve a_id
-                MagicMock(rows=[a_row]),  # fetch A
-                MagicMock(rows=[ab_edge]),  # neighbors of A (hop 0)
-                MagicMock(rows=[b_row]),  # fetch B
-                MagicMock(rows=[bc_edge]),  # neighbors of B (hop 1)
-                MagicMock(rows=[c_row]),  # fetch C
-                MagicMock(rows=[]),  # neighbors of C (hop 2 — blocked by max_hops=2)
-            ]
-        )
-
-        inputs = KnowledgeInput(op="graph_traverse", start_entity=a_id, max_hops=2)
-        result = await executor._op_graph_traverse(inputs, _make_execution_context(), backend)
-
-        assert result.success is True
-        assert result.traversal_count >= 1
-        node_names = {n["name"] for n in result.nodes}
-        assert "A" in node_names
-        assert "B" in node_names
+        assert result.operation == "store"
+        assert hasattr(result, "memory_ids")
 
     @pytest.mark.asyncio
-    async def test_cycle_safety(self) -> None:
-        """Traversal does not loop when graph contains cycles (A→B→A)."""
-        executor = KnowledgeExecutor()
-
-        a_id = "aaaaaaaa-0000-0000-0000-000000000001"
-        b_id = "bbbbbbbb-0000-0000-0000-000000000002"
-
-        a_row = _make_entity_row(a_id, name="A")
-        b_row = _make_entity_row(b_id, name="B")
-
-        # A→B and B→A (cycle)
-        ab_edge = _make_relation_row("rel-ab", a_id, b_id)
-        ba_edge = _make_relation_row("rel-ba", b_id, a_id)
+    async def test_execute_ingest_raw_forwards_validity_window_to_store(self) -> None:
+        """Unified ingest must forward valid_from/valid_to from record to store request."""
+        from workflows_mcp.engine.memory_service import ManageMemoryResult, MemoryRequest, MemoryService
 
         backend = MagicMock()
-        backend.query = AsyncMock(
-            side_effect=[
-                MagicMock(rows=[a_row]),  # resolve a_id
-                MagicMock(rows=[a_row]),  # fetch A
-                MagicMock(rows=[ab_edge]),  # neighbors of A
-                MagicMock(rows=[b_row]),  # fetch B
-                MagicMock(rows=[ba_edge]),  # neighbors of B — A already visited
-                # No further expansion; cycle is broken
-            ]
+        context = MagicMock()
+        context.execution_context = None
+        service = MemoryService(backend=backend, context=context)
+        service.manage = AsyncMock(  # type: ignore[method-assign]
+            return_value=ManageMemoryResult(operation="store", memory_ids=["m-1"], stored_count=1)
         )
 
-        inputs = KnowledgeInput(op="graph_traverse", start_entity=a_id, max_hops=5)
-        result = await executor._op_graph_traverse(inputs, _make_execution_context(), backend)
-
-        # Should terminate without error; exactly 2 distinct nodes
-        assert result.success is True
-        assert len(result.nodes) == 2
-
-
-class TestGraphPathOperation:
-    """Tests for _op_graph_path executor handler."""
-
-    @pytest.mark.asyncio
-    async def test_unknown_start_entity_returns_empty(self) -> None:
-        """Unknown start_entity must return empty result."""
-        executor = KnowledgeExecutor()
-        backend = MagicMock()
-        backend.query = AsyncMock(return_value=MagicMock(rows=[]))
-
-        inputs = KnowledgeInput(
-            op="graph_path",
-            start_entity="nonexistent-start",
-            end_entity="some-end",
+        await service.execute(
+            MemoryRequest(
+                operation="ingest",
+                scope={"wing": "engineering", "room": "memory", "hall": "temporal"},
+                record={
+                    "format": "raw",
+                    "content": "temporal fact",
+                    "valid_from": "2026-04-01T00:00:00Z",
+                    "valid_to": "2026-04-30T23:59:59Z",
+                },
+            )
         )
-        result = await executor._op_graph_path(inputs, _make_execution_context(), backend)
 
-        assert result.success is True
-        assert result.paths == []
-        assert result.nodes == []
+        called_request = service.manage.await_args.args[0]  # type: ignore[attr-defined]
+        assert called_request.operation == "store"
+        assert called_request.valid_from == "2026-04-01T00:00:00Z"
+        assert called_request.valid_to == "2026-04-30T23:59:59Z"
 
     @pytest.mark.asyncio
-    async def test_same_entity_path_is_trivial(self) -> None:
-        """When start == end, result contains 1 path with 0 hops."""
-        executor = KnowledgeExecutor()
-
-        entity_id = "aaaaaaaa-0000-0000-0000-000000000001"
-        entity_row = _make_entity_row(entity_id, name="Self")
+    async def test_query_with_as_of_passes_temporal_filter_to_search_layer(self) -> None:
+        """Query as_of should be converted and forwarded to search SQL builder layer."""
+        from workflows_mcp.engine.memory_service import MemoryService, QueryMemoryRequest
 
         backend = MagicMock()
-        backend.query = AsyncMock(
-            side_effect=[
-                MagicMock(rows=[entity_row]),  # resolve start UUID
-                MagicMock(rows=[entity_row]),  # resolve end UUID
-                MagicMock(rows=[entity_row]),  # fetch entity for trivial path
-            ]
-        )
+        backend.execute = AsyncMock()
+        context = MagicMock()
+        context.execution_context = None
 
-        inputs = KnowledgeInput(
-            op="graph_path",
-            start_entity=entity_id,
-            end_entity=entity_id,
-        )
-        result = await executor._op_graph_path(inputs, _make_execution_context(), backend)
+        with patch("workflows_mcp.engine.memory_service.compute_embedding") as mock_embed:
+            mock_embed.return_value = ([0.1, 0.2, 0.3], "text-embedding-3-small", 3, None)
+            with patch("workflows_mcp.engine.memory_service.room_scoped_search") as mock_search:
+                mock_search.return_value = []
+                service = MemoryService(backend=backend, context=context)
+                await service.query(
+                    QueryMemoryRequest(
+                        query="temporal query",
+                        strategy="auto",
+                        as_of="2026-04-07T12:00:00Z",
+                    )
+                )
 
-        assert result.success is True
-        assert len(result.paths) == 1
-        assert result.paths[0]["hop_count"] == 0
+        assert mock_search.await_count == 1
+        assert (
+            mock_search.await_args.kwargs["as_of"]
+            == datetime(2026, 4, 7, 12, 0, tzinfo=timezone.utc)
+        )
 
     @pytest.mark.asyncio
-    async def test_direct_path_one_hop(self) -> None:
-        """BFS finds a direct 1-hop path between two connected entities."""
-        executor = KnowledgeExecutor()
-
-        a_id = "aaaaaaaa-0000-0000-0000-000000000001"
-        b_id = "bbbbbbbb-0000-0000-0000-000000000002"
-
-        a_row = _make_entity_row(a_id, name="A")
-        b_row = _make_entity_row(b_id, name="B")
-        ab_edge = _make_relation_row("rel-ab", a_id, b_id)
+    async def test_query_with_interval_passes_temporal_range_to_search_layer(self) -> None:
+        """Query from/to should be converted and forwarded to search SQL builder layer."""
+        from workflows_mcp.engine.memory_service import MemoryService, QueryMemoryRequest
 
         backend = MagicMock()
-        backend.query = AsyncMock(
-            side_effect=[
-                MagicMock(rows=[a_row]),  # resolve start
-                MagicMock(rows=[b_row]),  # resolve end
-                MagicMock(rows=[ab_edge]),  # neighbors of A — finds B
-                MagicMock(rows=[a_row]),  # fetch A for path reconstruction
-                MagicMock(rows=[b_row]),  # fetch B for path reconstruction
-            ]
+        backend.execute = AsyncMock()
+        context = MagicMock()
+        context.execution_context = None
+
+        with patch("workflows_mcp.engine.memory_service.compute_embedding") as mock_embed:
+            mock_embed.return_value = ([0.1, 0.2, 0.3], "text-embedding-3-small", 3, None)
+            with patch("workflows_mcp.engine.memory_service.room_scoped_search") as mock_search:
+                mock_search.return_value = []
+                service = MemoryService(backend=backend, context=context)
+                await service.query(
+                    QueryMemoryRequest(
+                        query="temporal query",
+                        strategy="auto",
+                        from_="2026-04-01T00:00:00Z",
+                        to="2026-04-30T23:59:59Z",
+                    )
+                )
+
+        assert mock_search.await_count == 1
+        assert (
+            mock_search.await_args.kwargs["from_dt"]
+            == datetime(2026, 4, 1, 0, 0, tzinfo=timezone.utc)
+        )
+        assert (
+            mock_search.await_args.kwargs["to_dt"]
+            == datetime(2026, 4, 30, 23, 59, 59, tzinfo=timezone.utc)
         )
 
-        inputs = KnowledgeInput(op="graph_path", start_entity=a_id, end_entity=b_id)
-        result = await executor._op_graph_path(inputs, _make_execution_context(), backend)
-
-        assert result.success is True
-        assert len(result.paths) == 1
-        assert result.paths[0]["hop_count"] == 1
-        assert len(result.paths[0]["edges"]) == 1
-
     @pytest.mark.asyncio
-    async def test_no_path_returns_empty_paths(self) -> None:
-        """When no path exists between entities, paths list is empty."""
-        executor = KnowledgeExecutor()
-
-        a_id = "aaaaaaaa-0000-0000-0000-000000000001"
-        b_id = "bbbbbbbb-0000-0000-0000-000000000002"
-
-        a_row = _make_entity_row(a_id, name="A")
-        b_row = _make_entity_row(b_id, name="B")
-
-        backend = MagicMock()
-        backend.query = AsyncMock(
-            side_effect=[
-                MagicMock(rows=[a_row]),  # resolve start
-                MagicMock(rows=[b_row]),  # resolve end
-                MagicMock(rows=[]),  # A has no neighbors — path not found
-            ]
+    async def test_manage_context_preserves_filter_fields(self) -> None:
+        """Context management must forward all scoping/filter fields to QueryMemoryRequest."""
+        from workflows_mcp.engine.memory_service import (
+            ManageMemoryRequest,
+            MemoryService,
+            QueryMemoryResult,
         )
 
-        inputs = KnowledgeInput(op="graph_path", start_entity=a_id, end_entity=b_id)
-        result = await executor._op_graph_path(inputs, _make_execution_context(), backend)
-
-        assert result.success is True
-        assert result.paths == []
-
-
-class TestGraphStatsOperation:
-    """Tests for _op_graph_stats executor handler."""
-
-    @pytest.mark.asyncio
-    async def test_unknown_entity_returns_empty(self) -> None:
-        """Unknown entity must return empty result."""
-        executor = KnowledgeExecutor()
         backend = MagicMock()
         backend.query = AsyncMock(return_value=MagicMock(rows=[]))
+        backend.execute = AsyncMock()
 
-        inputs = KnowledgeInput(op="graph_stats", start_entity="nonexistent")
-        result = await executor._op_graph_stats(inputs, _make_execution_context(), backend)
+        context = MagicMock()
+        context.execution_context = None
 
-        assert result.success is True
-        assert result.nodes == []
-        assert result.traversal_count == 0
-
-    @pytest.mark.asyncio
-    async def test_degree_stats_returned_in_diagnostics(self) -> None:
-        """graph_stats encodes out_degree, in_degree, total_degree in diagnostics."""
-        executor = KnowledgeExecutor()
-
-        entity_id = "aaaaaaaa-0000-0000-0000-000000000001"
-        entity_row = _make_entity_row(entity_id, name="Hub")
-
-        stats_row = {
-            "out_degree": 3,
-            "in_degree": 2,
-            "distinct_relation_types": 2,
-        }
-
-        backend = MagicMock()
-        backend.query = AsyncMock(
-            side_effect=[
-                MagicMock(rows=[entity_row]),  # resolve entity id
-                MagicMock(rows=[entity_row]),  # fetch entity
-                MagicMock(rows=[stats_row]),  # degree stats query
-            ]
+        service = MemoryService(backend=backend, context=context)
+        service._query_context = AsyncMock(  # type: ignore[method-assign]
+            return_value=QueryMemoryResult(
+                evidence=[
+                    {
+                        "context_text": "ctx",
+                        "memory_count": 1,
+                        "tokens_used": 10,
+                    }
+                ]
+            )
         )
 
-        inputs = KnowledgeInput(op="graph_stats", start_entity=entity_id)
-        result = await executor._op_graph_stats(inputs, _make_execution_context(), backend)
-
-        assert result.success is True
-        assert len(result.nodes) == 1
-        assert result.nodes[0]["name"] == "Hub"
-        assert result.diagnostics["out_degree"] == 3
-        assert result.diagnostics["in_degree"] == 2
-        assert result.diagnostics["total_degree"] == 5
-        assert result.diagnostics["distinct_relation_types"] == 2
-
-    @pytest.mark.asyncio
-    async def test_stats_with_temporal_as_of(self) -> None:
-        """graph_stats passes as_of correctly; result still has degree fields."""
-        executor = KnowledgeExecutor()
-
-        entity_id = "aaaaaaaa-0000-0000-0000-000000000001"
-        entity_row = _make_entity_row(entity_id, name="TemporalHub")
-
-        stats_row = {
-            "out_degree": 1,
-            "in_degree": 0,
-            "distinct_relation_types": 1,
-        }
-
-        backend = MagicMock()
-        backend.query = AsyncMock(
-            side_effect=[
-                MagicMock(rows=[entity_row]),
-                MagicMock(rows=[entity_row]),
-                MagicMock(rows=[stats_row]),
-            ]
+        await service.manage(
+            ManageMemoryRequest(
+                operation="context",
+                query="investigate auth bug",
+                namespace="engineering",
+                room="auth",
+                corridor="critical-path",
+                source="runbook:*",
+                categories=["incident", "auth"],
+                as_of="2026-04-19T12:30:00Z",
+                min_confidence=0.77,
+                lifecycle_state="ACTIVE",
+                max_items=7,
+                max_tokens=512,
+                embedding_profile="embedding",
+            )
         )
 
-        inputs = KnowledgeInput(
-            op="graph_stats",
-            start_entity=entity_id,
-            as_of="2026-01-01T00:00:00Z",
-        )
-        result = await executor._op_graph_stats(inputs, _make_execution_context(), backend)
-
-        assert result.success is True
-        assert result.diagnostics["total_degree"] == 1
-
-
-class TestGraphTemporalFilter:
-    """Tests that verify temporal as_of is wired through to graph traversal."""
+        called_request = service._query_context.await_args.args[0]  # type: ignore[attr-defined]
+        assert called_request.query == "investigate auth bug"
+        assert called_request.strategy == "context"
+        assert called_request.namespace == "engineering"
+        assert called_request.room == "auth"
+        assert called_request.scope == {"corridor": "critical-path"}
+        assert called_request.source == "runbook:*"
+        assert called_request.categories == ["incident", "auth"]
+        assert called_request.as_of == "2026-04-19T12:30:00Z"
+        assert called_request.min_confidence == 0.77
+        assert called_request.lifecycle_state == "ACTIVE"
+        assert called_request.max_items == 7
+        assert called_request.max_tokens == 512
 
     @pytest.mark.asyncio
-    async def test_graph_neighbors_as_of_forwarded(self) -> None:
-        """graph_neighbors with as_of passes a datetime to graph_neighbors()."""
-        from unittest.mock import patch
+    @pytest.mark.parametrize("strategy", ["auto", "communities", "palace"])
+    async def test_query_retrieval_updates_last_retrieved_timestamp(self, strategy: str) -> None:
+        """Retrieval update SQL must increment count and stamp last_retrieved_at."""
+        from workflows_mcp.engine.memory_service import MemoryService, QueryMemoryRequest
 
-        executor = KnowledgeExecutor()
         backend = MagicMock()
+        backend.execute = AsyncMock()
         backend.query = AsyncMock(return_value=MagicMock(rows=[]))
 
-        inputs = KnowledgeInput(
-            op="graph_neighbors",
-            start_entity="entity-x",
-            as_of="2026-03-15T12:00:00Z",
-        )
+        context = MagicMock()
+        context.execution_context = None
 
-        with patch(
-            "workflows_mcp.engine.executors_knowledge.graph_neighbors",
-            new=AsyncMock(
-                return_value={
-                    "nodes": [],
-                    "edges": [],
-                    "paths": [],
-                    "traversal_count": 0,
-                    "diagnostics": {"expanded_nodes": 0, "pruned_edges": 0, "latency_ms": 0.1},
-                }
-            ),
-        ) as mock_fn:
-            await executor._op_graph_neighbors(inputs, _make_execution_context(), backend)
+        with patch("workflows_mcp.engine.memory_service.compute_embedding") as mock_embed:
+            mock_embed.return_value = ([0.1, 0.2, 0.3], "text-embedding-3-small", 3, None)
+            with patch("workflows_mcp.engine.memory_service.room_scoped_search") as mock_search:
+                mock_search.return_value = [
+                    {
+                        "id": "11111111-1111-1111-1111-111111111111",
+                        "content": "match",
+                        "confidence": 0.9,
+                        "authority": "AGENT",
+                        "rrf_score": 0.8,
+                        "item_path": None,
+                        "source_name": "docs",
+                        "namespace": "engineering",
+                    }
+                ]
 
-        call_kwargs = mock_fn.call_args.kwargs
-        assert call_kwargs["as_of"] is not None
-        assert isinstance(call_kwargs["as_of"], datetime)
+                if strategy == "communities":
+                    backend.query = AsyncMock(
+                        return_value=MagicMock(
+                            rows=[
+                                {
+                                    "id": "22222222-2222-2222-2222-222222222222",
+                                    "content": "community",
+                                    "member_count": 1,
+                                    "memory_count": 1,
+                                    "namespace": "engineering",
+                                    "room": "auth",
+                                    "corridor": None,
+                                    "similarity": 0.9,
+                                }
+                            ]
+                        )
+                    )
+
+                service = MemoryService(backend=backend, context=context)
+                await service.query(
+                    QueryMemoryRequest(
+                        query="auth incident",
+                        strategy=strategy,
+                        namespace="engineering",
+                        room="auth",
+                    )
+                )
+
+        assert backend.execute.await_count >= 1
+        update_sql = backend.execute.await_args_list[-1].args[0]
+        assert "retrieval_count = retrieval_count + 1" in update_sql
+        assert "last_retrieved_at = NOW()" in update_sql
+
+
+class TestMemoryExecutorManageWiring:
+    """Tests that MemoryExecutor forwards manage payloads correctly."""
 
     @pytest.mark.asyncio
-    async def test_graph_traverse_as_of_forwarded(self) -> None:
-        """graph_traverse with as_of passes a datetime to graph_traverse()."""
-        from unittest.mock import patch
-
-        executor = KnowledgeExecutor()
+    async def test_memory_executor_forwards_ingest_structured_request(self) -> None:
+        """MemoryExecutor passes unified ingest envelope to MemoryService.execute."""
         backend = MagicMock()
-        backend.query = AsyncMock(return_value=MagicMock(rows=[]))
+        backend.connect = AsyncMock()
+        backend.disconnect = AsyncMock()
 
-        inputs = KnowledgeInput(
-            op="graph_traverse",
-            start_entity="entity-y",
-            as_of="2026-06-01T00:00:00Z",
-        )
+        captured_requests: list[Any] = []
 
-        with patch(
-            "workflows_mcp.engine.executors_knowledge.graph_traverse",
-            new=AsyncMock(
-                return_value={
-                    "nodes": [],
-                    "edges": [],
-                    "paths": [],
-                    "traversal_count": 0,
-                    "diagnostics": {"expanded_nodes": 0, "pruned_edges": 0, "latency_ms": 0.1},
-                }
-            ),
-        ) as mock_fn:
-            await executor._op_graph_traverse(inputs, _make_execution_context(), backend)
+        async def capture_execute(request: Any) -> Any:
+            captured_requests.append(request)
+            from workflows_mcp.engine.memory_service import ManageMemoryResult, MemoryResult
 
-        call_kwargs = mock_fn.call_args.kwargs
-        assert call_kwargs["as_of"] is not None
-        assert isinstance(call_kwargs["as_of"], datetime)
+            return MemoryResult(
+                operation="ingest",
+                manage=ManageMemoryResult(
+                    operation="ingest_structured",
+                    success=True,
+                    stored_count=1,
+                    memory_ids=["memory-0-id"],
+                    entity_ids=["entity-alice-id"],
+                    relation_ids=["relation-0-id"],
+                    entities_stored_count=1,
+                    relations_stored_count=1,
+                ),
+            )
+
+        context = MagicMock()
+        context.execution_context = None
+
+        with patch.object(MemoryExecutor, "_create_backend", return_value=backend), patch(
+            "workflows_mcp.engine.executors_memory.MemoryService"
+        ) as mock_service_cls:
+            mock_service_cls.return_value.execute = capture_execute
+
+            executor = MemoryExecutor()
+            result = await executor.execute(
+                MemoryInput(
+                    operation="ingest",
+                    scope={"wing": "engineering", "room": "memory"},
+                    record={
+                        "format": "structured",
+                        "source": "spec-tests",
+                        "path": "docs/spec.md",
+                        "memories": [{"content": "Alice works at Acme."}],
+                        "entities": [
+                            {
+                                "name": "Alice",
+                                "entity_type": "PERSON",
+                                "memory_indices": [0],
+                            }
+                        ],
+                        "relations": [],
+                    },
+                ),
+                context,
+            )
+
+        assert result.success is True
+        assert result.operation == "ingest"
+        assert result.result["manage"]["stored_count"] == 1
+        assert result.result["manage"]["entity_ids"] == ["entity-alice-id"]
+        assert result.result["manage"]["relation_ids"] == ["relation-0-id"]
+        assert result.result["manage"]["entities_stored_count"] == 1
+        assert result.result["manage"]["relations_stored_count"] == 1
+        assert len(captured_requests) == 1
+        assert captured_requests[0].operation == "ingest"
+        assert captured_requests[0].scope.wing == "engineering"
+        assert captured_requests[0].scope.room == "memory"
+        assert captured_requests[0].record is not None
+        assert captured_requests[0].record.format == "structured"
+        assert captured_requests[0].record.memories is not None
+        assert captured_requests[0].record.memories[0]["content"] == "Alice works at Acme."
+        assert captured_requests[0].record.entities is not None
+        assert captured_requests[0].record.entities[0]["memory_indices"] == [0]
+        assert captured_requests[0].record.relations == []

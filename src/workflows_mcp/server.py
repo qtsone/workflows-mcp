@@ -9,12 +9,14 @@ Following the official Anthropic Python SDK patterns:
 - FastMCP server with stdio transport
 """
 
+import asyncio
 import logging
 import os
 import sys
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from pathlib import Path
+from typing import Any
 
 from mcp.server.fastmcp import FastMCP
 
@@ -29,6 +31,166 @@ logger = logging.getLogger(__name__)
 # =============================================================================
 # Shared Resources and Lifespan Management
 # =============================================================================
+
+
+def _is_enabled_env_flag(name: str, *, default: bool) -> bool:
+    """Parse a boolean environment flag with a default value."""
+    raw = os.getenv(name)
+    if raw is None:
+        return default
+
+    return raw.strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _quote_pg_identifier(identifier: str) -> str:
+    """Safely quote a PostgreSQL identifier for CREATE DATABASE statements."""
+    return f'"{identifier.replace("\"", "\"\"")}"'
+
+
+def _is_duplicate_database_error(exc: BaseException) -> bool:
+    """Return True when the error indicates CREATE DATABASE raced with another startup."""
+    return (
+        exc.__class__.__name__ == "DuplicateDatabaseError"
+        or getattr(exc, "sqlstate", None) == "42P04"
+    )
+
+
+async def _bootstrap_memory_database(
+    asyncpg_module: Any,
+    *,
+    host: str,
+    port: int,
+    admin_database: str,
+    target_database: str,
+    username: str | None,
+    password: str | None,
+) -> None:
+    """Create the memory database once using an admin database connection."""
+    logger.warning(
+        "Memory DB bootstrap attempt starting",
+        extra={
+            "memory_db_name": target_database,
+            "admin_database": admin_database,
+        },
+    )
+
+    admin_conn = await asyncpg_module.connect(
+        host=host,
+        port=port,
+        database=admin_database,
+        user=username,
+        password=password,
+    )
+    try:
+        sql = f"CREATE DATABASE {_quote_pg_identifier(target_database)}"
+        await admin_conn.execute(sql)
+        logger.warning(
+            "Memory DB bootstrap succeeded",
+            extra={"memory_db_name": target_database},
+        )
+    except Exception as exc:
+        if _is_duplicate_database_error(exc):
+            logger.warning(
+                "Memory DB bootstrap detected concurrent create; continuing",
+                extra={"memory_db_name": target_database},
+            )
+            return
+
+        logger.error(
+            "Memory DB bootstrap failed",
+            extra={"memory_db_name": target_database},
+            exc_info=True,
+        )
+        raise
+    finally:
+        await admin_conn.close()
+
+
+async def _prepare_memory_schema(memory_db_host: str) -> Any:
+    """Connect to memory DB, ensure schema, and return a connected backend."""
+    from .engine.knowledge.schema import ensure_schema
+    from .engine.sql.backend import ConnectionConfig, DatabaseEngine
+    from .engine.sql.postgres_backend import PostgresBackend
+
+    memory_db_port = int(os.getenv("MEMORY_DB_PORT", "5432"))
+    memory_db_name = os.getenv("MEMORY_DB_NAME", "memory_db")
+    memory_db_user = os.getenv("MEMORY_DB_USER")
+    memory_db_password = os.getenv("MEMORY_DB_PASSWORD")
+    memory_db_auto_create = _is_enabled_env_flag("MEMORY_DB_AUTO_CREATE", default=True)
+    memory_db_admin_database = os.getenv("MEMORY_DB_ADMIN_DATABASE", "postgres")
+
+    config = ConnectionConfig(
+        dialect=DatabaseEngine.POSTGRESQL,
+        host=memory_db_host,
+        port=memory_db_port,
+        database=memory_db_name,
+        username=memory_db_user,
+        password=memory_db_password,
+    )
+
+    backend = PostgresBackend()
+    connected = False
+
+    try:
+        await backend.connect(config)
+        connected = True
+    except Exception as exc:
+        asyncpg_module = None
+        try:
+            import asyncpg as asyncpg_module  # type: ignore[import-not-found]
+        except ImportError:
+            asyncpg_module = None
+
+        invalid_catalog_error: type[BaseException] | None = None
+        if asyncpg_module is not None:
+            invalid_catalog_error = getattr(asyncpg_module, "InvalidCatalogNameError", None)
+
+        if invalid_catalog_error is not None and isinstance(exc, invalid_catalog_error):
+            logger.warning(
+                "Memory DB is missing",
+                extra={"memory_db_name": memory_db_name},
+            )
+
+            if not memory_db_auto_create:
+                logger.warning(
+                    "Memory DB bootstrap skipped (MEMORY_DB_AUTO_CREATE=false)",
+                    extra={"memory_db_name": memory_db_name},
+                )
+                raise
+
+            if asyncpg_module is None:
+                logger.error(
+                    "Memory DB bootstrap failed (asyncpg unavailable)",
+                    extra={"memory_db_name": memory_db_name},
+                )
+                raise
+
+            await _bootstrap_memory_database(
+                asyncpg_module,
+                host=memory_db_host,
+                port=memory_db_port,
+                admin_database=memory_db_admin_database,
+                target_database=memory_db_name,
+                username=memory_db_user,
+                password=memory_db_password,
+            )
+
+            logger.warning(
+                "Retrying memory DB connection after bootstrap",
+                extra={"memory_db_name": memory_db_name},
+            )
+            await backend.connect(config)
+            connected = True
+        else:
+            raise
+
+    try:
+        await ensure_schema(backend)
+        return backend
+    except Exception:
+        if connected:
+            await backend.disconnect()
+        raise
 
 
 def get_max_recursion_depth() -> int:
@@ -261,49 +423,46 @@ async def app_lifespan(_server: FastMCP) -> AsyncIterator[AppContext]:
     else:
         logger.info("Job queue disabled")
 
-    # Initialize knowledge features if knowledge DB is configured
-    knowledge_db_host = os.getenv("KNOWLEDGE_DB_HOST")
-    if knowledge_db_host:
+    # Initialize memory features if memory DB is configured
+    memory_db_host = os.getenv("MEMORY_DB_HOST")
+    if memory_db_host:
         try:
-            from .engine.knowledge.schema import ensure_schema
-            from .engine.sql.backend import ConnectionConfig, DatabaseEngine
-            from .engine.sql.postgres_backend import PostgresBackend
-
-            backend = PostgresBackend()
-            await backend.connect(
-                ConnectionConfig(
-                    dialect=DatabaseEngine.POSTGRESQL,
-                    host=knowledge_db_host,
-                    port=int(os.getenv("KNOWLEDGE_DB_PORT", "5432")),
-                    database=os.getenv("KNOWLEDGE_DB_NAME", "knowledge_db"),
-                    username=os.getenv("KNOWLEDGE_DB_USER"),
-                    password=os.getenv("KNOWLEDGE_DB_PASSWORD"),
-                )
-            )
-            try:
-                await ensure_schema(backend)
-            finally:
-                await backend.disconnect()
+            app_context.memory_backend = await _prepare_memory_schema(memory_db_host)
+            app_context.memory_backend_lock = asyncio.Lock()
 
             # Schema OK — register executor and tools
-            from .engine.executors_knowledge import KnowledgeExecutor
-            from .tools_knowledge import register_knowledge_tools
+            from .engine.executors_memory import MemoryExecutor
+            from .tools_memory import register_memory_tools
 
-            executor_registry.register(KnowledgeExecutor())
-            register_knowledge_tools(mcp)
-            from .engine.executors_knowledge import AUDIT_FAIL_CLOSED
+            executor_registry.register(MemoryExecutor())
+            register_memory_tools(mcp)
+            from .engine.memory_service import AUDIT_FAIL_CLOSED
 
             logger.info(
-                "Knowledge features enabled (DB ready)",
+                "Memory features enabled (DB ready)",
                 extra={"audit_fail_closed": AUDIT_FAIL_CLOSED},
             )
-        except Exception:
-            logger.warning(
-                "Knowledge features disabled (DB unreachable)",
-                exc_info=True,
-            )
+        except Exception as exc:
+            if app_context.memory_backend is not None:
+                try:
+                    await app_context.memory_backend.disconnect()
+                finally:
+                    app_context.memory_backend = None
+                    app_context.memory_backend_lock = None
+
+            if isinstance(exc, RuntimeError) and "Incompatible knowledge schema detected" in str(exc):
+                logger.warning(
+                    "Memory features disabled (schema incompatible). "
+                    "Apply the documented migration path, then restart.",
+                    exc_info=True,
+                )
+            else:
+                logger.warning(
+                    "Memory features disabled (DB unreachable)",
+                    exc_info=True,
+                )
     else:
-        logger.info("Knowledge features disabled (KNOWLEDGE_DB_HOST not set)")
+        logger.info("Memory features disabled (MEMORY_DB_HOST not set)")
 
     try:
         # Make resources available to tools via AppContext
@@ -321,6 +480,16 @@ async def app_lifespan(_server: FastMCP) -> AsyncIterator[AppContext]:
         if io_queue:
             await io_queue.stop()
             logger.info("IO queue stopped")
+
+        # Close shared memory backend if enabled
+        if app_context.memory_backend is not None:
+            try:
+                await app_context.memory_backend.disconnect()
+            except Exception:
+                logger.warning("Failed to disconnect shared memory backend", exc_info=True)
+            finally:
+                app_context.memory_backend = None
+                app_context.memory_backend_lock = None
 
         # No other explicit cleanup required because:
         # - WorkflowRegistry: In-memory only, no persistent state

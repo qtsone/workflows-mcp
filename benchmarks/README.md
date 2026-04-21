@@ -116,7 +116,51 @@ uv run python benchmarks/workflows_locomo_bench.py \
   --purge-prefix
 ```
 
-## 6. Notes
+## 6. Multi-Service Memory Workload Benchmark (Issue #9)
+
+This benchmark adds practical load coverage for large scoped-memory workloads across:
+
+- high-cardinality topology (`wing` / `room` / `hall`)
+- mixed operation traffic (`ingest` + scoped retrieval + context assembly)
+- throughput and latency profiling
+
+### Run
+
+```bash
+uv run python benchmarks/workflows_memory_multiservice_bench.py \
+  --wings 8 \
+  --rooms-per-wing 8 \
+  --halls-per-room 4 \
+  --records-per-hall 3 \
+  --operations 300 \
+  --ingest-ratio 0.20 \
+  --scoped-query-ratio 0.55 \
+  --context-query-ratio 0.25
+```
+
+The script prints a JSON summary and can optionally persist it with `--output`.
+
+Dry-run (no DB writes, CLI sanity check):
+
+```bash
+uv run python benchmarks/workflows_memory_multiservice_bench.py --dry-run
+```
+
+### Safety / non-destructive behavior
+
+- Writes are isolated to a unique source name under `benchmark:multiservice:<timestamp>`.
+- Cleanup is automatic by default (source rows are purged at end of run).
+- Use `--keep-data` only when you intentionally want to inspect written rows.
+
+### Metrics to watch
+
+- `throughput_ops_per_second` (overall mixed-workload throughput)
+- `operation_mix.*.avg_ms`, `p50_ms`, `p95_ms`, `p99_ms`, `max_ms` (latency profile per op)
+- `operation_mix.*.ops_per_second` (per-op throughput)
+- `quality_signals.scoped_query_avg_results` and `scoped_query_empty_ratio`
+- `quality_signals.context_avg_tokens`, `context_p95_tokens`, `context_avg_memories`
+
+## 7. Notes
 
 - The workflows-mcp runners create temporary benchmark rows under source prefixes:
   - `benchmark:lme:*`

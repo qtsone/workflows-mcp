@@ -4,9 +4,11 @@ This module contains context types used across server and tools modules,
 separated to avoid circular imports.
 """
 
+import asyncio
 import uuid
 from collections.abc import Callable
 from dataclasses import dataclass, field
+from typing import Any
 
 from mcp.server.fastmcp import Context
 from mcp.server.session import ServerSession
@@ -34,6 +36,8 @@ class AppContext:
     llm_config_loader: LLMConfigLoader
     io_queue: IOQueue | None  # Optional IO queue for serialized file operations
     job_queue: JobQueue | None = None  # Optional job queue for async execution
+    memory_backend: Any | None = None  # Optional shared memory backend (lifespan-scoped)
+    memory_backend_lock: asyncio.Lock | None = None  # Serialize shared memory backend access
     max_recursion_depth: int = 50  # Default recursion depth limit
     # Optional callback for user context resolution.
     # OSS standalone: leave as None → tools fall back to OS/env user detection.
