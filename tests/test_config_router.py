@@ -251,3 +251,67 @@ async def test_config_apply_concurrent_overlap_returns_409(
     body = response.json()
     assert "error" in body
     assert body["error"]["code"] == "CONFIG_WRITE_IN_PROGRESS"
+
+
+# --- Task 3: /config/credentials/rotate and /config/credentials/revoke ---
+
+_NEW_VALID_TOKEN = "b" * 40
+
+
+def test_rotate_with_valid_token_returns_rotated(
+    token_store: TokenStore, config_service: ConfigService
+) -> None:
+    client = _make_client(token_store, config_service)
+    response = client.post(
+        "/config/credentials/rotate",
+        json={"token": _NEW_VALID_TOKEN},
+        headers={"Authorization": f"Bearer {_VALID_TOKEN}"},
+    )
+    assert response.status_code == 200
+    assert response.json() == {"rotated": True}
+
+
+def test_rotate_without_auth_returns_401(
+    token_store: TokenStore, config_service: ConfigService
+) -> None:
+    client = _make_client(token_store, config_service)
+    response = client.post(
+        "/config/credentials/rotate",
+        json={"token": _NEW_VALID_TOKEN},
+    )
+    assert response.status_code == 401
+
+
+def test_rotate_with_short_token_returns_400_error_envelope(
+    token_store: TokenStore, config_service: ConfigService
+) -> None:
+    client = _make_client(token_store, config_service)
+    response = client.post(
+        "/config/credentials/rotate",
+        json={"token": "short"},
+        headers={"Authorization": f"Bearer {_VALID_TOKEN}"},
+    )
+    assert response.status_code == 400
+    body = response.json()
+    assert "error" in body
+    assert body["error"]["code"] == "TOKEN_TOO_SHORT"
+
+
+def test_revoke_with_auth_returns_revoked(
+    token_store: TokenStore, config_service: ConfigService
+) -> None:
+    client = _make_client(token_store, config_service)
+    response = client.post(
+        "/config/credentials/revoke",
+        headers={"Authorization": f"Bearer {_VALID_TOKEN}"},
+    )
+    assert response.status_code == 200
+    assert response.json() == {"revoked": True}
+
+
+def test_revoke_without_auth_returns_401(
+    token_store: TokenStore, config_service: ConfigService
+) -> None:
+    client = _make_client(token_store, config_service)
+    response = client.post("/config/credentials/revoke")
+    assert response.status_code == 401

@@ -427,6 +427,7 @@ def create_app(
             config_service,
             readiness_service=readiness_service,
             auth_guard=auth_guard,
+            token_store=token_store,
         )
         app.include_router(config_router)
 

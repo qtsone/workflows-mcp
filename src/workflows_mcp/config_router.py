@@ -5,7 +5,9 @@ from typing import Any
 
 from fastapi import APIRouter, Depends
 from fastapi.responses import JSONResponse
+from pydantic import BaseModel
 
+from .auth import TokenStore
 from .config_service import ConfigService
 from .http_models import (
     ConfigApplyResponse,
@@ -13,11 +15,18 @@ from .http_models import (
     LLMConfigPayload,
 )
 
+_MIN_TOKEN_BYTES: int = 32
+
+
+class _RotatePayload(BaseModel):
+    token: str
+
 
 def build_config_router(
     config_service: ConfigService,
     readiness_service: Any,
     auth_guard: Callable[..., Any] | None = None,
+    token_store: TokenStore | None = None,
 ) -> APIRouter:
     """Return an ``APIRouter`` with config management endpoints.
 
@@ -26,6 +35,8 @@ def build_config_router(
     - ``GET /config/status``: Returns current readiness state and blockers.
     - ``POST /config/validate``: Validates a config payload without writing.
     - ``POST /config/apply``: Atomically writes config and returns updated state.
+    - ``POST /config/credentials/rotate``: Rotates the bearer token.
+    - ``POST /config/credentials/revoke``: Revokes the bearer token.
 
     All routes are mounted behind *auth_guard* when provided.  Validation
     failures return the stable ``ErrorEnvelope`` shape via ``_error_response``
@@ -93,5 +104,23 @@ def build_config_router(
             state=report.state,
             blockers=report.blockers,
         )
+
+    if token_store is not None:
+
+        @router.post("/credentials/rotate", response_model=None)
+        async def rotate_credentials(payload: _RotatePayload) -> Any:
+            if len(payload.token.encode("utf-8")) < _MIN_TOKEN_BYTES:
+                return _error_response(
+                    status_code=400,
+                    code="TOKEN_TOO_SHORT",
+                    message=f"Token must be at least {_MIN_TOKEN_BYTES} characters.",
+                )
+            token_store.rotate_token(payload.token)
+            return {"rotated": True}
+
+        @router.post("/credentials/revoke", response_model=None)
+        async def revoke_credentials() -> Any:
+            token_store.revoke()
+            return {"revoked": True}
 
     return router
