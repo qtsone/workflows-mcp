@@ -1,12 +1,16 @@
-"""FastMCP server initialization for workflows-mcp.
+"""MCP server initialization and HTTP app builder for workflows-mcp.
 
-This module initializes the MCP server and manages shared resources via lifespan context.
+This module provides:
+- The FastMCP server and its lifespan context manager (MCP protocol).
+- ``build_app()``: composes the full FastAPI HTTP application from auth,
+  readiness, config, and app components (HTTP transport).
+- ``main()``: HTTP-only entry point that starts the Uvicorn server.
+
 All tool implementations are in the tools module.
 
 Following the official Anthropic Python SDK patterns:
 - Lifespan context manager for resource initialization and cleanup
 - Context injection for tool access to shared resources
-- FastMCP server with stdio transport
 """
 
 import asyncio
@@ -530,21 +534,77 @@ mcp = FastMCP("workflows_mcp", lifespan=app_lifespan)
 # =============================================================================
 
 
-def main() -> None:
-    """Entry point for running the MCP server.
+def build_app(*, base_dir: Path | None = None):  # type: ignore[no-untyped-def]
+    """Compose and return the FastAPI HTTP application.
 
-    This function is called when the server is run directly via:
-    - uv run python -m workflows_mcp
-    - python -m workflows_mcp
-    - uv run workflows-mcp (if entry point is configured in pyproject.toml)
+    Wires together authentication, readiness, config, and route layers.
 
-    Defaults to stdio transport for MCP protocol communication.
+    Parameters
+    ----------
+    base_dir:
+        Directory used for token store and readiness checks.  Defaults to
+        ``~/.workflows``.  Override in tests to avoid touching the real
+        home directory.
+
+    Returns
+    -------
+    fastapi.FastAPI
+        Fully configured application ready for ASGI / Uvicorn.
     """
-    # Get log level from environment variable, default to INFO
+    from .auth import BootstrapTokenError, TokenStore, ensure_bootstrap_token
+    from .config_service import ConfigService
+    from .http_app import create_app
+    from .postgres_probe import PostgresProbe
+    from .readiness import ReadinessService
+
+    resolved_base = base_dir if base_dir is not None else Path.home() / ".workflows"
+
+    try:
+        token_store = ensure_bootstrap_token(resolved_base)
+    except BootstrapTokenError:
+        # No auth.json and no bootstrap token env var — provide a store that
+        # rejects every token.  The app still starts; all protected routes
+        # return 401 until the operator sets WORKFLOWS_BOOTSTRAP_TOKEN and
+        # restarts.
+        logger.warning(
+            "WORKFLOWS_BOOTSTRAP_TOKEN not set and no existing token store found. "
+            "Protected routes will reject all requests until the service is bootstrapped."
+        )
+        token_store = TokenStore(resolved_base / "auth.json")
+
+    config_service = ConfigService(base_dir=resolved_base)
+    readiness_service = ReadinessService(
+        base_dir=resolved_base,
+        probe=PostgresProbe.from_env(),
+    )
+    return create_app(
+        readiness_service=readiness_service,
+        token_store=token_store,
+        config_service=config_service,
+    )
+
+
+def main() -> None:
+    """HTTP-only entry point.
+
+    Starts a Uvicorn server hosting the FastAPI application built by
+    :func:`build_app`.  Bind address and port are controlled via environment
+    variables.
+
+    Environment Variables
+    ---------------------
+    WORKFLOWS_BIND_HOST:
+        Interface to bind to (default: ``127.0.0.1``).
+    WORKFLOWS_PORT:
+        Port number (default: ``8000``).
+    WORKFLOWS_LOG_LEVEL:
+        Logging level (default: ``INFO``).
+    """
+    import uvicorn
+
     valid_log_levels = {"DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"}
     log_level_str = os.getenv("WORKFLOWS_LOG_LEVEL", "INFO").upper()
 
-    # Validate log level and provide feedback
     if log_level_str not in valid_log_levels:
         print(
             f"Warning: Invalid WORKFLOWS_LOG_LEVEL '{log_level_str}'. "
@@ -556,26 +616,24 @@ def main() -> None:
 
     log_level = getattr(logging, log_level_str)
 
-    # Configure logging to stderr (MCP requirement)
     logging.basicConfig(
         level=log_level,
         format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
         stream=sys.stderr,
     )
 
-    logger.info("Starting MCP server (press Ctrl+C to stop)...")
+    logger.info("Starting HTTP server (press Ctrl+C to stop)...")
 
     try:
-        # Run the MCP server with stdio transport
-        # anyio.run() (used internally by mcp.run()) handles SIGINT gracefully
-        # and raises KeyboardInterrupt for clean shutdown
-        mcp.run()
+        uvicorn.run(
+            build_app(),
+            host=os.getenv("WORKFLOWS_BIND_HOST", "127.0.0.1"),
+            port=int(os.getenv("WORKFLOWS_PORT", "8000")),
+            log_level=log_level_str.lower(),
+        )
     except KeyboardInterrupt:
-        # Graceful shutdown via Ctrl+C (SIGINT)
-        # anyio ensures proper cleanup of async resources and lifespan context
         logger.info("Received interrupt signal, shutting down gracefully...")
     except Exception as e:
-        # Unexpected errors
         logger.exception(f"Server error: {e}")
         sys.exit(1)
 
@@ -590,6 +648,7 @@ __all__ = [
     # Server infrastructure
     "mcp",
     "main",
+    "build_app",
     "AppContext",
     "AppContextType",
     # Workflow loading (exposed for testing)
