@@ -172,14 +172,12 @@ def create_app(
             content={"state": str(report.state), "blockers": report.blockers},
         )
 
-    from fastapi import Depends
-
-    @app.get("/config", dependencies=[Depends(auth_guard)])
-    async def config() -> dict[str, str]:
-        return {"status": "protected"}
-
     if config_service is not None:
-        config_router = build_config_router(config_service, auth_guard=auth_guard)
+        config_router = build_config_router(
+            config_service,
+            readiness_service=readiness_service,
+            auth_guard=auth_guard,
+        )
         app.include_router(config_router)
 
     return app

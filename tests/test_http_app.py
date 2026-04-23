@@ -6,6 +6,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from workflows_mcp.auth import TokenStore
+from workflows_mcp.config_service import ConfigService
 from workflows_mcp.http_app import create_app
 from workflows_mcp.http_models import ReadinessState
 
@@ -33,6 +34,11 @@ def token_store(tmp_path: Path) -> TokenStore:
     return store
 
 
+@pytest.fixture()
+def config_service(tmp_path: Path) -> ConfigService:
+    return ConfigService(base_dir=tmp_path / ".workflows")
+
+
 def test_docs_is_public(token_store: TokenStore) -> None:
     app = create_app(
         readiness_service=FakeReadiness(ReadinessState.UNCONFIGURED),
@@ -51,31 +57,40 @@ def test_ready_is_503_when_not_ready(token_store: TokenStore) -> None:
     assert client.get("/ready").status_code == 503
 
 
-def test_protected_route_requires_token(token_store: TokenStore) -> None:
+def test_protected_route_requires_token(
+    token_store: TokenStore, config_service: ConfigService
+) -> None:
     app = create_app(
         readiness_service=FakeReadiness(ReadinessState.READY),
         token_store=token_store,
+        config_service=config_service,
     )
     client = TestClient(app)
-    response = client.get("/config")
+    response = client.get("/config/status")
     assert response.status_code == 401
 
 
-def test_protected_route_rejects_wrong_token(token_store: TokenStore) -> None:
+def test_protected_route_rejects_wrong_token(
+    token_store: TokenStore, config_service: ConfigService
+) -> None:
     app = create_app(
         readiness_service=FakeReadiness(ReadinessState.READY),
         token_store=token_store,
+        config_service=config_service,
     )
     client = TestClient(app)
-    response = client.get("/config", headers={"Authorization": "Bearer wrongtoken"})
+    response = client.get("/config/status", headers={"Authorization": "Bearer wrongtoken"})
     assert response.status_code == 401
 
 
-def test_protected_route_accepts_valid_token(token_store: TokenStore) -> None:
+def test_protected_route_accepts_valid_token(
+    token_store: TokenStore, config_service: ConfigService
+) -> None:
     app = create_app(
         readiness_service=FakeReadiness(ReadinessState.READY),
         token_store=token_store,
+        config_service=config_service,
     )
     client = TestClient(app)
-    response = client.get("/config", headers={"Authorization": f"Bearer {_VALID_TOKEN}"})
+    response = client.get("/config/status", headers={"Authorization": f"Bearer {_VALID_TOKEN}"})
     assert response.status_code == 200

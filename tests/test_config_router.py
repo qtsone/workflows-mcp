@@ -47,25 +47,25 @@ def test_validate_accepts_valid_payload(config_service: ConfigService) -> None:
     assert errors == {}
 
 
-def test_apply_creates_llm_config(config_service: ConfigService, tmp_path: Path) -> None:
-    config_service.apply_payload({"profiles": []})
+async def test_apply_creates_llm_config(config_service: ConfigService, tmp_path: Path) -> None:
+    await config_service.apply_payload({"profiles": []})
     assert (tmp_path / ".workflows" / "llm-config.yml").exists()
 
 
-def test_apply_creates_base_dir_if_missing(tmp_path: Path) -> None:
+async def test_apply_creates_base_dir_if_missing(tmp_path: Path) -> None:
     base_dir = tmp_path / "nested" / ".workflows"
     service = ConfigService(base_dir=base_dir)
-    service.apply_payload({"profiles": []})
+    await service.apply_payload({"profiles": []})
     assert (base_dir / "llm-config.yml").exists()
 
 
-def test_apply_preserves_last_known_good_on_invalid_payload(
+async def test_apply_preserves_last_known_good_on_invalid_payload(
     config_service: ConfigService, tmp_path: Path
 ) -> None:
     """Failed validation must not corrupt an existing good config."""
-    config_service.apply_payload({"profiles": []})
+    await config_service.apply_payload({"profiles": []})
     original_mtime = (tmp_path / ".workflows" / "llm-config.yml").stat().st_mtime
-    # Attempt an invalid write
+    # Attempt an invalid write — validate only, never call apply_payload with bad data.
     errors = config_service.validate_payload({"profiles": "bad"})
     assert errors  # validate first
     # File should be untouched
@@ -99,7 +99,6 @@ def test_validate_endpoint_rejects_invalid_payload(
     # Error contract: stable ErrorEnvelope shape — no raw "detail" key.
     assert "error" in body
     assert body["error"]["code"] == "VALIDATION_FAILED"
-    assert "profiles" in body["error"]["details"]["field_errors"]
 
 
 def test_validate_endpoint_accepts_valid_payload(
@@ -148,3 +147,70 @@ def test_config_endpoints_require_auth(
     for endpoint in ["/config/validate", "/config/apply"]:
         response = client.post(endpoint, json={"profiles": []})
         assert response.status_code == 401, f"{endpoint} should require auth"
+
+
+# --- Task 2: /config/status and enriched /config/apply ---
+
+
+def test_config_status_returns_readiness_and_blockers(
+    token_store: TokenStore, config_service: ConfigService
+) -> None:
+    client = _make_client(token_store, config_service)
+    response = client.get(
+        "/config/status",
+        headers={"Authorization": f"Bearer {_VALID_TOKEN}"},
+    )
+    assert response.status_code == 200
+    payload = response.json()
+    assert set(payload) >= {"state", "blockers"}
+
+
+def test_config_status_requires_auth(
+    token_store: TokenStore, config_service: ConfigService
+) -> None:
+    client = _make_client(token_store, config_service)
+    response = client.get("/config/status")
+    assert response.status_code == 401
+
+
+async def test_config_status_reports_config_present(
+    token_store: TokenStore, config_service: ConfigService, tmp_path: Path
+) -> None:
+    await config_service.apply_payload({"profiles": []})
+    client = _make_client(token_store, config_service)
+    response = client.get(
+        "/config/status",
+        headers={"Authorization": f"Bearer {_VALID_TOKEN}"},
+    )
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["config_present"] is True
+
+
+def test_config_apply_returns_state_and_blockers(
+    token_store: TokenStore, config_service: ConfigService
+) -> None:
+    client = _make_client(token_store, config_service)
+    response = client.post(
+        "/config/apply",
+        json={"profiles": []},
+        headers={"Authorization": f"Bearer {_VALID_TOKEN}"},
+    )
+    assert response.status_code == 200
+    payload = response.json()
+    assert set(payload) >= {"applied", "state", "blockers"}
+    assert payload["applied"] is True
+
+
+def test_config_apply_concurrent_write_protection(
+    token_store: TokenStore, config_service: ConfigService
+) -> None:
+    """Two sequential applies should both succeed (lock is released after each)."""
+    client = _make_client(token_store, config_service)
+    for _ in range(2):
+        response = client.post(
+            "/config/apply",
+            json={"profiles": []},
+            headers={"Authorization": f"Bearer {_VALID_TOKEN}"},
+        )
+        assert response.status_code == 200

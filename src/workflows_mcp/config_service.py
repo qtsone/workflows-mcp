@@ -32,23 +32,27 @@ class ConfigService:
             errors["profiles"] = "profiles must be a list"
         return errors
 
-    def apply_payload(self, payload: dict[str, Any]) -> None:
+    async def apply_payload(self, payload: dict[str, Any]) -> None:
         """Atomically write *payload* to ``<base_dir>/llm-config.yml``.
 
-        Creates ``base_dir`` if it does not exist.  Uses
-        ``NamedTemporaryFile -> fsync -> rename`` so the target file is
-        never observed in a partially-written state by concurrent readers.
+        Uses an asyncio lock to prevent concurrent writes.  Raises
+        ``RuntimeError("CONFIG_WRITE_IN_PROGRESS")`` if a write is already in
+        flight.  Uses ``NamedTemporaryFile -> fsync -> rename`` so the target
+        file is never observed in a partially-written state by concurrent readers.
         """
-        self.base_dir.mkdir(parents=True, exist_ok=True)
-        target = self.base_dir / "llm-config.yml"
-        with tempfile.NamedTemporaryFile(
-            "w",
-            delete=False,
-            dir=self.base_dir,
-            suffix=".tmp",
-        ) as handle:
-            yaml.safe_dump(payload, handle)
-            handle.flush()
-            os.fsync(handle.fileno())
-            tmp_name = handle.name
-        Path(tmp_name).replace(target)
+        if self._lock.locked():
+            raise RuntimeError("CONFIG_WRITE_IN_PROGRESS")
+        async with self._lock:
+            self.base_dir.mkdir(parents=True, exist_ok=True)
+            target = self.base_dir / "llm-config.yml"
+            with tempfile.NamedTemporaryFile(
+                "w",
+                delete=False,
+                dir=self.base_dir,
+                suffix=".tmp",
+            ) as handle:
+                yaml.safe_dump(payload, handle)
+                handle.flush()
+                os.fsync(handle.fileno())
+                tmp_name = handle.name
+            Path(tmp_name).replace(target)

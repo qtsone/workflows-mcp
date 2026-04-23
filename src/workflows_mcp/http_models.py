@@ -153,3 +153,25 @@ class ErrorEnvelope(StrictModel):
                 request_id=request_id,
             )
         )
+
+
+class LLMConfigPayload(StrictModel):
+    """Typed request model for config apply and validate endpoints."""
+
+    profiles: list[dict[str, Any]]
+
+
+class ConfigStatusResponse(StrictModel):
+    """Response model for ``GET /config/status``."""
+
+    state: ReadinessState
+    blockers: list[str]
+    config_present: bool
+
+
+class ConfigApplyResponse(StrictModel):
+    """Response model for ``POST /config/apply``."""
+
+    applied: bool
+    state: ReadinessState
+    blockers: list[str]

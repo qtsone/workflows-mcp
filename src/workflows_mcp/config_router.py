@@ -4,17 +4,29 @@ from collections.abc import Callable
 from typing import Any
 
 from fastapi import APIRouter, Depends
+from fastapi.responses import JSONResponse
 
 from .config_service import ConfigService
+from .http_models import (
+    ConfigApplyResponse,
+    ConfigStatusResponse,
+    LLMConfigPayload,
+)
 
 
 def build_config_router(
     config_service: ConfigService,
+    readiness_service: Any,
     auth_guard: Callable[..., Any] | None = None,
 ) -> APIRouter:
-    """Return an ``APIRouter`` with ``/config/validate`` and ``/config/apply`` endpoints.
+    """Return an ``APIRouter`` with config management endpoints.
 
-    Routes are mounted behind *auth_guard* when provided.  All validation
+    Endpoints:
+    - ``GET /config/status``: Returns current readiness state and blockers.
+    - ``POST /config/validate``: Validates a config payload without writing.
+    - ``POST /config/apply``: Atomically writes config and returns updated state.
+
+    All routes are mounted behind *auth_guard* when provided.  Validation
     failures return the stable ``ErrorEnvelope`` shape via ``_error_response``
     rather than raw FastAPI ``{"detail": ...}`` payloads.
     """
@@ -24,9 +36,18 @@ def build_config_router(
     dependencies = [Depends(auth_guard)] if auth_guard is not None else []
     router = APIRouter(prefix="/config", tags=["config"], dependencies=dependencies)
 
+    @router.get("/status", response_model=ConfigStatusResponse)
+    async def get_config_status() -> ConfigStatusResponse:
+        report = await readiness_service.evaluate()
+        return ConfigStatusResponse(
+            state=report.state,
+            blockers=report.blockers,
+            config_present=(config_service.base_dir / "llm-config.yml").exists(),
+        )
+
     @router.post("/validate", response_model=None)
-    async def validate_config(payload: dict[str, Any]) -> Any:
-        errors = config_service.validate_payload(payload)
+    async def validate_config(payload: LLMConfigPayload) -> Any:
+        errors = config_service.validate_payload(payload.model_dump())
         if errors:
             return _error_response(
                 status_code=422,
@@ -36,9 +57,9 @@ def build_config_router(
             )
         return {"valid": True}
 
-    @router.post("/apply", response_model=None)
-    async def apply_config(payload: dict[str, Any]) -> Any:
-        errors = config_service.validate_payload(payload)
+    @router.post("/apply", response_model=ConfigApplyResponse)
+    async def apply_config(payload: LLMConfigPayload) -> ConfigApplyResponse | JSONResponse:
+        errors = config_service.validate_payload(payload.model_dump())
         if errors:
             return _error_response(
                 status_code=422,
@@ -46,7 +67,12 @@ def build_config_router(
                 message="Configuration payload is invalid.",
                 details={"field_errors": errors},
             )
-        config_service.apply_payload(payload)
-        return {"applied": True}
+        await config_service.apply_payload(payload.model_dump())
+        report = await readiness_service.evaluate()
+        return ConfigApplyResponse(
+            applied=True,
+            state=report.state,
+            blockers=report.blockers,
+        )
 
     return router
