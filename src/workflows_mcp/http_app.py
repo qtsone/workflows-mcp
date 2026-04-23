@@ -1,11 +1,16 @@
 from __future__ import annotations
 
+import os
+import time
+from collections import deque
 from typing import Any
 
 from fastapi import Depends, FastAPI, Header, HTTPException, Request
 from fastapi.exceptions import RequestValidationError
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from starlette.exceptions import HTTPException as StarletteHTTPException
+from starlette.types import ASGIApp, Receive, Scope, Send
 
 from .auth import TokenStore, generate_request_id
 from .config_router import build_config_router
@@ -123,6 +128,197 @@ def _http_status_to_code(status_code: int) -> str:
     return _map.get(status_code, f"HTTP_{status_code}")
 
 
+# ---------------------------------------------------------------------------
+# Security middleware
+# ---------------------------------------------------------------------------
+
+#: Default maximum request body size (1 MiB).  Override via
+#: ``WORKFLOWS_MAX_BODY_BYTES`` environment variable.
+_DEFAULT_MAX_BODY_BYTES: int = 1 * 1024 * 1024
+
+#: General rate-limit: maximum requests per ``_RATE_WINDOW_SECONDS`` window.
+_GENERAL_RATE_LIMIT: int = 100
+
+#: Stricter rate-limit applied to ``/config`` routes.
+_CONFIG_RATE_LIMIT: int = 20
+
+#: Sliding-window duration in seconds.
+_RATE_WINDOW_SECONDS: float = 60.0
+
+
+class BodyLimitMiddleware:
+    """Reject requests whose ``Content-Length`` exceeds *max_bytes*.
+
+    Checking the ``Content-Length`` header is sufficient for deterministic
+    protection: the header is required on POST/PUT/PATCH requests by HTTP
+    spec and is always present when FastAPI's ``TestClient`` (httpx) sends
+    a body.  Streaming requests without a ``Content-Length`` header are not
+    rejected at this layer (they are handled by request-body read timeouts
+    at the server level).
+
+    The rejection happens before any route logic so the body is never read.
+    """
+
+    def __init__(self, app: ASGIApp, *, max_bytes: int) -> None:
+        self.app = app
+        self.max_bytes = max_bytes
+
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        if scope["type"] == "http":
+            headers: dict[bytes, bytes] = dict(scope.get("headers", []))
+            raw_cl = headers.get(b"content-length")
+            if raw_cl is not None:
+                try:
+                    content_length = int(raw_cl)
+                except ValueError:
+                    content_length = 0
+                if content_length > self.max_bytes:
+                    response = _error_response(
+                        status_code=413,
+                        code="REQUEST_TOO_LARGE",
+                        message="Request body exceeds configured limit.",
+                        details={"max_bytes": self.max_bytes},
+                    )
+                    await response(scope, receive, send)
+                    return
+        await self.app(scope, receive, send)
+
+
+class SlidingWindowRateLimiter:
+    """In-process sliding-window rate limiter keyed by client IP.
+
+    Uses ``collections.deque`` per key to store request timestamps within the
+    current window, evicting expired entries on every access.  The ``deque``
+    is bounded to ``limit`` entries so memory is capped regardless of traffic.
+
+    Thread-safety: designed for single-process async use (asyncio).  No locks
+    are required because the GIL serialises the deque operations.
+    """
+
+    def __init__(self, *, limit: int, window: float) -> None:
+        self.limit = limit
+        self.window = window
+        self._buckets: dict[str, deque[float]] = {}
+
+    def is_allowed(self, key: str) -> bool:
+        now = time.monotonic()
+        bucket = self._buckets.setdefault(key, deque(maxlen=self.limit + 1))
+        # Evict timestamps outside the current window.
+        cutoff = now - self.window
+        while bucket and bucket[0] < cutoff:
+            bucket.popleft()
+        if len(bucket) >= self.limit:
+            return False
+        bucket.append(now)
+        return True
+
+
+class RateLimitMiddleware:
+    """Enforce per-IP sliding-window rate limits.
+
+    Two limits are supported:
+    - ``config_limiter``: applied to paths starting with ``/config``.
+    - ``general_limiter``: applied to all other paths.
+
+    ``/health`` is deliberately exempted to avoid interfering with liveness
+    probes that fire at high frequency from orchestrators.
+
+    The client key is derived from the ``X-Forwarded-For`` header when
+    present (first address), falling back to the ASGI ``client`` tuple.
+    """
+
+    _EXEMPT_PATHS: frozenset[str] = frozenset({"/health"})
+
+    def __init__(
+        self,
+        app: ASGIApp,
+        *,
+        general_limiter: SlidingWindowRateLimiter,
+        config_limiter: SlidingWindowRateLimiter,
+    ) -> None:
+        self.app = app
+        self.general_limiter = general_limiter
+        self.config_limiter = config_limiter
+
+    def _client_key(self, scope: Scope) -> str:
+        headers: dict[bytes, bytes] = dict(scope.get("headers", []))
+        xff = headers.get(b"x-forwarded-for")
+        if xff:
+            return xff.decode("latin-1", errors="replace").split(",")[0].strip()
+        client = scope.get("client")
+        if client:
+            return str(client[0])
+        return "unknown"
+
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        if scope["type"] == "http":
+            path: str = scope.get("path", "")
+            if path not in self._EXEMPT_PATHS:
+                key = self._client_key(scope)
+                limiter = (
+                    self.config_limiter if path.startswith("/config") else self.general_limiter
+                )
+                if not limiter.is_allowed(key):
+                    response = _error_response(
+                        status_code=429,
+                        code="RATE_LIMITED",
+                        message="Too many requests. Please slow down.",
+                    )
+                    await response(scope, receive, send)
+                    return
+        await self.app(scope, receive, send)
+
+
+def _install_security_middleware(app: FastAPI) -> None:
+    """Add CORS, body-limit, and rate-limit middleware to *app*.
+
+    Middleware is added in reverse application order — the last ``add_middleware``
+    call wraps outermost.  Desired order (outermost → innermost):
+
+    1. CORS (responds to preflight before any logic)
+    2. Rate limiting (reject early, avoids unnecessary processing)
+    3. Body limit (cheap header-only check before body is consumed)
+    4. Route handlers
+    """
+    # CORS — deny-by-default; populate only when WORKFLOWS_CORS_ORIGINS is set.
+    raw_origins = os.getenv("WORKFLOWS_CORS_ORIGINS", "").strip()
+    allow_origins: list[str] = (
+        [o.strip() for o in raw_origins.split(",") if o.strip()] if raw_origins else []
+    )
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=allow_origins,
+        allow_credentials=False,
+        allow_methods=["GET", "POST", "OPTIONS"],
+        allow_headers=["Authorization", "Content-Type"],
+    )
+
+    # Body limit — checked before route logic on every HTTP request.
+    try:
+        max_body = int(os.getenv("WORKFLOWS_MAX_BODY_BYTES", str(_DEFAULT_MAX_BODY_BYTES)))
+    except ValueError:
+        max_body = _DEFAULT_MAX_BODY_BYTES
+    app.add_middleware(BodyLimitMiddleware, max_bytes=max_body)
+
+    # Rate limiting — config routes get a stricter cap.
+    try:
+        general_limit = int(os.getenv("WORKFLOWS_RATE_LIMIT", str(_GENERAL_RATE_LIMIT)))
+    except ValueError:
+        general_limit = _GENERAL_RATE_LIMIT
+    try:
+        config_limit = int(os.getenv("WORKFLOWS_CONFIG_RATE_LIMIT", str(_CONFIG_RATE_LIMIT)))
+    except ValueError:
+        config_limit = _CONFIG_RATE_LIMIT
+
+    general_limiter = SlidingWindowRateLimiter(limit=general_limit, window=_RATE_WINDOW_SECONDS)
+    config_limiter = SlidingWindowRateLimiter(limit=config_limit, window=_RATE_WINDOW_SECONDS)
+    app.add_middleware(
+        RateLimitMiddleware,
+        general_limiter=general_limiter,
+        config_limiter=config_limiter,
+    )
+
+
 def _make_auth_guard(token_store: TokenStore):  # type: ignore[no-untyped-def]
     """Return a FastAPI dependency that validates bearer tokens against *token_store*.
 
@@ -156,6 +352,7 @@ def create_app(
     app = FastAPI(title="workflows-mcp", docs_url="/docs", openapi_url="/openapi.json")
 
     _install_exception_handlers(app)
+    _install_security_middleware(app)
 
     auth_guard = _make_auth_guard(token_store)
 
