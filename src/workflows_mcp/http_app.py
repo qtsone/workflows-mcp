@@ -396,6 +396,34 @@ def _make_auth_guard(token_store: TokenStore):  # type: ignore[no-untyped-def]
     return _auth_guard
 
 
+def _build_openapi_with_bearer_auth(app: FastAPI) -> dict[str, Any]:
+    """Generate OpenAPI schema with BearerAuth security scheme injected.
+
+    Overrides the default FastAPI openapi() method so the /docs UI shows
+    the lock icon and all protected routes carry a security declaration.
+    """
+    from fastapi.openapi.utils import get_openapi
+
+    if app.openapi_schema:
+        return app.openapi_schema
+
+    schema = get_openapi(
+        title=app.title,
+        version=app.version,
+        description=app.description,
+        routes=app.routes,
+    )
+
+    # Inject BearerAuth security scheme into components.
+    schema.setdefault("components", {}).setdefault("securitySchemes", {})["BearerAuth"] = {
+        "type": "http",
+        "scheme": "bearer",
+    }
+
+    app.openapi_schema = schema
+    return schema
+
+
 def create_app(
     *,
     readiness_service: Any,
@@ -403,6 +431,9 @@ def create_app(
     config_service: ConfigService | None = None,
 ) -> FastAPI:
     app = FastAPI(title="workflows-mcp", docs_url="/docs", openapi_url="/openapi.json")
+
+    # Override OpenAPI schema generator to inject BearerAuth security scheme.
+    app.openapi = lambda: _build_openapi_with_bearer_auth(app)  # type: ignore[method-assign]
 
     _install_exception_handlers(app)
     _install_security_middleware(app)
@@ -461,7 +492,7 @@ def _register_mcp_endpoint(app: FastAPI, *, readiness_service: Any, auth_guard: 
     Error responses always use the stable ``ErrorEnvelope`` shape.
     """
 
-    @app.post("/mcp")
+    @app.post("/mcp", openapi_extra={"security": [{"BearerAuth": []}]})
     async def mcp_http_endpoint(
         request: Request,
         _: None = Depends(auth_guard),

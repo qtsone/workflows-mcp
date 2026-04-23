@@ -48,7 +48,9 @@ def build_config_router(
     dependencies = [Depends(auth_guard)] if auth_guard is not None else []
     router = APIRouter(prefix="/config", tags=["config"], dependencies=dependencies)
 
-    @router.get("/", response_model=ConfigStatusResponse)
+    _bearer_security: dict[str, Any] = {"security": [{"BearerAuth": []}]}
+
+    @router.get("/", response_model=ConfigStatusResponse, openapi_extra=_bearer_security)
     async def get_config_root() -> ConfigStatusResponse:
         report = await readiness_service.evaluate()
         return ConfigStatusResponse(
@@ -57,7 +59,7 @@ def build_config_router(
             config_present=(config_service.base_dir / "llm-config.yml").exists(),
         )
 
-    @router.get("/status", response_model=ConfigStatusResponse)
+    @router.get("/status", response_model=ConfigStatusResponse, openapi_extra=_bearer_security)
     async def get_config_status() -> ConfigStatusResponse:
         report = await readiness_service.evaluate()
         return ConfigStatusResponse(
@@ -66,7 +68,7 @@ def build_config_router(
             config_present=(config_service.base_dir / "llm-config.yml").exists(),
         )
 
-    @router.post("/validate", response_model=None)
+    @router.post("/validate", response_model=None, openapi_extra=_bearer_security)
     async def validate_config(payload: LLMConfigPayload) -> Any:
         errors = config_service.validate_payload(payload.model_dump())
         if errors:
@@ -78,7 +80,7 @@ def build_config_router(
             )
         return {"valid": True}
 
-    @router.post("/apply", response_model=ConfigApplyResponse)
+    @router.post("/apply", response_model=ConfigApplyResponse, openapi_extra=_bearer_security)
     async def apply_config(payload: LLMConfigPayload) -> ConfigApplyResponse | JSONResponse:
         errors = config_service.validate_payload(payload.model_dump())
         if errors:
@@ -107,7 +109,7 @@ def build_config_router(
 
     if token_store is not None:
 
-        @router.post("/credentials/rotate", response_model=None)
+        @router.post("/credentials/rotate", response_model=None, openapi_extra=_bearer_security)
         async def rotate_credentials(payload: _RotatePayload) -> Any:
             if len(payload.token.encode("utf-8")) < _MIN_TOKEN_BYTES:
                 return _error_response(
@@ -118,7 +120,7 @@ def build_config_router(
             token_store.rotate_token(payload.token)
             return {"rotated": True}
 
-        @router.post("/credentials/revoke", response_model=None)
+        @router.post("/credentials/revoke", response_model=None, openapi_extra=_bearer_security)
         async def revoke_credentials() -> Any:
             token_store.revoke()
             return {"revoked": True}

@@ -1,0 +1,603 @@
+{
+  "components": {
+    "schemas": {
+      "ConfigApplyResponse": {
+        "additionalProperties": false,
+        "description": "Response model for ``POST /config/apply``.",
+        "properties": {
+          "applied": {
+            "title": "Applied",
+            "type": "boolean"
+          },
+          "blockers": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Blockers",
+            "type": "array"
+          },
+          "state": {
+            "$ref": "#/components/schemas/ReadinessState"
+          }
+        },
+        "required": [
+          "applied",
+          "state",
+          "blockers"
+        ],
+        "title": "ConfigApplyResponse",
+        "type": "object"
+      },
+      "ConfigStatusResponse": {
+        "additionalProperties": false,
+        "description": "Response model for ``GET /config/status``.",
+        "properties": {
+          "blockers": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Blockers",
+            "type": "array"
+          },
+          "config_present": {
+            "title": "Config Present",
+            "type": "boolean"
+          },
+          "state": {
+            "$ref": "#/components/schemas/ReadinessState"
+          }
+        },
+        "required": [
+          "state",
+          "blockers",
+          "config_present"
+        ],
+        "title": "ConfigStatusResponse",
+        "type": "object"
+      },
+      "HTTPValidationError": {
+        "properties": {
+          "detail": {
+            "items": {
+              "$ref": "#/components/schemas/ValidationError"
+            },
+            "title": "Detail",
+            "type": "array"
+          }
+        },
+        "title": "HTTPValidationError",
+        "type": "object"
+      },
+      "LLMConfigPayload": {
+        "additionalProperties": false,
+        "description": "Typed request model for config apply and validate endpoints.",
+        "properties": {
+          "profiles": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "title": "Profiles",
+            "type": "array"
+          }
+        },
+        "required": [
+          "profiles"
+        ],
+        "title": "LLMConfigPayload",
+        "type": "object"
+      },
+      "ReadinessState": {
+        "description": "Readiness states reported by ``/ready`` and used internally by readiness service.",
+        "enum": [
+          "unconfigured",
+          "partially_configured",
+          "ready"
+        ],
+        "title": "ReadinessState",
+        "type": "string"
+      },
+      "ValidationError": {
+        "properties": {
+          "ctx": {
+            "title": "Context",
+            "type": "object"
+          },
+          "input": {
+            "title": "Input"
+          },
+          "loc": {
+            "items": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "integer"
+                }
+              ]
+            },
+            "title": "Location",
+            "type": "array"
+          },
+          "msg": {
+            "title": "Message",
+            "type": "string"
+          },
+          "type": {
+            "title": "Error Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "loc",
+          "msg",
+          "type"
+        ],
+        "title": "ValidationError",
+        "type": "object"
+      },
+      "_RotatePayload": {
+        "properties": {
+          "token": {
+            "title": "Token",
+            "type": "string"
+          }
+        },
+        "required": [
+          "token"
+        ],
+        "title": "_RotatePayload",
+        "type": "object"
+      }
+    },
+    "securitySchemes": {
+      "BearerAuth": {
+        "scheme": "bearer",
+        "type": "http"
+      }
+    }
+  },
+  "info": {
+    "title": "workflows-mcp",
+    "version": "0.1.0"
+  },
+  "openapi": "3.1.0",
+  "paths": {
+    "/config/": {
+      "get": {
+        "operationId": "get_config_root_config__get",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ConfigStatusResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "summary": "Get Config Root",
+        "tags": [
+          "config"
+        ]
+      }
+    },
+    "/config/apply": {
+      "post": {
+        "operationId": "apply_config_config_apply_post",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/LLMConfigPayload"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ConfigApplyResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "summary": "Apply Config",
+        "tags": [
+          "config"
+        ]
+      }
+    },
+    "/config/credentials/revoke": {
+      "post": {
+        "operationId": "revoke_credentials_config_credentials_revoke_post",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "summary": "Revoke Credentials",
+        "tags": [
+          "config"
+        ]
+      }
+    },
+    "/config/credentials/rotate": {
+      "post": {
+        "operationId": "rotate_credentials_config_credentials_rotate_post",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/_RotatePayload"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "summary": "Rotate Credentials",
+        "tags": [
+          "config"
+        ]
+      }
+    },
+    "/config/status": {
+      "get": {
+        "operationId": "get_config_status_config_status_get",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ConfigStatusResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "summary": "Get Config Status",
+        "tags": [
+          "config"
+        ]
+      }
+    },
+    "/config/validate": {
+      "post": {
+        "operationId": "validate_config_config_validate_post",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/LLMConfigPayload"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "summary": "Validate Config",
+        "tags": [
+          "config"
+        ]
+      }
+    },
+    "/health": {
+      "get": {
+        "operationId": "health_health_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": {
+                    "type": "string"
+                  },
+                  "title": "Response Health Health Get",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Health"
+      }
+    },
+    "/mcp": {
+      "post": {
+        "operationId": "mcp_http_endpoint_mcp_post",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "summary": "Mcp Http Endpoint"
+      }
+    },
+    "/ready": {
+      "get": {
+        "operationId": "ready_ready_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Ready"
+      }
+    }
+  }
+}
