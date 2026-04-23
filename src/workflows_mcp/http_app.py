@@ -5,6 +5,7 @@ from typing import Any
 from fastapi import FastAPI, Header, HTTPException, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
+from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from .auth import TokenStore, generate_request_id
 from .config_router import build_config_router
@@ -83,6 +84,28 @@ def _install_exception_handlers(app: FastAPI) -> None:
         )
         return JSONResponse(status_code=exc.status_code, content=payload.model_dump())
 
+    @app.exception_handler(StarletteHTTPException)
+    async def _handle_starlette_http_exception(
+        _: Request, exc: StarletteHTTPException
+    ) -> JSONResponse:
+        """Catch routing-layer errors (405 Method Not Allowed, 404 Not Found, etc.).
+
+        Starlette raises its own ``HTTPException`` subclass for these — it is
+        processed before FastAPI's middleware chain and therefore bypasses the
+        ``HTTPException`` handler registered above.  Registering a separate
+        handler for the Starlette base class intercepts those responses and
+        normalises them into the stable ``ErrorEnvelope``.
+        """
+        code = _http_status_to_code(exc.status_code)
+        message = str(exc.detail) if exc.detail else code
+        payload = ErrorEnvelope.for_code(
+            code=code,
+            message=message,
+            details=None,
+            request_id=generate_request_id(),
+        )
+        return JSONResponse(status_code=exc.status_code, content=payload.model_dump())
+
 
 def _http_status_to_code(status_code: int) -> str:
     """Map common HTTP status codes to SCREAMING_SNAKE error codes."""
@@ -91,6 +114,7 @@ def _http_status_to_code(status_code: int) -> str:
         401: "UNAUTHORIZED",
         403: "FORBIDDEN",
         404: "NOT_FOUND",
+        405: "METHOD_NOT_ALLOWED",
         409: "CONFLICT",
         422: "VALIDATION_FAILED",
         500: "INTERNAL_SERVER_ERROR",

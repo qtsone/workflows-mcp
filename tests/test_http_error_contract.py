@@ -83,3 +83,24 @@ def test_config_apply_missing_auth_uses_error_envelope(client: TestClient) -> No
     payload = response.json()
     assert "error" in payload
     assert payload["error"]["code"] == "UNAUTHORIZED"
+
+
+def test_method_not_allowed_uses_error_envelope(client: TestClient) -> None:
+    """A 405 on a protected route (wrong HTTP method) must use the stable ErrorEnvelope.
+
+    Starlette emits MethodNotAllowed as its own HTTPException subclass via the
+    routing layer.  This test ensures our handler intercepts it before the raw
+    ``{"detail": "Method Not Allowed"}`` response escapes to callers.
+    """
+    # /config/validate is POST-only; calling GET triggers a 405.
+    response = client.get(
+        "/config/validate",
+        headers={"Authorization": "Bearer 0123456789abcdef0123456789abcdef"},
+    )
+
+    assert response.status_code == 405
+    payload = response.json()
+    assert "error" in payload, f"Expected 'error' key, got: {list(payload.keys())}"
+    assert "detail" not in payload, "Raw Starlette 'detail' must not leak on protected routes"
+    assert set(payload["error"]) >= {"code", "message", "request_id"}
+    assert payload["error"]["code"] == "METHOD_NOT_ALLOWED"
