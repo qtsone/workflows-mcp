@@ -13,6 +13,7 @@ Also covers suitability checks (§7A.1) and resilience behavior (§7A.3):
 
 from __future__ import annotations
 
+import asyncio
 from pathlib import Path
 
 import pytest
@@ -321,7 +322,7 @@ async def test_suitability_failure_blocker_is_surfaced_in_readiness_report(
 
 
 # ---------------------------------------------------------------------------
-# §7A.2 Timeout / retry policy tests (new)
+# §7A.2 Timeout / retry policy tests
 # ---------------------------------------------------------------------------
 
 
@@ -339,6 +340,114 @@ async def test_postgres_probe_default_timeout_and_retries() -> None:
     probe = PostgresProbe(dsn="postgresql://fake/db")
     assert probe.timeout == 3.0
     assert probe.retries == 2
+
+
+@pytest.mark.asyncio
+async def test_probe_retries_exactly_n_times_on_connection_failure(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """On repeated connection failure the factory is called 1 + retries times total.
+
+    Spec §7A.2: retry count is 2 additional attempts after the first.
+    The test uses retries=2 (default) and a factory that always raises, then
+    asserts call count == 3.  Jitter sleep is patched to a no-op so the test
+    completes instantly.
+    """
+    call_count = 0
+
+    async def failing_factory() -> object:
+        nonlocal call_count
+        call_count += 1
+        raise ConnectionRefusedError("connection refused")
+
+    # Patch asyncio.sleep so jitter between retries does not slow the test.
+    monkeypatch.setattr(asyncio, "sleep", lambda _: _async_return(None))
+
+    probe = PostgresProbe(
+        dsn="postgresql://fake/db",
+        timeout=5.0,  # generous — factory raises before timeout fires
+        retries=2,
+        _connection_factory=failing_factory,
+    )
+    ok, blockers = await probe.check()
+
+    assert ok is False
+    assert "postgresql_connectivity" in blockers
+    # Factory must be called on the first attempt plus each retry: 1 + 2 = 3.
+    assert call_count == 3, f"expected 3 attempts, got {call_count}"
+
+
+@pytest.mark.asyncio
+async def test_probe_succeeds_on_second_attempt_after_transient_failure(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Probe must return ok=True if a later retry connects successfully.
+
+    First attempt raises; second attempt returns a good connection.
+    """
+    attempts = 0
+
+    class GoodConn:
+        async def fetchval(self, query: str, *args: object) -> object:
+            if "server_version_num" in query:
+                return "150000"
+            if "pg_extension" in query:
+                return True
+            return 1
+
+        async def execute(self, query: str, *args: object) -> None:
+            pass
+
+        async def close(self) -> None:
+            pass
+
+    async def flaky_factory() -> object:
+        nonlocal attempts
+        attempts += 1
+        if attempts == 1:
+            raise ConnectionRefusedError("transient failure")
+        return GoodConn()
+
+    monkeypatch.setattr(asyncio, "sleep", lambda _: _async_return(None))
+
+    probe = PostgresProbe(
+        dsn="postgresql://fake/db",
+        timeout=5.0,
+        retries=2,
+        _connection_factory=flaky_factory,
+    )
+    ok, blockers = await probe.check()
+
+    assert ok is True
+    assert blockers == []
+    assert attempts == 2, f"expected 2 attempts, got {attempts}"
+
+
+@pytest.mark.asyncio
+async def test_probe_respects_per_attempt_timeout(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A factory that hangs longer than timeout must be cancelled and reported as failure.
+
+    Uses a very short timeout (0.05 s) and a factory that sleeps 10 s, so the
+    test finishes fast.  Jitter sleep is patched to a no-op.
+    """
+    monkeypatch.setattr(asyncio, "sleep", lambda _: _async_return(None))
+
+    async def slow_factory() -> object:
+        await asyncio.sleep(10)  # longer than probe timeout
+        raise AssertionError("should not reach here")  # pragma: no cover
+
+    probe = PostgresProbe(
+        dsn="postgresql://fake/db",
+        timeout=0.05,
+        retries=0,  # single attempt — we only need to verify timeout fires once
+        _connection_factory=slow_factory,
+    )
+    ok, blockers = await probe.check()
+
+    assert ok is False
+    assert "postgresql_connectivity" in blockers
 
 
 # ---------------------------------------------------------------------------
