@@ -22,6 +22,7 @@ def build_config_router(
     """Return an ``APIRouter`` with config management endpoints.
 
     Endpoints:
+    - ``GET /config``: Alias for status — returns current readiness state and blockers.
     - ``GET /config/status``: Returns current readiness state and blockers.
     - ``POST /config/validate``: Validates a config payload without writing.
     - ``POST /config/apply``: Atomically writes config and returns updated state.
@@ -35,6 +36,15 @@ def build_config_router(
 
     dependencies = [Depends(auth_guard)] if auth_guard is not None else []
     router = APIRouter(prefix="/config", tags=["config"], dependencies=dependencies)
+
+    @router.get("/", response_model=ConfigStatusResponse)
+    async def get_config_root() -> ConfigStatusResponse:
+        report = await readiness_service.evaluate()
+        return ConfigStatusResponse(
+            state=report.state,
+            blockers=report.blockers,
+            config_present=(config_service.base_dir / "llm-config.yml").exists(),
+        )
 
     @router.get("/status", response_model=ConfigStatusResponse)
     async def get_config_status() -> ConfigStatusResponse:
