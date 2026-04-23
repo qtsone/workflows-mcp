@@ -427,22 +427,27 @@ async def test_probe_succeeds_on_second_attempt_after_transient_failure(
 async def test_probe_respects_per_attempt_timeout(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """A factory that hangs longer than timeout must be cancelled and reported as failure.
+    """A factory that hangs indefinitely must be cancelled by the per-attempt timeout.
 
-    Uses a very short timeout (0.05 s) and a factory that sleeps 10 s, so the
-    test finishes fast.  Jitter sleep is patched to a no-op.
+    Uses a very short timeout (0.05 s).  The factory blocks on an asyncio.Event
+    that is never set, so it hangs until asyncio.wait_for cancels the coroutine.
+    This is independent of the asyncio.sleep patch (jitter no-op), so the test
+    genuinely exercises the timeout path rather than relying on a patched sleep.
     """
+    # Patch only jitter sleep so retries don't slow things down.
     monkeypatch.setattr(asyncio, "sleep", lambda _: _async_return(None))
 
-    async def slow_factory() -> object:
-        await asyncio.sleep(10)  # longer than probe timeout
+    async def blocking_factory() -> object:
+        # Blocks until cancelled — asyncio.Event.wait() yields to the event loop
+        # and is interrupted by task cancellation from asyncio.wait_for.
+        await asyncio.Event().wait()
         raise AssertionError("should not reach here")  # pragma: no cover
 
     probe = PostgresProbe(
         dsn="postgresql://fake/db",
         timeout=0.05,
-        retries=0,  # single attempt — we only need to verify timeout fires once
-        _connection_factory=slow_factory,
+        retries=0,  # single attempt — verify timeout fires and is caught once
+        _connection_factory=blocking_factory,
     )
     ok, blockers = await probe.check()
 
