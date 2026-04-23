@@ -551,7 +551,7 @@ def build_app(*, base_dir: Path | None = None):  # type: ignore[no-untyped-def]
     fastapi.FastAPI
         Fully configured application ready for ASGI / Uvicorn.
     """
-    from .auth import BootstrapTokenError, TokenStore, ensure_bootstrap_token
+    from .auth import ensure_bootstrap_token
     from .config_service import ConfigService
     from .http_app import create_app
     from .postgres_probe import PostgresProbe
@@ -559,18 +559,9 @@ def build_app(*, base_dir: Path | None = None):  # type: ignore[no-untyped-def]
 
     resolved_base = base_dir if base_dir is not None else Path.home() / ".workflows"
 
-    try:
-        token_store = ensure_bootstrap_token(resolved_base)
-    except BootstrapTokenError:
-        # No auth.json and no bootstrap token env var — provide a store that
-        # rejects every token.  The app still starts; all protected routes
-        # return 401 until the operator sets WORKFLOWS_BOOTSTRAP_TOKEN and
-        # restarts.
-        logger.warning(
-            "WORKFLOWS_BOOTSTRAP_TOKEN not set and no existing token store found. "
-            "Protected routes will reject all requests until the service is bootstrapped."
-        )
-        token_store = TokenStore(resolved_base / "auth.json")
+    # Raises BootstrapTokenError on first start when WORKFLOWS_BOOTSTRAP_TOKEN
+    # is absent or too short — spec §7.4 requires fail-fast here.
+    token_store = ensure_bootstrap_token(resolved_base)
 
     config_service = ConfigService(base_dir=resolved_base)
     readiness_service = ReadinessService(

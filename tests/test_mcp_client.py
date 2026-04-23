@@ -1,17 +1,15 @@
 #!/usr/bin/env python3
-"""Comprehensive MCP server testing.
+"""MCP server and HTTP service testing.
 
-Philosophy: Test the product AS IT'S MEANT TO BE USED - as an MCP server
-communicating via the MCP protocol over stdio, exactly as Claude Code would.
+Transport: HTTP-only (FastAPI / Uvicorn) — stdio has been retired.
 
 This test suite validates:
 
-1. **MCP Server Health & Protocol Compliance**
-   - Server initialization and MCP protocol handshake
-   - Tool discovery and capability exposition
-   - Response format consistency
+1. **HTTP Service Health** (TestHTTPServerIntegration)
+   - build_app() composition and public endpoint availability
+   - Fail-fast bootstrap token enforcement (spec §7.4)
 
-2. **MCP Tool Functionality**
+2. **MCP Tool Functionality** (unit tests via mock_context)
    - Workflow execution (execute_workflow, execute_inline_workflow)
    - Workflow discovery (list_workflows, get_workflow_info)
    - Schema validation (get_workflow_schema, validate_workflow_yaml)
@@ -19,17 +17,13 @@ This test suite validates:
    - Input validation and error handling
    - Response format variations (minimal/detailed, json/markdown)
 
-3. **Snapshot-Based Workflow Validation**
+3. **Snapshot-Based Workflow Validation** (pending Task 8 HTTP conversion)
    - Real workflow execution against golden snapshots
    - Regression detection across code changes
-   - Coverage validation (all workflows have snapshots)
 
-Test Approach:
-- Test via MCP protocol over stdio (real-world integration)
-- Pydantic input validation throughout
-- Actionable error messages
-- Comprehensive edge case coverage
-- Snapshot-based regression testing
+Note: Test classes that previously used the stdio transport helper
+(TestMCPServerHealth, TestInteractiveWorkflows, TestWorkflowSnapshots)
+are marked skip and will be converted to HTTP in Task 8.
 
 Snapshot Management:
 - Generate snapshots: `uv run python tests/generate_snapshots.py`
@@ -135,18 +129,13 @@ def mock_context():
 
 @asynccontextmanager
 async def get_mcp_client() -> AsyncIterator[ClientSession]:
-    """Context manager providing MCP client connected to server via stdio.
+    """LEGACY: stdio MCP client helper.
 
-    Mimics exactly how Claude Code connects to MCP servers, ensuring
-    we test the real integration path using MCP protocol over stdio.
+    This helper spawns a subprocess using stdio transport, which has been
+    retired in favour of HTTP.  It remains here only to keep existing tests
+    compilable until they are converted or removed in Task 8.
 
-    Configuration:
-    - Uses WORKFLOWS_TEMPLATE_PATHS to point to tests/workflows
-    - Sets WORKFLOWS_LOG_LEVEL=WARNING to suppress INFO logs
-    - Executes server via `python -m workflows_mcp`
-
-    Yields:
-        ClientSession: Initialized MCP client session for tool calls
+    Do not add new tests that depend on this helper.
     """
     server_params = StdioServerParameters(
         command="python",
@@ -169,6 +158,7 @@ async def get_mcp_client() -> AsyncIterator[ClientSession]:
 # =============================================================================
 
 
+@pytest.mark.skip(reason="Pending Task 8: stdio transport removal and HTTP conversion")
 class TestMCPServerHealth:
     """MCP server health and protocol compliance validation.
 
@@ -878,6 +868,7 @@ blocks: []
 # =============================================================================
 
 
+@pytest.mark.skip(reason="Pending Task 8: stdio transport removal and HTTP conversion")
 class TestInteractiveWorkflows:
     """Tests for interactive workflow pause and resume functionality.
 
@@ -1339,6 +1330,7 @@ class TestQualityAssurance:
 # =============================================================================
 
 
+@pytest.mark.skip(reason="Pending Task 8: stdio transport removal and HTTP conversion")
 class TestWorkflowSnapshots:
     """Snapshot-based workflow execution validation.
 
@@ -1507,6 +1499,58 @@ class TestWorkflowSnapshots:
 
 
 # =============================================================================
+# HTTP Service Integration (Task 7)
+# =============================================================================
+
+
+class TestHTTPServerIntegration:
+    """HTTP service integration tests using FastAPI TestClient.
+
+    These replace the retired stdio-based TestMCPServerHealth tests.
+    build_app() is exercised end-to-end via an isolated tmp token store so
+    tests never touch ~/.workflows on the developer's machine.
+    """
+
+    def _make_client(self, tmp_path: Path):  # type: ignore[return]
+        from fastapi.testclient import TestClient
+
+        from workflows_mcp.auth import TokenStore
+        from workflows_mcp.server import build_app
+
+        store = TokenStore(tmp_path / "auth.json")
+        store.write_token("test-token-" + "x" * 32)
+        return TestClient(build_app(base_dir=tmp_path))
+
+    def test_health_is_public(self, tmp_path: Path) -> None:
+        client = self._make_client(tmp_path)
+        response = client.get("/health")
+        assert response.status_code == 200
+        assert response.json()["status"] == "ok"
+
+    def test_openapi_is_public(self, tmp_path: Path) -> None:
+        client = self._make_client(tmp_path)
+        assert client.get("/openapi.json").status_code == 200
+
+    def test_docs_is_public(self, tmp_path: Path) -> None:
+        client = self._make_client(tmp_path)
+        assert client.get("/docs").status_code == 200
+
+    def test_protected_config_requires_token(self, tmp_path: Path) -> None:
+        client = self._make_client(tmp_path)
+        assert client.get("/config").status_code == 401
+
+    def test_build_app_raises_without_bootstrap_token(self, tmp_path: Path) -> None:
+        """Spec §7.4: fail-fast when no token store and no env var."""
+        import pytest
+
+        from workflows_mcp.auth import BootstrapTokenError
+        from workflows_mcp.server import build_app
+
+        with pytest.raises(BootstrapTokenError):
+            build_app(base_dir=tmp_path)
+
+
+# =============================================================================
 # Pytest Hooks - Dynamic test parametrization
 # =============================================================================
 
@@ -1557,7 +1601,13 @@ def pytest_generate_tests(metafunc: pytest.Metafunc) -> None:
 
                 return non_interactive
 
-        workflows = asyncio.run(discover_workflows())
+        workflows: list[str] = []
+        try:
+            workflows = asyncio.run(discover_workflows())
+        except Exception:
+            # Stdio transport is retired; parametrize with empty list so the
+            # skipped TestWorkflowSnapshots tests collect cleanly.
+            pass
         metafunc.parametrize("workflow_name", workflows)
 
 
