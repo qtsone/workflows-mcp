@@ -67,7 +67,16 @@ def build_config_router(
                 message="Configuration payload is invalid.",
                 details={"field_errors": errors},
             )
-        await config_service.apply_payload(payload.model_dump())
+        try:
+            await config_service.apply_payload(payload.model_dump())
+        except RuntimeError as exc:
+            if str(exc) == "CONFIG_WRITE_IN_PROGRESS":
+                return _error_response(
+                    status_code=409,
+                    code="CONFIG_WRITE_IN_PROGRESS",
+                    message="A config write is already in progress. Retry after it completes.",
+                )
+            raise
         report = await readiness_service.evaluate()
         return ConfigApplyResponse(
             applied=True,

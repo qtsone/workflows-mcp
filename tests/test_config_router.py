@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import httpx
 import pytest
 from fastapi.testclient import TestClient
 
@@ -202,10 +203,10 @@ def test_config_apply_returns_state_and_blockers(
     assert payload["applied"] is True
 
 
-def test_config_apply_concurrent_write_protection(
+def test_config_apply_sequential_writes_both_succeed(
     token_store: TokenStore, config_service: ConfigService
 ) -> None:
-    """Two sequential applies should both succeed (lock is released after each)."""
+    """Two sequential applies must both succeed — lock releases between them."""
     client = _make_client(token_store, config_service)
     for _ in range(2):
         response = client.post(
@@ -214,3 +215,39 @@ def test_config_apply_concurrent_write_protection(
             headers={"Authorization": f"Bearer {_VALID_TOKEN}"},
         )
         assert response.status_code == 200
+
+
+async def test_config_apply_concurrent_overlap_returns_409(
+    token_store: TokenStore, config_service: ConfigService
+) -> None:
+    """A second apply arriving while a write is in flight must get 409 Conflict.
+
+    We simulate the overlap by holding the lock manually before firing the HTTP
+    request, so the loser is guaranteed to collide with the held lock.
+    """
+    app = create_app(
+        readiness_service=FakeReadiness(),
+        token_store=token_store,
+        config_service=config_service,
+    )
+
+    headers = {"Authorization": f"Bearer {_VALID_TOKEN}"}
+
+    # Hold the lock to simulate a write already in progress.
+    await config_service._lock.acquire()
+    try:
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=app), base_url="http://test"
+        ) as ac:
+            response = await ac.post(
+                "/config/apply",
+                json={"profiles": []},
+                headers=headers,
+            )
+    finally:
+        config_service._lock.release()
+
+    assert response.status_code == 409
+    body = response.json()
+    assert "error" in body
+    assert body["error"]["code"] == "CONFIG_WRITE_IN_PROGRESS"
