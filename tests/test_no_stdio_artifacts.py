@@ -27,15 +27,25 @@ BANNED_SKIP_REASON_SUBSTRINGS = [
 ]
 
 
+_SELF = Path(__file__).name
+
+
 def _git_grep(pattern: str, *paths: Path) -> list[str]:
-    """Return lines matching pattern across the given paths using git grep."""
+    """Return lines matching pattern across the given paths using git grep.
+
+    Lines from this sentinel file are excluded to avoid self-referential failures.
+    """
     result = subprocess.run(
         ["git", "grep", "-rn", "--", pattern, *(str(p) for p in paths)],
         cwd=REPO_ROOT,
         capture_output=True,
         text=True,
     )
-    return [line for line in result.stdout.splitlines() if line.strip()]
+    return [
+        line
+        for line in result.stdout.splitlines()
+        if line.strip() and _SELF not in line
+    ]
 
 
 def test_no_stdio_server_import() -> None:
