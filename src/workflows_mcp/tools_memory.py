@@ -35,7 +35,6 @@ from .engine.memory_onboard_sync_orchestrator import (
 from .engine.memory_scope_resolver import (
     SyncContextCandidate,
     build_ambiguous_context_envelope,
-    build_no_context_envelope,
     resolve_sync_context,
     scope_key,
     sorted_scan_manifest,
@@ -48,6 +47,7 @@ from .engine.memory_service import (
     MemoryService,
 )
 from .engine.sql.postgres_backend import PostgresBackend
+from .http_models import OnboardRequest, SyncRequest
 
 logger = logging.getLogger(__name__)
 
@@ -1245,11 +1245,12 @@ def _build_project_failed_checkpoint_payload(
     }
 
 
-def _memory_schema_payload() -> dict[str, Any]:
+def memory_schema_payload() -> dict[str, Any]:
     """Return a static contract/schema snapshot for the memory tool.
 
     Does not require DB connectivity.  Useful for agents to discover available
     operations, checkpoint format, and scan configuration options at runtime.
+    Callable from the HTTP transport layer as well as the MCP tool layer.
     """
     return {
         "version": _PROJECT_FLOW_VERSION,
@@ -1398,7 +1399,7 @@ def register_memory_tools(
         """Run one memory operation and return compact JSON results."""
         # Schema operation short-circuits before any DB connectivity.
         if operation == "schema":
-            return _json_response(_memory_schema_payload())
+            return _json_response(memory_schema_payload())
 
         # Active context fallback: when no explicit scope/scope_token/context_id
         # is provided, try the session's active context (set by onboard/select).
@@ -2438,6 +2439,72 @@ def register_memory_tools(
         except Exception as e:
             return _json_response(_tool_error_payload("sync", e))
 
+    # -----------------------------------------------------------------------
+    # Wire strict HTTP adapters (Task 6)
+    #
+    # These closures capture the inner onboard/sync tool functions defined
+    # above.  They validate the raw HTTP payload through strict Pydantic models
+    # before delegating to the existing orchestration, then JSON-decode the
+    # CallToolResult text into a plain dict for the HTTP layer.
+    # -----------------------------------------------------------------------
+
+    async def _onboard_http_impl(
+        payload: dict[str, Any], *, ctx: AppContextType
+    ) -> dict[str, Any]:
+        """Validate payload strictly then delegate to onboard() orchestration."""
+        request = OnboardRequest.model_validate(payload)  # raises ValidationError on violation
+        result = await onboard(
+            scope=request.scope.model_dump(exclude_none=True) if request.scope else None,
+            ingestion=request.ingestion.model_dump(exclude_none=True)
+            if request.ingestion
+            else None,
+            ingest=request.ingest,
+            supersede=request.supersede,
+            archive=request.archive,
+            maintain=request.maintain,
+            checkpoint=request.checkpoint.model_dump(exclude_none=True)
+            if request.checkpoint
+            else None,
+            scan=request.scan,
+            response=request.response.model_dump(exclude_none=True)
+            if request.response
+            else None,
+            max_operations=request.max_operations,
+            debug=request.debug,
+            ctx=ctx,
+        )
+        return json.loads(result.content[0].text)
+
+    async def _sync_http_impl(
+        payload: dict[str, Any], *, ctx: AppContextType
+    ) -> dict[str, Any]:
+        """Validate payload strictly then delegate to sync() orchestration."""
+        request = SyncRequest.model_validate(payload)  # raises ValidationError on violation
+        result = await sync(
+            scope=request.scope.model_dump(exclude_none=True) if request.scope else None,
+            ingest=request.ingest,
+            supersede=request.supersede,
+            archive=request.archive,
+            maintain=request.maintain,
+            checkpoint=request.checkpoint.model_dump(exclude_none=True)
+            if request.checkpoint
+            else None,
+            scan=request.scan,
+            response=request.response.model_dump(exclude_none=True)
+            if request.response
+            else None,
+            max_operations=request.max_operations,
+            debug=request.debug,
+            ctx=ctx,
+        )
+        return json.loads(result.content[0].text)
+
+    # Publish to module-level names so the HTTP transport layer (Task 7)
+    # and tests can import them directly from workflows_mcp.tools_memory.
+    global onboard_http, sync_http
+    onboard_http = _onboard_http_impl
+    sync_http = _sync_http_impl
+
     @mcp_server.tool(
         description=(
             "Switch active memory context for this session. "
@@ -2527,3 +2594,40 @@ def register_memory_tools(
                 }
             }
         )
+
+
+# ---------------------------------------------------------------------------
+# Strict HTTP-facing adapters (Task 6)
+#
+# onboard_http and sync_http are async callables that:
+#   1. Parse the raw dict payload through the strict Pydantic contract model
+#      (raises pydantic.ValidationError on unknown fields / legacy response.mode).
+#   2. Delegate to the underlying onboard() / sync() MCP tool orchestration.
+#   3. Return the JSON-decoded result dict.
+#
+# These names are assigned to module-level variables inside register_memory_tools
+# (after the inner onboard/sync closures are in scope) so they are importable
+# by the HTTP transport layer (Task 7) and by tests.
+# ---------------------------------------------------------------------------
+
+# Sentinel callables replaced by register_memory_tools at import time.
+
+
+async def _onboard_http_not_ready(
+    payload: dict[str, Any], *, ctx: AppContextType
+) -> dict[str, Any]:
+    raise RuntimeError(
+        "onboard_http is not available: call register_memory_tools() first."
+    )
+
+
+async def _sync_http_not_ready(
+    payload: dict[str, Any], *, ctx: AppContextType
+) -> dict[str, Any]:
+    raise RuntimeError(
+        "sync_http is not available: call register_memory_tools() first."
+    )
+
+
+onboard_http = _onboard_http_not_ready
+sync_http = _sync_http_not_ready

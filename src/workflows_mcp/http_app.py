@@ -189,7 +189,7 @@ def create_app(
 # MCP-over-HTTP entry point
 # ---------------------------------------------------------------------------
 
-_MCP_METHODS: frozenset[str] = frozenset({"ping"})
+_MCP_METHODS: frozenset[str] = frozenset({"schema"})
 
 
 def _register_mcp_endpoint(app: FastAPI, *, readiness_service: Any, auth_guard: Any) -> None:
@@ -199,10 +199,14 @@ def _register_mcp_endpoint(app: FastAPI, *, readiness_service: Any, auth_guard: 
     1. Bearer authentication (401 on failure).
     2. Service readiness (409 when not ``READY``).
 
-    When both gates pass, the request is dispatched to an internal method
-    router.  Currently ``ping`` is the supported delegated operation; all
-    other method names return 400 with code ``METHOD_NOT_FOUND``.
+    When both gates pass, the request is dispatched to a method router backed
+    by real production adapters:
 
+    - ``schema``: delegates to ``tools_memory.memory_schema_payload()``, the
+      same pure function used by ``memory(operation="schema")`` in the MCP tool.
+      Requires no DB connectivity.
+
+    All other method names return 400 with code ``METHOD_NOT_FOUND``.
     Error responses always use the stable ``ErrorEnvelope`` shape.
     """
 
@@ -225,7 +229,7 @@ def _register_mcp_endpoint(app: FastAPI, *, readiness_service: Any, auth_guard: 
                 },
             )
 
-        # Method dispatch.
+        # Method dispatch — backed by real adapter functions.
         try:
             payload = await request.json()
         except Exception:
@@ -233,8 +237,10 @@ def _register_mcp_endpoint(app: FastAPI, *, readiness_service: Any, auth_guard: 
 
         method: str | None = payload.get("method") if isinstance(payload, dict) else None
 
-        if method == "ping":
-            return JSONResponse(status_code=200, content={"result": "pong"})
+        if method == "schema":
+            from .tools_memory import memory_schema_payload
+
+            return JSONResponse(status_code=200, content={"result": memory_schema_payload()})
 
         return _error_response(
             status_code=400,

@@ -155,28 +155,44 @@ def test_mcp_409_includes_readiness_details(not_ready_client: TestClient) -> Non
 
 # ---------------------------------------------------------------------------
 # Delegated operation tests (authenticated + ready → 200)
+#
+# method=schema delegates to tools_memory.memory_schema_payload() — a real
+# production function already used by the MCP memory(operation="schema") path.
+# It requires no DB connectivity, making it the cleanest real adapter callable
+# from the HTTP layer without the MCP lifespan context.
 # ---------------------------------------------------------------------------
 
 
-def test_mcp_ping_returns_200_when_ready(ready_client: TestClient) -> None:
-    """POST /mcp with method=ping must return 200 when service is ready."""
+def test_mcp_schema_returns_200_when_ready(ready_client: TestClient) -> None:
+    """POST /mcp with method=schema must return 200 when service is ready."""
     response = ready_client.post(
         "/mcp",
         headers={"Authorization": f"Bearer {_VALID_TOKEN}"},
-        json={"method": "ping"},
+        json={"method": "schema"},
     )
     assert response.status_code == 200
 
 
-def test_mcp_ping_returns_pong(ready_client: TestClient) -> None:
-    """POST /mcp with method=ping must return {result: pong}."""
+def test_mcp_schema_returns_real_adapter_output(ready_client: TestClient) -> None:
+    """POST /mcp with method=schema must return output from memory_schema_payload().
+
+    Verifies the endpoint delegates to the real adapter rather than a stub.
+    The response must contain the version and operations keys produced by the
+    existing tools_memory.memory_schema_payload() function.
+    """
+    from workflows_mcp.tools_memory import memory_schema_payload
+
     response = ready_client.post(
         "/mcp",
         headers={"Authorization": f"Bearer {_VALID_TOKEN}"},
-        json={"method": "ping"},
+        json={"method": "schema"},
     )
     payload = response.json()
-    assert payload.get("result") == "pong"
+    expected = memory_schema_payload()
+    # The /mcp response wraps the adapter output under a "result" key.
+    assert "result" in payload
+    assert payload["result"]["version"] == expected["version"]
+    assert payload["result"]["operations"] == expected["operations"]
 
 
 def test_mcp_unknown_method_returns_400(ready_client: TestClient) -> None:
