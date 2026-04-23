@@ -4,6 +4,105 @@ import pytest
 
 from workflows_mcp.auth import BootstrapTokenError, TokenStore, ensure_bootstrap_token
 
+# ---------------------------------------------------------------------------
+# Token lifecycle: rotate
+# ---------------------------------------------------------------------------
+
+
+def test_rotate_token_invalidates_old_token(tmp_path: Path) -> None:
+    """After rotation the previous token must not authenticate."""
+    store = TokenStore(tmp_path / "auth.json")
+    store.write_token("a" * 40)
+    store.rotate_token("b" * 40)
+    assert store.validate("a" * 40) is False
+    assert store.validate("b" * 40) is True
+
+
+def test_rotate_token_file_mode_is_0600(tmp_path: Path) -> None:
+    """rotate_token must preserve 0600 permissions on the store file."""
+    store = TokenStore(tmp_path / "auth.json")
+    store.write_token("a" * 40)
+    store.rotate_token("b" * 40)
+    mode = (tmp_path / "auth.json").stat().st_mode & 0o777
+    assert mode == 0o600
+
+
+# ---------------------------------------------------------------------------
+# Token lifecycle: revoke
+# ---------------------------------------------------------------------------
+
+
+def test_revoke_token_invalidates_current_token(tmp_path: Path) -> None:
+    """After revocation the current token must not authenticate."""
+    store = TokenStore(tmp_path / "auth.json")
+    store.write_token("a" * 40)
+    store.revoke()
+    assert store.validate("a" * 40) is False
+
+
+def test_revoke_when_store_absent_does_not_raise(tmp_path: Path) -> None:
+    """Revoking when no store file exists must succeed silently."""
+    store = TokenStore(tmp_path / "nonexistent.json")
+    store.revoke()  # must not raise
+
+
+# ---------------------------------------------------------------------------
+# Recovery / bootstrap path
+# ---------------------------------------------------------------------------
+
+
+def test_recovery_path_bootstrap_token_when_store_absent(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """When the store is absent and WORKFLOWS_BOOTSTRAP_TOKEN is set,
+    ensure_bootstrap_token must write a new token and allow validation.
+
+    Addendum §8.2: recovery path must be testable, not just implied.
+    """
+    token = "g" * 40
+    monkeypatch.setenv("WORKFLOWS_BOOTSTRAP_TOKEN", token)
+    store = ensure_bootstrap_token(tmp_path)
+    assert store.validate(token) is True
+    assert (tmp_path / "auth.json").exists()
+
+
+def test_recovery_path_after_explicit_revoke(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """After revocation (store absent), supplying a bootstrap token must
+    issue a new admin token without requiring a reinstall.
+
+    Addendum §8.2: recovery path covers explicitly-reset auth state.
+    """
+    token_initial = "h" * 40
+    token_recovery = "i" * 40
+
+    # First start: write token
+    monkeypatch.setenv("WORKFLOWS_BOOTSTRAP_TOKEN", token_initial)
+    store = ensure_bootstrap_token(tmp_path)
+    assert store.validate(token_initial) is True
+
+    # Explicit revocation
+    store.revoke()
+    assert not (tmp_path / "auth.json").exists()
+
+    # Recovery: new bootstrap token while store is absent
+    monkeypatch.setenv("WORKFLOWS_BOOTSTRAP_TOKEN", token_recovery)
+    recovered_store = ensure_bootstrap_token(tmp_path)
+    assert recovered_store.validate(token_recovery) is True
+    assert recovered_store.validate(token_initial) is False
+
+
+def test_recovery_file_mode_is_0600_after_recovery(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The auth store created during recovery must have mode 0600."""
+    token = "j" * 40
+    monkeypatch.setenv("WORKFLOWS_BOOTSTRAP_TOKEN", token)
+    ensure_bootstrap_token(tmp_path)
+    mode = (tmp_path / "auth.json").stat().st_mode & 0o777
+    assert mode == 0o600
+
 
 def test_bootstrap_token_requires_minimum_entropy(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("WORKFLOWS_BOOTSTRAP_TOKEN", "short-token")

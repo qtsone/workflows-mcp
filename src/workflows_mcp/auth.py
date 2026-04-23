@@ -88,6 +88,37 @@ class TokenStore:
         self.path.chmod(0o600)
         logger.debug("Token store written to %s", self.path)
 
+    def rotate_token(self, token: str) -> None:
+        """Replace the current token with a new one.
+
+        The previous token is immediately invalidated.  The write is atomic
+        (via :meth:`write_token`) so no window exists where neither token is
+        valid.  File mode ``0600`` is enforced after the rename.
+
+        Parameters
+        ----------
+        token:
+            The new raw bearer token value.  It is hashed before storage.
+        """
+        self.write_token(token)
+        logger.debug("Token rotated at %s", self.path)
+
+    def revoke(self) -> None:
+        """Delete the token store, immediately invalidating all tokens.
+
+        Calling this method when no store file exists is a no-op.
+
+        Recovery:
+            After revocation, calling :func:`ensure_bootstrap_token` with
+            ``WORKFLOWS_BOOTSTRAP_TOKEN`` set will issue a new admin token
+            without requiring a reinstall.
+        """
+        if self.path.exists():
+            self.path.unlink()
+            logger.info("Token store revoked and removed at %s", self.path)
+        else:
+            logger.debug("revoke() called but no store exists at %s", self.path)
+
     def validate(self, token: str) -> bool:
         """Return ``True`` iff *token* matches the stored digest.
 
