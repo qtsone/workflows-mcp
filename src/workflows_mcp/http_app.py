@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from fastapi import FastAPI, Header, HTTPException, Request
+from fastapi import Depends, FastAPI, Header, HTTPException, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from starlette.exceptions import HTTPException as StarletteHTTPException
@@ -180,4 +180,65 @@ def create_app(
         )
         app.include_router(config_router)
 
+    _register_mcp_endpoint(app, readiness_service=readiness_service, auth_guard=auth_guard)
+
     return app
+
+
+# ---------------------------------------------------------------------------
+# MCP-over-HTTP entry point
+# ---------------------------------------------------------------------------
+
+_MCP_METHODS: frozenset[str] = frozenset({"ping"})
+
+
+def _register_mcp_endpoint(app: FastAPI, *, readiness_service: Any, auth_guard: Any) -> None:
+    """Register the protected ``POST /mcp`` endpoint.
+
+    The endpoint enforces two gates in order:
+    1. Bearer authentication (401 on failure).
+    2. Service readiness (409 when not ``READY``).
+
+    When both gates pass, the request is dispatched to an internal method
+    router.  Currently ``ping`` is the supported delegated operation; all
+    other method names return 400 with code ``METHOD_NOT_FOUND``.
+
+    Error responses always use the stable ``ErrorEnvelope`` shape.
+    """
+
+    @app.post("/mcp")
+    async def mcp_http_endpoint(
+        request: Request,
+        _: None = Depends(auth_guard),
+    ) -> JSONResponse:
+        # Readiness gate — evaluated after auth so we never leak readiness
+        # state to unauthenticated callers.
+        report = await readiness_service.evaluate()
+        if report.state != ReadinessState.READY:
+            return _error_response(
+                status_code=409,
+                code="CONFIG_REQUIRED",
+                message="Service is not ready. Complete /config setup.",
+                details={
+                    "readiness_state": str(report.state),
+                    "missing": report.blockers,
+                },
+            )
+
+        # Method dispatch.
+        try:
+            payload = await request.json()
+        except Exception:
+            payload = {}
+
+        method: str | None = payload.get("method") if isinstance(payload, dict) else None
+
+        if method == "ping":
+            return JSONResponse(status_code=200, content={"result": "pong"})
+
+        return _error_response(
+            status_code=400,
+            code="METHOD_NOT_FOUND",
+            message=f"Unknown method: {method!r}. Supported methods: {sorted(_MCP_METHODS)}.",
+            details={"method": method},
+        )
