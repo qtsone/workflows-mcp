@@ -35,6 +35,21 @@ def setup_test_secrets() -> Iterator[None]:
     _teardown_secrets()
 
 
+@pytest.fixture(autouse=True)
+def _clear_onboard_context_registry() -> Iterator[None]:
+    """Isolate the in-process onboard context registry between tests.
+
+    The registry is module-level state in tools_memory. Without clearing it
+    between tests, a successful onboard in one test would cause subsequent
+    sync({}) calls in unrelated tests to resolve unexpectedly.
+    """
+    import workflows_mcp.tools_memory as _tools_memory
+
+    _tools_memory._onboard_context_registry.clear()
+    yield
+    _tools_memory._onboard_context_registry.clear()
+
+
 @pytest.fixture
 def httpbin_mock(httpserver: HTTPServer) -> HTTPServer:
     """

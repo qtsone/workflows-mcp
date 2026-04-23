@@ -98,8 +98,8 @@ class TestCommunityRefresh:
         ]
         assert len(derived_insert_calls) == 1
         assert derived_insert_calls[0].args[1][4] == Authority.COMMUNITY_SUMMARY
-        assert derived_insert_calls[0].args[1][14] == "derived"
-        assert derived_insert_calls[0].args[1][15] == "community"
+        assert derived_insert_calls[0].args[1][15] == "derived"
+        assert derived_insert_calls[0].args[1][16] == "community"
 
     @pytest.mark.asyncio
     async def test_community_refresh_honors_namespace_and_room_scope(self) -> None:
@@ -457,7 +457,7 @@ class TestCommunityRetrieval:
         assert result.communities == []
         assert (
             result.diagnostics["error"]
-            == "palace strategy requires namespace or room for scoped retrieval"
+            == "palace strategy requires palace, namespace, or room for scoped retrieval"
         )
         assert result.diagnostics["scope_mode"] == "strict_scoped"
         assert result.diagnostics["scope_applied"] is False
@@ -596,7 +596,9 @@ class TestCommunityRetrieval:
 
         assert result.facts == []
         assert result.memories == []
-        assert result.diagnostics["scope_mode"] == "dual_lane_with_companion"
+        # MEMORY-CONTRACT-v3.1: with explicit corridor scope, companion lane is suppressed.
+        # scope_mode reflects actual retrieval posture (strict_scoped when scope is explicit).
+        assert result.diagnostics["scope_mode"] == "strict_scoped"
         assert result.diagnostics["scope_applied"] is True
         assert result.diagnostics["scope_status"] == "no_data_in_scope"
         assert result.diagnostics["authority_routing"] == "facts_user_validated"

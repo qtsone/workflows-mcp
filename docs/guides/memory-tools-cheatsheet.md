@@ -5,10 +5,10 @@ Practical guide for the current public memory contract.
 Active MCP tools:
 
 - `memory` (stable unified tool)
-- `project_onboard`
-- `project_sync`
+- `onboard`
+- `sync`
 
-Legacy tool names (`query_memory`, `manage_memory`) are not part of the active public contract.
+Legacy tool names are not part of the active public contract.
 
 ## 1) Canonical request envelope (`memory`)
 
@@ -185,35 +185,63 @@ Validation note (2026-04-21): this category behavior was live-validated via prod
 }
 ```
 
-## 7) Example payloads (Current memory project tools)
+## 7) Example payloads (Project onboard/sync tools)
 
-### project_onboard
-
-```json
-{
-  "scope": {"palace": "acme", "wing": "workflows", "room": "memory", "compartment": "contract-r2"},
-  "ingest": {"format": "raw", "content": "Initial baseline", "memory_tier": "direct"},
-  "supersede": {"ids": ["11111111-1111-1111-1111-111111111111"], "superseded_by": "22222222-2222-2222-2222-222222222222"},
-  "archive": {"ids": ["33333333-3333-3333-3333-333333333333"]},
-  "maintain": {"mode": "community_refresh"},
-  "max_operations": 1
-}
-```
-
-### project_sync (resume from checkpoint)
+### onboard
 
 ```json
 {
-  "checkpoint": {
-    "version": "oss-r2",
-    "scope": {"palace": "acme", "wing": "workflows", "room": "memory", "compartment": "contract-r2"},
-    "plan": [{"operation": "ingest", "payload": {"format": "raw", "content": "Initial baseline", "memory_tier": "direct"}}],
-    "next_index": 0,
-    "completed": []
-  },
-  "max_operations": 3
+  "scope": {"palace": "acme"},
+  "ingestion": {"mode": "programmatic"},
+  "scan": {
+    "patterns": ["src/**/*.py"],
+    "root": "/path/to/repo",
+    "max_size_kb": 512,
+    "respect_gitignore": true
+  }
 }
 ```
+
+Onboarding notes:
+
+- `onboard` is compact by default. Completed steps strip heavy `plan[].payload.memories[].content` blobs.
+- Pass root-level `debug=true` for full internals (`results[]`, full completed result details, full plan payloads).
+- Programmatic onboarding accepts minimal scope with `scope.palace` and derives lower topology from scanned structure.
+- Graph onboarding success requires a structurally complete graph payload: all four node types (Palace, Wing, Room, Compartment) with `contains` corridors.
+- Ingestion mode: `programmatic` (default) is hash-based and deterministic. `llm` mode is optional with strict defaults.
+- Binary and unsupported files produce metadata-only compartments (path, size, mime-type); no content is ingested.
+
+### sync
+
+```json
+{
+  "scope": {"palace": "acme"},
+  "scan": {
+    "patterns": ["src/**/*.py"],
+    "root": "/path/to/repo"
+  }
+}
+```
+
+`sync({})` context behavior:
+
+- `sync({})` (empty call) resolves context from successful onboard contexts in the current server session.
+- Returns `status: "UNCHANGED"` when context resolves but no scan config is stored for automatic delta.
+- Returns `status: "NO_CONTEXT"` when no context exists; call `onboard` first.
+- Returns `status: "AMBIGUOUS_CONTEXT"` when multiple contexts match; supply a narrowing `scope`.
+
+Completed-checkpoint semantics:
+
+- If the checkpoint is already complete, `sync` returns a fast-path response with:
+  - `from_checkpoint: true`
+  - a `note` saying results came from checkpoint cache (no re-execution).
+- Pass root-level `debug=true` to expand diagnostic detail.
+
+Scan root policy:
+
+- `scan.root` is validated against a single scan root.
+- Default scan root is `/`.
+- Override with environment variable `WORKFLOWS_SCAN_ROOT=/your/root`.
 
 ## 8) Common invalid payloads
 

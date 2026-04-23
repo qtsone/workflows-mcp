@@ -133,9 +133,12 @@ class TestSchemaDDL:
         assert "knowledge_sources(name)" in _CREATE_INDEXES
 
     def test_ddl_contains_unique_entity_index(self) -> None:
-        """DDL should scope entity uniqueness by topology + type + name."""
+        """DDL should scope entity uniqueness by palace + topology + type + name."""
         assert "idx_ke_type_name" in _CREATE_INDEXES
-        assert "knowledge_entities(namespace, room, corridor, entity_type, name)" in _CREATE_INDEXES
+        assert (
+            "knowledge_entities(palace, namespace, room, corridor, entity_type, name)"
+            in _CREATE_INDEXES
+        )
 
     def test_ddl_contains_unique_source_path_index(self) -> None:
         """DDL should create unique index on knowledge_items(source_id, path)."""

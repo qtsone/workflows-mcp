@@ -88,15 +88,34 @@ SCOPE_REQUIRED_OPERATIONS: frozenset[MemoryOperation] = frozenset({"query", "ing
 class MemoryContractError(ValueError):
     """Deterministic contract error with machine-readable code."""
 
-    def __init__(self, *, code: str, message: str, retryable: bool = False) -> None:
+    def __init__(
+        self,
+        *,
+        code: str,
+        message: str,
+        retryable: bool = False,
+        actionable_fix: str | None = None,
+    ) -> None:
         super().__init__(message)
         self.code = code
         self.message = message
         self.retryable = retryable
+        self.actionable_fix = actionable_fix
 
 
-def _raise_contract_error(*, code: str, message: str, retryable: bool = False) -> None:
-    raise MemoryContractError(code=code, message=f"{code}: {message}", retryable=retryable)
+def _raise_contract_error(
+    *,
+    code: str,
+    message: str,
+    retryable: bool = False,
+    actionable_fix: str | None = None,
+) -> None:
+    raise MemoryContractError(
+        code=code,
+        message=f"{code}: {message}",
+        retryable=retryable,
+        actionable_fix=actionable_fix,
+    )
 
 
 def _get_audit_user_id(context: Execution) -> uuid.UUID:
@@ -233,9 +252,22 @@ def _get_corridor(request: QueryMemoryRequest | ManageMemoryRequest) -> str | No
     return None
 
 
+def _get_palace(request: QueryMemoryRequest | ManageMemoryRequest) -> str | None:
+    """Resolve palace from explicit request field or optional scope bag."""
+    palace = getattr(request, "palace", None)
+    if palace:
+        return str(palace)
+    scope = getattr(request, "scope", None)
+    if isinstance(scope, dict):
+        raw_palace = scope.get("palace")
+        if isinstance(raw_palace, str) and raw_palace:
+            return raw_palace
+    return None
+
+
 def _has_explicit_scope(request: QueryMemoryRequest) -> bool:
     """Return True when any explicit topology scope is provided."""
-    return bool(request.namespace or request.room or _get_corridor(request))
+    return bool(request.namespace or request.room or _get_corridor(request) or _get_palace(request))
 
 
 def _build_scope_diagnostics(
@@ -329,12 +361,17 @@ def _build_memory_scope_filters(
     *,
     alias: str,
     start_index: int = 1,
+    palace: str | None = None,
 ) -> tuple[list[str], list[Any], int]:
     """Build SQL filter fragments for scoped memory queries."""
     clauses: list[str] = []
     params: list[Any] = []
     next_index = start_index
 
+    if palace is not None:
+        clauses.append(f"{alias}.palace = ${next_index}")
+        params.append(palace)
+        next_index += 1
     if namespace is not None:
         clauses.append(f"{alias}.namespace = ${next_index}")
         params.append(namespace)
@@ -491,6 +528,10 @@ class QueryMemoryRequest(BaseModel):
         default=None,
         description="Room for scoped retrieval (use with namespace)",
     )
+    palace: str | None = Field(
+        default=None,
+        description="Palace (org-level scope) for strict palace-scoped retrieval",
+    )
     # Filtering
     source: str | None = Field(default=None)
     categories: list[str] | None = Field(default=None)
@@ -610,6 +651,7 @@ class ManageMemoryRequest(BaseModel):
     namespace: str | None = Field(default=None)
     room: str | None = Field(default=None)
     corridor: str | None = Field(default=None)
+    palace: str | None = Field(default=None, description="Palace (org-level scope)")
     source_type: str = Field(default="TOOL")
     categories: list[str] | None = Field(default=None)
     allow_create_categories: bool = Field(
@@ -955,11 +997,39 @@ class MemoryRequest(BaseModel):
                 message="'hall' is invalid in memory.v2 scope; use 'compartment'",
             )
 
+        # B-5 / B-2: corridor is an internal DB column, not an external scope key
+        if "corridor" in raw_scope:
+            _raise_contract_error(
+                code="MEM_INVALID_TAXONOMY_KEY",
+                message=(
+                    "'corridor' is an internal topology term and is forbidden in external scope; "
+                    "use 'compartment' instead"
+                ),
+            )
+
+        # B-1: Forbid any key outside the four canonical external scope fields
         invalid_keys = sorted(key for key in raw_scope if key not in CONTRACT_SCOPE_FIELDS)
         if invalid_keys:
             _raise_contract_error(
                 code="MEM_INVALID_TAXONOMY_KEY",
                 message=f"Unsupported scope keys: {', '.join(invalid_keys)}",
+            )
+
+        # B-1: Enforce hierarchy — room requires wing; compartment requires room + wing
+        if raw_scope.get("compartment") and not raw_scope.get("room"):
+            _raise_contract_error(
+                code="MEM_SCOPE_HIERARCHY_VIOLATION",
+                message="scope.compartment requires scope.room to be present",
+            )
+        if raw_scope.get("compartment") and not raw_scope.get("wing"):
+            _raise_contract_error(
+                code="MEM_SCOPE_HIERARCHY_VIOLATION",
+                message="scope.compartment requires scope.wing to be present",
+            )
+        if raw_scope.get("room") and not raw_scope.get("wing"):
+            _raise_contract_error(
+                code="MEM_SCOPE_HIERARCHY_VIOLATION",
+                message="scope.room requires scope.wing to be present",
             )
 
         return data
@@ -985,6 +1055,91 @@ class MemoryRequest(BaseModel):
         return self
 
 
+class OrgUserMergeTransparency(BaseModel):
+    """B-4: Org/user merge transparency fields for two-layer reads."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    effective_source: Literal["org", "user"] = Field(
+        description="Which layer produced the effective record (newer updated_at; org wins tie)"
+    )
+    org_record: dict[str, Any] | None = Field(
+        default=None,
+        description="Org-layer record when present",
+    )
+    user_record: dict[str, Any] | None = Field(
+        default=None,
+        description="User-layer record when present",
+    )
+    conflict: bool = Field(
+        description="True when both org and user records exist and differ"
+    )
+
+
+def _build_merge_transparency(
+    *,
+    org_record: dict[str, Any] | None,
+    user_record: dict[str, Any] | None,
+) -> OrgUserMergeTransparency | None:
+    """Compute merge transparency when both org and user records are present.
+
+    Merge rule (spec §5.2):
+      effective = record with newer updated_at; org wins on tie.
+    """
+    if org_record is None and user_record is None:
+        return None
+    if org_record is None:
+        return OrgUserMergeTransparency(
+            effective_source="user",
+            org_record=None,
+            user_record=user_record,
+            conflict=False,
+        )
+    if user_record is None:
+        return OrgUserMergeTransparency(
+            effective_source="org",
+            org_record=org_record,
+            user_record=None,
+            conflict=False,
+        )
+
+    # Both present — apply merge rule
+    org_updated = org_record.get("updated_at")
+    user_updated = user_record.get("updated_at")
+
+    _epoch = datetime.min.replace(tzinfo=UTC)
+
+    def _parse_ts(value: Any) -> datetime:
+        """Parse a timestamp string to an aware UTC datetime.
+
+        Handles naive timestamps (no timezone info) by treating them as UTC,
+        which matches PostgreSQL's default behavior for timestamp columns.
+        Falls back to _epoch on any parse failure.
+        """
+        if not value:
+            return _epoch
+        try:
+            dt = datetime.fromisoformat(str(value))
+            if dt.tzinfo is None:
+                dt = dt.replace(tzinfo=UTC)
+            return dt
+        except (ValueError, TypeError):
+            return _epoch
+
+    org_dt = _parse_ts(org_updated)
+    user_dt = _parse_ts(user_updated)
+
+    # Org wins tie (user_dt must be strictly newer to win)
+    effective_source: Literal["org", "user"] = "user" if user_dt > org_dt else "org"
+
+    return OrgUserMergeTransparency(
+        effective_source=effective_source,
+        org_record=org_record,
+        user_record=user_record,
+        conflict=True,
+    )
+
+
 class MemoryResult(BaseModel):
     """Canonical result envelope."""
 
@@ -993,6 +1148,8 @@ class MemoryResult(BaseModel):
     scope_source: dict[str, Literal["request", "token", "context"]] = Field(default_factory=dict)
     query: QueryMemoryResult | None = Field(default=None)
     manage: ManageMemoryResult | None = Field(default=None)
+    # B-4: org/user merge transparency — populated when both layers are queried
+    merge: OrgUserMergeTransparency | None = Field(default=None)
 
 
 class StructuredMemoryRecord(BaseModel):
@@ -1078,6 +1235,10 @@ def _resolve_scope_from_context(
                 message=(
                     f"Unable to resolve scope field '{field}' from request/scope_token/context_id"
                 ),
+                actionable_fix=(
+                    f"Provide '{field}' in scope or pass a scope_token/context_id "
+                    "that resolves this field."
+                ),
             )
 
     return MemoryScope.model_validate(resolved), sources
@@ -1144,11 +1305,16 @@ class MemoryService:
         op = request.operation
         required_scope_fields: tuple[str, ...] = ()
         if op == "query":
-            required_scope_fields = CONTRACT_SCOPE_FIELDS
+            # Only palace is required for query routing; wing/room/compartment are
+            # optional narrowing filters that default to None when absent.  Requiring
+            # all four fields broke palace-only callers (post-onboard pattern where the
+            # agent knows the palace but not the derived wing/room).
+            required_scope_fields = ("palace",)
         elif op == "ingest":
-            # Ingest requires the three topology tiers eagerly and resolves
-            # compartment via request scope or context-derived fallbacks.
-            required_scope_fields = ("palace", "wing", "room")
+            # Ingest requires palace for routing; wing/room/compartment are
+            # optional and may be None (defaults are applied at the manage layer).
+            # Compartment presence is enforced separately via COMPARTMENT_REQUIRED.
+            required_scope_fields = ("palace",)
         elif op == "graph_upsert" and request.graph is not None and request.graph.kind == "place":
             required_scope_fields = CONTRACT_SCOPE_FIELDS
 
@@ -1189,6 +1355,7 @@ class MemoryService:
                         "to": request.query.to,
                         "max_tokens": request.query.limits.tokens,
                         "max_items": request.query.limits.items,
+                        "palace": resolved_scope.palace,
                         "namespace": resolved_scope.wing,
                         "room": resolved_scope.room,
                         "source": request.query.source,
@@ -1210,11 +1377,20 @@ class MemoryService:
             normalized_diagnostics["effective_strategy"] = strategy
             query_result = query_result.model_copy(update={"diagnostics": normalized_diagnostics})
 
+            # B-4: Wire merge transparency when both org and user layers are present.
+            # Org layer = memories (non-USER_VALIDATED authority).
+            # User layer = facts (USER_VALIDATED authority).
+            merge_transparency = _build_merge_transparency(
+                org_record=query_result.memories[0] if query_result.memories else None,
+                user_record=query_result.facts[0] if query_result.facts else None,
+            )
+
             return MemoryResult(
                 operation=op,
                 query=query_result,
                 resolved_scope=resolved_scope,
                 scope_source=scope_source,
+                merge=merge_transparency,
             )
 
         if op == "ingest":
@@ -1233,6 +1409,7 @@ class MemoryService:
                     operation="ingest_structured",
                     source=request.record.source,
                     path=request.record.path,
+                    palace=resolved_scope.palace,
                     namespace=resolved_scope.wing,
                     room=resolved_scope.room,
                     corridor=resolved_scope.compartment,
@@ -1253,6 +1430,7 @@ class MemoryService:
                     path=request.record.path,
                     valid_from=request.record.valid_from,
                     valid_to=request.record.valid_to,
+                    palace=resolved_scope.palace,
                     namespace=resolved_scope.wing,
                     room=resolved_scope.room,
                     corridor=resolved_scope.compartment,
@@ -1318,6 +1496,7 @@ class MemoryService:
                     operation="graph_store_entity",
                     entity_name=request.graph.place_name,
                     entity_type=request.graph.place_type,
+                    palace=resolved_scope.palace,
                     namespace=resolved_scope.wing,
                     room=resolved_scope.room,
                     corridor=resolved_scope.compartment,
@@ -1349,6 +1528,7 @@ class MemoryService:
                     evidence_memory_id=request.graph.evidence_memory_id,
                     evidence_memory_ids=effective_evidence_ids,
                     curated=request.graph.curated,
+                    palace=resolved_scope.palace,
                     namespace=resolved_scope.wing,
                     room=resolved_scope.room,
                     corridor=resolved_scope.compartment,
@@ -1418,8 +1598,8 @@ class MemoryService:
         """Run hybrid search and fuse into recollection-first result."""
         limit = request.max_items
         corridor = _get_corridor(request)
+        palace = _get_palace(request)
         has_explicit_scope = _has_explicit_scope(request)
-        s2_effective = request.s2_enabled and has_explicit_scope
 
         resolved_categories: list[str] | None = None
         if request.categories:
@@ -1435,10 +1615,18 @@ class MemoryService:
             profile=request.embedding_profile,
         )
 
+        # MEMORY-CONTRACT-v3.1: The global companion lane (s2) runs without scope
+        # filters and therefore MUST NOT fire when an explicit scope is present —
+        # doing so admits out-of-scope rows into the result set (cross-scope leakage).
+        # s2_enabled is a retrieval-optimization hint, not a scope-override.
+        # Scope isolation takes precedence: companion lane is only safe when no
+        # explicit scope is provided (global search context enrichment only).
+        include_companion = not has_explicit_scope
         rows = await room_scoped_search(
             embedding,
             request.query,
             self._backend,
+            palace=palace,
             namespace=request.namespace,
             room=request.room,
             corridor=corridor,
@@ -1450,7 +1638,7 @@ class MemoryService:
             min_confidence=request.min_confidence,
             lifecycle_state=request.lifecycle_state,
             limit=limit,
-            include_global_companion=s2_effective,
+            include_global_companion=include_companion,
         )
 
         if rows:
@@ -1466,7 +1654,8 @@ class MemoryService:
         facts: list[dict[str, Any]] = []
         memories: list[dict[str, Any]] = []
         for row in rows:
-            # Build lean dict — always include content; include optional fields only when present
+            # Build lean dict — always include content; include optional fields only when present.
+            # B-2: namespace is an internal DB column; it MUST NOT appear in external responses.
             cleaned: dict[str, Any] = {
                 "id": str(row.get("id", "")),
                 "content": row.get("content", ""),
@@ -1476,7 +1665,6 @@ class MemoryService:
                 # provenance fields — consumers can locate the source file/project
                 "path": row.get("item_path") or None,
                 "source": row.get("source_name") or None,
-                "namespace": row.get("namespace") or None,
             }
             # Lane contract:
             # USER_VALIDATED is promoted to facts; other authorities stay in memories.
@@ -1492,12 +1680,11 @@ class MemoryService:
             memories=memories,
             diagnostics={
                 **_base_query_diagnostics(
-                    # Keep auto-mode scope diagnostics stable with Task 4 contract:
-                    # mode reflects requested retrieval posture, while retrieval.s2.enabled
-                    # reflects whether companion lane is effective for this scope.
-                    scope_mode="dual_lane_with_companion"
-                    if request.s2_enabled
-                    else "strict_scoped",
+                    # scope_mode reflects actual retrieval posture:
+                    # companion lane is only active for unscoped (global) queries.
+                    scope_mode="strict_scoped"
+                    if has_explicit_scope
+                    else "dual_lane_with_companion",
                     scope_applied=scope_applied,
                     has_results=bool(facts or memories),
                 ),
@@ -1505,7 +1692,7 @@ class MemoryService:
                 "retrieval": _build_retrieval_diagnostics(
                     candidate_generation="deterministic",
                     algorithm="rrf",
-                    s2_enabled=s2_effective,
+                    s2_enabled=include_companion,
                     s2_requested=request.s2_enabled,
                     s2_strategy="companion_lane",
                 ),
@@ -1522,6 +1709,7 @@ class MemoryService:
             request.as_of, request.from_, request.to
         )
         corridor = _get_corridor(request)
+        palace = _get_palace(request)
 
         embedding, _, _, _ = await compute_embedding(
             text=request.query,
@@ -1541,6 +1729,7 @@ class MemoryService:
             corridor,
             alias="km",
             start_index=4,
+            palace=palace,
         )
         clauses.extend(scope_clauses)
         params.extend(scope_params)
@@ -1596,6 +1785,7 @@ class MemoryService:
                 kc.content,
                 kc.member_count,
                 kc.memory_count,
+                kc.palace,
                 kc.namespace,
                 kc.room,
                 kc.corridor,
@@ -1623,6 +1813,8 @@ class MemoryService:
                 "memory_count": row.get("memory_count", 0),
                 "similarity": row.get("similarity"),
             }
+            if row.get("palace") is not None:
+                community["palace"] = row["palace"]
             if row.get("namespace") is not None:
                 community["namespace"] = row["namespace"]
             if row.get("room") is not None:
@@ -1639,6 +1831,7 @@ class MemoryService:
                 embedding,
                 request.query,
                 self._backend,
+                palace=palace,
                 namespace=request.namespace,
                 room=request.room,
                 corridor=corridor,
@@ -1707,11 +1900,12 @@ class MemoryService:
         )
 
     async def _query_palace(self, request: QueryMemoryRequest) -> QueryMemoryResult:
-        """Palace-scoped retrieval with explicit namespace/room scoping.
+        """Palace-scoped retrieval with explicit namespace/room/palace scoping.
 
-        Palace retrieval requires explicit topology scoping (namespace and/or room).
+        Palace retrieval requires explicit topology scoping (palace, namespace, and/or room).
         """
-        if not request.namespace and not request.room:
+        palace = _get_palace(request)
+        if not request.namespace and not request.room and not palace:
             return QueryMemoryResult(
                 diagnostics={
                     **_base_query_diagnostics(
@@ -1720,7 +1914,9 @@ class MemoryService:
                         has_results=False,
                         missing_scope=True,
                     ),
-                    "error": ("palace strategy requires namespace or room for scoped retrieval"),
+                    "error": (
+                        "palace strategy requires palace, namespace, or room for scoped retrieval"
+                    ),
                 }
             )
 
@@ -1740,6 +1936,7 @@ class MemoryService:
             embedding,
             request.query,
             self._backend,
+            palace=palace,
             namespace=request.namespace,
             room=request.room,
             corridor=corridor,
@@ -1777,7 +1974,7 @@ class MemoryService:
                 "rrf_score": row.get("rrf_score"),
                 "path": row.get("item_path") or None,
                 "source": row.get("source_name") or None,
-                "namespace": row.get("namespace") or None,
+                # B-2: namespace is an internal DB column; omitted from external results
             }
             # Lane contract:
             # USER_VALIDATED is promoted to facts; other authorities stay in memories.
@@ -2407,11 +2604,21 @@ class MemoryService:
             for memory in request.memories:
                 memory_id = str(uuid.uuid4())
                 memory_ids.append(memory_id)
-                embedding, model_name, _, _ = await compute_embedding(
-                    text=memory.content,
-                    context=self._context,
-                    profile=request.embedding_profile,
-                )
+                try:
+                    embedding, model_name, _, _ = await compute_embedding(
+                        text=memory.content,
+                        context=self._context,
+                        profile=request.embedding_profile,
+                    )
+                except Exception as embed_exc:
+                    raise MemoryContractError(
+                        code="MEM_EMBEDDING_FAILED",
+                        message=(
+                            f"MEM_EMBEDDING_FAILED: Failed to compute embedding for memory: "
+                            f"{embed_exc}"
+                        ),
+                        retryable=True,
+                    ) from embed_exc
                 await self._backend.execute(
                     """
                     INSERT INTO knowledge_memories
@@ -2419,7 +2626,7 @@ class MemoryService:
                          authority, lifecycle_state, confidence, embedding_model,
                          metadata, created_by, auth_method,
                          source_name, source_type,
-                         namespace, room, corridor,
+                         palace, namespace, room, corridor,
                          memory_tier, derived_kind, parent_memory_ids)
                     VALUES
                         ($1::uuid, $2::uuid, $3, $4::vector,
@@ -2427,8 +2634,8 @@ class MemoryService:
                          $5, $6, $7, $8,
                          $9::jsonb, $10::uuid, $11,
                          $12, $13,
-                         $14, $15, $16,
-                         $17, $18, $19::uuid[])
+                         $14, $15, $16, $17,
+                         $18, $19, $20::uuid[])
                     """,
                     (
                         memory_id,
@@ -2444,6 +2651,7 @@ class MemoryService:
                         auth_method,
                         source_name,
                         request.source_type,
+                        _get_palace(request),
                         request.namespace,
                         request.room,
                         request.corridor,
@@ -2462,6 +2670,7 @@ class MemoryService:
                 )
 
             entity_ids_by_key: dict[tuple[str, str], str] = {}
+            entity_scope_palace = _normalize_scope_value(_get_palace(request))
             entity_scope_namespace = _normalize_scope_value(request.namespace)
             entity_scope_room = _normalize_scope_value(request.room)
             entity_scope_corridor = _normalize_scope_value(_get_corridor(request))
@@ -2472,6 +2681,7 @@ class MemoryService:
                     confidence=entity.confidence
                     if entity.confidence is not None
                     else request.confidence,
+                    palace=entity_scope_palace,
                     namespace=entity_scope_namespace,
                     room=entity_scope_room,
                     corridor=entity_scope_corridor,
@@ -2497,6 +2707,7 @@ class MemoryService:
                     relation.source_type,
                     relation.source_name,
                     request.confidence,
+                    palace=entity_scope_palace,
                     namespace=entity_scope_namespace,
                     room=entity_scope_room,
                     corridor=entity_scope_corridor,
@@ -2509,6 +2720,7 @@ class MemoryService:
                     relation.target_type,
                     relation.target_name,
                     request.confidence,
+                    palace=entity_scope_palace,
                     namespace=entity_scope_namespace,
                     room=entity_scope_room,
                     corridor=entity_scope_corridor,
@@ -2667,7 +2879,7 @@ class MemoryService:
                  embedding_model, metadata,
                  valid_from, valid_to,
                  created_by, auth_method, source_name, source_type,
-                 namespace, room, corridor,
+                 palace, namespace, room, corridor,
                  memory_tier, derived_kind, parent_memory_ids)
             VALUES
                 ($1::uuid, $2::uuid, $3, $4::vector,
@@ -2676,8 +2888,8 @@ class MemoryService:
                  $8, $9::jsonb,
                  $10::timestamptz, $11::timestamptz,
                  $12::uuid, $13, $14, $15,
-                 $16, $17, $18,
-                 $19, $20, $21::uuid[])
+                 $16, $17, $18, $19,
+                 $20, $21, $22::uuid[])
             """,
             (
                 memory_id,
@@ -2695,6 +2907,7 @@ class MemoryService:
                 auth_method,
                 source_name,
                 request.source_type,
+                _get_palace(request),
                 request.namespace,
                 request.room,
                 request.corridor,
@@ -2864,6 +3077,29 @@ class MemoryService:
         reason = request.reason or "manual"
         explicit_valid_to = _coerce_iso_datetime(request.valid_to, "valid_to")
         placeholders = ", ".join(f"${i + 1}::uuid" for i in range(len(ids)))
+
+        # Pre-flight: detect SUPERSEDED records before issuing any UPDATE.
+        # The DB trigger trg_km_supersede_append_only forbids changing lifecycle_state
+        # away from SUPERSEDED. Raise a deterministic contract error here so callers
+        # receive MEM_SUPERSEDE_APPEND_ONLY rather than a generic MEM_INTERNAL_ERROR.
+        superseded_check = await self._backend.query(
+            f"""
+            SELECT id FROM knowledge_memories
+            WHERE id IN ({placeholders})
+              AND lifecycle_state = 'SUPERSEDED'
+            """,
+            tuple(ids),
+        )
+        if superseded_check.rows:
+            superseded_ids = [str(r["id"]) for r in superseded_check.rows]
+            _raise_contract_error(
+                code="MEM_SUPERSEDE_APPEND_ONLY",
+                message=(
+                    "superseded memories cannot be archived — "
+                    "supersede is an append-only lifecycle state. "
+                    f"Affected id(s): {', '.join(superseded_ids)}"
+                ),
+            )
 
         skipped_result = await self._backend.query(
             f"""
@@ -3347,6 +3583,7 @@ class MemoryService:
                 operation="graph_store_entity", success=False, error="'entity_type' is required"
             )
 
+        entity_scope_palace = _normalize_scope_value(_get_palace(request))
         entity_scope_namespace = _normalize_scope_value(request.namespace)
         entity_scope_room = _normalize_scope_value(request.room)
         entity_scope_corridor = _normalize_scope_value(_get_corridor(request))
@@ -3354,10 +3591,10 @@ class MemoryService:
         result = await self._backend.query(
             """
             INSERT INTO knowledge_entities (
-                id, entity_type, name, namespace, room, corridor, confidence
+                id, entity_type, name, palace, namespace, room, corridor, confidence
             )
-            VALUES ($1::uuid, $2, $3, $4, $5, $6, $7)
-            ON CONFLICT (namespace, room, corridor, entity_type, name) DO UPDATE
+            VALUES ($1::uuid, $2, $3, $4, $5, $6, $7, $8)
+            ON CONFLICT (palace, namespace, room, corridor, entity_type, name) DO UPDATE
                 SET confidence = GREATEST(knowledge_entities.confidence, EXCLUDED.confidence)
             RETURNING id
             """,
@@ -3365,6 +3602,7 @@ class MemoryService:
                 str(uuid.uuid4()),
                 request.entity_type,
                 request.entity_name,
+                entity_scope_palace,
                 entity_scope_namespace,
                 entity_scope_room,
                 entity_scope_corridor,
@@ -3596,6 +3834,8 @@ class MemoryService:
         memories_by_id: dict[str, dict[str, Any]] = {}
         for row in result.rows:
             memory_id = str(row["id"])
+            # B-2: namespace, room, corridor are internal DB columns; omitted from external results.
+            # Scope context is conveyed via resolved_scope in the outer MemoryResult envelope.
             memories_by_id[memory_id] = {
                 "id": memory_id,
                 "content": row.get("content", ""),
@@ -3603,9 +3843,6 @@ class MemoryService:
                 "authority": row.get("authority"),
                 "path": row.get("item_path") or None,
                 "source": row.get("source_name") or None,
-                "namespace": row.get("namespace") or None,
-                "room": row.get("room") or None,
-                "corridor": row.get("corridor") or None,
             }
 
         for edge in edges:
@@ -3945,9 +4182,10 @@ class MemoryService:
         result = await self._backend.query(
             """
             INSERT INTO knowledge_communities
-                (id, content, embedding, member_count, memory_count, namespace, room, corridor)
+                (id, content, embedding, member_count, memory_count,
+                 palace, namespace, room, corridor)
             VALUES
-                ($1::uuid, $2, $3::vector, $4, $5, $6, $7, $8)
+                ($1::uuid, $2, $3::vector, $4, $5, $6, $7, $8, $9)
             RETURNING id
             """,
             (
@@ -3956,6 +4194,7 @@ class MemoryService:
                 str(centroid) if centroid is not None else None,
                 len(entity_ids),
                 len({str(row["id"]) for row in memory_rows}),
+                _get_palace(request),
                 request.namespace,
                 request.room,
                 _get_corridor(request),
@@ -4005,15 +4244,15 @@ class MemoryService:
                 (id, community_id, content, embedding, search_vector,
                  authority, lifecycle_state, confidence, embedding_model,
                  metadata, created_by, auth_method,
-                 namespace, room, corridor,
+                 palace, namespace, room, corridor,
                  memory_tier, derived_kind, parent_memory_ids)
             VALUES
                 ($1::uuid, $2::uuid, $3, $4::vector,
                  to_tsvector('english', $3),
                  $5, $6, $7, $8,
                  $9::jsonb, $10::uuid, $11,
-                 $12, $13, $14,
-                 $15, $16, $17::uuid[])
+                 $12, $13, $14, $15,
+                 $16, $17, $18::uuid[])
             """,
             (
                 derived_memory_id,
@@ -4032,6 +4271,7 @@ class MemoryService:
                 ),
                 str(created_by),
                 auth_method,
+                _get_palace(request),
                 request.namespace,
                 request.room,
                 _get_corridor(request),
@@ -4119,6 +4359,7 @@ class MemoryService:
         entity_type: str,
         confidence: float | None,
         *,
+        palace: str,
         namespace: str,
         room: str,
         corridor: str,
@@ -4127,10 +4368,10 @@ class MemoryService:
         result = await self._backend.query(
             """
             INSERT INTO knowledge_entities (
-                id, entity_type, name, namespace, room, corridor, confidence
+                id, entity_type, name, palace, namespace, room, corridor, confidence
             )
-            VALUES ($1::uuid, $2, $3, $4, $5, $6, $7)
-            ON CONFLICT (namespace, room, corridor, entity_type, name) DO UPDATE
+            VALUES ($1::uuid, $2, $3, $4, $5, $6, $7, $8)
+            ON CONFLICT (palace, namespace, room, corridor, entity_type, name) DO UPDATE
                 SET confidence = GREATEST(knowledge_entities.confidence, EXCLUDED.confidence)
             RETURNING id
             """,
@@ -4138,6 +4379,7 @@ class MemoryService:
                 str(uuid.uuid4()),
                 entity_type,
                 entity_name,
+                palace,
                 namespace,
                 room,
                 corridor,
@@ -4157,6 +4399,7 @@ class MemoryService:
         entity_name: str,
         confidence: float,
         *,
+        palace: str,
         namespace: str,
         room: str,
         corridor: str,
@@ -4170,6 +4413,7 @@ class MemoryService:
             entity_name=entity_name,
             entity_type=entity_type,
             confidence=confidence,
+            palace=palace,
             namespace=namespace,
             room=room,
             corridor=corridor,

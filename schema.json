@@ -1997,7 +1997,7 @@
                         }
                       ],
                       "default": null,
-                      "description": "Scope envelope (room/corridor/global and retrieval boundaries).",
+                      "description": "Scope envelope: palace, wing, room, compartment, and retrieval boundaries.",
                       "title": "Scope"
                     },
                     "scope_token": {
@@ -3905,7 +3905,7 @@
             }
           ],
           "default": null,
-          "description": "Scope envelope (room/corridor/global and retrieval boundaries).",
+          "description": "Scope envelope: palace, wing, room, compartment, and retrieval boundaries.",
           "title": "Scope"
         },
         "scope_token": {

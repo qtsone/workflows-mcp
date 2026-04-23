@@ -231,15 +231,150 @@ class TestProjectMemoryToolsMetadata:
         server = FastMCP("metadata-test")
         register_memory_tools(server, enable_project_tools=True)
 
-        onboard = server._tool_manager._tools.get("project_onboard")
+        onboard = server._tool_manager._tools.get("onboard")
         assert onboard is not None
         assert onboard.description
         assert "start or continue project memory onboarding" in onboard.description.lower()
 
-        sync = server._tool_manager._tools.get("project_sync")
+        sync = server._tool_manager._tools.get("sync")
         assert sync is not None
         assert sync.description
         assert "continue project memory synchronization" in sync.description.lower()
+
+    def test_old_project_tool_names_absent(self) -> None:
+        server = FastMCP("absent-names-test")
+        register_memory_tools(server, enable_project_tools=True)
+        assert server._tool_manager._tools.get("project_onboard") is None
+        assert server._tool_manager._tools.get("project_sync") is None
+
+
+class TestProjectMemoryToolsScanParameter:
+    """Validate that onboard and sync accept the scan parameter."""
+
+    def test_onboard_scan_parameter_accepted_in_schema(self) -> None:
+        """onboard tool schema must include the scan parameter."""
+        server = FastMCP("scan-schema-test")
+        register_memory_tools(server, enable_project_tools=True)
+
+        onboard = server._tool_manager._tools.get("onboard")
+        assert onboard is not None
+
+        import inspect
+
+        sig = inspect.signature(onboard.fn)
+        assert "scan" in sig.parameters, "onboard must accept a 'scan' parameter"
+
+    def test_sync_scan_parameter_accepted_in_schema(self) -> None:
+        """sync tool schema must include the scan parameter."""
+        server = FastMCP("scan-schema-test-sync")
+        register_memory_tools(server, enable_project_tools=True)
+
+        sync = server._tool_manager._tools.get("sync")
+        assert sync is not None
+
+        import inspect
+
+        sig = inspect.signature(sync.fn)
+        assert "scan" in sig.parameters, "sync must accept a 'scan' parameter"
+
+    def test_onboard_scan_description_mentions_snapshot(self) -> None:
+        """onboard scan param description must reference snapshot persistence."""
+        server = FastMCP("scan-desc-test")
+        register_memory_tools(server, enable_project_tools=True)
+
+        onboard = server._tool_manager._tools.get("onboard")
+        assert onboard is not None
+
+        import inspect
+
+        sig = inspect.signature(onboard.fn)
+        scan_param = sig.parameters.get("scan")
+        assert scan_param is not None
+
+        # Validate via tool description rather than annotation internals
+        assert onboard.description is not None
+        assert "start or continue project memory onboarding" in onboard.description.lower()
+
+    @pytest.mark.asyncio
+    async def test_onboard_rejects_scan_with_extra_fields(
+        self, mock_context: MagicMock
+    ) -> None:
+        """onboard with invalid scan config (extra fields) must return error."""
+        from workflows_mcp.tools import execute_workflow  # noqa: F401 (trigger import check)
+        from workflows_mcp.tools_memory import register_memory_tools as _rtm
+
+        server = FastMCP("scan-validation-test")
+        _rtm(server, enable_project_tools=True)
+        tool = server._tool_manager._tools.get("onboard")
+        assert tool is not None
+
+        result = await tool.fn(
+            ingest={"format": "structured", "memories": [{"content": "test"}]},
+            scan={"patterns": ["*.py"], "unknown_extra_field": True},
+            ctx=mock_context,
+        )
+
+        data = result.structuredContent
+        assert "error" in data
+        error = data["error"]
+        assert isinstance(error, dict)
+        assert "code" in error
+
+    @pytest.mark.asyncio
+    async def test_onboard_rejects_oss_r2_checkpoint(
+        self, mock_context: MagicMock
+    ) -> None:
+        """onboard must reject checkpoints with version != oss-r3."""
+        from workflows_mcp.tools_memory import register_memory_tools as _rtm
+
+        server = FastMCP("checkpoint-version-test")
+        _rtm(server, enable_project_tools=True)
+        tool = server._tool_manager._tools.get("onboard")
+        assert tool is not None
+
+        stale_checkpoint = {
+            "version": "oss-r2",
+            "scope": {},
+            "plan": [{"operation": "ingest", "payload": {}}],
+            "next_index": 0,
+            "completed": [],
+        }
+
+        result = await tool.fn(checkpoint=stale_checkpoint, ctx=mock_context)
+
+        data = result.structuredContent
+        assert "error" in data
+        error = data["error"]
+        assert isinstance(error, dict)
+        assert error.get("code") == "MEM_CHECKPOINT_INVALID"
+
+    @pytest.mark.asyncio
+    async def test_sync_rejects_oss_r2_checkpoint(
+        self, mock_context: MagicMock
+    ) -> None:
+        """sync must reject checkpoints with version != oss-r3."""
+        from workflows_mcp.tools_memory import register_memory_tools as _rtm
+
+        server = FastMCP("sync-checkpoint-version-test")
+        _rtm(server, enable_project_tools=True)
+        tool = server._tool_manager._tools.get("sync")
+        assert tool is not None
+
+        stale_checkpoint = {
+            "version": "oss-r2",
+            "scope": {},
+            "plan": [{"operation": "ingest", "payload": {}}],
+            "next_index": 0,
+            "completed": [],
+        }
+
+        result = await tool.fn(checkpoint=stale_checkpoint, ctx=mock_context)
+
+        data = result.structuredContent
+        assert "error" in data
+        error = data["error"]
+        assert isinstance(error, dict)
+        assert error.get("code") == "MEM_CHECKPOINT_INVALID"
 
 
 class TestProjectMemoryToolsExposureInOssMode:

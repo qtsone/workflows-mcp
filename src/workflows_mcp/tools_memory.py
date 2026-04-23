@@ -2,17 +2,44 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
 import os
 import uuid
-from typing import Annotated, Any
+from pathlib import Path
+from typing import Annotated, Any, Literal
 
 from mcp.server.fastmcp import FastMCP
 from mcp.types import CallToolResult, TextContent, ToolAnnotations
-from pydantic import Field, ValidationError
+from pydantic import BaseModel, Field, ValidationError, field_validator, model_validator
 
 from .context import AppContextType
+from .engine.memory_graph_validator import (
+    GraphValidationResult,
+    build_graph_error_envelope,
+    validate_graph_payload,
+)
+from .engine.memory_onboard_sync_orchestrator import (
+    LLMOnboardRequest,
+    ProgrammaticOnboardRequest,
+    SyncDelta,
+    build_llm_onboard_response,
+    build_programmatic_onboard_response,
+    classify_deletion_policy,
+    classify_scan_files_for_programmatic_mode,
+    compute_sync_delta,
+    run_llm_onboard,
+    run_programmatic_onboard,
+)
+from .engine.memory_scope_resolver import (
+    SyncContextCandidate,
+    build_ambiguous_context_envelope,
+    build_no_context_envelope,
+    resolve_sync_context,
+    scope_key,
+    sorted_scan_manifest,
+)
 from .engine.memory_service import (
     MemoryContractError,
     MemoryRequest,
@@ -24,8 +51,408 @@ from .engine.sql.postgres_backend import PostgresBackend
 
 logger = logging.getLogger(__name__)
 
-_PROJECT_FLOW_VERSION = "oss-r2"
+_PROJECT_FLOW_VERSION = "oss-r3"
 _PROJECT_FLOW_OPERATIONS: tuple[str, ...] = ("ingest", "supersede", "archive", "maintain")
+
+# ---------------------------------------------------------------------------
+# Session-scoped active context helpers
+# ---------------------------------------------------------------------------
+
+
+def _get_session(ctx: AppContextType) -> Any:
+    """Return the underlying session object from an MCP tool context."""
+    return ctx.request_context.session
+
+
+def _get_active_context(ctx: AppContextType) -> Any:
+    """Return the active SyncContextCandidate for this session, or None."""
+    app_ctx = ctx.request_context.lifespan_context
+    session = _get_session(ctx)
+    return app_ctx.get_active_context(session)
+
+
+def _set_active_context(ctx: AppContextType, candidate: Any) -> None:
+    """Persist the active SyncContextCandidate for this session."""
+    app_ctx = ctx.request_context.lifespan_context
+    session = _get_session(ctx)
+    app_ctx.set_active_context(session, candidate)
+
+
+def _build_no_active_context_envelope() -> dict[str, Any]:
+    """Actionable error when memory/sync is called with no scope and no active context."""
+    return {
+        "error": {
+            "code": "MEM_NO_ACTIVE_CONTEXT",
+            "message": (
+                "No active memory context for this session. "
+                "Call onboard() first to initialise a project context, "
+                "or pass an explicit 'scope' argument."
+            ),
+            "retryable": False,
+            "actionable_fix": (
+                "Run onboard(scope={...}, ingest={...}) to create a context, "
+                "or use select(scope={...}) to switch to an existing one, "
+                "or pass scope={...} directly to this call."
+            ),
+        }
+    }
+
+
+# ---------------------------------------------------------------------------
+# In-process onboard context registry for sync({}) zero-arg resolution.
+#
+# Keyed by scope_key (stable SHA-256 hex string). Written by onboard on
+# successful completion (both fast-path and checkpoint-based flows).
+# Read by sync({}) when no checkpoint / scope / plan args are provided.
+# Reset between onboard calls for the same scope_key (idempotent upsert).
+# ---------------------------------------------------------------------------
+_onboard_context_registry: dict[str, SyncContextCandidate] = {}
+
+
+def _register_onboard_context(
+    resolved_scope: dict[str, str | None],
+    checkpoint_payload: dict[str, Any],
+) -> None:
+    """Upsert a completed onboard context into the in-process registry.
+
+    Called after every successful onboard completion so that a subsequent
+    sync({}) call can resolve the context without a caller-provided checkpoint.
+    """
+    key = scope_key(resolved_scope)
+    candidate = SyncContextCandidate(
+        scope=resolved_scope,
+        scope_key_value=key,
+        checkpoint_data=checkpoint_payload,
+        source="stored_checkpoint",
+    )
+    _onboard_context_registry[key] = candidate
+    logger.info(
+        "onboard_context_registry: upserted scope_key=%s (total=%d)",
+        key[:12],
+        len(_onboard_context_registry),
+    )
+
+
+# ============================================================================
+# Scan config and snapshot Pydantic models
+# ============================================================================
+
+
+class ScanConfig(BaseModel, extra="forbid"):
+    """Configuration for file-system scan used by onboard / sync."""
+
+    path: str | None = Field(
+        default=None,
+        description="Optional single file path. Mutually exclusive with patterns.",
+    )
+    patterns: list[str] = Field(
+        default_factory=list,
+        description="Glob patterns for files to scan (e.g. ['src/**/*.py', 'docs/**/*.md'])",
+    )
+    root: str = Field(
+        default=".",
+        description="Base directory for glob expansion (absolute or relative).",
+    )
+    exclude_patterns: list[str] = Field(
+        default_factory=list,
+        description="Additional patterns to exclude (beyond built-in defaults).",
+    )
+    max_files: int = Field(
+        default=20,
+        ge=1,
+        le=100,
+        description="Maximum number of files to scan.",
+    )
+    max_size_kb: int = Field(
+        default=100,
+        ge=1,
+        le=10240,
+        description="Maximum individual file size in KB.",
+    )
+    respect_gitignore: bool = Field(
+        default=True,
+        description="Whether to respect .gitignore patterns.",
+    )
+    mode: Literal["full", "outline", "summary"] = Field(
+        default="full",
+        description="Read mode for scanned files.",
+    )
+    deletion_policy: Literal[
+        "archive", "supersede", "ignore", "mark_missing", "archive_missing"
+    ] = Field(
+        default="archive",
+        description=(
+            "How to handle files present in snapshot but absent on re-scan. "
+            "archive/mark_missing/archive_missing: mark inactive. "
+            "supersede: replace. ignore: do nothing."
+        ),
+    )
+
+    @field_validator("patterns", mode="before")
+    @classmethod
+    def _normalize_patterns(cls, value: Any) -> Any:
+        if value is None:
+            return []
+        return value
+
+    @model_validator(mode="after")
+    def _validate_path_or_patterns(self) -> ScanConfig:
+        has_path = self.path is not None
+        has_patterns = len(self.patterns) > 0
+        if has_path and has_patterns:
+            raise ValueError("scan.path and scan.patterns are mutually exclusive")
+        if not has_path and not has_patterns:
+            raise ValueError("scan requires either path or patterns")
+        return self
+
+
+class FileSnapshotEntry(BaseModel, extra="forbid"):
+    """Metadata snapshot for a single scanned file."""
+
+    path: str = Field(description="Relative file path (from root).")
+    size_bytes: int = Field(description="File size in bytes at scan time.")
+    mtime_ns: int = Field(description="File mtime in nanoseconds at scan time.")
+    content_hash: str = Field(description="SHA-256 hex digest of file content.")
+    memory_id: str | None = Field(
+        default=None,
+        description="Memory ID stored for this file (populated after successful ingest).",
+    )
+
+
+class ScanSnapshot(BaseModel, extra="forbid"):
+    """Snapshot of all files captured during a scan pass."""
+
+    scan_config: ScanConfig = Field(description="Scan config used to produce this snapshot.")
+    entries: list[FileSnapshotEntry] = Field(
+        default_factory=list,
+        description="One entry per scanned file.",
+    )
+
+
+def _merge_dict_prefer_explicit(
+    generated: dict[str, Any],
+    explicit: dict[str, Any] | None,
+) -> dict[str, Any]:
+    if explicit is None:
+        return generated
+    return {**generated, **explicit}
+
+
+def _hash_content(content: str) -> str:
+    return hashlib.sha256(content.encode("utf-8", errors="replace")).hexdigest()
+
+
+def _hash_file_bytes(abs_path: Path) -> str:
+    """Compute SHA-256 of raw file bytes (encoding-independent)."""
+    h = hashlib.sha256()
+    with abs_path.open("rb") as fh:
+        for chunk in iter(lambda: fh.read(65536), b""):
+            h.update(chunk)
+    return h.hexdigest()
+
+
+def _get_scan_root() -> Path:
+    """Return the single allowed scan root directory.
+
+    Defaults to ``Path('/')`` (filesystem root) when ``WORKFLOWS_SCAN_ROOT``
+    is unset or blank.  Override by setting ``WORKFLOWS_SCAN_ROOT`` to a single
+    absolute path — any subfolder under that path will be accepted.
+    """
+    raw = os.environ.get("WORKFLOWS_SCAN_ROOT", "").strip()
+    if raw:
+        return Path(raw).expanduser().resolve()
+    return Path("/")
+
+
+def _validate_scan_path_within_workspace(resolved: Path, label: str) -> None:
+    """Raise MemoryContractError when *resolved* is outside the allowed scan root.
+
+    The allowed root is ``Path('/')`` by default, or the path set in the
+    ``WORKFLOWS_SCAN_ROOT`` environment variable (single path, no list parsing).
+    """
+    root = _get_scan_root()
+    try:
+        resolved.relative_to(root)
+        return  # Path is inside the root — allowed
+    except ValueError:
+        pass
+    raise MemoryContractError(
+        code="MEM_SCAN_PATH_OUT_OF_ROOT",
+        message=(
+            f"MEM_SCAN_PATH_OUT_OF_ROOT: {label} must be inside the allowed scan root "
+            f"({root}); got {resolved}. "
+            f"Set WORKFLOWS_SCAN_ROOT to a single directory path to override."
+        ),
+        retryable=False,
+    )
+
+
+async def _run_scan(scan_config: ScanConfig) -> tuple[list[dict[str, Any]], ScanSnapshot]:
+    """Run a file scan using the ReadFiles executor helper.
+
+    Returns:
+        (scanned_files, snapshot) where scanned_files is a list of dicts with
+        keys 'path', 'content', 'size_bytes' and snapshot contains metadata.
+
+    Raises:
+        MemoryContractError: When scan.root or path resolves outside workspace root.
+    """
+    from .engine.executors_file import run_readfiles_scan
+
+    # --- path safety: validate root is inside workspace root ---
+    base = Path(scan_config.root).expanduser().resolve()
+    _validate_scan_path_within_workspace(base, "scan.root")
+
+    if scan_config.path is not None:
+        single_path = (base / scan_config.path).resolve()
+        _validate_scan_path_within_workspace(single_path, "scan.path")
+
+    try:
+        scanned_files = await run_readfiles_scan(
+            path=scan_config.path,
+            patterns=scan_config.patterns,
+            base_path=scan_config.root,
+            exclude_patterns=scan_config.exclude_patterns,
+            max_files=scan_config.max_files,
+            max_size_kb=scan_config.max_size_kb,
+            respect_gitignore=scan_config.respect_gitignore,
+            mode=scan_config.mode,
+        )
+    except FileNotFoundError as exc:
+        raise MemoryContractError(
+            code="MEM_SCAN_NO_FILES_MATCHED",
+            message=f"MEM_SCAN_NO_FILES_MATCHED: {exc}",
+            retryable=False,
+        ) from exc
+    except ValueError as exc:
+        raise MemoryContractError(
+            code="MEM_SCAN_INVALID_CONFIG",
+            message=f"MEM_SCAN_INVALID_CONFIG: {exc}",
+            retryable=False,
+        ) from exc
+
+    entries: list[FileSnapshotEntry] = []
+    for f in scanned_files:
+        rel_path = f["path"]
+        abs_path = base / rel_path
+        try:
+            stat = abs_path.stat()
+            mtime_ns = stat.st_mtime_ns
+            size_bytes = stat.st_size
+            # Fix 4: hash from raw bytes (encoding-independent, avoids round-trip drift)
+            content_hash = _hash_file_bytes(abs_path)
+        except OSError:
+            mtime_ns = 0
+            size_bytes = f.get("size_bytes", 0)
+            content_hash = _hash_content(f["content"])
+        entries.append(
+            FileSnapshotEntry(
+                path=rel_path,
+                size_bytes=size_bytes,
+                mtime_ns=mtime_ns,
+                content_hash=content_hash,
+            )
+        )
+
+    snapshot = ScanSnapshot(scan_config=scan_config, entries=entries)
+    # Phase 2: always return scan manifest in deterministic (sorted) order.
+    scanned_files = sorted_scan_manifest(scanned_files)
+    return scanned_files, snapshot
+
+
+def _build_ingest_from_files(
+    scanned_files: list[dict[str, Any]],
+) -> tuple[dict[str, Any], list[str]]:
+    """Build a minimal ingest payload from scanned file list.
+
+    Returns:
+        (payload, ingested_paths) where ingested_paths is the ordered list of file paths
+        corresponding to each entry in payload["memories"], enabling memory_id back-propagation.
+    """
+    memories = []
+    ingested_paths: list[str] = []
+    for f in scanned_files:
+        if f.get("content", "").strip():
+            memories.append({"content": f["content"], "metadata": {"path": f["path"]}})
+            ingested_paths.append(f["path"])
+    return {"format": "structured", "memories": memories}, ingested_paths
+
+
+def _update_snapshot_with_memory_ids(
+    snapshot: ScanSnapshot,
+    ingested_paths: list[str],
+    memory_ids: list[str],
+) -> ScanSnapshot:
+    """Return a new ScanSnapshot with memory_ids back-populated from ingest results.
+
+    Maps memory_ids[i] to the snapshot entry whose path matches ingested_paths[i].
+    Entries with no matching ingested path are left unchanged.
+    """
+    if not ingested_paths or not memory_ids:
+        return snapshot
+
+    path_to_id: dict[str, str] = {}
+    for i, path in enumerate(ingested_paths):
+        if i < len(memory_ids):
+            path_to_id[path] = memory_ids[i]
+
+    updated_entries = [
+        FileSnapshotEntry(
+            path=entry.path,
+            size_bytes=entry.size_bytes,
+            mtime_ns=entry.mtime_ns,
+            content_hash=entry.content_hash,
+            memory_id=path_to_id.get(entry.path, entry.memory_id),
+        )
+        for entry in snapshot.entries
+    ]
+    return ScanSnapshot(scan_config=snapshot.scan_config, entries=updated_entries)
+
+
+def _compute_scan_delta(
+    snapshot: ScanSnapshot,
+    new_snapshot: ScanSnapshot,
+) -> tuple[list[str], list[str], list[str]]:
+    """Compute added, modified, deleted relative paths between two snapshots.
+
+    Delegates to the canonical ``compute_sync_delta`` from the orchestrator
+    so that the four-class delta (added/modified/deleted/unchanged) is always
+    computed consistently.  This wrapper preserves the existing (added, modified,
+    deleted) three-tuple return type for backwards-compatible call sites.
+
+    Returns:
+        (added, modified, deleted) lists of relative paths.
+    """
+    prior_entries = [
+        {"path": e.path, "content_hash": e.content_hash}
+        for e in snapshot.entries
+    ]
+    new_entries = [
+        {"path": e.path, "content_hash": e.content_hash}
+        for e in new_snapshot.entries
+    ]
+    delta = compute_sync_delta(prior_entries, new_entries)
+    return delta.added, delta.modified, delta.deleted
+
+
+def _compute_full_scan_delta(
+    snapshot: ScanSnapshot,
+    new_snapshot: ScanSnapshot,
+) -> SyncDelta:
+    """Compute a full four-class SyncDelta between two ScanSnapshots.
+
+    Returns the complete SyncDelta (added/modified/deleted/unchanged) for
+    use in Phase 6 idempotency checks and debug diagnostics.
+    """
+    prior_entries = [
+        {"path": e.path, "content_hash": e.content_hash}
+        for e in snapshot.entries
+    ]
+    new_entries = [
+        {"path": e.path, "content_hash": e.content_hash}
+        for e in new_snapshot.entries
+    ]
+    return compute_sync_delta(prior_entries, new_entries)
 
 
 def _json_response(data: dict[str, Any]) -> CallToolResult:
@@ -35,13 +462,20 @@ def _json_response(data: dict[str, Any]) -> CallToolResult:
     )
 
 
-def _tool_error_payload(tool: str, err: Exception) -> dict[str, Any]:
+def _tool_error_payload(
+    tool: str,
+    err: Exception,
+    *,
+    stage: str | None = None,
+) -> dict[str, Any]:
     correlation_id = str(uuid.uuid4())
+    actionable_fix: str | None = None
 
     if isinstance(err, MemoryContractError):
         code = err.code
         message = err.message
         retryable = err.retryable
+        actionable_fix = err.actionable_fix
         logger.warning(
             "memory tool contract error tool=%s code=%s retryable=%s correlation_id=%s",
             tool,
@@ -63,6 +497,7 @@ def _tool_error_payload(tool: str, err: Exception) -> dict[str, Any]:
             code = contract_error.code
             message = contract_error.message
             retryable = contract_error.retryable
+            actionable_fix = contract_error.actionable_fix
             logger.warning(
                 (
                     "memory tool contract validation error "
@@ -75,7 +510,22 @@ def _tool_error_payload(tool: str, err: Exception) -> dict[str, Any]:
             )
         else:
             code = "MEM_SCHEMA_VALIDATION_FAILED"
-            message = "Request schema validation failed"
+            # Surface field-level detail so the caller can identify which field
+            # and constraint failed without consulting external schema docs.
+            field_errors = []
+            for item in err.errors(include_url=False):
+                loc = ".".join(str(p) for p in item.get("loc", ())) or "(root)"
+                msg = item.get("msg", "")
+                field_errors.append(f"{loc}: {msg}")
+            if field_errors:
+                message = "Request schema validation failed — " + "; ".join(field_errors)
+                actionable_fix = (
+                    "Fix the following field(s) and retry: "
+                    + "; ".join(field_errors)
+                )
+            else:
+                message = "Request schema validation failed"
+                actionable_fix = "Check required fields and types against the schema."
             retryable = False
             logger.warning(
                 "memory tool schema validation failed tool=%s code=%s correlation_id=%s",
@@ -94,14 +544,15 @@ def _tool_error_payload(tool: str, err: Exception) -> dict[str, Any]:
             correlation_id,
         )
 
-    return {
-        "error": {
-            "code": code,
-            "message": message,
-            "retryable": retryable,
-            "correlation_id": correlation_id,
-        }
+    error_body: dict[str, Any] = {
+        "code": code,
+        "message": message,
+        "retryable": retryable,
+        "correlation_id": correlation_id,
+        "stage": stage,
+        "actionable_fix": actionable_fix,
     }
+    return {"error": error_body}
 
 
 def _error_envelope(
@@ -129,6 +580,27 @@ def _shape_scope_fields(result: MemoryResult) -> dict[str, Any]:
     return {
         "resolved_scope": result.resolved_scope.model_dump(exclude_none=False),
         "scope_source": result.scope_source,
+    }
+
+
+def _relabel_scope_source_active_context(payload: dict[str, Any]) -> dict[str, Any]:
+    """Replace all scope_source field values with 'active_context'.
+
+    Called when the effective scope came from the session's active context fallback
+    (not an explicit caller-provided scope/scope_token/context_id).  The service
+    layer labels every resolved scope field as 'request' because the scope dict
+    was injected as if it were a caller request — which is misleading.
+
+    This function rewrites each field's source label to 'active_context' so the
+    caller can distinguish implicit-context resolution from explicit scope passing.
+    The outer response shape and all other fields are preserved unchanged.
+    """
+    scope_source = payload.get("scope_source")
+    if not isinstance(scope_source, dict) or not scope_source:
+        return payload
+    return {
+        **payload,
+        "scope_source": {k: "active_context" for k in scope_source},
     }
 
 
@@ -169,6 +641,8 @@ def _shape_memory_response(result: MemoryResult, response: MemoryResponseInput) 
         if response.mode == "evidence":
             payload["diagnostics"] = q.diagnostics
             payload["evidence"] = q.evidence
+        if result.merge is not None:
+            payload["merge"] = result.merge.model_dump(by_alias=True)
         if not payload:
             return {"found": False, **scope_fields}
         return {**payload, **scope_fields}
@@ -256,6 +730,7 @@ def _get_standalone_user_context() -> tuple[uuid.UUID | None, str | None, str]:
     from .engine.memory_service import SYSTEM_USER_UUID
 
     for env_var in [
+        "MEMORY_USER_ID",
         "WORKFLOWS_USER_ID",
         "WORKFLOWS_USER",
         "MCP_USER_ID",
@@ -416,9 +891,14 @@ def _restore_checkpoint(
         normalized_plan.append({"operation": operation, "payload": payload or {}})
 
     if require_ingest and normalized_plan[0]["operation"] != "ingest":
-        raise _checkpoint_error("project_onboard checkpoint plan must start with ingest")
+        raise _checkpoint_error("onboard checkpoint plan must start with ingest")
 
     raw_next_index = checkpoint.get("next_index", 0)
+    # Accept integral floats (e.g. 1.0 from JSON deserialisation); reject non-integral floats.
+    if isinstance(raw_next_index, float):
+        if raw_next_index != int(raw_next_index):
+            raise _checkpoint_error("checkpoint.next_index is out of range")
+        raw_next_index = int(raw_next_index)
     if (
         not isinstance(raw_next_index, int)
         or raw_next_index < 0
@@ -483,7 +963,7 @@ def _build_new_checkpoint(
     if require_ingest and plan[0]["operation"] != "ingest":
         raise MemoryContractError(
             code="MEM_PROJECT_ONBOARD_REQUIRES_INGEST",
-            message=("MEM_PROJECT_ONBOARD_REQUIRES_INGEST: project_onboard must start with ingest"),
+            message=("MEM_PROJECT_ONBOARD_REQUIRES_INGEST: onboard must start with ingest"),
             retryable=False,
         )
     return scope or {}, plan, 0, []
@@ -540,6 +1020,51 @@ def _step_sections(
     )
 
 
+def _validate_graph_step_payload(
+    step_payload: dict[str, Any],
+    *,
+    stage: str = "graph_validation",
+) -> dict[str, Any] | None:
+    """Validate a graph step payload from an onboard/sync checkpoint plan.
+
+    Returns a deterministic error envelope dict when the payload fails
+    validation (code=GRAPH_COMPLETENESS_FAILED), or None when valid.
+
+    Phase 3: this is the atomic persistence boundary gate — graph payloads
+    that fail validation are rejected before any DB write is attempted.
+    """
+    # Graph step payloads may embed a "graph" sub-key or be a raw graph dict.
+    graph_data = step_payload.get("graph") if "graph" in step_payload else step_payload
+    if not isinstance(graph_data, dict):
+        return None  # Not a graph payload — no validation needed here.
+    # Only validate if the dict contains "nodes" or "corridors" keys (batch payload).
+    if "nodes" not in graph_data and "corridors" not in graph_data:
+        return None
+
+    result: GraphValidationResult = validate_graph_payload(graph_data)
+    if result.valid:
+        return None
+    envelope = result.error_envelope
+    if isinstance(envelope, dict) and "error" in envelope:
+        err = dict(envelope["error"])
+        err.setdefault("stage", stage)
+        err.setdefault("actionable_fix", (
+            "Fix graph payload: ensure required node types and corridor fields are present, "
+            "remove illegal same-level links, and eliminate orphan nodes."
+        ))
+        return {"error": err}
+    return build_graph_error_envelope(
+        code="GRAPH_COMPLETENESS_FAILED",
+        message="Graph payload failed completeness validation.",
+        stage=stage,
+        actionable_fix=(
+            "Fix graph payload: ensure required node types and corridor fields are present, "
+            "remove illegal same-level links, and eliminate orphan nodes."
+        ),
+        violations=result.violations,
+    )
+
+
 def _extract_error_envelope(payload: dict[str, Any]) -> dict[str, Any] | None:
     """Return deterministic error envelope object when present, else None."""
     maybe_error = payload.get("error")
@@ -563,20 +1088,125 @@ def _extract_error_envelope(payload: dict[str, Any]) -> dict[str, Any] | None:
     return envelope_error
 
 
+def _is_debug_response(response: dict[str, Any] | None) -> bool:
+    """Return True when the caller requested debug-level project flow output."""
+    if response is None:
+        return False
+    return bool(response.get("debug"))
+
+
+def _compact_plan_step_payload(payload: dict[str, Any]) -> dict[str, Any]:
+    """Return a compacted copy of a *completed* plan step payload.
+
+    Only ``memories[].content`` is stripped — it is the dominant source of
+    payload bloat and is no longer needed once the step has been executed.
+    All other keys (format, metadata, ids, …) are preserved so the checkpoint
+    remains human-readable and auditable.
+
+    This function is intentionally conservative: it only modifies the
+    ``memories`` list and leaves every other key intact.
+    """
+    if "memories" not in payload:
+        return payload
+    compacted = dict(payload)
+    compacted["memories"] = [
+        {k: v for k, v in mem.items() if k != "content"} if isinstance(mem, dict) else mem
+        for mem in payload["memories"]
+    ]
+    return compacted
+
+
+def _compact_checkpoint(
+    checkpoint: dict[str, Any],
+    *,
+    debug: bool,
+) -> dict[str, Any]:
+    """Return a copy of *checkpoint* shaped for the given verbosity level.
+
+    Compact (debug=False):
+    - ``completed[].result`` blobs are stripped (not needed for resume; only
+      ``operation`` is required by ``_restore_checkpoint``).
+    - ``plan[i].payload.memories[].content`` is stripped for *completed* steps
+      (index < next_index) — these steps will not be re-executed, so their
+      heavy memory bodies are dead weight.  Pending steps (index >= next_index)
+      keep their full payload so resume can pass it through unchanged.
+    - ``scan_snapshot`` is kept fully intact because ``sync`` reads
+      entries to compute delta between scans.  Stripping entries would break
+      resume functionality for scan-based flows.
+    - Everything else (plan, scope, next_index, scan config, version) is kept
+      intact so the checkpoint remains fully usable for resume.
+
+    Debug (debug=True):
+    - Checkpoint is returned as-is with all blobs present.
+    """
+    if debug:
+        return checkpoint
+
+    result = dict(checkpoint)
+
+    # Strip result blobs from completed items; keep operation for resume.
+    if isinstance(result.get("completed"), list):
+        result["completed"] = [
+            {"operation": item["operation"]}
+            if isinstance(item, dict) and "operation" in item
+            else item
+            for item in result["completed"]
+        ]
+
+    # Strip memories content from completed plan steps (index < next_index).
+    # Pending steps (index >= next_index) keep their payload intact for resume.
+    next_index = result.get("next_index", 0)
+    if not isinstance(next_index, int):
+        # Accept integral floats produced by JSON round-trips
+        try:
+            next_index = int(next_index)
+        except (TypeError, ValueError):
+            next_index = 0
+
+    if isinstance(result.get("plan"), list) and next_index > 0:
+        compacted_plan: list[dict[str, Any]] = []
+        for i, step in enumerate(result["plan"]):
+            if not isinstance(step, dict):
+                compacted_plan.append(step)
+                continue
+            if i < next_index:
+                # Completed step — strip heavy payload content
+                raw_payload = step.get("payload")
+                compacted_step = dict(step)
+                if isinstance(raw_payload, dict):
+                    compacted_step["payload"] = _compact_plan_step_payload(raw_payload)
+                compacted_plan.append(compacted_step)
+            else:
+                # Pending step — keep as-is (needed for resume)
+                compacted_plan.append(step)
+        result["plan"] = compacted_plan
+
+    return result
+
+
 def _build_project_checkpoint_payload(
     *,
     scope: dict[str, Any],
     plan: list[dict[str, Any]],
     next_index: int,
     completed: list[dict[str, Any]],
+    scan: ScanConfig | None = None,
+    scan_snapshot: ScanSnapshot | None = None,
 ) -> dict[str, Any]:
-    return {
+    payload: dict[str, Any] = {
         "version": _PROJECT_FLOW_VERSION,
         "scope": scope,
+        # Phase 2: include stable scope_key for deterministic context lookup.
+        "scope_key": scope_key(scope),
         "plan": plan,
         "next_index": next_index,
         "completed": completed,
     }
+    if scan is not None:
+        payload["scan"] = scan.model_dump()
+    if scan_snapshot is not None:
+        payload["scan_snapshot"] = scan_snapshot.model_dump()
+    return payload
 
 
 def _build_project_failed_checkpoint_payload(
@@ -589,6 +1219,8 @@ def _build_project_failed_checkpoint_payload(
     completed: list[dict[str, Any]],
     completed_ops: list[str],
     result: dict[str, Any] | None,
+    scan: ScanConfig | None = None,
+    scan_snapshot: ScanSnapshot | None = None,
 ) -> dict[str, Any]:
     """Build deterministic checkpoint payload for failed project flow steps."""
     checkpoint_payload = _build_project_checkpoint_payload(
@@ -596,6 +1228,8 @@ def _build_project_failed_checkpoint_payload(
         plan=plan,
         next_index=next_index,
         completed=completed,
+        scan=scan,
+        scan_snapshot=scan_snapshot,
     )
     return {
         "status": "checkpoint",
@@ -608,6 +1242,115 @@ def _build_project_failed_checkpoint_payload(
         "last_operation": completed_ops[-1] if completed_ops else None,
         "result": result,
         "checkpoint": checkpoint_payload,
+    }
+
+
+def _memory_schema_payload() -> dict[str, Any]:
+    """Return a static contract/schema snapshot for the memory tool.
+
+    Does not require DB connectivity.  Useful for agents to discover available
+    operations, checkpoint format, and scan configuration options at runtime.
+    """
+    return {
+        "version": _PROJECT_FLOW_VERSION,
+        "operations": [
+            "query",
+            "ingest",
+            "validate",
+            "supersede",
+            "archive",
+            "maintain",
+            "graph_upsert",
+            "graph_delete",
+            "schema",
+        ],
+        "query": {
+            "description": (
+                "Search and retrieve memories. Pass a 'query' object as the 'query' parameter "
+                "to memory(operation='query', query={...})."
+            ),
+            "supported_keys": [
+                "text",
+                "mode",
+                "limit",
+                "min_score",
+                "filter",
+                "include_communities",
+                "include_facts",
+            ],
+            "examples": [
+                {"query": {"text": "incident response runbook"}},
+                {"query": {"text": "API rate limit", "mode": "search", "limit": 10}},
+                {"query": {"text": "auth flow", "mode": "evidence"}},
+                {"query": {"text": "topology", "mode": "graph"}},
+            ],
+            "notes": (
+                "The 'text' key is required for all search modes. "
+                "'mode' defaults to 'search' when omitted. "
+                "Supported modes: search, evidence, graph."
+            ),
+        },
+        "scan": {
+            "fields": {
+                "path": "Optional single file path (mutually exclusive with patterns).",
+                "patterns": "Glob patterns for files to scan (e.g. ['src/**/*.py']).",
+                "root": "Base directory for glob expansion (absolute or relative).",
+                "exclude_patterns": "Additional exclude patterns beyond built-in defaults.",
+                "max_files": "Maximum number of files to scan (1-100, default 20).",
+                "max_size_kb": "Maximum individual file size in KB (1-10240, default 100).",
+                "respect_gitignore": "Whether to respect .gitignore patterns (default true).",
+                "mode": "Read mode: full | outline | summary (default full).",
+                "deletion_policy": (
+                    "How to handle files absent on re-scan: archive | supersede | ignore."
+                ),
+            },
+            "deletion_policies": ["archive", "supersede", "ignore"],
+            "scan_root": (
+                "scan.root must be inside the allowed scan root. "
+                "Default root is '/' (filesystem root). "
+                "Override via WORKFLOWS_SCAN_ROOT (single path, no list parsing)."
+            ),
+        },
+        "checkpoint": {
+            "version": _PROJECT_FLOW_VERSION,
+            "fields": {
+                "version": "Checkpoint format version string (must match server version).",
+                "scope": "Project scope dict passed through all steps.",
+                "plan": "List of {operation, payload} steps to execute.",
+                "next_index": "Index of next step to execute (0-based).",
+                "completed": (
+                    "List of completed {operation} entries "
+                    "(result stripped in compact mode)."
+                ),
+                "scan": "ScanConfig used for file-system scans (optional).",
+                "scan_snapshot": (
+                    "ScanSnapshot from last scan pass "
+                    "(optional, entries preserved for delta)."
+                ),
+            },
+            "flow_operations": list(_PROJECT_FLOW_OPERATIONS),
+            "response_debug": {
+                "description": (
+                    "Pass response={'debug': True} to onboard or sync to "
+                    "receive full checkpoint internals. Default (debug=False or omitted): "
+                    "compact mode strips completed[].result blobs and "
+                    "plan[i].payload.memories[].content for completed steps (index < next_index). "
+                    "Pending steps keep full payload for resume. scan_snapshot.entries are always "
+                    "preserved (required for sync delta computation). "
+                    "The outer 'results' list is only included when debug=True."
+                ),
+                "compact_default": [
+                    "completed[].result blobs stripped",
+                    "plan[i<next_index].payload.memories[].content stripped",
+                    "outer results[] omitted",
+                ],
+                "debug_full": [
+                    "completed[].result included",
+                    "plan[].payload fully intact",
+                    "outer results[] included",
+                ],
+            },
+        },
     }
 
 
@@ -637,7 +1380,7 @@ def register_memory_tools(
             Field(
                 description=(
                     "Operation: query, ingest, validate, supersede, archive, maintain, "
-                    "graph_upsert, graph_delete"
+                    "graph_upsert, graph_delete, schema"
                 )
             ),
         ],
@@ -653,6 +1396,24 @@ def register_memory_tools(
         ctx: AppContextType,
     ) -> CallToolResult:
         """Run one memory operation and return compact JSON results."""
+        # Schema operation short-circuits before any DB connectivity.
+        if operation == "schema":
+            return _json_response(_memory_schema_payload())
+
+        # Active context fallback: when no explicit scope/scope_token/context_id
+        # is provided, try the session's active context (set by onboard/select).
+        # Explicit args always win over the fallback.
+        effective_scope = scope
+        _scope_from_active_context = False
+        if effective_scope is None and scope_token is None and context_id is None:
+            active = _get_active_context(ctx)
+            if active is not None:
+                effective_scope = active.scope
+                _scope_from_active_context = True
+            else:
+                # No active context and no explicit scope — return actionable error.
+                return _json_response(_build_no_active_context_envelope())
+
         app_ctx = ctx.request_context.lifespan_context
         execution = _create_memory_execution(ctx)
         try:
@@ -660,7 +1421,7 @@ def register_memory_tools(
                 app_ctx=app_ctx,
                 execution=execution,
                 operation=operation,
-                scope=scope,
+                scope=effective_scope,
                 scope_token=scope_token,
                 context_id=context_id,
                 query=query,
@@ -669,6 +1430,12 @@ def register_memory_tools(
                 maintenance=maintenance,
                 response=response,
             )
+            # Correct misleading scope_source when scope came from active context fallback.
+            # The service layer labels those fields as 'request' because the scope dict
+            # was injected as a caller-provided scope — but the true source is the session's
+            # active context, not an explicit caller argument.
+            if _scope_from_active_context:
+                payload = _relabel_scope_source_active_context(payload)
             return _json_response(payload)
         except Exception as e:
             return _json_response(_tool_error_payload("memory", e))
@@ -682,20 +1449,31 @@ def register_memory_tools(
             "Call this first to run ingest/supersede/archive/maintain in order."
         ),
         annotations=ToolAnnotations(
-            title="Project Onboard",
+            title="Onboard",
             readOnlyHint=False,
             destructiveHint=True,
             idempotentHint=False,
             openWorldHint=True,
         ),
     )
-    async def project_onboard(
+    async def onboard(
         scope: Annotated[
             dict[str, Any] | None,
             Field(
                 default=None,
                 description=(
                     "Project scope for onboarding (for example palace/wing/room/compartment)."
+                ),
+            ),
+        ] = None,
+        ingestion: Annotated[
+            dict[str, Any] | None,
+            Field(
+                default=None,
+                description=(
+                    "Ingestion configuration: mode ('programmatic'|'llm'), "
+                    "llm_profile (required when mode='llm'), "
+                    "reproducibility ('strict'|'relaxed', default 'strict')."
                 ),
             ),
         ] = None,
@@ -742,7 +1520,19 @@ def register_memory_tools(
             Field(
                 default=None,
                 description=(
-                    "Checkpoint returned by project_onboard or project_sync to resume progress."
+                    "Checkpoint returned by onboard or sync to resume progress."
+                ),
+            ),
+        ] = None,
+        scan: Annotated[
+            dict[str, Any] | None,
+            Field(
+                default=None,
+                description=(
+                    "Optional file-system scan config (ScanConfig). "
+                    "When provided and ingest is omitted, an ingest payload is auto-generated "
+                    "from scanned files. Explicit ingest keys win on conflict. "
+                    "The scan snapshot is persisted in the returned checkpoint."
                 ),
             ),
         ] = None,
@@ -762,22 +1552,208 @@ def register_memory_tools(
                 ),
             ),
         ] = 1,
+        debug: Annotated[
+            bool,
+            Field(
+                default=False,
+                description=(
+                    "When True, include full checkpoint internals and per-step results "
+                    "in the response. Default (False): compact mode strips completed blobs."
+                ),
+            ),
+        ] = False,
         *,
         ctx: AppContextType,
     ) -> CallToolResult:
         """Run project onboarding steps and return a checkpoint for the next call."""
+        # Guard: reject legacy response.mode contract (spec §2: no backward compatibility).
+        if isinstance(response, dict) and response.get("mode") in ("programmatic", "llm"):
+            return _json_response(
+                {
+                    "error": {
+                        "code": "LEGACY_CONTRACT_REJECTED",
+                        "message": (
+                            "The 'response.mode' field ('programmatic'|'llm') is no longer "
+                            "accepted. Use the 'ingestion' parameter instead: "
+                            "ingestion={'mode': 'programmatic'} or "
+                            "ingestion={'mode': 'llm', 'llm_profile': '<profile>'}."
+                        ),
+                        "retryable": False,
+                        "stage": "contract_validation",
+                        "actionable_fix": (
+                            "Replace response={'mode': ...} with "
+                            "ingestion={'mode': ..., 'llm_profile': ...}."
+                        ),
+                    }
+                }
+            )
+        # Merge root-level debug flag into response shaping dict.
+        if debug and response is None:
+            response = {"debug": True}
+        elif debug and isinstance(response, dict) and not response.get("debug"):
+            response = {**response, "debug": True}
         app_ctx = ctx.request_context.lifespan_context
         execution = _create_memory_execution(ctx)
         try:
+            # Resolve ingestion contract fields (spec §4.1).
+            _ingestion = ingestion or {}
+            _pipeline_mode: str | None = _ingestion.get("mode") if _ingestion else None
+
+            # --- Phase 4: programmatic onboard fast-path ---
+            # Activated only when ingestion.mode='programmatic': scan provided, no checkpoint,
+            # no explicit ingest payload. Routes through the programmatic onboard
+            # pipeline (graph build + validation), bypassing the checkpoint flow.
+            if (
+                _pipeline_mode == "programmatic"
+                and scan is not None
+                and checkpoint is None
+                and ingest is None
+            ):
+                effective_scan_cfg = ScanConfig.model_validate(scan)
+                scanned_files_raw, _snapshot = await _run_scan(effective_scan_cfg)
+                file_entries = classify_scan_files_for_programmatic_mode(
+                    scanned_files_raw,
+                    base_path=effective_scan_cfg.root,
+                )
+                request = ProgrammaticOnboardRequest(
+                    scope=scope or {},
+                    files=file_entries,
+                    mode="programmatic",
+                    debug=debug,
+                    provenance="onboard",
+                    confidence=1.0,
+                )
+                result = run_programmatic_onboard(request)
+                if result.status == "completed":
+                    _register_onboard_context(
+                        result.scope,
+                        {"scope": result.scope, "scope_key": result.scope_key_value},
+                    )
+                    _set_active_context(ctx, _onboard_context_registry[result.scope_key_value])
+                return _json_response(build_programmatic_onboard_response(result, debug=debug))
+
+            # --- Phase 5: LLM onboard fast-path ---
+            # Activated only when ingestion.mode='llm': scan provided, no checkpoint,
+            # no explicit ingest payload. Routes through the LLM onboard pipeline
+            # which validates the LLM profile and enforces reproducibility constraints.
+            if (
+                _pipeline_mode == "llm"
+                and scan is not None
+                and checkpoint is None
+                and ingest is None
+            ):
+                llm_profile: str | None = _ingestion.get("llm_profile") or None
+                if not llm_profile:
+                    return _json_response(
+                        {
+                            "error": {
+                                "code": "INVALID_LLM_PROFILE",
+                                "message": (
+                                    "LLM mode requires 'llm_profile' in the ingestion config "
+                                    "(e.g. ingestion={'mode': 'llm', 'llm_profile': 'standard'})."
+                                ),
+                                "retryable": False,
+                                "stage": "profile_resolution",
+                                "actionable_fix": (
+                                    "Add 'llm_profile' key to the ingestion dict."
+                                ),
+                            }
+                        }
+                    )
+                _reproducibility = _ingestion.get("reproducibility", "strict")
+                llm_strict = _reproducibility != "relaxed"
+                effective_scan_cfg = ScanConfig.model_validate(scan)
+                scanned_files_raw, _snapshot = await _run_scan(effective_scan_cfg)
+                file_entries = classify_scan_files_for_programmatic_mode(
+                    scanned_files_raw,
+                    base_path=effective_scan_cfg.root,
+                )
+                llm_request = LLMOnboardRequest(
+                    scope=scope or {},
+                    files=file_entries,
+                    profile=llm_profile,
+                    mode="llm",
+                    strict=llm_strict,
+                    debug=debug,
+                    provenance="onboard",
+                    confidence=1.0,
+                )
+                llm_result = run_llm_onboard(
+                    llm_request,
+                    loader=app_ctx.llm_config_loader,
+                )
+                if llm_result.status == "completed":
+                    _register_onboard_context(
+                        llm_result.scope,
+                        {"scope": llm_result.scope, "scope_key": llm_result.scope_key_value},
+                    )
+                    _set_active_context(ctx, _onboard_context_registry[llm_result.scope_key_value])
+                return _json_response(build_llm_onboard_response(llm_result, debug=debug))
+
+            # --- scan handling for new flows (checkpoint not provided) ---
+            effective_scan: ScanConfig | None = None
+            scan_snapshot: ScanSnapshot | None = None
+            effective_ingest = ingest
+            scan_ingested_paths: list[str] = []
+            # Track whether auto-ingest was generated from scan (needs compartment injection).
+            _scan_auto_ingest_active = False
+            if scan is not None and checkpoint is None:
+                effective_scan = ScanConfig.model_validate(scan)
+                scanned_files, scan_snapshot = await _run_scan(effective_scan)
+                auto_ingest, scan_ingested_paths = _build_ingest_from_files(scanned_files)
+                if effective_ingest is None:
+                    effective_ingest = auto_ingest
+                    _scan_auto_ingest_active = True
+                else:
+                    # Explicit ingest wins on conflict; explicit caller controls path list
+                    scan_ingested_paths = []
+                    effective_ingest = _merge_dict_prefer_explicit(auto_ingest, effective_ingest)
+
+            # Augment scope with a synthetic compartment for scan-driven auto-ingest.
+            # Direct ingest (operation='ingest') requires scope.compartment — when the caller
+            # provides only palace/wing/room (typical for a fresh onboard), the auto-generated
+            # scan ingest payload would be rejected with COMPARTMENT_REQUIRED.  Injecting
+            # compartment='scan' ensures the ingest step can proceed and records are queryable.
+            # The caller's explicit compartment always wins; injection only applies when absent.
+            # Build effective scope for the checkpoint plan, but only when we have an
+            # actual scope or need to inject one for scan-driven auto-ingest.
+            # Passing an empty dict (scope or {}) instead of None would falsely trigger
+            # the MEM_CHECKPOINT_CONFLICT guard in _normalize_project_checkpoint when a
+            # checkpoint is being resumed without any explicit scope override.
+            effective_scope_for_plan: dict[str, Any] | None = scope if scope else None
+            if _scan_auto_ingest_active and not (effective_scope_for_plan or {}).get("wing"):
+                # Inject wing='scan' to satisfy the scope hierarchy contract (compartment
+                # requires room+wing; wing only requires palace).  This ensures scan-driven
+                # auto-ingest records are queryable without violating hierarchy constraints.
+                effective_scope_for_plan = {
+                    **(effective_scope_for_plan or {}),
+                    "wing": "scan",
+                }
+
             resolved_scope, plan, next_index, completed = _normalize_project_checkpoint(
                 checkpoint=checkpoint,
-                scope=scope,
-                ingest=ingest,
+                scope=effective_scope_for_plan,
+                ingest=effective_ingest,
                 supersede=supersede,
                 archive=archive,
                 maintain=maintain,
                 require_ingest=True,
             )
+
+            # Restore scan snapshot from existing checkpoint if present
+            if scan_snapshot is None and checkpoint is not None:
+                raw_scan = checkpoint.get("scan")
+                if raw_scan is not None:
+                    try:
+                        effective_scan = ScanConfig.model_validate(raw_scan)
+                    except Exception:
+                        effective_scan = None
+                raw_snap = checkpoint.get("scan_snapshot")
+                if raw_snap is not None:
+                    try:
+                        scan_snapshot = ScanSnapshot.model_validate(raw_snap)
+                    except Exception:
+                        scan_snapshot = None
 
             completed_ops: list[str] = []
             last_result: dict[str, Any] | None = None
@@ -808,13 +1784,17 @@ def register_memory_tools(
                         response=response,
                     )
                 except Exception as step_exc:
-                    step_error_payload = _tool_error_payload("project_onboard", step_exc)
+                    step_error_payload = _tool_error_payload(
+                        "onboard", step_exc, stage=operation_name
+                    )
                     step_error = step_error_payload.get("error")
                     if not isinstance(step_error, dict):
                         step_error = {
                             "code": "MEM_INTERNAL_ERROR",
-                            "message": "project_onboard failed",
+                            "message": "onboard failed",
                             "retryable": False,
+                            "stage": operation_name,
+                            "actionable_fix": None,
                         }
                     return _json_response(
                         _build_project_failed_checkpoint_payload(
@@ -826,6 +1806,8 @@ def register_memory_tools(
                             completed=completed,
                             completed_ops=completed_ops,
                             result=last_result,
+                            scan=effective_scan,
+                            scan_snapshot=scan_snapshot,
                         )
                     )
                 step_error = _extract_error_envelope(step_result)
@@ -840,7 +1822,25 @@ def register_memory_tools(
                             completed=completed,
                             completed_ops=completed_ops,
                             result=step_result,
+                            scan=effective_scan,
+                            scan_snapshot=scan_snapshot,
                         )
+                    )
+                # Back-populate memory_ids into snapshot entries after a scan-driven ingest.
+                if (
+                    operation_name == "ingest"
+                    and scan_snapshot is not None
+                    and scan_ingested_paths
+                ):
+                    returned_ids: list[str] = []
+                    if isinstance(step_result, dict):
+                        raw_ids = step_result.get("ids") or step_result.get("id")
+                        if isinstance(raw_ids, list):
+                            returned_ids = [str(x) for x in raw_ids]
+                        elif isinstance(raw_ids, str):
+                            returned_ids = [raw_ids]
+                    scan_snapshot = _update_snapshot_with_memory_ids(
+                        scan_snapshot, scan_ingested_paths, returned_ids
                     )
                 completed.append({"operation": operation_name, "result": step_result})
                 completed_ops.append(operation_name)
@@ -853,8 +1853,11 @@ def register_memory_tools(
                 plan=plan,
                 next_index=next_index,
                 completed=completed_results,
+                scan=effective_scan,
+                scan_snapshot=scan_snapshot,
             )
 
+            _debug = _is_debug_response(response)
             if next_index < len(plan):
                 return _json_response(
                     {
@@ -865,43 +1868,45 @@ def register_memory_tools(
                         "completed_operations": completed_ops,
                         "last_operation": completed_ops[-1] if completed_ops else None,
                         "result": last_result,
-                        "checkpoint": checkpoint_payload,
+                        "checkpoint": _compact_checkpoint(checkpoint_payload, debug=_debug),
                     }
                 )
 
-            return _json_response(
-                {
-                    "status": "completed",
-                    "completed_operations": [
-                        str(item.get("operation")) for item in completed_results
-                    ],
-                    "results": completed_results,
-                    "checkpoint": checkpoint_payload,
-                }
-            )
+            completed_response: dict[str, Any] = {
+                "status": "completed",
+                "completed_operations": [
+                    str(item.get("operation")) for item in completed_results
+                ],
+                "checkpoint": _compact_checkpoint(checkpoint_payload, debug=_debug),
+            }
+            if _debug:
+                completed_response["results"] = completed_results
+            _register_onboard_context(resolved_scope, checkpoint_payload)
+            _set_active_context(ctx, _onboard_context_registry[scope_key(resolved_scope)])
+            return _json_response(completed_response)
         except Exception as e:
-            return _json_response(_tool_error_payload("project_onboard", e))
+            return _json_response(_tool_error_payload("onboard", e))
 
     @mcp_server.tool(
         description=(
             "Continue project memory synchronization from a checkpoint, or start a new sync plan. "
-            "Call this after project_onboard returns status='checkpoint'."
+            "Call this after onboard returns status='checkpoint'."
         ),
         annotations=ToolAnnotations(
-            title="Project Sync",
+            title="Sync",
             readOnlyHint=False,
             destructiveHint=True,
             idempotentHint=False,
             openWorldHint=True,
         ),
     )
-    async def project_sync(
+    async def sync(
         checkpoint: Annotated[
             dict[str, Any] | None,
             Field(
                 default=None,
                 description=(
-                    "Checkpoint returned by project_onboard or project_sync."
+                    "Checkpoint returned by onboard or sync."
                 ),
             ),
         ] = None,
@@ -910,6 +1915,17 @@ def register_memory_tools(
             Field(
                 default=None,
                 description="Scope for starting a new sync flow when checkpoint is omitted.",
+            ),
+        ] = None,
+        ingestion: Annotated[
+            dict[str, Any] | None,
+            Field(
+                default=None,
+                description=(
+                    "Ingestion configuration: mode ('programmatic'|'llm'), "
+                    "llm_profile (required when mode='llm'), "
+                    "reproducibility ('strict'|'relaxed', default 'strict')."
+                ),
             ),
         ] = None,
         ingest: Annotated[
@@ -928,6 +1944,18 @@ def register_memory_tools(
             dict[str, Any] | None,
             Field(default=None, description="Optional maintain payload for new sync flows."),
         ] = None,
+        scan: Annotated[
+            dict[str, Any] | None,
+            Field(
+                default=None,
+                description=(
+                    "Optional scan config override. When the resolved checkpoint carries a "
+                    "scan_snapshot, re-scan is performed automatically using the stored config "
+                    "(or this override). Delta (added/modified/deleted) drives auto-generated "
+                    "ingest and deletion payloads. Explicit caller payloads win on conflict."
+                ),
+            ),
+        ] = None,
         response: Annotated[
             dict[str, Any] | None,
             Field(default=None, description="Optional memory response shaping options."),
@@ -938,25 +1966,347 @@ def register_memory_tools(
                 default=1,
                 ge=1,
                 le=20,
-                description="Maximum sync steps to execute before returning.",
+                 description="Maximum sync steps to execute before returning.",
             ),
         ] = 1,
+        debug: Annotated[
+            bool,
+            Field(
+                default=False,
+                description=(
+                    "When True, include full checkpoint internals and per-step results "
+                    "in the response. Default (False): compact mode strips completed blobs."
+                ),
+            ),
+        ] = False,
         *,
         ctx: AppContextType,
     ) -> CallToolResult:
-        """Advance project sync steps and return the next checkpoint or final result."""
+        """Advance sync steps and return the next checkpoint or final result."""
+        # Guard: reject legacy response.mode contract (spec §2: no backward compatibility).
+        if isinstance(response, dict) and response.get("mode") in ("programmatic", "llm"):
+            return _json_response(
+                {
+                    "error": {
+                        "code": "LEGACY_CONTRACT_REJECTED",
+                        "message": (
+                            "The 'response.mode' field ('programmatic'|'llm') is no longer "
+                            "accepted. Use the 'ingestion' parameter instead: "
+                            "ingestion={'mode': 'programmatic'} or "
+                            "ingestion={'mode': 'llm', 'llm_profile': '<profile>'}."
+                        ),
+                        "retryable": False,
+                        "stage": "contract_validation",
+                        "actionable_fix": (
+                            "Replace response={'mode': ...} with "
+                            "ingestion={'mode': ..., 'llm_profile': ...}."
+                        ),
+                    }
+                }
+            )
+        # Merge root-level debug flag into response shaping dict.
+        if debug and response is None:
+            response = {"debug": True}
+        elif debug and isinstance(response, dict) and not response.get("debug"):
+            response = {**response, "debug": True}
         app_ctx = ctx.request_context.lifespan_context
         execution = _create_memory_execution(ctx)
         try:
-            resolved_scope, plan, next_index, completed = _normalize_project_checkpoint(
-                checkpoint=checkpoint,
-                scope=scope,
-                ingest=ingest,
-                supersede=supersede,
-                archive=archive,
-                maintain=maintain,
-                require_ingest=False,
-            )
+            # Fast-path: if the checkpoint is already completed (next_index == len(plan)),
+            # validate it first and then return a stable completed response without
+            # replaying any operations.  Validation runs before the early return so that
+            # corrupt/inconsistent completed-checkpoints still surface MEM_CHECKPOINT_INVALID.
+            if checkpoint is not None:
+                _raw_next = checkpoint.get("next_index", 0)
+                _raw_plan = checkpoint.get("plan", [])
+                # B: Accept integral floats (e.g. 1.0) by coercing safely; reject non-integral.
+                if isinstance(_raw_next, float):
+                    if _raw_next != int(_raw_next):
+                        raise _checkpoint_error(
+                            "checkpoint.next_index must be an integer; "
+                            f"non-integral float {_raw_next!r} is not allowed"
+                        )
+                    _raw_next = int(_raw_next)
+                if (
+                    isinstance(_raw_next, int)
+                    and isinstance(_raw_plan, list)
+                    and _raw_next > 0
+                    and _raw_next == len(_raw_plan)
+                ):
+                    # C: Log to prove fast-path was taken (visible in server logs).
+                    logger.info(
+                        "sync fast-path: checkpoint already completed "
+                        "(next_index=%d == len(plan)=%d); skipping replay",
+                        _raw_next,
+                        len(_raw_plan),
+                    )
+                    # Run full validation (raises MemoryContractError on corrupt checkpoint).
+                    _scope, _plan, _ni, _done = _restore_checkpoint(
+                        checkpoint, require_ingest=False
+                    )
+                    # A: Include from_checkpoint flag and note in response.
+                    _fp_debug = _is_debug_response(response)
+                    _fp_checkpoint = (
+                        _build_project_checkpoint_payload(
+                            scope=_scope,
+                            plan=_plan,
+                            next_index=_ni,
+                            completed=_done,
+                            scan=None,
+                            scan_snapshot=None,
+                        )
+                        if checkpoint.get("scan") is None
+                        else checkpoint
+                    )
+                    _fp_response: dict[str, Any] = {
+                        "status": "completed",
+                        "from_checkpoint": True,
+                        "note": (
+                            "Results returned from completed checkpoint cache; "
+                            "no operations were re-executed."
+                        ),
+                        "completed_operations": [
+                            str(item.get("operation"))
+                            for item in _done
+                            if isinstance(item, dict)
+                        ],
+                        "checkpoint": _compact_checkpoint(_fp_checkpoint, debug=_fp_debug),
+                    }
+                    if _fp_debug:
+                        _fp_response["results"] = _done
+                    return _json_response(_fp_response)
+
+            effective_scan: ScanConfig | None = None
+            prior_snapshot: ScanSnapshot | None = None
+            new_scan_snapshot: ScanSnapshot | None = None
+            sync_ingested_paths: list[str] = []
+            sync_delta: SyncDelta | None = None
+
+            if checkpoint is not None:
+                raw_scan = checkpoint.get("scan")
+                if raw_scan is not None:
+                    effective_scan = ScanConfig.model_validate(raw_scan)
+
+                raw_snap = checkpoint.get("scan_snapshot")
+                if raw_snap is not None:
+                    prior_snapshot = ScanSnapshot.model_validate(raw_snap)
+                    if effective_scan is None:
+                        effective_scan = prior_snapshot.scan_config
+
+            if scan is not None:
+                effective_scan = ScanConfig.model_validate(scan)
+
+            if checkpoint is not None and effective_scan is None:
+                resolved_scope, plan, next_index, completed = _normalize_project_checkpoint(
+                    checkpoint=checkpoint,
+                    scope=scope,
+                    ingest=ingest,
+                    supersede=supersede,
+                    archive=archive,
+                    maintain=maintain,
+                    require_ingest=False,
+                )
+            elif checkpoint is not None:
+                if scope is not None:
+                    raise MemoryContractError(
+                        code="MEM_CHECKPOINT_CONFLICT",
+                        message=(
+                            "MEM_CHECKPOINT_CONFLICT: provide either checkpoint OR "
+                            "scope/plan payloads, not both"
+                        ),
+                        retryable=False,
+                    )
+
+                resolved_scope, plan, next_index, completed = _normalize_project_checkpoint(
+                    checkpoint=checkpoint,
+                    scope=None,
+                    ingest=None,
+                    supersede=None,
+                    archive=None,
+                    maintain=None,
+                    require_ingest=False,
+                )
+
+                if effective_scan is None:
+                    raise MemoryContractError(
+                        code="MEM_SCAN_CONFIG_MISSING",
+                        message=(
+                            "MEM_SCAN_CONFIG_MISSING: checkpoint carries a scan_snapshot "
+                            "but no resolvable scan config; provide scan override to proceed"
+                        ),
+                        retryable=False,
+                    )
+                scanned_files, new_scan_snapshot = await _run_scan(effective_scan)
+
+                changed_files = scanned_files
+                deleted: list[str] = []
+                if prior_snapshot is not None:
+                    sync_delta = _compute_full_scan_delta(prior_snapshot, new_scan_snapshot)
+                    # UNCHANGED fast-path only applies when this is a fresh sync start
+                    # (next_index == 0), meaning no operations have been executed yet from
+                    # this checkpoint.  Mid-flight resumes (next_index > 0) must continue
+                    # executing the remaining steps even when the file delta is empty —
+                    # those steps were already committed to when the prior run paused.
+                    _is_fresh_start = next_index == 0
+                    if not sync_delta.has_semantic_delta and _is_fresh_start:
+                        # Idempotency: no files changed — skip plan execution entirely.
+                        _sync_debug = _is_debug_response(response)
+                        unchanged_response: dict[str, Any] = {
+                            "status": "UNCHANGED",
+                            "scope": resolved_scope,
+                            "message": "No files changed since last sync; nothing to do.",
+                        }
+                        if _sync_debug:
+                            unchanged_response["delta"] = sync_delta.to_debug_dict()
+                        return _json_response(unchanged_response)
+                    added = sync_delta.added
+                    modified = sync_delta.modified
+                    deleted = sync_delta.deleted
+                    changed_paths = set(added) | set(modified)
+                    changed_files = [f for f in scanned_files if f["path"] in changed_paths]
+
+                auto_ingest_payload: dict[str, Any] | None = None
+                if len(changed_files) > 0:
+                    auto_ingest_payload, sync_ingested_paths = _build_ingest_from_files(
+                        changed_files
+                    )
+                auto_ingest = auto_ingest_payload
+                effective_ingest = (
+                    _merge_dict_prefer_explicit(auto_ingest, ingest)
+                    if auto_ingest is not None
+                    else ingest
+                )
+                if ingest is not None:
+                    # Explicit ingest overrides path tracking
+                    sync_ingested_paths = []
+
+                deleted_ids: list[str] = []
+                if prior_snapshot is not None and len(deleted) > 0:
+                    deleted_set = set(deleted)
+                    deleted_ids = [
+                        entry.memory_id
+                        for entry in prior_snapshot.entries
+                        if entry.path in deleted_set and entry.memory_id is not None
+                    ]
+
+                auto_archive: dict[str, Any] | None = None
+                auto_supersede: dict[str, Any] | None = None
+                if len(deleted_ids) > 0:
+                    canonical_policy = classify_deletion_policy(effective_scan.deletion_policy)
+                    if canonical_policy == "archive":
+                        auto_archive = {"ids": deleted_ids}
+                    elif canonical_policy == "supersede":
+                        auto_supersede = {"ids": deleted_ids}
+                    # canonical_policy == "ignore": no action on deleted files
+
+                effective_archive = (
+                    _merge_dict_prefer_explicit(auto_archive, archive)
+                    if auto_archive is not None
+                    else archive
+                )
+                effective_supersede = (
+                    _merge_dict_prefer_explicit(auto_supersede, supersede)
+                    if auto_supersede is not None
+                    else supersede
+                )
+
+                rebuilt_plan = _project_flow_plan(
+                    ingest=effective_ingest,
+                    supersede=effective_supersede,
+                    archive=effective_archive,
+                    maintain=maintain,
+                )
+                if len(rebuilt_plan) > 0:
+                    plan = rebuilt_plan
+                    next_index = 0
+                    completed = []
+            else:
+                # sync({}) detection: no checkpoint, no scan, no plan payloads.
+                # Resolution priority:
+                # 1. Session active context (set by onboard/select)
+                # 2. Explicit scope filter against onboard registry
+                # 3. Registry-wide (ambiguous or no-context)
+                # Return actionable error instead of MEM_PROJECT_FLOW_EMPTY.
+                _no_plan = (
+                    ingest is None
+                    and supersede is None
+                    and archive is None
+                    and maintain is None
+                )
+                _registry_resolved = False
+                if effective_scan is None and _no_plan:
+                    # Priority 1: use session active context when no explicit scope filter.
+                    _active = _get_active_context(ctx) if scope is None else None
+                    if _active is not None:
+                        # Active context found — use it directly.
+                        candidates: list[SyncContextCandidate] = [_active]
+                        resolution = resolve_sync_context(candidates, requested_scope=None)
+                    else:
+                        # Fall back to registry-wide resolution.
+                        candidates = list(_onboard_context_registry.values())
+                        resolution = resolve_sync_context(candidates, requested_scope=scope)
+
+                    if resolution.status == "AMBIGUOUS_CONTEXT":
+                        return _json_response(
+                            build_ambiguous_context_envelope(resolution.candidates)
+                        )
+                    if resolution.status == "success" and resolution.context is not None:
+                        # Resolved: use the stored checkpoint to bootstrap the sync flow.
+                        stored_cp = resolution.context.checkpoint_data
+                        resolved_scope = resolution.context.scope
+                        plan = []
+                        next_index = 0
+                        completed = []
+                        # If the stored checkpoint carries a scan config, re-run the scan.
+                        raw_scan_cfg = stored_cp.get("scan")
+                        raw_snap = stored_cp.get("scan_snapshot")
+                        if raw_scan_cfg is not None:
+                            effective_scan = ScanConfig.model_validate(raw_scan_cfg)
+                        if raw_snap is not None:
+                            try:
+                                prior_snapshot = ScanSnapshot.model_validate(raw_snap)
+                                if effective_scan is None:
+                                    effective_scan = prior_snapshot.scan_config
+                            except Exception:
+                                pass
+                        if effective_scan is None:
+                            # No scan config in stored checkpoint: return UNCHANGED so
+                            # callers know onboard completed but nothing to re-sync.
+                            return _json_response(
+                                {
+                                    "status": "UNCHANGED",
+                                    "scope": resolved_scope,
+                                    "message": (
+                                        "Onboard context found but no scan config is stored. "
+                                        "Provide a scan argument to perform a delta sync."
+                                    ),
+                                }
+                            )
+                        _registry_resolved = True
+                        # Fall through to scan + delta handling below.
+                    else:
+                        return _json_response(_build_no_active_context_envelope())
+
+                effective_ingest = ingest
+                if effective_scan is not None:
+                    scanned_files, new_scan_snapshot = await _run_scan(effective_scan)
+                    auto_ingest, sync_ingested_paths = _build_ingest_from_files(scanned_files)
+                    effective_ingest = _merge_dict_prefer_explicit(auto_ingest, ingest)
+                    if ingest is not None:
+                        sync_ingested_paths = []
+
+                # When resolved_scope/plan/next_index/completed were set by the registry
+                # path above, skip re-building (they are already final).
+                if not _registry_resolved:
+                    resolved_scope, plan, next_index, completed = _normalize_project_checkpoint(
+                        checkpoint=None,
+                        scope=scope,
+                        ingest=effective_ingest,
+                        supersede=supersede,
+                        archive=archive,
+                        maintain=maintain,
+                        require_ingest=False,
+                    )
 
             completed_ops: list[str] = []
             last_result: dict[str, Any] | None = None
@@ -987,13 +2337,15 @@ def register_memory_tools(
                         response=response,
                     )
                 except Exception as step_exc:
-                    step_error_payload = _tool_error_payload("project_sync", step_exc)
+                    step_error_payload = _tool_error_payload("sync", step_exc, stage=operation_name)
                     step_error = step_error_payload.get("error")
                     if not isinstance(step_error, dict):
                         step_error = {
                             "code": "MEM_INTERNAL_ERROR",
-                            "message": "project_sync failed",
+                            "message": "sync failed",
                             "retryable": False,
+                            "stage": operation_name,
+                            "actionable_fix": None,
                         }
                     return _json_response(
                         _build_project_failed_checkpoint_payload(
@@ -1005,6 +2357,8 @@ def register_memory_tools(
                             completed=completed,
                             completed_ops=completed_ops,
                             result=last_result,
+                            scan=effective_scan,
+                            scan_snapshot=new_scan_snapshot,
                         )
                     )
                 step_error = _extract_error_envelope(step_result)
@@ -1019,7 +2373,25 @@ def register_memory_tools(
                             completed=completed,
                             completed_ops=completed_ops,
                             result=step_result,
+                            scan=effective_scan,
+                            scan_snapshot=new_scan_snapshot,
                         )
+                    )
+                # Back-populate memory_ids into snapshot entries after a scan-driven ingest.
+                if (
+                    operation_name == "ingest"
+                    and new_scan_snapshot is not None
+                    and sync_ingested_paths
+                ):
+                    sync_returned_ids: list[str] = []
+                    if isinstance(step_result, dict):
+                        raw_ids = step_result.get("ids") or step_result.get("id")
+                        if isinstance(raw_ids, list):
+                            sync_returned_ids = [str(x) for x in raw_ids]
+                        elif isinstance(raw_ids, str):
+                            sync_returned_ids = [raw_ids]
+                    new_scan_snapshot = _update_snapshot_with_memory_ids(
+                        new_scan_snapshot, sync_ingested_paths, sync_returned_ids
                     )
                 completed.append({"operation": operation_name, "result": step_result})
                 completed_ops.append(operation_name)
@@ -1032,8 +2404,11 @@ def register_memory_tools(
                 plan=plan,
                 next_index=next_index,
                 completed=completed_results,
+                scan=effective_scan,
+                scan_snapshot=new_scan_snapshot,
             )
 
+            _sync_debug = _is_debug_response(response)
             if next_index < len(plan):
                 return _json_response(
                     {
@@ -1044,19 +2419,111 @@ def register_memory_tools(
                         "completed_operations": completed_ops,
                         "last_operation": completed_ops[-1] if completed_ops else None,
                         "result": last_result,
-                        "checkpoint": checkpoint_payload,
+                        "checkpoint": _compact_checkpoint(checkpoint_payload, debug=_sync_debug),
                     }
                 )
 
+            sync_completed_response: dict[str, Any] = {
+                "status": "completed",
+                "completed_operations": [
+                    str(item.get("operation")) for item in completed_results
+                ],
+                "checkpoint": _compact_checkpoint(checkpoint_payload, debug=_sync_debug),
+            }
+            if _sync_debug:
+                sync_completed_response["results"] = completed_results
+                if sync_delta is not None:
+                    sync_completed_response["delta"] = sync_delta.to_debug_dict()
+            return _json_response(sync_completed_response)
+        except Exception as e:
+            return _json_response(_tool_error_payload("sync", e))
+
+    @mcp_server.tool(
+        description=(
+            "Switch active memory context for this session. "
+            "After selecting, memory() and sync() calls without explicit scope "
+            "use the selected context automatically. "
+            "Use onboard() first to create contexts."
+        ),
+        annotations=ToolAnnotations(
+            title="Select",
+            readOnlyHint=True,
+            destructiveHint=False,
+            idempotentHint=True,
+            openWorldHint=False,
+        ),
+    )
+    async def select(
+        scope: Annotated[
+            dict[str, Any],
+            Field(
+                description=(
+                    "Scope selector: at minimum provide 'palace'. "
+                    "Optionally include 'wing', 'room', 'compartment' to narrow selection. "
+                    "Example: {'palace': 'my-project'} or "
+                    "{'palace': 'my-project', 'wing': 'backend'}."
+                ),
+            ),
+        ],
+        *,
+        ctx: AppContextType,
+    ) -> CallToolResult:
+        """Switch the session's active memory context to the specified scope."""
+        # Resolve against the in-process onboard registry.
+        candidates: list[SyncContextCandidate] = list(_onboard_context_registry.values())
+        if not candidates:
             return _json_response(
                 {
-                    "status": "completed",
-                    "completed_operations": [
-                        str(item.get("operation")) for item in completed_results
-                    ],
-                    "results": completed_results,
-                    "checkpoint": checkpoint_payload,
+                    "error": {
+                        "code": "MEM_NO_ACTIVE_CONTEXT",
+                        "message": (
+                            "No onboarded contexts found in this server session. "
+                            "Run onboard() first to create a context before using select()."
+                        ),
+                        "retryable": False,
+                        "actionable_fix": "Run onboard(scope={...}, ingest={...}) first.",
+                    }
                 }
             )
-        except Exception as e:
-            return _json_response(_tool_error_payload("project_sync", e))
+
+        resolution = resolve_sync_context(candidates, requested_scope=scope)
+
+        if resolution.status == "AMBIGUOUS_CONTEXT":
+            return _json_response(build_ambiguous_context_envelope(resolution.candidates))
+
+        if resolution.status == "success" and resolution.context is not None:
+            _set_active_context(ctx, resolution.context)
+            active = resolution.context
+            return _json_response(
+                {
+                    "status": "selected",
+                    "active_context": {
+                        "scope": active.scope,
+                        "scope_key": active.scope_key_value,
+                        "source": active.source,
+                    },
+                    "message": (
+                        "Active context set. Subsequent memory() and sync() calls "
+                        "without explicit scope will use this context."
+                    ),
+                }
+            )
+
+        # NO_CONTEXT — scope not found in registry.
+        candidate_scopes = [c.scope for c in candidates]
+        return _json_response(
+            {
+                "error": {
+                    "code": "MEM_SELECT_NOT_FOUND",
+                    "message": (
+                        f"No onboarded context matched scope {scope!r}. "
+                        f"Known contexts: {candidate_scopes}"
+                    ),
+                    "retryable": False,
+                    "actionable_fix": (
+                        "Run onboard() with the desired scope first, "
+                        "or adjust the scope selector to match a known context."
+                    ),
+                }
+            }
+        )

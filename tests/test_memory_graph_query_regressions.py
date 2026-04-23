@@ -15,6 +15,7 @@ from workflows_mcp.engine.memory_service import (
     MemoryResponseInput,
     MemoryResult,
     MemoryService,
+    OrgUserMergeTransparency,
     QueryMemoryRequest,
     QueryMemoryResult,
 )
@@ -496,4 +497,50 @@ async def test_query_graph_hydrates_supporting_memories_for_evidence_links() -> 
     assert result.memories[0]["id"] == "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"
     assert result.evidence[0]["edges"][0]["supporting_memories"][0]["id"] == (
         "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"
+    )
+
+
+# ---------------------------------------------------------------------------
+# Merge transparency in compact query responses
+# ---------------------------------------------------------------------------
+
+
+def _make_query_result_with_merge(
+    merge: OrgUserMergeTransparency | None,
+) -> MemoryResult:
+    """Build a minimal MemoryResult with one memory and optional merge."""
+    query = QueryMemoryResult(
+        memories=[{"content": "test memory"}],
+        facts=[],
+        communities=[],
+        paths=[],
+        diagnostics={},
+        evidence=[],
+    )
+    return MemoryResult(operation="query", query=query, merge=merge)
+
+
+def test_compact_query_includes_merge_when_present() -> None:
+    """Compact (non-debug) query response must include merge when result.merge is not None."""
+    merge = OrgUserMergeTransparency(
+        effective_source="org",
+        org_record={"content": "org memory"},
+        user_record={"content": "user memory"},
+        conflict=True,
+    )
+    result = _make_query_result_with_merge(merge)
+    payload = _shape_memory_response(result, MemoryResponseInput())
+
+    assert "merge" in payload, "compact query response must include merge when result.merge is set"
+    assert payload["merge"]["effective_source"] == "org"
+    assert payload["merge"]["conflict"] is True
+
+
+def test_compact_query_omits_merge_when_absent() -> None:
+    """Compact query response must not include merge key when result.merge is None."""
+    result = _make_query_result_with_merge(None)
+    payload = _shape_memory_response(result, MemoryResponseInput())
+
+    assert "merge" not in payload, (
+        "compact query response must omit merge when result.merge is None"
     )

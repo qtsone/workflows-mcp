@@ -75,6 +75,7 @@ CREATE TABLE IF NOT EXISTS knowledge_communities (
     embedding   vector(1536),
     member_count INTEGER NOT NULL DEFAULT 0,
     memory_count INTEGER NOT NULL DEFAULT 0,
+    palace      VARCHAR(200),
     namespace   VARCHAR(200),
     room        VARCHAR(200),
     corridor    VARCHAR(200),
@@ -125,6 +126,7 @@ CREATE TABLE IF NOT EXISTS knowledge_memories (
     parent_memory_ids UUID[] NOT NULL DEFAULT '{}',
     superseded_by_memory_id UUID REFERENCES knowledge_memories(id) ON DELETE RESTRICT,
     -- Topology / room system
+    palace    VARCHAR(200),
     namespace VARCHAR(200),
     room      VARCHAR(200),
     corridor  VARCHAR(200),
@@ -157,6 +159,7 @@ _CREATE_KNOWLEDGE_ENTITIES = """
 CREATE TABLE IF NOT EXISTS knowledge_entities (
     id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     community_id UUID REFERENCES knowledge_communities(id) ON DELETE SET NULL,
+    palace      VARCHAR(200) NOT NULL DEFAULT '',
     namespace   VARCHAR(200) NOT NULL DEFAULT '',
     room        VARCHAR(200) NOT NULL DEFAULT '',
     corridor    VARCHAR(200) NOT NULL DEFAULT '',
@@ -299,6 +302,12 @@ CREATE INDEX IF NOT EXISTS idx_km_room
 CREATE INDEX IF NOT EXISTS idx_km_namespace_room
     ON knowledge_memories(namespace, room)
     WHERE namespace IS NOT NULL AND room IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_km_palace
+    ON knowledge_memories(palace)
+    WHERE palace IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_km_palace_namespace_room
+    ON knowledge_memories(palace, namespace, room)
+    WHERE palace IS NOT NULL;
 CREATE INDEX IF NOT EXISTS idx_km_superseded_by
     ON knowledge_memories(superseded_by_memory_id)
     WHERE superseded_by_memory_id IS NOT NULL;
@@ -319,6 +328,9 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_ks_name            ON knowledge_sources(na
 CREATE INDEX  IF NOT EXISTS idx_ki_source_id             ON knowledge_items(source_id);
 CREATE UNIQUE INDEX IF NOT EXISTS idx_ki_source_path     ON knowledge_items(source_id, path);
 -- knowledge_communities
+CREATE INDEX IF NOT EXISTS idx_kc_palace
+    ON knowledge_communities(palace)
+    WHERE palace IS NOT NULL;
 CREATE INDEX IF NOT EXISTS idx_kc_namespace
     ON knowledge_communities(namespace)
     WHERE namespace IS NOT NULL;
@@ -328,12 +340,15 @@ CREATE INDEX IF NOT EXISTS idx_kc_room
 CREATE INDEX IF NOT EXISTS idx_kc_namespace_room
     ON knowledge_communities(namespace, room)
     WHERE namespace IS NOT NULL AND room IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_kc_palace_namespace_room
+    ON knowledge_communities(palace, namespace, room)
+    WHERE palace IS NOT NULL;
 -- knowledge_entities
 CREATE INDEX IF NOT EXISTS idx_ke_community_id
     ON knowledge_entities(community_id)
     WHERE community_id IS NOT NULL;
 CREATE UNIQUE INDEX IF NOT EXISTS idx_ke_type_name
-    ON knowledge_entities(namespace, room, corridor, entity_type, name);
+    ON knowledge_entities(palace, namespace, room, corridor, entity_type, name);
 -- knowledge_memory_audits
 CREATE INDEX IF NOT EXISTS idx_kma_memory_id             ON knowledge_memory_audits(memory_id);
 CREATE INDEX IF NOT EXISTS idx_kma_performed_by          ON knowledge_memory_audits(performed_by);
@@ -590,6 +605,44 @@ CREATE INDEX IF NOT EXISTS idx_kr_evidence_memory_ids
     ON knowledge_relations USING gin(evidence_memory_ids);
 """
 
+_V5_PALACE_SQL = """
+-- Add palace column to topology tables.
+-- palace is the org-level discriminator above namespace/wing.
+-- Default '' (empty string) for NOT NULL tables; NULL for nullable tables.
+
+ALTER TABLE knowledge_memories
+    ADD COLUMN IF NOT EXISTS palace VARCHAR(200);
+
+ALTER TABLE knowledge_communities
+    ADD COLUMN IF NOT EXISTS palace VARCHAR(200);
+
+ALTER TABLE knowledge_entities
+    ADD COLUMN IF NOT EXISTS palace VARCHAR(200) NOT NULL DEFAULT '';
+
+-- Indexes for palace-scoped retrieval on knowledge_memories
+CREATE INDEX IF NOT EXISTS idx_km_palace
+    ON knowledge_memories(palace)
+    WHERE palace IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_km_palace_namespace_room
+    ON knowledge_memories(palace, namespace, room)
+    WHERE palace IS NOT NULL;
+
+-- Indexes for palace-scoped retrieval on knowledge_communities
+CREATE INDEX IF NOT EXISTS idx_kc_palace
+    ON knowledge_communities(palace)
+    WHERE palace IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_kc_palace_namespace_room
+    ON knowledge_communities(palace, namespace, room)
+    WHERE palace IS NOT NULL;
+
+-- Rebuild entity uniqueness index to include palace so that identical
+-- entity names in colliding namespace/room/corridor under different
+-- palaces are treated as distinct entities.
+DROP INDEX IF EXISTS idx_ke_type_name;
+CREATE UNIQUE INDEX IF NOT EXISTS idx_ke_type_name
+    ON knowledge_entities(palace, namespace, room, corridor, entity_type, name);
+"""
+
 _HAS_KNOWLEDGE_TABLES_SQL = """
 SELECT EXISTS (
         SELECT 1
@@ -641,6 +694,11 @@ MIGRATIONS: list[tuple[int, str, str]] = [
         4,
         "Add relation evidence linkage for non-curated corridor edges",
         _V4_RELATION_EVIDENCE_LINKAGE_SQL,
+    ),
+    (
+        5,
+        "Add palace column to topology tables for org-level isolation",
+        _V5_PALACE_SQL,
     ),
 ]
 

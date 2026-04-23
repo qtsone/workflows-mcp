@@ -53,7 +53,7 @@ class MemoryInput(BlockInput):
 
     scope: dict[str, Any] | None = Field(
         default=None,
-        description="Scope envelope (room/corridor/global and retrieval boundaries).",
+        description="Scope envelope: palace, wing, room, compartment, and retrieval boundaries.",
     )
     scope_token: str | None = Field(
         default=None,

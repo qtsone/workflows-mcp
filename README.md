@@ -132,8 +132,8 @@ execute_workflow(workflow="python-ci-pipeline", inputs={...}, mode="async")
 | Tool | When to call | Typical call pattern |
 | --- | --- | --- |
 | `memory` | Unified memory query/ingest/maintenance/graph operations | `memory(operation="query", scope={...}, query={...})` |
-| `project_onboard` | Current memory onboarding flow with checkpoints | `project_onboard(scope={...}, ingest={...}, max_operations=1)` |
-| `project_sync` | Current memory checkpoint resume/continuation | `project_sync(checkpoint={...}, max_operations=3)` |
+| `onboard` | Start project memory onboarding for a repo scan | `onboard(scope={"palace":"my-project"}, ingestion={"mode":"programmatic"}, scan={...})` |
+| `sync` | Re-scan the current onboard context for changes | `sync({})` |
 
 IMPORTANT: The `memory` tool is registered only when memory DB setup is available and valid at startup (see [below](#memory))
 
@@ -150,6 +150,9 @@ Memory contract highlights:
     - `ingest`: all four fields must resolve (including `compartment`).
     - `graph_upsert` with `graph.kind="place"`: all four fields must resolve.
     - `validate|supersede|archive|maintain|graph_delete|graph_upsert(kind="link")`: scope is optional.
+- Query request shape:
+  - `operation="query"` requires `query` to be an object (for example `{"text": "...", "mode": "search"}`).
+  - Passing `query` as a plain string is rejected by request validation.
 - Temporal query semantics:
   - `operation="query"` supports either `query.as_of` OR interval `query.from/query.to` (mutually exclusive).
   - `query.mode="graph"` supports `query.as_of` only; `query.from/query.to` are rejected.
@@ -169,6 +172,15 @@ Memory contract highlights:
 - Graph semantics:
   - `operation="graph_upsert"` with `graph.kind="link"` is idempotent.
   - `operation="graph_delete"` returns compact delete counters (`deleted_places` for `kind="place"`, `deleted_links` for `kind="link"`); optional debug output adds diagnostics metadata.
+- Project scan root policy:
+  - `scan.root` is validated against a single allowed root.
+  - Default allowed root is `/`.
+  - Override with `WORKFLOWS_SCAN_ROOT=/your/root`.
+- Project flow response compactness:
+  - `onboard`/`sync` are compact by default.
+  - Completed checkpoint steps strip large `plan[].payload.memories[].content` blobs in compact mode.
+  - Pass root-level `debug=true` to expand the response with full diagnostics (equivalent to `response={"debug": true}` in the previous contract).
+  - Completed-checkpoint `sync` fast-path returns `from_checkpoint=true` with a note indicating no re-execution.
 
 Validation note: this ingest category behavior (`MEM_UNKNOWN_CATEGORY` with create disabled, successful ingest with `allow_create_categories=true`) was live-validated on 2026-04-21 via production-like direct MCP `memory` calls.
 
@@ -266,33 +278,82 @@ Direct-call JSON examples:
 }
 ```
 
-`project_onboard`:
+`onboard` (programmatic mode):
 
 ```json
 {
-  "scope": {"palace": "acme", "wing": "workflows", "room": "memory-engine", "compartment": "contract-r2"},
-  "ingest": {"format": "raw", "content": "Initial baseline", "memory_tier": "direct"},
-  "supersede": {"ids": ["11111111-1111-1111-1111-111111111111"], "superseded_by": "22222222-2222-2222-2222-222222222222"},
-  "archive": {"ids": ["33333333-3333-3333-3333-333333333333"]},
-  "maintain": {"mode": "community_refresh"},
-  "max_operations": 1
+  "scope": {"palace": "acme"},
+  "ingestion": {"mode": "programmatic"},
+  "scan": {
+    "patterns": ["src/**/*.py"],
+    "root": "/path/to/repo",
+    "max_files": 200,
+    "max_size_kb": 512,
+    "respect_gitignore": true
+  }
 }
 ```
 
-`project_sync`:
+Onboarding success criteria:
+
+- A structurally complete graph payload (Palace → Wing → Room → Compartment with `contains` corridors) is required for graph operations.
+- Ingestion mode: `programmatic` is the default (deterministic, hash-based file scan). `llm` mode is optional and uses strict defaults when enabled.
+- Binary and unsupported files produce metadata-only compartments (path, size, mime-type) with no content ingested.
+
+Compact-by-default note:
+
+- `onboard` defaults to compact responses.
+- To receive full `results[]` and full checkpoint internals, pass root-level `debug=true`:
 
 ```json
 {
-  "checkpoint": {
-    "version": "oss-r2",
-    "scope": {"palace": "acme", "wing": "workflows", "room": "memory-engine", "compartment": "contract-r2"},
-    "plan": [{"operation": "ingest", "payload": {"format": "raw", "content": "Initial baseline", "memory_tier": "direct"}}],
-    "next_index": 0,
-    "completed": []
+  "debug": true
+}
+```
+
+`onboard` (llm mode):
+
+```json
+{
+  "scope": {"palace": "acme"},
+  "ingestion": {
+    "mode": "llm",
+    "llm_profile": "knowledge-ingest",
+    "reproducibility": "strict"
   },
-  "max_operations": 3
+  "scan": {
+    "patterns": ["src/**/*.py"],
+    "root": "/path/to/repo"
+  },
+  "debug": true
 }
 ```
+
+`sync`:
+
+```json
+{
+  "scope": {"palace": "acme"},
+  "scan": {
+    "patterns": ["src/**/*.py"],
+    "root": "/path/to/repo"
+  }
+}
+```
+
+`sync({})` context behavior:
+
+- `sync({})` (empty call) resolves context from successful onboard contexts in the current server session.
+- Returns `status: "UNCHANGED"` when context resolves but no scan config is stored for automatic delta execution.
+- Returns `status: "NO_CONTEXT"` when no onboard context is available; call `onboard` first.
+- Returns `status: "AMBIGUOUS_CONTEXT"` when multiple contexts match; narrow with explicit `scope`.
+
+Completed-checkpoint fast-path cue:
+
+- When a checkpoint is already complete, `sync` returns:
+  - `status: "completed"`
+  - `from_checkpoint: true`
+  - a note clarifying results are from checkpoint cache and no operations were re-executed.
 
 Invalid (mutually exclusive temporal filters):
 
@@ -376,7 +437,7 @@ Memory is an optional persistent storage feature that lets agents and workflows 
 ### What memory provides
 
 - **`memory` MCP tool** — direct call interface for LLM agents to store and query information without writing workflow YAML.
-- **`project_onboard` / `project_sync` MCP tools** — Current memory contract helpers for checkpointed onboarding/sync sequences.
+- **`onboard` / `sync` MCP tools** — project onboarding and incremental project-sync tools. `onboard` builds project memory from scan input; `sync({})` auto-resolves context from successful onboard contexts in the current server session, returning `NO_CONTEXT` or `AMBIGUOUS_CONTEXT` when context is insufficient.
 - **`Memory` workflow block** — use inside YAML workflows to automate memory operations as part of larger pipelines.
 - **Memory topology scoping** (`palace` → `wing` → `room` → `compartment`) — current memory scope keys are strict and legacy keys (for example `hall`) are rejected. Scope can be supplied directly and/or resolved from context (`scope_token`, `context_id`) using deterministic precedence.
 - **Temporal tracking** — records carry `valid_from` / `valid_to` timestamps supporting point-in-time and interval queries.

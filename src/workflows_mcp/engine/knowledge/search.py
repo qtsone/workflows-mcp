@@ -87,6 +87,7 @@ def build_vector_search_query(
     lifecycle_state: str = LifecycleState.ACTIVE,
     limit: int = DEFAULT_LIMIT,
     include_embeddings: bool = False,
+    palace: str | None = None,
     namespace: str | None = None,
     room: str | None = None,
     corridor: str | None = None,
@@ -102,6 +103,7 @@ def build_vector_search_query(
         include_embeddings: If True, include the raw embedding vector in SELECT.
             Used internally by _op_context for MMR reranking. Never expose
             embedding values in public API responses.
+        palace: When provided, restrict candidates to this palace (org-level scope).
         namespace: When provided, restrict candidates to propositions in this namespace.
         room: When provided, restrict candidates to propositions in this room.
         corridor: When provided, restrict candidates to propositions in this corridor.
@@ -159,6 +161,8 @@ def build_vector_search_query(
     )
 
     # Room-scope filters
+    if palace is not None:
+        post_where_clauses.append(f"kp.palace = {next_param(palace)}")
     if namespace is not None:
         post_where_clauses.append(f"kp.namespace = {next_param(namespace)}")
     if room is not None:
@@ -205,6 +209,7 @@ def build_fts_search_query(
     min_confidence: float = DEFAULT_MIN_CONFIDENCE,
     lifecycle_state: str = LifecycleState.ACTIVE,
     limit: int = DEFAULT_LIMIT,
+    palace: str | None = None,
     namespace: str | None = None,
     room: str | None = None,
     corridor: str | None = None,
@@ -216,6 +221,7 @@ def build_fts_search_query(
     Uses plainto_tsquery for natural-language query parsing.
 
     Args:
+        palace: When provided, restrict candidates to this palace (org-level scope).
         namespace: When provided, restrict candidates to propositions in this namespace.
         room: When provided, restrict candidates to propositions in this room.
         corridor: When provided, restrict candidates to propositions in this corridor.
@@ -273,6 +279,8 @@ def build_fts_search_query(
     )
 
     # Room-scope filters
+    if palace is not None:
+        post_where_clauses.append(f"kp.palace = {next_param(palace)}")
     if namespace is not None:
         post_where_clauses.append(f"kp.namespace = {next_param(namespace)}")
     if room is not None:
@@ -352,6 +360,7 @@ async def room_scoped_search(
     query_text: str,
     backend: Any,
     *,
+    palace: str | None = None,
     namespace: str | None,
     room: str | None,
     corridor: str | None = None,
@@ -370,18 +379,24 @@ async def room_scoped_search(
     """Run room-scoped and global companion lanes in parallel, then fuse.
 
     Both lanes run concurrently via asyncio.gather.  The room-scoped lane
-    restricts candidates to the supplied namespace/room; the global companion
-    lane runs a fixed-size global retrieval to preserve cross-room recall.
+    restricts candidates to the supplied palace/namespace/room; the global
+    companion lane runs a fixed-size global retrieval to preserve cross-room
+    recall.
 
     Results are merged via a single RRF pass over all four candidate lists
     (room-vector, room-fts, global-vector, global-fts).
 
-    When namespace, room, and corridor are all None this degrades to a
+    When palace, namespace, room, and corridor are all None this degrades to a
     standard global search (no scoped lane is issued; only the global lane
     runs). Set include_global_companion=False to disable the companion lane
     when strict scoped retrieval is required.
     """
-    has_room_scope = namespace is not None or room is not None or corridor is not None
+    has_room_scope = (
+        palace is not None
+        or namespace is not None
+        or room is not None
+        or corridor is not None
+    )
     run_global_lane = include_global_companion or not has_room_scope
 
     # ---- Room-scoped lane ------------------------------------------------
@@ -399,6 +414,7 @@ async def room_scoped_search(
             lifecycle_state=lifecycle_state,
             limit=limit,
             include_embeddings=include_embeddings,
+            palace=palace,
             namespace=namespace,
             room=room,
             corridor=corridor,
@@ -414,6 +430,7 @@ async def room_scoped_search(
             min_confidence=min_confidence,
             lifecycle_state=lifecycle_state,
             limit=limit,
+            palace=palace,
             namespace=namespace,
             room=room,
             corridor=corridor,

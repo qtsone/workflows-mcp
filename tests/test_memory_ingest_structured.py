@@ -15,6 +15,7 @@ from pydantic import ValidationError
 from workflows_mcp.engine.memory_service import (
     ManageMemoryRequest,
     ManageMemoryResult,
+    MemoryContractError,
     MemoryRequest,
     MemoryService,
 )
@@ -200,9 +201,9 @@ class TestStructuredIngestService:
         assert "to_tsvector('english', $3)" in memory_insert_sql
         assert memory_insert_params[3] == "[0.1, 0.2, 0.3]"
         assert memory_insert_params[7] == "embed-model"
-        assert memory_insert_params[16] == "direct"
-        assert memory_insert_params[17] is None
-        assert memory_insert_params[18] == []
+        assert memory_insert_params[17] == "direct"
+        assert memory_insert_params[18] is None
+        assert memory_insert_params[19] == []
 
         audit_calls = [
             call
@@ -703,10 +704,13 @@ class TestStructuredIngestService:
         entity_insert_sql = entity_insert_call.args[0]
         entity_insert_params = entity_insert_call.args[1]
         assert "namespace, room, corridor" in entity_insert_sql
-        assert "ON CONFLICT (namespace, room, corridor, entity_type, name)" in entity_insert_sql
-        assert entity_insert_params[3] == "service-a"
-        assert entity_insert_params[4] == "auth"
-        assert entity_insert_params[5] == "incident"
+        assert (
+            "ON CONFLICT (palace, namespace, room, corridor, entity_type, name)"
+            in entity_insert_sql
+        )
+        assert entity_insert_params[4] == "service-a"
+        assert entity_insert_params[5] == "auth"
+        assert entity_insert_params[6] == "incident"
 
     @pytest.mark.asyncio
     async def test_store_rejects_unknown_categories_without_explicit_opt_in(self) -> None:
@@ -923,8 +927,9 @@ class TestStructuredIngestService:
         backend = MagicMock()
         backend.query = AsyncMock(
             side_effect=[
-                MagicMock(rows=[{"cnt": 0}]),
-                MagicMock(rows=[{"id": "m-1"}]),
+                MagicMock(rows=[]),           # pre-flight superseded check — no superseded records
+                MagicMock(rows=[{"cnt": 0}]), # skipped count (USER_VALIDATED / ARCHIVED)
+                MagicMock(rows=[{"id": "m-1"}]),  # archive UPDATE
             ]
         )
         context = MagicMock()
@@ -939,9 +944,36 @@ class TestStructuredIngestService:
         )
 
         assert result.success is True
-        update_call = backend.query.await_args_list[1]
+        update_call = backend.query.await_args_list[2]
         assert "valid_to = COALESCE" in update_call.args[0]
         assert update_call.args[1][-1] is None
+
+    @pytest.mark.asyncio
+    async def test_forget_raises_contract_error_for_superseded_memory(self) -> None:
+        """Archiving a SUPERSEDED memory raises MEM_SUPERSEDE_APPEND_ONLY before DB trigger."""
+        backend = MagicMock()
+        # The pre-flight superseded check is the first query issued.
+        # It returns a row indicating a SUPERSEDED record is in the request set.
+        backend.query = AsyncMock(
+            return_value=MagicMock(rows=[{"id": "11111111-1111-1111-1111-111111111111"}]),
+        )
+        context = MagicMock()
+        context.execution_context = None
+        service = MemoryService(backend=backend, context=context)
+
+        with pytest.raises(MemoryContractError) as exc_info:
+            await service.manage(
+                ManageMemoryRequest(
+                    operation="forget",
+                    memory_ids=["11111111-1111-1111-1111-111111111111"],
+                )
+            )
+
+        error = exc_info.value
+        assert error.code == "MEM_SUPERSEDE_APPEND_ONLY"
+        assert "MEM_SUPERSEDE_APPEND_ONLY" in error.message
+        # Must not reach the UPDATE that would trip the DB trigger
+        assert backend.query.await_count == 1
 
     @pytest.mark.asyncio
     async def test_execute_archive_forwards_record_valid_to_override(self) -> None:

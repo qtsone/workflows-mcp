@@ -8,7 +8,7 @@ import asyncio
 import uuid
 from collections.abc import Callable
 from dataclasses import dataclass, field
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from mcp.server.fastmcp import Context
 from mcp.server.session import ServerSession
@@ -20,6 +20,9 @@ from .engine.io_queue import IOQueue
 from .engine.job_queue import JobQueue
 from .engine.llm_config import LLMConfigLoader
 
+if TYPE_CHECKING:
+    from .engine.memory_scope_resolver import SyncContextCandidate
+
 
 @dataclass
 class AppContext:
@@ -29,6 +32,12 @@ class AppContext:
     via dependency injection through the Context parameter.
 
     Post ADR-008: Stores shared resources for ExecutionContext creation.
+
+    Session-scoped active context:
+        _active_contexts maps id(session) → SyncContextCandidate.
+        Set by onboard/select; read by memory/sync when no explicit scope is provided.
+        Keyed by session object identity (id()) which is stable for the session lifetime
+        and does not require any MCP SDK changes.
     """
 
     registry: WorkflowRegistry
@@ -46,6 +55,22 @@ class AppContext:
     get_user_context: Callable[[], tuple[uuid.UUID | None, str | None, str]] | None = field(
         default=None, repr=False
     )
+    # Session-scoped active context: keyed by id(session) → SyncContextCandidate.
+    # Protected by _active_contexts_lock for thread-safety across concurrent tool calls.
+    _active_contexts: dict[int, "SyncContextCandidate"] = field(
+        default_factory=dict, repr=False
+    )
+    _active_contexts_lock: asyncio.Lock = field(
+        default_factory=asyncio.Lock, repr=False
+    )
+
+    def get_active_context(self, session: Any) -> "SyncContextCandidate | None":
+        """Return the active context for the given session, or None."""
+        return self._active_contexts.get(id(session))
+
+    def set_active_context(self, session: Any, candidate: "SyncContextCandidate") -> None:
+        """Set the active context for the given session."""
+        self._active_contexts[id(session)] = candidate
 
     def create_execution_context(
         self,

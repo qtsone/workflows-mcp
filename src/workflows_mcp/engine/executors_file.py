@@ -1439,3 +1439,89 @@ class EditFileExecutor(BlockExecutor):
             result_lines[old_start:old_end] = new_lines_in_hunk
 
         return "".join(result_lines)
+
+
+# ============================================================================
+# Reusable scan helper
+# ============================================================================
+
+# Patterns for files that commonly contain secrets or private key material.
+# These are always excluded when run_readfiles_scan is called (e.g. from
+# project_onboard / project_sync) to prevent accidental ingest of credentials.
+_SENSITIVE_EXCLUDE_PATTERNS: tuple[str, ...] = (
+    "**/.env",
+    "**/.env.*",
+    "**/*.pem",
+    "**/*.key",
+    "**/id_rsa",
+    "**/id_rsa.*",
+    "**/id_ed25519",
+    "**/id_ed25519.*",
+    "**/id_dsa",
+    "**/id_dsa.*",
+    "**/id_ecdsa",
+    "**/id_ecdsa.*",
+    "**/credentials",
+    "**/credentials.*",
+    "**/secrets",
+    "**/secrets.*",
+    "**/*.p12",
+    "**/*.pfx",
+    "**/*.sqlite",
+    "**/*.db",
+)
+
+
+async def run_readfiles_scan(
+    *,
+    path: str | None = None,
+    patterns: list[str] | None = None,
+    base_path: str = ".",
+    exclude_patterns: list[str] | None = None,
+    max_files: int = 20,
+    max_size_kb: int = 100,
+    respect_gitignore: bool = True,
+    mode: Literal["full", "outline", "summary"] = "full",
+) -> list[dict[str, Any]]:
+    """Run a ReadFiles scan and return a plain list of file dicts.
+
+    Each dict contains:
+        path        - relative path from base_path (str)
+        content     - file content string
+        size_bytes  - file size in bytes (int)
+
+    Args:
+        path: Optional single-file path. Mutually exclusive with patterns.
+        patterns: Optional glob patterns for file discovery.
+        base_path: Base directory for glob expansion.
+        exclude_patterns: Additional exclusion patterns.
+        max_files: Maximum files to return.
+        max_size_kb: Per-file size cap in KB.
+        respect_gitignore: Whether to honour .gitignore.
+        mode: Read mode for ReadFiles executor.
+
+    Returns:
+        List of file metadata dicts (only successfully read files).
+
+    Raises:
+        FileNotFoundError: No files matched the patterns after filtering.
+        ValueError: Invalid patterns or configuration.
+    """
+    # Always merge sensitive-default patterns; caller-supplied patterns may add more.
+    merged_exclude = list(_SENSITIVE_EXCLUDE_PATTERNS) + list(exclude_patterns or [])
+    executor = ReadFilesExecutor()
+    inputs = ReadFilesInput(
+        path=path,
+        patterns=patterns or [],
+        base_path=base_path,
+        exclude_patterns=merged_exclude,
+        max_files=max_files,
+        max_file_size_kb=max_size_kb,
+        respect_gitignore=respect_gitignore,
+        mode=mode,
+    )
+    output = await executor.execute(inputs, Execution())
+    return [
+        {"path": f.path, "content": f.content, "size_bytes": f.size_bytes}
+        for f in output.files
+    ]
