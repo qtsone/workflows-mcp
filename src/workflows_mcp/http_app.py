@@ -147,16 +147,18 @@ _RATE_WINDOW_SECONDS: float = 60.0
 
 
 class BodyLimitMiddleware:
-    """Reject requests whose ``Content-Length`` exceeds *max_bytes*.
+    """Reject requests whose body exceeds *max_bytes*.
 
-    Checking the ``Content-Length`` header is sufficient for deterministic
-    protection: the header is required on POST/PUT/PATCH requests by HTTP
-    spec and is always present when FastAPI's ``TestClient`` (httpx) sends
-    a body.  Streaming requests without a ``Content-Length`` header are not
-    rejected at this layer (they are handled by request-body read timeouts
-    at the server level).
+    Two enforcement paths:
+    1. **Fast path**: if ``Content-Length`` is present and exceeds the limit the
+       request is rejected immediately without reading any body bytes.
+    2. **Streaming path**: if ``Content-Length`` is absent (chunked / streaming
+       transfer), the ``receive`` callable is wrapped so bytes are counted as
+       they arrive; once the running total exceeds *max_bytes* a 413 is returned
+       and the body stream is drained (not forwarded to the application).
 
-    The rejection happens before any route logic so the body is never read.
+    Both paths respond with the stable ``ErrorEnvelope`` shape and the rejection
+    always happens before any route logic sees the request body.
     """
 
     def __init__(self, app: ASGIApp, *, max_bytes: int) -> None:
@@ -164,24 +166,69 @@ class BodyLimitMiddleware:
         self.max_bytes = max_bytes
 
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
-        if scope["type"] == "http":
-            headers: dict[bytes, bytes] = dict(scope.get("headers", []))
-            raw_cl = headers.get(b"content-length")
-            if raw_cl is not None:
-                try:
-                    content_length = int(raw_cl)
-                except ValueError:
-                    content_length = 0
-                if content_length > self.max_bytes:
+        if scope["type"] != "http":
+            await self.app(scope, receive, send)
+            return
+
+        headers: dict[bytes, bytes] = dict(scope.get("headers", []))
+
+        # Fast path: Content-Length header present.
+        raw_cl = headers.get(b"content-length")
+        if raw_cl is not None:
+            try:
+                content_length = int(raw_cl)
+            except ValueError:
+                content_length = 0
+            if content_length > self.max_bytes:
+                response = _error_response(
+                    status_code=413,
+                    code="REQUEST_TOO_LARGE",
+                    message="Request body exceeds configured limit.",
+                    details={"max_bytes": self.max_bytes},
+                )
+                await response(scope, receive, send)
+                return
+
+        # Streaming path: pre-buffer the entire body from receive() before
+        # forwarding to the app.  This ensures oversized streaming bodies
+        # (sent without Content-Length) are rejected deterministically before
+        # any route logic sees the request body.
+        max_bytes = self.max_bytes
+        body = b""
+        more_body = True
+        while more_body:
+            raw_message = await receive()
+            message: dict[str, Any] = dict(raw_message)
+            if message.get("type") == "http.request":
+                chunk: bytes = message.get("body", b"")
+                body += chunk
+                more_body = message.get("more_body", False)
+                if len(body) > max_bytes:
                     response = _error_response(
                         status_code=413,
                         code="REQUEST_TOO_LARGE",
                         message="Request body exceeds configured limit.",
-                        details={"max_bytes": self.max_bytes},
+                        details={"max_bytes": max_bytes},
                     )
                     await response(scope, receive, send)
                     return
-        await self.app(scope, receive, send)
+            else:
+                # Disconnect or other non-request message — pass through.
+                more_body = False
+
+        # Body is within limits; replay it as a single receive() call.
+        body_message: dict[str, Any] = {"type": "http.request", "body": body, "more_body": False}
+        consumed = False
+
+        async def _replay_receive() -> dict[str, Any]:
+            nonlocal consumed
+            if not consumed:
+                consumed = True
+                return body_message
+            # Subsequent receive() calls (e.g. for disconnect) go to the real receive.
+            return dict(await receive())
+
+        await self.app(scope, _replay_receive, send)
 
 
 class SlidingWindowRateLimiter:
@@ -214,20 +261,23 @@ class SlidingWindowRateLimiter:
 
 
 class RateLimitMiddleware:
-    """Enforce per-IP sliding-window rate limits.
+    """Enforce per-IP sliding-window rate limits on protected routes.
+
+    Rate limiting is applied only to routes that require authentication
+    (``/config/*`` and ``/mcp``).  Public health/readiness endpoints
+    (``/health``, ``/ready``) and documentation endpoints are deliberately
+    exempt so liveness probes and tooling are never blocked.
 
     Two limits are supported:
     - ``config_limiter``: applied to paths starting with ``/config``.
-    - ``general_limiter``: applied to all other paths.
-
-    ``/health`` is deliberately exempted to avoid interfering with liveness
-    probes that fire at high frequency from orchestrators.
+    - ``mcp_limiter``: applied to ``/mcp`` and any other protected route.
 
     The client key is derived from the ``X-Forwarded-For`` header when
     present (first address), falling back to the ASGI ``client`` tuple.
     """
 
-    _EXEMPT_PATHS: frozenset[str] = frozenset({"/health"})
+    #: Only these path prefixes are subject to rate limiting.
+    _PROTECTED_PREFIXES: tuple[str, ...] = ("/config", "/mcp")
 
     def __init__(
         self,
@@ -250,10 +300,13 @@ class RateLimitMiddleware:
             return str(client[0])
         return "unknown"
 
+    def _is_protected(self, path: str) -> bool:
+        return any(path.startswith(prefix) for prefix in self._PROTECTED_PREFIXES)
+
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
         if scope["type"] == "http":
             path: str = scope.get("path", "")
-            if path not in self._EXEMPT_PATHS:
+            if self._is_protected(path):
                 key = self._client_key(scope)
                 limiter = (
                     self.config_limiter if path.startswith("/config") else self.general_limiter
