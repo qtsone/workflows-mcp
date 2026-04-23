@@ -205,41 +205,6 @@ def assert_workflow_paused(result: dict[str, Any], prompt_pattern: str | None = 
 
 
 # =============================================================================
-# Example Usage in Tests
-# =============================================================================
-
-
-@pytest.mark.asyncio
-async def example_behavior_test():
-    """Example of behavior-based testing."""
-    from test_mcp_client import get_mcp_client
-
-    # Define expected behavior
-    expected = WorkflowBehavior(
-        status="success",
-        output_schema={"exit_code": int, "succeeded": bool},
-        output_values={"exit_code": 0, "succeeded": True},
-    )
-
-    # Execute workflow via MCP
-    async with get_mcp_client() as client:
-        import json
-
-        from mcp.types import TextContent
-
-        result = await client.call_tool(
-            "execute_workflow",
-            arguments={"workflow": "test-workflow", "inputs": {}, "debug": False},
-        )
-
-        content = result.content[0]
-        assert isinstance(content, TextContent)
-        response = json.loads(content.text)
-
-        # Validate behavior
-        assert_workflow_behavior(response, expected)
-
-
 # =============================================================================
 # Test Discovery and Execution
 # =============================================================================
