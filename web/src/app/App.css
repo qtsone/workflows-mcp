@@ -126,6 +126,7 @@ body {
 }
 
 .admin-form input,
+.admin-form select,
 .admin-form textarea,
 .admin-form button,
 .actions-row button {
@@ -139,6 +140,14 @@ body {
   min-height: 6rem;
   resize: vertical;
   font: inherit;
+}
+
+.admin-form input:focus-visible,
+.admin-form select:focus-visible,
+.admin-form textarea:focus-visible,
+.admin-form button:focus-visible {
+  outline: 2px solid #73a5f7;
+  outline-offset: 1px;
 }
 
 .admin-form button,
@@ -272,8 +281,83 @@ body {
   margin-top: 0.75rem;
 }
 
+.database-console {
+  background: #0f1722;
+  border: 1px solid #253245;
+  border-radius: 0.6rem;
+  padding: 1rem;
+  color: #d8e3f2;
+}
+
+.database-terminal-bar {
+  font-family: "Menlo", "SFMono-Regular", "Consolas", monospace;
+  background: #121c29;
+  border: 1px solid #314357;
+  border-radius: 0.35rem;
+  padding: 0.55rem 0.75rem;
+  margin-bottom: 0.9rem;
+  color: #9db5cf;
+}
+
+.database-terminal-title {
+  margin: 0;
+  font-weight: 600;
+  letter-spacing: 0.01em;
+}
+
+.database-terminal-chips {
+  margin-top: 0.55rem;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+}
+
+.database-chip {
+  border: 1px solid #3b5168;
+  border-radius: 999px;
+  padding: 0.15rem 0.5rem;
+  background: #0b1420;
+  color: #c8d9ec;
+  font-size: 0.78rem;
+}
+
+.database-grid {
+  display: grid;
+  gap: 0.9rem;
+  grid-template-columns: 16rem 1fr 1fr;
+}
+
+.database-rail,
+.database-side-panel,
+.database-command-pane {
+  display: grid;
+  gap: 0.7rem;
+}
+
+.database-console .admin-card {
+  background: #111c29;
+  border-color: #2f4157;
+  color: #d8e3f2;
+}
+
+.database-console .admin-card p,
+.database-console .admin-card li,
+.database-console .admin-card label {
+  color: #c4d4e8;
+}
+
+.database-console pre {
+  background: #0c141f;
+  border-color: #2d3f54;
+  color: #d7e5fa;
+}
+
 @media (max-width: 900px) {
   .layout {
+    grid-template-columns: 1fr;
+  }
+
+  .database-grid {
     grid-template-columns: 1fr;
   }
 }

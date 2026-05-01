@@ -111,6 +111,7 @@ const deferred = <T,>() => {
     resumeRunErrorMessage = "resume failed",
     filesystemListingByPath,
     filesystemErrorByPath,
+    initialDatabaseSettings,
   }: {
     projectCount?: number;
     projects?: Array<Record<string, unknown>>;
@@ -134,6 +135,7 @@ const deferred = <T,>() => {
     resumeRunErrorMessage?: string;
     filesystemListingByPath?: Record<string, Record<string, unknown>>;
     filesystemErrorByPath?: Record<string, { status: number; body: Record<string, unknown> }>;
+    initialDatabaseSettings?: Record<string, unknown>;
   } = {},
 ) => {
   const projects: Array<Record<string, unknown>> =
@@ -234,6 +236,24 @@ const deferred = <T,>() => {
     };
   const pathEntriesListingByPath: Record<string, Record<string, unknown>> = filesystemListingByPath ?? {};
   const pathEntriesErrorByPath = filesystemErrorByPath ?? {};
+  let databaseSettings: Record<string, unknown> = {
+    enabled: false,
+    configured: false,
+    updated_at: "2026-04-29T00:00:00Z",
+    host: "",
+    port: 5432,
+    database: "",
+    username: "",
+    password_configured: false,
+    ssl_mode: "prefer",
+    extra_params: "",
+    container_name: "workflows-postgres",
+    container_image: "pgvector/pgvector:pg17",
+    container_host_port: 5432,
+    volume_name: "workflows-postgres-data",
+    dsn_import: null,
+    ...initialDatabaseSettings,
+  };
 
   const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
     const method = (init?.method ?? "GET").toUpperCase();
@@ -257,10 +277,25 @@ const deferred = <T,>() => {
       });
     }
     if (url.endsWith("/api/admin/v1/database/settings") && method === "GET") {
-      return jsonResponse({ enabled: false, configured: false, updated_at: "2026-04-29T00:00:00Z" });
+      return jsonResponse(databaseSettings);
     }
     if (url.endsWith("/api/admin/v1/database/settings") && method === "PUT") {
-      return jsonResponse({ enabled: true, configured: true, updated_at: "2026-04-30T00:00:00Z" });
+      const payload = JSON.parse(String(init?.body ?? "{}")) as Record<string, unknown>;
+      databaseSettings = {
+        ...databaseSettings,
+        ...payload,
+        port: Number(payload.port ?? 5432),
+        container_host_port: Number(payload.container_host_port ?? 5432),
+        password_configured:
+          payload.password_clear === true
+            ? false
+            : typeof payload.password === "string"
+              ? payload.password.trim().length > 0
+              : (databaseSettings.password_configured as boolean),
+        configured: payload.enabled === true,
+        updated_at: "2026-04-30T00:00:00Z",
+      };
+      return jsonResponse(databaseSettings);
     }
     if (url.endsWith("/api/admin/v1/database/connection-test") && method === "POST") {
       return jsonResponse({
@@ -735,33 +770,42 @@ describe("App", () => {
     expect(addProjectLink.getAttribute("href")).toBe("/projects");
   });
 
-  it("loads database guidance, saves settings, and tests connection", async () => {
+  it("renders structured database profile fields and saves structured payload", async () => {
     const fetchMock = installApiMock();
     renderAtPath("/database");
 
-    await waitFor(() => {
-      expect(screen.getByRole("heading", { name: /database setup guidance/i })).toBeTruthy();
-    });
-
-    expect(screen.getByText(/pgvector\/pgvector:pg17/i)).toBeTruthy();
-    expect(screen.getByLabelText(/postgresql dsn/i)).toBeTruthy();
+    await screen.findByRole("heading", { name: /database settings/i });
+    expect(screen.getByLabelText(/^host$/i)).toBeTruthy();
+    expect(screen.getByLabelText(/^port$/i)).toBeTruthy();
+    expect(screen.getByLabelText(/^database$/i)).toBeTruthy();
+    expect(screen.getByLabelText(/^username$/i)).toBeTruthy();
+    expect(screen.getByLabelText(/^password$/i)).toBeTruthy();
+    expect(screen.getByLabelText(/ssl mode/i)).toBeTruthy();
+    expect(screen.getByLabelText(/extra parameters/i)).toBeTruthy();
+    expect(screen.getByLabelText(/container name/i)).toBeTruthy();
+    expect(screen.getByLabelText(/container image/i)).toBeTruthy();
+    expect(screen.getByLabelText(/host port/i)).toBeTruthy();
+    expect(screen.getByLabelText(/volume name/i)).toBeTruthy();
+    expect(screen.getByLabelText(/advanced dsn import/i)).toBeTruthy();
+    expect(screen.getByText(/workflowsctl \/ database-profile \/ local/i)).toBeTruthy();
+    expect(screen.getByText(/connection profile/i)).toBeTruthy();
+    expect(screen.getByText(/container command/i)).toBeTruthy();
+    expect(screen.getByText(/connection test/i)).toBeTruthy();
+    expect(screen.getByText(/persist settings/i)).toBeTruthy();
+    expect(screen.getByText(/enabled: off/i)).toBeTruthy();
+    expect(screen.getAllByText(/configured: no/i).length).toBeGreaterThan(0);
+    expect(screen.getByText(/password: pending/i)).toBeTruthy();
+    expect(screen.getByText(/legacy re-entry: clean/i)).toBeTruthy();
 
     fireEvent.click(screen.getByRole("checkbox", { name: /enable postgresql metadata backend/i }));
-    fireEvent.change(screen.getByLabelText(/postgresql dsn/i), {
-      target: { value: "postgresql://wf_user:strong-pass@127.0.0.1:5432/workflows" },
-    });
+    fireEvent.change(screen.getByLabelText(/^host$/i), { target: { value: "127.0.0.1" } });
+    fireEvent.change(screen.getByLabelText(/^port$/i), { target: { value: "5432" } });
+    fireEvent.change(screen.getByLabelText(/^database$/i), { target: { value: "workflows" } });
+    fireEvent.change(screen.getByLabelText(/^username$/i), { target: { value: "wf_user" } });
+    fireEvent.change(screen.getByLabelText(/^password$/i), { target: { value: "strong-pass" } });
     fireEvent.click(screen.getByRole("button", { name: /save settings/i }));
 
-    await waitFor(() => {
-      expect(screen.getByText("Database settings saved.")).toBeTruthy();
-    });
-
-    fireEvent.click(screen.getByRole("button", { name: /test connection/i }));
-
-    await waitFor(() => {
-      expect(screen.getByText(/connection status: degraded/i)).toBeTruthy();
-      expect(screen.getByText(/verify host, port, credentials, and network reachability/i)).toBeTruthy();
-    });
+    await screen.findByText("Database settings saved.");
 
     const saveCall = fetchMock.mock.calls.find((call) => {
       const url = String(call[0]);
@@ -769,27 +813,35 @@ describe("App", () => {
       return url.includes("/api/admin/v1/database/settings") && init?.method === "PUT";
     });
     expect(saveCall).toBeTruthy();
+    const payload = JSON.parse(String((saveCall?.[1] as RequestInit | undefined)?.body ?? "{}")) as Record<string, unknown>;
+    expect(payload.enabled).toBe(true);
+    expect(payload.host).toBe("127.0.0.1");
+    expect(payload.port).toBe(5432);
+    expect(payload.database).toBe("workflows");
+    expect(payload.username).toBe("wf_user");
+    expect(payload.password).toBe("strong-pass");
+    expect(payload.password_clear).toBe(false);
+    expect(payload.ssl_mode).toBe("prefer");
+    expect(payload.container_host_port).toBe(5432);
+    expect(payload.dsn_import).toBeNull();
+    expect(Object.hasOwn(payload, "dsn")).toBe(false);
   });
 
-  it("blocks save when database is enabled with blank dsn", async () => {
+  it("blocks enabled save when required structured fields or password are missing", async () => {
     const fetchMock = installApiMock();
     renderAtPath("/database");
 
-    await waitFor(() => {
-      expect(screen.getByRole("heading", { name: /database setup guidance/i })).toBeTruthy();
-    });
-
+    await screen.findByRole("heading", { name: /database settings/i });
     fireEvent.click(screen.getByRole("checkbox", { name: /enable postgresql metadata backend/i }));
-    fireEvent.change(screen.getByLabelText(/postgresql dsn/i), { target: { value: "    " } });
+    fireEvent.change(screen.getByLabelText(/^host$/i), { target: { value: "127.0.0.1" } });
+    fireEvent.change(screen.getByLabelText(/^port$/i), { target: { value: "5432" } });
+    fireEvent.change(screen.getByLabelText(/^database$/i), { target: { value: "workflows" } });
+    fireEvent.change(screen.getByLabelText(/^username$/i), { target: { value: "wf_user" } });
+    fireEvent.change(screen.getByLabelText(/^password$/i), { target: { value: "" } });
     fireEvent.click(screen.getByRole("button", { name: /save settings/i }));
 
-    await waitFor(() => {
-      expect(
-        screen.getByText("Enter a PostgreSQL DSN before enabling the database backend."),
-      ).toBeTruthy();
-    });
-
-    expect(screen.queryByText("Database settings saved.")).toBeNull();
+    await screen.findByText(/password is required unless you clear it/i);
+    expect((screen.getByLabelText(/^host$/i) as HTMLInputElement).value).toBe("127.0.0.1");
 
     const saveCalls = fetchMock.mock.calls.filter((call) => {
       const url = String(call[0]);
@@ -797,6 +849,168 @@ describe("App", () => {
       return url.includes("/api/admin/v1/database/settings") && init?.method === "PUT";
     });
     expect(saveCalls).toHaveLength(0);
+  });
+
+  it("blocks save when container image is empty", async () => {
+    const fetchMock = installApiMock();
+    renderAtPath("/database");
+
+    await screen.findByRole("heading", { name: /database settings/i });
+    fireEvent.click(screen.getByRole("checkbox", { name: /enable postgresql metadata backend/i }));
+    fireEvent.change(screen.getByLabelText(/^host$/i), { target: { value: "127.0.0.1" } });
+    fireEvent.change(screen.getByLabelText(/^port$/i), { target: { value: "5432" } });
+    fireEvent.change(screen.getByLabelText(/^database$/i), { target: { value: "workflows" } });
+    fireEvent.change(screen.getByLabelText(/^username$/i), { target: { value: "wf_user" } });
+    fireEvent.change(screen.getByLabelText(/^password$/i), { target: { value: "strong-pass" } });
+    fireEvent.change(screen.getByLabelText(/container image/i), { target: { value: "   " } });
+    fireEvent.click(screen.getByRole("button", { name: /save settings/i }));
+
+    await screen.findByText(/container image is required/i);
+
+    const saveCalls = fetchMock.mock.calls.filter((call) => {
+      const url = String(call[0]);
+      const init = call[1] as RequestInit | undefined;
+      return url.includes("/api/admin/v1/database/settings") && init?.method === "PUT";
+    });
+    expect(saveCalls).toHaveLength(0);
+  });
+
+  it("imports a postgres dsn into fields and keeps raw dsn out of persisted state", async () => {
+    const fetchMock = installApiMock();
+    renderAtPath("/database");
+
+    await screen.findByRole("heading", { name: /database settings/i });
+    fireEvent.change(screen.getByLabelText(/advanced dsn import/i), {
+      target: { value: "postgresql://wf_user:typed-pass@db.internal:5433/workflows?sslmode=require&application_name=cli" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: /import dsn/i }));
+
+    expect((screen.getByLabelText(/^host$/i) as HTMLInputElement).value).toBe("db.internal");
+    expect((screen.getByLabelText(/^port$/i) as HTMLInputElement).value).toBe("5433");
+    expect((screen.getByLabelText(/^database$/i) as HTMLInputElement).value).toBe("workflows");
+    expect((screen.getByLabelText(/^username$/i) as HTMLInputElement).value).toBe("wf_user");
+    expect((screen.getByLabelText(/^password$/i) as HTMLInputElement).value).toBe("typed-pass");
+    expect((screen.getByLabelText(/ssl mode/i) as HTMLSelectElement).value).toBe("require");
+    expect((screen.getByLabelText(/extra parameters/i) as HTMLInputElement).value).toBe("application_name=cli");
+
+    fireEvent.click(screen.getByRole("checkbox", { name: /enable postgresql metadata backend/i }));
+    fireEvent.click(screen.getByRole("button", { name: /save settings/i }));
+    await screen.findByText("Database settings saved.");
+
+    const saveCall = fetchMock.mock.calls.find((call) => {
+      const url = String(call[0]);
+      const init = call[1] as RequestInit | undefined;
+      return url.includes("/api/admin/v1/database/settings") && init?.method === "PUT";
+    });
+    const payload = JSON.parse(String((saveCall?.[1] as RequestInit | undefined)?.body ?? "{}")) as Record<string, unknown>;
+    expect(payload.dsn_import).toBeNull();
+    expect(Object.hasOwn(payload, "dsn")).toBe(false);
+  });
+
+  it("quotes metacharacter values in command preview and switches to configured-password after reload", async () => {
+    installApiMock();
+    renderAtPath("/database");
+
+    await screen.findByRole("heading", { name: /database setup guidance/i });
+    expect(screen.getAllByText(/<password>/i).length).toBeGreaterThan(0);
+
+    fireEvent.change(screen.getByLabelText(/^username$/i), { target: { value: "wf user;echo" } });
+    fireEvent.change(screen.getByLabelText(/^database$/i), { target: { value: "wf$db 'name'" } });
+    fireEvent.change(screen.getByLabelText(/container name/i), { target: { value: "wf name;$(id)" } });
+    fireEvent.change(screen.getByLabelText(/volume name/i), { target: { value: "wf data && rm -rf /" } });
+    fireEvent.change(screen.getByLabelText(/^password$/i), { target: { value: "p@ss ' \" ; $(whoami)" } });
+
+    expect(screen.getAllByText(/POSTGRES_USER='wf user;echo'/i).length).toBeGreaterThan(0);
+    expect(screen.getAllByText(/POSTGRES_DB='wf\$db '"'"'name'"'"''/i).length).toBeGreaterThan(0);
+    expect(screen.getAllByText(/POSTGRES_PASSWORD='p@ss '"'"' " ; \$\(whoami\)'/i).length).toBeGreaterThan(0);
+    expect(screen.getAllByText(/'wf name;\$\(id\)'/i).length).toBeGreaterThan(0);
+    expect(screen.getAllByText(/'wf data && rm -rf \/':\/var\/lib\/postgresql\/data/i).length).toBeGreaterThan(0);
+
+    cleanup();
+    installApiMock({
+      initialDatabaseSettings: {
+        enabled: true,
+        configured: true,
+        host: "db.internal",
+        port: 5433,
+        database: "wf$db 'name'",
+        username: "wf user;echo",
+        password_configured: true,
+        container_name: "wf name;$(id)",
+        container_image: "pgvector/pgvector:pg17",
+        container_host_port: 5432,
+        volume_name: "wf data && rm -rf /",
+      },
+    });
+    renderAtPath("/database");
+    await screen.findByRole("heading", { name: /database setup guidance/i });
+    await waitFor(() => {
+      expect(screen.getAllByText(/POSTGRES_PASSWORD='<configured-password>'/i).length).toBeGreaterThan(0);
+    });
+    expect(screen.queryByText(/p@ss ' " ; \$\(whoami\)/i)).toBeNull();
+  });
+
+  it("shows connection-test status and inline errors with accessible status regions", async () => {
+    installApiMock();
+    renderAtPath("/database");
+
+    await screen.findByRole("heading", { name: /database settings/i });
+    fireEvent.click(screen.getByRole("checkbox", { name: /enable postgresql metadata backend/i }));
+    fireEvent.click(screen.getByRole("button", { name: /save settings/i }));
+
+    await screen.findAllByRole("alert");
+    fireEvent.click(screen.getByRole("button", { name: /test connection/i }));
+
+    await waitFor(() => {
+      expect(screen.getByText(/connection status: degraded/i)).toBeTruthy();
+      expect(screen.getByText(/verify host, port, credentials, and network reachability/i)).toBeTruthy();
+      expect(screen.getAllByRole("status").length).toBeGreaterThan(0);
+    });
+  });
+
+  it("shows copy controls and copies docker command with accessible success status", async () => {
+    const writeTextMock = vi.fn(async () => undefined);
+    Object.defineProperty(window.navigator, "clipboard", {
+      configurable: true,
+      value: { writeText: writeTextMock },
+    });
+
+    renderAtPath("/database");
+    await screen.findByRole("heading", { name: /database settings/i });
+
+    const dockerPre = screen.getByText(/docker run --name workflows-postgres/i);
+    expect(screen.getByRole("button", { name: /copy docker command/i })).toBeTruthy();
+    expect(screen.getByRole("button", { name: /copy podman command/i })).toBeTruthy();
+
+    fireEvent.click(screen.getByRole("button", { name: /copy docker command/i }));
+
+    await waitFor(() => {
+      expect(writeTextMock).toHaveBeenCalledTimes(1);
+      expect(writeTextMock).toHaveBeenCalledWith(dockerPre.textContent ?? "");
+    });
+    expect(screen.getByRole("status", { name: /clipboard status/i })).toBeTruthy();
+    expect(screen.getByText(/docker command copied to clipboard/i)).toBeTruthy();
+  });
+
+  it("shows accessible error when clipboard copy fails", async () => {
+    const writeTextMock = vi.fn(async () => {
+      throw new Error("clipboard blocked");
+    });
+    Object.defineProperty(window.navigator, "clipboard", {
+      configurable: true,
+      value: { writeText: writeTextMock },
+    });
+
+    renderAtPath("/database");
+    await screen.findByRole("heading", { name: /database settings/i });
+
+    fireEvent.click(screen.getByRole("button", { name: /copy podman command/i }));
+
+    await waitFor(() => {
+      expect(writeTextMock).toHaveBeenCalledTimes(1);
+    });
+    expect(screen.getByRole("alert")).toBeTruthy();
+    expect(screen.getByText(/unable to copy command to clipboard/i)).toBeTruthy();
   });
 
   it("renders watcher dashboard rows and allows pause action", async () => {

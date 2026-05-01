@@ -657,7 +657,22 @@ describe("createApiClient admin helpers", () => {
     await client.login("admin-pass");
     await client.getSystemStatus();
     await client.getDatabaseSettings();
-    await client.saveDatabaseSettings({ enabled: true, dsn: "postgresql://user:pass@host/db" });
+    await client.saveDatabaseSettings({
+      enabled: true,
+      host: "127.0.0.1",
+      port: 5432,
+      database: "workflows",
+      username: "wf_user",
+      password: "typed-secret",
+      password_clear: false,
+      ssl_mode: "disable",
+      extra_params: "connect_timeout=5&application_name=workflows-mcp",
+      container_name: "workflows-postgres",
+      container_image: "pgvector/pgvector:pg17",
+      container_host_port: 5432,
+      volume_name: "workflows-postgres-data",
+      dsn_import: null,
+    });
     await client.listProjects();
     await client.pauseWatcher("proj-1");
     await client.reconcileSync("proj-1");
@@ -675,6 +690,25 @@ describe("createApiClient admin helpers", () => {
     expect(settingsSaveCall).toBeTruthy();
     const settingsSaveHeaders = new Headers((settingsSaveCall?.[1] as RequestInit | undefined)?.headers);
     expect(settingsSaveHeaders.get("X-CSRF-Token")).toBe("csrf-token-1");
+    const settingsSaveBody = JSON.parse(
+      String((settingsSaveCall?.[1] as RequestInit | undefined)?.body ?? "{}"),
+    ) as Record<string, unknown>;
+    expect(settingsSaveBody).toEqual({
+      enabled: true,
+      host: "127.0.0.1",
+      port: 5432,
+      database: "workflows",
+      username: "wf_user",
+      password: "typed-secret",
+      password_clear: false,
+      ssl_mode: "disable",
+      extra_params: "connect_timeout=5&application_name=workflows-mcp",
+      container_name: "workflows-postgres",
+      container_image: "pgvector/pgvector:pg17",
+      container_host_port: 5432,
+      volume_name: "workflows-postgres-data",
+      dsn_import: null,
+    });
 
     const publicStatusCall = fetchMock.mock.calls.find((call) =>
       String(call[0]).includes("/api/public/v1/system/status"),
@@ -710,5 +744,64 @@ describe("createApiClient admin helpers", () => {
       status: 401,
       statusText: "Unauthorized",
     });
+  });
+
+  it("preserves explicit password null when saving database settings", async () => {
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
+      const method = (init?.method ?? "GET").toUpperCase();
+      const url = typeof input === "string" ? input : input.toString();
+
+      if (url.endsWith("/api/admin/v1/auth/csrf") && method === "GET") {
+        return new Response(JSON.stringify({ csrf_token: "csrf-token-2" }), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        });
+      }
+      if (url.endsWith("/api/admin/v1/database/settings") && method === "PUT") {
+        return new Response(JSON.stringify({ enabled: true, configured: true, updated_at: "t2" }), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        });
+      }
+
+      return new Response(JSON.stringify({ message: `unexpected ${method} ${url}` }), {
+        status: 404,
+        headers: { "content-type": "application/json" },
+      });
+    });
+
+    const client = createApiClient({
+      baseUrl: "https://admin.example.test",
+      fetchImpl: fetchMock,
+    });
+
+    await client.saveDatabaseSettings({
+      enabled: true,
+      host: "127.0.0.1",
+      port: 5432,
+      database: "workflows",
+      username: "wf_user",
+      password: null,
+      password_clear: false,
+      ssl_mode: "disable",
+      extra_params: "",
+      container_name: "workflows-postgres",
+      container_image: "pgvector/pgvector:pg17",
+      container_host_port: 5432,
+      volume_name: "workflows-postgres-data",
+      dsn_import: null,
+    });
+
+    const settingsSaveCall = fetchMock.mock.calls.find((call) => {
+      const url = String(call[0]);
+      const init = call[1] as RequestInit | undefined;
+      return url.includes("/api/admin/v1/database/settings") && init?.method === "PUT";
+    });
+    expect(settingsSaveCall).toBeTruthy();
+
+    const settingsSaveBody = JSON.parse(
+      String((settingsSaveCall?.[1] as RequestInit | undefined)?.body ?? "{}"),
+    ) as Record<string, unknown>;
+    expect(settingsSaveBody.password).toBeNull();
   });
 });

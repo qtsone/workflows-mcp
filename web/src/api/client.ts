@@ -19,6 +19,25 @@ export interface ApiErrorPayload {
   [key: string]: unknown;
 }
 
+export type DatabaseSslMode = "disable" | "prefer" | "require" | "verify-ca" | "verify-full";
+
+export interface SaveDatabaseSettingsPayload {
+  enabled: boolean;
+  host: string;
+  port: number;
+  database: string;
+  username: string;
+  password?: string | null;
+  password_clear: boolean;
+  ssl_mode: DatabaseSslMode;
+  extra_params: string;
+  container_name: string;
+  container_image: string;
+  container_host_port: number;
+  volume_name: string;
+  dsn_import: string | null;
+}
+
 export class ApiHttpError extends Error {
   readonly name = "ApiHttpError";
   readonly status: number;
@@ -375,7 +394,7 @@ export function createApiClient(options: CreateApiFetchOptions = {}) {
     async getDatabaseSettings(): Promise<DatabaseSettingsResponse> {
       return json<DatabaseSettingsResponse>(await fetcher("/api/admin/v1/database/settings"));
     },
-    async saveDatabaseSettings(payload: { enabled: boolean; dsn?: string | null }): Promise<DatabaseSettingsResponse> {
+    async saveDatabaseSettings(payload: SaveDatabaseSettingsPayload): Promise<DatabaseSettingsResponse> {
       await ensureCsrf();
       return json<DatabaseSettingsResponse>(
         await fetcher("/api/admin/v1/database/settings", {

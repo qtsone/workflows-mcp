@@ -80,6 +80,17 @@ CREATE TABLE IF NOT EXISTS postgresql_settings (
     id INTEGER PRIMARY KEY CHECK (id = 1),
     dsn_ref TEXT,
     enabled INTEGER NOT NULL DEFAULT 0,
+    host TEXT NOT NULL DEFAULT '127.0.0.1',
+    port INTEGER NOT NULL DEFAULT 5432,
+    database TEXT NOT NULL DEFAULT 'workflows',
+    username TEXT NOT NULL DEFAULT 'workflows',
+    ssl_mode TEXT NOT NULL DEFAULT 'disable',
+    extra_params TEXT NOT NULL DEFAULT '',
+    container_name TEXT NOT NULL DEFAULT 'workflows-postgres',
+    container_image TEXT NOT NULL DEFAULT 'pgvector/pgvector:pg17',
+    container_host_port INTEGER NOT NULL DEFAULT 5432,
+    volume_name TEXT NOT NULL DEFAULT 'workflows-postgres-data',
+    legacy_dsn_upgrade_status TEXT NOT NULL DEFAULT 'not_started',
     updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 

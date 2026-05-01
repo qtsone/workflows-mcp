@@ -1,7 +1,7 @@
 import "./App.css";
 import { FormEvent, useEffect, useMemo, useRef, useState } from "react";
 
-import { ApiHttpError, createApiClient } from "../api/client";
+import { ApiHttpError, createApiClient, type DatabaseSslMode } from "../api/client";
 import {
   createEventStream,
   createPollingFallback,
@@ -132,6 +132,35 @@ type DatabaseSettingsModel = {
   enabled: boolean;
   configured: boolean;
   updatedAt: string;
+  host: string;
+  port: number;
+  database: string;
+  username: string;
+  passwordConfigured: boolean;
+  sslMode: DatabaseSslMode;
+  extraParams: string;
+  containerName: string;
+  containerImage: string;
+  containerHostPort: number;
+  volumeName: string;
+};
+
+type DatabaseProfileForm = {
+  enabled: boolean;
+  host: string;
+  port: string;
+  database: string;
+  username: string;
+  password: string;
+  passwordConfigured: boolean;
+  passwordClear: boolean;
+  sslMode: DatabaseSslMode;
+  extraParams: string;
+  containerName: string;
+  containerImage: string;
+  containerHostPort: string;
+  volumeName: string;
+  dsnImport: string;
 };
 
 type ConnectionTestModel = {
@@ -263,6 +292,25 @@ type OneTimeMcpSecret = {
 type FolderBrowserTarget = "fsRoot" | "allowlist";
 
 const MCP_SECRET_MISSING_ERROR = "Token issuance response was incomplete; no secret was returned.";
+const VALID_NAME_PATTERN = /^[a-zA-Z0-9][a-zA-Z0-9_.-]{0,127}$/;
+
+const DEFAULT_DATABASE_FORM: DatabaseProfileForm = {
+  enabled: false,
+  host: "",
+  port: "5432",
+  database: "",
+  username: "",
+  password: "",
+  passwordConfigured: false,
+  passwordClear: false,
+  sslMode: "prefer",
+  extraParams: "",
+  containerName: "workflows-postgres",
+  containerImage: "pgvector/pgvector:pg17",
+  containerHostPort: "5432",
+  volumeName: "workflows-postgres-data",
+  dsnImport: "",
+};
 
 function toNonEmptyString(value: unknown): string | null {
   if (typeof value !== "string") return null;
@@ -292,11 +340,80 @@ function toObject(value: unknown): Record<string, unknown> {
 
 function toDatabaseSettingsModel(payload: unknown): DatabaseSettingsModel {
   const obj = toObject(payload);
+  const sslModeRaw = typeof obj.ssl_mode === "string" ? obj.ssl_mode : "prefer";
+  const sslMode: DatabaseSslMode =
+    sslModeRaw === "disable" ||
+    sslModeRaw === "prefer" ||
+    sslModeRaw === "require" ||
+    sslModeRaw === "verify-ca" ||
+    sslModeRaw === "verify-full"
+      ? sslModeRaw
+      : "prefer";
   return {
     enabled: obj.enabled === true,
     configured: obj.configured === true,
     updatedAt: typeof obj.updated_at === "string" ? obj.updated_at : "Unavailable",
+    host: typeof obj.host === "string" ? obj.host : "",
+    port: typeof obj.port === "number" ? obj.port : 5432,
+    database: typeof obj.database === "string" ? obj.database : "",
+    username: typeof obj.username === "string" ? obj.username : "",
+    passwordConfigured: obj.password_configured === true,
+    sslMode,
+    extraParams: typeof obj.extra_params === "string" ? obj.extra_params : "",
+    containerName: typeof obj.container_name === "string" ? obj.container_name : DEFAULT_DATABASE_FORM.containerName,
+    containerImage: typeof obj.container_image === "string" ? obj.container_image : DEFAULT_DATABASE_FORM.containerImage,
+    containerHostPort: typeof obj.container_host_port === "number" ? obj.container_host_port : 5432,
+    volumeName: typeof obj.volume_name === "string" ? obj.volume_name : DEFAULT_DATABASE_FORM.volumeName,
   };
+}
+
+function toDatabaseForm(settings: DatabaseSettingsModel): DatabaseProfileForm {
+  return {
+    enabled: settings.enabled,
+    host: settings.host,
+    port: String(settings.port),
+    database: settings.database,
+    username: settings.username,
+    password: "",
+    passwordConfigured: settings.passwordConfigured,
+    passwordClear: false,
+    sslMode: settings.sslMode,
+    extraParams: settings.extraParams,
+    containerName: settings.containerName,
+    containerImage: settings.containerImage,
+    containerHostPort: String(settings.containerHostPort),
+    volumeName: settings.volumeName,
+    dsnImport: "",
+  };
+}
+
+function parsePostgresDsnForForm(input: string): Partial<DatabaseProfileForm> {
+  const url = new URL(input.trim());
+  if (!["postgres:", "postgresql:"].includes(url.protocol)) {
+    throw new Error("Only postgresql:// or postgres:// DSN values are supported.");
+  }
+  const params = new URLSearchParams(url.search);
+  const sslmode = params.get("sslmode");
+  if (sslmode) params.delete("sslmode");
+  const sslMode: DatabaseSslMode =
+    sslmode === "disable" || sslmode === "prefer" || sslmode === "require" || sslmode === "verify-ca" || sslmode === "verify-full"
+      ? sslmode
+      : "prefer";
+
+  return {
+    host: decodeURIComponent(url.hostname),
+    port: url.port || "5432",
+    database: decodeURIComponent(url.pathname.replace(/^\//, "")),
+    username: decodeURIComponent(url.username),
+    password: decodeURIComponent(url.password),
+    sslMode,
+    extraParams: params.toString(),
+  };
+}
+
+function quoteShellPreview(value: string): string {
+  if (/^[A-Za-z0-9_@%+=:,./-]+$/.test(value)) return value;
+  return `'${value.replace(/'/g, `'"'"'`)}'`;
 }
 
 function toConnectionTestModel(payload: unknown): ConnectionTestModel {
@@ -437,14 +554,16 @@ export function App(): JSX.Element {
   });
   const [dbGuidance, setDbGuidance] = useState<{ image: string; docker: string; podman: string; notes: string[] } | null>(null);
   const [dbSettings, setDbSettings] = useState<DatabaseSettingsModel | null>(null);
-  const [dbEnabled, setDbEnabled] = useState(false);
-  const [dbDsn, setDbDsn] = useState("");
+  const [dbForm, setDbForm] = useState<DatabaseProfileForm>(DEFAULT_DATABASE_FORM);
   const [dbLoadError, setDbLoadError] = useState<string>("");
   const [dbSaveMessage, setDbSaveMessage] = useState<string>("");
   const [dbSavePending, setDbSavePending] = useState(false);
+  const [dbFieldErrors, setDbFieldErrors] = useState<Partial<Record<keyof DatabaseProfileForm, string>>>({});
   const [dbTestPending, setDbTestPending] = useState(false);
   const [dbConnectionResult, setDbConnectionResult] = useState<ConnectionTestModel | null>(null);
   const [dbConnectionMessage, setDbConnectionMessage] = useState("");
+  const [dbCopyStatus, setDbCopyStatus] = useState("");
+  const [dbCopyError, setDbCopyError] = useState("");
   const [projects, setProjects] = useState<ProjectModel[]>([]);
   const [projectsLoading, setProjectsLoading] = useState(false);
   const [projectMessage, setProjectMessage] = useState("");
@@ -747,8 +866,8 @@ export function App(): JSX.Element {
                 : [],
             });
             setDbSettings(settings);
-            setDbEnabled(settings.enabled);
-            setDbDsn("");
+            setDbForm(toDatabaseForm(settings));
+            setDbFieldErrors({});
           }
           return;
         }
@@ -1112,19 +1231,79 @@ export function App(): JSX.Element {
     }
   };
 
+  const onImportDatabaseDsn = (): void => {
+    try {
+      const parsed = parsePostgresDsnForForm(dbForm.dsnImport);
+      setDbForm((current) => ({
+        ...current,
+        ...parsed,
+        dsnImport: "",
+        passwordConfigured: current.passwordConfigured || (parsed.password?.length ?? 0) > 0,
+        passwordClear: false,
+      }));
+      setDbFieldErrors((current) => ({ ...current, dsnImport: undefined }));
+      setDbSaveMessage("DSN imported into structured profile fields.");
+    } catch (error) {
+      setDbFieldErrors((current) => ({ ...current, dsnImport: toUserError(error, "Invalid PostgreSQL DSN.") }));
+    }
+  };
+
   const onSaveDatabaseSettings = async (event: FormEvent<HTMLFormElement>): Promise<void> => {
     event.preventDefault();
-    const trimmedDsn = dbDsn.trim();
-    if (dbEnabled && trimmedDsn.length === 0) {
-      setDbSaveMessage("Enter a PostgreSQL DSN before enabling the database backend.");
+    const errors: Partial<Record<keyof DatabaseProfileForm, string>> = {};
+    const port = Number.parseInt(dbForm.port, 10);
+    const hostPort = Number.parseInt(dbForm.containerHostPort, 10);
+
+    if (dbForm.enabled) {
+      if (dbForm.host.trim().length === 0) errors.host = "Host is required.";
+      if (dbForm.database.trim().length === 0) errors.database = "Database is required.";
+      if (dbForm.username.trim().length === 0) errors.username = "Username is required.";
+      if (!Number.isInteger(port) || port < 1 || port > 65535) errors.port = "Port must be an integer between 1 and 65535.";
+      if (!Number.isInteger(hostPort) || hostPort < 1 || hostPort > 65535) {
+        errors.containerHostPort = "Host port must be an integer between 1 and 65535.";
+      }
+      if (!VALID_NAME_PATTERN.test(dbForm.containerName)) {
+        errors.containerName = "Container name must match ^[a-zA-Z0-9][a-zA-Z0-9_.-]{0,127}$.";
+      }
+      if (!VALID_NAME_PATTERN.test(dbForm.volumeName)) {
+        errors.volumeName = "Volume name must match ^[a-zA-Z0-9][a-zA-Z0-9_.-]{0,127}$.";
+      }
+      if (dbForm.containerImage.trim().length === 0) {
+        errors.containerImage = "Container image is required.";
+      }
+      if (!dbForm.passwordClear && dbForm.password.trim().length === 0 && !dbForm.passwordConfigured) {
+        errors.password = "Password is required unless you clear it or keep a configured password.";
+      }
+    }
+
+    setDbFieldErrors(errors);
+    if (Object.keys(errors).length > 0) {
+      setDbSaveMessage("Resolve the highlighted database settings errors.");
       return;
     }
+
     setDbSavePending(true);
     setDbSaveMessage("");
     try {
-      const payload = await api.saveDatabaseSettings({ enabled: dbEnabled, dsn: trimmedDsn || null });
+      const payload = await api.saveDatabaseSettings({
+        enabled: dbForm.enabled,
+        host: dbForm.host.trim(),
+        port,
+        database: dbForm.database.trim(),
+        username: dbForm.username.trim(),
+        password: dbForm.password.length > 0 ? dbForm.password : null,
+        password_clear: dbForm.passwordClear,
+        ssl_mode: dbForm.sslMode,
+        extra_params: dbForm.extraParams.trim(),
+        container_name: dbForm.containerName.trim(),
+        container_image: dbForm.containerImage.trim(),
+        container_host_port: hostPort,
+        volume_name: dbForm.volumeName.trim(),
+        dsn_import: null,
+      });
       const settings = toDatabaseSettingsModel(payload);
       setDbSettings(settings);
+      setDbForm((current) => ({ ...toDatabaseForm(settings), password: "", dsnImport: current.dsnImport }));
       setDbSaveMessage("Database settings saved.");
     } catch (error) {
       setDbSaveMessage(toUserError(error, "Unable to save database settings."));
@@ -1146,6 +1325,20 @@ export function App(): JSX.Element {
       setDbConnectionMessage(toUserError(error, "Unable to run database connection test."));
     } finally {
       setDbTestPending(false);
+    }
+  };
+
+  const onCopyDatabaseCommand = async (label: "Docker" | "Podman", command: string): Promise<void> => {
+    setDbCopyStatus("");
+    setDbCopyError("");
+    try {
+      if (typeof navigator.clipboard?.writeText !== "function") {
+        throw new Error("Clipboard API unavailable");
+      }
+      await navigator.clipboard.writeText(command);
+      setDbCopyStatus(`${label} command copied to clipboard.`);
+    } catch {
+      setDbCopyError("Unable to copy command to clipboard.");
     }
   };
 
@@ -1355,6 +1548,30 @@ export function App(): JSX.Element {
       ? { ...DEFAULT_PAGE, unknown: false }
       : { ...NOT_FOUND_PAGE, unknown: true };
 
+  const previewPassword =
+    dbForm.password.length > 0
+      ? dbForm.password
+      : dbForm.passwordConfigured
+        ? "<configured-password>"
+        : "<password>";
+  const previewHost = dbForm.host.trim().length > 0 ? dbForm.host.trim() : "<host>";
+  const previewDatabase = dbForm.database.trim().length > 0 ? dbForm.database.trim() : "<database>";
+  const previewUsername = dbForm.username.trim().length > 0 ? dbForm.username.trim() : "<username>";
+  const previewPort = dbForm.port.trim().length > 0 ? dbForm.port.trim() : "5432";
+  const previewContainerPort = dbForm.containerHostPort.trim().length > 0 ? dbForm.containerHostPort.trim() : "5432";
+  const dockerPreview =
+    `docker run --name ${quoteShellPreview(dbForm.containerName)} ` +
+    `-e POSTGRES_DB=${quoteShellPreview(previewDatabase)} ` +
+    `-e POSTGRES_USER=${quoteShellPreview(previewUsername)} ` +
+    `-e POSTGRES_PASSWORD=${quoteShellPreview(previewPassword)} ` +
+    `-p ${quoteShellPreview(previewContainerPort)}:5432 ` +
+    `-v ${quoteShellPreview(dbForm.volumeName)}:/var/lib/postgresql/data ` +
+    `${quoteShellPreview(dbForm.containerImage)}`;
+  const podmanPreview = dockerPreview.replace(/^docker/, "podman");
+  const dsnPreview =
+    `postgresql://${quoteShellPreview(previewUsername)}:${quoteShellPreview(previewPassword)}` +
+    `@${quoteShellPreview(previewHost)}:${quoteShellPreview(previewPort)}/${quoteShellPreview(previewDatabase)}`;
+
   return (
     <div className="admin-shell">
       <a className="skip-link" href="#main-content">
@@ -1480,27 +1697,58 @@ export function App(): JSX.Element {
           ) : null}
 
           {currentPath === "/database" ? (
-            <section className="admin-section" aria-label="Database management">
+            <section className="admin-section database-console" aria-label="Database management">
               {dbLoadError ? <p role="alert">{dbLoadError}</p> : null}
-              {dbGuidance ? (
-                <article className="admin-card" aria-labelledby="db-setup-guidance-title">
-                  <h2 id="db-setup-guidance-title">Database setup guidance</h2>
-                  <p>Recommended image: {dbGuidance.image}</p>
-                  <p><strong>Docker</strong></p>
-                  <pre>{dbGuidance.docker}</pre>
-                  <p><strong>Podman</strong></p>
-                  <pre>{dbGuidance.podman}</pre>
-                  {dbGuidance.notes.length > 0 ? (
-                    <ul>
-                      {dbGuidance.notes.map((note) => (
-                        <li key={note}>{note}</li>
-                      ))}
-                    </ul>
+              <div className="database-terminal-bar">
+                <p className="database-terminal-title">workflowsctl / database-profile / local</p>
+                <div className="database-terminal-chips" aria-label="Database profile status chips">
+                  <span className="database-chip">enabled: {dbForm.enabled ? "on" : "off"}</span>
+                  <span className="database-chip">configured: {dbSettings?.configured ? "yes" : "no"}</span>
+                  <span className="database-chip">
+                    password: {dbForm.password.length > 0 ? "typed" : dbForm.passwordConfigured ? "configured" : "pending"}
+                  </span>
+                  <span className="database-chip">legacy re-entry: {dbForm.dsnImport.trim().length > 0 ? "staged" : "clean"}</span>
+                </div>
+              </div>
+              <div className="database-grid">
+                <aside className="database-rail">
+                  <article className="admin-card" aria-labelledby="db-rail-steps-title">
+                    <h2 id="db-rail-steps-title">Operator steps</h2>
+                    <ol>
+                      <li>Connection profile</li>
+                      <li>Container command</li>
+                      <li>Connection test</li>
+                      <li>Persist settings</li>
+                    </ol>
+                  </article>
+                  {dbGuidance ? (
+                    <article className="admin-card" aria-labelledby="db-setup-guidance-title">
+                      <h2 id="db-setup-guidance-title">Database setup guidance</h2>
+                      <p>Recommended image: {dbGuidance.image}</p>
+                      {dbGuidance.notes.length > 0 ? (
+                        <ul>
+                          {dbGuidance.notes.map((note) => (
+                            <li key={note}>{note}</li>
+                          ))}
+                        </ul>
+                      ) : null}
+                    </article>
                   ) : null}
-                </article>
-              ) : null}
+                  <article className="admin-card database-side-panel">
+                    <h3>Advanced DSN import</h3>
+                    <label htmlFor="database-dsn-import">Advanced DSN import</label>
+                    <textarea
+                      id="database-dsn-import"
+                      value={dbForm.dsnImport}
+                      onChange={(event) => setDbForm((current) => ({ ...current, dsnImport: event.target.value }))}
+                      placeholder="postgresql://user:password@host:5432/workflows?sslmode=require"
+                    />
+                    <button type="button" onClick={onImportDatabaseDsn}>Import DSN</button>
+                    {dbFieldErrors.dsnImport ? <p role="alert">{dbFieldErrors.dsnImport}</p> : null}
+                  </article>
+                </aside>
 
-              <article className="admin-card" aria-labelledby="db-settings-title">
+                <article className="admin-card" aria-labelledby="db-settings-title">
                 <h2 id="db-settings-title">Database settings</h2>
                 {dbSettings ? (
                   <p>
@@ -1511,29 +1759,70 @@ export function App(): JSX.Element {
                   <label>
                     <input
                       type="checkbox"
-                      checked={dbEnabled}
-                      onChange={(event) => setDbEnabled(event.target.checked)}
+                      checked={dbForm.enabled}
+                      onChange={(event) => setDbForm((current) => ({ ...current, enabled: event.target.checked }))}
                     />
                     Enable PostgreSQL metadata backend
                   </label>
-                  <label htmlFor="postgres-dsn">PostgreSQL DSN</label>
+                  <label htmlFor="database-host">Host</label>
+                  <input id="database-host" value={dbForm.host} onChange={(event) => setDbForm((current) => ({ ...current, host: event.target.value }))} />
+                  {dbFieldErrors.host ? <p role="alert">{dbFieldErrors.host}</p> : null}
+                  <label htmlFor="database-port">Port</label>
+                  <input id="database-port" value={dbForm.port} onChange={(event) => setDbForm((current) => ({ ...current, port: event.target.value }))} />
+                  {dbFieldErrors.port ? <p role="alert">{dbFieldErrors.port}</p> : null}
+                  <label htmlFor="database-name">Database</label>
+                  <input id="database-name" value={dbForm.database} onChange={(event) => setDbForm((current) => ({ ...current, database: event.target.value }))} />
+                  {dbFieldErrors.database ? <p role="alert">{dbFieldErrors.database}</p> : null}
+                  <label htmlFor="database-username">Username</label>
+                  <input id="database-username" value={dbForm.username} onChange={(event) => setDbForm((current) => ({ ...current, username: event.target.value }))} />
+                  {dbFieldErrors.username ? <p role="alert">{dbFieldErrors.username}</p> : null}
+                  <label htmlFor="database-password">Password</label>
                   <input
-                    id="postgres-dsn"
-                    name="postgres-dsn"
+                    id="database-password"
                     type="password"
                     autoComplete="off"
-                    value={dbDsn}
-                    onChange={(event) => setDbDsn(event.target.value)}
-                    placeholder="postgresql://user:password@host:5432/workflows"
+                    value={dbForm.password}
+                    onChange={(event) => setDbForm((current) => ({ ...current, password: event.target.value, passwordClear: false }))}
                   />
+                  <label>
+                    <input
+                      type="checkbox"
+                      checked={dbForm.passwordClear}
+                      onChange={(event) => setDbForm((current) => ({ ...current, passwordClear: event.target.checked }))}
+                    />
+                    Clear configured password
+                  </label>
+                  {dbFieldErrors.password ? <p role="alert">{dbFieldErrors.password}</p> : null}
+                  <label htmlFor="database-ssl-mode">SSL mode</label>
+                  <select id="database-ssl-mode" value={dbForm.sslMode} onChange={(event) => setDbForm((current) => ({ ...current, sslMode: event.target.value as DatabaseSslMode }))}>
+                    <option value="disable">disable</option>
+                    <option value="prefer">prefer</option>
+                    <option value="require">require</option>
+                    <option value="verify-ca">verify-ca</option>
+                    <option value="verify-full">verify-full</option>
+                  </select>
+                  <label htmlFor="database-extra-params">Extra parameters</label>
+                  <input id="database-extra-params" value={dbForm.extraParams} onChange={(event) => setDbForm((current) => ({ ...current, extraParams: event.target.value }))} />
+                  <label htmlFor="database-container-name">Container name</label>
+                  <input id="database-container-name" value={dbForm.containerName} onChange={(event) => setDbForm((current) => ({ ...current, containerName: event.target.value }))} />
+                  {dbFieldErrors.containerName ? <p role="alert">{dbFieldErrors.containerName}</p> : null}
+                  <label htmlFor="database-container-image">Container image</label>
+                  <input id="database-container-image" value={dbForm.containerImage} onChange={(event) => setDbForm((current) => ({ ...current, containerImage: event.target.value }))} />
+                  {dbFieldErrors.containerImage ? <p role="alert">{dbFieldErrors.containerImage}</p> : null}
+                  <label htmlFor="database-host-port">Host port</label>
+                  <input id="database-host-port" value={dbForm.containerHostPort} onChange={(event) => setDbForm((current) => ({ ...current, containerHostPort: event.target.value }))} />
+                  {dbFieldErrors.containerHostPort ? <p role="alert">{dbFieldErrors.containerHostPort}</p> : null}
+                  <label htmlFor="database-volume-name">Volume name</label>
+                  <input id="database-volume-name" value={dbForm.volumeName} onChange={(event) => setDbForm((current) => ({ ...current, volumeName: event.target.value }))} />
+                  {dbFieldErrors.volumeName ? <p role="alert">{dbFieldErrors.volumeName}</p> : null}
                   <button type="submit" disabled={dbSavePending}>
                     Save settings
                   </button>
                 </form>
                 {dbSaveMessage ? <p role="status">{dbSaveMessage}</p> : null}
-              </article>
+                </article>
 
-              <article className="admin-card" aria-labelledby="db-test-title">
+                <article className="admin-card database-command-pane" aria-labelledby="db-test-title">
                 <h2 id="db-test-title">Connection check</h2>
                 <button type="button" onClick={() => void onTestDatabaseConnection()} disabled={dbTestPending}>
                   Test connection
@@ -1559,7 +1848,27 @@ export function App(): JSX.Element {
                     ) : null}
                   </div>
                 ) : null}
-              </article>
+                  <h3>Command preview</h3>
+                  <p>Connection DSN preview</p>
+                  <pre>{dsnPreview}</pre>
+                  <p><strong>Docker</strong></p>
+                  <pre>{dockerPreview}</pre>
+                  <button type="button" onClick={() => void onCopyDatabaseCommand("Docker", dockerPreview)}>
+                    Copy Docker command
+                  </button>
+                  <p><strong>Podman</strong></p>
+                  <pre>{podmanPreview}</pre>
+                  <button type="button" onClick={() => void onCopyDatabaseCommand("Podman", podmanPreview)}>
+                    Copy Podman command
+                  </button>
+                  {dbCopyStatus ? (
+                    <p role="status" aria-live="polite" aria-label="Clipboard status">
+                      {dbCopyStatus}
+                    </p>
+                  ) : null}
+                  {dbCopyError ? <p role="alert">{dbCopyError}</p> : null}
+                </article>
+              </div>
             </section>
           ) : null}
 

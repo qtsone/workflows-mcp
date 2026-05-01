@@ -3,7 +3,7 @@ from __future__ import annotations
 import sqlite3
 from pathlib import Path
 
-CURRENT_SCHEMA_VERSION = 6
+CURRENT_SCHEMA_VERSION = 7
 DEFAULT_JOB_TIMEOUT_SECONDS = 3600
 
 
@@ -92,6 +92,11 @@ def migrate_metadata_db(conn: sqlite3.Connection) -> None:
             _migrate_v5_to_v6(conn)
             conn.execute(
                 "INSERT OR IGNORE INTO schema_migrations(version) VALUES (6)"
+            )
+        if max_version < 7:
+            _migrate_v6_to_v7(conn)
+            conn.execute(
+                "INSERT OR IGNORE INTO schema_migrations(version) VALUES (7)"
             )
 
         # Phase 10+ internal-only resumable state for paused runs.
@@ -449,6 +454,63 @@ def _migrate_v5_to_v6(conn: sqlite3.Connection) -> None:
         "CREATE INDEX IF NOT EXISTS idx_job_runs_status ON job_runs("
         "status ASC, started_at ASC, run_id ASC)"
     )
+
+
+def _migrate_v6_to_v7(conn: sqlite3.Connection) -> None:
+    _ensure_postgresql_settings_structured_columns(conn)
+
+
+def _ensure_postgresql_settings_structured_columns(conn: sqlite3.Connection) -> None:
+    columns = _table_columns(conn, "postgresql_settings")
+    if "host" not in columns:
+        conn.execute(
+            "ALTER TABLE postgresql_settings ADD COLUMN host TEXT NOT NULL DEFAULT '127.0.0.1'"
+        )
+    if "port" not in columns:
+        conn.execute(
+            "ALTER TABLE postgresql_settings ADD COLUMN port INTEGER NOT NULL DEFAULT 5432"
+        )
+    if "database" not in columns:
+        conn.execute(
+            "ALTER TABLE postgresql_settings ADD COLUMN database TEXT NOT NULL DEFAULT 'workflows'"
+        )
+    if "username" not in columns:
+        conn.execute(
+            "ALTER TABLE postgresql_settings ADD COLUMN username TEXT NOT NULL DEFAULT 'workflows'"
+        )
+    if "ssl_mode" not in columns:
+        conn.execute(
+            "ALTER TABLE postgresql_settings ADD COLUMN ssl_mode TEXT NOT NULL DEFAULT 'disable'"
+        )
+    if "extra_params" not in columns:
+        conn.execute(
+            "ALTER TABLE postgresql_settings ADD COLUMN extra_params TEXT NOT NULL DEFAULT ''"
+        )
+    if "container_name" not in columns:
+        conn.execute(
+            "ALTER TABLE postgresql_settings ADD COLUMN "
+            "container_name TEXT NOT NULL DEFAULT 'workflows-postgres'"
+        )
+    if "container_image" not in columns:
+        conn.execute(
+            "ALTER TABLE postgresql_settings ADD COLUMN "
+            "container_image TEXT NOT NULL DEFAULT 'pgvector/pgvector:pg17'"
+        )
+    if "container_host_port" not in columns:
+        conn.execute(
+            "ALTER TABLE postgresql_settings ADD COLUMN "
+            "container_host_port INTEGER NOT NULL DEFAULT 5432"
+        )
+    if "volume_name" not in columns:
+        conn.execute(
+            "ALTER TABLE postgresql_settings ADD COLUMN "
+            "volume_name TEXT NOT NULL DEFAULT 'workflows-postgres-data'"
+        )
+    if "legacy_dsn_upgrade_status" not in columns:
+        conn.execute(
+            "ALTER TABLE postgresql_settings ADD COLUMN "
+            "legacy_dsn_upgrade_status TEXT NOT NULL DEFAULT 'not_started'"
+        )
 
 
 def _ensure_job_runs_execution_state_column(conn: sqlite3.Connection) -> None:

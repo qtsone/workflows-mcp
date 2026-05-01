@@ -50,7 +50,7 @@ def test_concurrent_metadata_migrations_apply_once(tmp_path: Path) -> None:
         versions = conn.execute(
             "SELECT version FROM schema_migrations ORDER BY version"
         ).fetchall()
-        assert [int(row[0]) for row in versions] == [1, 2, 3, 4, 5, 6]
+        assert [int(row[0]) for row in versions] == [1, 2, 3, 4, 5, 6, 7]
     finally:
         conn.close()
 
@@ -155,7 +155,7 @@ def test_watcher_queue_v1_shape_is_upgraded_to_v2(tmp_path: Path) -> None:
         versions = conn.execute(
             "SELECT version FROM schema_migrations ORDER BY version"
         ).fetchall()
-        assert [int(row[0]) for row in versions] == [1, 2, 3, 4, 5, 6]
+        assert [int(row[0]) for row in versions] == [1, 2, 3, 4, 5, 6, 7]
 
         workflow_sources_indexes = {
             str(row[1])
@@ -182,7 +182,90 @@ def test_workflow_sources_unique_index_is_applied_idempotently_in_v3(tmp_path: P
         versions = conn.execute(
             "SELECT version FROM schema_migrations ORDER BY version"
         ).fetchall()
-        assert [int(row[0]) for row in versions] == [1, 2, 3, 4, 5, 6]
+        assert [int(row[0]) for row in versions] == [1, 2, 3, 4, 5, 6, 7]
+    finally:
+        conn.close()
+
+
+def test_postgresql_settings_structured_columns_are_added_without_touching_legacy_dsn(
+    tmp_path: Path,
+) -> None:
+    db_path = tmp_path / "metadata.db"
+    seed_conn = sqlite3.connect(db_path)
+    try:
+        seed_conn.execute(
+            "CREATE TABLE schema_migrations (version INTEGER PRIMARY KEY, applied_at TEXT)"
+        )
+        seed_conn.execute(
+            "INSERT INTO schema_migrations(version, applied_at) VALUES (6, CURRENT_TIMESTAMP)"
+        )
+        seed_conn.execute(
+            """
+            CREATE TABLE postgresql_settings (
+                id INTEGER PRIMARY KEY CHECK (id = 1),
+                dsn_ref TEXT,
+                enabled INTEGER NOT NULL DEFAULT 0,
+                updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+            )
+            """
+        )
+        seed_conn.execute(
+            "INSERT INTO postgresql_settings(id, dsn_ref, enabled) VALUES (1, 'postgresql.dsn', 1)"
+        )
+        seed_conn.execute(
+            """
+            CREATE TABLE encrypted_secret_metadata (
+                id TEXT PRIMARY KEY,
+                secret_name TEXT NOT NULL UNIQUE,
+                key_id TEXT,
+                encrypted_payload TEXT NOT NULL,
+                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+            )
+            """
+        )
+        seed_conn.execute(
+            "INSERT INTO encrypted_secret_metadata"
+            "(id, secret_name, encrypted_payload) "
+            "VALUES ('s1', 'postgresql.dsn', 'ciphertext')"
+        )
+        seed_conn.commit()
+    finally:
+        seed_conn.close()
+
+    conn = connect_metadata_db(db_path)
+    try:
+        migrate_metadata_db(conn)
+        columns = {
+            str(row[1]) for row in conn.execute("PRAGMA table_info('postgresql_settings')")
+        }
+        assert {
+            "host",
+            "port",
+            "database",
+            "username",
+            "ssl_mode",
+            "extra_params",
+            "container_name",
+            "container_image",
+            "container_host_port",
+            "volume_name",
+            "legacy_dsn_upgrade_status",
+        }.issubset(columns)
+        settings = conn.execute(
+            "SELECT dsn_ref, enabled, legacy_dsn_upgrade_status "
+            "FROM postgresql_settings WHERE id = 1"
+        ).fetchone()
+        assert settings is not None
+        assert str(settings[0]) == "postgresql.dsn"
+        assert int(settings[1]) == 1
+        assert str(settings[2]) == "not_started"
+        secret = conn.execute(
+            "SELECT encrypted_payload FROM encrypted_secret_metadata "
+            "WHERE secret_name = 'postgresql.dsn'"
+        ).fetchone()
+        assert secret is not None
+        assert str(secret[0]) == "ciphertext"
     finally:
         conn.close()
 
@@ -299,7 +382,7 @@ def test_job_runs_v3_shape_is_upgraded_to_v4(tmp_path: Path) -> None:
         versions = conn.execute(
             "SELECT version FROM schema_migrations ORDER BY version"
         ).fetchall()
-        assert [int(row[0]) for row in versions] == [1, 3, 4, 5, 6]
+        assert [int(row[0]) for row in versions] == [1, 3, 4, 5, 6, 7]
     finally:
         conn.close()
 
@@ -425,7 +508,7 @@ def test_job_runs_v4_shape_is_upgraded_to_v5_with_safe_defaults(tmp_path: Path) 
         versions = conn.execute(
             "SELECT version FROM schema_migrations ORDER BY version"
         ).fetchall()
-        assert [int(row[0]) for row in versions] == [1, 4, 5, 6]
+        assert [int(row[0]) for row in versions] == [1, 4, 5, 6, 7]
     finally:
         conn.close()
 
@@ -561,6 +644,6 @@ def test_job_runs_v5_shape_is_upgraded_to_v6_with_created_started_contract(tmp_p
         versions = conn.execute(
             "SELECT version FROM schema_migrations ORDER BY version"
         ).fetchall()
-        assert [int(row[0]) for row in versions] == [1, 5, 6]
+        assert [int(row[0]) for row in versions] == [1, 5, 6, 7]
     finally:
         conn.close()
