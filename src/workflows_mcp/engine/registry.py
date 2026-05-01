@@ -576,6 +576,12 @@ class WorkflowRegistry:
         self._workflow_sources.clear()
         logger.info(f"Cleared {count} workflows from registry")
 
+    def replace_with(self, other: "WorkflowRegistry") -> None:
+        """Atomically replace this registry contents with another registry."""
+        self._workflows = dict(other._workflows)
+        self._workflow_sources = dict(other._workflow_sources)
+        logger.info(f"Replaced registry contents with {len(self._workflows)} workflows")
+
     def __len__(self) -> int:
         """Return number of registered workflows."""
         return len(self._workflows)

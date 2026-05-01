@@ -32,13 +32,9 @@ def client(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> TestClient:
     return TestClient(app)
 
 
-def test_config_validate_422_uses_error_envelope(client: TestClient) -> None:
-    """A 422 on /config/validate must return the stable ErrorEnvelope, not FastAPI detail."""
-    response = client.post(
-        "/config/validate",
-        headers={"Authorization": "Bearer 0123456789abcdef0123456789abcdef"},
-        json={"profiles": "bad"},
-    )
+def test_login_422_uses_error_envelope(client: TestClient) -> None:
+    """A 422 on admin login must return ErrorEnvelope, not raw FastAPI detail."""
+    response = client.post("/api/admin/v1/auth/login", json={"password": 123})
 
     assert response.status_code == 422
     payload = response.json()
@@ -49,8 +45,8 @@ def test_config_validate_422_uses_error_envelope(client: TestClient) -> None:
 
 
 def test_missing_auth_401_uses_error_envelope(client: TestClient) -> None:
-    """A 401 on /config/validate (no token) must return the stable ErrorEnvelope."""
-    response = client.post("/config/validate", json={"profiles": []})
+    """A 401 on session route (no cookie) must return the stable ErrorEnvelope."""
+    response = client.get("/api/admin/v1/auth/session")
 
     assert response.status_code == 401
     payload = response.json()
@@ -60,13 +56,9 @@ def test_missing_auth_401_uses_error_envelope(client: TestClient) -> None:
     assert "request_id" in payload["error"]
 
 
-def test_config_apply_422_uses_error_envelope(client: TestClient) -> None:
-    """A 422 on /config/apply (invalid payload) must return the stable ErrorEnvelope."""
-    response = client.post(
-        "/config/apply",
-        headers={"Authorization": "Bearer 0123456789abcdef0123456789abcdef"},
-        json={"profiles": "bad"},
-    )
+def test_login_missing_password_422_uses_error_envelope(client: TestClient) -> None:
+    """A 422 on admin login (missing required field) must return ErrorEnvelope."""
+    response = client.post("/api/admin/v1/auth/login", json={})
 
     assert response.status_code == 422
     payload = response.json()
@@ -75,9 +67,12 @@ def test_config_apply_422_uses_error_envelope(client: TestClient) -> None:
     assert payload["error"]["code"] == "VALIDATION_FAILED"
 
 
-def test_config_apply_missing_auth_uses_error_envelope(client: TestClient) -> None:
-    """A 401 on /config/apply (no token) must return the stable ErrorEnvelope."""
-    response = client.post("/config/apply", json={"profiles": []})
+def test_mcp_missing_auth_uses_error_envelope(client: TestClient) -> None:
+    """A 401 on /mcp (no bearer token) must return the stable ErrorEnvelope."""
+    response = client.post(
+        "/mcp",
+        json={"jsonrpc": "2.0", "id": "1", "method": "tools/list", "params": {}},
+    )
 
     assert response.status_code == 401
     payload = response.json()
@@ -92,11 +87,8 @@ def test_method_not_allowed_uses_error_envelope(client: TestClient) -> None:
     routing layer.  This test ensures our handler intercepts it before the raw
     ``{"detail": "Method Not Allowed"}`` response escapes to callers.
     """
-    # /config/validate is POST-only; calling GET triggers a 405.
-    response = client.get(
-        "/config/validate",
-        headers={"Authorization": "Bearer 0123456789abcdef0123456789abcdef"},
-    )
+    # /api/admin/v1/auth/logout is POST-only; calling GET triggers a 405.
+    response = client.get("/api/admin/v1/auth/logout")
 
     assert response.status_code == 405
     payload = response.json()

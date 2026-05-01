@@ -221,6 +221,7 @@ __marimo__/
 .worktrees/
 ARCHITECTURE.md
 CLAUDE.md
+AGENTS.md
 
 # Docs configuration
 docs/*
@@ -230,3 +231,9 @@ docs/*
 .workflows-state/
 .DS_Store
 .serena/
+web/node_modules/
+web/dist/
+web/test-results/
+src/workflows_mcp/static/admin/
+.playwright-mcp/
+.superpowers/

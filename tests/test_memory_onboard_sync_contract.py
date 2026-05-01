@@ -52,6 +52,7 @@ def mock_ctx() -> MagicMock:
     app_ctx = MagicMock()
     app_ctx.memory_backend = None
     app_ctx.memory_backend_lock = None
+    app_ctx.memory_backend_unavailable_error = None
     ctx.request_context.lifespan_context = app_ctx
     exec_context = MagicMock()
     exec_context.user_string_id = None
@@ -427,7 +428,8 @@ class TestIngestionLLMValidation:
         payload = json.loads(result.content[0].text)
         err = payload.get("error", {})
         assert err.get("code") == "MEM_NO_ACTIVE_CONTEXT", (
-            f"Expected MEM_NO_ACTIVE_CONTEXT from sync({{}}), got: {err.get('code')} — payload: {payload}"
+            "Expected MEM_NO_ACTIVE_CONTEXT from sync({}), "
+            f"got: {err.get('code')} — payload: {payload}"
         )
         assert err.get("code") != "MEM_PROJECT_FLOW_EMPTY"
 
@@ -573,7 +575,7 @@ class TestActiveScopeSourceLabeling:
     ) -> None:
         """When scope is resolved from the session active context, scope_source values
         must be 'active_context', not 'request'."""
-        from unittest.mock import AsyncMock, MagicMock as MM
+        from unittest.mock import AsyncMock
 
         from workflows_mcp.engine.memory_scope_resolver import SyncContextCandidate, scope_key
 
@@ -628,3 +630,324 @@ class TestActiveScopeSourceLabeling:
                     f"scope_source[{field_name!r}] expected 'active_context', got {source!r}"
                 )
 
+
+class TestActiveProjectDefaultResolution:
+    @pytest.mark.asyncio
+    async def test_memory_without_scope_uses_active_project_defaults(
+        self, mock_ctx: MagicMock
+    ) -> None:
+        from unittest.mock import AsyncMock
+
+        from workflows_mcp.context import SessionProjectContext
+
+        session = MagicMock(name="project_session")
+        mock_ctx.request_context.session = session
+        app_ctx = mock_ctx.request_context.lifespan_context
+        app_ctx.get_active_project.return_value = SessionProjectContext(
+            project_id="p1",
+            slug="forge",
+            palace="forge-palace",
+            default_wing="backend",
+            default_room="orchestrator",
+            source="session_selected",
+        )
+
+        captured: list[Any] = []
+
+        async def _capture_execute(self: Any, request: Any) -> Any:
+            captured.append(request)
+            from workflows_mcp.engine.memory_service import MemoryResult, QueryMemoryResult
+
+            return MemoryResult(
+                operation="query",
+                query=QueryMemoryResult(
+                    facts=[], memories=[], communities=[], diagnostics={}, evidence=[], paths=[]
+                ),
+            )
+
+        memory = _get_tool_fn("memory")
+        with (
+            patch("workflows_mcp.tools_memory.PostgresBackend", return_value=AsyncMock()),
+            patch(
+                "workflows_mcp.engine.memory_service.MemoryService.execute",
+                new=_capture_execute,
+            ),
+        ):
+            await memory(operation="query", query={"text": "test"}, ctx=mock_ctx)
+
+        assert captured, "Expected memory request capture"
+        assert captured[0].scope.palace == "forge-palace"
+        assert captured[0].scope.wing == "backend"
+        assert captured[0].scope.room == "orchestrator"
+
+    @pytest.mark.asyncio
+    async def test_context_id_scope_token_precedence_not_overridden_by_active_project(
+        self, mock_ctx: MagicMock
+    ) -> None:
+        from unittest.mock import AsyncMock
+
+        from workflows_mcp.context import SessionProjectContext
+
+        app_ctx = mock_ctx.request_context.lifespan_context
+        app_ctx.get_active_project.return_value = SessionProjectContext(
+            project_id="p1",
+            slug="forge",
+            palace="forge-palace",
+            default_wing="backend",
+            default_room="orchestrator",
+            source="token_bound",
+        )
+
+        # Ensure context_id/scope_token resolve in memory_service via execution context maps.
+        exec_context = app_ctx.create_execution_context.return_value
+        exec_context.memory_scope_tokens = {
+            "st_abc": {"palace": "token-palace", "wing": "token-wing", "room": "token-room"}
+        }
+        exec_context.memory_context_scopes = {
+            "ctx_abc": {"palace": "ctx-palace", "wing": "ctx-wing", "room": "ctx-room"}
+        }
+
+        memory = _get_tool_fn("memory")
+        backend = AsyncMock()
+        backend.query_memories = AsyncMock(
+            return_value={"memories": [], "facts": [], "communities": []}
+        )
+        fake_embedding = [0.0] * 1536
+
+        with (
+            patch("workflows_mcp.tools_memory.PostgresBackend", return_value=backend),
+            patch(
+                "workflows_mcp.engine.memory_service.compute_embedding",
+                return_value=(fake_embedding, "text-embedding-3-small", 1, 0.0),
+            ),
+        ):
+            result = await memory(
+                operation="query",
+                scope_token="st_abc",
+                context_id="ctx_abc",
+                query={"text": "test"},
+                ctx=mock_ctx,
+            )
+
+        payload = json.loads(result.content[0].text)
+        resolved = payload.get("resolved_scope", {})
+        assert resolved.get("palace") == "token-palace"
+        assert resolved.get("wing") == "token-wing"
+        assert resolved.get("room") == "token-room"
+
+    @pytest.mark.asyncio
+    async def test_partial_scope_without_palace_uses_active_project_defaults(
+        self, mock_ctx: MagicMock
+    ) -> None:
+        from unittest.mock import AsyncMock
+
+        from workflows_mcp.context import SessionProjectContext
+
+        app_ctx = mock_ctx.request_context.lifespan_context
+        app_ctx.get_active_project.return_value = SessionProjectContext(
+            project_id="p2",
+            slug="atlas",
+            palace="atlas-palace",
+            default_wing="services",
+            default_room="planner",
+            source="session_selected",
+        )
+
+        captured: list[Any] = []
+
+        async def _capture_execute(self: Any, request: Any) -> Any:
+            captured.append(request)
+            from workflows_mcp.engine.memory_service import MemoryResult, QueryMemoryResult
+
+            return MemoryResult(
+                operation="query",
+                query=QueryMemoryResult(
+                    facts=[], memories=[], communities=[], diagnostics={}, evidence=[], paths=[]
+                ),
+            )
+
+        memory = _get_tool_fn("memory")
+        with (
+            patch("workflows_mcp.tools_memory.PostgresBackend", return_value=AsyncMock()),
+            patch(
+                "workflows_mcp.engine.memory_service.MemoryService.execute",
+                new=_capture_execute,
+            ),
+        ):
+            await memory(
+                operation="query",
+                scope={"compartment": "ci"},
+                query={"text": "x"},
+                ctx=mock_ctx,
+            )
+
+        assert captured
+        assert captured[0].scope.palace == "atlas-palace"
+        assert captured[0].scope.wing == "services"
+        assert captured[0].scope.room == "planner"
+
+    @pytest.mark.asyncio
+    async def test_explicit_palace_not_overridden_defaults_only_when_matching(
+        self, mock_ctx: MagicMock
+    ) -> None:
+        from unittest.mock import AsyncMock
+
+        from workflows_mcp.context import SessionProjectContext
+
+        app_ctx = mock_ctx.request_context.lifespan_context
+        app_ctx.get_active_project.return_value = SessionProjectContext(
+            project_id="p3",
+            slug="forge",
+            palace="forge-palace",
+            default_wing="backend",
+            default_room="agents",
+            source="token_bound",
+        )
+
+        captured: list[Any] = []
+
+        async def _capture_execute(self: Any, request: Any) -> Any:
+            captured.append(request)
+            from workflows_mcp.engine.memory_service import MemoryResult, QueryMemoryResult
+
+            return MemoryResult(
+                operation="query",
+                query=QueryMemoryResult(
+                    facts=[], memories=[], communities=[], diagnostics={}, evidence=[], paths=[]
+                ),
+            )
+
+        memory = _get_tool_fn("memory")
+        with (
+            patch("workflows_mcp.tools_memory.PostgresBackend", return_value=AsyncMock()),
+            patch(
+                "workflows_mcp.engine.memory_service.MemoryService.execute",
+                new=_capture_execute,
+            ),
+        ):
+            await memory(
+                operation="query",
+                scope={"palace": "other-palace"},
+                query={"text": "x"},
+                ctx=mock_ctx,
+            )
+            await memory(
+                operation="query",
+                scope={"palace": "forge-palace"},
+                query={"text": "x"},
+                ctx=mock_ctx,
+            )
+
+        assert len(captured) == 2
+        assert captured[0].scope.palace == "other-palace"
+        assert captured[0].scope.wing is None
+        assert captured[0].scope.room is None
+        assert captured[1].scope.palace == "forge-palace"
+        assert captured[1].scope.wing == "backend"
+        assert captured[1].scope.room == "agents"
+
+
+# ---------------------------------------------------------------------------
+# Task 6: strict HTTP adapter contract (onboard_http / sync_http)
+# ---------------------------------------------------------------------------
+
+
+class TestStrictHttpAdapters:
+    """Strict HTTP adapters must enforce OnboardRequest / SyncRequest validation
+    before delegating to the underlying orchestration logic.
+
+    onboard_http and sync_http:
+    - raise pydantic.ValidationError for unknown fields and legacy response.mode
+    - are async and accept ctx: AppContextType
+    - delegate to the underlying onboard()/sync() orchestration on valid input
+    """
+
+    @pytest.mark.asyncio
+    async def test_onboard_http_rejects_unknown_field(self, mock_ctx: MagicMock) -> None:
+        """onboard_http must raise ValidationError when an unknown field is present."""
+        from pydantic import ValidationError
+
+        from workflows_mcp.tools_memory import onboard_http
+
+        with pytest.raises(ValidationError):
+            await onboard_http(
+                {"scope": {"palace": "acme"}, "unknown": True},
+                ctx=mock_ctx,
+            )
+
+    @pytest.mark.asyncio
+    async def test_onboard_http_rejects_legacy_response_mode(
+        self, mock_ctx: MagicMock
+    ) -> None:
+        """onboard_http must raise ValidationError when response.mode is supplied."""
+        from pydantic import ValidationError
+
+        from workflows_mcp.tools_memory import onboard_http
+
+        with pytest.raises(ValidationError):
+            await onboard_http(
+                {"scope": {"palace": "acme"}, "response": {"mode": "programmatic"}},
+                ctx=mock_ctx,
+            )
+
+    @pytest.mark.asyncio
+    async def test_sync_http_rejects_unknown_field(self, mock_ctx: MagicMock) -> None:
+        """sync_http must raise ValidationError when an unknown field is present."""
+        from pydantic import ValidationError
+
+        from workflows_mcp.tools_memory import sync_http
+
+        with pytest.raises(ValidationError):
+            await sync_http(
+                {"scope": {"palace": "acme"}, "unknown": True},
+                ctx=mock_ctx,
+            )
+
+    @pytest.mark.asyncio
+    async def test_sync_http_rejects_legacy_response_mode(
+        self, mock_ctx: MagicMock
+    ) -> None:
+        """sync_http must raise ValidationError when response.mode is supplied."""
+        from pydantic import ValidationError
+
+        from workflows_mcp.tools_memory import sync_http
+
+        with pytest.raises(ValidationError):
+            await sync_http(
+                {"scope": {"palace": "acme"}, "response": {"mode": "programmatic"}},
+                ctx=mock_ctx,
+            )
+
+    @pytest.mark.asyncio
+    async def test_onboard_http_delegates_to_orchestration_on_valid_payload(
+        self, mock_ctx: MagicMock
+    ) -> None:
+        """onboard_http must return a dict result from the orchestration layer."""
+        from unittest.mock import patch
+
+        from workflows_mcp.tools_memory import onboard_http
+
+        with patch("workflows_mcp.tools_memory.PostgresBackend"):
+            result = await onboard_http(
+                {"scope": {"palace": "acme"}},
+                ctx=mock_ctx,
+            )
+        # Result must be a dict (JSON-decoded orchestration output).
+        assert isinstance(result, dict)
+
+    @pytest.mark.asyncio
+    async def test_sync_http_delegates_to_orchestration_on_valid_payload(
+        self, mock_ctx: MagicMock
+    ) -> None:
+        """sync_http must return a dict result from the orchestration layer."""
+        from unittest.mock import patch
+
+        from workflows_mcp.tools_memory import sync_http
+
+        with patch("workflows_mcp.tools_memory.PostgresBackend"):
+            result = await sync_http(
+                {},
+                ctx=mock_ctx,
+            )
+        # Result must be a dict (JSON-decoded orchestration output).
+        assert isinstance(result, dict)

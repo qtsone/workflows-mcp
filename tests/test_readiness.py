@@ -17,7 +17,10 @@ import asyncio
 from pathlib import Path
 
 import pytest
+from fastapi.testclient import TestClient
 
+from workflows_mcp.auth import TokenStore
+from workflows_mcp.http_app import create_app
 from workflows_mcp.http_models import ReadinessState
 from workflows_mcp.postgres_probe import PostgresProbe
 from workflows_mcp.readiness import ReadinessService
@@ -453,6 +456,175 @@ async def test_probe_respects_per_attempt_timeout(
 
     assert ok is False
     assert "postgresql_connectivity" in blockers
+
+
+# ---------------------------------------------------------------------------
+# /ready API contract tests for control-plane vs knowledge readiness
+# ---------------------------------------------------------------------------
+
+
+def test_ready_reports_explicit_server_and_knowledge_booleans_when_unconfigured(
+    tmp_path: Path,
+) -> None:
+    """`/ready` must report control-plane availability separately from knowledge readiness."""
+
+    class _Report:
+        def __init__(self) -> None:
+            self.state = ReadinessState.UNCONFIGURED
+            self.blockers = ["workflows_dir"]
+
+    class _Readiness:
+        async def evaluate(self) -> _Report:
+            return _Report()
+
+    token_store = TokenStore(tmp_path / "auth.json")
+    token_store.write_token("a" * 40)
+    app = create_app(readiness_service=_Readiness(), token_store=token_store)
+    client = TestClient(app)
+
+    response = client.get("/ready")
+    assert response.status_code == 503
+    payload = response.json()
+    assert payload["state"] == str(ReadinessState.UNCONFIGURED)
+    assert payload["blockers"] == ["workflows_dir"]
+    assert payload["server_ready"] is True
+    assert payload["knowledge_ready"] is False
+
+
+def test_ready_degrades_knowledge_without_implying_server_startup_failure(
+    tmp_path: Path,
+) -> None:
+    """When knowledge dependencies fail, `/ready` keeps server_ready=true and reports blockers."""
+
+    class _Report:
+        def __init__(self) -> None:
+            self.state = ReadinessState.PARTIALLY_CONFIGURED
+            self.blockers = ["postgresql_dsn_missing"]
+
+    class _Readiness:
+        async def evaluate(self) -> _Report:
+            return _Report()
+
+    token_store = TokenStore(tmp_path / "auth.json")
+    token_store.write_token("a" * 40)
+    app = create_app(readiness_service=_Readiness(), token_store=token_store)
+    client = TestClient(app)
+
+    response = client.get("/ready")
+    assert response.status_code == 503
+    payload = response.json()
+    assert payload["state"] == str(ReadinessState.PARTIALLY_CONFIGURED)
+    assert payload["blockers"] == ["postgresql_dsn_missing"]
+    assert payload["server_ready"] is True
+    assert payload["knowledge_ready"] is False
+
+
+def test_ready_reports_canonical_incompatible_schema_blocker(
+    tmp_path: Path,
+) -> None:
+    """`/ready` must surface incompatible schema with canonical blocker code."""
+
+    base_dir = tmp_path / ".workflows"
+    base_dir.mkdir()
+    (base_dir / "llm-config.yml").write_text("profiles: []\n")
+
+    service = ReadinessService(
+        base_dir=base_dir,
+        probe=FakeProbe(ok=False, blockers_on_fail=["postgresql_schema_incompatible"]),
+    )
+
+    token_store = TokenStore(tmp_path / "auth.json")
+    token_store.write_token("a" * 40)
+    app = create_app(readiness_service=service, token_store=token_store)
+    client = TestClient(app)
+
+    response = client.get("/ready")
+    assert response.status_code == 503
+    payload = response.json()
+    assert payload["server_ready"] is True
+    assert payload["knowledge_ready"] is False
+    assert payload["state"] == str(ReadinessState.PARTIALLY_CONFIGURED)
+    assert "knowledge_schema_incompatible" in payload["blockers"]
+
+
+def test_ready_reports_degraded_when_postgresql_missing(
+    tmp_path: Path,
+) -> None:
+    """`/ready` must include postgres missing blocker when DSN is absent."""
+
+    class _Report:
+        def __init__(self) -> None:
+            self.state = ReadinessState.PARTIALLY_CONFIGURED
+            self.blockers = ["postgresql_dsn_missing"]
+
+    class _Readiness:
+        async def evaluate(self) -> _Report:
+            return _Report()
+
+    token_store = TokenStore(tmp_path / "auth.json")
+    token_store.write_token("a" * 40)
+    app = create_app(readiness_service=_Readiness(), token_store=token_store)
+    client = TestClient(app)
+
+    response = client.get("/ready")
+    assert response.status_code == 503
+    payload = response.json()
+    assert payload["server_ready"] is True
+    assert payload["knowledge_ready"] is False
+    assert "postgresql_dsn_missing" in payload["blockers"]
+
+
+def test_ready_reports_degraded_when_pgvector_missing(
+    tmp_path: Path,
+) -> None:
+    """`/ready` must include pgvector blocker when extension is unavailable."""
+
+    class _Report:
+        def __init__(self) -> None:
+            self.state = ReadinessState.PARTIALLY_CONFIGURED
+            self.blockers = ["pgvector_missing"]
+
+    class _Readiness:
+        async def evaluate(self) -> _Report:
+            return _Report()
+
+    token_store = TokenStore(tmp_path / "auth.json")
+    token_store.write_token("a" * 40)
+    app = create_app(readiness_service=_Readiness(), token_store=token_store)
+    client = TestClient(app)
+
+    response = client.get("/ready")
+    assert response.status_code == 503
+    payload = response.json()
+    assert payload["server_ready"] is True
+    assert payload["knowledge_ready"] is False
+    assert "pgvector_missing" in payload["blockers"]
+
+
+def test_ready_reports_true_knowledge_flag_when_state_is_ready(tmp_path: Path) -> None:
+    """When readiness state is READY, `/ready` returns 200 and both booleans true."""
+
+    class _Report:
+        def __init__(self) -> None:
+            self.state = ReadinessState.READY
+            self.blockers: list[str] = []
+
+    class _Readiness:
+        async def evaluate(self) -> _Report:
+            return _Report()
+
+    token_store = TokenStore(tmp_path / "auth.json")
+    token_store.write_token("a" * 40)
+    app = create_app(readiness_service=_Readiness(), token_store=token_store)
+    client = TestClient(app)
+
+    response = client.get("/ready")
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["state"] == str(ReadinessState.READY)
+    assert payload["blockers"] == []
+    assert payload["server_ready"] is True
+    assert payload["knowledge_ready"] is True
 
 
 # ---------------------------------------------------------------------------

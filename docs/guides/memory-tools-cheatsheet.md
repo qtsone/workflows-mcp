@@ -242,6 +242,8 @@ Scan root policy:
 - `scan.root` is validated against a single scan root.
 - Default scan root is `/`.
 - Override with environment variable `WORKFLOWS_SCAN_ROOT=/your/root`.
+- For hardened deployments, do not leave `WORKFLOWS_SCAN_ROOT` at `/`; use a repo/workspace-specific path.
+- Effective knowledge file access is the intersection of `WORKFLOWS_SCAN_ROOT` and project `fs_root`, plus explicitly approved extra allowlist roots.
 
 ## 8) Common invalid payloads
 

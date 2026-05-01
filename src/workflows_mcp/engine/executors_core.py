@@ -466,6 +466,18 @@ class ShellExecutor(BlockExecutor):
             stdout_bytes, stderr_bytes = await asyncio.wait_for(
                 process.communicate(), timeout=timeout
             )
+        except asyncio.CancelledError:
+            # Deterministically clean up subprocess before propagating cancellation.
+            # Without this, asyncio transport cleanup can leak to GC after loop close,
+            # triggering PytestUnraisableExceptionWarning in cancellation-heavy tests.
+            if process.returncode is None:
+                process.terminate()
+                try:
+                    await asyncio.wait_for(process.wait(), timeout=5)
+                except TimeoutError:
+                    process.kill()
+                    await process.wait()
+            raise
         except TimeoutError:
             process.kill()
             await process.wait()

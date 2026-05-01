@@ -23,6 +23,37 @@ from typing import Protocol, runtime_checkable
 from .http_models import ReadinessState
 
 
+def _canonicalize_blocker(blocker: str) -> str:
+    """Return canonical blocker identifiers for readiness responses.
+
+    Keeps existing blocker strings stable except for legacy/variant schema
+    incompatibility names, which are normalized to the canonical
+    ``knowledge_schema_incompatible`` code used by control-plane readiness.
+    """
+
+    schema_incompatible_aliases = {
+        "knowledge_schema_incompatible",
+        "postgresql_schema_incompatible",
+        "knowledge_schema_invalid",
+    }
+    if blocker in schema_incompatible_aliases:
+        return "knowledge_schema_incompatible"
+    return blocker
+
+
+def _canonicalize_blockers(blockers: list[str]) -> list[str]:
+    """Normalize blocker identifiers while preserving order and uniqueness."""
+
+    canonical: list[str] = []
+    seen: set[str] = set()
+    for blocker in blockers:
+        mapped = _canonicalize_blocker(blocker)
+        if mapped not in seen:
+            seen.add(mapped)
+            canonical.append(mapped)
+    return canonical
+
+
 @runtime_checkable
 class Probe(Protocol):
     """Protocol for dependency readiness probes.
@@ -92,7 +123,7 @@ class ReadinessService:
         if not ok:
             return ReadinessReport(
                 state=ReadinessState.PARTIALLY_CONFIGURED,
-                blockers=db_blockers,
+                blockers=_canonicalize_blockers(db_blockers),
             )
 
         return ReadinessReport(state=ReadinessState.READY, blockers=[])

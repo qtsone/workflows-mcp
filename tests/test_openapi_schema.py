@@ -13,7 +13,18 @@ from pathlib import Path
 
 import pytest
 
+from workflows_mcp.security.csrf import CSRF_HEADER_NAME
+from workflows_mcp.security.sessions import SESSION_COOKIE_NAME
+
 _SNAPSHOT_PATH = Path(__file__).parent / "snapshots" / "openapi.json"
+
+
+def _operation(schema: dict, path: str, method: str) -> dict:
+    path_item = schema.get("paths", {}).get(path)
+    assert isinstance(path_item, dict), f"Path missing from schema: {path}"
+    op = path_item.get(method)
+    assert isinstance(op, dict), f"Operation missing from schema: {method.upper()} {path}"
+    return op
 
 
 def _build_schema() -> dict:
@@ -63,28 +74,104 @@ class TestOpenAPISchema:
         assert bearer.get("type") == "http"
         assert bearer.get("scheme") == "bearer"
 
-    def test_protected_routes_declare_security(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        """All protected routes must declare security: [BearerAuth]."""
+    def test_admin_session_and_csrf_security_schemes_present(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """OpenAPI must declare cookie/header apiKey schemes for UI auth boundaries."""
+        monkeypatch.setenv("WORKFLOWS_BOOTSTRAP_TOKEN", "0123456789abcdef0123456789abcdef")
+        schema = _build_schema()
+        security_schemes = schema.get("components", {}).get("securitySchemes", {})
+
+        assert "AdminSessionCookie" in security_schemes
+        session_cookie = security_schemes["AdminSessionCookie"]
+        assert session_cookie.get("type") == "apiKey"
+        assert session_cookie.get("in") == "cookie"
+        assert session_cookie.get("name") == SESSION_COOKIE_NAME
+
+        assert "CsrfToken" in security_schemes
+        csrf_token = security_schemes["CsrfToken"]
+        assert csrf_token.get("type") == "apiKey"
+        assert csrf_token.get("in") == "header"
+        assert csrf_token.get("name") == CSRF_HEADER_NAME
+
+    def test_legacy_config_routes_absent_from_schema(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Legacy /config surface must not be present in the default OpenAPI schema."""
         monkeypatch.setenv("WORKFLOWS_BOOTSTRAP_TOKEN", "0123456789abcdef0123456789abcdef")
         schema = _build_schema()
         paths = schema.get("paths", {})
 
-        protected_paths = [p for p in paths if p.startswith("/config") or p == "/mcp"]
-        assert protected_paths, "No protected paths found in schema"
+        legacy_config_paths = [p for p in paths if p.startswith("/config")]
+        assert legacy_config_paths == [], (
+            f"Legacy /config paths should be absent from OpenAPI; found: {legacy_config_paths}"
+        )
 
-        for path, path_item in paths.items():
-            if not (path.startswith("/config") or path == "/mcp"):
-                continue
-            for method, operation in path_item.items():
-                if method not in ("get", "post", "put", "patch", "delete"):
-                    continue
-                security = operation.get("security")
-                assert security is not None, (
-                    f"{method.upper()} {path} is missing 'security' declaration"
-                )
-                assert {"BearerAuth": []} in security, (
-                    f"{method.upper()} {path} does not include BearerAuth in security"
-                )
+    def test_ui_session_routes_declare_cookie_auth_security(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Session-protected UI routes must declare AdminSessionCookie security."""
+        monkeypatch.setenv("WORKFLOWS_BOOTSTRAP_TOKEN", "0123456789abcdef0123456789abcdef")
+        schema = _build_schema()
+
+        for path, method in (
+            ("/api/admin/v1/auth/session", "get"),
+            ("/api/admin/v1/auth/csrf", "get"),
+            ("/api/events/v1/system", "get"),
+        ):
+            op = _operation(schema, path, method)
+            security = op.get("security")
+            assert security is not None, f"{method.upper()} {path} missing security"
+            assert {"AdminSessionCookie": []} in security, (
+                f"{method.upper()} {path} must include AdminSessionCookie security"
+            )
+
+    def test_system_events_openapi_uses_sse_media_type(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """System events endpoint must advertise SSE media type in OpenAPI."""
+        monkeypatch.setenv("WORKFLOWS_BOOTSTRAP_TOKEN", "0123456789abcdef0123456789abcdef")
+        schema = _build_schema()
+        op = _operation(schema, "/api/events/v1/system", "get")
+
+        responses = op.get("responses", {})
+        ok_response = responses.get("200", {})
+        content = ok_response.get("content", {})
+
+        assert "text/event-stream" in content, (
+            "GET /api/events/v1/system must document text/event-stream for 200 response"
+        )
+        assert "application/json" not in content, (
+            "GET /api/events/v1/system must not document application/json for 200 response"
+        )
+
+    def test_logout_declares_cookie_plus_csrf_in_same_security_object(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Logout must require both session cookie and CSRF header."""
+        monkeypatch.setenv("WORKFLOWS_BOOTSTRAP_TOKEN", "0123456789abcdef0123456789abcdef")
+        schema = _build_schema()
+        logout = _operation(schema, "/api/admin/v1/auth/logout", "post")
+        security = logout.get("security")
+        assert security is not None, "POST /api/admin/v1/auth/logout missing security"
+        assert {"AdminSessionCookie": [], "CsrfToken": []} in security, (
+            "POST /api/admin/v1/auth/logout must include both AdminSessionCookie and "
+            "CsrfToken in same security requirement"
+        )
+
+    def test_public_routes_remain_without_auth_security(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Public endpoints must not declare auth security requirements."""
+        monkeypatch.setenv("WORKFLOWS_BOOTSTRAP_TOKEN", "0123456789abcdef0123456789abcdef")
+        schema = _build_schema()
+
+        for path, method in (
+            ("/api/admin/v1/auth/login", "post"),
+            ("/api/public/v1/system/status", "get"),
+            ("/health", "get"),
+            ("/ready", "get"),
+        ):
+            op = _operation(schema, path, method)
+            assert "security" not in op, f"{method.upper()} {path} must be public (no security)"
 
     def test_schema_matches_snapshot(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """Live schema must match the committed snapshot.

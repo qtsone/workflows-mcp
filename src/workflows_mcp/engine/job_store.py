@@ -1,18 +1,4 @@
-"""Persistent job storage using SQLite + JSON files.
-
-Architecture:
-    - SQLite (state.db): Job metadata for fast queries
-    - JSON files (jobs/*.json): Full job data including large inputs/results
-    - Write-through pattern: All writes immediately persisted
-    - Load-on-demand: No in-memory cache, always read from filesystem
-
-Storage Layout:
-    ~/.workflows/states/<hash-of-cwd>/
-      state.db          # SQLite database
-      jobs/
-        job_abc123.json
-        job_def456.json
-"""
+"""Persistent job storage using SQLite metadata + run history summaries."""
 
 from __future__ import annotations
 
@@ -22,7 +8,12 @@ import logging
 import sqlite3
 from collections.abc import Callable
 from datetime import datetime
-from typing import TYPE_CHECKING, Any, TypeVar, cast
+from pathlib import Path
+from typing import TYPE_CHECKING, Any, TypeVar
+
+from workflows_mcp.metadata.db import connect_metadata_db
+from workflows_mcp.metadata.migrations import migrate_metadata_db
+from workflows_mcp.metadata.repos.run_history_repo import SQLiteRunHistoryRepository
 
 from .state_config import StateConfig
 
@@ -35,35 +26,11 @@ T = TypeVar("T")
 
 
 class JobStore:
-    """Persistent storage for job queue using SQLite + JSON files.
+    """Persistent storage for job queue with compact SQLite-only persistence."""
 
-    Provides atomic, durable storage with support for concurrent access
-    across multiple MCP server instances via SQLite WAL mode.
-
-    Architecture:
-        - state.db: Job metadata (id, workflow, status, timestamps)
-        - jobs/*.json: Full job data (inputs, result, error)
-        - No in-memory cache (load on demand)
-        - Write-through (immediate persistence)
-
-    Example:
-        store = JobStore()
-        await store.init()
-
-        # Save job
-        await store.save_job(job)
-
-        # Load job
-        job_data = await store.load_job("job_abc123")
-
-        # List metadata only (fast)
-        jobs = await store.list_jobs(status="completed", limit=100)
-    """
-
-    def __init__(self) -> None:
-        """Initialize job store with path-based isolation."""
-        self._db_path = StateConfig.get_db_path()
-        self._jobs_dir = StateConfig.get_jobs_dir()
+    def __init__(self, db_path: str | Path | None = None) -> None:
+        """Initialize job store with configurable database path."""
+        self._db_path = Path(db_path) if db_path is not None else StateConfig.get_db_path()
 
     async def init(self) -> None:
         """Initialize database schema and load existing stats.
@@ -74,41 +41,20 @@ class JobStore:
         # Initialize database schema
         await self._run_in_executor(self._init_db)
 
-        logger.info(f"JobStore initialized: db={self._db_path}, jobs_dir={self._jobs_dir}")
+        logger.info(f"JobStore initialized: db={self._db_path}")
 
     def _init_db(self) -> None:
         """Initialize SQLite database with schema (runs in thread pool).
 
-        Creates:
-            - jobs table with metadata and indexes
-            - stats table for persistent statistics
-            - WAL mode for concurrent access
+        Creates stats table and metadata schema.
         """
-        conn = sqlite3.connect(self._db_path)
+        conn = connect_metadata_db(self._db_path)
+
+        migrate_metadata_db(conn)
 
         # Enable WAL mode for concurrent access (multiple MCP instances)
         conn.execute("PRAGMA journal_mode=WAL")
         conn.execute("PRAGMA synchronous=NORMAL")  # Faster, still safe with WAL
-
-        # Create jobs metadata table
-        conn.execute("""
-            CREATE TABLE IF NOT EXISTS jobs (
-                id TEXT PRIMARY KEY,
-                workflow TEXT NOT NULL,
-                status TEXT NOT NULL,
-                timeout INTEGER NOT NULL,
-                created_at TEXT NOT NULL,
-                started_at TEXT,
-                completed_at TEXT,
-                updated_at TEXT NOT NULL,
-                error_summary TEXT
-            )
-        """)
-
-        # Create indexes for common queries
-        conn.execute("CREATE INDEX IF NOT EXISTS idx_status ON jobs(status)")
-        conn.execute("CREATE INDEX IF NOT EXISTS idx_created ON jobs(created_at DESC)")
-        conn.execute("CREATE INDEX IF NOT EXISTS idx_updated ON jobs(updated_at)")
 
         # Create stats table for persistent statistics
         conn.execute("""
@@ -130,44 +76,11 @@ class JobStore:
         logger.debug("Database schema initialized with WAL mode")
 
     async def save_job(self, job: Job) -> None:
-        """Save job to both SQLite metadata and JSON file.
-
-        Atomic write pattern: JSON file written first, then metadata updated.
-        Uses temp file + rename for atomic JSON writes.
-
-        Args:
-            job: Job instance to save
-        """
+        """Save job to SQLite metadata and compact run-history summaries."""
         # Update job's updated_at timestamp
         job.updated_at = datetime.now()
 
-        # Write to JSON file (atomic via temp file)
-        await self._save_job_file(job)
-
-        # Write metadata to SQLite
         await self._save_job_metadata(job)
-
-    async def _save_job_file(self, job: Job) -> None:
-        """Save full job data to JSON file (atomic write).
-
-        Uses temp file + rename pattern for atomic writes.
-
-        Args:
-            job: Job instance to save
-        """
-
-        def _write() -> None:
-            job_file = self._jobs_dir / f"{job.id}.json"
-            temp_file = job_file.with_suffix(".json.tmp")
-
-            # Write to temp file
-            with open(temp_file, "w", encoding="utf-8") as f:
-                json.dump(job.model_dump(), f, indent=2, default=str, ensure_ascii=False)
-
-            # Atomic rename (POSIX guarantee)
-            temp_file.rename(job_file)
-
-        await self._run_in_executor(_write)
 
     async def _save_job_metadata(self, job: Job) -> None:
         """Save job metadata to SQLite database.
@@ -177,30 +90,54 @@ class JobStore:
         """
 
         def _write() -> None:
-            conn = sqlite3.connect(self._db_path)
-            conn.execute(
-                """
-                INSERT OR REPLACE INTO jobs VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-            """,
-                (
-                    job.id,
-                    job.workflow,
-                    job.status.value,
-                    job.timeout,
-                    job.created_at.isoformat(),
-                    job.started_at.isoformat() if job.started_at else None,
-                    job.completed_at.isoformat() if job.completed_at else None,
-                    job.updated_at.isoformat(),
-                    job.error[:200] if job.error else None,  # Truncate error summary
-                ),
-            )
-            conn.commit()
+            result_summary = self._build_result_summary(job)
+            execution_state_json = self._build_execution_state_json(job)
+            cancellable = job.status.value in {"queued", "running"}
+            inputs_json = json.dumps(job.inputs, separators=(",", ":"), default=str)
+            created_at = job.created_at.isoformat()
+            started_at = job.started_at.isoformat() if job.started_at else None
+            updated_at = job.updated_at.isoformat()
+            finished_at = job.completed_at.isoformat() if job.completed_at else None
+
+            conn = connect_metadata_db(self._db_path)
+            run_repo = SQLiteRunHistoryRepository(conn)
+            existing = run_repo.get_run(job.id)
+            if existing is None:
+                run_repo.create_run(
+                    run_id=job.id,
+                    project_id=job.project_id,
+                    token_id=job.token_id,
+                    workflow_name=job.workflow,
+                    status=job.status.value,
+                    created_at=created_at,
+                    started_at=started_at,
+                    timeout_seconds=job.timeout,
+                    updated_at=updated_at,
+                    inputs_json=inputs_json,
+                    cancellable=cancellable,
+                    result_summary=result_summary,
+                    error_summary=job.error,
+                    execution_state_json=execution_state_json,
+                )
+            else:
+                run_repo.update_run(
+                    run_id=job.id,
+                    status=job.status.value,
+                    started_at=started_at,
+                    updated_at=updated_at,
+                    finished_at=finished_at,
+                    cancellable=cancellable,
+                    result_summary=result_summary,
+                    error_summary=job.error,
+                    execution_state_json=execution_state_json,
+                    inputs_json=inputs_json,
+                )
             conn.close()
 
         await self._run_in_executor(_write)
 
     async def load_job(self, job_id: str) -> dict[str, Any]:
-        """Load full job data from JSON file.
+        """Load job data from compact SQLite metadata.
 
         Args:
             job_id: Job ID to load
@@ -210,21 +147,44 @@ class JobStore:
 
         Raises:
             KeyError: If job not found in database
-            FileNotFoundError: If JSON file missing (corrupted state)
+            FileNotFoundError: no longer raised (SQLite-only persistence)
         """
-        # Check existence in database first
+        # Check existence in run-history first
         exists = await self._job_exists(job_id)
         if not exists:
             raise KeyError(f"Job not found: {job_id}")
 
-        # Load from JSON file
         def _read() -> dict[str, Any]:
-            job_file = self._jobs_dir / f"{job_id}.json"
-            if not job_file.exists():
-                raise FileNotFoundError(f"Job file missing (corrupted state): {job_id}")
+            conn = connect_metadata_db(self._db_path)
+            run_record = SQLiteRunHistoryRepository(conn).get_run(job_id)
+            conn.close()
 
-            with open(job_file, encoding="utf-8") as f:
-                return cast(dict[str, Any], json.load(f))
+            if run_record is None:
+                raise KeyError(f"Job not found: {job_id}")
+
+            result_payload = self._parse_result_summary(run_record.result_summary)
+            execution_state_payload = self._parse_execution_state_json(
+                run_record.execution_state_json
+            )
+            if execution_state_payload is not None:
+                if result_payload is None:
+                    result_payload = {}
+                result_payload["execution_state"] = execution_state_payload
+            inputs_payload = self._parse_inputs_json(run_record.inputs_json)
+            return {
+                "id": run_record.run_id,
+                "workflow": run_record.workflow_name,
+                "status": run_record.status,
+                "timeout": run_record.timeout_seconds,
+                "created_at": run_record.created_at,
+                "started_at": run_record.started_at,
+                "completed_at": run_record.finished_at,
+                "updated_at": run_record.updated_at,
+                "error": run_record.error_summary,
+                "result": result_payload,
+                "inputs": inputs_payload,
+                "cancellable": run_record.cancellable,
+            }
 
         return await self._run_in_executor(_read)
 
@@ -239,8 +199,8 @@ class JobStore:
         """
 
         def _check() -> bool:
-            conn = sqlite3.connect(self._db_path)
-            cursor = conn.execute("SELECT 1 FROM jobs WHERE id = ?", (job_id,))
+            conn = connect_metadata_db(self._db_path)
+            cursor = conn.execute("SELECT 1 FROM job_runs WHERE run_id = ?", (job_id,))
             exists = cursor.fetchone() is not None
             conn.close()
             return exists
@@ -250,7 +210,7 @@ class JobStore:
     async def list_jobs(
         self, status: WorkflowStatus | None = None, limit: int = 100
     ) -> list[dict[str, Any]]:
-        """List jobs metadata without loading full JSON files.
+        """List jobs metadata from SQLite.
 
         Fast query using SQLite metadata only.
 
@@ -263,15 +223,22 @@ class JobStore:
         """
 
         def _query() -> list[dict[str, Any]]:
-            conn = sqlite3.connect(self._db_path)
+            conn = connect_metadata_db(self._db_path)
             conn.row_factory = sqlite3.Row
 
             if status:
                 cursor = conn.execute(
                     """
-                    SELECT id, workflow, status, timeout,
-                           created_at, started_at, completed_at, error_summary
-                    FROM jobs
+                    SELECT run_id AS id,
+                           workflow_name AS workflow,
+                           status,
+                           timeout_seconds AS timeout,
+                           created_at,
+                           started_at,
+                           finished_at AS completed_at,
+                           error_summary,
+                           cancellable
+                    FROM job_runs
                     WHERE status = ?
                     ORDER BY created_at DESC
                     LIMIT ?
@@ -281,9 +248,16 @@ class JobStore:
             else:
                 cursor = conn.execute(
                     """
-                    SELECT id, workflow, status, timeout,
-                           created_at, started_at, completed_at, error_summary
-                    FROM jobs
+                    SELECT run_id AS id,
+                           workflow_name AS workflow,
+                           status,
+                           timeout_seconds AS timeout,
+                           created_at,
+                           started_at,
+                           finished_at AS completed_at,
+                           error_summary,
+                           cancellable
+                    FROM job_runs
                     ORDER BY created_at DESC
                     LIMIT ?
                 """,
@@ -291,28 +265,25 @@ class JobStore:
                 )
 
             rows = [dict(row) for row in cursor.fetchall()]
+            for row in rows:
+                row["cancellable"] = bool(int(row["cancellable"]))
             conn.close()
             return rows
 
         return await self._run_in_executor(_query)
 
     async def delete_job(self, job_id: str) -> None:
-        """Delete job from both SQLite and JSON file.
+        """Delete job from SQLite metadata.
 
         Args:
             job_id: Job ID to delete
         """
 
         def _delete() -> None:
-            # Delete from database
-            conn = sqlite3.connect(self._db_path)
-            conn.execute("DELETE FROM jobs WHERE id = ?", (job_id,))
+            conn = connect_metadata_db(self._db_path)
+            conn.execute("DELETE FROM job_runs WHERE run_id = ?", (job_id,))
             conn.commit()
             conn.close()
-
-            # Delete JSON file
-            job_file = self._jobs_dir / f"{job_id}.json"
-            job_file.unlink(missing_ok=True)
 
         await self._run_in_executor(_delete)
 
@@ -331,26 +302,19 @@ class JobStore:
         """
 
         def _query() -> list[str]:
-            conn = sqlite3.connect(self._db_path)
-            cursor = conn.execute(
-                """
-                SELECT id, timeout, updated_at
-                FROM jobs
-                WHERE status = 'running'
-            """
-            )
+            conn = connect_metadata_db(self._db_path)
+            runs = SQLiteRunHistoryRepository(conn).list_running_runs_for_stale_check()
 
             now = datetime.now()
             stale_ids = []
 
-            for row in cursor:
-                job_id, timeout, updated_at_str = row
-                updated_at = datetime.fromisoformat(updated_at_str)
+            for run in runs:
+                updated_at = datetime.fromisoformat(run.updated_at)
 
                 # Check if job hasn't been updated in (timeout + grace) seconds
                 elapsed = (now - updated_at).total_seconds()
-                if elapsed > (timeout + grace_period):
-                    stale_ids.append(job_id)
+                if elapsed > (run.timeout_seconds + grace_period):
+                    stale_ids.append(run.run_id)
 
             conn.close()
             return stale_ids
@@ -365,7 +329,7 @@ class JobStore:
         """
 
         def _increment() -> None:
-            conn = sqlite3.connect(self._db_path)
+            conn = connect_metadata_db(self._db_path)
             conn.execute(
                 "UPDATE stats SET value = value + 1 WHERE key = ?",
                 (key,),
@@ -383,7 +347,7 @@ class JobStore:
         """
 
         def _query() -> dict[str, int]:
-            conn = sqlite3.connect(self._db_path)
+            conn = connect_metadata_db(self._db_path)
             conn.row_factory = sqlite3.Row
             cursor = conn.execute("SELECT key, value FROM stats")
             stats = dict(cursor.fetchall())
@@ -403,6 +367,64 @@ class JobStore:
         """
         loop = asyncio.get_event_loop()
         return await loop.run_in_executor(None, func)
+
+    @staticmethod
+    def _build_result_summary(job: Job) -> str | None:
+        if not isinstance(job.result, dict):
+            return None
+        outputs = job.result.get("outputs")
+        prompt = job.result.get("prompt")
+        payload: dict[str, Any] = {}
+        if outputs is not None:
+            payload["outputs"] = outputs
+        if prompt is not None:
+            payload["prompt"] = prompt
+        if not payload:
+            return None
+        import json
+
+        return json.dumps(payload, separators=(",", ":"), default=str)
+
+    @staticmethod
+    def _build_execution_state_json(job: Job) -> str | None:
+        if not isinstance(job.result, dict):
+            return None
+        execution_state = job.result.get("execution_state")
+        if not isinstance(execution_state, dict):
+            return None
+        return json.dumps(execution_state, separators=(",", ":"), default=str)
+
+    @staticmethod
+    def _parse_result_summary(summary: str | None) -> dict[str, Any] | None:
+        if summary is None:
+            return None
+        import json
+
+        try:
+            parsed = json.loads(summary)
+            return parsed if isinstance(parsed, dict) else None
+        except Exception:
+            return None
+
+    @staticmethod
+    def _parse_inputs_json(inputs_json: str | None) -> dict[str, Any]:
+        if inputs_json is None:
+            return {}
+        try:
+            parsed = json.loads(inputs_json)
+            return parsed if isinstance(parsed, dict) else {}
+        except Exception:
+            return {}
+
+    @staticmethod
+    def _parse_execution_state_json(execution_state_json: str | None) -> dict[str, Any] | None:
+        if execution_state_json is None:
+            return None
+        try:
+            parsed = json.loads(execution_state_json)
+            return parsed if isinstance(parsed, dict) else None
+        except Exception:
+            return None
 
 
 __all__ = ["JobStore"]

@@ -5,8 +5,8 @@ Covers:
 - CORS allowlist: listed origins are allowed when configured.
 - Oversized body rejected with 413 before route logic runs — including when
   Content-Length header is absent (streaming / chunked bodies).
-- Rate limiting returns 429 on protected routes (/config, /mcp).
-- /config routes have a stricter rate limit than other protected routes.
+- Rate limiting returns 429 on protected routes (/mcp, /api/admin/v1/auth/login).
+- MCP and login routes use independent limiter buckets.
 - Public routes (/health, /ready) are NOT rate-limited.
 """
 
@@ -15,8 +15,16 @@ from __future__ import annotations
 import pytest
 from fastapi.testclient import TestClient
 
+from workflows_mcp.bootstrap import bootstrap_if_needed
+from workflows_mcp.security.csrf import CSRF_HEADER_NAME
+
 TOKEN = "0123456789abcdef0123456789abcdef"
 AUTH_HEADER = {"Authorization": f"Bearer {TOKEN}"}
+
+
+def _assert_no_sensitive_literals(serialized: str, literals: list[str]) -> None:
+    for literal in literals:
+        assert literal not in serialized, f"Sensitive literal leaked in response: {literal!r}"
 
 
 @pytest.fixture()
@@ -74,6 +82,25 @@ def test_cors_listed_origin_allowed_when_configured(app_with_cors):
     )
 
 
+def test_cors_preflight_admin_logout_allows_csrf_header_and_credentials(app_with_cors):
+    """Configured CORS must support cookie+CSRF browser admin mutations."""
+    client = TestClient(app_with_cors, raise_server_exceptions=False)
+    response = client.options(
+        "/api/admin/v1/auth/logout",
+        headers={
+            "Origin": "https://allowed.example.com",
+            "Access-Control-Request-Method": "POST",
+            "Access-Control-Request-Headers": f"{CSRF_HEADER_NAME}, Content-Type",
+        },
+    )
+
+    assert response.status_code in {200, 204}
+    assert response.headers.get("access-control-allow-origin") == "https://allowed.example.com"
+    assert response.headers.get("access-control-allow-credentials") == "true"
+    allow_headers = response.headers.get("access-control-allow-headers", "")
+    assert CSRF_HEADER_NAME.lower() in allow_headers.lower()
+
+
 # ---------------------------------------------------------------------------
 # Body size limit — with Content-Length header
 # ---------------------------------------------------------------------------
@@ -83,11 +110,7 @@ def test_oversized_body_returns_413(app):
     """A body larger than the configured limit must be rejected with 413."""
     client = TestClient(app, raise_server_exceptions=False)
     large_payload = {"profiles": [{"x": "a" * 2_000_000}]}
-    response = client.post(
-        "/config/validate",
-        headers=AUTH_HEADER,
-        json=large_payload,
-    )
+    response = client.post("/mcp", headers=AUTH_HEADER, json=large_payload)
     assert response.status_code == 413
 
 
@@ -95,11 +118,7 @@ def test_oversized_body_returns_error_envelope(app):
     """The 413 response must use the stable error envelope shape."""
     client = TestClient(app, raise_server_exceptions=False)
     large_payload = {"profiles": [{"x": "a" * 2_000_000}]}
-    response = client.post(
-        "/config/validate",
-        headers=AUTH_HEADER,
-        json=large_payload,
-    )
+    response = client.post("/mcp", headers=AUTH_HEADER, json=large_payload)
     assert response.status_code == 413
     payload = response.json()
     assert "error" in payload
@@ -136,7 +155,7 @@ async def test_oversized_body_without_content_length_returns_413(app):
                 yield large_bytes[offset : offset + chunk]
 
         response = await client.post(
-            "/config/validate",
+            "/mcp",
             content=_body_gen(),
             headers={**AUTH_HEADER, "Content-Type": "application/json"},
         )
@@ -148,21 +167,17 @@ async def test_oversized_body_without_content_length_returns_413(app):
 
 
 # ---------------------------------------------------------------------------
-# Rate limiting — protected routes (/config, /mcp)
+# Rate limiting — protected routes (/mcp, /api/admin/v1/auth/login)
 # ---------------------------------------------------------------------------
 
 
 def test_rate_limit_returns_429_on_protected_routes(app):
     """Repeated requests to protected routes beyond the limit must return 429."""
     client = TestClient(app, raise_server_exceptions=False)
-    # /config/validate is a protected route; fire enough to exhaust the cap.
-    responses = [
-        client.post("/config/validate", headers=AUTH_HEADER, json={"profiles": []})
-        for _ in range(100)
-    ]
+    responses = [client.post("/mcp", headers=AUTH_HEADER, json={}) for _ in range(100)]
     status_codes = {r.status_code for r in responses}
     assert 429 in status_codes, (
-        f"Expected at least one 429 after 100 rapid requests to /config/validate; "
+        f"Expected at least one 429 after 100 rapid requests to /mcp; "
         f"got statuses: {status_codes}"
     )
 
@@ -170,10 +185,7 @@ def test_rate_limit_returns_429_on_protected_routes(app):
 def test_rate_limit_429_uses_error_envelope(app):
     """The 429 response must use the stable error envelope shape."""
     client = TestClient(app, raise_server_exceptions=False)
-    responses = [
-        client.post("/config/validate", headers=AUTH_HEADER, json={"profiles": []})
-        for _ in range(100)
-    ]
+    responses = [client.post("/mcp", headers=AUTH_HEADER, json={}) for _ in range(100)]
     rate_limited = [r for r in responses if r.status_code == 429]
     assert rate_limited, "Expected at least one 429 response"
     payload = rate_limited[0].json()
@@ -197,26 +209,42 @@ def test_public_routes_are_not_rate_limited(app):
 
 
 # ---------------------------------------------------------------------------
-# Rate limiting — /config stricter than other protected routes
+# Rate limiting — MCP and login are independently limited
 # ---------------------------------------------------------------------------
 
 
-def test_config_routes_have_stricter_rate_limit_than_mcp(app):
-    """/config routes must hit 429 sooner than /mcp.
+def test_login_routes_have_independent_rate_limit_from_mcp(tmp_path, monkeypatch):
+    """Login and MCP routes must use separate limiter buckets."""
+    monkeypatch.setenv("WORKFLOWS_BOOTSTRAP_TOKEN", TOKEN)
+    monkeypatch.setenv("WORKFLOWS_LOGIN_RATE_LIMIT", "3")
+    monkeypatch.setenv("WORKFLOWS_MCP_RATE_LIMIT", "50")
+    monkeypatch.setenv("WORKFLOWS_RATE_LIMIT", "100")
+    monkeypatch.delenv("WORKFLOWS_CORS_ORIGINS", raising=False)
+    base_dir = tmp_path / ".workflows"
+    bootstrap_if_needed(
+        config_dir=base_dir,
+        host="127.0.0.1",
+        port=8000,
+        admin_password="phase2-admin-password",
+    )
 
-    Both are protected; /config carries a tighter cap.
-    """
+    from workflows_mcp.server import build_app
+
+    client = TestClient(build_app(base_dir=base_dir), raise_server_exceptions=False)
+
+    login_statuses = [
+        client.post("/api/admin/v1/auth/login", json={"password": "wrong-password"}).status_code
+        for _ in range(6)
+    ]
+    assert 429 in login_statuses
+
+    mcp_response = client.post("/mcp", headers=AUTH_HEADER, json={})
+    assert mcp_response.status_code != 429
+
+
+def test_mcp_rate_limit_applies_to_mcp_route(app):
+    """MCP limiter must eventually throttle repeated /mcp requests."""
     client = TestClient(app, raise_server_exceptions=False)
-
-    # Exhaust /config/validate rate limit.
-    config_429_at: int | None = None
-    for i in range(100):
-        r = client.post("/config/validate", headers=AUTH_HEADER, json={"profiles": []})
-        if r.status_code == 429:
-            config_429_at = i + 1
-            break
-
-    # Exhaust /mcp rate limit (will 409 while not ready, but rate limit fires first).
     mcp_429_at: int | None = None
     for i in range(200):
         r = client.post("/mcp", headers=AUTH_HEADER, json={})
@@ -224,9 +252,105 @@ def test_config_routes_have_stricter_rate_limit_than_mcp(app):
             mcp_429_at = i + 1
             break
 
-    assert config_429_at is not None, "/config/validate never returned 429 within 100 requests"
     assert mcp_429_at is not None, "/mcp never returned 429 within 200 requests"
-    assert config_429_at <= mcp_429_at, (
-        f"/config rate limit ({config_429_at}) should be stricter (lower) "
-        f"than /mcp rate limit ({mcp_429_at})"
+
+
+def test_exhausted_login_limiter_does_not_throttle_mcp_route(tmp_path, monkeypatch):
+    """Login and MCP must use separate limiter buckets."""
+    monkeypatch.setenv("WORKFLOWS_BOOTSTRAP_TOKEN", TOKEN)
+    monkeypatch.setenv("WORKFLOWS_LOGIN_RATE_LIMIT", "3")
+    monkeypatch.setenv("WORKFLOWS_MCP_RATE_LIMIT", "50")
+    monkeypatch.setenv("WORKFLOWS_RATE_LIMIT", "100")
+    monkeypatch.delenv("WORKFLOWS_CORS_ORIGINS", raising=False)
+    base_dir = tmp_path / ".workflows"
+    bootstrap_if_needed(
+        config_dir=base_dir,
+        host="127.0.0.1",
+        port=8000,
+        admin_password="phase2-admin-password",
     )
+
+    from workflows_mcp.server import build_app
+
+    client = TestClient(build_app(base_dir=base_dir), raise_server_exceptions=False)
+
+    login_statuses = [
+        client.post("/api/admin/v1/auth/login", json={"password": "wrong-password"}).status_code
+        for _ in range(6)
+    ]
+    assert 429 in login_statuses
+
+    mcp_response = client.post("/mcp", headers=AUTH_HEADER, json={})
+    assert mcp_response.status_code != 429
+
+
+# ---------------------------------------------------------------------------
+# OpenAPI / API response non-leak baseline
+# ---------------------------------------------------------------------------
+
+
+def test_openapi_json_does_not_leak_sensitive_literals(app):
+    """OpenAPI schema/examples must not contain concrete secret-like local values."""
+    client = TestClient(app, raise_server_exceptions=False)
+    response = client.get("/openapi.json")
+    assert response.status_code == 200
+
+    serialized = response.text
+    disallowed_literals = [
+        "sk-live-local-openapi-secret-123456",
+        "/private/tmp/workflows-mcp/secret.key",
+        "Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.local.payload.signature",
+        "mcp_tok_local_secret_0123456789abcdef",
+        "-----BEGIN PRIVATE KEY-----",
+        TOKEN,
+    ]
+    _assert_no_sensitive_literals(serialized, disallowed_literals)
+
+    # Guard against leaking concrete bearer token values while allowing
+    # harmless security scheme metadata such as "BearerAuth".
+    assert "BearerAuth" in serialized
+    assert "Bearer eyJ" not in serialized
+
+
+def test_error_responses_do_not_echo_sensitive_request_literals(tmp_path, monkeypatch):
+    """Auth error responses must not reflect attacker-controlled secret-like literals."""
+    monkeypatch.setenv("WORKFLOWS_BOOTSTRAP_TOKEN", TOKEN)
+    from workflows_mcp.server import build_app
+
+    client = TestClient(build_app(base_dir=tmp_path / ".workflows"), raise_server_exceptions=False)
+
+    injected_secret = "sk-live-local-response-secret-987654321"
+    injected_path = "/private/tmp/workflows-mcp/client-secrets.json"
+    injected_bearer = "Bearer eyJhbGciOiJIUzI1NiJ9.reflected.payload"
+    injected_key_marker = "-----BEGIN PRIVATE KEY-----"
+
+    # Invalid token format path: keep route protected and trigger 401 error flow.
+    auth_response = client.post(
+        "/mcp",
+        headers={"Authorization": injected_bearer},
+        json={"jsonrpc": "2.0", "id": "1", "method": "tools/list", "params": {}},
+    )
+    assert auth_response.status_code == 401
+
+    # Auth-required API path: inject sensitive literals in body and force 401.
+    unauth_response = client.post(
+        "/api/admin/v1/secrets",
+        json={
+            "name": "OPENAI_API_KEY",
+            "value": injected_secret,
+            "path": injected_path,
+            "key": injected_key_marker,
+        },
+    )
+    assert unauth_response.status_code == 401
+
+    for response in (auth_response, unauth_response):
+        _assert_no_sensitive_literals(
+            response.text,
+            [
+                injected_secret,
+                injected_path,
+                injected_bearer,
+                injected_key_marker,
+            ],
+        )

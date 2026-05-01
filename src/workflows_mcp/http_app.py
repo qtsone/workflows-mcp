@@ -3,9 +3,10 @@ from __future__ import annotations
 import os
 import time
 from collections import deque
+from pathlib import Path
 from typing import Any
 
-from fastapi import Depends, FastAPI, Header, HTTPException, Request
+from fastapi import FastAPI, Header, HTTPException, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
@@ -13,9 +14,20 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 from starlette.types import ASGIApp, Receive, Scope, Send
 
 from .auth import TokenStore, generate_request_id
-from .config_router import build_config_router
 from .config_service import ConfigService
+from .http.auth_mcp import MCPAuthMiddleware
+from .http.mcp_transport import (
+    MCPStreamableHTTPMount,
+    build_mcp_streamable_http_mount,
+    resolve_app_context_from_fastapi_state,
+)
+from .http.routes.admin_v1 import router as admin_v1_router
+from .http.routes.events_v1 import router as events_v1_router
+from .http.routes.public_v1 import router as public_v1_router
+from .http.static import install_admin_static
 from .http_models import ErrorEnvelope, ReadinessState
+from .security.csrf import CSRF_HEADER_NAME
+from .security.sessions import SESSION_COOKIE_NAME
 
 
 def _error_response(
@@ -139,8 +151,11 @@ _DEFAULT_MAX_BODY_BYTES: int = 1 * 1024 * 1024
 #: General rate-limit: maximum requests per ``_RATE_WINDOW_SECONDS`` window.
 _GENERAL_RATE_LIMIT: int = 100
 
-#: Stricter rate-limit applied to ``/config`` routes.
-_CONFIG_RATE_LIMIT: int = 20
+#: Stricter rate-limit applied to MCP protected routes.
+_MCP_RATE_LIMIT: int = 20
+
+#: Stricter rate-limit applied to admin login endpoint.
+_LOGIN_RATE_LIMIT: int = _MCP_RATE_LIMIT
 
 #: Sliding-window duration in seconds.
 _RATE_WINDOW_SECONDS: float = 60.0
@@ -264,31 +279,34 @@ class RateLimitMiddleware:
     """Enforce per-IP sliding-window rate limits on protected routes.
 
     Rate limiting is applied only to routes that require authentication
-    (``/config/*`` and ``/mcp``).  Public health/readiness endpoints
+    (``/mcp`` and ``/api/admin/v1/auth/login``). Public health/readiness endpoints
     (``/health``, ``/ready``) and documentation endpoints are deliberately
     exempt so liveness probes and tooling are never blocked.
 
     Two limits are supported:
-    - ``config_limiter``: applied to paths starting with ``/config``.
-    - ``mcp_limiter``: applied to ``/mcp`` and any other protected route.
+    - ``login_limiter``: applied to ``/api/admin/v1/auth/login``.
+    - ``mcp_limiter``: applied to ``/mcp``.
 
     The client key is derived from the ``X-Forwarded-For`` header when
     present (first address), falling back to the ASGI ``client`` tuple.
     """
 
     #: Only these path prefixes are subject to rate limiting.
-    _PROTECTED_PREFIXES: tuple[str, ...] = ("/config", "/mcp")
+    _PROTECTED_PREFIXES: tuple[str, ...] = (
+        "/mcp",
+        "/api/admin/v1/auth/login",
+    )
 
     def __init__(
         self,
         app: ASGIApp,
         *,
-        general_limiter: SlidingWindowRateLimiter,
-        config_limiter: SlidingWindowRateLimiter,
+        mcp_limiter: SlidingWindowRateLimiter,
+        login_limiter: SlidingWindowRateLimiter,
     ) -> None:
         self.app = app
-        self.general_limiter = general_limiter
-        self.config_limiter = config_limiter
+        self.mcp_limiter = mcp_limiter
+        self.login_limiter = login_limiter
 
     def _client_key(self, scope: Scope) -> str:
         headers: dict[bytes, bytes] = dict(scope.get("headers", []))
@@ -309,7 +327,9 @@ class RateLimitMiddleware:
             if self._is_protected(path):
                 key = self._client_key(scope)
                 limiter = (
-                    self.config_limiter if path.startswith("/config") else self.general_limiter
+                    self.login_limiter
+                    if path == "/api/admin/v1/auth/login"
+                    else self.mcp_limiter
                 )
                 if not limiter.is_allowed(key):
                     response = _error_response(
@@ -319,6 +339,21 @@ class RateLimitMiddleware:
                     )
                     await response(scope, receive, send)
                     return
+        await self.app(scope, receive, send)
+
+
+class _MCPPathCanonicalizationMiddleware:
+    """Normalize exact ``/mcp`` requests to ``/mcp/`` for mounted transport."""
+
+    def __init__(self, app: ASGIApp) -> None:
+        self.app = app
+
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        if scope.get("type") == "http" and scope.get("path") == "/mcp":
+            # Mounted ASGI apps are resolved on a path-prefix basis and exact
+            # mount roots can otherwise produce 405 for non-GET methods.
+            scope = dict(scope)
+            scope["path"] = "/mcp/"
         await self.app(scope, receive, send)
 
 
@@ -341,9 +376,9 @@ def _install_security_middleware(app: FastAPI) -> None:
     app.add_middleware(
         CORSMiddleware,
         allow_origins=allow_origins,
-        allow_credentials=False,
+        allow_credentials=True,
         allow_methods=["GET", "POST", "OPTIONS"],
-        allow_headers=["Authorization", "Content-Type"],
+        allow_headers=["Authorization", "Content-Type", CSRF_HEADER_NAME],
     )
 
     # Body limit — checked before route logic on every HTTP request.
@@ -353,23 +388,31 @@ def _install_security_middleware(app: FastAPI) -> None:
         max_body = _DEFAULT_MAX_BODY_BYTES
     app.add_middleware(BodyLimitMiddleware, max_bytes=max_body)
 
-    # Rate limiting — config routes get a stricter cap.
+    # Rate limiting — MCP routes and login have dedicated caps.
     try:
         general_limit = int(os.getenv("WORKFLOWS_RATE_LIMIT", str(_GENERAL_RATE_LIMIT)))
     except ValueError:
         general_limit = _GENERAL_RATE_LIMIT
     try:
-        config_limit = int(os.getenv("WORKFLOWS_CONFIG_RATE_LIMIT", str(_CONFIG_RATE_LIMIT)))
+        mcp_limit = int(os.getenv("WORKFLOWS_MCP_RATE_LIMIT", str(_MCP_RATE_LIMIT)))
     except ValueError:
-        config_limit = _CONFIG_RATE_LIMIT
+        mcp_limit = _MCP_RATE_LIMIT
+    try:
+        login_limit = int(os.getenv("WORKFLOWS_LOGIN_RATE_LIMIT", str(_LOGIN_RATE_LIMIT)))
+    except ValueError:
+        login_limit = _LOGIN_RATE_LIMIT
 
-    general_limiter = SlidingWindowRateLimiter(limit=general_limit, window=_RATE_WINDOW_SECONDS)
-    config_limiter = SlidingWindowRateLimiter(limit=config_limit, window=_RATE_WINDOW_SECONDS)
+    # Keep parsed to preserve env validation consistency for shared rate-limit knobs.
+    _ = general_limit
+    mcp_limiter = SlidingWindowRateLimiter(limit=mcp_limit, window=_RATE_WINDOW_SECONDS)
+    login_limiter = SlidingWindowRateLimiter(limit=login_limit, window=_RATE_WINDOW_SECONDS)
     app.add_middleware(
         RateLimitMiddleware,
-        general_limiter=general_limiter,
-        config_limiter=config_limiter,
+        mcp_limiter=mcp_limiter,
+        login_limiter=login_limiter,
     )
+
+    app.add_middleware(_MCPPathCanonicalizationMiddleware)
 
 
 def _make_auth_guard(token_store: TokenStore):  # type: ignore[no-untyped-def]
@@ -397,7 +440,7 @@ def _make_auth_guard(token_store: TokenStore):  # type: ignore[no-untyped-def]
 
 
 def _build_openapi_with_bearer_auth(app: FastAPI) -> dict[str, Any]:
-    """Generate OpenAPI schema with BearerAuth security scheme injected.
+    """Generate OpenAPI schema with authentication security schemes injected.
 
     Overrides the default FastAPI openapi() method so the /docs UI shows
     the lock icon and all protected routes carry a security declaration.
@@ -414,10 +457,26 @@ def _build_openapi_with_bearer_auth(app: FastAPI) -> dict[str, Any]:
         routes=app.routes,
     )
 
-    # Inject BearerAuth security scheme into components.
-    schema.setdefault("components", {}).setdefault("securitySchemes", {})["BearerAuth"] = {
+    security_schemes = schema.setdefault("components", {}).setdefault("securitySchemes", {})
+
+    # Keep bearer auth for MCP protected endpoints.
+    security_schemes["BearerAuth"] = {
         "type": "http",
         "scheme": "bearer",
+    }
+
+    # Session cookie required for UI session-protected routes.
+    security_schemes["AdminSessionCookie"] = {
+        "type": "apiKey",
+        "in": "cookie",
+        "name": SESSION_COOKIE_NAME,
+    }
+
+    # CSRF token header required for mutating admin operations.
+    security_schemes["CsrfToken"] = {
+        "type": "apiKey",
+        "in": "header",
+        "name": CSRF_HEADER_NAME,
     }
 
     app.openapi_schema = schema
@@ -429,16 +488,22 @@ def create_app(
     readiness_service: Any,
     token_store: TokenStore,
     config_service: ConfigService | None = None,
+    frontend_static_dir: Path | None = None,
+    require_frontend_assets: bool = False,
+    lifespan: Any = None,
 ) -> FastAPI:
-    app = FastAPI(title="workflows-mcp", docs_url="/docs", openapi_url="/openapi.json")
+    app = FastAPI(
+        title="workflows-mcp",
+        docs_url="/docs",
+        openapi_url="/openapi.json",
+        lifespan=lifespan,
+    )
 
     # Override OpenAPI schema generator to inject BearerAuth security scheme.
     app.openapi = lambda: _build_openapi_with_bearer_auth(app)  # type: ignore[method-assign]
 
     _install_exception_handlers(app)
     _install_security_middleware(app)
-
-    auth_guard = _make_auth_guard(token_store)
 
     @app.get("/health")
     async def health() -> dict[str, str]:
@@ -447,22 +512,34 @@ def create_app(
     @app.get("/ready")
     async def ready() -> JSONResponse:
         report = await readiness_service.evaluate()
-        status_code = 200 if report.state == ReadinessState.READY else 503
+        knowledge_ready = report.state == ReadinessState.READY
+        status_code = 200 if knowledge_ready else 503
         return JSONResponse(
             status_code=status_code,
-            content={"state": str(report.state), "blockers": report.blockers},
+            content={
+                "state": str(report.state),
+                "blockers": report.blockers,
+                # Control-plane status: route reached and app is serving.
+                "server_ready": True,
+                # Knowledge status: backing knowledge dependencies are ready.
+                "knowledge_ready": knowledge_ready,
+            },
         )
 
-    if config_service is not None:
-        config_router = build_config_router(
-            config_service,
-            readiness_service=readiness_service,
-            auth_guard=auth_guard,
-            token_store=token_store,
-        )
-        app.include_router(config_router)
+    app.include_router(public_v1_router)
+    app.include_router(admin_v1_router)
+    app.include_router(events_v1_router)
 
-    _register_mcp_endpoint(app, readiness_service=readiness_service, auth_guard=auth_guard)
+    _mount_mcp_transport(
+        app,
+        readiness_service=readiness_service,
+    )
+
+    install_admin_static(
+        app,
+        static_dir=frontend_static_dir,
+        require_assets=require_frontend_assets,
+    )
 
     return app
 
@@ -471,62 +548,18 @@ def create_app(
 # MCP-over-HTTP entry point
 # ---------------------------------------------------------------------------
 
-_MCP_METHODS: frozenset[str] = frozenset({"schema"})
+def _mount_mcp_transport(
+    app: FastAPI,
+    *,
+    readiness_service: Any,
+) -> None:
+    transport_mount: MCPStreamableHTTPMount = build_mcp_streamable_http_mount(
+        app_context_factory=lambda: resolve_app_context_from_fastapi_state(app)
+    )
+    secured_transport: ASGIApp = MCPAuthMiddleware(
+        transport_mount.asgi_app,
+        readiness_service=readiness_service,
+    )
 
-
-def _register_mcp_endpoint(app: FastAPI, *, readiness_service: Any, auth_guard: Any) -> None:
-    """Register the protected ``POST /mcp`` endpoint.
-
-    The endpoint enforces two gates in order:
-    1. Bearer authentication (401 on failure).
-    2. Service readiness (409 when not ``READY``).
-
-    When both gates pass, the request is dispatched to a method router backed
-    by real production adapters:
-
-    - ``schema``: delegates to ``tools_memory.memory_schema_payload()``, the
-      same pure function used by ``memory(operation="schema")`` in the MCP tool.
-      Requires no DB connectivity.
-
-    All other method names return 400 with code ``METHOD_NOT_FOUND``.
-    Error responses always use the stable ``ErrorEnvelope`` shape.
-    """
-
-    @app.post("/mcp", openapi_extra={"security": [{"BearerAuth": []}]})
-    async def mcp_http_endpoint(
-        request: Request,
-        _: None = Depends(auth_guard),
-    ) -> JSONResponse:
-        # Readiness gate — evaluated after auth so we never leak readiness
-        # state to unauthenticated callers.
-        report = await readiness_service.evaluate()
-        if report.state != ReadinessState.READY:
-            return _error_response(
-                status_code=409,
-                code="CONFIG_REQUIRED",
-                message="Service is not ready. Complete /config setup.",
-                details={
-                    "readiness_state": str(report.state),
-                    "missing": report.blockers,
-                },
-            )
-
-        # Method dispatch — backed by real adapter functions.
-        try:
-            payload = await request.json()
-        except Exception:
-            payload = {}
-
-        method: str | None = payload.get("method") if isinstance(payload, dict) else None
-
-        if method == "schema":
-            from .tools_memory import memory_schema_payload
-
-            return JSONResponse(status_code=200, content={"result": memory_schema_payload()})
-
-        return _error_response(
-            status_code=400,
-            code="METHOD_NOT_FOUND",
-            message=f"Unknown method: {method!r}. Supported methods: {sorted(_MCP_METHODS)}.",
-            details={"method": method},
-        )
+    app.state.mcp_transport_mount = transport_mount
+    app.mount("/mcp", secured_transport)

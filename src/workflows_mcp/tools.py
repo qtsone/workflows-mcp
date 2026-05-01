@@ -15,21 +15,24 @@ import json
 from datetime import datetime
 from typing import Annotated, Any, Literal
 
+from mcp.server.fastmcp import FastMCP
 from mcp.types import CallToolResult, TextContent, ToolAnnotations
 from pydantic import Field
 
-from .context import AppContextType
+from .context import AppContextType, SessionProjectContext
 from .engine import WorkflowRunner, load_workflow_from_yaml
 from .formatting import (
     format_workflow_info_markdown,
     format_workflow_list_markdown,
     format_workflow_not_found_error,
 )
-from .server import load_workflows, mcp
+from .server import mcp
 
 # =============================================================================
 # Response Helpers
 # =============================================================================
+
+_AUTH_SCOPE_KEY = "workflows_mcp.auth_context"
 
 
 def _json_response(data: dict[str, Any]) -> CallToolResult:
@@ -46,6 +49,66 @@ def _json_response(data: dict[str, Any]) -> CallToolResult:
         content=[TextContent(type="text", text=json.dumps(data, separators=(",", ":")))],
         structuredContent=data,
     )
+
+
+def _get_request_scope(ctx: AppContextType) -> dict[str, Any] | None:
+    """Best-effort access to HTTP request scope from MCP tool context."""
+    request = getattr(ctx.request_context, "request", None)
+    scope = getattr(request, "scope", None)
+    if isinstance(scope, dict):
+        return scope
+    return None
+
+
+def _resolve_run_binding(ctx: AppContextType) -> tuple[str | None, str | None]:
+    """Resolve active project/token IDs for MCP-bound async executions."""
+    app_ctx = ctx.request_context.lifespan_context
+    session = ctx.request_context.session
+
+    scope = _get_request_scope(ctx)
+    auth_ctx = scope.get(_AUTH_SCOPE_KEY) if scope else None
+    token_id = getattr(auth_ctx, "token_id", None)
+    if not isinstance(token_id, str) or not token_id:
+        token_id = None
+
+    projects = getattr(auth_ctx, "projects", ()) if auth_ctx is not None else ()
+    if isinstance(projects, tuple) and all(isinstance(p, SessionProjectContext) for p in projects):
+        app_ctx.register_allowed_projects(session, list(projects))
+        if len(projects) == 1:
+            app_ctx.set_active_project(session, projects[0])
+        else:
+            active = app_ctx.get_active_project(session)
+            if active is not None and not any(
+                active.project_id == candidate.project_id for candidate in projects
+            ):
+                clearer = getattr(app_ctx, "clear_active_project", None)
+                if callable(clearer):
+                    clearer(session)
+
+    active_project = app_ctx.get_active_project(session)
+    project_id = (
+        active_project.project_id
+        if isinstance(active_project, SessionProjectContext)
+        else None
+    )
+    return project_id, token_id
+
+
+def register_workflow_tools(target_mcp: FastMCP) -> None:
+    """Register workflow MCP tools on the provided FastMCP server."""
+
+    target_mcp.add_tool(execute_workflow, name="execute_workflow")
+    target_mcp.add_tool(execute_inline_workflow, name="execute_inline_workflow")
+    target_mcp.add_tool(list_workflows, name="list_workflows")
+    target_mcp.add_tool(get_workflow_info, name="get_workflow_info")
+    target_mcp.add_tool(get_workflow_schema, name="get_workflow_schema")
+    target_mcp.add_tool(validate_workflow_yaml, name="validate_workflow_yaml")
+    target_mcp.add_tool(reload_workflows, name="reload_workflows")
+    target_mcp.add_tool(resume_workflow, name="resume_workflow")
+    target_mcp.add_tool(get_job_status, name="get_job_status")
+    target_mcp.add_tool(cancel_job, name="cancel_job")
+    target_mcp.add_tool(list_jobs, name="list_jobs")
+    target_mcp.add_tool(get_queue_stats, name="get_queue_stats")
 
 
 # =============================================================================
@@ -158,7 +221,14 @@ async def execute_workflow(
             )
 
         # Submit job with optional timeout
-        job_id = await app_ctx.job_queue.submit_job(workflow, inputs, timeout=timeout)
+        project_id, token_id = _resolve_run_binding(ctx)
+        job_id = await app_ctx.job_queue.submit_job(
+            workflow,
+            inputs,
+            timeout=timeout,
+            project_id=project_id,
+            token_id=token_id,
+        )
         # Get effective timeout for response
         effective_timeout = timeout if timeout else app_ctx.job_queue._default_job_timeout
         return _json_response(
@@ -746,10 +816,18 @@ async def reload_workflows(
         )
 
     app_ctx = ctx.request_context.lifespan_context
-    registry = app_ctx.registry
+    reload_callback = app_ctx.reload_workflows
+
+    if reload_callback is None:
+        return _json_response(
+            {
+                "status": "failure",
+                "message": "Workflow reload is not available in current server context.",
+            }
+        )
 
     try:
-        load_workflows(registry)
+        summary = reload_callback()
     except Exception as e:
         return _json_response(
             {
@@ -762,7 +840,9 @@ async def reload_workflows(
         {
             "status": "success",
             "message": "Successfully reloaded workflows",
-            "total": len(registry.list_names()),
+            "total": summary.workflow_count,
+            "source_count": summary.source_count,
+            "workflow_names": summary.workflow_names,
         }
     )
 
@@ -1031,7 +1111,13 @@ async def cancel_job(
     PARAMETERS:
     - job_id: Job ID to cancel
 
-    RETURNS: {cancelled: true|false, message: ...}
+    RETURNS: {
+      job_id: <string>,
+      cancelled: <bool>,
+      outcome: "cancel_requested"|"already_terminal"|"non_cancellable"|"not_found",
+      error_code: <string|null>,
+      message: <string>
+    }
 
     SEE ALSO: list_jobs (find job IDs), get_job_status (check before cancelling)
     """
@@ -1048,27 +1134,8 @@ async def cancel_job(
             }
         )
 
-    # Cancel job
-    try:
-        cancelled = await app_ctx.job_queue.cancel_job(job_id)
-        return _json_response(
-            {
-                "job_id": job_id,
-                "cancelled": cancelled,
-                "message": (
-                    "Job cancelled successfully" if cancelled else "Job already completed or failed"
-                ),
-            }
-        )
-    except KeyError:
-        return _json_response(
-            {
-                "status": "failure",
-                "error": "Job not found",
-                "job_id": job_id,
-                "message": f"No job found with ID: {job_id}",
-            }
-        )
+    result = await app_ctx.job_queue.cancel_job(job_id)
+    return _json_response(result)
 
 
 @mcp.tool(
@@ -1211,6 +1278,7 @@ async def get_queue_stats(
 # =============================================================================
 
 __all__ = [
+    "register_workflow_tools",
     # Tool functions (all MCP tools)
     "execute_workflow",
     "execute_inline_workflow",

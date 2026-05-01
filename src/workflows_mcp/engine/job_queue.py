@@ -60,6 +60,8 @@ class Job(BaseModel):
     inputs: dict[str, Any] = Field(default_factory=dict, description="Workflow inputs")
     status: WorkflowStatus = Field(default=WorkflowStatus.QUEUED, description="Current status")
     timeout: int = Field(default=3600, description="Job timeout in seconds")
+    project_id: str | None = Field(default=None, description="Associated project ID")
+    token_id: str | None = Field(default=None, description="Associated MCP token ID")
     result: dict[str, Any] | None = Field(default=None, description="Workflow result")
     error: str | None = Field(default=None, description="Error message if failed")
     created_at: datetime = Field(default_factory=datetime.now, description="Creation time")
@@ -89,19 +91,27 @@ class JobQueue:
         status = queue.get_status(job_id)
     """
 
-    def __init__(self, app_context: AppContext, num_workers: int = 3):
+    def __init__(
+        self,
+        app_context: AppContext,
+        num_workers: int = 3,
+        *,
+        db_path: str | None = None,
+    ):
         """Initialize job queue.
 
         Args:
             app_context: AppContext instance for creating execution contexts
             num_workers: Number of parallel workers
+            db_path: Optional SQLite DB path for run-history/job metadata
         """
         self._app_context = app_context
         self._num_workers = num_workers
-        self._store = JobStore()  # Persistent storage (SQLite + JSON)
+        self._store = JobStore(db_path=db_path)  # Persistent storage (SQLite run-history)
         self._queue: asyncio.Queue[Job] = asyncio.Queue()
         self._workers: list[asyncio.Task[None]] = []
         self._job_tasks: dict[str, asyncio.Task[Any]] = {}  # Track running tasks for cancellation
+        self._inflight_job_ids: set[str] = set()
         self._running = False
 
         # Job retention configuration
@@ -117,6 +127,7 @@ class JobQueue:
 
         # Lock for cleanup operations
         self._cleanup_lock = asyncio.Lock()
+        self._state_lock = asyncio.Lock()
 
     async def start(self) -> None:
         """Start worker pool and initialize persistent storage."""
@@ -179,7 +190,13 @@ class JobQueue:
         )
 
     async def submit_job(
-        self, workflow: str, inputs: dict[str, Any] | None = None, timeout: int | None = None
+        self,
+        workflow: str,
+        inputs: dict[str, Any] | None = None,
+        timeout: int | None = None,
+        *,
+        project_id: str | None = None,
+        token_id: str | None = None,
     ) -> str:
         """Submit workflow for async execution.
 
@@ -188,6 +205,8 @@ class JobQueue:
             inputs: Workflow inputs
             timeout: Optional job timeout in seconds (default: WORKFLOWS_JOB_TIMEOUT env var)
                      Maximum allowed: 86400 seconds (24 hours)
+            project_id: Optional project association for run-history records
+            token_id: Optional MCP token association for run-history records
 
         Returns:
             Job ID for status tracking
@@ -212,38 +231,44 @@ class JobQueue:
         else:
             job_timeout = self._default_job_timeout
 
-        # Check active job limit (backpressure - soft limit)
-        stats = await self.get_stats()
-        active_jobs = stats["queue_size"] + len(self._job_tasks)
-
-        if active_jobs >= self._max_concurrent_jobs:
-            raise RuntimeError(
-                f"Job queue at capacity: {active_jobs}/{self._max_concurrent_jobs} active jobs. "
-                f"Current: {stats['queue_size']} queued, {len(self._job_tasks)} running. "
-                f"Use get_queue_stats() to monitor or cancel_job() to free slots. "
-                f"Adjust via WORKFLOWS_MAX_CONCURRENT_JOBS environment variable."
-            )
-
         # Create job with timeout
         job = Job(
             id=f"job_{uuid.uuid4().hex[:8]}",
             workflow=workflow,
             inputs=inputs or {},
             timeout=job_timeout,
+            project_id=project_id,
+            token_id=token_id,
         )
 
-        # Persist job to storage (state.db + JSON file)
-        await self._store.save_job(job)
+        # Atomic admission + reservation under state lock
+        async with self._state_lock:
+            queued_rows = await self._store.list_jobs(status=WorkflowStatus.QUEUED, limit=10000)
+            running_rows = await self._store.list_jobs(status=WorkflowStatus.RUNNING, limit=10000)
+            queue_size = len(queued_rows)
+            running_jobs = len(running_rows)
+            active_jobs = queue_size + running_jobs
 
-        # Increment stats in database
-        await self._store.increment_stat("total_jobs")
+            if active_jobs >= self._max_concurrent_jobs:
+                raise RuntimeError(
+                    f"Job queue at capacity: "
+                    f"{active_jobs}/{self._max_concurrent_jobs} active jobs. "
+                    f"Current: {queue_size} queued, {running_jobs} running. "
+                    f"Use get_queue_stats() to monitor "
+                    f"or cancel_job() to free slots. "
+                    f"Adjust via WORKFLOWS_MAX_CONCURRENT_JOBS environment variable."
+                )
+
+            # Persist job reservation before queueing in-memory item
+            await self._store.save_job(job)
+            await self._store.increment_stat("total_jobs")
 
         # Get current total for cleanup trigger
         stats = await self._store.get_stats()
         if stats["total_jobs"] % 10 == 0:
             asyncio.create_task(self._cleanup_old_jobs())
 
-        # Queue for execution (ephemeral, not persisted)
+        # Queue for execution after successful persisted reservation
         await self._queue.put(job)
         logger.info(f"Job submitted: {job.id} (workflow={workflow}, timeout={job_timeout}s)")
 
@@ -256,11 +281,7 @@ class JobQueue:
         - Job status and timing
         - Workflow-level outputs (not block internals)
         - Error message if failed
-        - Path to full result file for debugging
-
-        This minimal response prevents token waste by excluding block execution
-        details, stdout/stderr, and deep execution trees (which can exceed 30K tokens).
-        Full job data is stored in result_file and can be accessed for debugging.
+        - Deterministic cancellable state
 
         Args:
             job_id: Job ID
@@ -276,16 +297,14 @@ class JobQueue:
                 "created_at": "2025-11-11T12:00:00",
                 "started_at": "2025-11-11T12:00:01" | null,
                 "completed_at": "2025-11-11T12:00:05" | null,
-                "result_file": "~/.workflows/states/<hash>/jobs/job_abc123.json"
+                "cancellable": false
             }
 
         Raises:
             KeyError: If job not found in database
-            FileNotFoundError: If JSON file missing (corrupted state)
+            FileNotFoundError: no longer raised (SQLite-only persistence)
         """
-        from .state_config import StateConfig
-
-        # Load full job data from JSON file (includes inputs, result, all execution details)
+        # Load compact job data from SQLite metadata
         job_data = await self._store.load_job(job_id)
 
         # Extract workflow-level outputs from result (if available)
@@ -294,10 +313,6 @@ class JobQueue:
 
         # Extract pause prompt if job is paused (critical for resume)
         prompt = result.get("prompt") if job_data["status"] == "paused" else None
-
-        # Build result file path (full job data location for debugging)
-        state_dir = StateConfig.get_state_dir()
-        result_file = str(state_dir / "jobs" / f"{job_data['id']}.json")
 
         # Return minimal response optimized for LLM callers
         response = {
@@ -310,7 +325,7 @@ class JobQueue:
             "created_at": job_data["created_at"],
             "started_at": job_data.get("started_at"),
             "completed_at": job_data.get("completed_at"),
-            "result_file": result_file,
+            "cancellable": bool(job_data.get("cancellable", False)),
         }
 
         # Add prompt and message fields when paused (so LLM/user knows what response is expected)
@@ -323,49 +338,192 @@ class JobQueue:
 
         return response
 
-    async def cancel_job(self, job_id: str) -> bool:
+    async def cancel_job(self, job_id: str) -> dict[str, Any]:
         """Cancel pending or running job.
 
         Args:
             job_id: Job ID
 
-        Returns:
-            True if cancelled, False if already completed/failed
-
-        Raises:
-            KeyError: If job not found
+        Returns structured contract with deterministic outcome/error_code.
         """
-        # Load job from storage
-        job_data = await self._store.load_job(job_id)
+        task_to_cancel: asyncio.Task[Any] | None = None
+        status: WorkflowStatus
+        async with self._state_lock:
+            try:
+                job_data = await self._store.load_job(job_id)
+            except KeyError:
+                return {
+                    "job_id": job_id,
+                    "cancelled": False,
+                    "outcome": "not_found",
+                    "error_code": "JOB_NOT_FOUND",
+                    "message": "No job found with the provided job_id",
+                }
 
-        # Check if job can be cancelled
-        status = WorkflowStatus(job_data["status"])
-        if status in (WorkflowStatus.COMPLETED, WorkflowStatus.FAILED, WorkflowStatus.CANCELLED):
-            return False
+            status = WorkflowStatus(job_data["status"])
+            if status in (
+                WorkflowStatus.COMPLETED,
+                WorkflowStatus.FAILED,
+                WorkflowStatus.CANCELLED,
+            ):
+                return {
+                    "job_id": job_id,
+                    "cancelled": False,
+                    "outcome": "already_terminal",
+                    "error_code": "JOB_ALREADY_TERMINAL",
+                    "message": "Job is already in terminal state and cannot be cancelled",
+                }
 
-        # Create Job model from data
-        job = Job(**job_data)
+            if status == WorkflowStatus.RUNNING:
+                runtime_task = self._job_tasks.get(job_id)
+                if runtime_task is None:
+                    return {
+                        "job_id": job_id,
+                        "cancelled": False,
+                        "outcome": "non_cancellable",
+                        "error_code": "JOB_NON_CANCELLABLE",
+                        "message": "Job cannot be interrupted in its current execution state",
+                    }
+                if runtime_task.done():
+                    return {
+                        "job_id": job_id,
+                        "cancelled": False,
+                        "outcome": "already_terminal",
+                        "error_code": "JOB_ALREADY_TERMINAL",
+                        "message": "Job is already in terminal state and cannot be cancelled",
+                    }
+                task_to_cancel = runtime_task
 
-        # Update job status
-        job.status = WorkflowStatus.CANCELLED
-        job.completed_at = datetime.now()
-        job.updated_at = datetime.now()
+            job = Job(**job_data)
+            job.status = WorkflowStatus.CANCELLED
+            job.completed_at = datetime.now()
+            job.updated_at = datetime.now()
+            await self._store.save_job(job)
+            await self._store.increment_stat("cancelled_jobs")
 
-        # Save to storage
-        await self._store.save_job(job)
-        await self._store.increment_stat("cancelled_jobs")
-
-        # Cancel running task if exists
-        if job_id in self._job_tasks:
-            task = self._job_tasks[job_id]
-            if not task.done():
-                task.cancel()
-                logger.info(f"Cancelled running task for job: {job_id}")
-            del self._job_tasks[job_id]
+        if task_to_cancel is not None:
+            task_to_cancel.cancel()
+            logger.info(f"Cancelled running task for job: {job_id}")
         else:
             logger.info(f"Job cancelled (not yet started): {job_id}")
 
-        return True
+        return {
+            "job_id": job_id,
+            "cancelled": True,
+            "outcome": "cancel_requested",
+            "error_code": None,
+            "message": "Cancellation requested",
+        }
+
+    async def resume_job(self, job_id: str, *, response: str = "") -> dict[str, Any]:
+        """Resume a paused job via a stable public contract.
+
+        Returns:
+            {
+              "job_id": str,
+              "resumed": bool,
+              "outcome": "resumed"|"not_found"|"not_resumable"|"resume_failed",
+              "error_code": str | None,
+              "message": str,
+              "result": dict[str, Any] | None,
+            }
+        """
+        try:
+            job_data = await self._store.load_job(job_id)
+        except KeyError:
+            return {
+                "job_id": job_id,
+                "resumed": False,
+                "outcome": "not_found",
+                "error_code": "JOB_NOT_FOUND",
+                "message": "No job found with the provided job_id",
+            }
+
+        job = Job.model_validate(job_data)
+        if job.status != WorkflowStatus.PAUSED:
+            return {
+                "job_id": job_id,
+                "resumed": False,
+                "outcome": "not_resumable",
+                "error_code": "JOB_NOT_RESUMABLE",
+                "message": "Job is not paused or has no resumable execution state",
+            }
+        if not job.result:
+            return {
+                "job_id": job_id,
+                "resumed": False,
+                "outcome": "not_resumable",
+                "error_code": "JOB_NOT_RESUMABLE",
+                "message": "Job is not paused or has no resumable execution state",
+            }
+
+        try:
+            execution_state = WorkflowRunner._extract_execution_state(job.result)
+        except ValueError:
+            return {
+                "job_id": job_id,
+                "resumed": False,
+                "outcome": "not_resumable",
+                "error_code": "JOB_NOT_RESUMABLE",
+                "message": "Job is not paused or has no resumable execution state",
+            }
+
+        saved_stack = execution_state.workflow_stack or []
+        workflow_stack = [item["name"] if isinstance(item, dict) else item for item in saved_stack]
+        exec_context = self._app_context.create_execution_context(workflow_stack=workflow_stack)
+        runner = WorkflowRunner()
+
+        try:
+            result = await runner.resume_from_state(
+                execution_state=execution_state,
+                response=response,
+                context=exec_context,
+            )
+        except Exception as exc:
+            logger.exception("Resume execution crashed for job %s", job_id)
+            return {
+                "job_id": job_id,
+                "resumed": False,
+                "outcome": "resume_failed",
+                "error_code": "JOB_RESUME_FAILED",
+                "message": f"Resume execution failed: {exc}",
+            }
+
+        if result.status == "success":
+            job.status = WorkflowStatus.COMPLETED
+            job.result = result._build_debug_data()
+            job.completed_at = datetime.now()
+            job.updated_at = datetime.now()
+            await self._store.save_job(job)
+            await self._store.increment_stat("completed_jobs")
+        elif result.status == "failure":
+            job.status = WorkflowStatus.FAILED
+            job.result = result._build_debug_data()
+            job.error = result.error
+            job.completed_at = datetime.now()
+            job.updated_at = datetime.now()
+            await self._store.save_job(job)
+            await self._store.increment_stat("failed_jobs")
+            return {
+                "job_id": job_id,
+                "resumed": False,
+                "outcome": "resume_failed",
+                "error_code": "JOB_RESUME_FAILED",
+                "message": result.error or "Resume execution failed",
+            }
+        elif result.status == "paused":
+            job.result = result._build_debug_data()
+            job.updated_at = datetime.now()
+            await self._store.save_job(job)
+
+        return {
+            "job_id": job_id,
+            "resumed": True,
+            "outcome": "resumed",
+            "error_code": None,
+            "message": "Resume execution accepted",
+            "result": result.to_response(False),
+        }
 
     async def list_jobs(
         self, status: WorkflowStatus | None = None, limit: int = 100
@@ -394,9 +552,15 @@ class JobQueue:
         db_stats = await self._store.get_stats()
 
         # Add runtime stats (ephemeral state)
+        queued_rows = await self._store.list_jobs(status=WorkflowStatus.QUEUED, limit=10000)
+        running_rows = await self._store.list_jobs(status=WorkflowStatus.RUNNING, limit=10000)
+        running_jobs = len(running_rows)
+        active_jobs = len(queued_rows) + running_jobs
         return {
             **db_stats,
-            "queue_size": self._queue.qsize(),
+            "queue_size": len(queued_rows),
+            "running_jobs": running_jobs,
+            "active_jobs": active_jobs,
             "active_workers": len([w for w in self._workers if not w.done()]),
         }
 
@@ -504,21 +668,28 @@ class JobQueue:
                         break  # Exit when stopping and no more items
                     continue  # Keep waiting when running
 
-                # Skip if cancelled while queued
-                if job.status == WorkflowStatus.CANCELLED:
-                    self._queue.task_done()
-                    continue
+                # Re-hydrate and transition QUEUED->RUNNING under state lock.
+                async with self._state_lock:
+                    persisted = await self._store.load_job(job.id)
+                    if persisted["status"] == WorkflowStatus.CANCELLED.value:
+                        self._queue.task_done()
+                        continue
 
-                # Update status to RUNNING and persist
-                job.status = WorkflowStatus.RUNNING
-                job.started_at = datetime.now()
-                job.updated_at = datetime.now()
-                await self._store.save_job(job)
+                    self._inflight_job_ids.add(job.id)
+                    job.status = WorkflowStatus(persisted["status"])
+                    if isinstance(persisted.get("inputs"), dict):
+                        job.inputs = persisted["inputs"]
 
-                # Store task reference for cancellation support
-                current_task = asyncio.current_task()
-                if current_task:
-                    self._job_tasks[job.id] = current_task
+                    latest_before_running = await self._store.load_job(job.id)
+                    if latest_before_running["status"] == WorkflowStatus.CANCELLED.value:
+                        self._inflight_job_ids.discard(job.id)
+                        self._queue.task_done()
+                        continue
+
+                    job.status = WorkflowStatus.RUNNING
+                    job.started_at = datetime.now()
+                    job.updated_at = datetime.now()
+                    await self._store.save_job(job)
 
                 logger.info(
                     f"Worker {worker_id} executing job: {job.id} "
@@ -534,25 +705,45 @@ class JobQueue:
                     execution_context = self._app_context.create_execution_context()
                     runner = WorkflowRunner()
 
-                    # Execute workflow with timeout wrapper
-                    result = await asyncio.wait_for(
-                        runner.execute(workflow_schema, job.inputs, execution_context),
-                        timeout=job.timeout,
+                    # Execute workflow via per-job task so cancel_job can interrupt
+                    execution_task = asyncio.create_task(
+                        runner.execute(workflow_schema, job.inputs, execution_context)
                     )
+                    self._job_tasks[job.id] = execution_task
+                    result = await asyncio.wait_for(execution_task, timeout=job.timeout)
+
+                    async with self._state_lock:
+                        latest = await self._store.load_job(job.id)
+                        if latest["status"] == WorkflowStatus.CANCELLED.value:
+                            logger.info(
+                                f"Worker {worker_id} dropping result for cancelled job: {job.id}"
+                            )
+                            continue
 
                     # Update job with result and persist (unified Job architecture)
                     # Check if workflow paused (Prompt block)
                     if hasattr(result, "status") and result.status == "paused":
-                        # Workflow paused - set PAUSED status
-                        job.status = WorkflowStatus.PAUSED
-                        # Store execution_state in result for resume
-                        if hasattr(result, "_build_debug_data"):
-                            job.result = result._build_debug_data()
-                        else:
-                            job.result = {"status": "paused", "error": "Missing execution state"}
-                        job.updated_at = datetime.now()
-                        # Note: No completed_at - workflow not finished
-                        await self._store.save_job(job)
+                        async with self._state_lock:
+                            latest_before_write = await self._store.load_job(job.id)
+                            if latest_before_write["status"] == WorkflowStatus.CANCELLED.value:
+                                logger.info(
+                                    f"Worker {worker_id} paused result dropped "
+                                    f"for cancelled job: {job.id}"
+                                )
+                                continue
+                            # Workflow paused - set PAUSED status
+                            job.status = WorkflowStatus.PAUSED
+                            # Store execution_state in result for resume
+                            if hasattr(result, "_build_debug_data"):
+                                job.result = result._build_debug_data()
+                            else:
+                                job.result = {
+                                    "status": "paused",
+                                    "error": "Missing execution state",
+                                }
+                            job.updated_at = datetime.now()
+                            # Note: No completed_at - workflow not finished
+                            await self._store.save_job(job)
 
                         prompt_preview = (
                             result.pause_data.prompt[:50] if result.pause_data else "N/A"
@@ -562,20 +753,29 @@ class JobQueue:
                             f"(workflow={job.workflow}, prompt={prompt_preview}...)"
                         )
                     else:
-                        # Workflow completed successfully
-                        job.status = WorkflowStatus.COMPLETED
-                        # Use clean debug format (same as /tmp/ debug files)
-                        # This prevents secret_redactor serialization and provides consistent format
-                        if hasattr(result, "_build_debug_data"):
-                            job.result = result._build_debug_data()
-                        elif isinstance(result, dict):
-                            job.result = dict(result)
-                        else:
-                            job.result = {"value": result}
-                        job.completed_at = datetime.now()
-                        job.updated_at = datetime.now()
-                        await self._store.save_job(job)
-                        await self._store.increment_stat("completed_jobs")
+                        async with self._state_lock:
+                            latest_before_write = await self._store.load_job(job.id)
+                            if latest_before_write["status"] == WorkflowStatus.CANCELLED.value:
+                                logger.info(
+                                    f"Worker {worker_id} completion dropped "
+                                    f"for cancelled job: {job.id}"
+                                )
+                                continue
+                            # Workflow completed successfully
+                            job.status = WorkflowStatus.COMPLETED
+                            # Use clean debug format (same as /tmp/ debug files)
+                            # This prevents secret_redactor serialization
+                            # and provides consistent format
+                            if hasattr(result, "_build_debug_data"):
+                                job.result = result._build_debug_data()
+                            elif isinstance(result, dict):
+                                job.result = dict(result)
+                            else:
+                                job.result = {"value": result}
+                            job.completed_at = datetime.now()
+                            job.updated_at = datetime.now()
+                            await self._store.save_job(job)
+                            await self._store.increment_stat("completed_jobs")
 
                         duration = (job.completed_at - job.started_at).total_seconds()
                         logger.info(
@@ -585,13 +785,20 @@ class JobQueue:
                         )
 
                 except TimeoutError:
-                    # Job exceeded timeout - persist failure
-                    job.status = WorkflowStatus.FAILED
-                    job.error = f"Job exceeded timeout limit ({job.timeout} seconds)"
-                    job.completed_at = datetime.now()
-                    job.updated_at = datetime.now()
-                    await self._store.save_job(job)
-                    await self._store.increment_stat("failed_jobs")
+                    async with self._state_lock:
+                        latest = await self._store.load_job(job.id)
+                        if latest["status"] == WorkflowStatus.CANCELLED.value:
+                            logger.info(
+                                f"Worker {worker_id} timeout ignored due to cancellation: {job.id}"
+                            )
+                            continue
+                        # Job exceeded timeout - persist failure
+                        job.status = WorkflowStatus.FAILED
+                        job.error = f"Job exceeded timeout limit ({job.timeout} seconds)"
+                        job.completed_at = datetime.now()
+                        job.updated_at = datetime.now()
+                        await self._store.save_job(job)
+                        await self._store.increment_stat("failed_jobs")
 
                     duration = (job.completed_at - job.started_at).total_seconds()
                     logger.error(
@@ -600,21 +807,30 @@ class JobQueue:
                         f"duration={duration:.1f}s)"
                     )
 
+                except asyncio.CancelledError:
+                    logger.info(f"Worker {worker_id} observed cancellation for job: {job.id}")
+
                 except Exception as e:
-                    # Job failed - persist failure
-                    job.status = WorkflowStatus.FAILED
-                    job.error = str(e)
-                    job.completed_at = datetime.now()
-                    job.updated_at = datetime.now()
-                    await self._store.save_job(job)
-                    await self._store.increment_stat("failed_jobs")
+                    async with self._state_lock:
+                        latest = await self._store.load_job(job.id)
+                        if latest["status"] == WorkflowStatus.CANCELLED.value:
+                            logger.info(
+                                f"Worker {worker_id} failure ignored due to cancellation: {job.id}"
+                            )
+                            continue
+                        # Job failed - persist failure
+                        job.status = WorkflowStatus.FAILED
+                        job.error = str(e)
+                        job.completed_at = datetime.now()
+                        job.updated_at = datetime.now()
+                        await self._store.save_job(job)
+                        await self._store.increment_stat("failed_jobs")
 
                     logger.error(f"Worker {worker_id} failed job: {job.id} - {e}", exc_info=True)
 
                 finally:
-                    # Clean up task reference
-                    if job.id in self._job_tasks:
-                        del self._job_tasks[job.id]
+                    self._job_tasks.pop(job.id, None)
+                    self._inflight_job_ids.discard(job.id)
 
                     self._queue.task_done()
 

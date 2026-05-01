@@ -36,6 +36,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 import workflows_mcp.tools_memory as _tools_memory
+from workflows_mcp.context import SessionProjectContext
 from workflows_mcp.engine.llm_config import (
     LLMConfig,
     LLMConfigLoader,
@@ -468,14 +469,39 @@ def _get_tool_fn(name: str) -> Any:
 def mock_ctx() -> MagicMock:
     ctx = MagicMock()
     app_ctx = MagicMock()
+    session = object()
     app_ctx.memory_backend = None
     app_ctx.memory_backend_lock = None
+    app_ctx.memory_backend_unavailable_error = None
     ctx.request_context.lifespan_context = app_ctx
+    ctx.request_context.session = session
+
+    active_context_store: dict[int, Any] = {}
+
+    def _set_active_context(session_obj: Any, candidate: Any) -> None:
+        active_context_store[id(session_obj)] = candidate
+
+    def _get_active_context(session_obj: Any) -> Any:
+        return active_context_store.get(id(session_obj))
+
+    app_ctx.set_active_context.side_effect = _set_active_context
+    app_ctx.get_active_context.side_effect = _get_active_context
+
+    onboard_candidates_store: dict[int, list[Any]] = {}
+
+    def _register_onboard_context_candidate(session_obj: Any, candidate: Any) -> None:
+        onboard_candidates_store.setdefault(id(session_obj), []).append(candidate)
+
+    def _list_onboard_context_candidates(session_obj: Any) -> list[Any]:
+        return list(onboard_candidates_store.get(id(session_obj), []))
+
+    app_ctx.register_onboard_context_candidate.side_effect = _register_onboard_context_candidate
+    app_ctx.list_onboard_context_candidates.side_effect = _list_onboard_context_candidates
+
     exec_context = MagicMock()
     exec_context.user_string_id = None
     app_ctx.create_execution_context.return_value = exec_context
     app_ctx.get_user_context.return_value = (uuid.UUID(int=0), "test-user", "OS_USER")
-    app_ctx.get_active_context.return_value = None
     return ctx
 
 
@@ -498,7 +524,9 @@ class TestSyncNoArgsResolution:
             result = await sync(ctx=mock_ctx)
         payload = json.loads(result.content[0].text)
         err = payload.get("error", {})
-        assert err.get("code") == "MEM_NO_ACTIVE_CONTEXT", f"Expected MEM_NO_ACTIVE_CONTEXT, got: {err.get('code')}"
+        assert err.get("code") == "MEM_NO_ACTIVE_CONTEXT", (
+            f"Expected MEM_NO_ACTIVE_CONTEXT, got: {err.get('code')}"
+        )
 
     @pytest.mark.asyncio
     async def test_sync_no_context_retryable_is_false(self, mock_ctx: MagicMock) -> None:
@@ -816,6 +844,66 @@ class TestOnboardProgrammaticFastPath:
         )
         payload = json.loads(result.content[0].text)
         assert payload.get("status") == "completed", f"Unexpected response: {payload}"
+
+    @pytest.mark.asyncio
+    async def test_programmatic_completed_enables_watcher_for_active_project(
+        self, mock_ctx: MagicMock, tmp_path: Path
+    ) -> None:
+        (tmp_path / "main.py").write_text("print('hello')")
+
+        active_project = SessionProjectContext(
+            project_id="proj-123",
+            slug="test-proj",
+            palace="test-org",
+            default_wing="svc",
+            default_room=None,
+            source="session_selected",
+        )
+        app_ctx = mock_ctx.request_context.lifespan_context
+        app_ctx.get_active_project.return_value = active_project
+        app_ctx.watcher_manager = MagicMock()
+
+        onboard = _get_tool_fn("onboard")
+        result = await onboard(
+            scope={"palace": "test-org", "wing": "svc"},
+            scan={
+                "patterns": ["*.py"],
+                "root": str(tmp_path),
+                "max_files": 5,
+                "max_size_kb": 10,
+            },
+            ingestion={"mode": "programmatic"},
+            ctx=mock_ctx,
+        )
+        payload = json.loads(result.content[0].text)
+        assert payload.get("status") == "completed", f"Unexpected response: {payload}"
+        app_ctx.watcher_manager.enable_project_by_default.assert_called_once_with("proj-123")
+
+    @pytest.mark.asyncio
+    async def test_programmatic_completed_no_active_project_is_noop_for_watcher(
+        self, mock_ctx: MagicMock, tmp_path: Path
+    ) -> None:
+        (tmp_path / "main.py").write_text("print('hello')")
+
+        app_ctx = mock_ctx.request_context.lifespan_context
+        app_ctx.get_active_project.return_value = None
+        app_ctx.watcher_manager = MagicMock()
+
+        onboard = _get_tool_fn("onboard")
+        result = await onboard(
+            scope={"palace": "test-org", "wing": "svc"},
+            scan={
+                "patterns": ["*.py"],
+                "root": str(tmp_path),
+                "max_files": 5,
+                "max_size_kb": 10,
+            },
+            ingestion={"mode": "programmatic"},
+            ctx=mock_ctx,
+        )
+        payload = json.loads(result.content[0].text)
+        assert payload.get("status") == "completed", f"Unexpected response: {payload}"
+        app_ctx.watcher_manager.enable_project_by_default.assert_not_called()
 
     @pytest.mark.asyncio
     async def test_scan_no_checkpoint_response_has_graph_summary(
@@ -1247,10 +1335,36 @@ class TestOnboardLLMModeToolFastPath:
         """Build a mock ctx whose app_ctx carries the supplied loader."""
         ctx = MagicMock()
         app_ctx = MagicMock()
+        session = object()
         app_ctx.memory_backend = None
         app_ctx.memory_backend_lock = None
+        app_ctx.memory_backend_unavailable_error = None
         app_ctx.llm_config_loader = loader
         ctx.request_context.lifespan_context = app_ctx
+        ctx.request_context.session = session
+
+        active_context_store: dict[int, Any] = {}
+
+        def _set_active_context(session_obj: Any, candidate: Any) -> None:
+            active_context_store[id(session_obj)] = candidate
+
+        def _get_active_context(session_obj: Any) -> Any:
+            return active_context_store.get(id(session_obj))
+
+        app_ctx.set_active_context.side_effect = _set_active_context
+        app_ctx.get_active_context.side_effect = _get_active_context
+
+        onboard_candidates_store: dict[int, list[Any]] = {}
+
+        def _register_onboard_context_candidate(session_obj: Any, candidate: Any) -> None:
+            onboard_candidates_store.setdefault(id(session_obj), []).append(candidate)
+
+        def _list_onboard_context_candidates(session_obj: Any) -> list[Any]:
+            return list(onboard_candidates_store.get(id(session_obj), []))
+
+        app_ctx.register_onboard_context_candidate.side_effect = _register_onboard_context_candidate
+        app_ctx.list_onboard_context_candidates.side_effect = _list_onboard_context_candidates
+
         exec_context = MagicMock()
         exec_context.user_string_id = None
         app_ctx.create_execution_context.return_value = exec_context
@@ -1767,7 +1881,9 @@ class TestOnboardContextPersistenceForSync:
             result = await sync(ctx=mock_ctx)
         payload = json.loads(result.content[0].text)
         err = payload.get("error", {})
-        assert err.get("code") == "MEM_NO_ACTIVE_CONTEXT", f"Expected MEM_NO_ACTIVE_CONTEXT, got: {err.get('code')}"
+        assert err.get("code") == "MEM_NO_ACTIVE_CONTEXT", (
+            f"Expected MEM_NO_ACTIVE_CONTEXT, got: {err.get('code')}"
+        )
 
     @pytest.mark.asyncio
     async def test_two_distinct_scopes_sync_returns_ambiguous(
@@ -1775,14 +1891,19 @@ class TestOnboardContextPersistenceForSync:
     ) -> None:
         """sync({}) with two stored contexts and no scope hint must return AMBIGUOUS_CONTEXT."""
         from workflows_mcp.engine.memory_scope_resolver import normalize_scope
+
         # Directly inject two candidates into the registry.
         scope_a = {"palace": "palace-a"}
         scope_b = {"palace": "palace-b"}
-        _tools_memory._register_onboard_context(
-            normalize_scope(scope_a), {"scope": normalize_scope(scope_a)}
+        _tools_memory._register_onboard_context_for_session(
+            mock_ctx,
+            normalize_scope(scope_a),
+            {"scope": normalize_scope(scope_a)},
         )
-        _tools_memory._register_onboard_context(
-            normalize_scope(scope_b), {"scope": normalize_scope(scope_b)}
+        _tools_memory._register_onboard_context_for_session(
+            mock_ctx,
+            normalize_scope(scope_b),
+            {"scope": normalize_scope(scope_b)},
         )
 
         sync = _get_tool_fn("sync")

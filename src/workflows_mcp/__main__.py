@@ -1,14 +1,11 @@
-"""Entry point for workflows-mcp HTTP server.
-
-Delegates to ``server.main()`` which starts the Uvicorn/FastAPI HTTP service.
-"""
+"""Entry point for workflows-mcp CLI."""
 
 
 def main() -> None:
-    """Entry point for direct execution."""
-    from .server import main as server_main
+    """Entry point for direct execution through CLI router."""
+    from .cli import main as cli_main
 
-    server_main()
+    cli_main()
 
 
 if __name__ == "__main__":

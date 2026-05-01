@@ -14,7 +14,12 @@ from mcp.server.fastmcp import FastMCP
 from mcp.types import CallToolResult, TextContent, ToolAnnotations
 from pydantic import BaseModel, Field, ValidationError, field_validator, model_validator
 
-from .context import AppContextType
+from .context import (
+    AppContext,
+    AppContextType,
+    MemoryBackendUnavailableError,
+    SessionProjectContext,
+)
 from .engine.memory_graph_validator import (
     GraphValidationResult,
     build_graph_error_envelope,
@@ -48,11 +53,16 @@ from .engine.memory_service import (
 )
 from .engine.sql.postgres_backend import PostgresBackend
 from .http_models import OnboardRequest, SyncRequest
+from .security.filesystem_boundaries import (
+    normalize_project_roots,
+    validate_path_within_effective_boundary,
+)
 
 logger = logging.getLogger(__name__)
 
 _PROJECT_FLOW_VERSION = "oss-r3"
 _PROJECT_FLOW_OPERATIONS: tuple[str, ...] = ("ingest", "supersede", "archive", "maintain")
+_AUTH_SCOPE_KEY = "workflows_mcp.auth_context"
 
 # ---------------------------------------------------------------------------
 # Session-scoped active context helpers
@@ -62,6 +72,64 @@ _PROJECT_FLOW_OPERATIONS: tuple[str, ...] = ("ingest", "supersede", "archive", "
 def _get_session(ctx: AppContextType) -> Any:
     """Return the underlying session object from an MCP tool context."""
     return ctx.request_context.session
+
+
+def _get_request_scope(ctx: AppContextType) -> dict[str, Any] | None:
+    """Best-effort access to HTTP request scope from MCP tool context."""
+    request = getattr(ctx.request_context, "request", None)
+    scope = getattr(request, "scope", None)
+    if isinstance(scope, dict):
+        return scope
+    return None
+
+
+def _get_header_from_scope(scope: dict[str, Any], header_name: bytes) -> str | None:
+    headers = dict(scope.get("headers", []))
+    raw = headers.get(header_name)
+    if raw is None:
+        return None
+    value = raw.decode("latin-1", errors="replace").strip()
+    return value or None
+
+
+def _prime_session_project_context_from_auth(ctx: AppContextType) -> None:
+    """Hydrate per-session allowed/active projects from auth middleware context."""
+    scope = _get_request_scope(ctx)
+    if scope is None:
+        return
+
+    auth_ctx = scope.get(_AUTH_SCOPE_KEY)
+    projects = getattr(auth_ctx, "projects", None)
+    if not isinstance(projects, tuple) or not all(
+        isinstance(project, SessionProjectContext) for project in projects
+    ):
+        return
+
+    app_ctx = ctx.request_context.lifespan_context
+    session = _get_session(ctx)
+
+    transport_session_id = _get_header_from_scope(scope, b"mcp-session-id")
+    binder = getattr(app_ctx, "bind_transport_session", None)
+    if transport_session_id and callable(binder):
+        auth_token_id = getattr(auth_ctx, "token_id", None)
+        binder(transport_session_id, session, token_id=auth_token_id)
+
+    allowed = list(projects)
+    app_ctx.register_allowed_projects(session, allowed)
+
+    if len(allowed) == 1:
+        app_ctx.set_active_project(session, allowed[0])
+        return
+
+    active = app_ctx.get_active_project(session)
+    if active is None:
+        return
+    if any(active.project_id == candidate.project_id for candidate in allowed):
+        return
+
+    clearer = getattr(app_ctx, "clear_active_project", None)
+    if callable(clearer):
+        clearer(session)
 
 
 def _get_active_context(ctx: AppContextType) -> Any:
@@ -76,6 +144,121 @@ def _set_active_context(ctx: AppContextType, candidate: Any) -> None:
     app_ctx = ctx.request_context.lifespan_context
     session = _get_session(ctx)
     app_ctx.set_active_context(session, candidate)
+
+
+def _list_session_onboard_candidates(ctx: AppContextType) -> list[SyncContextCandidate]:
+    """Return onboard/sync candidates visible to the current session."""
+    app_ctx = ctx.request_context.lifespan_context
+    session = _get_session(ctx)
+    lister = getattr(app_ctx, "list_onboard_context_candidates", None)
+    if callable(lister):
+        listed = lister(session)
+        if isinstance(listed, list) and all(
+            isinstance(item, SyncContextCandidate) for item in listed
+        ):
+            return listed
+    # Fail closed: never fall back to process-global candidate visibility.
+    return []
+
+
+def _register_onboard_context_for_session(
+    ctx: AppContextType,
+    resolved_scope: dict[str, str | None],
+    checkpoint_payload: dict[str, Any],
+) -> SyncContextCandidate:
+    """Register candidate in current session context only."""
+    key = scope_key(resolved_scope)
+    candidate = SyncContextCandidate(
+        scope=resolved_scope,
+        scope_key_value=key,
+        checkpoint_data=checkpoint_payload,
+        source="stored_checkpoint",
+    )
+
+    app_ctx = ctx.request_context.lifespan_context
+    register = getattr(app_ctx, "register_onboard_context_candidate", None)
+    if callable(register):
+        register(_get_session(ctx), candidate)
+    return candidate
+
+
+def _get_active_project(ctx: AppContextType) -> SessionProjectContext | None:
+    """Return the active project for this session, or None."""
+    _prime_session_project_context_from_auth(ctx)
+    app_ctx = ctx.request_context.lifespan_context
+    getter = getattr(app_ctx, "get_active_project", None)
+    if getter is None:
+        return None
+    project = getter(_get_session(ctx))
+    if isinstance(project, SessionProjectContext):
+        return project
+    return None
+
+
+def _enable_watcher_for_active_project_after_onboard(ctx: AppContextType) -> None:
+    """Best-effort default watcher enablement for the active project.
+
+    Onboarding success must not fail if watcher manager is unavailable or errors.
+    """
+    active_project = _get_active_project(ctx)
+    if active_project is None:
+        return
+
+    app_ctx = ctx.request_context.lifespan_context
+    watcher_manager = getattr(app_ctx, "watcher_manager", None)
+    if watcher_manager is None:
+        return
+
+    enable_by_default = getattr(watcher_manager, "enable_project_by_default", None)
+    if not callable(enable_by_default):
+        return
+
+    try:
+        enable_by_default(active_project.project_id)
+    except Exception:
+        logger.warning(
+            "Failed to enable default watcher after onboard for project_id=%s",
+            active_project.project_id,
+            exc_info=True,
+        )
+
+
+def _merge_scope_with_active_project(
+    scope: dict[str, Any] | None,
+    active_project: SessionProjectContext,
+) -> dict[str, Any]:
+    """Resolve scope with project defaults per Slice D precedence.
+
+    Rules:
+    - No explicit scope: use active project's palace/wing/room defaults.
+    - Partial scope missing palace: inject palace, wing, room from active defaults.
+    - Explicit palace is never overridden.
+    - Missing wing/room are only defaulted when explicit palace matches active palace.
+    """
+    if scope is None:
+        return {
+            "palace": active_project.palace,
+            "wing": active_project.default_wing,
+            "room": active_project.default_room,
+        }
+
+    merged: dict[str, Any] = dict(scope)
+    explicit_palace = merged.get("palace")
+    if not explicit_palace:
+        merged["palace"] = active_project.palace
+        if not merged.get("wing") and active_project.default_wing is not None:
+            merged["wing"] = active_project.default_wing
+        if not merged.get("room") and active_project.default_room is not None:
+            merged["room"] = active_project.default_room
+        return merged
+
+    if explicit_palace == active_project.palace:
+        if not merged.get("wing") and active_project.default_wing is not None:
+            merged["wing"] = active_project.default_wing
+        if not merged.get("room") and active_project.default_room is not None:
+            merged["room"] = active_project.default_room
+
+    return merged
 
 
 def _build_no_active_context_envelope() -> dict[str, Any]:
@@ -98,39 +281,27 @@ def _build_no_active_context_envelope() -> dict[str, Any]:
     }
 
 
+def _memory_backend_unavailable_envelope(app_ctx: AppContext) -> dict[str, Any] | None:
+    """Return actionable fail-closed envelope when memory backend is unavailable."""
+    unavailable = app_ctx.memory_backend_unavailable_error
+    if unavailable is None or not isinstance(unavailable, MemoryBackendUnavailableError):
+        return None
+
+    return {
+        "error": {
+            "code": unavailable.code,
+            "message": unavailable.message,
+            "retryable": unavailable.retryable,
+            "actionable_fix": unavailable.actionable_fix,
+        }
+    }
+
+
 # ---------------------------------------------------------------------------
-# In-process onboard context registry for sync({}) zero-arg resolution.
-#
-# Keyed by scope_key (stable SHA-256 hex string). Written by onboard on
-# successful completion (both fast-path and checkpoint-based flows).
-# Read by sync({}) when no checkpoint / scope / plan args are provided.
-# Reset between onboard calls for the same scope_key (idempotent upsert).
+# Legacy in-process onboarding registry retained for tests/compatibility only.
+# Runtime session resolution must not read/write this process-global store.
 # ---------------------------------------------------------------------------
 _onboard_context_registry: dict[str, SyncContextCandidate] = {}
-
-
-def _register_onboard_context(
-    resolved_scope: dict[str, str | None],
-    checkpoint_payload: dict[str, Any],
-) -> None:
-    """Upsert a completed onboard context into the in-process registry.
-
-    Called after every successful onboard completion so that a subsequent
-    sync({}) call can resolve the context without a caller-provided checkpoint.
-    """
-    key = scope_key(resolved_scope)
-    candidate = SyncContextCandidate(
-        scope=resolved_scope,
-        scope_key_value=key,
-        checkpoint_data=checkpoint_payload,
-        source="stored_checkpoint",
-    )
-    _onboard_context_registry[key] = candidate
-    logger.info(
-        "onboard_context_registry: upserted scope_key=%s (total=%d)",
-        key[:12],
-        len(_onboard_context_registry),
-    )
 
 
 # ============================================================================
@@ -271,11 +442,12 @@ def _validate_scan_path_within_workspace(resolved: Path, label: str) -> None:
     ``WORKFLOWS_SCAN_ROOT`` environment variable (single path, no list parsing).
     """
     root = _get_scan_root()
-    try:
-        resolved.relative_to(root)
-        return  # Path is inside the root — allowed
-    except ValueError:
-        pass
+    if validate_path_within_effective_boundary(
+        resolved,
+        global_root=root,
+        project_roots=None,
+    ):
+        return
     raise MemoryContractError(
         code="MEM_SCAN_PATH_OUT_OF_ROOT",
         message=(
@@ -287,7 +459,55 @@ def _validate_scan_path_within_workspace(resolved: Path, label: str) -> None:
     )
 
 
-async def _run_scan(scan_config: ScanConfig) -> tuple[list[dict[str, Any]], ScanSnapshot]:
+def _validate_scan_path_with_project_boundary(
+    resolved: Path,
+    label: str,
+    active_project: SessionProjectContext | None,
+) -> None:
+    """Validate scan path against active project boundaries when configured.
+
+    Enforced only when an active project with fs_root is present.
+    """
+    global_root = _get_scan_root()
+    project_roots = None
+    if active_project is not None and active_project.fs_root:
+        project_roots = normalize_project_roots(
+            fs_root=active_project.fs_root,
+            fs_allowlist=active_project.fs_allowlist,
+        )
+
+    if validate_path_within_effective_boundary(
+        resolved,
+        global_root=global_root,
+        project_roots=project_roots,
+    ):
+        return
+
+    if project_roots:
+        roots_rendered = ", ".join(str(root) for root in project_roots)
+        message = (
+            f"MEM_SCAN_PATH_OUT_OF_ROOT: {label} must be inside project boundary "
+            f"([{roots_rendered}]) and global scan root ({global_root}); got {resolved}."
+        )
+    else:
+        message = (
+            f"MEM_SCAN_PATH_OUT_OF_ROOT: {label} must be inside the allowed scan root "
+            f"({global_root}); got {resolved}. "
+            "Set WORKFLOWS_SCAN_ROOT to a single directory path to override."
+        )
+
+    raise MemoryContractError(
+        code="MEM_SCAN_PATH_OUT_OF_ROOT",
+        message=message,
+        retryable=False,
+    )
+
+
+async def _run_scan(
+    scan_config: ScanConfig,
+    *,
+    active_project: SessionProjectContext | None = None,
+) -> tuple[list[dict[str, Any]], ScanSnapshot]:
     """Run a file scan using the ReadFiles executor helper.
 
     Returns:
@@ -301,11 +521,11 @@ async def _run_scan(scan_config: ScanConfig) -> tuple[list[dict[str, Any]], Scan
 
     # --- path safety: validate root is inside workspace root ---
     base = Path(scan_config.root).expanduser().resolve()
-    _validate_scan_path_within_workspace(base, "scan.root")
+    _validate_scan_path_with_project_boundary(base, "scan.root", active_project)
 
     if scan_config.path is not None:
         single_path = (base / scan_config.path).resolve()
-        _validate_scan_path_within_workspace(single_path, "scan.path")
+        _validate_scan_path_with_project_boundary(single_path, "scan.path", active_project)
 
     try:
         scanned_files = await run_readfiles_scan(
@@ -334,7 +554,12 @@ async def _run_scan(scan_config: ScanConfig) -> tuple[list[dict[str, Any]], Scan
     entries: list[FileSnapshotEntry] = []
     for f in scanned_files:
         rel_path = f["path"]
-        abs_path = base / rel_path
+        abs_path = (base / rel_path).resolve()
+        _validate_scan_path_with_project_boundary(
+            abs_path,
+            f"scan.result:{rel_path}",
+            active_project,
+        )
         try:
             stat = abs_path.stat()
             mtime_ns = stat.st_mtime_ns
@@ -1401,21 +1626,32 @@ def register_memory_tools(
         if operation == "schema":
             return _json_response(memory_schema_payload())
 
-        # Active context fallback: when no explicit scope/scope_token/context_id
-        # is provided, try the session's active context (set by onboard/select).
-        # Explicit args always win over the fallback.
+        app_ctx = ctx.request_context.lifespan_context
+        unavailable = _memory_backend_unavailable_envelope(app_ctx)
+        if unavailable is not None:
+            return _json_response(unavailable)
+
+        # Scope precedence for Slice D:
+        # 1) scope_token/context_id (handled in service) — never overridden here.
+        # 2) explicit scope (merged with active project defaults per rules below).
+        # 3) active project defaults.
+        # 4) active context fallback (onboard/select scope context).
         effective_scope = scope
         _scope_from_active_context = False
-        if effective_scope is None and scope_token is None and context_id is None:
-            active = _get_active_context(ctx)
-            if active is not None:
-                effective_scope = active.scope
-                _scope_from_active_context = True
-            else:
-                # No active context and no explicit scope — return actionable error.
-                return _json_response(_build_no_active_context_envelope())
+        if scope_token is None and context_id is None:
+            active_project = _get_active_project(ctx)
+            if active_project is not None:
+                effective_scope = _merge_scope_with_active_project(effective_scope, active_project)
 
-        app_ctx = ctx.request_context.lifespan_context
+            if effective_scope is None:
+                active = _get_active_context(ctx)
+                if active is not None:
+                    effective_scope = active.scope
+                    _scope_from_active_context = True
+                else:
+                    # No active context/project and no explicit scope — actionable error.
+                    return _json_response(_build_no_active_context_envelope())
+
         execution = _create_memory_execution(ctx)
         try:
             payload = await _execute_memory_request(
@@ -1567,6 +1803,11 @@ def register_memory_tools(
         ctx: AppContextType,
     ) -> CallToolResult:
         """Run project onboarding steps and return a checkpoint for the next call."""
+        app_ctx = ctx.request_context.lifespan_context
+        unavailable = _memory_backend_unavailable_envelope(app_ctx)
+        if unavailable is not None:
+            return _json_response(unavailable)
+
         # Guard: reject legacy response.mode contract (spec §2: no backward compatibility).
         if isinstance(response, dict) and response.get("mode") in ("programmatic", "llm"):
             return _json_response(
@@ -1593,7 +1834,6 @@ def register_memory_tools(
             response = {"debug": True}
         elif debug and isinstance(response, dict) and not response.get("debug"):
             response = {**response, "debug": True}
-        app_ctx = ctx.request_context.lifespan_context
         execution = _create_memory_execution(ctx)
         try:
             # Resolve ingestion contract fields (spec §4.1).
@@ -1611,7 +1851,10 @@ def register_memory_tools(
                 and ingest is None
             ):
                 effective_scan_cfg = ScanConfig.model_validate(scan)
-                scanned_files_raw, _snapshot = await _run_scan(effective_scan_cfg)
+                scanned_files_raw, _snapshot = await _run_scan(
+                    effective_scan_cfg,
+                    active_project=_get_active_project(ctx),
+                )
                 file_entries = classify_scan_files_for_programmatic_mode(
                     scanned_files_raw,
                     base_path=effective_scan_cfg.root,
@@ -1626,11 +1869,13 @@ def register_memory_tools(
                 )
                 result = run_programmatic_onboard(request)
                 if result.status == "completed":
-                    _register_onboard_context(
+                    candidate = _register_onboard_context_for_session(
+                        ctx,
                         result.scope,
                         {"scope": result.scope, "scope_key": result.scope_key_value},
                     )
-                    _set_active_context(ctx, _onboard_context_registry[result.scope_key_value])
+                    _set_active_context(ctx, candidate)
+                    _enable_watcher_for_active_project_after_onboard(ctx)
                 return _json_response(build_programmatic_onboard_response(result, debug=debug))
 
             # --- Phase 5: LLM onboard fast-path ---
@@ -1664,7 +1909,10 @@ def register_memory_tools(
                 _reproducibility = _ingestion.get("reproducibility", "strict")
                 llm_strict = _reproducibility != "relaxed"
                 effective_scan_cfg = ScanConfig.model_validate(scan)
-                scanned_files_raw, _snapshot = await _run_scan(effective_scan_cfg)
+                scanned_files_raw, _snapshot = await _run_scan(
+                    effective_scan_cfg,
+                    active_project=_get_active_project(ctx),
+                )
                 file_entries = classify_scan_files_for_programmatic_mode(
                     scanned_files_raw,
                     base_path=effective_scan_cfg.root,
@@ -1684,11 +1932,13 @@ def register_memory_tools(
                     loader=app_ctx.llm_config_loader,
                 )
                 if llm_result.status == "completed":
-                    _register_onboard_context(
+                    candidate = _register_onboard_context_for_session(
+                        ctx,
                         llm_result.scope,
                         {"scope": llm_result.scope, "scope_key": llm_result.scope_key_value},
                     )
-                    _set_active_context(ctx, _onboard_context_registry[llm_result.scope_key_value])
+                    _set_active_context(ctx, candidate)
+                    _enable_watcher_for_active_project_after_onboard(ctx)
                 return _json_response(build_llm_onboard_response(llm_result, debug=debug))
 
             # --- scan handling for new flows (checkpoint not provided) ---
@@ -1700,7 +1950,10 @@ def register_memory_tools(
             _scan_auto_ingest_active = False
             if scan is not None and checkpoint is None:
                 effective_scan = ScanConfig.model_validate(scan)
-                scanned_files, scan_snapshot = await _run_scan(effective_scan)
+                scanned_files, scan_snapshot = await _run_scan(
+                    effective_scan,
+                    active_project=_get_active_project(ctx),
+                )
                 auto_ingest, scan_ingested_paths = _build_ingest_from_files(scanned_files)
                 if effective_ingest is None:
                     effective_ingest = auto_ingest
@@ -1882,8 +2135,13 @@ def register_memory_tools(
             }
             if _debug:
                 completed_response["results"] = completed_results
-            _register_onboard_context(resolved_scope, checkpoint_payload)
-            _set_active_context(ctx, _onboard_context_registry[scope_key(resolved_scope)])
+            candidate = _register_onboard_context_for_session(
+                ctx,
+                resolved_scope,
+                checkpoint_payload,
+            )
+            _set_active_context(ctx, candidate)
+            _enable_watcher_for_active_project_after_onboard(ctx)
             return _json_response(completed_response)
         except Exception as e:
             return _json_response(_tool_error_payload("onboard", e))
@@ -1984,6 +2242,11 @@ def register_memory_tools(
         ctx: AppContextType,
     ) -> CallToolResult:
         """Advance sync steps and return the next checkpoint or final result."""
+        app_ctx = ctx.request_context.lifespan_context
+        unavailable = _memory_backend_unavailable_envelope(app_ctx)
+        if unavailable is not None:
+            return _json_response(unavailable)
+
         # Guard: reject legacy response.mode contract (spec §2: no backward compatibility).
         if isinstance(response, dict) and response.get("mode") in ("programmatic", "llm"):
             return _json_response(
@@ -2010,7 +2273,6 @@ def register_memory_tools(
             response = {"debug": True}
         elif debug and isinstance(response, dict) and not response.get("debug"):
             response = {**response, "debug": True}
-        app_ctx = ctx.request_context.lifespan_context
         execution = _create_memory_execution(ctx)
         try:
             # Fast-path: if the checkpoint is already completed (next_index == len(plan)),
@@ -2137,7 +2399,10 @@ def register_memory_tools(
                         ),
                         retryable=False,
                     )
-                scanned_files, new_scan_snapshot = await _run_scan(effective_scan)
+                scanned_files, new_scan_snapshot = await _run_scan(
+                    effective_scan,
+                    active_project=_get_active_project(ctx),
+                )
 
                 changed_files = scanned_files
                 deleted: list[str] = []
@@ -2243,8 +2508,8 @@ def register_memory_tools(
                         candidates: list[SyncContextCandidate] = [_active]
                         resolution = resolve_sync_context(candidates, requested_scope=None)
                     else:
-                        # Fall back to registry-wide resolution.
-                        candidates = list(_onboard_context_registry.values())
+                        # Fall back to this session's onboarded candidate registry.
+                        candidates = _list_session_onboard_candidates(ctx)
                         resolution = resolve_sync_context(candidates, requested_scope=scope)
 
                     if resolution.status == "AMBIGUOUS_CONTEXT":
@@ -2290,7 +2555,10 @@ def register_memory_tools(
 
                 effective_ingest = ingest
                 if effective_scan is not None:
-                    scanned_files, new_scan_snapshot = await _run_scan(effective_scan)
+                    scanned_files, new_scan_snapshot = await _run_scan(
+                        effective_scan,
+                        active_project=_get_active_project(ctx),
+                    )
                     auto_ingest, sync_ingested_paths = _build_ingest_from_files(scanned_files)
                     effective_ingest = _merge_dict_prefer_explicit(auto_ingest, ingest)
                     if ingest is not None:
@@ -2473,7 +2741,10 @@ def register_memory_tools(
             debug=request.debug,
             ctx=ctx,
         )
-        return json.loads(result.content[0].text)
+        decoded = json.loads(result.content[0].text)
+        if not isinstance(decoded, dict):
+            raise RuntimeError("onboard() must return a JSON object payload")
+        return decoded
 
     async def _sync_http_impl(
         payload: dict[str, Any], *, ctx: AppContextType
@@ -2497,7 +2768,10 @@ def register_memory_tools(
             debug=request.debug,
             ctx=ctx,
         )
-        return json.loads(result.content[0].text)
+        decoded = json.loads(result.content[0].text)
+        if not isinstance(decoded, dict):
+            raise RuntimeError("sync() must return a JSON object payload")
+        return decoded
 
     # Publish to module-level names so the HTTP transport layer (Task 7)
     # and tests can import them directly from workflows_mcp.tools_memory.
@@ -2521,9 +2795,20 @@ def register_memory_tools(
         ),
     )
     async def select(
-        scope: Annotated[
-            dict[str, Any],
+        project: Annotated[
+            str | None,
             Field(
+                default=None,
+                description=(
+                    "Project selector (project_id, slug, or palace). "
+                    "When provided, selects from session/token allowed projects."
+                ),
+            ),
+        ] = None,
+        scope: Annotated[
+            dict[str, Any] | None,
+            Field(
+                default=None,
                 description=(
                     "Scope selector: at minimum provide 'palace'. "
                     "Optionally include 'wing', 'room', 'compartment' to narrow selection. "
@@ -2531,13 +2816,107 @@ def register_memory_tools(
                     "{'palace': 'my-project', 'wing': 'backend'}."
                 ),
             ),
-        ],
+        ] = None,
         *,
         ctx: AppContextType,
     ) -> CallToolResult:
         """Switch the session's active memory context to the specified scope."""
-        # Resolve against the in-process onboard registry.
-        candidates: list[SyncContextCandidate] = list(_onboard_context_registry.values())
+        app_ctx = ctx.request_context.lifespan_context
+        unavailable = _memory_backend_unavailable_envelope(app_ctx)
+        if unavailable is not None:
+            return _json_response(unavailable)
+
+        if project is not None:
+            session = _get_session(ctx)
+            _prime_session_project_context_from_auth(ctx)
+            allowed = app_ctx.list_allowed_projects(session)
+            if not allowed:
+                return _json_response(
+                    {
+                        "error": {
+                            "code": "MEM_NO_ACTIVE_CONTEXT",
+                            "message": (
+                                "No allowed projects found for this session. "
+                                "Bind projects first, then call select(project=...)."
+                            ),
+                            "retryable": False,
+                            "actionable_fix": (
+                                "Register allowed projects for this session/token context, "
+                                "then select by project id, slug, or palace."
+                            ),
+                        }
+                    }
+                )
+
+            matches = [
+                p
+                for p in allowed
+                if project in {p.project_id, p.slug, p.palace}
+            ]
+            if len(matches) > 1:
+                return _json_response(
+                    {
+                        "error": {
+                            "code": "MEM_SELECT_AMBIGUOUS_PROJECT",
+                            "message": (
+                                f"Project selector {project!r} matched multiple allowed projects."
+                            ),
+                            "retryable": False,
+                            "actionable_fix": (
+                                "Select by unique project_id, or narrow project bindings to avoid "
+                                "duplicate slug/palace values in one session."
+                            ),
+                        }
+                    }
+                )
+            if not matches:
+                return _json_response(
+                    {
+                        "error": {
+                            "code": "MEM_SELECT_NOT_FOUND",
+                            "message": f"No allowed project matched selector {project!r}.",
+                            "retryable": False,
+                            "actionable_fix": (
+                                "Use a known project_id, slug, or palace from session bindings."
+                            ),
+                        }
+                    }
+                )
+
+            selected = matches[0]
+            app_ctx.set_active_project(session, selected)
+            return _json_response(
+                {
+                    "status": "selected",
+                    "active_project": {
+                        "project_id": selected.project_id,
+                        "slug": selected.slug,
+                        "palace": selected.palace,
+                        "default_wing": selected.default_wing,
+                        "default_room": selected.default_room,
+                        "source": selected.source,
+                    },
+                    "message": (
+                        "Active project set for this session. Subsequent memory() calls may "
+                        "use project defaults when scope fields are omitted."
+                    ),
+                }
+            )
+
+        if scope is None:
+            return _json_response(
+                {
+                    "error": {
+                        "code": "MEM_SELECT_INVALID_REQUEST",
+                        "message": "select requires either 'project' or 'scope'.",
+                        "retryable": False,
+                        "actionable_fix": "Pass project='...' or scope={...}.",
+                    }
+                }
+            )
+
+        # Resolve against this session's onboard registry.
+        candidates: list[SyncContextCandidate] = _list_session_onboard_candidates(ctx)
         if not candidates:
             return _json_response(
                 {

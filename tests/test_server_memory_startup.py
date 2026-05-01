@@ -1,10 +1,12 @@
 from __future__ import annotations
 
+import json
 import sys
 from types import SimpleNamespace
 from typing import Any
 
 import pytest
+from mcp.server.fastmcp import FastMCP
 
 from workflows_mcp import server
 
@@ -51,6 +53,23 @@ class _FakeLifespanBackend:
         self.disconnect_calls += 1
 
 
+class _FakeMemoryRequestContext:
+    def __init__(self, lifespan_context: Any) -> None:
+        self.lifespan_context = lifespan_context
+        self.session = object()
+
+
+class _FakeMemoryCtx:
+    def __init__(self, lifespan_context: Any) -> None:
+        self.request_context = _FakeMemoryRequestContext(lifespan_context)
+
+
+def _tool_fn(mcp_server: FastMCP, name: str) -> Any:
+    tool = mcp_server._tool_manager._tools.get(name)
+    assert tool is not None, f"Tool {name!r} should be registered"
+    return tool.fn
+
+
 @pytest.mark.asyncio
 async def test_prepare_memory_schema_connects_and_initializes_without_bootstrap(
     monkeypatch: pytest.MonkeyPatch,
@@ -84,6 +103,7 @@ async def test_prepare_memory_schema_connects_and_initializes_without_bootstrap(
 async def test_app_lifespan_reuses_single_memory_backend_and_disconnects_on_shutdown(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    local_mcp = FastMCP("memory-backend-reuse-test", lifespan=server.app_lifespan)
     fake_backend = _FakeLifespanBackend()
     prepare_calls = {"count": 0}
     register_calls = {"count": 0}
@@ -114,7 +134,7 @@ async def test_app_lifespan_reuses_single_memory_backend_and_disconnects_on_shut
     monkeypatch.setenv("WORKFLOWS_IO_QUEUE_ENABLED", "false")
     monkeypatch.setenv("WORKFLOWS_JOB_QUEUE_ENABLED", "false")
 
-    async with server.app_lifespan(server.mcp) as app_context:
+    async with server.app_lifespan(local_mcp) as app_context:
         assert prepare_calls["count"] == 1
         assert register_calls["count"] == 1
         assert app_context.memory_backend is fake_backend
@@ -326,3 +346,108 @@ async def test_prepare_memory_schema_disconnects_on_schema_failure(
 
     assert backend.connect_calls == 1
     assert backend.disconnect_calls == 1
+
+
+@pytest.mark.asyncio
+async def test_app_lifespan_registers_memory_tools_when_backend_unavailable_and_fails_closed(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    local_mcp = FastMCP("memory-unavailable-test", lifespan=server.app_lifespan)
+
+    async def _fake_prepare_memory_schema(_memory_db_host: str) -> Any:
+        raise ConnectionError("backend down")
+
+    monkeypatch.setattr(server, "_prepare_memory_schema", _fake_prepare_memory_schema)
+    monkeypatch.setattr(server, "load_workflows", lambda _registry: None)
+    monkeypatch.setenv("MEMORY_DB_HOST", "localhost")
+    monkeypatch.setenv("WORKFLOWS_IO_QUEUE_ENABLED", "false")
+    monkeypatch.setenv("WORKFLOWS_JOB_QUEUE_ENABLED", "false")
+
+    async with server.app_lifespan(local_mcp) as app_context:
+        for name in ("memory", "onboard", "sync", "select"):
+            assert local_mcp._tool_manager._tools.get(name) is not None
+
+        memory = _tool_fn(local_mcp, "memory")
+        onboard = _tool_fn(local_mcp, "onboard")
+        sync = _tool_fn(local_mcp, "sync")
+        select = _tool_fn(local_mcp, "select")
+        ctx = _FakeMemoryCtx(app_context)
+
+        memory_result = await memory(operation="query", query={"text": "hello"}, ctx=ctx)
+        onboard_result = await onboard(
+            scope={"palace": "forge"},
+            ingest={"format": "structured", "memories": [{"content": "x"}]},
+            ctx=ctx,
+        )
+        sync_result = await sync(
+            scope={"palace": "forge"},
+            ingest={"format": "structured"},
+            ctx=ctx,
+        )
+        select_result = await select(scope={"palace": "forge"}, ctx=ctx)
+
+        for result in (memory_result, onboard_result, sync_result, select_result):
+            payload = result.structuredContent
+            assert isinstance(payload, dict)
+            assert "error" in payload
+            err = payload["error"]
+            assert err["code"] == "MEMORY_BACKEND_UNAVAILABLE"
+            assert "/api/admin/v1/database/settings" in (err.get("actionable_fix") or "")
+            assert "/ready" in (err.get("actionable_fix") or "")
+            serialized = json.dumps(payload)
+            assert "postgres://" not in serialized
+            assert "MEMORY_DB_PASSWORD" not in serialized
+
+
+@pytest.mark.asyncio
+async def test_app_lifespan_registers_memory_tools_when_schema_incompatible_and_fails_closed(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    local_mcp = FastMCP("memory-incompatible-test", lifespan=server.app_lifespan)
+
+    async def _fake_prepare_memory_schema(_memory_db_host: str) -> Any:
+        raise RuntimeError("Incompatible knowledge schema detected: expected v3")
+
+    monkeypatch.setattr(server, "_prepare_memory_schema", _fake_prepare_memory_schema)
+    monkeypatch.setattr(server, "load_workflows", lambda _registry: None)
+    monkeypatch.setenv("MEMORY_DB_HOST", "localhost")
+    monkeypatch.setenv("WORKFLOWS_IO_QUEUE_ENABLED", "false")
+    monkeypatch.setenv("WORKFLOWS_JOB_QUEUE_ENABLED", "false")
+
+    async with server.app_lifespan(local_mcp) as app_context:
+        memory = _tool_fn(local_mcp, "memory")
+        payload = (
+            await memory(
+                operation="query",
+                query={"text": "hello"},
+                ctx=_FakeMemoryCtx(app_context),
+            )
+        ).structuredContent
+        assert isinstance(payload, dict)
+        assert payload.get("error", {}).get("code") == "MEMORY_BACKEND_UNAVAILABLE"
+
+
+@pytest.mark.asyncio
+async def test_app_lifespan_registers_memory_tools_only_once_per_mcp_instance(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    local_mcp = FastMCP("memory-idempotent-registration-test", lifespan=server.app_lifespan)
+
+    async def _fake_prepare_memory_schema(_memory_db_host: str) -> Any:
+        raise ConnectionError("backend down")
+
+    monkeypatch.setattr(server, "_prepare_memory_schema", _fake_prepare_memory_schema)
+    monkeypatch.setattr(server, "load_workflows", lambda _registry: None)
+    monkeypatch.setenv("MEMORY_DB_HOST", "localhost")
+    monkeypatch.setenv("WORKFLOWS_IO_QUEUE_ENABLED", "false")
+    monkeypatch.setenv("WORKFLOWS_JOB_QUEUE_ENABLED", "false")
+
+    async with server.app_lifespan(local_mcp):
+        first_memory_tool = local_mcp._tool_manager._tools.get("memory")
+        assert first_memory_tool is not None
+
+    async with server.app_lifespan(local_mcp):
+        second_memory_tool = local_mcp._tool_manager._tools.get("memory")
+        assert second_memory_tool is first_memory_tool
+
+    assert len(local_mcp._tool_manager._tools) >= 1

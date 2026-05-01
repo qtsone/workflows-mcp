@@ -1,37 +1,129 @@
 {
   "components": {
     "schemas": {
-      "ConfigApplyResponse": {
-        "additionalProperties": false,
-        "description": "Response model for ``POST /config/apply``.",
+      "CreateProjectRequest": {
+        "examples": [
+          {
+            "default_room": "runtime",
+            "default_wing": "platform",
+            "fs_allowlist": [
+              "/workspace/workflows",
+              "/workspace/shared"
+            ],
+            "fs_root": "/workspace/workflows",
+            "name": "Workflow Service",
+            "palace": "wf-palace",
+            "slug": "workflow-service"
+          }
+        ],
         "properties": {
-          "applied": {
-            "title": "Applied",
-            "type": "boolean"
+          "default_room": {
+            "maxLength": 1024,
+            "minLength": 1,
+            "title": "Default Room",
+            "type": "string"
           },
-          "blockers": {
-            "items": {
-              "type": "string"
-            },
-            "title": "Blockers",
-            "type": "array"
+          "default_wing": {
+            "maxLength": 1024,
+            "minLength": 1,
+            "title": "Default Wing",
+            "type": "string"
           },
-          "state": {
-            "$ref": "#/components/schemas/ReadinessState"
+          "fs_allowlist": {
+            "anyOf": [
+              {
+                "items": {
+                  "maxLength": 1024,
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Fs Allowlist"
+          },
+          "fs_root": {
+            "maxLength": 1024,
+            "minLength": 1,
+            "title": "Fs Root",
+            "type": "string"
+          },
+          "name": {
+            "maxLength": 1024,
+            "minLength": 1,
+            "title": "Name",
+            "type": "string"
+          },
+          "palace": {
+            "maxLength": 1024,
+            "minLength": 1,
+            "title": "Palace",
+            "type": "string"
+          },
+          "slug": {
+            "maxLength": 1024,
+            "minLength": 1,
+            "title": "Slug",
+            "type": "string"
           }
         },
         "required": [
-          "applied",
-          "state",
-          "blockers"
+          "name",
+          "slug",
+          "palace",
+          "default_wing",
+          "default_room",
+          "fs_root"
         ],
-        "title": "ConfigApplyResponse",
+        "title": "CreateProjectRequest",
         "type": "object"
       },
-      "ConfigStatusResponse": {
+      "CreateWorkflowSourceRequest": {
         "additionalProperties": false,
-        "description": "Response model for ``GET /config/status``.",
         "properties": {
+          "checksum": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Checksum"
+          },
+          "project_id": {
+            "maxLength": 1024,
+            "minLength": 1,
+            "title": "Project Id",
+            "type": "string"
+          },
+          "source_path": {
+            "maxLength": 1024,
+            "minLength": 1,
+            "title": "Source Path",
+            "type": "string"
+          }
+        },
+        "required": [
+          "project_id",
+          "source_path"
+        ],
+        "title": "CreateWorkflowSourceRequest",
+        "type": "object"
+      },
+      "DatabaseConnectionTestResponse": {
+        "properties": {
+          "actionable": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Actionable",
+            "type": "array"
+          },
           "blockers": {
             "items": {
               "type": "string"
@@ -39,20 +131,195 @@
             "title": "Blockers",
             "type": "array"
           },
-          "config_present": {
-            "title": "Config Present",
+          "configured": {
+            "title": "Configured",
             "type": "boolean"
           },
-          "state": {
-            "$ref": "#/components/schemas/ReadinessState"
+          "ok": {
+            "title": "Ok",
+            "type": "boolean"
+          },
+          "status": {
+            "title": "Status",
+            "type": "string"
           }
         },
         "required": [
-          "state",
+          "ok",
+          "status",
+          "configured",
           "blockers",
-          "config_present"
+          "actionable"
         ],
-        "title": "ConfigStatusResponse",
+        "title": "DatabaseConnectionTestResponse",
+        "type": "object"
+      },
+      "DatabaseSettingsResponse": {
+        "properties": {
+          "configured": {
+            "title": "Configured",
+            "type": "boolean"
+          },
+          "enabled": {
+            "title": "Enabled",
+            "type": "boolean"
+          },
+          "updated_at": {
+            "title": "Updated At",
+            "type": "string"
+          }
+        },
+        "required": [
+          "enabled",
+          "configured",
+          "updated_at"
+        ],
+        "title": "DatabaseSettingsResponse",
+        "type": "object"
+      },
+      "DatabaseSetupResponse": {
+        "properties": {
+          "docker": {
+            "title": "Docker",
+            "type": "string"
+          },
+          "image": {
+            "title": "Image",
+            "type": "string"
+          },
+          "notes": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Notes",
+            "type": "array"
+          },
+          "podman": {
+            "title": "Podman",
+            "type": "string"
+          }
+        },
+        "required": [
+          "image",
+          "docker",
+          "podman",
+          "notes"
+        ],
+        "title": "DatabaseSetupResponse",
+        "type": "object"
+      },
+      "DeleteProjectResponse": {
+        "properties": {
+          "deleted": {
+            "title": "Deleted",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "deleted"
+        ],
+        "title": "DeleteProjectResponse",
+        "type": "object"
+      },
+      "DeleteSecretResponse": {
+        "properties": {
+          "deleted": {
+            "title": "Deleted",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "deleted"
+        ],
+        "title": "DeleteSecretResponse",
+        "type": "object"
+      },
+      "DeleteWorkflowSourceResponse": {
+        "properties": {
+          "deleted": {
+            "title": "Deleted",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "deleted"
+        ],
+        "title": "DeleteWorkflowSourceResponse",
+        "type": "object"
+      },
+      "FilesystemEntriesResponse": {
+        "properties": {
+          "can_go_up": {
+            "title": "Can Go Up",
+            "type": "boolean"
+          },
+          "entries": {
+            "items": {
+              "$ref": "#/components/schemas/FilesystemEntryResponse"
+            },
+            "title": "Entries",
+            "type": "array"
+          },
+          "parent": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Parent"
+          },
+          "path": {
+            "title": "Path",
+            "type": "string"
+          },
+          "root": {
+            "title": "Root",
+            "type": "string"
+          }
+        },
+        "required": [
+          "root",
+          "path",
+          "parent",
+          "can_go_up",
+          "entries"
+        ],
+        "title": "FilesystemEntriesResponse",
+        "type": "object"
+      },
+      "FilesystemEntryResponse": {
+        "properties": {
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "path": {
+            "title": "Path",
+            "type": "string"
+          },
+          "selectable": {
+            "title": "Selectable",
+            "type": "boolean"
+          },
+          "type": {
+            "enum": [
+              "directory",
+              "file"
+            ],
+            "title": "Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "name",
+          "path",
+          "type",
+          "selectable"
+        ],
+        "title": "FilesystemEntryResponse",
         "type": "object"
       },
       "HTTPValidationError": {
@@ -68,34 +335,1089 @@
         "title": "HTTPValidationError",
         "type": "object"
       },
-      "LLMConfigPayload": {
-        "additionalProperties": false,
-        "description": "Typed request model for config apply and validate endpoints.",
+      "LLMConfig": {
+        "description": "Root LLM configuration model.\n\nValidates the complete llm-config.yml structure with schema versioning.",
         "properties": {
+          "default_profile": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Default profile name when none specified",
+            "title": "Default Profile"
+          },
           "profiles": {
-            "items": {
-              "additionalProperties": true,
-              "type": "object"
+            "additionalProperties": {
+              "$ref": "#/components/schemas/ProfileConfig"
             },
+            "description": "Profile tier definitions (reference providers)",
             "title": "Profiles",
+            "type": "object"
+          },
+          "providers": {
+            "additionalProperties": {
+              "$ref": "#/components/schemas/ProviderConfig"
+            },
+            "description": "Provider infrastructure definitions (reusable)",
+            "title": "Providers",
+            "type": "object"
+          },
+          "version": {
+            "default": "1.0",
+            "description": "Configuration schema version",
+            "title": "Version",
+            "type": "string"
+          }
+        },
+        "title": "LLMConfig",
+        "type": "object"
+      },
+      "LoginRequest": {
+        "properties": {
+          "password": {
+            "title": "Password",
+            "type": "string"
+          }
+        },
+        "required": [
+          "password"
+        ],
+        "title": "LoginRequest",
+        "type": "object"
+      },
+      "MCPClientCreateRequest": {
+        "examples": [
+          {
+            "capabilities": {
+              "scopes": [
+                "read:workflows"
+              ]
+            },
+            "label": "ci-agent",
+            "project_ids": [
+              "project-id"
+            ]
+          }
+        ],
+        "properties": {
+          "capabilities": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Capabilities"
+          },
+          "label": {
+            "maxLength": 1024,
+            "minLength": 1,
+            "title": "Label",
+            "type": "string"
+          },
+          "project_ids": {
+            "items": {
+              "maxLength": 1024,
+              "minLength": 1,
+              "type": "string"
+            },
+            "title": "Project Ids",
             "type": "array"
           }
         },
         "required": [
-          "profiles"
+          "label",
+          "project_ids"
         ],
-        "title": "LLMConfigPayload",
+        "title": "MCPClientCreateRequest",
         "type": "object"
       },
-      "ReadinessState": {
-        "description": "Readiness states reported by ``/ready`` and used internally by readiness service.",
-        "enum": [
-          "unconfigured",
-          "partially_configured",
-          "ready"
+      "MCPClientCreateResponse": {
+        "properties": {
+          "capabilities": {
+            "additionalProperties": true,
+            "title": "Capabilities",
+            "type": "object"
+          },
+          "config_snippet": {
+            "title": "Config Snippet",
+            "type": "string"
+          },
+          "created_at": {
+            "title": "Created At",
+            "type": "string"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "label": {
+            "title": "Label",
+            "type": "string"
+          },
+          "last_used_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Used At"
+          },
+          "project_ids": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Project Ids",
+            "type": "array"
+          },
+          "revoked_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Revoked At"
+          },
+          "token": {
+            "title": "Token",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "label",
+          "capabilities",
+          "project_ids",
+          "created_at",
+          "last_used_at",
+          "revoked_at",
+          "token",
+          "config_snippet"
         ],
-        "title": "ReadinessState",
-        "type": "string"
+        "title": "MCPClientCreateResponse",
+        "type": "object"
+      },
+      "MCPClientResponse": {
+        "properties": {
+          "capabilities": {
+            "additionalProperties": true,
+            "title": "Capabilities",
+            "type": "object"
+          },
+          "created_at": {
+            "title": "Created At",
+            "type": "string"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "label": {
+            "title": "Label",
+            "type": "string"
+          },
+          "last_used_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Used At"
+          },
+          "project_ids": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Project Ids",
+            "type": "array"
+          },
+          "revoked_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Revoked At"
+          }
+        },
+        "required": [
+          "id",
+          "label",
+          "capabilities",
+          "project_ids",
+          "created_at",
+          "last_used_at",
+          "revoked_at"
+        ],
+        "title": "MCPClientResponse",
+        "type": "object"
+      },
+      "MCPClientRevokeResponse": {
+        "properties": {
+          "revoked": {
+            "title": "Revoked",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "revoked"
+        ],
+        "title": "MCPClientRevokeResponse",
+        "type": "object"
+      },
+      "MCPClientsListResponse": {
+        "properties": {
+          "mcp_clients": {
+            "items": {
+              "$ref": "#/components/schemas/MCPClientResponse"
+            },
+            "title": "Mcp Clients",
+            "type": "array"
+          }
+        },
+        "required": [
+          "mcp_clients"
+        ],
+        "title": "MCPClientsListResponse",
+        "type": "object"
+      },
+      "ProfileConfig": {
+        "description": "Profile tier definition (like AWS EC2 instance sizes).\n\nDefines a named configuration that references a provider and specifies\nmodel parameters. Profiles enable right-sizing models for different tasks.",
+        "properties": {
+          "description": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Human-readable description of profile use case",
+            "title": "Description"
+          },
+          "max_tokens": {
+            "anyOf": [
+              {
+                "maximum": 128000.0,
+                "minimum": 1.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Maximum tokens to generate",
+            "title": "Max Tokens"
+          },
+          "model": {
+            "description": "Model name (e.g., gpt-4o, claude-sonnet-4, gemini-2.0-flash-exp)",
+            "title": "Model",
+            "type": "string"
+          },
+          "provider": {
+            "description": "Provider name (must reference a key in providers section)",
+            "title": "Provider",
+            "type": "string"
+          },
+          "temperature": {
+            "anyOf": [
+              {
+                "maximum": 2.0,
+                "minimum": 0.0,
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Sampling temperature",
+            "title": "Temperature"
+          }
+        },
+        "required": [
+          "provider",
+          "model"
+        ],
+        "title": "ProfileConfig",
+        "type": "object"
+      },
+      "ProjectResponse": {
+        "properties": {
+          "created_at": {
+            "title": "Created At",
+            "type": "string"
+          },
+          "default_room": {
+            "title": "Default Room",
+            "type": "string"
+          },
+          "default_wing": {
+            "title": "Default Wing",
+            "type": "string"
+          },
+          "fs_allowlist": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Fs Allowlist",
+            "type": "array"
+          },
+          "fs_root": {
+            "title": "Fs Root",
+            "type": "string"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "palace": {
+            "title": "Palace",
+            "type": "string"
+          },
+          "slug": {
+            "title": "Slug",
+            "type": "string"
+          },
+          "updated_at": {
+            "title": "Updated At",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "name",
+          "slug",
+          "palace",
+          "default_wing",
+          "default_room",
+          "fs_root",
+          "fs_allowlist",
+          "created_at",
+          "updated_at"
+        ],
+        "title": "ProjectResponse",
+        "type": "object"
+      },
+      "ProjectsListResponse": {
+        "properties": {
+          "projects": {
+            "items": {
+              "$ref": "#/components/schemas/ProjectResponse"
+            },
+            "title": "Projects",
+            "type": "array"
+          }
+        },
+        "required": [
+          "projects"
+        ],
+        "title": "ProjectsListResponse",
+        "type": "object"
+      },
+      "ProviderConfig": {
+        "description": "Provider infrastructure definition (reusable).\n\nDefines connection details and defaults for an LLM provider endpoint.",
+        "properties": {
+          "api_key_secret": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Secret key name for API authentication. Maps to WORKFLOW_SECRET_{KEY_NAME} environment variable.",
+            "title": "Api Key Secret"
+          },
+          "api_url": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "API endpoint URL (optional, uses provider defaults if not specified)",
+            "title": "Api Url"
+          },
+          "api_version": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "[Azure OpenAI] API version",
+            "title": "Api Version"
+          },
+          "deployment_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "[Azure OpenAI] Deployment name",
+            "title": "Deployment Name"
+          },
+          "extra_headers": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "description": "Custom HTTP headers to include in all requests to this provider. Values can use {ENV_VAR} syntax for runtime environment variable resolution.",
+            "title": "Extra Headers",
+            "type": "object"
+          },
+          "max_retries": {
+            "default": 3,
+            "description": "Maximum retry attempts for failed requests",
+            "maximum": 10.0,
+            "minimum": 1.0,
+            "title": "Max Retries",
+            "type": "integer"
+          },
+          "model": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Default model for this provider (optional, can be overridden in profile)",
+            "title": "Model"
+          },
+          "retry_delay": {
+            "default": 2.0,
+            "description": "Initial retry delay in seconds (exponential backoff)",
+            "maximum": 60.0,
+            "minimum": 0.1,
+            "title": "Retry Delay",
+            "type": "number"
+          },
+          "timeout": {
+            "default": 60,
+            "description": "Request timeout in seconds",
+            "maximum": 1800.0,
+            "minimum": 1.0,
+            "title": "Timeout",
+            "type": "integer"
+          },
+          "type": {
+            "description": "Provider type (openai, anthropic, gemini, ollama, azure-openai)",
+            "title": "Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "type"
+        ],
+        "title": "ProviderConfig",
+        "type": "object"
+      },
+      "RawYAMLRequest": {
+        "examples": [
+          {
+            "raw_yaml": "version: \"1.0\"\nproviders: {}\nprofiles: {}"
+          }
+        ],
+        "properties": {
+          "raw_yaml": {
+            "maxLength": 65536,
+            "minLength": 1,
+            "title": "Raw Yaml",
+            "type": "string"
+          }
+        },
+        "required": [
+          "raw_yaml"
+        ],
+        "title": "RawYAMLRequest",
+        "type": "object"
+      },
+      "RawYAMLResponse": {
+        "properties": {
+          "raw_yaml": {
+            "title": "Raw Yaml",
+            "type": "string"
+          }
+        },
+        "required": [
+          "raw_yaml"
+        ],
+        "title": "RawYAMLResponse",
+        "type": "object"
+      },
+      "ResumeRunRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "response": {
+            "default": "",
+            "title": "Response",
+            "type": "string"
+          }
+        },
+        "title": "ResumeRunRequest",
+        "type": "object"
+      },
+      "RunDetailResponse": {
+        "properties": {
+          "cancellable": {
+            "title": "Cancellable",
+            "type": "boolean"
+          },
+          "created_at": {
+            "title": "Created At",
+            "type": "string"
+          },
+          "error_summary": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Error Summary"
+          },
+          "finished_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Finished At"
+          },
+          "job_id": {
+            "title": "Job Id",
+            "type": "string"
+          },
+          "project_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Project Id"
+          },
+          "result_summary": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Result Summary"
+          },
+          "run_id": {
+            "title": "Run Id",
+            "type": "string"
+          },
+          "started_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Started At"
+          },
+          "status": {
+            "title": "Status",
+            "type": "string"
+          },
+          "token_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Token Id"
+          },
+          "updated_at": {
+            "title": "Updated At",
+            "type": "string"
+          },
+          "workflow_name": {
+            "title": "Workflow Name",
+            "type": "string"
+          }
+        },
+        "required": [
+          "run_id",
+          "job_id",
+          "workflow_name",
+          "status",
+          "created_at",
+          "started_at",
+          "finished_at",
+          "updated_at",
+          "cancellable",
+          "project_id",
+          "token_id",
+          "result_summary",
+          "error_summary"
+        ],
+        "title": "RunDetailResponse",
+        "type": "object"
+      },
+      "RunRowResponse": {
+        "properties": {
+          "cancellable": {
+            "title": "Cancellable",
+            "type": "boolean"
+          },
+          "created_at": {
+            "title": "Created At",
+            "type": "string"
+          },
+          "finished_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Finished At"
+          },
+          "job_id": {
+            "title": "Job Id",
+            "type": "string"
+          },
+          "project_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Project Id"
+          },
+          "run_id": {
+            "title": "Run Id",
+            "type": "string"
+          },
+          "started_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Started At"
+          },
+          "status": {
+            "title": "Status",
+            "type": "string"
+          },
+          "token_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Token Id"
+          },
+          "updated_at": {
+            "title": "Updated At",
+            "type": "string"
+          },
+          "workflow_name": {
+            "title": "Workflow Name",
+            "type": "string"
+          }
+        },
+        "required": [
+          "run_id",
+          "job_id",
+          "workflow_name",
+          "status",
+          "created_at",
+          "started_at",
+          "finished_at",
+          "updated_at",
+          "cancellable",
+          "project_id",
+          "token_id"
+        ],
+        "title": "RunRowResponse",
+        "type": "object"
+      },
+      "RunsListResponse": {
+        "properties": {
+          "runs": {
+            "items": {
+              "$ref": "#/components/schemas/RunRowResponse"
+            },
+            "title": "Runs",
+            "type": "array"
+          }
+        },
+        "required": [
+          "runs"
+        ],
+        "title": "RunsListResponse",
+        "type": "object"
+      },
+      "SavePostgresSettingsRequest": {
+        "examples": [
+          {
+            "dsn": "postgresql://wf_user:password@127.0.0.1:5432/workflows",
+            "enabled": true
+          }
+        ],
+        "properties": {
+          "dsn": {
+            "anyOf": [
+              {
+                "maxLength": 65536,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Dsn"
+          },
+          "enabled": {
+            "default": true,
+            "title": "Enabled",
+            "type": "boolean"
+          }
+        },
+        "title": "SavePostgresSettingsRequest",
+        "type": "object"
+      },
+      "SecretMetadataResponse": {
+        "properties": {
+          "created_at": {
+            "title": "Created At",
+            "type": "string"
+          },
+          "key_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Key Id"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "updated_at": {
+            "title": "Updated At",
+            "type": "string"
+          }
+        },
+        "required": [
+          "name",
+          "key_id",
+          "created_at",
+          "updated_at"
+        ],
+        "title": "SecretMetadataResponse",
+        "type": "object"
+      },
+      "SecretsListResponse": {
+        "properties": {
+          "secrets": {
+            "items": {
+              "$ref": "#/components/schemas/SecretMetadataResponse"
+            },
+            "title": "Secrets",
+            "type": "array"
+          }
+        },
+        "required": [
+          "secrets"
+        ],
+        "title": "SecretsListResponse",
+        "type": "object"
+      },
+      "SyncListResponse": {
+        "properties": {
+          "projects": {
+            "items": {
+              "$ref": "#/components/schemas/SyncProjectSummary"
+            },
+            "title": "Projects",
+            "type": "array"
+          }
+        },
+        "required": [
+          "projects"
+        ],
+        "title": "SyncListResponse",
+        "type": "object"
+      },
+      "SyncNowResponse": {
+        "properties": {
+          "dirty_count": {
+            "title": "Dirty Count",
+            "type": "integer"
+          },
+          "project_id": {
+            "title": "Project Id",
+            "type": "string"
+          },
+          "status": {
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "required": [
+          "project_id",
+          "status",
+          "dirty_count"
+        ],
+        "title": "SyncNowResponse",
+        "type": "object"
+      },
+      "SyncProjectSummary": {
+        "properties": {
+          "dirty_count": {
+            "title": "Dirty Count",
+            "type": "integer"
+          },
+          "project_id": {
+            "title": "Project Id",
+            "type": "string"
+          },
+          "requires_reconciliation": {
+            "title": "Requires Reconciliation",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "project_id",
+          "dirty_count",
+          "requires_reconciliation"
+        ],
+        "title": "SyncProjectSummary",
+        "type": "object"
+      },
+      "SyncReconcileResponse": {
+        "properties": {
+          "dirty_count": {
+            "title": "Dirty Count",
+            "type": "integer"
+          },
+          "project_id": {
+            "title": "Project Id",
+            "type": "string"
+          },
+          "requires_reconciliation": {
+            "title": "Requires Reconciliation",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "project_id",
+          "dirty_count",
+          "requires_reconciliation"
+        ],
+        "title": "SyncReconcileResponse",
+        "type": "object"
+      },
+      "UpdateProjectRequest": {
+        "properties": {
+          "default_room": {
+            "anyOf": [
+              {
+                "maxLength": 1024,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Default Room"
+          },
+          "default_wing": {
+            "anyOf": [
+              {
+                "maxLength": 1024,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Default Wing"
+          },
+          "fs_allowlist": {
+            "anyOf": [
+              {
+                "items": {
+                  "maxLength": 1024,
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Fs Allowlist"
+          },
+          "fs_root": {
+            "anyOf": [
+              {
+                "maxLength": 1024,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Fs Root"
+          },
+          "name": {
+            "anyOf": [
+              {
+                "maxLength": 1024,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Name"
+          },
+          "palace": {
+            "anyOf": [
+              {
+                "maxLength": 1024,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Palace"
+          },
+          "slug": {
+            "anyOf": [
+              {
+                "maxLength": 1024,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Slug"
+          }
+        },
+        "title": "UpdateProjectRequest",
+        "type": "object"
+      },
+      "UpsertSecretRequest": {
+        "examples": [
+          {
+            "key_id": "k1",
+            "name": "OPENAI_API_KEY"
+          }
+        ],
+        "properties": {
+          "key_id": {
+            "anyOf": [
+              {
+                "maxLength": 256,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Key Id"
+          },
+          "name": {
+            "maxLength": 128,
+            "minLength": 1,
+            "pattern": "^[A-Za-z_][A-Za-z0-9_]*$",
+            "title": "Name",
+            "type": "string"
+          },
+          "value": {
+            "maxLength": 65536,
+            "minLength": 1,
+            "title": "Value",
+            "type": "string"
+          }
+        },
+        "required": [
+          "name",
+          "value"
+        ],
+        "title": "UpsertSecretRequest",
+        "type": "object"
       },
       "ValidationError": {
         "properties": {
@@ -137,24 +1459,290 @@
         "title": "ValidationError",
         "type": "object"
       },
-      "_RotatePayload": {
+      "WatcherStatusResponse": {
         "properties": {
-          "token": {
-            "title": "Token",
+          "dirty_count": {
+            "title": "Dirty Count",
+            "type": "integer"
+          },
+          "last_event_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Event At"
+          },
+          "project_id": {
+            "title": "Project Id",
+            "type": "string"
+          },
+          "requires_reconciliation": {
+            "title": "Requires Reconciliation",
+            "type": "boolean"
+          },
+          "state": {
+            "title": "State",
+            "type": "string"
+          },
+          "updated_at": {
+            "title": "Updated At",
             "type": "string"
           }
         },
         "required": [
-          "token"
+          "project_id",
+          "state",
+          "dirty_count",
+          "requires_reconciliation",
+          "last_event_at",
+          "updated_at"
         ],
-        "title": "_RotatePayload",
+        "title": "WatcherStatusResponse",
+        "type": "object"
+      },
+      "WatchersListResponse": {
+        "properties": {
+          "watchers": {
+            "items": {
+              "$ref": "#/components/schemas/WatcherStatusResponse"
+            },
+            "title": "Watchers",
+            "type": "array"
+          }
+        },
+        "required": [
+          "watchers"
+        ],
+        "title": "WatchersListResponse",
+        "type": "object"
+      },
+      "WorkflowReloadResponse": {
+        "properties": {
+          "source_count": {
+            "title": "Source Count",
+            "type": "integer"
+          },
+          "status": {
+            "title": "Status",
+            "type": "string"
+          },
+          "total": {
+            "title": "Total",
+            "type": "integer"
+          },
+          "workflow_names": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Workflow Names",
+            "type": "array"
+          }
+        },
+        "required": [
+          "status",
+          "total",
+          "source_count",
+          "workflow_names"
+        ],
+        "title": "WorkflowReloadResponse",
+        "type": "object"
+      },
+      "WorkflowSourceResponse": {
+        "properties": {
+          "checksum": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Checksum"
+          },
+          "discovered_at": {
+            "title": "Discovered At",
+            "type": "string"
+          },
+          "error_message": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Error Message"
+          },
+          "last_loaded_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Loaded At"
+          },
+          "project_id": {
+            "title": "Project Id",
+            "type": "string"
+          },
+          "source_id": {
+            "title": "Source Id",
+            "type": "string"
+          },
+          "source_path": {
+            "title": "Source Path",
+            "type": "string"
+          },
+          "status": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Status"
+          }
+        },
+        "required": [
+          "source_id",
+          "project_id",
+          "source_path",
+          "checksum",
+          "discovered_at",
+          "last_loaded_at",
+          "status",
+          "error_message"
+        ],
+        "title": "WorkflowSourceResponse",
+        "type": "object"
+      },
+      "WorkflowSourcesListResponse": {
+        "properties": {
+          "sources": {
+            "items": {
+              "$ref": "#/components/schemas/WorkflowSourceResponse"
+            },
+            "title": "Sources",
+            "type": "array"
+          }
+        },
+        "required": [
+          "sources"
+        ],
+        "title": "WorkflowSourcesListResponse",
+        "type": "object"
+      },
+      "WorkflowSummaryResponse": {
+        "properties": {
+          "description": {
+            "title": "Description",
+            "type": "string"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "source_path": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Source Path"
+          },
+          "tags": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Tags",
+            "type": "array"
+          },
+          "version": {
+            "title": "Version",
+            "type": "string"
+          }
+        },
+        "required": [
+          "name",
+          "description",
+          "version",
+          "tags",
+          "source_path"
+        ],
+        "title": "WorkflowSummaryResponse",
+        "type": "object"
+      },
+      "WorkflowValidateResponse": {
+        "properties": {
+          "total": {
+            "title": "Total",
+            "type": "integer"
+          },
+          "valid": {
+            "title": "Valid",
+            "type": "boolean"
+          },
+          "workflow_names": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Workflow Names",
+            "type": "array"
+          }
+        },
+        "required": [
+          "valid",
+          "workflow_names",
+          "total"
+        ],
+        "title": "WorkflowValidateResponse",
+        "type": "object"
+      },
+      "WorkflowsListResponse": {
+        "properties": {
+          "workflows": {
+            "items": {
+              "$ref": "#/components/schemas/WorkflowSummaryResponse"
+            },
+            "title": "Workflows",
+            "type": "array"
+          }
+        },
+        "required": [
+          "workflows"
+        ],
+        "title": "WorkflowsListResponse",
         "type": "object"
       }
     },
     "securitySchemes": {
+      "AdminSessionCookie": {
+        "in": "cookie",
+        "name": "workflows_admin_session",
+        "type": "apiKey"
+      },
       "BearerAuth": {
         "scheme": "bearer",
         "type": "http"
+      },
+      "CsrfToken": {
+        "in": "header",
+        "name": "X-CSRF-Token",
+        "type": "apiKey"
       }
     }
   },
@@ -164,86 +1752,42 @@
   },
   "openapi": "3.1.0",
   "paths": {
-    "/config/": {
+    "/api/admin/v1/auth/csrf": {
       "get": {
-        "operationId": "get_config_root_config__get",
-        "parameters": [
-          {
-            "in": "header",
-            "name": "authorization",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "Authorization"
-            }
-          }
-        ],
+        "operationId": "csrf_api_admin_v1_auth_csrf_get",
         "responses": {
           "200": {
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/ConfigStatusResponse"
+                  "additionalProperties": true,
+                  "title": "Response Csrf Api Admin V1 Auth Csrf Get",
+                  "type": "object"
                 }
               }
             },
             "description": "Successful Response"
-          },
-          "422": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            },
-            "description": "Validation Error"
           }
         },
         "security": [
           {
-            "BearerAuth": []
+            "AdminSessionCookie": []
           }
         ],
-        "summary": "Get Config Root",
+        "summary": "Csrf",
         "tags": [
-          "config"
+          "admin-v1"
         ]
       }
     },
-    "/config/apply": {
+    "/api/admin/v1/auth/login": {
       "post": {
-        "operationId": "apply_config_config_apply_post",
-        "parameters": [
-          {
-            "in": "header",
-            "name": "authorization",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "Authorization"
-            }
-          }
-        ],
+        "operationId": "login_api_admin_v1_auth_login_post",
         "requestBody": {
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/LLMConfigPayload"
+                "$ref": "#/components/schemas/LoginRequest"
               }
             }
           },
@@ -254,7 +1798,9 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/ConfigApplyResponse"
+                  "additionalProperties": true,
+                  "title": "Response Login Api Admin V1 Auth Login Post",
+                  "type": "object"
                 }
               }
             },
@@ -271,24 +1817,19 @@
             "description": "Validation Error"
           }
         },
-        "security": [
-          {
-            "BearerAuth": []
-          }
-        ],
-        "summary": "Apply Config",
+        "summary": "Login",
         "tags": [
-          "config"
+          "admin-v1"
         ]
       }
     },
-    "/config/credentials/revoke": {
+    "/api/admin/v1/auth/logout": {
       "post": {
-        "operationId": "revoke_credentials_config_credentials_revoke_post",
+        "operationId": "logout_api_admin_v1_auth_logout_post",
         "parameters": [
           {
             "in": "header",
-            "name": "authorization",
+            "name": "X-CSRF-Token",
             "required": false,
             "schema": {
               "anyOf": [
@@ -299,7 +1840,7 @@
                   "type": "null"
                 }
               ],
-              "title": "Authorization"
+              "title": "X-Csrf-Token"
             }
           }
         ],
@@ -307,7 +1848,13 @@
           "200": {
             "content": {
               "application/json": {
-                "schema": {}
+                "schema": {
+                  "additionalProperties": {
+                    "type": "boolean"
+                  },
+                  "title": "Response Logout Api Admin V1 Auth Logout Post",
+                  "type": "object"
+                }
               }
             },
             "description": "Successful Response"
@@ -325,84 +1872,51 @@
         },
         "security": [
           {
-            "BearerAuth": []
+            "AdminSessionCookie": [],
+            "CsrfToken": []
           }
         ],
-        "summary": "Revoke Credentials",
+        "summary": "Logout",
         "tags": [
-          "config"
+          "admin-v1"
         ]
       }
     },
-    "/config/credentials/rotate": {
-      "post": {
-        "operationId": "rotate_credentials_config_credentials_rotate_post",
-        "parameters": [
-          {
-            "in": "header",
-            "name": "authorization",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "Authorization"
-            }
-          }
-        ],
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/_RotatePayload"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {}
-              }
-            },
-            "description": "Successful Response"
-          },
-          "422": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            },
-            "description": "Validation Error"
-          }
-        },
-        "security": [
-          {
-            "BearerAuth": []
-          }
-        ],
-        "summary": "Rotate Credentials",
-        "tags": [
-          "config"
-        ]
-      }
-    },
-    "/config/status": {
+    "/api/admin/v1/auth/session": {
       "get": {
-        "operationId": "get_config_status_config_status_get",
+        "operationId": "session_api_admin_v1_auth_session_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Session Api Admin V1 Auth Session Get",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "security": [
+          {
+            "AdminSessionCookie": []
+          }
+        ],
+        "summary": "Session",
+        "tags": [
+          "admin-v1"
+        ]
+      }
+    },
+    "/api/admin/v1/database/connection-test": {
+      "post": {
+        "operationId": "test_postgres_connection_api_admin_v1_database_connection_test_post",
         "parameters": [
           {
             "in": "header",
-            "name": "authorization",
+            "name": "X-CSRF-Token",
             "required": false,
             "schema": {
               "anyOf": [
@@ -413,7 +1927,7 @@
                   "type": "null"
                 }
               ],
-              "title": "Authorization"
+              "title": "X-Csrf-Token"
             }
           }
         ],
@@ -422,7 +1936,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/ConfigStatusResponse"
+                  "$ref": "#/components/schemas/DatabaseConnectionTestResponse"
                 }
               }
             },
@@ -441,22 +1955,47 @@
         },
         "security": [
           {
-            "BearerAuth": []
+            "AdminSessionCookie": [],
+            "CsrfToken": []
           }
         ],
-        "summary": "Get Config Status",
+        "summary": "Test Postgres Connection",
         "tags": [
-          "config"
+          "admin-v1"
         ]
       }
     },
-    "/config/validate": {
-      "post": {
-        "operationId": "validate_config_config_validate_post",
+    "/api/admin/v1/database/settings": {
+      "get": {
+        "operationId": "get_postgres_settings_api_admin_v1_database_settings_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DatabaseSettingsResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "security": [
+          {
+            "AdminSessionCookie": []
+          }
+        ],
+        "summary": "Get Postgres Settings",
+        "tags": [
+          "admin-v1"
+        ]
+      },
+      "put": {
+        "operationId": "put_postgres_settings_api_admin_v1_database_settings_put",
         "parameters": [
           {
             "in": "header",
-            "name": "authorization",
+            "name": "X-CSRF-Token",
             "required": false,
             "schema": {
               "anyOf": [
@@ -467,7 +2006,7 @@
                   "type": "null"
                 }
               ],
-              "title": "Authorization"
+              "title": "X-Csrf-Token"
             }
           }
         ],
@@ -475,7 +2014,7 @@
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/LLMConfigPayload"
+                "$ref": "#/components/schemas/SavePostgresSettingsRequest"
               }
             }
           },
@@ -485,7 +2024,9 @@
           "200": {
             "content": {
               "application/json": {
-                "schema": {}
+                "schema": {
+                  "$ref": "#/components/schemas/DatabaseSettingsResponse"
+                }
               }
             },
             "description": "Successful Response"
@@ -503,12 +2044,2325 @@
         },
         "security": [
           {
-            "BearerAuth": []
+            "AdminSessionCookie": [],
+            "CsrfToken": []
           }
         ],
-        "summary": "Validate Config",
+        "summary": "Put Postgres Settings",
         "tags": [
-          "config"
+          "admin-v1"
+        ]
+      }
+    },
+    "/api/admin/v1/database/setup": {
+      "get": {
+        "operationId": "get_database_setup_guidance_api_admin_v1_database_setup_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DatabaseSetupResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "security": [
+          {
+            "AdminSessionCookie": []
+          }
+        ],
+        "summary": "Get Database Setup Guidance",
+        "tags": [
+          "admin-v1"
+        ]
+      }
+    },
+    "/api/admin/v1/filesystem/entries": {
+      "get": {
+        "operationId": "list_entries_api_admin_v1_filesystem_entries_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "path",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 4096,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Path"
+            }
+          },
+          {
+            "in": "query",
+            "name": "selection_type",
+            "required": false,
+            "schema": {
+              "default": "folder",
+              "enum": [
+                "folder",
+                "file"
+              ],
+              "title": "Selection Type",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "extensions",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "items": {
+                    "type": "string"
+                  },
+                  "type": "array"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Extensions"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FilesystemEntriesResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "AdminSessionCookie": []
+          }
+        ],
+        "summary": "List Entries",
+        "tags": [
+          "admin-v1"
+        ]
+      }
+    },
+    "/api/admin/v1/llm/config": {
+      "get": {
+        "operationId": "get_llm_config_api_admin_v1_llm_config_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LLMConfig"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "security": [
+          {
+            "AdminSessionCookie": []
+          }
+        ],
+        "summary": "Get Llm Config",
+        "tags": [
+          "admin-v1"
+        ]
+      },
+      "put": {
+        "operationId": "put_llm_config_api_admin_v1_llm_config_put",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "X-CSRF-Token",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Csrf-Token"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/LLMConfig"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LLMConfig"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "AdminSessionCookie": [],
+            "CsrfToken": []
+          }
+        ],
+        "summary": "Put Llm Config",
+        "tags": [
+          "admin-v1"
+        ]
+      }
+    },
+    "/api/admin/v1/llm/export": {
+      "get": {
+        "operationId": "export_llm_config_api_admin_v1_llm_export_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RawYAMLResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "security": [
+          {
+            "AdminSessionCookie": []
+          }
+        ],
+        "summary": "Export Llm Config",
+        "tags": [
+          "admin-v1"
+        ]
+      }
+    },
+    "/api/admin/v1/llm/import": {
+      "post": {
+        "operationId": "import_llm_config_api_admin_v1_llm_import_post",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "X-CSRF-Token",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Csrf-Token"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RawYAMLRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LLMConfig"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "AdminSessionCookie": [],
+            "CsrfToken": []
+          }
+        ],
+        "summary": "Import Llm Config",
+        "tags": [
+          "admin-v1"
+        ]
+      }
+    },
+    "/api/admin/v1/llm/preview": {
+      "post": {
+        "operationId": "preview_llm_config_api_admin_v1_llm_preview_post",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "X-CSRF-Token",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Csrf-Token"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RawYAMLRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LLMConfig"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "AdminSessionCookie": [],
+            "CsrfToken": []
+          }
+        ],
+        "summary": "Preview Llm Config",
+        "tags": [
+          "admin-v1"
+        ]
+      }
+    },
+    "/api/admin/v1/mcp-clients": {
+      "get": {
+        "operationId": "list_mcp_clients_api_admin_v1_mcp_clients_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MCPClientsListResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "security": [
+          {
+            "AdminSessionCookie": []
+          }
+        ],
+        "summary": "List Mcp Clients",
+        "tags": [
+          "admin-v1"
+        ]
+      },
+      "post": {
+        "operationId": "create_mcp_client_api_admin_v1_mcp_clients_post",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "X-CSRF-Token",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Csrf-Token"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/MCPClientCreateRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MCPClientCreateResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "AdminSessionCookie": [],
+            "CsrfToken": []
+          }
+        ],
+        "summary": "Create Mcp Client",
+        "tags": [
+          "admin-v1"
+        ]
+      }
+    },
+    "/api/admin/v1/mcp-clients/{token_id}": {
+      "delete": {
+        "operationId": "revoke_mcp_client_api_admin_v1_mcp_clients__token_id__delete",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "token_id",
+            "required": true,
+            "schema": {
+              "maxLength": 128,
+              "minLength": 1,
+              "title": "Token Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-CSRF-Token",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Csrf-Token"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MCPClientRevokeResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "AdminSessionCookie": [],
+            "CsrfToken": []
+          }
+        ],
+        "summary": "Revoke Mcp Client",
+        "tags": [
+          "admin-v1"
+        ]
+      }
+    },
+    "/api/admin/v1/mcp-clients/{token_id}/regenerate": {
+      "post": {
+        "operationId": "regenerate_mcp_client_api_admin_v1_mcp_clients__token_id__regenerate_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "token_id",
+            "required": true,
+            "schema": {
+              "maxLength": 128,
+              "minLength": 1,
+              "title": "Token Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-CSRF-Token",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Csrf-Token"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MCPClientCreateResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "AdminSessionCookie": [],
+            "CsrfToken": []
+          }
+        ],
+        "summary": "Regenerate Mcp Client",
+        "tags": [
+          "admin-v1"
+        ]
+      }
+    },
+    "/api/admin/v1/projects": {
+      "get": {
+        "operationId": "list_projects_api_admin_v1_projects_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProjectsListResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "security": [
+          {
+            "AdminSessionCookie": []
+          }
+        ],
+        "summary": "List Projects",
+        "tags": [
+          "admin-v1"
+        ]
+      },
+      "post": {
+        "operationId": "create_project_api_admin_v1_projects_post",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "X-CSRF-Token",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Csrf-Token"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateProjectRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProjectResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "AdminSessionCookie": [],
+            "CsrfToken": []
+          }
+        ],
+        "summary": "Create Project",
+        "tags": [
+          "admin-v1"
+        ]
+      }
+    },
+    "/api/admin/v1/projects/{project_id}": {
+      "delete": {
+        "operationId": "delete_project_api_admin_v1_projects__project_id__delete",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "project_id",
+            "required": true,
+            "schema": {
+              "maxLength": 128,
+              "minLength": 1,
+              "title": "Project Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-CSRF-Token",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Csrf-Token"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DeleteProjectResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "AdminSessionCookie": [],
+            "CsrfToken": []
+          }
+        ],
+        "summary": "Delete Project",
+        "tags": [
+          "admin-v1"
+        ]
+      },
+      "get": {
+        "operationId": "get_project_api_admin_v1_projects__project_id__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "project_id",
+            "required": true,
+            "schema": {
+              "maxLength": 128,
+              "minLength": 1,
+              "title": "Project Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProjectResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "AdminSessionCookie": []
+          }
+        ],
+        "summary": "Get Project",
+        "tags": [
+          "admin-v1"
+        ]
+      },
+      "patch": {
+        "operationId": "patch_project_api_admin_v1_projects__project_id__patch",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "project_id",
+            "required": true,
+            "schema": {
+              "maxLength": 128,
+              "minLength": 1,
+              "title": "Project Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-CSRF-Token",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Csrf-Token"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UpdateProjectRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProjectResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "AdminSessionCookie": [],
+            "CsrfToken": []
+          }
+        ],
+        "summary": "Patch Project",
+        "tags": [
+          "admin-v1"
+        ]
+      }
+    },
+    "/api/admin/v1/runs": {
+      "get": {
+        "operationId": "list_runs_api_admin_v1_runs_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "status",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 64,
+                  "minLength": 1,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Status"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 50,
+              "maximum": 500,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "offset",
+            "required": false,
+            "schema": {
+              "default": 0,
+              "minimum": 0,
+              "title": "Offset",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RunsListResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "AdminSessionCookie": []
+          }
+        ],
+        "summary": "List Runs",
+        "tags": [
+          "admin-v1"
+        ]
+      }
+    },
+    "/api/admin/v1/runs/{run_id}": {
+      "get": {
+        "operationId": "get_run_detail_api_admin_v1_runs__run_id__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "run_id",
+            "required": true,
+            "schema": {
+              "maxLength": 128,
+              "minLength": 1,
+              "title": "Run Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RunDetailResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "AdminSessionCookie": []
+          }
+        ],
+        "summary": "Get Run Detail",
+        "tags": [
+          "admin-v1"
+        ]
+      }
+    },
+    "/api/admin/v1/runs/{run_id}/cancel": {
+      "post": {
+        "operationId": "cancel_run_api_admin_v1_runs__run_id__cancel_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "run_id",
+            "required": true,
+            "schema": {
+              "maxLength": 128,
+              "minLength": 1,
+              "title": "Run Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-CSRF-Token",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Csrf-Token"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Cancel Run Api Admin V1 Runs  Run Id  Cancel Post",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "AdminSessionCookie": [],
+            "CsrfToken": []
+          }
+        ],
+        "summary": "Cancel Run",
+        "tags": [
+          "admin-v1"
+        ]
+      }
+    },
+    "/api/admin/v1/runs/{run_id}/resume": {
+      "post": {
+        "operationId": "resume_run_api_admin_v1_runs__run_id__resume_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "run_id",
+            "required": true,
+            "schema": {
+              "maxLength": 128,
+              "minLength": 1,
+              "title": "Run Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-CSRF-Token",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Csrf-Token"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "anyOf": [
+                  {
+                    "$ref": "#/components/schemas/ResumeRunRequest"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "title": "Body"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Resume Run Api Admin V1 Runs  Run Id  Resume Post",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "AdminSessionCookie": [],
+            "CsrfToken": []
+          }
+        ],
+        "summary": "Resume Run",
+        "tags": [
+          "admin-v1"
+        ]
+      }
+    },
+    "/api/admin/v1/secrets": {
+      "get": {
+        "operationId": "list_secrets_api_admin_v1_secrets_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SecretsListResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "security": [
+          {
+            "AdminSessionCookie": []
+          }
+        ],
+        "summary": "List Secrets",
+        "tags": [
+          "admin-v1"
+        ]
+      },
+      "post": {
+        "operationId": "upsert_secret_api_admin_v1_secrets_post",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "X-CSRF-Token",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Csrf-Token"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UpsertSecretRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SecretMetadataResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "AdminSessionCookie": [],
+            "CsrfToken": []
+          }
+        ],
+        "summary": "Upsert Secret",
+        "tags": [
+          "admin-v1"
+        ]
+      }
+    },
+    "/api/admin/v1/secrets/{name}": {
+      "delete": {
+        "operationId": "delete_secret_api_admin_v1_secrets__name__delete",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "name",
+            "required": true,
+            "schema": {
+              "maxLength": 128,
+              "minLength": 1,
+              "pattern": "^[A-Za-z_][A-Za-z0-9_]*$",
+              "title": "Name",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-CSRF-Token",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Csrf-Token"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DeleteSecretResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "AdminSessionCookie": [],
+            "CsrfToken": []
+          }
+        ],
+        "summary": "Delete Secret",
+        "tags": [
+          "admin-v1"
+        ]
+      }
+    },
+    "/api/admin/v1/sync": {
+      "get": {
+        "operationId": "list_sync_queue_api_admin_v1_sync_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SyncListResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "security": [
+          {
+            "AdminSessionCookie": []
+          }
+        ],
+        "summary": "List Sync Queue",
+        "tags": [
+          "admin-v1"
+        ]
+      }
+    },
+    "/api/admin/v1/sync/{project_id}/now": {
+      "post": {
+        "operationId": "sync_now_api_admin_v1_sync__project_id__now_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "project_id",
+            "required": true,
+            "schema": {
+              "maxLength": 128,
+              "minLength": 1,
+              "title": "Project Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-CSRF-Token",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Csrf-Token"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SyncNowResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "AdminSessionCookie": [],
+            "CsrfToken": []
+          }
+        ],
+        "summary": "Sync Now",
+        "tags": [
+          "admin-v1"
+        ]
+      }
+    },
+    "/api/admin/v1/sync/{project_id}/rebuild": {
+      "post": {
+        "operationId": "sync_rebuild_api_admin_v1_sync__project_id__rebuild_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "project_id",
+            "required": true,
+            "schema": {
+              "maxLength": 128,
+              "minLength": 1,
+              "title": "Project Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-CSRF-Token",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Csrf-Token"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SyncReconcileResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "AdminSessionCookie": [],
+            "CsrfToken": []
+          }
+        ],
+        "summary": "Sync Rebuild",
+        "tags": [
+          "admin-v1"
+        ]
+      }
+    },
+    "/api/admin/v1/sync/{project_id}/reconcile": {
+      "post": {
+        "operationId": "sync_reconcile_api_admin_v1_sync__project_id__reconcile_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "project_id",
+            "required": true,
+            "schema": {
+              "maxLength": 128,
+              "minLength": 1,
+              "title": "Project Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-CSRF-Token",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Csrf-Token"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SyncReconcileResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "AdminSessionCookie": [],
+            "CsrfToken": []
+          }
+        ],
+        "summary": "Sync Reconcile",
+        "tags": [
+          "admin-v1"
+        ]
+      }
+    },
+    "/api/admin/v1/watchers": {
+      "get": {
+        "operationId": "list_watchers_api_admin_v1_watchers_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WatchersListResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "security": [
+          {
+            "AdminSessionCookie": []
+          }
+        ],
+        "summary": "List Watchers",
+        "tags": [
+          "admin-v1"
+        ]
+      }
+    },
+    "/api/admin/v1/watchers/{project_id}": {
+      "get": {
+        "operationId": "get_watcher_status_api_admin_v1_watchers__project_id__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "project_id",
+            "required": true,
+            "schema": {
+              "maxLength": 128,
+              "minLength": 1,
+              "title": "Project Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WatcherStatusResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "AdminSessionCookie": []
+          }
+        ],
+        "summary": "Get Watcher Status",
+        "tags": [
+          "admin-v1"
+        ]
+      }
+    },
+    "/api/admin/v1/watchers/{project_id}/disable": {
+      "post": {
+        "operationId": "disable_watcher_api_admin_v1_watchers__project_id__disable_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "project_id",
+            "required": true,
+            "schema": {
+              "maxLength": 128,
+              "minLength": 1,
+              "title": "Project Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-CSRF-Token",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Csrf-Token"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WatcherStatusResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "AdminSessionCookie": [],
+            "CsrfToken": []
+          }
+        ],
+        "summary": "Disable Watcher",
+        "tags": [
+          "admin-v1"
+        ]
+      }
+    },
+    "/api/admin/v1/watchers/{project_id}/pause": {
+      "post": {
+        "operationId": "pause_watcher_api_admin_v1_watchers__project_id__pause_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "project_id",
+            "required": true,
+            "schema": {
+              "maxLength": 128,
+              "minLength": 1,
+              "title": "Project Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-CSRF-Token",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Csrf-Token"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WatcherStatusResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "AdminSessionCookie": [],
+            "CsrfToken": []
+          }
+        ],
+        "summary": "Pause Watcher",
+        "tags": [
+          "admin-v1"
+        ]
+      }
+    },
+    "/api/admin/v1/watchers/{project_id}/resume": {
+      "post": {
+        "operationId": "resume_watcher_api_admin_v1_watchers__project_id__resume_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "project_id",
+            "required": true,
+            "schema": {
+              "maxLength": 128,
+              "minLength": 1,
+              "title": "Project Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-CSRF-Token",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Csrf-Token"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WatcherStatusResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "AdminSessionCookie": [],
+            "CsrfToken": []
+          }
+        ],
+        "summary": "Resume Watcher",
+        "tags": [
+          "admin-v1"
+        ]
+      }
+    },
+    "/api/admin/v1/workflows": {
+      "get": {
+        "operationId": "list_workflows_api_admin_v1_workflows_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WorkflowsListResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "security": [
+          {
+            "AdminSessionCookie": []
+          }
+        ],
+        "summary": "List Workflows",
+        "tags": [
+          "admin-v1"
+        ]
+      }
+    },
+    "/api/admin/v1/workflows/reload": {
+      "post": {
+        "operationId": "reload_workflows_api_admin_v1_workflows_reload_post",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "X-CSRF-Token",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Csrf-Token"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WorkflowReloadResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "AdminSessionCookie": [],
+            "CsrfToken": []
+          }
+        ],
+        "summary": "Reload Workflows",
+        "tags": [
+          "admin-v1"
+        ]
+      }
+    },
+    "/api/admin/v1/workflows/schema": {
+      "get": {
+        "operationId": "workflow_schema_api_admin_v1_workflows_schema_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Workflow Schema Api Admin V1 Workflows Schema Get",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "security": [
+          {
+            "AdminSessionCookie": []
+          }
+        ],
+        "summary": "Workflow Schema",
+        "tags": [
+          "admin-v1"
+        ]
+      }
+    },
+    "/api/admin/v1/workflows/sources": {
+      "get": {
+        "operationId": "list_workflow_sources_api_admin_v1_workflows_sources_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WorkflowSourcesListResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "security": [
+          {
+            "AdminSessionCookie": []
+          }
+        ],
+        "summary": "List Workflow Sources",
+        "tags": [
+          "admin-v1"
+        ]
+      },
+      "post": {
+        "operationId": "create_workflow_source_api_admin_v1_workflows_sources_post",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "X-CSRF-Token",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Csrf-Token"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateWorkflowSourceRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WorkflowSourceResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "AdminSessionCookie": [],
+            "CsrfToken": []
+          }
+        ],
+        "summary": "Create Workflow Source",
+        "tags": [
+          "admin-v1"
+        ]
+      }
+    },
+    "/api/admin/v1/workflows/sources/{source_id}": {
+      "delete": {
+        "operationId": "delete_workflow_source_api_admin_v1_workflows_sources__source_id__delete",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "source_id",
+            "required": true,
+            "schema": {
+              "maxLength": 128,
+              "minLength": 1,
+              "title": "Source Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-CSRF-Token",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Csrf-Token"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DeleteWorkflowSourceResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "AdminSessionCookie": [],
+            "CsrfToken": []
+          }
+        ],
+        "summary": "Delete Workflow Source",
+        "tags": [
+          "admin-v1"
+        ]
+      }
+    },
+    "/api/admin/v1/workflows/sources/{source_id}/validate": {
+      "post": {
+        "operationId": "validate_workflow_source_api_admin_v1_workflows_sources__source_id__validate_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "source_id",
+            "required": true,
+            "schema": {
+              "maxLength": 128,
+              "minLength": 1,
+              "title": "Source Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-CSRF-Token",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Csrf-Token"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WorkflowValidateResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "AdminSessionCookie": [],
+            "CsrfToken": []
+          }
+        ],
+        "summary": "Validate Workflow Source",
+        "tags": [
+          "admin-v1"
+        ]
+      }
+    },
+    "/api/admin/v1/workflows/{workflow_name}": {
+      "get": {
+        "operationId": "workflow_detail_api_admin_v1_workflows__workflow_name__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "workflow_name",
+            "required": true,
+            "schema": {
+              "maxLength": 256,
+              "minLength": 1,
+              "title": "Workflow Name",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Workflow Detail Api Admin V1 Workflows  Workflow Name  Get",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "AdminSessionCookie": []
+          }
+        ],
+        "summary": "Workflow Detail",
+        "tags": [
+          "admin-v1"
+        ]
+      }
+    },
+    "/api/events/v1/sync": {
+      "get": {
+        "operationId": "sync_events_api_events_v1_sync_get",
+        "responses": {
+          "200": {
+            "content": {
+              "text/event-stream": {}
+            },
+            "description": "Successful Response"
+          }
+        },
+        "security": [
+          {
+            "AdminSessionCookie": []
+          }
+        ],
+        "summary": "Sync Events",
+        "tags": [
+          "events-v1"
+        ]
+      }
+    },
+    "/api/events/v1/sync/state": {
+      "get": {
+        "operationId": "sync_events_state_api_events_v1_sync_state_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "security": [
+          {
+            "AdminSessionCookie": []
+          }
+        ],
+        "summary": "Sync Events State",
+        "tags": [
+          "events-v1"
+        ]
+      }
+    },
+    "/api/events/v1/system": {
+      "get": {
+        "description": "Return minimal SSE stream for v1 events namespace.",
+        "operationId": "system_events_api_events_v1_system_get",
+        "responses": {
+          "200": {
+            "content": {
+              "text/event-stream": {}
+            },
+            "description": "Successful Response"
+          }
+        },
+        "security": [
+          {
+            "AdminSessionCookie": []
+          }
+        ],
+        "summary": "System Events",
+        "tags": [
+          "events-v1"
+        ]
+      }
+    },
+    "/api/events/v1/watchers": {
+      "get": {
+        "operationId": "watcher_events_api_events_v1_watchers_get",
+        "responses": {
+          "200": {
+            "content": {
+              "text/event-stream": {}
+            },
+            "description": "Successful Response"
+          }
+        },
+        "security": [
+          {
+            "AdminSessionCookie": []
+          }
+        ],
+        "summary": "Watcher Events",
+        "tags": [
+          "events-v1"
+        ]
+      }
+    },
+    "/api/events/v1/watchers/state": {
+      "get": {
+        "operationId": "watcher_events_state_api_events_v1_watchers_state_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "security": [
+          {
+            "AdminSessionCookie": []
+          }
+        ],
+        "summary": "Watcher Events State",
+        "tags": [
+          "events-v1"
+        ]
+      }
+    },
+    "/api/public/v1/system/status": {
+      "get": {
+        "description": "Return minimal public service status payload for v1 namespace.",
+        "operationId": "system_status_api_public_v1_system_status_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": {
+                    "type": "string"
+                  },
+                  "title": "Response System Status Api Public V1 System Status Get",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "System Status",
+        "tags": [
+          "public-v1"
         ]
       }
     },
@@ -532,55 +4386,6 @@
           }
         },
         "summary": "Health"
-      }
-    },
-    "/mcp": {
-      "post": {
-        "operationId": "mcp_http_endpoint_mcp_post",
-        "parameters": [
-          {
-            "in": "header",
-            "name": "authorization",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "Authorization"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {}
-              }
-            },
-            "description": "Successful Response"
-          },
-          "422": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            },
-            "description": "Validation Error"
-          }
-        },
-        "security": [
-          {
-            "BearerAuth": []
-          }
-        ],
-        "summary": "Mcp Http Endpoint"
       }
     },
     "/ready": {

@@ -1,17 +1,19 @@
 """LLM configuration management for profile-based provider/model selection.
 
-This module implements the File-Based Profile Configuration system as described in
-docs/WORKFLOWS-AS-AGENTS.md. It provides hierarchical LLM configuration through:
+This module implements profile-based provider/model selection. HTTP runtime
+configuration reads from the SQLite metadata DB; legacy/unit contexts can still
+load YAML compatibility files. It provides hierarchical LLM configuration through:
 
 1. Providers: Infrastructure definitions (reusable provider configs)
 2. Profiles: Named configurations (like AWS instance sizes) that reference providers
 3. Hierarchical resolution with inline parameter overrides
 
-Configuration file location priority:
-1. Explicit path passed to LLMConfigLoader
-2. WORKFLOWS_LLM_CONFIG environment variable
-3. Standard location: ~/.workflows/llm-config.yml
-4. Built-in defaults (if no config file found)
+Runtime source priority:
+1. SQLite metadata DB when ``metadata_db_path`` is passed to ``LLMConfigLoader``
+2. Explicit YAML path passed to ``LLMConfigLoader`` for legacy/unit contexts
+3. ``WORKFLOWS_LLM_CONFIG`` for legacy/unit contexts
+4. Standard legacy location: ``~/.workflows/llm-config.yml``
+5. Built-in defaults when no configuration source exists
 
 Example config file:
 ```yaml
@@ -54,7 +56,8 @@ default_profile: standard
 ```
 
 Architecture:
-- Load config once during app startup (singleton pattern)
+- HTTP runtime reads SQLite metadata as the source of truth
+- Legacy YAML loading remains available for compatibility/import workflows
 - Validate schema using Pydantic models
 - Resolve profiles with inline parameter overrides
 - Backward compatible (works without config file)
@@ -259,18 +262,19 @@ class ResolvedLLMConfig(BaseModel):
 
 
 class LLMConfigLoader:
-    """Loader for LLM configuration from YAML file.
+    """Loader for LLM configuration from SQLite or legacy YAML files.
 
-    This class implements the File-Based Profile Configuration system with:
-    - Hierarchical configuration file location
+    This class implements profile-based configuration with:
+    - SQLite metadata DB source-of-truth for HTTP runtime
+    - Legacy hierarchical YAML file locations when no metadata DB path is provided
     - Schema validation using Pydantic
     - Profile resolution with inline parameter overrides
     - Backward compatibility (works without config file)
 
     Usage:
         ```python
-        # Load config during app startup
-        loader = LLMConfigLoader()
+        # Load config during HTTP startup from SQLite metadata
+        loader = LLMConfigLoader(metadata_db_path=base_dir / "server.db")
         config = loader.load_config()
 
         # Resolve profile for a workflow block
@@ -281,11 +285,16 @@ class LLMConfigLoader:
         ```
 
     Thread Safety:
-        This class is thread-safe for reading (load_config() caches result).
-        Config is loaded once during initialization and reused.
+        This class is thread-safe for reading. SQLite-backed runtime loading reads
+        fresh state on each call so admin updates are visible without restart.
+        Legacy YAML loading caches the parsed file after the first load.
     """
 
-    def __init__(self, config_path: str | Path | None = None):
+    def __init__(
+        self,
+        config_path: str | Path | None = None,
+        metadata_db_path: str | Path | None = None,
+    ):
         """Initialize config loader with optional explicit path.
 
         Args:
@@ -294,6 +303,7 @@ class LLMConfigLoader:
         """
         self._config: LLMConfig | None = None
         self._explicit_path = Path(config_path) if config_path else None
+        self._metadata_db_path = Path(metadata_db_path) if metadata_db_path else None
 
     def get_config_path(self) -> Path | None:
         """Determine config file path using priority order.
@@ -341,6 +351,9 @@ class LLMConfigLoader:
             ValueError: If config file is invalid or fails validation
             yaml.YAMLError: If YAML parsing fails
         """
+        if self._metadata_db_path is not None:
+            return self._load_config_from_metadata_db()
+
         if self._config is not None:
             return self._config
 
@@ -383,6 +396,41 @@ class LLMConfigLoader:
 
         except (yaml.YAMLError, ValueError) as e:
             raise ValueError(f"Failed to load LLM config from {config_path}: {e}")
+
+    def _load_config_from_metadata_db(self) -> LLMConfig:
+        """Load LLM configuration from metadata SQLite database.
+
+        In HTTP runtime mode, SQLite is the source of truth. YAML discovery paths are
+        ignored when metadata_db_path is configured.
+        """
+        assert self._metadata_db_path is not None
+
+        if not self._metadata_db_path.exists():
+            logger.info(
+                "Metadata DB path does not exist for runtime LLM config. "
+                "Using empty configuration.",
+            )
+            return LLMConfig()
+
+        try:
+            from workflows_mcp.metadata.db import connect_metadata_db
+            from workflows_mcp.metadata.repos import SQLiteLLMConfigRepository
+
+            conn = connect_metadata_db(self._metadata_db_path)
+            try:
+                repo = SQLiteLLMConfigRepository(conn)
+                return repo.load_config()
+            finally:
+                conn.close()
+        except Exception as exc:
+            message = str(exc).lower()
+            if "no such table" in message:
+                logger.info(
+                    "Metadata DB missing LLM tables for runtime LLM config. "
+                    "Using empty configuration."
+                )
+                return LLMConfig()
+            raise
 
     def resolve_profile(
         self,

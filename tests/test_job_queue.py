@@ -1,6 +1,7 @@
 """Tests for Job Queue."""
 
 import asyncio
+import os
 import shutil
 import tempfile
 from pathlib import Path
@@ -78,7 +79,9 @@ async def test_job_queue_submit_and_complete(job_queue):
     assert status["status"] == "completed"
     assert status["outputs"] is not None  # Workflow outputs (not full result)
     assert status["error"] is None
-    assert "result_file" in status  # Full result stored in file
+    assert isinstance(status["cancellable"], bool)
+    assert status["cancellable"] is False
+    assert "result_file" not in status
 
 
 @pytest.mark.asyncio
@@ -113,12 +116,19 @@ async def test_job_queue_cancel_queued_job(job_queue):
     # Cancel one of the jobs immediately
     # With persistent storage, there's a race between cancel and worker execution
     # cancel_job() returns True if cancelled, False if already completed/failed
-    cancelled = await job_queue.cancel_job(job_ids[2])
-    assert cancelled in (True, False)
-
-    # Check status - job may be in various states depending on timing
-    status = await job_queue.get_status(job_ids[2])
-    assert status["status"] in ("cancelled", "running", "completed", "failed")
+    cancel_result = await job_queue.cancel_job(job_ids[2])
+    assert cancel_result["job_id"] == job_ids[2]
+    if cancel_result["outcome"] == "cancel_requested":
+        for _ in range(40):
+            await asyncio.sleep(0.05)
+            status = await job_queue.get_status(job_ids[2])
+            if status["status"] not in ("queued", "running"):
+                break
+        status = await job_queue.get_status(job_ids[2])
+        assert status["status"] == "cancelled"
+        assert status["cancellable"] is False
+    else:
+        assert cancel_result["outcome"] in {"already_terminal", "non_cancellable"}
 
 
 @pytest.mark.asyncio
@@ -135,8 +145,14 @@ async def test_job_queue_cancel_completed_job(job_queue):
             break
 
     # Try to cancel completed job
-    cancelled = await job_queue.cancel_job(job_id)
-    assert cancelled is False
+    cancel_result = await job_queue.cancel_job(job_id)
+    assert cancel_result == {
+        "job_id": job_id,
+        "cancelled": False,
+        "outcome": "already_terminal",
+        "error_code": "JOB_ALREADY_TERMINAL",
+        "message": "Job is already in terminal state and cannot be cancelled",
+    }
 
 
 @pytest.mark.asyncio
@@ -149,8 +165,36 @@ async def test_job_queue_get_status_not_found(job_queue):
 @pytest.mark.asyncio
 async def test_job_queue_cancel_not_found(job_queue):
     """Test cancel_job with non-existent job ID."""
-    with pytest.raises(KeyError):
-        await job_queue.cancel_job("nonexistent_job_id")
+    cancel_result = await job_queue.cancel_job("nonexistent_job_id")
+    assert cancel_result == {
+        "job_id": "nonexistent_job_id",
+        "cancelled": False,
+        "outcome": "not_found",
+        "error_code": "JOB_NOT_FOUND",
+        "message": "No job found with the provided job_id",
+    }
+
+
+@pytest.mark.asyncio
+async def test_job_queue_resume_not_found_contract(job_queue):
+    resume_result = await job_queue.resume_job("nonexistent_job_id", response="ok")
+    assert resume_result == {
+        "job_id": "nonexistent_job_id",
+        "resumed": False,
+        "outcome": "not_found",
+        "error_code": "JOB_NOT_FOUND",
+        "message": "No job found with the provided job_id",
+    }
+
+
+@pytest.mark.asyncio
+async def test_job_queue_resume_not_resumable_contract(job_queue):
+    job_id = await job_queue.submit_job("test-simple", {})
+    resume_result = await job_queue.resume_job(job_id, response="ok")
+    assert resume_result["job_id"] == job_id
+    assert resume_result["resumed"] is False
+    assert resume_result["outcome"] == "not_resumable"
+    assert resume_result["error_code"] == "JOB_NOT_RESUMABLE"
 
 
 @pytest.mark.asyncio
@@ -329,6 +373,45 @@ async def test_job_queue_job_model():
 
 
 @pytest.mark.asyncio
+async def test_job_store_preserves_paused_execution_state_for_resume(app_context):
+    """Paused jobs persist resumable execution_state in internal storage."""
+    queue = JobQueue(app_context, num_workers=0)
+    await queue.start()
+    try:
+        paused_job = Job(
+            id="paused_job_1",
+            workflow="test-simple",
+            inputs={"request_id": "r1"},
+            status=WorkflowStatus.PAUSED,
+            result={
+                "status": "paused",
+                "prompt": "approve?",
+                "execution_state": {
+                    "workflow_name": "test-simple",
+                    "completed_blocks": [],
+                    "block_outputs": {},
+                    "remaining_blocks": [],
+                    "paused_block_id": "approval",
+                    "pause_metadata": {},
+                    "workflow_stack": [],
+                    "parent_execution_state": None,
+                    "current_call_block_id": None,
+                    "active_for_each": None,
+                },
+            },
+        )
+
+        await queue._store.save_job(paused_job)
+        loaded = await queue._store.load_job(paused_job.id)
+
+        assert loaded["status"] == "paused"
+        assert loaded["result"] is not None
+        assert "execution_state" in loaded["result"]
+    finally:
+        await queue.stop(wait_for_completion=False)
+
+
+@pytest.mark.asyncio
 async def test_job_timeout(job_queue, app_context):
     """Test that jobs respect timeout limits."""
     # Create a workflow that sleeps longer than timeout
@@ -413,6 +496,8 @@ async def test_job_queue_backpressure():
     """Test backpressure mechanism with soft limit."""
     # Create temporary directory for state
     temp_dir = Path(tempfile.mkdtemp())
+    original_cwd = Path.cwd()
+    os.chdir(temp_dir)
 
     try:
         # Create app context with registry
@@ -455,9 +540,15 @@ async def test_job_queue_backpressure():
             job_id_1 = await queue.submit_job("slow-for-backpressure")
             _ = await queue.submit_job("slow-for-backpressure")  # Second job (fills queue)
 
-            # Verify we have 2 active jobs
+            # Verify explicit active-job contract from queue stats
             stats = await queue.get_stats()
-            assert stats["queue_size"] + len(queue._job_tasks) == 2
+            for _ in range(20):
+                if stats["active_jobs"] == 2:
+                    break
+                await asyncio.sleep(0.05)
+                stats = await queue.get_stats()
+            assert stats["active_jobs"] == 2
+            assert stats["running_jobs"] in (0, 1)
 
             # Try to submit one more - should fail with RuntimeError
             with pytest.raises(RuntimeError) as exc_info:
@@ -470,10 +561,15 @@ async def test_job_queue_backpressure():
             assert "WORKFLOWS_MAX_CONCURRENT_JOBS" in error_msg
 
             # Cancel one job to free a slot
-            await queue.cancel_job(job_id_1)
+            cancel_result = await queue.cancel_job(job_id_1)
+            assert cancel_result["outcome"] in ("cancel_requested", "already_terminal")
 
-            # Wait a bit for cancellation to propagate
-            await asyncio.sleep(0.1)
+            # Async contract: capacity is freed after cancellation reaches terminal state.
+            for _ in range(40):
+                await asyncio.sleep(0.05)
+                state = await queue.get_status(job_id_1)
+                if state["status"] in ("cancelled", "completed", "failed"):
+                    break
 
             # Should be able to submit again after freeing a slot
             job_id_3 = await queue.submit_job("slow-for-backpressure")
@@ -483,5 +579,174 @@ async def test_job_queue_backpressure():
             await queue.stop(wait_for_completion=False)
 
     finally:
+        os.chdir(original_cwd)
         # Cleanup temp directory
+        shutil.rmtree(temp_dir, ignore_errors=True)
+
+
+@pytest.mark.asyncio
+async def test_cancel_running_job_does_not_stop_worker_and_next_job_completes(app_context):
+    """Cancelling a running job does not kill worker loop."""
+    app_context.registry.register(
+        WorkflowSchema(
+            name="slow-cancel-survival",
+            description="Slow workflow to validate worker survival",
+            blocks=[{"id": "sleep", "type": "Shell", "inputs": {"command": "sleep 2"}}],
+        )
+    )
+    queue = JobQueue(app_context, num_workers=1)
+    await queue.start()
+    try:
+        slow_job = await queue.submit_job("slow-cancel-survival", {})
+
+        for _ in range(40):
+            await asyncio.sleep(0.05)
+            state = await queue.get_status(slow_job)
+            if state["status"] == "running":
+                break
+
+        cancel_result = await queue.cancel_job(slow_job)
+        assert cancel_result["outcome"] == "cancel_requested"
+
+        for _ in range(40):
+            await asyncio.sleep(0.05)
+            state = await queue.get_status(slow_job)
+            if state["status"] == "cancelled":
+                break
+        assert (await queue.get_status(slow_job))["status"] == "cancelled"
+
+        follow_up_job = await queue.submit_job("test-simple", {})
+        for _ in range(60):
+            await asyncio.sleep(0.05)
+            follow_up_state = await queue.get_status(follow_up_job)
+            if follow_up_state["status"] in ("completed", "failed"):
+                break
+
+        follow_up_state = await queue.get_status(follow_up_job)
+        assert follow_up_state["status"] == "completed"
+        stats = await queue.get_stats()
+        assert stats["active_workers"] == 1
+    finally:
+        await queue.stop(wait_for_completion=False)
+
+
+@pytest.mark.asyncio
+async def test_cancel_queued_job_prevents_execution_when_cancel_requested(app_context):
+    """Queued cancellation accepted before start must prevent execution."""
+    app_context.registry.register(
+        WorkflowSchema(
+            name="queue-blocker",
+            description="Blocks single worker to force queued target",
+            blocks=[{"id": "sleep", "type": "Shell", "inputs": {"command": "sleep 2"}}],
+        )
+    )
+    queue = JobQueue(app_context, num_workers=1)
+    await queue.start()
+    try:
+        blocker_job = await queue.submit_job("queue-blocker", {})
+        for _ in range(40):
+            await asyncio.sleep(0.05)
+            blocker_state = await queue.get_status(blocker_job)
+            if blocker_state["status"] == "running":
+                break
+
+        queued_job = await queue.submit_job("test-simple", {})
+        cancel_result = await queue.cancel_job(queued_job)
+        assert cancel_result["outcome"] == "cancel_requested"
+
+        for _ in range(80):
+            await asyncio.sleep(0.05)
+            queued_state = await queue.get_status(queued_job)
+            if queued_state["status"] == "cancelled":
+                break
+        queued_state = await queue.get_status(queued_job)
+        assert queued_state["status"] == "cancelled"
+        assert queued_state["outputs"] is None
+        assert queued_state["error"] is None
+    finally:
+        await queue.stop(wait_for_completion=False)
+
+
+@pytest.mark.asyncio
+async def test_queued_job_reports_null_started_at_until_running(app_context):
+    """Queued jobs keep started_at=None until worker actually starts execution."""
+    app_context.registry.register(
+        WorkflowSchema(
+            name="contention-slow",
+            description="Slow workflow for queue contention",
+            blocks=[{"id": "sleep", "type": "Shell", "inputs": {"command": "sleep 2"}}],
+        )
+    )
+    queue = JobQueue(app_context, num_workers=1)
+    await queue.start()
+    try:
+        first_job = await queue.submit_job("contention-slow", {})
+        for _ in range(40):
+            await asyncio.sleep(0.05)
+            first_state = await queue.get_status(first_job)
+            if first_state["status"] == "running":
+                break
+
+        second_job = await queue.submit_job("test-simple", {})
+        queued_state = await queue.get_status(second_job)
+        assert queued_state["status"] == "queued"
+        assert queued_state["started_at"] is None
+
+        for _ in range(80):
+            await asyncio.sleep(0.05)
+            second_state = await queue.get_status(second_job)
+            if second_state["status"] in ("running", "completed", "failed"):
+                break
+
+        final_state = await queue.get_status(second_job)
+        if final_state["status"] == "running":
+            assert final_state["started_at"] is not None
+        else:
+            assert final_state["status"] in ("completed", "failed")
+            assert final_state["started_at"] is not None
+    finally:
+        await queue.stop(wait_for_completion=False)
+
+
+@pytest.mark.asyncio
+async def test_concurrent_submit_admission_never_exceeds_active_capacity(app_context):
+    """Concurrent submits must admit at most max active jobs."""
+    app_context.registry.register(
+        WorkflowSchema(
+            name="slow-admission",
+            description="Slow workflow for concurrent admission tests",
+            blocks=[{"id": "sleep", "type": "Shell", "inputs": {"command": "sleep 1"}}],
+        )
+    )
+
+    temp_dir = Path(tempfile.mkdtemp())
+    original_cwd = Path.cwd()
+    os.chdir(temp_dir)
+
+    queue = JobQueue(app_context, num_workers=0)
+    queue._max_concurrent_jobs = 2
+    await queue.start()
+    try:
+        async def _submit_one() -> tuple[bool, str]:
+            try:
+                job_id = await queue.submit_job("slow-admission", {})
+                return (True, job_id)
+            except RuntimeError as err:
+                return (False, str(err))
+
+        results = await asyncio.gather(*[_submit_one() for _ in range(5)])
+        successes = [value for ok, value in results if ok]
+        failures = [value for ok, value in results if not ok]
+
+        assert len(successes) == 2
+        assert len(failures) == 3
+        assert all("Job queue at capacity" in message for message in failures)
+
+        stats = await queue.get_stats()
+        assert stats["active_jobs"] == 2
+        assert stats["queue_size"] == 2
+        assert stats["running_jobs"] == 0
+    finally:
+        await queue.stop(wait_for_completion=False)
+        os.chdir(original_cwd)
         shutil.rmtree(temp_dir, ignore_errors=True)

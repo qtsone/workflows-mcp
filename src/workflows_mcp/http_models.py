@@ -126,7 +126,7 @@ class ErrorEnvelope(StrictModel):
         {
             "error": {
                 "code": "CONFIG_REQUIRED",
-                "message": "Service is not ready. Complete /config setup.",
+                "message": "Service is not ready. Complete /api/admin/v1 setup.",
                 "details": {"readiness_state": "partially_configured"},
                 "request_id": "a1b2c3d4..."
             }
@@ -159,19 +159,3 @@ class LLMConfigPayload(StrictModel):
     """Typed request model for config apply and validate endpoints."""
 
     profiles: list[dict[str, Any]]
-
-
-class ConfigStatusResponse(StrictModel):
-    """Response model for ``GET /config/status``."""
-
-    state: ReadinessState
-    blockers: list[str]
-    config_present: bool
-
-
-class ConfigApplyResponse(StrictModel):
-    """Response model for ``POST /config/apply``."""
-
-    applied: bool
-    state: ReadinessState
-    blockers: list[str]

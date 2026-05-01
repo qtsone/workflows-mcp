@@ -12,7 +12,9 @@ Run YAML workflows as MCP tools so agents can automate real tasks with one serve
 - Keep secrets server-side via `WORKFLOW_SECRET_*` with redacted outputs.
 - Run synchronous or async jobs with queue visibility and cancellation.
 
-## Quickstart (5 minutes)
+## Running workflows-mcp
+
+`workflows-mcp` is a long-lived HTTP service with a web UI and MCP endpoint.
 
 ### 1) Install
 
@@ -28,44 +30,120 @@ or:
 pip install workflows-mcp
 ```
 
-### 2) Add to your MCP client
+### 2) One-time bootstrap (admin setup)
 
-Example (`claude_desktop_config.json`):
+Initialize server state before the first run:
+
+```bash
+workflows-mcp bootstrap --config-dir ~/.workflows
+```
+
+By default, the config directory is `~/.workflows` (or `WORKFLOWS_CONFIG_DIR` if set).
+
+Bootstrap is idempotent: if state already exists, `workflows-mcp bootstrap` reports that
+the instance is already initialized and exits without rewriting credentials or settings.
+
+To intentionally change existing bootstrap state, pass `--reconfigure`.
+
+On first bootstrap, the CLI prompts for:
+
+- `Host [127.0.0.1]:`
+- `Port [8000]:`
+- `Admin password:`
+
+Press Enter on host/port to accept the shown defaults. Admin password is required on first bootstrap.
+
+For existing state, run `workflows-mcp bootstrap --reconfigure` to prompt through the same
+fields using persisted defaults. Press Enter to keep current host/port, and press Enter at
+the password prompt to keep the current password.
+
+Flags remain script-friendly overrides:
+
+- `--host` skips host prompt
+- `--port` skips port prompt
+- `--admin-password` skips password prompt and updates/sets the password
+
+In non-interactive environments, host/port prompt EOF falls back to displayed defaults.
+First-time password prompt EOF fails with a friendly error; pass `--admin-password` explicitly.
+
+Bootstrap writes:
+
+- `~/.workflows/server.db` (SQLite metadata/control-plane database)
+- `~/.workflows/secrets.key` (server-side key material)
+
+You can override the default config directory with `WORKFLOWS_CONFIG_DIR`.
+
+Reconfigure examples:
+
+```bash
+# Change admin password for an existing bootstrap state
+workflows-mcp bootstrap --reconfigure --admin-password "new-strong-password"
+
+# Change host/port explicitly (other settings remain unchanged)
+workflows-mcp bootstrap --reconfigure --host 0.0.0.0 --port 8080
+```
+
+### 3) Start the server
+
+Set a bootstrap token for current legacy startup/config guards, then start:
+
+```bash
+WORKFLOWS_BOOTSTRAP_TOKEN="replace-with-a-secure-32-byte-or-longer-token" workflows-mcp
+```
+
+No-arg `workflows-mcp` starts the HTTP service. By default it binds to
+`http://127.0.0.1:8000`; override with `WORKFLOWS_BIND_HOST` and `WORKFLOWS_PORT`.
+
+### 4) Open the UI and create an MCP token
+
+1. Open `http://127.0.0.1:8000/` and sign in at `/login` with the admin password set during bootstrap.
+2. Create a project and generate an MCP bearer token in the UI.
+
+### 5) Connect your MCP client
+
+Configure your MCP client to connect over Streamable HTTP with the UI-generated MCP bearer token:
 
 ```json
 {
   "mcpServers": {
     "workflows": {
-      "command": "uvx",
-      "args": ["workflows-mcp"],
-      "env": {
-        "WORKFLOWS_TEMPLATE_PATHS": "/path/to/your/workflows",
-        "WORKFLOWS_LOG_LEVEL": "INFO",
-        "WORKFLOW_SECRET_API_KEY": "your-secret-value"
+      "transport": "streamable-http",
+      "url": "http://127.0.0.1:8000/mcp",
+      "headers": {
+        "Authorization": "Bearer <mcp-token-from-ui>"
       }
     }
   }
 }
 ```
 
-If installed with `pip`:
+Use your server host in the URL if you bind to a non-default interface.
 
-```json
-{
-  "mcpServers": {
-    "workflows": {
-      "command": "workflows-mcp",
-      "env": {
-        "WORKFLOWS_TEMPLATE_PATHS": "/path/to/your/workflows",
-        "WORKFLOWS_LOG_LEVEL": "INFO",
-        "WORKFLOW_SECRET_API_KEY": "your-secret-value"
-      }
-    }
-  }
-}
+### 6) Service endpoints and auth boundaries
+
+| Endpoint | Auth required | Description |
+| --- | --- | --- |
+| `http://127.0.0.1:8000/` | No | Web UI entry point |
+| `http://127.0.0.1:8000/login` | No | Admin login page |
+| `http://127.0.0.1:8000/api/public/v1/*` | No | Public API surface |
+| `http://127.0.0.1:8000/api/events/v1/*` | UI session cookie | UI event/session APIs |
+| `http://127.0.0.1:8000/api/admin/v1/*` | UI session cookie (+ CSRF on mutating routes) | Admin control plane (projects, tokens, workflow sources, reload/validate) |
+| `http://127.0.0.1:8000/mcp` | MCP bearer token | MCP transport endpoint |
+| `http://127.0.0.1:8000/docs` | No | Swagger UI (browser-accessible) |
+| `http://127.0.0.1:8000/openapi.json` | No | OpenAPI schema |
+| `http://127.0.0.1:8000/health` | No | Liveness check |
+| `http://127.0.0.1:8000/ready` | No | Readiness check |
+| `http://127.0.0.1:8000/config/*` | Legacy bearer token flow | Legacy compatibility endpoints (not primary admin surface) |
+
+Auth model at a glance:
+
+```text
+- UI admin: password login -> session cookie; mutating /api/admin/v1/* calls also require X-CSRF-Token.
+- MCP clients: bearer token generated in the UI and sent to /mcp.
+- WORKFLOWS_BOOTSTRAP_TOKEN: current server startup requirement and legacy `/config/*` bearer credential; not the UI admin password and not the token users paste into MCP clients.
 ```
 
-### 3) Restart your MCP client and run first calls
+### 7) Run first MCP calls
 
 1. `list_workflows`
 2. `get_workflow_info`
@@ -176,6 +254,11 @@ Memory contract highlights:
   - `scan.root` is validated against a single allowed root.
   - Default allowed root is `/`.
   - Override with `WORKFLOWS_SCAN_ROOT=/your/root`.
+  - Hardened deployments should not leave this at `/`; set a repo/workspace-specific boundary.
+  - Recommended hardened values:
+    - Local development: `WORKFLOWS_SCAN_ROOT=/absolute/path/to/your/workflows-mcp-repo`
+    - CI/release runners: `WORKFLOWS_SCAN_ROOT=$CI_PROJECT_DIR` (or runner workspace root for this repository only)
+  - Effective knowledge file access is an intersection: `WORKFLOWS_SCAN_ROOT ∩ fs_root`, plus explicitly approved extra allowlist roots.
 - Project flow response compactness:
   - `onboard`/`sync` are compact by default.
   - Completed checkpoint steps strip large `plan[].payload.memories[].content` blobs in compact mode.
@@ -409,11 +492,19 @@ Invalid (supersede missing required `superseded_by`):
 
 ## Configuration
 
+### HTTP service and auth
+
+- `WORKFLOWS_CONFIG_DIR`: Config directory for bootstrap/runtime metadata (default: `~/.workflows`).
+- `WORKFLOWS_BOOTSTRAP_TOKEN`: Current server startup requirement and legacy `/config/*` bearer credential. Must be at least 32 bytes. Not used as the UI admin password and not the token users paste into MCP clients.
+- `WORKFLOWS_BIND_HOST`: Host to bind the HTTP server (default: `127.0.0.1`).
+- `WORKFLOWS_PORT`: Port to bind the HTTP server (default: `8000`).
+- `WORKFLOWS_LOG_LEVEL`: Logging level (`DEBUG`, `INFO`, `WARNING`, `ERROR`, `CRITICAL`; default: `INFO`).
+
 ### Workflow loading and execution
 
-- `WORKFLOWS_TEMPLATE_PATHS`: Comma-separated workflow directories to load.
 - `WORKFLOWS_MAX_RECURSION_DEPTH`: Max workflow composition depth (default: `50`).
-- `WORKFLOWS_LOG_LEVEL`: Logging level (`DEBUG`, `INFO`, `WARNING`, `ERROR`, `CRITICAL`; default: `INFO`).
+- Workflow sources for day-to-day operations are managed in SQLite via the web UI / `/api/admin/v1/workflows/sources` (including reload/validate actions).
+- `WORKFLOWS_TEMPLATE_PATHS` remains available for template loading behavior, but it is not the primary live control-plane for HTTP/web management.
 
 ### Queue and async settings
 
@@ -432,7 +523,7 @@ Invalid (supersede missing required `superseded_by`):
 
 ## Memory
 
-Memory is an optional persistent storage feature that lets agents and workflows record, retrieve, and organize information across sessions. It is backed by PostgreSQL and gives each agent a structured, scoped, and temporally-aware knowledge store.
+Memory is an optional persistent storage feature that lets agents and workflows record, retrieve, and organize information across sessions. The HTTP/web-management control plane uses SQLite metadata as source of truth; PostgreSQL (optionally with pgvector) is used for memory/knowledge data.
 
 ### What memory provides
 
@@ -495,34 +586,25 @@ Resolution precedence is `scope` → `scope_token` → `context_id` for each fie
 
 ### Enabling memory
 
-Add the following variables to your MCP client config:
+Set the following environment variables when launching the server process:
 
-```json
-{
-  "mcpServers": {
-    "workflows": {
-      "command": "uvx",
-      "args": ["workflows-mcp"],
-      "env": {
-        "MEMORY_DB_HOST": "localhost",
-        "MEMORY_DB_PORT": "5432",
-        "MEMORY_DB_NAME": "memory_db",
-        "MEMORY_DB_USER": "postgres",
-        "MEMORY_DB_PASSWORD": "your-password"
-      }
-    }
-  }
-}
+```bash
+MEMORY_DB_HOST=localhost \
+MEMORY_DB_PORT=5432 \
+MEMORY_DB_NAME=memory_db \
+MEMORY_DB_USER=postgres \
+MEMORY_DB_PASSWORD=your-password \
+WORKFLOWS_BOOTSTRAP_TOKEN="replace-with-a-secure-32-byte-or-longer-token" \
+uv run workflows-mcp
 ```
 
-On first boot with `MEMORY_DB_AUTO_CREATE=true` (the default), the server creates the target database and applies the schema automatically. Restart your MCP client after adding the variables.
+On first boot with `MEMORY_DB_AUTO_CREATE=true` (the default), the server creates the target database and applies the schema automatically. Restart the server process after adding the variables.
 
 ### Verifying memory is active
 
-1. Restart your MCP client.
-2. Call `list_workflows` — confirm the server started without errors in the client logs.
-3. Check that the `memory` tool appears in the available tool list.
-4. Run a test ingest:
+1. Restart the server process.
+2. Check that the `memory` tool appears in the available tool list (call `list_workflows` via MCP).
+3. Run a test ingest:
 
 ```json
 {
@@ -564,7 +646,6 @@ Example block families include `Shell`, `ReadFiles`, `HttpCall`, `LLMCall`, `Sql
 - `docs/llm/block-reference.md`: exact block inputs/outputs for workflow authoring.
 - `docs/TESTING.md`: test strategy and test commands.
 - `ARCHITECTURE.md`: architecture overview.
-- `docs/adr/`: design decisions and rationale.
 - `CHANGELOG.md`: release history.
 
 ## Contributing

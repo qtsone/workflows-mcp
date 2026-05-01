@@ -21,17 +21,40 @@ from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from importlib import import_module
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from mcp.server.fastmcp import FastMCP
 
-from .context import AppContext, AppContextType
-from .engine import WorkflowRegistry
-from .engine.executor_base import create_default_registry
-from .engine.io_queue import IOQueue
-from .engine.job_queue import JobQueue
+if TYPE_CHECKING:
+    from fastapi import FastAPI
+
+from .context import AppContext, AppContextType, MemoryBackendUnavailableError
+from .engine.workflow_source_loader import (
+    WorkflowSourceReloadSummary,
+    reload_registry_from_source_paths,
+)
+from .http.lifespan import AppResources, build_resources, start_resources, stop_resources
+from .metadata.repos.workflow_sources_repo import SQLiteWorkflowSourcesRepository
 
 logger = logging.getLogger(__name__)
+
+
+def _has_registered_memory_tools(mcp_server: FastMCP) -> bool:
+    """Return True when memory MCP tools are already registered."""
+    tools = mcp_server._tool_manager._tools
+    return "memory" in tools
+
+def _resolve_base_dir(base_dir: Path | None = None) -> Path:
+    """Resolve runtime base directory from explicit value or environment."""
+    if base_dir is not None:
+        return base_dir
+
+    config_dir = os.getenv("WORKFLOWS_CONFIG_DIR")
+    if config_dir and config_dir.strip():
+        return Path(config_dir).expanduser()
+
+    return Path.home() / ".workflows"
+
 
 # =============================================================================
 # Shared Resources and Lifespan Management
@@ -214,113 +237,20 @@ def get_max_recursion_depth() -> int:
         return 50
 
 
-def load_workflows(registry: WorkflowRegistry) -> None:
-    """Load workflows from optional built-in templates and user-provided directories.
-
-    This function:
-    1. Checks for built-in templates (skipped if empty or absent)
-    2. Parses WORKFLOWS_TEMPLATE_PATHS environment variable (comma-separated paths)
-    3. Uses registry.load_from_directories() with on_duplicate="overwrite"
-
-    Priority: User templates OVERRIDE built-in templates by name.
-
-    Environment Variables:
-        WORKFLOWS_TEMPLATE_PATHS: Comma-separated list of template directories.
-            Paths can use ~ for home directory. Empty or missing variable is handled gracefully.
-
-    Example:
-        WORKFLOWS_TEMPLATE_PATHS="/workflows,/opt/company-workflows"
-        # Load order:
-        # 1. Built-in: src/workflows_mcp/templates/ (if any YAML files exist)
-        # 2. User: /workflows (overrides built-in by name)
-        # 3. User: /opt/company-workflows (overrides both by name)
-
-    Args:
-        registry: Registry to load workflows into
-
-    Note:
-        Post ADR-008: WorkflowRunner is stateless, workflows only need to be
-        loaded into registry. No executor loading step required.
-    """
-    # Built-in templates directory (optional — may be empty or absent)
-    built_in_templates = Path(__file__).parent / "templates"
-    has_built_in = built_in_templates.is_dir() and any(built_in_templates.glob("*.yaml"))
-    if not has_built_in:
-        logger.info("No built-in workflow templates found, skipping")
-
-    # Parse WORKFLOWS_TEMPLATE_PATHS environment variable
-    env_paths_str = os.getenv("WORKFLOWS_TEMPLATE_PATHS", "")
-    user_template_paths: list[Path] = []
-
-    if env_paths_str.strip():
-        # Split by comma, strip whitespace, expand ~, and convert to Path
-        for path_str in env_paths_str.split(","):
-            path_str = path_str.strip()
-            if path_str:
-                # Expand ~ for home directory
-                expanded_path = Path(path_str).expanduser()
-
-                # Validate path exists and is a directory
-                if not expanded_path.exists():
-                    logger.warning(f"Template path does not exist, skipping: {expanded_path}")
-                    continue
-                if not expanded_path.is_dir():
-                    logger.warning(f"Template path is not a directory, skipping: {expanded_path}")
-                    continue
-
-                user_template_paths.append(expanded_path)
-
-        if user_template_paths:
-            logger.info(f"User template paths from WORKFLOWS_TEMPLATE_PATHS: {user_template_paths}")
-        else:
-            logger.warning("WORKFLOWS_TEMPLATE_PATHS provided but no valid directories found")
-
-    # Build directory list: built-in first (if present), then user paths (user paths override)
-    directories_to_load: list[Path | str] = []
-    if has_built_in:
-        directories_to_load.append(built_in_templates)
-    directories_to_load.extend(user_template_paths)
-
-    if not directories_to_load:
-        logger.info("No workflow directories to load")
-        return
-
-    logger.info(f"Loading workflows from {len(directories_to_load)} directories")
-    if has_built_in:
-        logger.info(f"  Built-in: {built_in_templates}")
-    for idx, user_path in enumerate(user_template_paths, 1):
-        logger.info(f"  User {idx}: {user_path}")
-
-    # Load workflows from all directories with overwrite policy (user templates override)
-    result = registry.load_from_directories(directories_to_load, on_duplicate="overwrite")
-
-    if not result.is_success:
-        error_msg = f"Failed to load workflows: {result.error}"
-        logger.error(error_msg)
-        raise RuntimeError(
-            f"{error_msg}\n"
-            "Server cannot start without workflows. Please check:\n"
-            "1. WORKFLOWS_TEMPLATE_PATHS (if set) contains valid workflow YAML files\n"
-            "2. All workflow files follow the correct schema"
-        )
-
-    # Log loading results per directory
-    # Type narrowing: result.is_success guarantees value is not None
-    assert result.value is not None
-    load_counts = result.value
-    total_workflows = sum(load_counts.values())
-
-    if load_counts:
-        logger.info("Workflow loading summary:")
-        if has_built_in:
-            built_in_count = load_counts.get(str(built_in_templates), 0)
-            logger.info(f"  Built-in templates: {built_in_count} workflows")
-
-        for user_path in user_template_paths:
-            user_count = load_counts.get(str(user_path), 0)
-            logger.info(f"  User templates ({user_path}): {user_count} workflows")
-
-    logger.info(f"Successfully loaded {total_workflows} total workflows into registry")
+def load_workflows(resources: AppResources) -> WorkflowSourceReloadSummary:
+    """Load workflows from SQLite-managed source records into the registry."""
+    repo = SQLiteWorkflowSourcesRepository(resources.metadata_db_conn)
+    sources = repo.list()
+    source_paths = [source.source_path for source in sources]
+    summary = reload_registry_from_source_paths(resources.workflow_registry, source_paths)
+    logger.info(
+        "Workflow registry reloaded from SQLite sources",
+        extra={
+            "source_count": summary.source_count,
+            "workflow_count": summary.workflow_count,
+        },
+    )
+    return summary
 
 
 @asynccontextmanager
@@ -329,7 +259,7 @@ async def app_lifespan(_server: FastMCP) -> AsyncIterator[AppContext]:
 
     This lifespan context manager:
     1. Initializes shared resources (workflow registry, executor registry, checkpoint store)
-    2. Loads workflows from built-in and user template directories
+    2. Reloads workflow registry from SQLite-backed workflow source records
     3. Initializes secret management system
     4. Yields context to make resources available to tools
     5. Cleans up resources on shutdown
@@ -348,150 +278,173 @@ async def app_lifespan(_server: FastMCP) -> AsyncIterator[AppContext]:
     # Startup: initialize resources
     logger.info("Initializing MCP server resources...")
 
-    # Read max recursion depth from environment
-    max_recursion_depth = get_max_recursion_depth()
-    if max_recursion_depth != 50:
-        logger.info(f"Using max recursion depth: {max_recursion_depth}")
+    resources = build_resources(base_dir=_resolve_base_dir())
+    app_context = resources.app_context
+    executor_registry = resources.executor_registry
+    io_queue = resources.io_queue
+    job_queue = resources.job_queue
+    num_workers = resources.metadata.job_queue_workers
+    try:
+        await start_resources(resources)
 
-    # Initialize secret provider and check for configured secrets
-    from .engine.secrets import EnvVarSecretProvider
+        # Read max recursion depth from environment
+        max_recursion_depth = resources.max_recursion_depth
+        if max_recursion_depth != 50:
+            logger.info(f"Using max recursion depth: {max_recursion_depth}")
 
-    secret_provider = EnvVarSecretProvider()
-    secret_keys = await secret_provider.list_secret_keys()
+        # Initialize secret provider and check for configured secrets
+        from .engine.secrets import EnvVarSecretProvider
 
-    logger.info(f"Secret provider: {secret_provider.__class__.__name__}")
-    logger.info(f"Available secrets: {len(secret_keys)}")
+        secret_provider = EnvVarSecretProvider()
+        secret_keys = await secret_provider.list_secret_keys()
 
-    if len(secret_keys) == 0:
-        logger.warning(
-            "No secrets configured. Use WORKFLOW_SECRET_* environment variables to provide secrets."
-        )
-    else:
-        # Log secret keys (not values!) for debugging
-        logger.debug(f"Secret keys: {', '.join(sorted(secret_keys))}")
+        logger.info(f"Secret provider: {secret_provider.__class__.__name__}")
+        logger.info(f"Available secrets: {len(secret_keys)}")
 
-    # Initialize LLM config loader
-    from .engine.llm_config import LLMConfigLoader
-
-    llm_config_loader = LLMConfigLoader()
-    llm_config = llm_config_loader.load_config()
-
-    logger.info(
-        f"LLM config: {len(llm_config.providers)} providers, {len(llm_config.profiles)} profiles"
-    )
-    if llm_config.default_profile:
-        logger.info(f"Default LLM profile: {llm_config.default_profile}")
-
-    # Create executor registry with all built-in executors
-    executor_registry = create_default_registry()
-
-    # Create workflow registry
-    registry = WorkflowRegistry()
-
-    # Read queue configuration from environment variables
-    io_queue_enabled = os.getenv("WORKFLOWS_IO_QUEUE_ENABLED", "true").lower() == "true"
-    job_queue_enabled = os.getenv("WORKFLOWS_JOB_QUEUE_ENABLED", "true").lower() == "true"
-    num_workers = int(os.getenv("WORKFLOWS_JOB_QUEUE_WORKERS", "3"))
-
-    # Create IO queue if enabled (for serialized file operations)
-    io_queue = IOQueue() if io_queue_enabled else None
-
-    # Create AppContext first (needed by JobQueue)
-    app_context = AppContext(
-        registry=registry,
-        executor_registry=executor_registry,
-        llm_config_loader=llm_config_loader,
-        io_queue=io_queue,
-        job_queue=None,  # Will be set after JobQueue creation if enabled
-        max_recursion_depth=max_recursion_depth,
-    )
-
-    # Create and initialize JobQueue if enabled
-    job_queue = None
-    if job_queue_enabled:
-        job_queue = JobQueue(app_context, num_workers=num_workers)
-        app_context.job_queue = job_queue
-
-    # Load workflows into registry
-    load_workflows(registry)
-
-    # Start queues if enabled
-    if io_queue:
-        await io_queue.start()
-        logger.info("IO queue started")
-    else:
-        logger.info("IO queue disabled")
-
-    if job_queue:
-        await job_queue.start()
-        logger.info(f"Job queue started with {num_workers} workers")
-    else:
-        logger.info("Job queue disabled")
-
-    # Initialize memory features if memory DB is configured
-    memory_db_host = os.getenv("MEMORY_DB_HOST")
-    if memory_db_host:
-        try:
-            app_context.memory_backend = await _prepare_memory_schema(memory_db_host)
-            app_context.memory_backend_lock = asyncio.Lock()
-
-            # Schema OK — register executor and tools
-            from .engine.executors_memory import MemoryExecutor
-            from .tools_memory import register_memory_tools
-
-            oss_mode_enabled = _is_enabled_env_flag("WORKFLOWS_OSS_MODE", default=True)
-            project_tools_enabled = _is_enabled_env_flag(
-                "WORKFLOWS_ENABLE_PROJECT_TOOLS", default=True
+        if len(secret_keys) == 0:
+            logger.warning(
+                "No secrets configured. "
+                "Use WORKFLOW_SECRET_* environment variables to provide secrets."
             )
-            if "WORKFLOWS_ENABLE_PROJECT_TOOLS" not in os.environ and (
-                "WORKFLOWS_ENABLE_TEMP_PROJECT_TOOLS" in os.environ
-            ):
-                project_tools_enabled = _is_enabled_env_flag(
-                    "WORKFLOWS_ENABLE_TEMP_PROJECT_TOOLS", default=True
-                )
+        else:
+            # Log secret keys (not values!) for debugging
+            logger.debug(f"Secret keys: {', '.join(sorted(secret_keys))}")
 
-            expose_project_tools = oss_mode_enabled and project_tools_enabled
-            executor_registry.register(MemoryExecutor())
+        llm_config = resources.llm_config_loader.load_config()
+
+        logger.info(
+            "LLM config: "
+            f"{len(llm_config.providers)} providers, {len(llm_config.profiles)} profiles"
+        )
+        if llm_config.default_profile:
+            logger.info(f"Default LLM profile: {llm_config.default_profile}")
+
+        app_context.reload_workflows = lambda: load_workflows(resources)
+
+        # Load workflows into registry
+        load_workflows(resources)
+
+        # Start queues if enabled
+        if io_queue:
+            await io_queue.start()
+            logger.info("IO queue started")
+        else:
+            logger.info("IO queue disabled")
+
+        if job_queue:
+            await job_queue.start()
+            logger.info(f"Job queue started with {num_workers} workers")
+        else:
+            logger.info("Job queue disabled")
+
+        from .tools_memory import register_memory_tools
+
+        oss_mode_enabled = _is_enabled_env_flag("WORKFLOWS_OSS_MODE", default=True)
+        project_tools_enabled = _is_enabled_env_flag("WORKFLOWS_ENABLE_PROJECT_TOOLS", default=True)
+        if "WORKFLOWS_ENABLE_PROJECT_TOOLS" not in os.environ and (
+            "WORKFLOWS_ENABLE_TEMP_PROJECT_TOOLS" in os.environ
+        ):
+            project_tools_enabled = _is_enabled_env_flag(
+                "WORKFLOWS_ENABLE_TEMP_PROJECT_TOOLS", default=True
+            )
+        expose_project_tools = oss_mode_enabled and project_tools_enabled
+        if not _has_registered_memory_tools(_server):
             register_memory_tools(
-                mcp,
+                _server,
                 enable_project_tools=expose_project_tools,
             )
-            from .engine.memory_service import AUDIT_FAIL_CLOSED
 
-            logger.info(
-                "Memory features enabled (DB ready)",
-                extra={
-                    "audit_fail_closed": AUDIT_FAIL_CLOSED,
-                    "oss_mode_enabled": oss_mode_enabled,
-                    "project_tools_enabled": project_tools_enabled,
-                    "expose_project_tools": expose_project_tools,
-                },
+        app_context.memory_backend_unavailable_error = MemoryBackendUnavailableError(
+            code="MEMORY_BACKEND_UNAVAILABLE",
+            message="Memory backend is unavailable.",
+            retryable=False,
+            actionable_fix=(
+                "Configure PostgreSQL/pgvector via /api/admin/v1/database/settings and "
+                "/api/admin/v1/database/connection-test, then verify /ready reports "
+                "healthy before retrying."
+            ),
+        )
+
+        # Initialize memory features if memory DB is configured
+        memory_db_host = os.getenv("MEMORY_DB_HOST")
+        if memory_db_host:
+            try:
+                app_context.memory_backend = await _prepare_memory_schema(memory_db_host)
+                app_context.memory_backend_lock = asyncio.Lock()
+                app_context.memory_backend_unavailable_error = None
+
+                # Schema OK — register memory block executor.
+                from .engine.executors_memory import MemoryExecutor
+
+                executor_registry.register(MemoryExecutor())
+                from .engine.memory_service import AUDIT_FAIL_CLOSED
+
+                logger.info(
+                    "Memory features enabled (DB ready)",
+                    extra={
+                        "audit_fail_closed": AUDIT_FAIL_CLOSED,
+                        "oss_mode_enabled": oss_mode_enabled,
+                        "project_tools_enabled": project_tools_enabled,
+                        "expose_project_tools": expose_project_tools,
+                    },
+                )
+            except Exception as exc:
+                if app_context.memory_backend is not None:
+                    try:
+                        await app_context.memory_backend.disconnect()
+                    finally:
+                        app_context.memory_backend = None
+                        app_context.memory_backend_lock = None
+
+                incompatible_schema = isinstance(exc, RuntimeError) and (
+                    "Incompatible knowledge schema detected" in str(exc)
+                )
+                if incompatible_schema:
+                    app_context.memory_backend_unavailable_error = MemoryBackendUnavailableError(
+                        code="MEMORY_BACKEND_UNAVAILABLE",
+                        message=(
+                            "Memory backend is unavailable due to incompatible knowledge schema."
+                        ),
+                        retryable=False,
+                        actionable_fix=(
+                            "Apply the documented knowledge schema migration, then "
+                            "configure/verify "
+                            "database readiness via /api/admin/v1/database/settings and /ready."
+                        ),
+                    )
+                    logger.warning(
+                        "Memory features disabled (schema incompatible). "
+                        "Apply the documented migration path, then restart.",
+                        exc_info=True,
+                    )
+                else:
+                    app_context.memory_backend_unavailable_error = MemoryBackendUnavailableError(
+                        code="MEMORY_BACKEND_UNAVAILABLE",
+                        message="Memory backend is unavailable.",
+                        retryable=False,
+                        actionable_fix=(
+                            "Configure PostgreSQL/pgvector via /api/admin/v1/database/settings and "
+                            "/api/admin/v1/database/connection-test, then verify /ready reports "
+                            "healthy before retrying."
+                        ),
+                    )
+                    logger.warning(
+                        "Memory features disabled (DB unreachable)",
+                        exc_info=True,
+                    )
+        else:
+            app_context.memory_backend_unavailable_error = MemoryBackendUnavailableError(
+                code="MEMORY_BACKEND_UNAVAILABLE",
+                message="Memory backend is unavailable because MEMORY_DB_HOST is not configured.",
+                retryable=False,
+                actionable_fix=(
+                    "Configure PostgreSQL/pgvector via /api/admin/v1/database/settings and "
+                    "/api/admin/v1/database/connection-test, then verify /ready reports "
+                    "healthy before retrying."
+                ),
             )
-        except Exception as exc:
-            if app_context.memory_backend is not None:
-                try:
-                    await app_context.memory_backend.disconnect()
-                finally:
-                    app_context.memory_backend = None
-                    app_context.memory_backend_lock = None
+            logger.info("Memory features disabled (MEMORY_DB_HOST not set)")
 
-            if isinstance(exc, RuntimeError) and "Incompatible knowledge schema detected" in str(
-                exc
-            ):
-                logger.warning(
-                    "Memory features disabled (schema incompatible). "
-                    "Apply the documented migration path, then restart.",
-                    exc_info=True,
-                )
-            else:
-                logger.warning(
-                    "Memory features disabled (DB unreachable)",
-                    exc_info=True,
-                )
-    else:
-        logger.info("Memory features disabled (MEMORY_DB_HOST not set)")
-
-    try:
         # Make resources available to tools via AppContext
         yield app_context
     finally:
@@ -507,6 +460,8 @@ async def app_lifespan(_server: FastMCP) -> AsyncIterator[AppContext]:
         if io_queue:
             await io_queue.stop()
             logger.info("IO queue stopped")
+
+        await stop_resources(resources)
 
         # Close shared memory backend if enabled
         if app_context.memory_backend is not None:
@@ -534,7 +489,7 @@ mcp = FastMCP("workflows_mcp", lifespan=app_lifespan)
 # =============================================================================
 
 
-def build_app(*, base_dir: Path | None = None):  # type: ignore[no-untyped-def]
+def build_app(*, base_dir: Path | None = None) -> "FastAPI":
     """Compose and return the FastAPI HTTP application.
 
     Wires together authentication, readiness, config, and route layers.
@@ -551,28 +506,52 @@ def build_app(*, base_dir: Path | None = None):  # type: ignore[no-untyped-def]
     fastapi.FastAPI
         Fully configured application ready for ASGI / Uvicorn.
     """
-    from .auth import ensure_bootstrap_token
+    from .auth import TokenStore
     from .config_service import ConfigService
     from .http_app import create_app
     from .postgres_probe import PostgresProbe
     from .readiness import ReadinessService
 
-    resolved_base = base_dir if base_dir is not None else Path.home() / ".workflows"
+    resolved_base = _resolve_base_dir(base_dir)
+    frontend_mode = os.getenv("WORKFLOWS_FRONTEND_MODE", "").strip().lower()
+    require_frontend_assets = frontend_mode == "production"
 
-    # Raises BootstrapTokenError on first start when WORKFLOWS_BOOTSTRAP_TOKEN
-    # is absent or too short — spec §7.4 requires fail-fast here.
-    token_store = ensure_bootstrap_token(resolved_base)
+    token_store = TokenStore(resolved_base / "auth.json")
 
     config_service = ConfigService(base_dir=resolved_base)
     readiness_service = ReadinessService(
         base_dir=resolved_base,
         probe=PostgresProbe.from_env(),
     )
-    return create_app(
+    resources = build_resources(base_dir=resolved_base)
+
+    @asynccontextmanager
+    async def _http_lifespan(_app: "FastAPI") -> AsyncIterator[None]:
+        await start_resources(resources)
+        resources.app_context.reload_workflows = lambda: load_workflows(resources)
+        load_workflows(resources)
+        transport_mount = getattr(_app.state, "mcp_transport_mount", None)
+        transport_started = False
+        try:
+            if transport_mount is not None:
+                await transport_mount.startup()
+                transport_started = True
+            yield
+        finally:
+            if transport_mount is not None and transport_started:
+                await transport_mount.shutdown()
+            await stop_resources(resources)
+
+    app = create_app(
         readiness_service=readiness_service,
         token_store=token_store,
         config_service=config_service,
+        require_frontend_assets=require_frontend_assets,
+        lifespan=_http_lifespan,
     )
+    app.state.resources = resources
+
+    return app
 
 
 def main() -> None:
@@ -615,11 +594,20 @@ def main() -> None:
 
     logger.info("Starting HTTP server (press Ctrl+C to stop)...")
 
+    port_str = os.getenv("WORKFLOWS_PORT", "8000")
+    try:
+        port = int(port_str)
+    except ValueError:
+        logger.error(
+            "Invalid WORKFLOWS_PORT value %r — must be an integer. Exiting.", port_str
+        )
+        sys.exit(1)
+
     try:
         uvicorn.run(
             build_app(),
             host=os.getenv("WORKFLOWS_BIND_HOST", "127.0.0.1"),
-            port=int(os.getenv("WORKFLOWS_PORT", "8000")),
+            port=port,
             log_level=log_level_str.lower(),
         )
     except KeyboardInterrupt:
