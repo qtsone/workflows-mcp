@@ -542,6 +542,26 @@ describe("App", () => {
     });
   });
 
+  it("redirects admin API 401 responses to login", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () =>
+        jsonResponse(
+          { error: { code: "UNAUTHORIZED", message: "Authentication required", request_id: "test" } },
+          401,
+        ),
+      ),
+    );
+
+    renderAtPath("/projects");
+
+    await waitFor(() => {
+      expect(window.location.pathname).toBe("/login");
+      expect(screen.getByRole("heading", { level: 1, name: "Login" })).toBeTruthy();
+      expect(screen.getByText("Your admin session expired. Sign in to continue.")).toBeTruthy();
+    });
+  });
+
   for (const [path, title] of Object.entries(TITLES_BY_PATH)) {
     it(`renders page title '${title}' for route '${path}'`, () => {
       renderAtPath(path);
@@ -980,10 +1000,43 @@ describe("App", () => {
     expect(createBody.fs_allowlist).toEqual(["/workspace/workflows", "/workspace/shared"]);
   });
 
+  it("defaults project fs root to the user home shortcut", async () => {
+    const fetchMock = installApiMock();
+    renderAtPath("/projects");
+
+    const fsRootInput = await screen.findByLabelText(/^fs root$/i, { selector: "input" });
+    expect((fsRootInput as HTMLInputElement).value).toBe("~");
+
+    fireEvent.change(screen.getByLabelText(/^name$/i), { target: { value: "Workflow Service" } });
+    fireEvent.change(screen.getByLabelText(/^slug$/i), { target: { value: "workflow-service" } });
+    fireEvent.change(screen.getByLabelText(/^palace$/i), { target: { value: "wf-palace" } });
+    fireEvent.change(screen.getByLabelText(/default wing/i), { target: { value: "platform" } });
+    fireEvent.change(screen.getByLabelText(/default room/i), { target: { value: "runtime" } });
+
+    fireEvent.click(screen.getByRole("button", { name: /register project/i }));
+
+    await waitFor(() => {
+      expect(screen.getByText(/project registered successfully/i)).toBeTruthy();
+    });
+
+    const createCall = fetchMock.mock.calls.find((call) => {
+      const url = String(call[0]);
+      const init = call[1] as RequestInit | undefined;
+      return url.includes("/api/admin/v1/projects") && init?.method === "POST";
+    });
+
+    expect(createCall).toBeTruthy();
+    const createBody = JSON.parse(String((createCall?.[1] as RequestInit | undefined)?.body ?? "{}")) as {
+      fs_root?: string;
+    };
+    expect(createBody.fs_root).toBe("~");
+    expect((fsRootInput as HTMLInputElement).value).toBe("~");
+  });
+
   it("preserves create-project payload shape when using browser-selected fs_root", async () => {
     const fetchMock = installApiMock({
       filesystemListingByPath: {
-        "": {
+        "~": {
           root: "/srv/workflows",
           path: "/srv/workflows",
           parent: null,
@@ -1014,7 +1067,7 @@ describe("App", () => {
     fireEvent.change(screen.getByLabelText(/default room/i), { target: { value: "runtime" } });
 
     fireEvent.click(screen.getByRole("button", { name: /browse fs root/i }));
-    fireEvent.click(await screen.findByRole("button", { name: /^alpha$/i }));
+    fireEvent.click(await screen.findByRole("option", { name: /^alpha\/$/i }));
     fireEvent.click(screen.getByRole("button", { name: /use selection/i }));
 
     fireEvent.change(screen.getByLabelText(/^allowlist paths$/i, { selector: "textarea" }), {
@@ -1048,7 +1101,7 @@ describe("App", () => {
   it("replaces fs root from the server folder browser", async () => {
     const fetchMock = installApiMock({
       filesystemListingByPath: {
-        "": {
+        "~": {
           root: "/srv/workflows",
           path: "/srv/workflows",
           parent: null,
@@ -1072,7 +1125,7 @@ describe("App", () => {
 
     expect(await screen.findByRole("heading", { name: /browse server folders/i })).toBeTruthy();
 
-    fireEvent.click(await screen.findByRole("button", { name: /^alpha$/i }));
+    fireEvent.click(await screen.findByRole("option", { name: /^alpha\/$/i }));
 
     fireEvent.click(screen.getByRole("button", { name: /use selection/i }));
 
@@ -1121,7 +1174,7 @@ describe("App", () => {
     fireEvent.click(screen.getByRole("button", { name: /browse fs root/i }));
 
     await screen.findByRole("heading", { name: /browse server folders/i });
-    fireEvent.click(await screen.findByRole("button", { name: /^alpha$/i }));
+    fireEvent.click(await screen.findByRole("option", { name: /^alpha\/$/i }));
     fireEvent.click(screen.getByRole("button", { name: /use selection/i }));
 
     expect(
@@ -1182,7 +1235,7 @@ describe("App", () => {
     fireEvent.change(await screen.findByLabelText(/^fs root$/i), { target: { value: "/srv/workflows/prefilled" } });
     fireEvent.click(screen.getByRole("button", { name: /browse fs root/i }));
 
-    await screen.findByText("$ ls /srv/workflows/prefilled");
+    await screen.findByText("/srv/workflows/prefilled");
 
     expect(
       fetchMock.mock.calls.some((call) => {
@@ -1223,7 +1276,7 @@ describe("App", () => {
     fireEvent.click(screen.getByRole("button", { name: /browse allowlist paths/i }));
     expect(await screen.findByRole("heading", { name: /browse server folders/i })).toBeTruthy();
 
-    fireEvent.click(screen.getByRole("button", { name: /^shared$/i }));
+    fireEvent.click(screen.getByRole("option", { name: /^shared\/$/i }));
 
     fireEvent.click(screen.getByRole("button", { name: /use selection/i }));
 
@@ -1263,7 +1316,7 @@ describe("App", () => {
     fireEvent.click(screen.getByRole("button", { name: /browse allowlist paths/i }));
     expect(await screen.findByRole("heading", { name: /browse server folders/i })).toBeTruthy();
 
-    fireEvent.click(screen.getByRole("button", { name: /^shared$/i }));
+    fireEvent.click(screen.getByRole("option", { name: /^shared\/$/i }));
 
     fireEvent.click(screen.getByRole("button", { name: /use selection/i }));
 
@@ -1320,6 +1373,15 @@ describe("App", () => {
   it("keeps cancel available after initial listing error and restores fs-root focus", async () => {
     installApiMock({
       filesystemErrorByPath: {
+        "~": {
+          status: 409,
+          body: {
+            detail: {
+              code: "filesystem_browsing_root_missing",
+              message: "Server folder browsing requires WORKFLOWS_SCAN_ROOT to be configured.",
+            },
+          },
+        },
         "": {
           status: 409,
           body: {

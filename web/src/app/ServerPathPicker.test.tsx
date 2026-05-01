@@ -31,7 +31,7 @@ const deferred = <T,>() => {
 };
 
 describe("ServerPathPicker", () => {
-  it("renders command line and parent row when parent exists", async () => {
+  it("renders modal path context and parent row when parent exists", async () => {
     const listEntries = vi.fn(async () => listing());
 
     render(
@@ -44,8 +44,41 @@ describe("ServerPathPicker", () => {
       />,
     );
 
-    expect(await screen.findByText("$ ls /workspace")).toBeTruthy();
-    expect(screen.getByRole("button", { name: "Open parent directory" })).toBeTruthy();
+    expect(await screen.findByRole("dialog", { name: "Pick path" })).toBeTruthy();
+    expect(await screen.findByText("/workspace")).toBeTruthy();
+    expect(screen.getByRole("option", { name: "../" })).toBeTruthy();
+  });
+
+  it("renders simplified folder-first rows without duplicated open controls", async () => {
+    const listEntries = vi.fn(async () =>
+      listing({
+        parent: null,
+        canGoUp: false,
+        entries: [
+          { name: "readme.md", path: "/workspace/readme.md", type: "file", selectable: true },
+          { name: "src", path: "/workspace/src", type: "directory", selectable: true },
+          { name: "docs", path: "/workspace/docs", type: "directory", selectable: true },
+          { name: "license", path: "/workspace/license", type: "file", selectable: true },
+        ],
+      }),
+    );
+
+    render(
+      <ServerPathPicker
+        title="Pick path"
+        selectionMode="folder"
+        listEntries={listEntries}
+        onSelect={vi.fn()}
+        onCancel={vi.fn()}
+      />,
+    );
+
+    const rows = await screen.findAllByRole("option");
+
+    expect(rows.map((row) => row.textContent)).toEqual(["src/", "docs/", "readme.md", "license"]);
+    expect(screen.queryByRole("button", { name: "Open src" })).toBeNull();
+    expect(screen.queryByText("/workspace/src")).toBeNull();
+    expect(screen.queryByText("directory")).toBeNull();
   });
 
   it("clicking parent row loads parent path", async () => {
@@ -64,7 +97,7 @@ describe("ServerPathPicker", () => {
       />,
     );
 
-    fireEvent.click(await screen.findByRole("button", { name: "Open parent directory" }));
+    fireEvent.click(await screen.findByRole("option", { name: "../" }));
 
     await waitFor(() => {
       expect(listEntries).toHaveBeenNthCalledWith(2, {
@@ -89,7 +122,7 @@ describe("ServerPathPicker", () => {
       />,
     );
 
-    fireEvent.click(await screen.findByRole("option", { name: "alpha" }));
+    fireEvent.click(await screen.findByRole("option", { name: "alpha/" }));
     fireEvent.click(screen.getByRole("button", { name: "Use selection" }));
 
     expect(onSelect).toHaveBeenCalledWith("/workspace/alpha");
@@ -123,8 +156,8 @@ describe("ServerPathPicker", () => {
       />,
     );
 
-    fireEvent.click(await screen.findByRole("button", { name: "Open src" }));
-    await screen.findByText("$ ls /workspace/src");
+    fireEvent.doubleClick(await screen.findByRole("option", { name: "src/" }));
+    await screen.findByText("/workspace/src");
 
     fireEvent.click(screen.getByRole("option", { name: "main.ts" }));
     fireEvent.click(screen.getByRole("button", { name: "Use selection" }));
@@ -215,7 +248,7 @@ describe("ServerPathPicker", () => {
     });
 
     second.resolve(listing({ path: "/second", parent: "/", entries: [] }));
-    expect(await screen.findByText("$ ls /second")).toBeTruthy();
+    expect(await screen.findByText("/second")).toBeTruthy();
 
     await act(async () => {
       first.resolve(listing({ path: "/first", parent: "/", entries: [] }));
@@ -223,8 +256,8 @@ describe("ServerPathPicker", () => {
     });
 
     await waitFor(() => {
-      expect(screen.getByText("$ ls /second")).toBeTruthy();
-      expect(screen.queryByText("$ ls /first")).toBeNull();
+      expect(screen.getByText("/second")).toBeTruthy();
+      expect(screen.queryByText("/first")).toBeNull();
     });
   });
 

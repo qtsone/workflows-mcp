@@ -4,6 +4,7 @@
   "version": "0.0.0",
   "type": "module",
   "scripts": {
+    "dev": "vite",
     "generate:client": "openapi-typescript ../tests/snapshots/openapi.json -o src/api/generated/schema.d.ts",
     "check:client": "npm run generate:client && node ./scripts/check-generated-client.mjs",
     "typecheck": "tsc --noEmit",

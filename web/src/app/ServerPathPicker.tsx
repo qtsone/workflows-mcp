@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent } from "react";
+import { useCallback, useEffect, useId, useMemo, useRef, useState, type KeyboardEvent } from "react";
 
 export type PathEntry = {
   name: string;
@@ -34,6 +34,9 @@ type PickerRow =
   | { kind: "parent"; key: string; label: string; path: string }
   | { kind: "entry"; key: string; entry: PathEntry };
 
+const entryLabel = (entry: PathEntry): string =>
+  entry.type === "directory" ? `${entry.name}/` : entry.name;
+
 const nonBlank = (value?: string): string | undefined => {
   const trimmed = value?.trim();
   return trimmed && trimmed.length > 0 ? trimmed : undefined;
@@ -56,6 +59,10 @@ export function ServerPathPicker({
   const [error, setError] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const requestIdRef = useRef(0);
+  const dialogRef = useRef<HTMLElement | null>(null);
+  const listRef = useRef<HTMLDivElement | null>(null);
+  const titleId = useId();
+  const descriptionId = useId();
 
   const effectiveRoot = nonBlank(rootPath);
   const effectiveStart = nonBlank(startPath);
@@ -134,6 +141,16 @@ export function ServerPathPicker({
     };
   }, [effectiveStart, fallbackPath, initialPath, loadPath]);
 
+  useEffect(() => {
+    dialogRef.current?.focus();
+  }, []);
+
+  useEffect(() => {
+    if (!isLoading && !error) {
+      listRef.current?.focus();
+    }
+  }, [error, isLoading, listing?.path]);
+
   const showParent = Boolean(
     listing?.parent && (!effectiveRoot || listing.path !== effectiveRoot),
   );
@@ -145,9 +162,15 @@ export function ServerPathPicker({
 
     const nextRows: PickerRow[] = [];
     if (showParent && listing.parent) {
-      nextRows.push({ kind: "parent", key: "parent", label: "..", path: listing.parent });
+      nextRows.push({ kind: "parent", key: "parent", label: "../", path: listing.parent });
     }
-    for (const entry of listing.entries) {
+    const sortedEntries = [...listing.entries].sort((left, right) => {
+      if (left.type === right.type) {
+        return 0;
+      }
+      return left.type === "directory" ? -1 : 1;
+    });
+    for (const entry of sortedEntries) {
       nextRows.push({ kind: "entry", key: entry.path, entry });
     }
     return nextRows;
@@ -184,13 +207,28 @@ export function ServerPathPicker({
     [openPath],
   );
 
-  const onListKeyDown = (event: KeyboardEvent<HTMLDivElement>) => {
+  const openRow = useCallback(
+    (row: PickerRow) => {
+      if (row.kind === "parent") {
+        void openPath(row.path);
+        return;
+      }
+      if (row.entry.type === "directory") {
+        void openPath(row.entry.path);
+      }
+    },
+    [openPath],
+  );
+
+  const onDialogKeyDown = (event: KeyboardEvent<HTMLElement>) => {
     if (event.key === "Escape") {
       event.preventDefault();
+      event.stopPropagation();
       onCancel();
-      return;
     }
+  };
 
+  const onListKeyDown = (event: KeyboardEvent<HTMLDivElement>) => {
     if (rows.length === 0) {
       return;
     }
@@ -210,93 +248,133 @@ export function ServerPathPicker({
     if (event.key === "Enter") {
       event.preventDefault();
       activateRow(rows[activeIndex] ?? rows[0]);
+      return;
+    }
+
+    if (event.key === "ArrowRight") {
+      event.preventDefault();
+      openRow(rows[activeIndex] ?? rows[0]);
     }
   };
 
   return (
-    <section className="server-path-picker" aria-label={title}>
-      <header className="server-path-picker__header">
-        <h2>{title}</h2>
-        <code>{`$ ls ${listing?.path ?? "..."}`}</code>
-      </header>
+    <div
+      className="server-path-picker__backdrop"
+      onMouseDown={(event) => {
+        if (event.target === event.currentTarget) {
+          onCancel();
+        }
+      }}
+    >
+      <section
+        ref={dialogRef}
+        className="server-path-picker"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby={titleId}
+        aria-describedby={descriptionId}
+        tabIndex={-1}
+        onKeyDown={onDialogKeyDown}
+      >
+        <header className="server-path-picker__header">
+          <div>
+            <p className="server-path-picker__eyebrow">
+              {selectionMode === "folder" ? "Server folder" : "Server file"}
+            </p>
+            <h2 id={titleId}>{title}</h2>
+          </div>
+          <button type="button" className="server-path-picker__close" onClick={onCancel}>
+            Close
+          </button>
+        </header>
 
-      {warning ? <p className="server-path-picker__warning">{warning}</p> : null}
-      {error ? <p className="server-path-picker__error">{error}</p> : null}
-      {isLoading ? <p>Loading paths…</p> : null}
+        <div id={descriptionId} className="server-path-picker__pathbar">
+          <span>Current path</span>
+          <code>{listing?.path ?? "Loading..."}</code>
+        </div>
 
-      {!isLoading && !error ? (
-        <div
-          className="server-path-picker__list"
-          role="listbox"
-          aria-label="Server path entries"
-          tabIndex={0}
-          onKeyDown={onListKeyDown}
-        >
-          {rows.length === 0 ? <p>No entries in this directory.</p> : null}
+        {warning ? <p className="server-path-picker__warning">{warning}</p> : null}
+        {error ? <p className="server-path-picker__error">{error}</p> : null}
+        {isLoading ? <p className="server-path-picker__status">Loading paths…</p> : null}
 
-          {rows.map((row, index) => {
-            if (row.kind === "parent") {
+        {!isLoading && !error ? (
+          <div
+            ref={listRef}
+            className="server-path-picker__list"
+            role="listbox"
+            aria-label="Server path entries"
+            tabIndex={0}
+            onKeyDown={onListKeyDown}
+          >
+            {rows.length === 0 ? <p className="server-path-picker__empty">No entries in this directory.</p> : null}
+
+            {rows.map((row, index) => {
+              if (row.kind === "parent") {
+                return (
+                  <div
+                    key={row.key}
+                    role="option"
+                    aria-selected={false}
+                    className={`server-path-picker__row${index === activeIndex ? " is-active" : ""}`}
+                    onMouseEnter={() => setActiveIndex(index)}
+                    onClick={() => void openPath(row.path)}
+                    onDoubleClick={() => void openPath(row.path)}
+                  >
+                    <span className="server-path-picker__name">{row.label}</span>
+                  </div>
+                );
+              }
+
+              const isSelected = selectedPath === row.entry.path;
+              const isActive = index === activeIndex;
+              const label = entryLabel(row.entry);
+              const isDisabled = !row.entry.selectable && row.entry.type === "file";
               return (
                 <div
                   key={row.key}
                   role="option"
-                  aria-selected={index === activeIndex}
-                  className="server-path-picker__row"
-                >
-                  <span className="server-path-picker__name">{row.label}</span>
-                  <button type="button" onClick={() => void openPath(row.path)}>
-                    Open parent directory
-                  </button>
-                </div>
-              );
-            }
-
-            const isSelected = selectedPath === row.entry.path;
-            const isActive = index === activeIndex;
-            return (
-              <div
-                key={row.key}
-                role="option"
-                aria-label={row.entry.name}
-                aria-selected={isSelected || isActive}
-                className={`server-path-picker__row${isSelected ? " is-selected" : ""}`}
-                onClick={() => {
-                  if (row.entry.selectable) {
-                    setSelectedPath(row.entry.path);
-                  }
-                }}
-              >
-                <button
-                  type="button"
-                  className="server-path-picker__entry"
+                  aria-label={label}
+                  aria-selected={isSelected}
+                  aria-disabled={isDisabled || undefined}
+                  className={`server-path-picker__row${isActive ? " is-active" : ""}${isSelected ? " is-selected" : ""}${isDisabled ? " is-disabled" : ""}`}
                   onClick={() => {
                     if (row.entry.selectable) {
                       setSelectedPath(row.entry.path);
+                      return;
+                    }
+                    if (row.entry.type === "directory") {
+                      void openPath(row.entry.path);
                     }
                   }}
+                  onDoubleClick={() => {
+                    if (row.entry.type === "directory") {
+                      void openPath(row.entry.path);
+                    }
+                  }}
+                  onMouseEnter={() => setActiveIndex(index)}
                 >
-                  {row.entry.name}
-                </button>
+                  <span className="server-path-picker__name">{label}</span>
+                </div>
+              );
+            })}
+          </div>
+        ) : null}
 
-                {row.entry.type === "directory" ? (
-                  <button type="button" onClick={() => void openPath(row.entry.path)}>
-                    Open {row.entry.name}
-                  </button>
-                ) : null}
-              </div>
-            );
-          })}
-        </div>
-      ) : null}
-
-      <div className="server-path-picker__actions">
-        <button type="button" className="secondary-button" onClick={onCancel}>
-          Cancel
-        </button>
-        <button type="button" onClick={() => selectedPath && onSelect(selectedPath)} disabled={!selectedPath}>
-          Use selection
-        </button>
-      </div>
-    </section>
+        <footer className="server-path-picker__footer">
+          <div className="server-path-picker__selection" aria-live="polite">
+            <span>Selected</span>
+            <code>{selectedPath ?? "Choose an entry"}</code>
+          </div>
+          <div className="server-path-picker__actions">
+            <button type="button" className="secondary-button" onClick={onCancel}>
+              Cancel
+            </button>
+            <button type="button" onClick={() => selectedPath && onSelect(selectedPath)} disabled={!selectedPath}>
+              Use selection
+            </button>
+          </div>
+        </footer>
+      </section>
+    </div>
   );
 }

@@ -106,6 +106,8 @@ const DEFAULT_PAGE = {
   description: "Choose a section to begin managing the workflows platform.",
 } as const;
 
+const DEFAULT_PROJECT_FS_ROOT = "~";
+
 const NOT_FOUND_PAGE = {
   title: "Page not found",
   description: "The requested route is not part of the admin shell.",
@@ -409,8 +411,19 @@ function toRunDetailModel(payload: unknown): RunDetailModel {
   };
 }
 
+type NavigateOptions = { replace?: boolean };
+
+function navigateBrowser(path: string, { replace = false }: NavigateOptions = {}): void {
+  if (window.location.pathname === path) return;
+  if (replace) {
+    window.history.replaceState({}, "", path);
+  } else {
+    window.history.pushState({}, "", path);
+  }
+  window.dispatchEvent(new PopStateEvent("popstate"));
+}
+
 export function App(): JSX.Element {
-  const api = useMemo(() => createApiClient(), []);
   const [currentPath, setCurrentPath] = useState(() => window.location.pathname);
   const route = ROUTES.find((entry) => entry.path === currentPath);
   const [password, setPassword] = useState("");
@@ -445,7 +458,7 @@ export function App(): JSX.Element {
   const [projectPalace, setProjectPalace] = useState("");
   const [projectDefaultWing, setProjectDefaultWing] = useState("");
   const [projectDefaultRoom, setProjectDefaultRoom] = useState("");
-  const [projectFsRoot, setProjectFsRoot] = useState("");
+  const [projectFsRoot, setProjectFsRoot] = useState(DEFAULT_PROJECT_FS_ROOT);
   const [projectAllowlistInput, setProjectAllowlistInput] = useState("");
   const projectFsRootRef = useRef<HTMLInputElement | null>(null);
   const projectAllowlistRef = useRef<HTMLTextAreaElement | null>(null);
@@ -494,6 +507,20 @@ export function App(): JSX.Element {
   const [runFilterLimit, setRunFilterLimit] = useState("50");
   const [runFilterOffset, setRunFilterOffset] = useState("0");
   const [runActionPendingId, setRunActionPendingId] = useState<string | null>(null);
+
+  const api = useMemo(
+    () =>
+      createApiClient({
+        onUnauthorized: () => {
+          setContentState("");
+          setPathPickerOpen(false);
+          setLoginState("idle");
+          setLoginMessage("Your admin session expired. Sign in to continue.");
+          navigateBrowser("/login", { replace: true });
+        },
+      }),
+    [],
+  );
 
   const loadProjects = async (): Promise<void> => {
     setProjectsLoading(true);
@@ -618,15 +645,7 @@ export function App(): JSX.Element {
     }
   };
 
-  const navigate = (path: string, { replace = false }: { replace?: boolean } = {}): void => {
-    if (window.location.pathname === path) return;
-    if (replace) {
-      window.history.replaceState({}, "", path);
-    } else {
-      window.history.pushState({}, "", path);
-    }
-    window.dispatchEvent(new PopStateEvent("popstate"));
-  };
+  const navigate = navigateBrowser;
 
   useEffect(() => {
     const onPopState = (): void => {
@@ -1151,7 +1170,7 @@ export function App(): JSX.Element {
       setProjectPalace("");
       setProjectDefaultWing("");
       setProjectDefaultRoom("");
-      setProjectFsRoot("");
+      setProjectFsRoot(DEFAULT_PROJECT_FS_ROOT);
       setProjectAllowlistInput("");
       await loadProjects();
     } catch (error) {
