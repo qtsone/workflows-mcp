@@ -11,6 +11,7 @@ import {
   WatcherStateItem,
 } from "../api/events";
 import { ServerPathPicker, type PathListing } from "./ServerPathPicker";
+import { ActionButton, FolderIcon, PageHeader, Panel, StatusBadge } from "./ui";
 
 type RouteDefinition = {
   path: string;
@@ -1579,14 +1580,29 @@ export function App(): JSX.Element {
       </a>
 
       <header className="app-header" role="banner">
-        <div className="brand">workflows-mcp admin</div>
+        <div className="brand-lockup">
+          <span className="brand-mark" aria-hidden="true">wm</span>
+          <div>
+            <div className="brand">workflows-mcp</div>
+            <p>Administration control plane</p>
+          </div>
+        </div>
+        <div className="header-meta" aria-label="Admin shell status">
+          <StatusBadge tone={currentPath === "/login" ? "warning" : "success"}>
+            {currentPath === "/login" ? "Session required" : "Console ready"}
+          </StatusBadge>
+          <a href="/docs">Docs</a>
+        </div>
       </header>
 
       <div className="layout">
         <nav aria-label="Primary navigation" className="app-nav">
-          <h2 className="nav-title">Sections</h2>
+          <div className="nav-header">
+            <h2 className="nav-title">Control plane</h2>
+            <p>Configure projects, registry state, access, and run history.</p>
+          </div>
           <ul>
-            {ROUTES.filter((entry) => PRIMARY_NAV_PATHS.has(entry.path)).map((entry) => (
+            {ROUTES.filter((entry) => PRIMARY_NAV_PATHS.has(entry.path)).map((entry, index) => (
               <li key={entry.path}>
                 <a
                   href={entry.path}
@@ -1596,19 +1612,27 @@ export function App(): JSX.Element {
                     navigate(entry.path);
                   }}
                 >
-                  {entry.label}
+                  <span className="nav-index" aria-hidden="true">
+                    {String(index + 1).padStart(2, "0")}
+                  </span>
+                  <span>{entry.label}</span>
                 </a>
               </li>
             ))}
-            <li>
-              <a href="/docs">Docs</a>
-            </li>
           </ul>
         </nav>
 
         <main id="main-content" className="app-main">
-          <h1>{page.title}</h1>
-          <p>{page.description}</p>
+          <PageHeader
+            eyebrow={currentPath === "/login" ? "Access" : page.unknown ? "Routing" : "Admin workspace"}
+            title={page.title}
+            description={page.description}
+            actions={
+              currentPath !== "/login" && !page.unknown ? (
+                <StatusBadge tone="info">{route?.label ?? "Overview"}</StatusBadge>
+              ) : undefined
+            }
+          />
           {currentPath === "/login" ? (
             <form className="admin-form" onSubmit={(event) => void onLoginSubmit(event)}>
               <label htmlFor="admin-password">Password</label>
@@ -1621,9 +1645,9 @@ export function App(): JSX.Element {
                 onChange={(event) => setPassword(event.target.value)}
                 required
               />
-              <button type="submit" disabled={loginState === "pending"}>
+              <ActionButton type="submit" variant="primary" disabled={loginState === "pending"}>
                 Sign in
-              </button>
+              </ActionButton>
               {loginMessage ? <p role="status">{loginMessage}</p> : null}
             </form>
           ) : null}
@@ -1642,34 +1666,43 @@ export function App(): JSX.Element {
                   <ul className="checklist-grid" aria-label="Setup status checks">
                     <li>
                       <strong>Admin session active</strong>
-                      <span>{setupDashboard.data.sessionActive ? "Yes" : "No"}</span>
+                      <StatusBadge tone={setupDashboard.data.sessionActive ? "success" : "warning"}>
+                        {setupDashboard.data.sessionActive ? "Yes" : "No"}
+                      </StatusBadge>
                     </li>
                     <li>
                       <strong>Public status</strong>
-                      <span>{setupDashboard.data.systemStatus}</span>
+                      <StatusBadge tone="info">{setupDashboard.data.systemStatus}</StatusBadge>
                     </li>
                     <li>
                       <strong>Database configured</strong>
-                      <span>{setupDashboard.data.databaseConfigured ? "Yes" : "No"}</span>
+                      <StatusBadge tone={setupDashboard.data.databaseConfigured ? "success" : "warning"}>
+                        {setupDashboard.data.databaseConfigured ? "Yes" : "No"}
+                      </StatusBadge>
                     </li>
                     <li>
                       <strong>LLM config loaded</strong>
-                      <span>{setupDashboard.data.llmConfigured ? "Yes" : "No"}</span>
+                      <StatusBadge tone={setupDashboard.data.llmConfigured ? "success" : "warning"}>
+                        {setupDashboard.data.llmConfigured ? "Yes" : "No"}
+                      </StatusBadge>
                     </li>
                     <li>
                       <strong>Projects registered</strong>
-                      <span>{setupDashboard.data.projectCount}</span>
+                      <StatusBadge tone={setupDashboard.data.projectCount > 0 ? "success" : "warning"}>
+                        {setupDashboard.data.projectCount}
+                      </StatusBadge>
                     </li>
                     <li>
                       <strong>MCP clients issued</strong>
-                      <span>{setupDashboard.data.mcpClientCount}</span>
+                      <StatusBadge tone={setupDashboard.data.mcpClientCount > 0 ? "success" : "warning"}>
+                        {setupDashboard.data.mcpClientCount}
+                      </StatusBadge>
                     </li>
                   </ul>
-                  <div className="admin-card">
-                    <h3>Next actions</h3>
-                    <p>
-                      Complete the essentials before running automation in shared environments.
-                    </p>
+                  <Panel
+                    title="Next actions"
+                    description="Complete the essentials before running automation in shared environments."
+                  >
                     <ul>
                       {!setupDashboard.data.databaseConfigured ? (
                         <li>
@@ -1690,7 +1723,7 @@ export function App(): JSX.Element {
                         </li>
                       ) : null}
                     </ul>
-                  </div>
+                  </Panel>
                 </>
               ) : null}
             </section>
@@ -1985,7 +2018,7 @@ export function App(): JSX.Element {
                       title="Browse FS root"
                       onClick={() => openPathPicker("fsRoot")}
                     >
-                      <span aria-hidden="true">📁</span>
+                      <FolderIcon />
                     </button>
                   </div>
                   <label htmlFor="project-allowlist">Allowlist paths</label>
@@ -2003,7 +2036,7 @@ export function App(): JSX.Element {
                     title="Browse allowlist paths"
                     onClick={() => openPathPicker("allowlist")}
                   >
-                    <span aria-hidden="true">📁</span>
+                    <FolderIcon />
                   </button>
                   {pathPickerOpen ? (
                     <ServerPathPicker

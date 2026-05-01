@@ -26,11 +26,68 @@ test("admin shell mounts, assets load, login is interactive, and workflow reload
       body: JSON.stringify({ csrf_token: "csrf-test-token" }),
     });
   });
+  await page.route("**/api/public/v1/system/status", async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({ status: "ok" }),
+    });
+  });
+  await page.route("**/api/admin/v1/database/settings", async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({
+        enabled: false,
+        configured: false,
+        updated_at: "2026-04-30T00:00:00Z",
+        host: "",
+        port: 5432,
+        database: "",
+        username: "",
+        password_configured: false,
+        ssl_mode: "prefer",
+        extra_params: "",
+        container_name: "workflows-postgres",
+        container_image: "pgvector/pgvector:pg17",
+        container_host_port: 5432,
+        volume_name: "workflows-postgres-data",
+      }),
+    });
+  });
+  await page.route("**/api/admin/v1/llm/config", async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({ providers: {}, profiles: {} }),
+    });
+  });
+  await page.route("**/api/admin/v1/projects", async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({ projects: [] }),
+    });
+  });
+  await page.route("**/api/admin/v1/mcp-clients", async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({ mcp_clients: [] }),
+    });
+  });
   await page.route("**/api/admin/v1/workflows", async (route) => {
     await route.fulfill({
       status: 200,
       contentType: "application/json",
       body: JSON.stringify({ workflows: [] }),
+    });
+  });
+  await page.route("**/api/admin/v1/workflows/sources", async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({ sources: [] }),
     });
   });
   await page.route("**/api/admin/v1/workflows/reload", async (route) => {
@@ -68,11 +125,12 @@ test("admin shell mounts, assets load, login is interactive, and workflow reload
   await expect(passwordInput).toBeEnabled();
   await passwordInput.fill("secret");
   await page.getByRole("button", { name: "Sign in" }).click();
-  await expect(page.getByRole("status")).toContainText("Signed in");
+  await expect(page).toHaveURL(/\/setup$/);
+  await expect(page.getByRole("heading", { name: "Setup", exact: true })).toBeVisible();
 
   await page.goto("/workflows");
   await page.getByRole("button", { name: "Reload workflows" }).click();
-  await expect(page.getByRole("status")).toContainText("Reloaded 1 workflows.");
+  await expect(page.getByText("Workflow registry reloaded: 1 workflows from 1 source(s).")).toBeVisible();
 
   expect(apiRequests).toHaveLength(1);
   expect(apiRequests[0]).toMatchObject({
