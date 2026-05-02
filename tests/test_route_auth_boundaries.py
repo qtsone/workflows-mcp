@@ -7,7 +7,6 @@ from fastapi.testclient import TestClient
 
 from workflows_mcp.auth import TokenStore
 from workflows_mcp.bootstrap import bootstrap_if_needed
-from workflows_mcp.config_service import ConfigService
 from workflows_mcp.http_app import create_app
 from workflows_mcp.http_models import ReadinessState
 from workflows_mcp.server import build_app
@@ -54,7 +53,6 @@ def test_public_routes_remain_public_with_frontend_assets(tmp_path: Path) -> Non
     app = create_app(
         readiness_service=_FakeReadiness(ReadinessState.READY),
         token_store=token_store,
-        config_service=ConfigService(base_dir=tmp_path / ".workflows"),
         frontend_static_dir=static_dir,
         require_frontend_assets=True,
     )

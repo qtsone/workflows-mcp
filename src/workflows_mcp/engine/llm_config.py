@@ -1,8 +1,8 @@
 """LLM configuration management for profile-based provider/model selection.
 
-This module implements profile-based provider/model selection. HTTP runtime
-configuration reads from the SQLite metadata DB; legacy/unit contexts can still
-load YAML compatibility files. It provides hierarchical LLM configuration through:
+This module implements profile-based provider/model selection. Runtime
+configuration reads from the SQLite metadata DB. It provides hierarchical LLM
+configuration through:
 
 1. Providers: Infrastructure definitions (reusable provider configs)
 2. Profiles: Named configurations (like AWS instance sizes) that reference providers
@@ -10,10 +10,8 @@ load YAML compatibility files. It provides hierarchical LLM configuration throug
 
 Runtime source priority:
 1. SQLite metadata DB when ``metadata_db_path`` is passed to ``LLMConfigLoader``
-2. Explicit YAML path passed to ``LLMConfigLoader`` for legacy/unit contexts
-3. ``WORKFLOWS_LLM_CONFIG`` for legacy/unit contexts
-4. Standard legacy location: ``~/.workflows/llm-config.yml``
-5. Built-in defaults when no configuration source exists
+2. In-memory configuration injected by tests or embedding code
+3. Built-in empty defaults when no SQLite source exists
 
 Example config file:
 ```yaml
@@ -57,7 +55,7 @@ default_profile: standard
 
 Architecture:
 - HTTP runtime reads SQLite metadata as the source of truth
-- Legacy YAML loading remains available for compatibility/import workflows
+- YAML remains an explicit admin import/export format, not a runtime source
 - Validate schema using Pydantic models
 - Resolve profiles with inline parameter overrides
 - Backward compatible (works without config file)
@@ -66,11 +64,9 @@ Architecture:
 from __future__ import annotations
 
 import logging
-import os
 from pathlib import Path
 from typing import Any
 
-import yaml
 from pydantic import BaseModel, Field, field_validator
 
 logger = logging.getLogger(__name__)
@@ -170,7 +166,7 @@ class ProfileConfig(BaseModel):
 class LLMConfig(BaseModel):
     """Root LLM configuration model.
 
-    Validates the complete llm-config.yml structure with schema versioning.
+    Validates the complete LLM provider/profile structure with schema versioning.
     """
 
     version: str = Field(
@@ -262,11 +258,10 @@ class ResolvedLLMConfig(BaseModel):
 
 
 class LLMConfigLoader:
-    """Loader for LLM configuration from SQLite or legacy YAML files.
+    """Loader for LLM configuration from SQLite or explicit in-memory config.
 
     This class implements profile-based configuration with:
     - SQLite metadata DB source-of-truth for HTTP runtime
-    - Legacy hierarchical YAML file locations when no metadata DB path is provided
     - Schema validation using Pydantic
     - Profile resolution with inline parameter overrides
     - Backward compatibility (works without config file)
@@ -287,69 +282,33 @@ class LLMConfigLoader:
     Thread Safety:
         This class is thread-safe for reading. SQLite-backed runtime loading reads
         fresh state on each call so admin updates are visible without restart.
-        Legacy YAML loading caches the parsed file after the first load.
+        Non-SQLite contexts return an injected in-memory config or an empty config.
     """
 
     def __init__(
         self,
-        config_path: str | Path | None = None,
         metadata_db_path: str | Path | None = None,
     ):
-        """Initialize config loader with optional explicit path.
+        """Initialize config loader with optional metadata database path.
 
         Args:
-            config_path: Explicit path to config file (optional).
-                If not provided, uses environment variable or standard location.
+            metadata_db_path: SQLite metadata database path. When provided, this
+                is the runtime source of truth.
         """
         self._config: LLMConfig | None = None
-        self._explicit_path = Path(config_path) if config_path else None
         self._metadata_db_path = Path(metadata_db_path) if metadata_db_path else None
 
-    def get_config_path(self) -> Path | None:
-        """Determine config file path using priority order.
-
-        Priority:
-        1. Explicit path passed to constructor
-        2. WORKFLOWS_LLM_CONFIG environment variable
-        3. Standard location: ~/.workflows/llm-config.yml
-
-        Returns:
-            Path to config file, or None if file doesn't exist
-        """
-        # Priority 1: Explicit path
-        if self._explicit_path:
-            if self._explicit_path.exists():
-                return self._explicit_path
-            logger.warning(f"Explicit LLM config path does not exist: {self._explicit_path}")
-            return None
-
-        # Priority 2: Environment variable
-        env_path_str = os.getenv("WORKFLOWS_LLM_CONFIG")
-        if env_path_str:
-            env_path = Path(env_path_str).expanduser()
-            if env_path.exists():
-                return env_path
-            logger.warning(f"WORKFLOWS_LLM_CONFIG path does not exist: {env_path}")
-            return None
-
-        # Priority 3: Standard location
-        standard_path = Path.home() / ".workflows" / "llm-config.yml"
-        if standard_path.exists():
-            return standard_path
-
-        return None
-
     def load_config(self) -> LLMConfig:
-        """Load and validate LLM configuration from file.
+        """Load and validate LLM configuration from SQLite or memory.
 
-        This method caches the loaded config for reuse. Call once during app startup.
+        SQLite-backed loading intentionally reads fresh state on every call so
+        admin updates are visible without server restart.
 
         Returns:
-            Validated LLMConfig instance (may be empty if no config file found)
+            Validated LLMConfig instance, or an empty config when no source exists.
 
         Raises:
-            ValueError: If config file is invalid or fails validation
-            yaml.YAMLError: If YAML parsing fails
+            ValueError: If persisted config fails validation.
         """
         if self._metadata_db_path is not None:
             return self._load_config_from_metadata_db()
@@ -357,45 +316,11 @@ class LLMConfigLoader:
         if self._config is not None:
             return self._config
 
-        config_path = self.get_config_path()
-
-        if config_path is None:
-            logger.info(
-                "No LLM config file found. Using backward-compatible mode "
-                "(workflows must specify provider/model directly)."
-            )
-            self._config = LLMConfig()
-            return self._config
-
-        logger.info(f"Loading LLM config from: {config_path}")
-
-        try:
-            # Load YAML file
-            with open(config_path, encoding="utf-8") as f:
-                raw_config = yaml.safe_load(f)
-
-            if not isinstance(raw_config, dict):
-                raise ValueError("Config file must contain a YAML dictionary")
-
-            # Validate with Pydantic
-            config = LLMConfig(**raw_config)
-
-            # Post-validation: check profile provider references
-            config.validate_profile_provider_references()
-
-            # Log summary
-            logger.info(
-                f"Loaded LLM config: {len(config.providers)} providers, "
-                f"{len(config.profiles)} profiles"
-            )
-            if config.default_profile:
-                logger.info(f"Default profile: {config.default_profile}")
-
-            self._config = config
-            return config
-
-        except (yaml.YAMLError, ValueError) as e:
-            raise ValueError(f"Failed to load LLM config from {config_path}: {e}")
+        logger.info(
+            "No SQLite LLM metadata source configured. Using direct provider/model mode."
+        )
+        self._config = LLMConfig()
+        return self._config
 
     def _load_config_from_metadata_db(self) -> LLMConfig:
         """Load LLM configuration from metadata SQLite database.
@@ -469,7 +394,7 @@ class LLMConfigLoader:
                 # No profiles configured - provide setup guidance
                 raise ValueError(
                     f"Profile '{profile}' not found. No profiles configured.\n"
-                    f"Create ~/.workflows/llm-config.yml or use direct provider/model.\n"
+                    f"Configure profiles in the admin /llm page or use direct provider/model.\n"
                     f"See: https://github.com/qtsone/workflows-mcp#-llm-integration"
                 )
             else:

@@ -112,6 +112,7 @@ const deferred = <T,>() => {
     filesystemListingByPath,
     filesystemErrorByPath,
     initialDatabaseSettings,
+    llmConfig: initialLlmConfig,
   }: {
     projectCount?: number;
     projects?: Array<Record<string, unknown>>;
@@ -136,6 +137,7 @@ const deferred = <T,>() => {
     filesystemListingByPath?: Record<string, Record<string, unknown>>;
     filesystemErrorByPath?: Record<string, { status: number; body: Record<string, unknown> }>;
     initialDatabaseSettings?: Record<string, unknown>;
+    llmConfig?: Record<string, unknown>;
   } = {},
 ) => {
   const projects: Array<Record<string, unknown>> =
@@ -254,6 +256,12 @@ const deferred = <T,>() => {
     dsn_import: null,
     ...initialDatabaseSettings,
   };
+  let llmConfig: Record<string, unknown> = initialLlmConfig ?? {
+    version: "1.0",
+    providers: {},
+    profiles: {},
+    default_profile: null,
+  };
 
   const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
     const method = (init?.method ?? "GET").toUpperCase();
@@ -310,7 +318,31 @@ const deferred = <T,>() => {
       return jsonResponse({ status: "ok" });
     }
     if (url.endsWith("/api/admin/v1/llm/config") && method === "GET") {
-      return jsonResponse({ version: "1.0", providers: {}, profiles: {} });
+      return jsonResponse(llmConfig);
+    }
+    if (url.endsWith("/api/admin/v1/llm/config") && method === "PUT") {
+      llmConfig = JSON.parse(String(init?.body ?? "{}")) as Record<string, unknown>;
+      return jsonResponse(llmConfig);
+    }
+    if (url.endsWith("/api/admin/v1/llm/export") && method === "GET") {
+      return jsonResponse({ raw_yaml: "version: '1.0'\nproviders:\n  openai:\n    type: openai\n" });
+    }
+    if (url.endsWith("/api/admin/v1/llm/preview") && method === "POST") {
+      return jsonResponse({
+        version: "1.0",
+        providers: { anthropic: { type: "anthropic", model: "claude-sonnet" } },
+        profiles: { review: { provider: "anthropic", model: "claude-sonnet", temperature: 0.2 } },
+        default_profile: "review",
+      });
+    }
+    if (url.endsWith("/api/admin/v1/llm/import") && method === "POST") {
+      llmConfig = {
+        version: "1.0",
+        providers: { anthropic: { type: "anthropic", model: "claude-sonnet" } },
+        profiles: { review: { provider: "anthropic", model: "claude-sonnet", temperature: 0.2 } },
+        default_profile: "review",
+      };
+      return jsonResponse(llmConfig);
     }
     if (url.endsWith("/api/admin/v1/projects") && method === "GET") {
       return jsonResponse({ projects });
@@ -643,7 +675,7 @@ describe("App", () => {
       expect(screen.getByRole("button", { name: /reload workflows/i })).toBeTruthy();
     });
 
-    fireEvent.change(screen.getByLabelText(/project id/i), { target: { value: "p1" } });
+    fireEvent.change(screen.getByLabelText(/^project$/i, { selector: "select" }), { target: { value: "p1" } });
     fireEvent.change(screen.getByLabelText(/source path/i), { target: { value: "/workspace/more-workflows" } });
     fireEvent.click(screen.getByRole("button", { name: /add workflow source/i }));
 
@@ -690,6 +722,35 @@ describe("App", () => {
 
     await waitFor(() => {
       expect(screen.getByText(/workflow registry reloaded: 1 workflows from 1 source/i)).toBeTruthy();
+    });
+  });
+
+  it("uses registered projects when adding workflow sources", async () => {
+    const fetchMock = installApiMock({
+      projects: [
+        { id: "p1", name: "Main Project", slug: "main", palace: "x", default_wing: "w", default_room: "r", fs_root: "/tmp/main", fs_allowlist: [] },
+        { id: "p2", name: "Docs Project", slug: "docs", palace: "x", default_wing: "w", default_room: "r", fs_root: "/tmp/docs", fs_allowlist: [] },
+      ],
+    });
+    renderAtPath("/workflows");
+
+    await waitFor(() => {
+      expect(screen.getByLabelText(/^project$/i, { selector: "select" })).toBeTruthy();
+    });
+
+    fireEvent.change(screen.getByLabelText(/^project$/i, { selector: "select" }), { target: { value: "p2" } });
+    fireEvent.change(screen.getByLabelText(/source path/i), { target: { value: "/workspace/docs-workflows" } });
+    fireEvent.click(screen.getByRole("button", { name: /add workflow source/i }));
+
+    await waitFor(() => {
+      const createCall = fetchMock.mock.calls.find((call) => {
+        const url = String(call[0]);
+        const init = call[1] as RequestInit | undefined;
+        return url.includes("/api/admin/v1/workflows/sources") && init?.method === "POST";
+      });
+      expect(createCall).toBeTruthy();
+      const body = JSON.parse(String((createCall?.[1] as RequestInit | undefined)?.body ?? "{}")) as Record<string, unknown>;
+      expect(body.project_id).toBe("p2");
     });
   });
 
@@ -743,7 +804,7 @@ describe("App", () => {
     expect(screen.getByText(/public status/i)).toBeTruthy();
     expect(screen.getByText(/^ok$/i)).toBeTruthy();
     expect(screen.getByText(/database configured/i)).toBeTruthy();
-    expect(screen.getByText(/^no$/i)).toBeTruthy();
+    expect(screen.getAllByText(/^no$/i).length).toBeGreaterThan(0);
     expect(screen.getByText(/llm config loaded/i)).toBeTruthy();
     expect(screen.getByText(/projects registered/i)).toBeTruthy();
     expect(screen.getByText(/^1$/i)).toBeTruthy();
@@ -760,6 +821,211 @@ describe("App", () => {
     expect(screen.getByRole("link", { name: /create mcp client token/i }).getAttribute("href")).toBe(
       "/mcp-clients",
     );
+  });
+
+  it("does not mark LLM configured when only config version exists", async () => {
+    installApiMock({ llmConfig: { version: "1.0", providers: {}, profiles: {}, default_profile: null } });
+    renderAtPath("/setup");
+
+    await waitFor(() => {
+      expect(screen.getByText(/llm config loaded/i)).toBeTruthy();
+    });
+
+    expect(screen.getAllByText(/^no$/i).length).toBeGreaterThan(1);
+  });
+
+  it("does not mark LLM configured when providers exist without profiles", async () => {
+    installApiMock({
+      llmConfig: {
+        version: "1.0",
+        providers: { openai: { type: "openai", model: "gpt-4.1-mini" } },
+        profiles: {},
+        default_profile: null,
+      },
+    });
+    renderAtPath("/setup");
+
+    await waitFor(() => {
+      expect(screen.getByText(/llm config loaded/i)).toBeTruthy();
+    });
+
+    expect(screen.getAllByText(/^no$/i).length).toBeGreaterThan(1);
+  });
+
+  it("loads SQLite-backed LLM config with provider and profile summaries", async () => {
+    installApiMock({
+      llmConfig: {
+        version: "1.0",
+        providers: {
+          openai: {
+            type: "openai",
+            api_url: "https://api.openai.com/v1",
+            api_key_secret: "OPENAI_API_KEY",
+            model: "gpt-4.1-mini",
+            timeout: 30,
+            max_retries: 2,
+            retry_delay: 1,
+            extra_headers: { "X-Team": "platform" },
+          },
+        },
+        profiles: {
+          default: {
+            provider: "openai",
+            model: "gpt-4.1-mini",
+            temperature: 0.2,
+            max_tokens: 4096,
+            description: "Primary runtime profile",
+          },
+        },
+        default_profile: "default",
+      },
+    });
+
+    renderAtPath("/llm");
+
+    expect(await screen.findByRole("heading", { name: /llm configuration/i })).toBeTruthy();
+    expect(screen.getByText(/source of truth: sqlite-backed/i)).toBeTruthy();
+    expect(screen.getByText(/providers: 1/i)).toBeTruthy();
+    expect(screen.getByText(/profiles: 1/i)).toBeTruthy();
+    expect(screen.getByText(/default profile: default/i)).toBeTruthy();
+    expect(screen.getAllByText(/openai/i).length).toBeGreaterThan(0);
+    expect(screen.getByText(/api key secret: openai_api_key/i)).toBeTruthy();
+    expect(screen.getByText(/primary runtime profile/i)).toBeTruthy();
+  });
+
+  it("saves full normalized LLM config after provider and profile edits", async () => {
+    const fetchMock = installApiMock();
+    renderAtPath("/llm");
+
+    await screen.findByRole("heading", { name: /llm configuration/i });
+
+    fireEvent.change(screen.getByLabelText(/^provider id$/i), { target: { value: "openai" } });
+    fireEvent.change(screen.getByLabelText(/^provider type$/i), { target: { value: "openai" } });
+    fireEvent.change(screen.getByLabelText(/^provider model$/i), { target: { value: "gpt-4.1-mini" } });
+    fireEvent.change(screen.getByLabelText(/api key secret/i), { target: { value: "OPENAI_API_KEY" } });
+    fireEvent.change(screen.getByLabelText(/api url/i), { target: { value: "https://api.openai.com/v1" } });
+    fireEvent.click(screen.getByRole("button", { name: /save provider/i }));
+
+    fireEvent.change(screen.getByLabelText(/^profile id$/i), { target: { value: "default" } });
+    fireEvent.change(screen.getByLabelText(/^profile provider$/i), { target: { value: "openai" } });
+    fireEvent.change(screen.getByLabelText(/^profile model$/i), { target: { value: "gpt-4.1-mini" } });
+    fireEvent.change(screen.getByLabelText(/temperature/i), { target: { value: "0.2" } });
+    fireEvent.change(screen.getByLabelText(/max tokens/i), { target: { value: "4096" } });
+    fireEvent.change(screen.getByLabelText(/description/i), { target: { value: "Primary runtime profile" } });
+    fireEvent.click(screen.getByRole("button", { name: /save profile/i }));
+
+    fireEvent.change(screen.getByLabelText(/default profile/i), { target: { value: "default" } });
+    fireEvent.click(screen.getByRole("button", { name: /save llm configuration/i }));
+
+    await screen.findByText(/llm configuration saved/i);
+
+    const saveCall = fetchMock.mock.calls.find((call) => {
+      const url = String(call[0]);
+      const init = call[1] as RequestInit | undefined;
+      return url.includes("/api/admin/v1/llm/config") && init?.method === "PUT";
+    });
+    expect(saveCall).toBeTruthy();
+
+    const headers = new Headers((saveCall?.[1] as RequestInit | undefined)?.headers);
+    expect(headers.get("X-CSRF-Token")).toBe("csrf-test-token");
+    const payload = JSON.parse(String((saveCall?.[1] as RequestInit | undefined)?.body ?? "{}")) as Record<string, unknown>;
+    expect(payload).toEqual({
+      version: "1.0",
+      providers: {
+        openai: {
+          type: "openai",
+          api_url: "https://api.openai.com/v1",
+          api_key_secret: "OPENAI_API_KEY",
+          model: "gpt-4.1-mini",
+          extra_headers: {},
+          deployment_name: null,
+          api_version: null,
+        },
+      },
+      profiles: {
+        default: {
+          provider: "openai",
+          model: "gpt-4.1-mini",
+          temperature: 0.2,
+          max_tokens: 4096,
+          description: "Primary runtime profile",
+        },
+      },
+      default_profile: "default",
+    });
+  });
+
+  it("rejects blank LLM profile model before saving configuration", async () => {
+    const fetchMock = installApiMock();
+    renderAtPath("/llm");
+
+    await screen.findByRole("heading", { name: /llm configuration/i });
+
+    fireEvent.change(screen.getByLabelText(/^provider id$/i), { target: { value: "openai" } });
+    fireEvent.change(screen.getByLabelText(/^provider type$/i), { target: { value: "openai" } });
+    fireEvent.change(screen.getByLabelText(/^provider model$/i), { target: { value: "gpt-4.1-mini" } });
+    fireEvent.click(screen.getByRole("button", { name: /save provider/i }));
+
+    fireEvent.change(screen.getByLabelText(/^profile id$/i), { target: { value: "default" } });
+    fireEvent.change(screen.getByLabelText(/^profile provider$/i), { target: { value: "openai" } });
+    fireEvent.change(screen.getByLabelText(/^profile model$/i), { target: { value: "   " } });
+    fireEvent.click(screen.getByRole("button", { name: /save profile/i }));
+
+    expect(await screen.findByText(/profile model is required/i)).toBeTruthy();
+
+    fireEvent.click(screen.getByRole("button", { name: /save llm configuration/i }));
+    const saveCalls = fetchMock.mock.calls.filter((call) => {
+      const url = String(call[0]);
+      const init = call[1] as RequestInit | undefined;
+      return url.includes("/api/admin/v1/llm/config") && init?.method === "PUT";
+    });
+    expect(saveCalls).toHaveLength(0);
+  });
+
+  it("blocks deleting an LLM provider while profiles reference it", async () => {
+    const fetchMock = installApiMock({
+      llmConfig: {
+        version: "1.0",
+        providers: { openai: { type: "openai", model: "gpt-4.1-mini" } },
+        profiles: { default: { provider: "openai", model: "gpt-4.1-mini" } },
+        default_profile: "default",
+      },
+    });
+    renderAtPath("/llm");
+
+    await screen.findByText(/default profile: default/i);
+    fireEvent.click(screen.getByRole("button", { name: /delete provider openai/i }));
+
+    await screen.findByText(/remove or reassign profiles first: default/i);
+    expect(
+      fetchMock.mock.calls.some((call) => {
+        const url = String(call[0]);
+        const init = call[1] as RequestInit | undefined;
+        return url.includes("/api/admin/v1/llm/config") && init?.method === "PUT";
+      }),
+    ).toBe(false);
+  });
+
+  it("supports LLM YAML export, preview, and import migration flow", async () => {
+    installApiMock();
+    renderAtPath("/llm");
+
+    await screen.findByRole("heading", { name: /llm configuration/i });
+
+    fireEvent.click(screen.getByRole("button", { name: /export yaml/i }));
+    await screen.findByText(/llm yaml exported/i);
+    expect((screen.getByLabelText(/yaml export/i) as HTMLTextAreaElement).value).toContain("providers:\n  openai:");
+
+    fireEvent.change(screen.getByLabelText(/yaml import/i), {
+      target: { value: "version: '1.0'\nproviders:\n  anthropic:\n    type: anthropic\n" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: /preview import/i }));
+    expect(await screen.findByText(/preview loaded: 1 providers, 1 profiles/i)).toBeTruthy();
+
+    fireEvent.click(screen.getByRole("button", { name: /^import yaml$/i }));
+    expect(await screen.findByText(/llm yaml imported into sqlite-backed config/i)).toBeTruthy();
+    expect(screen.getAllByText(/anthropic/i).length).toBeGreaterThan(0);
+    expect(screen.getByText(/default profile: review/i)).toBeTruthy();
   });
 
   it("routes zero-project setup CTA to the projects page", async () => {
@@ -787,8 +1053,12 @@ describe("App", () => {
     expect(screen.getByLabelText(/host port/i)).toBeTruthy();
     expect(screen.getByLabelText(/volume name/i)).toBeTruthy();
     expect(screen.getByLabelText(/advanced dsn import/i)).toBeTruthy();
+    expect(screen.getByRole("region", { name: /profile status/i })).toBeTruthy();
+    expect(screen.getAllByText(/connection profile/i).length).toBeGreaterThan(0);
+    expect(screen.getAllByText(/runtime container/i).length).toBeGreaterThan(0);
+    expect(screen.getByRole("heading", { name: /runtime commands/i })).toBeTruthy();
     expect(screen.getByText(/workflowsctl \/ database-profile \/ local/i)).toBeTruthy();
-    expect(screen.getByText(/connection profile/i)).toBeTruthy();
+    expect(screen.getAllByText(/connection profile/i).length).toBeGreaterThan(0);
     expect(screen.getByText(/container command/i)).toBeTruthy();
     expect(screen.getByText(/connection test/i)).toBeTruthy();
     expect(screen.getByText(/persist settings/i)).toBeTruthy();
@@ -975,20 +1245,80 @@ describe("App", () => {
       value: { writeText: writeTextMock },
     });
 
+    installApiMock();
     renderAtPath("/database");
     await screen.findByRole("heading", { name: /database settings/i });
 
     const dockerPre = screen.getByText(/docker run --name workflows-postgres/i);
-    expect(screen.getByRole("button", { name: /copy docker command/i })).toBeTruthy();
-    expect(screen.getByRole("button", { name: /copy podman command/i })).toBeTruthy();
+    const copyDockerButton = screen.getByRole("button", { name: /copy docker command/i });
+    const copyPodmanButton = screen.getByRole("button", { name: /copy podman command/i });
+    expect(copyDockerButton).toBeTruthy();
+    expect(copyPodmanButton).toBeTruthy();
+    expect(copyDockerButton.textContent?.trim()).toBe("");
+    expect(copyPodmanButton.textContent?.trim()).toBe("");
 
-    fireEvent.click(screen.getByRole("button", { name: /copy docker command/i }));
+    fireEvent.click(copyDockerButton);
 
     await waitFor(() => {
       expect(writeTextMock).toHaveBeenCalledTimes(1);
       expect(writeTextMock).toHaveBeenCalledWith(dockerPre.textContent ?? "");
     });
     expect(screen.getByRole("status", { name: /clipboard status/i })).toBeTruthy();
+    expect(screen.getByText(/docker command copied to clipboard/i)).toBeTruthy();
+  });
+
+  it("copies the just-saved password without rendering it in the command preview", async () => {
+    const writeTextMock = vi.fn(async (_text: string) => undefined);
+    Object.defineProperty(window.navigator, "clipboard", {
+      configurable: true,
+      value: { writeText: writeTextMock },
+    });
+
+    installApiMock();
+    renderAtPath("/database");
+    await screen.findByRole("heading", { name: /database settings/i });
+
+    fireEvent.click(screen.getByRole("checkbox", { name: /enable postgresql metadata backend/i }));
+    fireEvent.change(screen.getByLabelText(/^host$/i), { target: { value: "127.0.0.1" } });
+    fireEvent.change(screen.getByLabelText(/^database$/i), { target: { value: "workflows" } });
+    fireEvent.change(screen.getByLabelText(/^username$/i), { target: { value: "workflows" } });
+    fireEvent.change(screen.getByLabelText(/^password$/i), { target: { value: "saved-pass-123" } });
+    fireEvent.click(screen.getByRole("button", { name: /save settings/i }));
+
+    await screen.findByText("Database settings saved.");
+    expect((screen.getByLabelText(/^password$/i) as HTMLInputElement).value).toBe("");
+    expect(screen.queryByText(/saved-pass-123/i)).toBeNull();
+    expect(screen.getAllByText(/<configured-password>/i).length).toBeGreaterThan(0);
+
+    fireEvent.click(screen.getByRole("button", { name: /copy docker command/i }));
+
+    await waitFor(() => {
+      expect(writeTextMock).toHaveBeenCalledTimes(1);
+    });
+    const copiedCommand = String(writeTextMock.mock.calls[0]?.[0] ?? "");
+    expect(copiedCommand).toContain("POSTGRES_PASSWORD=saved-pass-123");
+    expect(copiedCommand).not.toContain("<configured-password>");
+  });
+
+  it("falls back to textarea copy when async clipboard is unavailable", async () => {
+    Object.defineProperty(window.navigator, "clipboard", {
+      configurable: true,
+      value: undefined,
+    });
+    const execCommandMock = vi.fn(() => true);
+    Object.defineProperty(document, "execCommand", {
+      configurable: true,
+      value: execCommandMock,
+    });
+
+    renderAtPath("/database");
+    await screen.findByRole("heading", { name: /database settings/i });
+
+    fireEvent.click(screen.getByRole("button", { name: /copy docker command/i }));
+
+    await waitFor(() => {
+      expect(execCommandMock).toHaveBeenCalledWith("copy");
+    });
     expect(screen.getByText(/docker command copied to clipboard/i)).toBeTruthy();
   });
 
@@ -1000,6 +1330,10 @@ describe("App", () => {
       configurable: true,
       value: { writeText: writeTextMock },
     });
+    Object.defineProperty(document, "execCommand", {
+      configurable: true,
+      value: vi.fn(() => false),
+    });
 
     renderAtPath("/database");
     await screen.findByRole("heading", { name: /database settings/i });
@@ -1009,8 +1343,8 @@ describe("App", () => {
     await waitFor(() => {
       expect(writeTextMock).toHaveBeenCalledTimes(1);
     });
-    expect(screen.getByRole("alert")).toBeTruthy();
-    expect(screen.getByText(/unable to copy command to clipboard/i)).toBeTruthy();
+    const clipboardAlert = await screen.findByText(/unable to copy command to clipboard/i);
+    expect(clipboardAlert.getAttribute("role")).toBe("alert");
   });
 
   it("renders watcher dashboard rows and allows pause action", async () => {
@@ -1057,7 +1391,7 @@ describe("App", () => {
     renderAtPath("/sync");
 
     await waitFor(() => {
-      expect(screen.getByText(/main project/i)).toBeTruthy();
+      expect(screen.getByRole("heading", { name: /main project/i })).toBeTruthy();
     });
 
     fireEvent.click(screen.getByRole("button", { name: /sync now p1/i }));
@@ -1072,6 +1406,36 @@ describe("App", () => {
     });
   });
 
+  it("filters sync operations through a registered project selector", async () => {
+    const fetchMock = installApiMock({
+      projects: [
+        { id: "p1", name: "Main Project", slug: "main", palace: "x", default_wing: "w", default_room: "r", fs_root: "/tmp/main", fs_allowlist: [] },
+        { id: "p2", name: "Docs Project", slug: "docs", palace: "x", default_wing: "w", default_room: "r", fs_root: "/tmp/docs", fs_allowlist: [] },
+      ],
+      syncProjects: [
+        { project_id: "p1", dirty_count: 2, requires_reconciliation: true },
+        { project_id: "p2", dirty_count: 0, requires_reconciliation: false },
+      ],
+    });
+    renderAtPath("/sync");
+
+    await waitFor(() => {
+      expect(screen.getByLabelText(/^project$/i, { selector: "select" })).toBeTruthy();
+    });
+
+    fireEvent.change(screen.getByLabelText(/^project$/i, { selector: "select" }), { target: { value: "p2" } });
+    fireEvent.click(screen.getByRole("button", { name: /sync now p2/i }));
+
+    await waitFor(() => {
+      const syncCall = fetchMock.mock.calls.find((call) => {
+        const url = String(call[0]);
+        const init = call[1] as RequestInit | undefined;
+        return url.includes("/api/admin/v1/sync/p2/now") && init?.method === "POST";
+      });
+      expect(syncCall).toBeTruthy();
+    });
+  });
+
   it("renders clean registered project in sync dashboard when sync state is empty", async () => {
     const fetchMock = installApiMock({
       projects: [{ id: "p1", name: "Main Project", slug: "main", palace: "x", default_wing: "w", default_room: "r", fs_root: "/tmp", fs_allowlist: [] }],
@@ -1081,7 +1445,7 @@ describe("App", () => {
     renderAtPath("/sync");
 
     await waitFor(() => {
-      expect(screen.getByText(/main project/i)).toBeTruthy();
+      expect(screen.getByRole("heading", { name: /main project/i })).toBeTruthy();
       expect(screen.getByText(/dirty count: 0/i)).toBeTruthy();
       expect(screen.getByText(/sync state: idle/i)).toBeTruthy();
       expect(screen.getByText(/reconcile state: clear/i)).toBeTruthy();
@@ -1126,7 +1490,7 @@ describe("App", () => {
 
     renderAtPath("/sync");
     await waitFor(() => {
-      expect(screen.getByText(/main project/i)).toBeTruthy();
+      expect(screen.getByRole("heading", { name: /main project/i })).toBeTruthy();
     });
 
     const syncInstance = FakeEventSource.instances.find((item) => item.url.includes("/api/events/v1/sync"));
@@ -1741,7 +2105,7 @@ describe("App", () => {
     });
 
     fireEvent.change(screen.getByLabelText(/^client label$/i), { target: { value: "ci-agent" } });
-    fireEvent.change(screen.getByLabelText(/project ids/i), { target: { value: "p1" } });
+    fireEvent.change(screen.getByLabelText(/project access/i, { selector: "select" }), { target: { value: "p1" } });
     fireEvent.click(screen.getByRole("button", { name: /create mcp client/i }));
 
     await waitFor(() => {
@@ -1756,6 +2120,35 @@ describe("App", () => {
     });
   });
 
+  it("creates MCP clients from registered project selections", async () => {
+    const fetchMock = installApiMock({
+      projects: [
+        { id: "p1", name: "Main Project", slug: "main", palace: "x", default_wing: "w", default_room: "r", fs_root: "/tmp/main", fs_allowlist: [] },
+        { id: "p2", name: "Docs Project", slug: "docs", palace: "x", default_wing: "w", default_room: "r", fs_root: "/tmp/docs", fs_allowlist: [] },
+      ],
+    });
+    renderAtPath("/mcp-clients");
+
+    await waitFor(() => {
+      expect(screen.getByLabelText(/project access/i, { selector: "select" })).toBeTruthy();
+    });
+
+    fireEvent.change(screen.getByLabelText(/^client label$/i), { target: { value: "docs-agent" } });
+    fireEvent.change(screen.getByLabelText(/project access/i, { selector: "select" }), { target: { value: "p2" } });
+    fireEvent.click(screen.getByRole("button", { name: /create mcp client/i }));
+
+    await waitFor(() => {
+      const createCall = fetchMock.mock.calls.find((call) => {
+        const url = String(call[0]);
+        const init = call[1] as RequestInit | undefined;
+        return url.includes("/api/admin/v1/mcp-clients") && init?.method === "POST";
+      });
+      expect(createCall).toBeTruthy();
+      const body = JSON.parse(String((createCall?.[1] as RequestInit | undefined)?.body ?? "{}")) as Record<string, unknown>;
+      expect(body.project_ids).toEqual(["p2"]);
+    });
+  });
+
   it("keeps form label in token card when create response omits label", async () => {
     installApiMock({ createMcpClientResponse: { label: undefined } });
     renderAtPath("/mcp-clients");
@@ -1765,7 +2158,7 @@ describe("App", () => {
     });
 
     fireEvent.change(screen.getByLabelText(/^client label$/i), { target: { value: "ci-agent" } });
-    fireEvent.change(screen.getByLabelText(/project ids/i), { target: { value: "p1" } });
+    fireEvent.change(screen.getByLabelText(/project access/i, { selector: "select" }), { target: { value: "p1" } });
     fireEvent.click(screen.getByRole("button", { name: /create mcp client/i }));
 
     await waitFor(() => {
@@ -1784,7 +2177,7 @@ describe("App", () => {
     });
 
     fireEvent.change(screen.getByLabelText(/^client label$/i), { target: { value: "ci-agent" } });
-    fireEvent.change(screen.getByLabelText(/project ids/i), { target: { value: "p1" } });
+    fireEvent.change(screen.getByLabelText(/project access/i, { selector: "select" }), { target: { value: "p1" } });
     fireEvent.click(screen.getByRole("button", { name: /create mcp client/i }));
 
     await waitFor(() => {

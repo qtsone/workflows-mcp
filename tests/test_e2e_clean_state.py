@@ -91,7 +91,7 @@ def test_phase11_clean_state_http_flow(tmp_path: Path, clean_state_client: TestC
         "/api/admin/v1/database/settings",
         json={
             "enabled": True,
-            "dsn": "postgresql://wf_admin:super-secret@127.0.0.1:1/workflows",
+            "dsn_import": "postgresql://wf_admin:super-secret@127.0.0.1:1/workflows",
         },
         headers={"X-CSRF-Token": csrf_token},
     )
@@ -99,8 +99,10 @@ def test_phase11_clean_state_http_flow(tmp_path: Path, clean_state_client: TestC
     db_payload = db_settings.json()
     assert db_payload["enabled"] is True
     assert db_payload["configured"] is True
+    assert db_payload["password_configured"] is True
     assert "dsn" not in db_payload
-    assert "password" not in str(db_payload).lower()
+    assert "postgresql://" not in str(db_payload).lower()
+    assert "super-secret" not in str(db_payload).lower()
 
     llm_put = clean_state_client.put(
         "/api/admin/v1/llm/config",
@@ -216,7 +218,7 @@ def test_phase11_clean_state_http_flow(tmp_path: Path, clean_state_client: TestC
     assert sync_now.status_code == 200
     sync_payload = sync_now.json()
     assert sync_payload["project_id"] == project_id
-    assert sync_payload["dirty_count"] >= 1
+    assert sync_payload["dirty_count"] == 0
 
     _seed_run(
         clean_state_client,

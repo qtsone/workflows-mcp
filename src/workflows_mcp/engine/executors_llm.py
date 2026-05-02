@@ -76,7 +76,7 @@ class LLMCallInput(BlockInput):
     """Input schema for LLMCall block.
 
     Supports two configuration modes:
-    - Profile-based: Load settings from ~/.workflows/llm-config.yml
+    - Profile-based: Load settings from SQLite-backed admin /llm config
     - Direct: Specify provider and model inline
 
     Variables are resolved by VariableResolver before execution. Schema validation
@@ -87,7 +87,8 @@ class LLMCallInput(BlockInput):
     profile: str | None = Field(
         default=None,
         description=(
-            "Profile name from ~/.workflows/llm-config.yml (e.g., 'cloud', 'local', 'default'). "
+            "Profile name from the SQLite-backed admin /llm config "
+            "(e.g., 'cloud', 'local', 'default'). "
             "If specified, provider/model are loaded from config. "
             "Mutually exclusive with direct provider/model specification."
         ),
@@ -618,7 +619,7 @@ class LLMCallExecutor(BlockExecutor):
     async def _resolve_profile_to_inputs(
         self, inputs: LLMCallInput, context: Execution
     ) -> LLMCallInput:
-        """Resolve profile configuration from ~/.workflows/llm-config.yml.
+        """Resolve profile configuration from SQLite-backed admin /llm config.
 
         Loads profile, merges with inline overrides, resolves API key from secrets,
         and returns merged LLMCallInput.
@@ -743,8 +744,8 @@ class LLMCallExecutor(BlockExecutor):
                 f"Profile '{inputs.profile}' not found and no default_profile set.\n"
                 f"Available profiles: {available}\n"
                 f"Either:\n"
-                f"  1. Add '{inputs.profile}' profile to ~/.workflows/llm-config.yml, OR\n"
-                f"  2. Set 'default_profile' in ~/.workflows/llm-config.yml"
+                f"  1. Add '{inputs.profile}' profile in the admin /llm page, OR\n"
+                f"  2. Set 'default_profile' in the admin /llm page"
             )
 
         # Case 3: Neither profile nor provider - error (explicit required)
@@ -1404,12 +1405,12 @@ class EmbeddingInput(BlockInput):
 
     Exactly one of `text` or `texts` must be specified.
 
-    Defaults to 'embedding' profile from ~/.workflows/llm-config.yml.
+    Defaults to the 'embedding' profile from SQLite-backed admin /llm config.
     """
 
     profile: str = Field(
         default="embedding",
-        description="Profile name from ~/.workflows/llm-config.yml (defaults to 'embedding')",
+        description="Profile name from admin /llm config (defaults to 'embedding')",
     )
 
     model: str | None = Field(
@@ -1670,7 +1671,7 @@ async def compute_embedding(
     Args:
         text: Text to generate embedding for.
         context: Execution context with LLM config loader.
-        profile: Profile name from llm-config.yml (defaults to 'embedding').
+        profile: Profile name from admin /llm config (defaults to 'embedding').
         model: Override embedding model (uses profile model if not specified).
         api_key: Override API key (uses profile secret if not specified).
         api_url: Override API endpoint URL (uses profile URL if not specified).
@@ -1788,7 +1789,7 @@ async def compute_embedding_batch(
     Args:
         texts: List of texts to generate embeddings for.
         context: Execution context with LLM config loader.
-        profile: Profile name from llm-config.yml (defaults to 'embedding').
+        profile: Profile name from admin /llm config (defaults to 'embedding').
         model: Override embedding model (uses profile model if not specified).
         api_key: Override API key (uses profile secret if not specified).
         api_url: Override API endpoint URL (uses profile URL if not specified).

@@ -69,9 +69,24 @@ def test_entries_browser_lists_configured_root(
         "parent": None,
         "can_go_up": False,
         "entries": [
-            {"name": "alpha", "path": str(alpha.resolve()), "type": "directory", "selectable": True},
-            {"name": "beta", "path": str(beta.resolve()), "type": "directory", "selectable": True},
-            {"name": "not-a-directory.txt", "path": str(file_path.resolve()), "type": "file", "selectable": False},
+            {
+                "name": "alpha",
+                "path": str(alpha.resolve()),
+                "type": "directory",
+                "selectable": True,
+            },
+            {
+                "name": "beta",
+                "path": str(beta.resolve()),
+                "type": "directory",
+                "selectable": True,
+            },
+            {
+                "name": "not-a-directory.txt",
+                "path": str(file_path.resolve()),
+                "type": "file",
+                "selectable": False,
+            },
         ],
     }
 
@@ -198,11 +213,17 @@ def test_entries_browser_reports_not_found_and_not_directory(
     monkeypatch.setenv("WORKFLOWS_SCAN_ROOT", str(root))
     _login(app_client)
 
-    missing = app_client.get("/api/admin/v1/filesystem/entries", params={"path": str(root / "missing")})
+    missing = app_client.get(
+        "/api/admin/v1/filesystem/entries",
+        params={"path": str(root / "missing")},
+    )
     assert missing.status_code == 404
     assert _error_code(missing.json()) == "filesystem_path_not_found"
 
-    not_directory = app_client.get("/api/admin/v1/filesystem/entries", params={"path": str(file_path)})
+    not_directory = app_client.get(
+        "/api/admin/v1/filesystem/entries",
+        params={"path": str(file_path)},
+    )
     assert not_directory.status_code == 422
     assert _error_code(not_directory.json()) == "filesystem_path_not_directory"
 

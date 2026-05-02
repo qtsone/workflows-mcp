@@ -99,7 +99,7 @@ class ImageGenInput(BlockInput):
     profile: str | None = Field(
         default=None,
         description=(
-            "Profile name from ~/.workflows/llm-config.yml. "
+            "Profile name from SQLite-backed admin /llm config. "
             "If specified, provider/model are loaded from config. "
             "Mutually exclusive with direct provider/model specification."
         ),
@@ -313,7 +313,7 @@ class ImageGenExecutor(BlockExecutor):
     async def _resolve_profile_to_inputs(
         self, inputs: ImageGenInput, context: Execution
     ) -> ImageGenInput:
-        """Resolve profile configuration from ~/.workflows/llm-config.yml."""
+        """Resolve profile configuration from SQLite-backed admin /llm config."""
         execution_context = context.execution_context
         if execution_context is None:
             raise ValueError("ExecutionContext not available.")
@@ -325,12 +325,13 @@ class ImageGenExecutor(BlockExecutor):
             key: value
             for key, value in {
                 "provider": inputs.provider,
-                "model": inputs.model,
                 "api_url": inputs.api_url,
                 "api_key": inputs.api_key,
             }.items()
             if value is not None
         }
+        if "model" in inputs.model_fields_set and inputs.model is not None:
+            inline_overrides["model"] = inputs.model
 
         # Resolve profile
         resolved_config = llm_config_loader.resolve_profile(

@@ -219,6 +219,36 @@ class SQLiteWatcherRepository:
         raw_count = 0 if row is None else row[0]
         return int(raw_count)
 
+    def mark_active_dirty_processed(self, *, project_id: str) -> int:
+        self._assert_project_exists(project_id)
+
+        self._conn.execute("BEGIN IMMEDIATE")
+        try:
+            cursor = self._conn.execute(
+                """
+                UPDATE watcher_queue
+                SET processed_at = CURRENT_TIMESTAMP,
+                    updated_at = CURRENT_TIMESTAMP
+                WHERE project_id = ?
+                  AND processed_at IS NULL
+                """,
+                (project_id,),
+            )
+            self._conn.execute(
+                """
+                UPDATE watcher_status
+                SET updated_at = CURRENT_TIMESTAMP
+                WHERE project_id = ?
+                """,
+                (project_id,),
+            )
+            self._conn.commit()
+        except Exception:
+            self._conn.rollback()
+            raise
+
+        return cursor.rowcount
+
     def requires_reconciliation(self, *, project_id: str) -> bool:
         row = self._conn.execute(
             """

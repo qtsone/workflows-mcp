@@ -3,6 +3,11 @@ import { useId } from "react";
 
 type Tone = "neutral" | "info" | "success" | "warning" | "danger";
 type ButtonVariant = "primary" | "secondary" | "danger" | "ghost";
+export type ProjectOption = {
+  id: string;
+  name: string;
+  slug?: string | null;
+};
 
 const cx = (...classes: Array<string | false | null | undefined>): string =>
   classes.filter(Boolean).join(" ");
@@ -85,6 +90,110 @@ export function ActionButton({
   );
 }
 
+const projectOptionLabel = (project: ProjectOption): string => {
+  const name = project.name.trim();
+  const slug = project.slug?.trim();
+  const primary = name.length > 0 ? name : project.id;
+  const suffix = slug && slug !== project.id ? `${project.id} / ${slug}` : project.id;
+  return `${primary} (${suffix})`;
+};
+
+type ProjectSelectProps = {
+  id: string;
+  label: string;
+  projects: ProjectOption[];
+  value: string;
+  onChange: (value: string) => void;
+  allLabel?: string;
+  placeholder?: string;
+  helperText?: string;
+  required?: boolean;
+  disabled?: boolean;
+  className?: string;
+};
+
+export function ProjectSelect({
+  id,
+  label,
+  projects,
+  value,
+  onChange,
+  allLabel,
+  placeholder = "Select a project",
+  helperText,
+  required = false,
+  disabled = false,
+  className,
+}: ProjectSelectProps): JSX.Element {
+  return (
+    <div className={cx("project-select", className)}>
+      <label htmlFor={id}>{label}</label>
+      <select
+        id={id}
+        value={value}
+        onChange={(event) => onChange(event.currentTarget.value)}
+        required={required}
+        disabled={disabled || projects.length === 0}
+      >
+        {allLabel ? <option value="">{allLabel}</option> : <option value="">{placeholder}</option>}
+        {projects.map((project) => (
+          <option key={project.id} value={project.id}>
+            {projectOptionLabel(project)}
+          </option>
+        ))}
+      </select>
+      {helperText ? <p className="field-hint">{helperText}</p> : null}
+    </div>
+  );
+}
+
+type ProjectMultiSelectProps = {
+  id: string;
+  label: string;
+  projects: ProjectOption[];
+  selectedIds: string[];
+  onChange: (values: string[]) => void;
+  helperText?: string;
+  disabled?: boolean;
+  className?: string;
+};
+
+export function ProjectMultiSelect({
+  id,
+  label,
+  projects,
+  selectedIds,
+  onChange,
+  helperText,
+  disabled = false,
+  className,
+}: ProjectMultiSelectProps): JSX.Element {
+  const visibleRows = Math.min(Math.max(projects.length, 2), 5);
+
+  return (
+    <div className={cx("project-select", className)}>
+      <label htmlFor={id}>{label}</label>
+      <select
+        id={id}
+        multiple
+        size={visibleRows}
+        value={selectedIds}
+        onChange={(event) => {
+          onChange(Array.from(event.currentTarget.selectedOptions, (option) => option.value));
+        }}
+        disabled={disabled || projects.length === 0}
+      >
+        {projects.map((project) => (
+          <option key={project.id} value={project.id}>
+            {projectOptionLabel(project)}
+          </option>
+        ))}
+      </select>
+      {helperText ? <p className="field-hint">{helperText}</p> : null}
+    </div>
+  );
+}
+
 export function FolderIcon(): JSX.Element {
   return (
     <svg className="ui-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
@@ -101,6 +210,29 @@ export function FolderIcon(): JSX.Element {
         fill="none"
         stroke="currentColor"
         strokeLinecap="round"
+        strokeWidth="1.8"
+      />
+    </svg>
+  );
+}
+
+export function CopyIcon(): JSX.Element {
+  return (
+    <svg className="ui-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+      <path
+        d="M8 7.25A2.25 2.25 0 0 1 10.25 5h6.5A2.25 2.25 0 0 1 19 7.25v6.5A2.25 2.25 0 0 1 16.75 16h-6.5A2.25 2.25 0 0 1 8 13.75v-6.5Z"
+        fill="none"
+        stroke="currentColor"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        strokeWidth="1.8"
+      />
+      <path
+        d="M15.75 19H7.25A2.25 2.25 0 0 1 5 16.75V8.25"
+        fill="none"
+        stroke="currentColor"
+        strokeLinecap="round"
+        strokeLinejoin="round"
         strokeWidth="1.8"
       />
     </svg>

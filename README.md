@@ -519,7 +519,7 @@ Invalid (supersede missing required `superseded_by`):
 ### Secrets and LLM config
 
 - `WORKFLOW_SECRET_<NAME>`: Secret value exposed as `{{secrets.NAME}}`.
-- `WORKFLOWS_LLM_CONFIG`: Optional path override for LLM config.
+- LLM providers and profiles are managed in SQLite via the web UI / `/api/admin/v1/llm/config`; YAML is available only as explicit import/export data.
 
 ## Memory
 

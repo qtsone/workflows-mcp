@@ -2,11 +2,11 @@
 
 Derives the service readiness state from:
 1. Presence of the ``~/.workflows/`` directory.
-2. Presence of ``~/.workflows/llm-config.yml``.
+2. Valid, non-empty LLM configuration in ``~/.workflows/server.db``.
 3. Result of the PostgreSQL connectivity probe.
 
 States (spec section 9.1):
-- ``UNCONFIGURED``: directory or config file absent.
+- ``UNCONFIGURED``: directory or SQLite LLM config absent/empty/invalid.
 - ``PARTIALLY_CONFIGURED``: config artifacts present but DB probe fails.
 - ``READY``: all prerequisites satisfied.
 
@@ -16,11 +16,13 @@ protocol, making it straightforward to inject test doubles.
 
 from __future__ import annotations
 
+import sqlite3
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Protocol, runtime_checkable
 
 from .http_models import ReadinessState
+from .metadata.repos import SQLiteLLMConfigRepository
 
 
 def _canonicalize_blocker(blocker: str) -> str:
@@ -52,6 +54,25 @@ def _canonicalize_blockers(blockers: list[str]) -> list[str]:
             seen.add(mapped)
             canonical.append(mapped)
     return canonical
+
+
+def _has_configured_sqlite_llm(base_dir: Path) -> bool:
+    """Return whether server.db contains a valid, non-empty LLM config."""
+
+    db_path = base_dir / "server.db"
+    if not db_path.exists():
+        return False
+
+    try:
+        conn = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
+        try:
+            config = SQLiteLLMConfigRepository(conn).load_config()
+        finally:
+            conn.close()
+    except Exception:
+        return False
+
+    return bool(config.providers) and bool(config.profiles)
 
 
 @runtime_checkable
@@ -112,8 +133,7 @@ class ReadinessService:
                 blockers=["workflows_dir"],
             )
 
-        llm_config = self.base_dir / "llm-config.yml"
-        if not llm_config.exists():
+        if not _has_configured_sqlite_llm(self.base_dir):
             return ReadinessReport(
                 state=ReadinessState.UNCONFIGURED,
                 blockers=["llm_config"],

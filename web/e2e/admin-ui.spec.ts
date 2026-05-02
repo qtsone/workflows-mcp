@@ -56,10 +56,26 @@ test("admin shell mounts, assets load, login is interactive, and workflow reload
     });
   });
   await page.route("**/api/admin/v1/llm/config", async (route) => {
+    const request = route.request();
+    if (request.method() === "PUT") {
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: request.postData() ?? JSON.stringify({ version: "1.0", providers: {}, profiles: {}, default_profile: null }),
+      });
+      return;
+    }
     await route.fulfill({
       status: 200,
       contentType: "application/json",
-      body: JSON.stringify({ providers: {}, profiles: {} }),
+      body: JSON.stringify({ version: "1.0", providers: {}, profiles: {}, default_profile: null }),
+    });
+  });
+  await page.route("**/api/admin/v1/llm/export", async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({ raw_yaml: "version: '1.0'\nproviders: {}\nprofiles: {}\n" }),
     });
   });
   await page.route("**/api/admin/v1/projects", async (route) => {
@@ -127,6 +143,10 @@ test("admin shell mounts, assets load, login is interactive, and workflow reload
   await page.getByRole("button", { name: "Sign in" }).click();
   await expect(page).toHaveURL(/\/setup$/);
   await expect(page.getByRole("heading", { name: "Setup", exact: true })).toBeVisible();
+
+  await page.goto("/llm");
+  await expect(page.getByRole("heading", { name: "LLM configuration" })).toBeVisible();
+  await expect(page.getByText("Source of truth: SQLite-backed.")).toBeVisible();
 
   await page.goto("/workflows");
   await page.getByRole("button", { name: "Reload workflows" }).click();

@@ -280,7 +280,7 @@ Without this, execution fails with 'LLM configuration required' error.
 
 ### Optional Inputs
 
-- **`profile`** (string): Profile name from ~/.workflows/llm-config.yml (e.g., 'cloud', 'local', 'default'). If specified, provider/model are loaded from config. Mutually exclusive with direct provider/model specification.
+- **`profile`** (string): Profile name from the SQLite-backed admin /llm config (e.g., 'cloud', 'local', 'default'). If specified, provider/model are loaded from config. Mutually exclusive with direct provider/model specification.
 - **`provider`** (string): LLM provider (enum or interpolation string). Required if profile not specified. Ignored if profile specified.
 - **`model`** (string): Model name (e.g., gpt-4o, claude-3-5-sonnet-20241022, gemini-2.0-flash-exp). Required if profile not specified. Can override profile model if both specified.
 - **`system_instructions`** (string): System instructions (optional)
@@ -327,7 +327,7 @@ Please provide a valid response that conforms to the schema.`)*: Template for va
 
 ### Optional Inputs
 
-- **`profile`** (string) *(default: `embedding`)*: Profile name from ~/.workflows/llm-config.yml (defaults to 'embedding')
+- **`profile`** (string) *(default: `embedding`)*: Profile name from admin /llm config (defaults to 'embedding')
 - **`model`** (string): Override embedding model (uses profile model if not specified)
 - **`text`** (string): Single text to generate embedding for. Mutually exclusive with 'texts'.
 - **`texts`** (array): List of texts to embed in a single API call (batch mode). Mutually exclusive with 'text'.
@@ -378,7 +378,7 @@ Without this, execution fails with configuration error.
 ### Optional Inputs
 
 - **`prompt`** (string): Text prompt (required for generate/edit, not used for variation)
-- **`profile`** (string): Profile name from ~/.workflows/llm-config.yml. If specified, provider/model are loaded from config. Mutually exclusive with direct provider/model specification.
+- **`profile`** (string): Profile name from SQLite-backed admin /llm config. If specified, provider/model are loaded from config. Mutually exclusive with direct provider/model specification.
 - **`provider`** (string): Image provider (openai, openai_compatible). Required if profile not specified.
 - **`model`** (string) *(default: `dall-e-3`)*: Model to use (dall-e-3, dall-e-2, or custom model name)
 - **`api_url`** (string): Custom API endpoint URL (required for openai_compatible)

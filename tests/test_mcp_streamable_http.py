@@ -7,7 +7,6 @@ import pytest
 from fastapi.testclient import TestClient
 
 from workflows_mcp.auth import TokenStore
-from workflows_mcp.config_service import ConfigService
 from workflows_mcp.http.lifespan import build_resources
 from workflows_mcp.http_app import create_app
 from workflows_mcp.http_models import ReadinessState
@@ -38,7 +37,6 @@ def ready_client(tmp_path: Path) -> TestClient:
     app = create_app(
         readiness_service=_FakeReadiness(ReadinessState.READY),
         token_store=token_store,
-        config_service=ConfigService(base_dir=tmp_path / ".workflows"),
     )
     resources = build_resources(base_dir=tmp_path / ".workflows")
     project = SQLiteProjectsRepository(resources.metadata_db_conn).create(

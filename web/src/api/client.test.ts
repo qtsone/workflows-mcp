@@ -804,4 +804,109 @@ describe("createApiClient admin helpers", () => {
     ) as Record<string, unknown>;
     expect(settingsSaveBody.password).toBeNull();
   });
+
+  it("sends full LLM config updates with csrf and JSON body", async () => {
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
+      const method = (init?.method ?? "GET").toUpperCase();
+      const url = typeof input === "string" ? input : input.toString();
+
+      if (url.endsWith("/api/admin/v1/auth/csrf") && method === "GET") {
+        return new Response(JSON.stringify({ csrf_token: "csrf-llm-token" }), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        });
+      }
+      if (url.endsWith("/api/admin/v1/llm/config") && method === "PUT") {
+        return new Response(String(init?.body ?? "{}"), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        });
+      }
+
+      return new Response(JSON.stringify({ message: `unexpected ${method} ${url}` }), {
+        status: 404,
+        headers: { "content-type": "application/json" },
+      });
+    });
+
+    const client = createApiClient({
+      baseUrl: "https://admin.example.test",
+      fetchImpl: fetchMock,
+    });
+    const payload = {
+      version: "1.0",
+      providers: { openai: { type: "openai", model: "gpt-4.1-mini" } },
+      profiles: { default: { provider: "openai", model: "gpt-4.1-mini" } },
+      default_profile: "default",
+    };
+
+    await client.updateLlmConfig(payload);
+
+    const updateCall = fetchMock.mock.calls.find((call) => {
+      const url = String(call[0]);
+      const init = call[1] as RequestInit | undefined;
+      return url.includes("/api/admin/v1/llm/config") && init?.method === "PUT";
+    });
+    expect(updateCall).toBeTruthy();
+
+    const headers = new Headers((updateCall?.[1] as RequestInit | undefined)?.headers);
+    expect(headers.get("X-CSRF-Token")).toBe("csrf-llm-token");
+    expect(headers.get("content-type")).toBe("application/json");
+    expect(JSON.parse(String((updateCall?.[1] as RequestInit | undefined)?.body ?? "{}"))).toEqual(payload);
+  });
+
+  it("sends LLM YAML preview and import mutations with csrf and raw_yaml body", async () => {
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
+      const method = (init?.method ?? "GET").toUpperCase();
+      const url = typeof input === "string" ? input : input.toString();
+
+      if (url.endsWith("/api/admin/v1/auth/csrf") && method === "GET") {
+        return new Response(JSON.stringify({ csrf_token: "csrf-llm-token" }), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        });
+      }
+      if ((url.endsWith("/api/admin/v1/llm/preview") || url.endsWith("/api/admin/v1/llm/import")) && method === "POST") {
+        return new Response(JSON.stringify({ version: "1.0", providers: {}, profiles: {} }), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        });
+      }
+
+      return new Response(JSON.stringify({ message: `unexpected ${method} ${url}` }), {
+        status: 404,
+        headers: { "content-type": "application/json" },
+      });
+    });
+
+    const client = createApiClient({
+      baseUrl: "https://admin.example.test",
+      fetchImpl: fetchMock,
+    });
+
+    await client.previewLlmConfig("version: '1.0'\n");
+    await client.importLlmConfig("providers: {}\n");
+
+    for (const endpoint of ["/api/admin/v1/llm/preview", "/api/admin/v1/llm/import"]) {
+      const call = fetchMock.mock.calls.find((entry) => {
+        const url = String(entry[0]);
+        const init = entry[1] as RequestInit | undefined;
+        return url.includes(endpoint) && init?.method === "POST";
+      });
+      expect(call).toBeTruthy();
+      const headers = new Headers((call?.[1] as RequestInit | undefined)?.headers);
+      expect(headers.get("X-CSRF-Token")).toBe("csrf-llm-token");
+      expect(headers.get("content-type")).toBe("application/json");
+    }
+
+    const previewCall = fetchMock.mock.calls.find((entry) => String(entry[0]).includes("/api/admin/v1/llm/preview"));
+    expect(JSON.parse(String((previewCall?.[1] as RequestInit | undefined)?.body ?? "{}"))).toEqual({
+      raw_yaml: "version: '1.0'\n",
+    });
+
+    const importCall = fetchMock.mock.calls.find((entry) => String(entry[0]).includes("/api/admin/v1/llm/import"));
+    expect(JSON.parse(String((importCall?.[1] as RequestInit | undefined)?.body ?? "{}"))).toEqual({
+      raw_yaml: "providers: {}\n",
+    });
+  });
 });

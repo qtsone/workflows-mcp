@@ -14,7 +14,6 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 from starlette.types import ASGIApp, Receive, Scope, Send
 
 from .auth import TokenStore, generate_request_id
-from .config_service import ConfigService
 from .http.auth_mcp import MCPAuthMiddleware
 from .http.mcp_transport import (
     MCPStreamableHTTPMount,
@@ -487,7 +486,6 @@ def create_app(
     *,
     readiness_service: Any,
     token_store: TokenStore,
-    config_service: ConfigService | None = None,
     frontend_static_dir: Path | None = None,
     require_frontend_assets: bool = False,
     lifespan: Any = None,

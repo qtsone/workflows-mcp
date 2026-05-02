@@ -1,7 +1,7 @@
 """Tests for the readiness service and PostgreSQL probe interface.
 
 Covers the three readiness states defined in the spec (section 9.1):
-- unconfigured: ~/.workflows/ or llm-config.yml missing
+- unconfigured: ~/.workflows/ or SQLite LLM config missing
 - partially_configured: config artifacts exist but DB check fails
 - ready: config present and DB probe succeeds
 
@@ -20,8 +20,12 @@ import pytest
 from fastapi.testclient import TestClient
 
 from workflows_mcp.auth import TokenStore
+from workflows_mcp.engine.llm_config import LLMConfig
 from workflows_mcp.http_app import create_app
 from workflows_mcp.http_models import ReadinessState
+from workflows_mcp.metadata.db import connect_metadata_db
+from workflows_mcp.metadata.migrations import migrate_metadata_db
+from workflows_mcp.metadata.repos import SQLiteLLMConfigRepository
 from workflows_mcp.postgres_probe import PostgresProbe
 from workflows_mcp.readiness import ReadinessService
 
@@ -43,6 +47,32 @@ class FakeProbe:
         return False, list(self.blockers_on_fail)
 
 
+def _write_valid_sqlite_llm_config(base_dir: Path) -> None:
+    base_dir.mkdir(parents=True, exist_ok=True)
+    conn = connect_metadata_db(base_dir / "server.db")
+    try:
+        migrate_metadata_db(conn)
+        config = LLMConfig(
+            providers={
+                "openai-cloud": {
+                    "type": "openai",
+                    "api_url": "https://api.openai.com/v1/chat/completions",
+                    "api_key_secret": "OPENAI_API_KEY",
+                },
+            },
+            profiles={
+                "default": {
+                    "provider": "openai-cloud",
+                    "model": "gpt-4o-mini",
+                },
+            },
+            default_profile="default",
+        )
+        SQLiteLLMConfigRepository(conn).replace_config(config)
+    finally:
+        conn.close()
+
+
 # ---------------------------------------------------------------------------
 # Existing state-transition tests (preserved)
 # ---------------------------------------------------------------------------
@@ -57,22 +87,64 @@ async def test_missing_workflows_dir_is_unconfigured(tmp_path: Path) -> None:
 
 
 @pytest.mark.asyncio
-async def test_missing_llm_config_is_unconfigured(tmp_path: Path) -> None:
-    """When ~/.workflows/ exists but llm-config.yml is absent, state must be UNCONFIGURED."""
+async def test_missing_sqlite_llm_config_is_unconfigured(tmp_path: Path) -> None:
+    """When ~/.workflows/ exists but server.db is absent, state must be UNCONFIGURED."""
     base_dir = tmp_path / ".workflows"
     base_dir.mkdir()
-    # Do NOT create llm-config.yml
     service = ReadinessService(base_dir=base_dir, probe=FakeProbe(ok=True))
     report = await service.evaluate()
     assert report.state == ReadinessState.UNCONFIGURED
+    assert report.blockers == ["llm_config"]
+
+
+@pytest.mark.asyncio
+async def test_legacy_llm_config_yaml_does_not_make_readiness_configured(
+    tmp_path: Path,
+) -> None:
+    """Legacy llm-config.yml is ignored because SQLite server.db is the source of truth."""
+    base_dir = tmp_path / ".workflows"
+    base_dir.mkdir()
+    (base_dir / "llm-config.yml").write_text("profiles: []\n")
+    service = ReadinessService(base_dir=base_dir, probe=FakeProbe(ok=True))
+    report = await service.evaluate()
+    assert report.state == ReadinessState.UNCONFIGURED
+    assert report.blockers == ["llm_config"]
+
+
+@pytest.mark.asyncio
+async def test_empty_sqlite_llm_config_is_unconfigured(tmp_path: Path) -> None:
+    """An existing server.db with no provider/profile rows is not configured."""
+    base_dir = tmp_path / ".workflows"
+    base_dir.mkdir()
+    conn = connect_metadata_db(base_dir / "server.db")
+    try:
+        migrate_metadata_db(conn)
+    finally:
+        conn.close()
+
+    service = ReadinessService(base_dir=base_dir, probe=FakeProbe(ok=True))
+    report = await service.evaluate()
+    assert report.state == ReadinessState.UNCONFIGURED
+    assert report.blockers == ["llm_config"]
+
+
+@pytest.mark.asyncio
+async def test_valid_sqlite_llm_config_and_db_is_ready(tmp_path: Path) -> None:
+    """A valid SQLite LLM config and successful dependency probe make readiness READY."""
+    base_dir = tmp_path / ".workflows"
+    _write_valid_sqlite_llm_config(base_dir)
+
+    service = ReadinessService(base_dir=base_dir, probe=FakeProbe(ok=True))
+    report = await service.evaluate()
+    assert report.state == ReadinessState.READY
+    assert report.blockers == []
 
 
 @pytest.mark.asyncio
 async def test_invalid_db_is_partially_configured(tmp_path: Path) -> None:
     """Config artifacts exist but DB probe fails -> PARTIALLY_CONFIGURED."""
     base_dir = tmp_path / ".workflows"
-    base_dir.mkdir()
-    (base_dir / "llm-config.yml").write_text("profiles: []\n")
+    _write_valid_sqlite_llm_config(base_dir)
     service = ReadinessService(base_dir=base_dir, probe=FakeProbe(ok=False))
     report = await service.evaluate()
     assert report.state == ReadinessState.PARTIALLY_CONFIGURED
@@ -83,8 +155,7 @@ async def test_invalid_db_is_partially_configured(tmp_path: Path) -> None:
 async def test_valid_config_and_db_is_ready(tmp_path: Path) -> None:
     """Config artifacts exist and DB probe succeeds -> READY."""
     base_dir = tmp_path / ".workflows"
-    base_dir.mkdir()
-    (base_dir / "llm-config.yml").write_text("profiles: []\n")
+    _write_valid_sqlite_llm_config(base_dir)
     service = ReadinessService(base_dir=base_dir, probe=FakeProbe(ok=True))
     report = await service.evaluate()
     assert report.state == ReadinessState.READY
@@ -258,8 +329,7 @@ async def test_readiness_transitions_to_partially_configured_on_outage(tmp_path:
     that a subsequent evaluate() with a failing probe returns the right state.
     """
     base_dir = tmp_path / ".workflows"
-    base_dir.mkdir()
-    (base_dir / "llm-config.yml").write_text("profiles: []\n")
+    _write_valid_sqlite_llm_config(base_dir)
 
     probe = FakeProbe(ok=True)
     service = ReadinessService(base_dir=base_dir, probe=probe)
@@ -285,8 +355,7 @@ async def test_readiness_recovers_to_ready_without_restart(tmp_path: Path) -> No
     Verifies the full outage -> recovery cycle using the same service instance.
     """
     base_dir = tmp_path / ".workflows"
-    base_dir.mkdir()
-    (base_dir / "llm-config.yml").write_text("profiles: []\n")
+    _write_valid_sqlite_llm_config(base_dir)
 
     probe = FakeProbe(ok=True)
     service = ReadinessService(base_dir=base_dir, probe=probe)
@@ -313,8 +382,7 @@ async def test_suitability_failure_blocker_is_surfaced_in_readiness_report(
 ) -> None:
     """Suitability blockers (e.g. version, extension) must appear verbatim in report.blockers."""
     base_dir = tmp_path / ".workflows"
-    base_dir.mkdir()
-    (base_dir / "llm-config.yml").write_text("profiles: []\n")
+    _write_valid_sqlite_llm_config(base_dir)
 
     probe = FakeProbe(ok=False, blockers_on_fail=["postgresql_version_unsupported"])
     service = ReadinessService(base_dir=base_dir, probe=probe)
@@ -525,8 +593,7 @@ def test_ready_reports_canonical_incompatible_schema_blocker(
     """`/ready` must surface incompatible schema with canonical blocker code."""
 
     base_dir = tmp_path / ".workflows"
-    base_dir.mkdir()
-    (base_dir / "llm-config.yml").write_text("profiles: []\n")
+    _write_valid_sqlite_llm_config(base_dir)
 
     service = ReadinessService(
         base_dir=base_dir,

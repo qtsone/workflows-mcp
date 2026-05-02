@@ -1008,7 +1008,7 @@ def _resolve_llm_profile(
         # happen here since we guard against empty string above, but be safe.
         raise ValueError(
             f"Profile '{profile}' could not be resolved (returned None). "
-            "Ensure the profile exists in ~/.workflows/llm-config.yml."
+            "Ensure the profile exists in the admin /llm configuration."
         )
     return resolved
 
@@ -1029,7 +1029,7 @@ def _build_invalid_profile_envelope(
             "retryable": False,
             "stage": stage,
             "actionable_fix": (
-                "Ensure the profile is defined in ~/.workflows/llm-config.yml "
+                "Ensure the profile is defined in the admin /llm configuration "
                 "and its provider is also configured."
             ),
         }

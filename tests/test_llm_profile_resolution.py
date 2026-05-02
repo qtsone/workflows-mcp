@@ -5,6 +5,9 @@ from pathlib import Path
 
 import pytest
 
+from workflows_mcp.engine.execution import Execution
+from workflows_mcp.engine.execution_context import ExecutionContext
+from workflows_mcp.engine.executors_image import ImageGenExecutor, ImageGenInput
 from workflows_mcp.engine.executors_llm import LLMCallExecutor, LLMCallInput
 from workflows_mcp.engine.llm_config import (
     LLMConfig,
@@ -137,6 +140,66 @@ class TestProfileValidation:
         assert inputs.provider is None
 
 
+class TestImageProfileResolution:
+    """Test ImageGen profile model resolution without making API calls."""
+
+    def _execution_with_loader(self, loader: LLMConfigLoader) -> Execution:
+        context = ExecutionContext(
+            workflow_registry=None,  # type: ignore[arg-type]
+            executor_registry=None,  # type: ignore[arg-type]
+            llm_config_loader=loader,
+            io_queue=None,
+        )
+        execution = Execution()
+        execution.set_execution_context(context)
+        return execution
+
+    @pytest.mark.asyncio
+    async def test_profile_only_uses_profile_image_model(self) -> None:
+        loader = LLMConfigLoader()
+        loader._config = LLMConfig(
+            providers={"openai-cloud": ProviderConfig(type="openai")},
+            profiles={
+                "image": ProfileConfig(provider="openai-cloud", model="gpt-image-1")
+            },
+            default_profile="image",
+        )
+        inputs = ImageGenInput(profile="image", prompt="paint a red square")
+
+        resolved = await ImageGenExecutor()._resolve_profile_to_inputs(
+            inputs, self._execution_with_loader(loader)
+        )
+
+        assert resolved.model == "gpt-image-1"
+
+    def test_direct_image_generation_defaults_to_dall_e_3(self) -> None:
+        inputs = ImageGenInput(provider="openai", prompt="paint a red square")
+
+        assert inputs.model == "dall-e-3"
+
+    @pytest.mark.asyncio
+    async def test_explicit_model_with_profile_remains_inline_override(self) -> None:
+        loader = LLMConfigLoader()
+        loader._config = LLMConfig(
+            providers={"openai-cloud": ProviderConfig(type="openai")},
+            profiles={
+                "image": ProfileConfig(provider="openai-cloud", model="gpt-image-1")
+            },
+            default_profile="image",
+        )
+        inputs = ImageGenInput(
+            profile="image",
+            model="dall-e-3",
+            prompt="paint a red square",
+        )
+
+        resolved = await ImageGenExecutor()._resolve_profile_to_inputs(
+            inputs, self._execution_with_loader(loader)
+        )
+
+        assert resolved.model == "dall-e-3"
+
+
 class TestSQLiteBackedLoader:
     def _seed_sqlite_llm_config(
         self,
@@ -204,6 +267,33 @@ default_profile: yaml-only
 
         assert resolved is not None
         assert resolved.model == "gpt-4o-mini"
+
+    def test_loader_without_metadata_db_ignores_legacy_yaml_paths(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        yaml_path = tmp_path / "llm-config.yml"
+        yaml_path.write_text(
+            """
+version: "1.0"
+providers:
+  from-yaml:
+    type: openai
+profiles:
+  yaml-only:
+    provider: from-yaml
+    model: gpt-4o
+default_profile: yaml-only
+""".strip(),
+            encoding="utf-8",
+        )
+        monkeypatch.setenv("WORKFLOWS_LLM_CONFIG", str(yaml_path))
+
+        loader = LLMConfigLoader()
+        config = loader.load_config()
+
+        assert config == LLMConfig()
+        with pytest.raises(ValueError, match="No profiles configured"):
+            loader.resolve_profile("yaml-only")
 
     def test_build_resources_wires_loader_to_base_dir_server_db(self, tmp_path: Path) -> None:
         base_dir = tmp_path / ".workflows"

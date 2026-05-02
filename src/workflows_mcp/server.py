@@ -507,7 +507,6 @@ def build_app(*, base_dir: Path | None = None) -> "FastAPI":
         Fully configured application ready for ASGI / Uvicorn.
     """
     from .auth import TokenStore
-    from .config_service import ConfigService
     from .http_app import create_app
     from .postgres_probe import PostgresProbe
     from .readiness import ReadinessService
@@ -518,7 +517,6 @@ def build_app(*, base_dir: Path | None = None) -> "FastAPI":
 
     token_store = TokenStore(resolved_base / "auth.json")
 
-    config_service = ConfigService(base_dir=resolved_base)
     readiness_service = ReadinessService(
         base_dir=resolved_base,
         probe=PostgresProbe.from_env(),
@@ -545,7 +543,6 @@ def build_app(*, base_dir: Path | None = None) -> "FastAPI":
     app = create_app(
         readiness_service=readiness_service,
         token_store=token_store,
-        config_service=config_service,
         require_frontend_assets=require_frontend_assets,
         lifespan=_http_lifespan,
     )

@@ -105,17 +105,16 @@ async def sync_now(
             )
 
         try:
-            scanned_paths = scan_project_files(FilePath(project.fs_root))
+            scan_project_files(FilePath(project.fs_root))
         except FileNotFoundError:
-            scanned_paths = []
-
-        for scanned_path in scanned_paths:
-            repo.enqueue_dirty(
+            dirty_count = repo.count_active_dirty(project_id=project_id)
+            return SyncNowResponse(
                 project_id=project_id,
-                path=scanned_path.as_posix(),
-                event_type="modified",
-                reason="scan_now",
+                status="queued" if dirty_count > 0 else "idle",
+                dirty_count=dirty_count,
             )
+
+        repo.mark_active_dirty_processed(project_id=project_id)
 
         dirty_count = repo.count_active_dirty(project_id=project_id)
         return SyncNowResponse(

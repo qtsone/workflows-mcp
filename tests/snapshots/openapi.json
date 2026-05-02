@@ -160,18 +160,78 @@
             "title": "Configured",
             "type": "boolean"
           },
+          "container_host_port": {
+            "title": "Container Host Port",
+            "type": "integer"
+          },
+          "container_image": {
+            "title": "Container Image",
+            "type": "string"
+          },
+          "container_name": {
+            "title": "Container Name",
+            "type": "string"
+          },
+          "database": {
+            "title": "Database",
+            "type": "string"
+          },
           "enabled": {
             "title": "Enabled",
             "type": "boolean"
           },
+          "extra_params": {
+            "title": "Extra Params",
+            "type": "string"
+          },
+          "host": {
+            "title": "Host",
+            "type": "string"
+          },
+          "legacy_profile_reentry_required": {
+            "title": "Legacy Profile Reentry Required",
+            "type": "boolean"
+          },
+          "password_configured": {
+            "title": "Password Configured",
+            "type": "boolean"
+          },
+          "port": {
+            "title": "Port",
+            "type": "integer"
+          },
+          "ssl_mode": {
+            "title": "Ssl Mode",
+            "type": "string"
+          },
           "updated_at": {
             "title": "Updated At",
+            "type": "string"
+          },
+          "username": {
+            "title": "Username",
+            "type": "string"
+          },
+          "volume_name": {
+            "title": "Volume Name",
             "type": "string"
           }
         },
         "required": [
           "enabled",
           "configured",
+          "password_configured",
+          "legacy_profile_reentry_required",
+          "host",
+          "port",
+          "database",
+          "username",
+          "ssl_mode",
+          "extra_params",
+          "container_name",
+          "container_image",
+          "container_host_port",
+          "volume_name",
           "updated_at"
         ],
         "title": "DatabaseSettingsResponse",
@@ -336,7 +396,7 @@
         "type": "object"
       },
       "LLMConfig": {
-        "description": "Root LLM configuration model.\n\nValidates the complete llm-config.yml structure with schema versioning.",
+        "description": "Root LLM configuration model.\n\nValidates the complete LLM provider/profile structure with schema versioning.",
         "properties": {
           "default_profile": {
             "anyOf": [
@@ -1113,30 +1173,112 @@
         "type": "object"
       },
       "SavePostgresSettingsRequest": {
-        "examples": [
-          {
-            "dsn": "postgresql://wf_user:password@127.0.0.1:5432/workflows",
-            "enabled": true
-          }
-        ],
+        "additionalProperties": false,
         "properties": {
-          "dsn": {
+          "container_host_port": {
+            "default": 5432,
+            "maximum": 65535.0,
+            "minimum": 1.0,
+            "title": "Container Host Port",
+            "type": "integer"
+          },
+          "container_image": {
+            "default": "pgvector/pgvector:pg17",
+            "maxLength": 255,
+            "minLength": 1,
+            "title": "Container Image",
+            "type": "string"
+          },
+          "container_name": {
+            "default": "workflows-postgres",
+            "pattern": "^[a-zA-Z0-9][a-zA-Z0-9_.-]{0,127}$",
+            "title": "Container Name",
+            "type": "string"
+          },
+          "database": {
+            "default": "workflows",
+            "maxLength": 63,
+            "minLength": 1,
+            "title": "Database",
+            "type": "string"
+          },
+          "dsn_import": {
             "anyOf": [
               {
-                "maxLength": 65536,
-                "minLength": 1,
                 "type": "string"
               },
               {
                 "type": "null"
               }
             ],
-            "title": "Dsn"
+            "title": "Dsn Import"
           },
           "enabled": {
             "default": true,
             "title": "Enabled",
             "type": "boolean"
+          },
+          "extra_params": {
+            "default": "",
+            "maxLength": 2048,
+            "title": "Extra Params",
+            "type": "string"
+          },
+          "host": {
+            "default": "127.0.0.1",
+            "maxLength": 253,
+            "minLength": 1,
+            "title": "Host",
+            "type": "string"
+          },
+          "password": {
+            "anyOf": [
+              {
+                "maxLength": 1024,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Password"
+          },
+          "password_clear": {
+            "default": false,
+            "title": "Password Clear",
+            "type": "boolean"
+          },
+          "port": {
+            "default": 5432,
+            "maximum": 65535.0,
+            "minimum": 1.0,
+            "title": "Port",
+            "type": "integer"
+          },
+          "ssl_mode": {
+            "default": "disable",
+            "enum": [
+              "disable",
+              "prefer",
+              "require",
+              "verify-ca",
+              "verify-full"
+            ],
+            "title": "Ssl Mode",
+            "type": "string"
+          },
+          "username": {
+            "default": "workflows",
+            "maxLength": 63,
+            "minLength": 1,
+            "title": "Username",
+            "type": "string"
+          },
+          "volume_name": {
+            "default": "workflows-postgres-data",
+            "pattern": "^[a-zA-Z0-9][a-zA-Z0-9_.-]{0,127}$",
+            "title": "Volume Name",
+            "type": "string"
           }
         },
         "title": "SavePostgresSettingsRequest",

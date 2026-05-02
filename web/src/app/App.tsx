@@ -11,7 +11,7 @@ import {
   WatcherStateItem,
 } from "../api/events";
 import { ServerPathPicker, type PathListing } from "./ServerPathPicker";
-import { ActionButton, FolderIcon, PageHeader, Panel, StatusBadge } from "./ui";
+import { ActionButton, CopyIcon, FolderIcon, PageHeader, Panel, ProjectMultiSelect, ProjectSelect, StatusBadge } from "./ui";
 
 type RouteDefinition = {
   path: string;
@@ -164,6 +164,72 @@ type DatabaseProfileForm = {
   dsnImport: string;
 };
 
+type ProviderConfig = {
+  type: string;
+  api_url: string | null;
+  api_key_secret: string | null;
+  model: string | null;
+  timeout: number | null;
+  max_retries: number | null;
+  retry_delay: number | null;
+  extra_headers: Record<string, string>;
+  deployment_name: string | null;
+  api_version: string | null;
+};
+
+type ProfileConfig = {
+  provider: string;
+  model: string;
+  temperature: number | null;
+  max_tokens: number | null;
+  description: string | null;
+};
+
+type LlmConfigModel = {
+  version: "1.0";
+  providers: Record<string, ProviderConfig>;
+  profiles: Record<string, ProfileConfig>;
+  default_profile: string | null;
+};
+
+type ProviderConfigPayload = Omit<ProviderConfig, "timeout" | "max_retries" | "retry_delay"> & {
+  timeout?: number;
+  max_retries?: number;
+  retry_delay?: number;
+};
+
+type ProfileConfigPayload = ProfileConfig;
+
+type LlmConfigPayload = {
+  version: "1.0";
+  providers: Record<string, ProviderConfigPayload>;
+  profiles: Record<string, ProfileConfigPayload>;
+  default_profile: string | null;
+};
+
+type LlmProviderForm = {
+  id: string;
+  type: string;
+  apiUrl: string;
+  apiKeySecret: string;
+  model: string;
+  timeout: string;
+  maxRetries: string;
+  retryDelay: string;
+  extraHeaders: string;
+  deploymentName: string;
+  apiVersion: string;
+};
+
+type LlmProfileForm = {
+  id: string;
+  provider: string;
+  model: string;
+  temperature: string;
+  maxTokens: string;
+  description: string;
+};
+
 type ConnectionTestModel = {
   ok: boolean;
   status: string;
@@ -313,6 +379,36 @@ const DEFAULT_DATABASE_FORM: DatabaseProfileForm = {
   dsnImport: "",
 };
 
+const EMPTY_LLM_CONFIG: LlmConfigModel = {
+  version: "1.0",
+  providers: {},
+  profiles: {},
+  default_profile: null,
+};
+
+const DEFAULT_LLM_PROVIDER_FORM: LlmProviderForm = {
+  id: "",
+  type: "",
+  apiUrl: "",
+  apiKeySecret: "",
+  model: "",
+  timeout: "",
+  maxRetries: "",
+  retryDelay: "",
+  extraHeaders: "{}",
+  deploymentName: "",
+  apiVersion: "",
+};
+
+const DEFAULT_LLM_PROFILE_FORM: LlmProfileForm = {
+  id: "",
+  provider: "",
+  model: "",
+  temperature: "",
+  maxTokens: "",
+  description: "",
+};
+
 function toNonEmptyString(value: unknown): string | null {
   if (typeof value !== "string") return null;
   const trimmed = value.trim();
@@ -337,6 +433,119 @@ function toUserError(error: unknown, fallback: string): string {
 
 function toObject(value: unknown): Record<string, unknown> {
   return value && typeof value === "object" ? (value as Record<string, unknown>) : {};
+}
+
+function toNullableString(value: unknown): string | null {
+  return typeof value === "string" && value.trim().length > 0 ? value.trim() : null;
+}
+
+function toNullableNumber(value: unknown): number | null {
+  if (typeof value === "number" && Number.isFinite(value)) return value;
+  if (typeof value === "string" && value.trim().length > 0) {
+    const parsed = Number(value);
+    return Number.isFinite(parsed) ? parsed : null;
+  }
+  return null;
+}
+
+function toStringMap(value: unknown): Record<string, string> {
+  const obj = toObject(value);
+  return Object.fromEntries(
+    Object.entries(obj)
+      .filter((entry): entry is [string, string] => typeof entry[1] === "string")
+      .map(([key, val]) => [key, val]),
+  );
+}
+
+function toLlmProviderConfig(payload: unknown): ProviderConfig {
+  const obj = toObject(payload);
+  return {
+    type: typeof obj.type === "string" ? obj.type : "",
+    api_url: toNullableString(obj.api_url),
+    api_key_secret: toNullableString(obj.api_key_secret),
+    model: toNullableString(obj.model),
+    timeout: toNullableNumber(obj.timeout),
+    max_retries: toNullableNumber(obj.max_retries),
+    retry_delay: toNullableNumber(obj.retry_delay),
+    extra_headers: toStringMap(obj.extra_headers),
+    deployment_name: toNullableString(obj.deployment_name),
+    api_version: toNullableString(obj.api_version),
+  };
+}
+
+function toLlmProfileConfig(payload: unknown): ProfileConfig {
+  const obj = toObject(payload);
+  return {
+    provider: typeof obj.provider === "string" ? obj.provider : "",
+    model: toNullableString(obj.model) ?? "",
+    temperature: toNullableNumber(obj.temperature),
+    max_tokens: toNullableNumber(obj.max_tokens),
+    description: toNullableString(obj.description),
+  };
+}
+
+function toLlmConfigModel(payload: unknown): LlmConfigModel {
+  const obj = toObject(payload);
+  const providersObj = toObject(obj.providers);
+  const profilesObj = toObject(obj.profiles);
+  const providers = Object.fromEntries(
+    Object.entries(providersObj).map(([key, value]) => [key, toLlmProviderConfig(value)]),
+  );
+  const profiles = Object.fromEntries(
+    Object.entries(profilesObj).map(([key, value]) => [key, toLlmProfileConfig(value)]),
+  );
+  const defaultProfile = toNullableString(obj.default_profile);
+  return {
+    version: "1.0",
+    providers,
+    profiles,
+    default_profile: defaultProfile && profiles[defaultProfile] ? defaultProfile : null,
+  };
+}
+
+function toLlmProviderForm(id: string, provider: ProviderConfig): LlmProviderForm {
+  return {
+    id,
+    type: provider.type,
+    apiUrl: provider.api_url ?? "",
+    apiKeySecret: provider.api_key_secret ?? "",
+    model: provider.model ?? "",
+    timeout: provider.timeout === null ? "" : String(provider.timeout),
+    maxRetries: provider.max_retries === null ? "" : String(provider.max_retries),
+    retryDelay: provider.retry_delay === null ? "" : String(provider.retry_delay),
+    extraHeaders: JSON.stringify(provider.extra_headers, null, 2),
+    deploymentName: provider.deployment_name ?? "",
+    apiVersion: provider.api_version ?? "",
+  };
+}
+
+function toLlmProfileForm(id: string, profile: ProfileConfig): LlmProfileForm {
+  return {
+    id,
+    provider: profile.provider,
+    model: profile.model,
+    temperature: profile.temperature === null ? "" : String(profile.temperature),
+    maxTokens: profile.max_tokens === null ? "" : String(profile.max_tokens),
+    description: profile.description ?? "",
+  };
+}
+
+function parseExtraHeaders(value: string): Record<string, string> {
+  const trimmed = value.trim();
+  if (trimmed.length === 0) return {};
+  const parsed = JSON.parse(trimmed) as unknown;
+  const obj = toObject(parsed);
+  const invalid = Object.entries(obj).find(([, val]) => typeof val !== "string");
+  if (invalid) throw new Error("Extra headers must be a JSON object with string values.");
+  return toStringMap(obj);
+}
+
+function numberField(value: string, label: string): number | null {
+  const trimmed = value.trim();
+  if (trimmed.length === 0) return null;
+  const parsed = Number(trimmed);
+  if (!Number.isFinite(parsed)) throw new Error(`${label} must be a number.`);
+  return parsed;
 }
 
 function toDatabaseSettingsModel(payload: unknown): DatabaseSettingsModel {
@@ -541,6 +750,37 @@ function navigateBrowser(path: string, { replace = false }: NavigateOptions = {}
   window.dispatchEvent(new PopStateEvent("popstate"));
 }
 
+async function copyTextToClipboard(text: string): Promise<void> {
+  try {
+    if (typeof navigator.clipboard?.writeText === "function") {
+      await navigator.clipboard.writeText(text);
+      return;
+    }
+  } catch {
+    // Fall through to the selection-based copy path for embedded browsers.
+  }
+
+  const textarea = document.createElement("textarea");
+  textarea.value = text;
+  textarea.setAttribute("readonly", "");
+  textarea.style.position = "fixed";
+  textarea.style.left = "-9999px";
+  textarea.style.top = "0";
+  textarea.style.opacity = "0";
+
+  document.body.appendChild(textarea);
+  textarea.focus();
+  textarea.select();
+
+  try {
+    if (typeof document.execCommand !== "function" || !document.execCommand("copy")) {
+      throw new Error("Clipboard fallback failed");
+    }
+  } finally {
+    textarea.remove();
+  }
+}
+
 export function App(): JSX.Element {
   const [currentPath, setCurrentPath] = useState(() => window.location.pathname);
   const route = ROUTES.find((entry) => entry.path === currentPath);
@@ -565,6 +805,7 @@ export function App(): JSX.Element {
   const [dbConnectionMessage, setDbConnectionMessage] = useState("");
   const [dbCopyStatus, setDbCopyStatus] = useState("");
   const [dbCopyError, setDbCopyError] = useState("");
+  const [dbSavedPasswordForCopy, setDbSavedPasswordForCopy] = useState<string | null>(null);
   const [projects, setProjects] = useState<ProjectModel[]>([]);
   const [projectsLoading, setProjectsLoading] = useState(false);
   const [projectMessage, setProjectMessage] = useState("");
@@ -592,7 +833,7 @@ export function App(): JSX.Element {
   const [mcpCreatePending, setMcpCreatePending] = useState(false);
   const [mcpMutationPendingId, setMcpMutationPendingId] = useState<string | null>(null);
   const [mcpLabel, setMcpLabel] = useState("");
-  const [mcpProjectIdsInput, setMcpProjectIdsInput] = useState("");
+  const [mcpSelectedProjectIds, setMcpSelectedProjectIds] = useState<string[]>([]);
   const [oneTimeMcpSecret, setOneTimeMcpSecret] = useState<OneTimeMcpSecret | null>(null);
   const [watchersRows, setWatchersRows] = useState<WatcherDashboardRow[]>([]);
   const [watchersLoading, setWatchersLoading] = useState(false);
@@ -604,6 +845,7 @@ export function App(): JSX.Element {
   const [syncError, setSyncError] = useState("");
   const [syncMessage, setSyncMessage] = useState("");
   const [syncPendingAction, setSyncPendingAction] = useState<string | null>(null);
+  const [selectedSyncProjectId, setSelectedSyncProjectId] = useState("");
   const [workflowsLoading, setWorkflowsLoading] = useState(false);
   const [workflowsError, setWorkflowsError] = useState("");
   const [workflowsMessage, setWorkflowsMessage] = useState("");
@@ -627,6 +869,16 @@ export function App(): JSX.Element {
   const [runFilterLimit, setRunFilterLimit] = useState("50");
   const [runFilterOffset, setRunFilterOffset] = useState("0");
   const [runActionPendingId, setRunActionPendingId] = useState<string | null>(null);
+  const [llmConfig, setLlmConfig] = useState<LlmConfigModel>(EMPTY_LLM_CONFIG);
+  const [llmLoading, setLlmLoading] = useState(false);
+  const [llmSaving, setLlmSaving] = useState(false);
+  const [llmError, setLlmError] = useState("");
+  const [llmMessage, setLlmMessage] = useState("");
+  const [llmProviderForm, setLlmProviderForm] = useState<LlmProviderForm>(DEFAULT_LLM_PROVIDER_FORM);
+  const [llmProfileForm, setLlmProfileForm] = useState<LlmProfileForm>(DEFAULT_LLM_PROFILE_FORM);
+  const [llmYamlImport, setLlmYamlImport] = useState("");
+  const [llmYamlExport, setLlmYamlExport] = useState("");
+  const [llmPreview, setLlmPreview] = useState<LlmConfigModel | null>(null);
 
   const api = useMemo(
     () =>
@@ -642,14 +894,25 @@ export function App(): JSX.Element {
     [],
   );
 
-  const loadProjects = async (): Promise<void> => {
+  const loadProjects = async (): Promise<ProjectModel[]> => {
     setProjectsLoading(true);
     setProjectError("");
     try {
       const result = await api.listProjects();
-      setProjects(result.projects.map(toProjectModel));
+      const projectModels = result.projects.map(toProjectModel);
+      const validProjectIds = new Set(projectModels.map((project) => project.id));
+      setProjects(projectModels);
+      setMcpSelectedProjectIds((current) => current.filter((projectId) => validProjectIds.has(projectId)));
+      if (selectedSyncProjectId && !validProjectIds.has(selectedSyncProjectId)) {
+        setSelectedSyncProjectId("");
+      }
+      if (workflowSourceProjectId && !validProjectIds.has(workflowSourceProjectId)) {
+        setWorkflowSourceProjectId("");
+      }
+      return projectModels;
     } catch (error) {
       setProjectError(toUserError(error, "Unable to load projects. Confirm your admin session and retry."));
+      return [];
     } finally {
       setProjectsLoading(false);
     }
@@ -680,7 +943,9 @@ export function App(): JSX.Element {
         api.listWorkflows(),
         api.listWorkflowSources(),
       ]);
-      setWorkflowProjectsCount(projectsPayload.projects.length);
+      const projectModels = projectsPayload.projects.map(toProjectModel);
+      setProjects(projectModels);
+      setWorkflowProjectsCount(projectModels.length);
       setWorkflowsList(workflowsPayload.workflows.map(toWorkflowSummaryModel));
       setWorkflowSources(sourcesPayload.sources.map(toWorkflowSourceModel));
     } catch (error) {
@@ -706,6 +971,19 @@ export function App(): JSX.Element {
       setRunsError(toUserError(error, "Unable to load runs. Confirm your admin session and retry."));
     } finally {
       setRunsLoading(false);
+    }
+  };
+
+  const loadLlmConfig = async (): Promise<void> => {
+    setLlmLoading(true);
+    setLlmError("");
+    try {
+      const payload = await api.getLlmConfig();
+      setLlmConfig(toLlmConfigModel(payload));
+    } catch (error) {
+      setLlmError(toUserError(error, "Unable to load LLM configuration."));
+    } finally {
+      setLlmLoading(false);
     }
   };
 
@@ -821,10 +1099,7 @@ export function App(): JSX.Element {
           const llmObj = toObject(llmConfig);
           const providers = toObject(llmObj.providers);
           const profiles = toObject(llmObj.profiles);
-          const llmConfigured =
-            Object.keys(providers).length > 0 ||
-            Object.keys(profiles).length > 0 ||
-            Object.keys(llmObj).length > 0;
+          const llmConfigured = Object.keys(providers).length > 0 && Object.keys(profiles).length > 0;
           if (!cancelled) {
             setSetupDashboard({
               loading: false,
@@ -849,6 +1124,7 @@ export function App(): JSX.Element {
             setDbSaveMessage("");
             setDbConnectionMessage("");
             setDbConnectionResult(null);
+            setDbSavedPasswordForCopy(null);
           }
           await api.getCsrf();
           const [guidancePayload, settingsPayload] = await Promise.all([
@@ -882,7 +1158,14 @@ export function App(): JSX.Element {
           return;
         }
         if (currentPath === "/llm") {
-          if (!cancelled) setContentState("LLM admin controls are available in a follow-up slice.");
+          if (!cancelled) {
+            setContentState("");
+            setLlmMessage("");
+            setLlmError("");
+            setLlmYamlExport("");
+            setLlmPreview(null);
+            await loadLlmConfig();
+          }
           return;
         }
         if (currentPath === "/secrets") {
@@ -898,6 +1181,7 @@ export function App(): JSX.Element {
           }
           const projectsPayload = await api.listProjects();
           const projectModels = projectsPayload.projects.map(toProjectModel);
+          if (!cancelled) setProjects(projectModels);
           const projectNameById = toProjectNameById(projectModels);
           const statePayload = await fetchWatcherState();
           if (!cancelled) {
@@ -952,6 +1236,12 @@ export function App(): JSX.Element {
           }
           const projectsPayload = await api.listProjects();
           const projectModels = projectsPayload.projects.map(toProjectModel);
+          if (!cancelled) {
+            setProjects(projectModels);
+            if (selectedSyncProjectId && !projectModels.some((project) => project.id === selectedSyncProjectId)) {
+              setSelectedSyncProjectId("");
+            }
+          }
           const statePayload = await fetchSyncState();
           if (!cancelled) {
             setSyncRows(buildSyncDashboardRows(statePayload.items, projectModels));
@@ -1001,7 +1291,7 @@ export function App(): JSX.Element {
             setContentState("");
             setMcpMessage("");
             setMcpError("");
-            await loadMcpClients();
+            await Promise.all([loadProjects(), loadMcpClients()]);
           }
           return;
         }
@@ -1079,6 +1369,10 @@ export function App(): JSX.Element {
     try {
       const projects = (await api.listProjects()).projects.map(toProjectModel);
       const payload = await fetchSyncState();
+      setProjects(projects);
+      if (selectedSyncProjectId && !projects.some((project) => project.id === selectedSyncProjectId)) {
+        setSelectedSyncProjectId("");
+      }
       setSyncRows(buildSyncDashboardRows(payload.items, projects));
     } catch (error) {
       setSyncError(toUserError(error, "Unable to refresh sync queue status."));
@@ -1254,6 +1548,7 @@ export function App(): JSX.Element {
     const errors: Partial<Record<keyof DatabaseProfileForm, string>> = {};
     const port = Number.parseInt(dbForm.port, 10);
     const hostPort = Number.parseInt(dbForm.containerHostPort, 10);
+    const savedPasswordForCopy = dbForm.passwordClear || dbForm.password.length === 0 ? null : dbForm.password;
 
     if (dbForm.enabled) {
       if (dbForm.host.trim().length === 0) errors.host = "Host is required.";
@@ -1305,6 +1600,7 @@ export function App(): JSX.Element {
       const settings = toDatabaseSettingsModel(payload);
       setDbSettings(settings);
       setDbForm((current) => ({ ...toDatabaseForm(settings), password: "", dsnImport: current.dsnImport }));
+      setDbSavedPasswordForCopy(savedPasswordForCopy);
       setDbSaveMessage("Database settings saved.");
     } catch (error) {
       setDbSaveMessage(toUserError(error, "Unable to save database settings."));
@@ -1333,10 +1629,7 @@ export function App(): JSX.Element {
     setDbCopyStatus("");
     setDbCopyError("");
     try {
-      if (typeof navigator.clipboard?.writeText !== "function") {
-        throw new Error("Clipboard API unavailable");
-      }
-      await navigator.clipboard.writeText(command);
+      await copyTextToClipboard(command);
       setDbCopyStatus(`${label} command copied to clipboard.`);
     } catch {
       setDbCopyError("Unable to copy command to clipboard.");
@@ -1465,7 +1758,7 @@ export function App(): JSX.Element {
     try {
       const result = await api.createMcpClient({
         label: mcpLabel.trim(),
-        project_ids: normalizePathList(mcpProjectIdsInput),
+        project_ids: mcpSelectedProjectIds,
       });
       const token = toNonEmptyString(result.token);
       if (!token) {
@@ -1482,7 +1775,7 @@ export function App(): JSX.Element {
       });
       setMcpMessage("MCP client created. Save the token now—it will not be shown again.");
       setMcpLabel("");
-      setMcpProjectIdsInput("");
+      setMcpSelectedProjectIds([]);
       await loadMcpClients();
       setOneTimeMcpSecret({
         token,
@@ -1490,7 +1783,7 @@ export function App(): JSX.Element {
         label: secretLabel,
       });
     } catch (error) {
-      setMcpError(toUserError(error, "Unable to create MCP client. Confirm label and project IDs."));
+      setMcpError(toUserError(error, "Unable to create MCP client. Confirm label and project access."));
     } finally {
       setMcpCreatePending(false);
     }
@@ -1543,6 +1836,249 @@ export function App(): JSX.Element {
     }
   };
 
+  const normalizedLlmConfig = (config: LlmConfigModel): LlmConfigModel => {
+    const profiles = Object.fromEntries(
+      Object.entries(config.profiles).map(([id, profile]) => [
+        id,
+        {
+          provider: profile.provider.trim(),
+          model: profile.model.trim(),
+          temperature: profile.temperature,
+          max_tokens: profile.max_tokens,
+          description: profile.description,
+        },
+      ]),
+    );
+    const defaultProfile = config.default_profile && profiles[config.default_profile] ? config.default_profile : null;
+    return {
+      version: "1.0",
+      providers: Object.fromEntries(
+        Object.entries(config.providers).map(([id, provider]) => [
+          id,
+          {
+            type: provider.type.trim(),
+            api_url: provider.api_url,
+            api_key_secret: provider.api_key_secret,
+            model: provider.model,
+            timeout: provider.timeout,
+            max_retries: provider.max_retries,
+            retry_delay: provider.retry_delay,
+            extra_headers: provider.extra_headers,
+            deployment_name: provider.deployment_name,
+            api_version: provider.api_version,
+          },
+        ]),
+      ),
+      profiles,
+      default_profile: defaultProfile,
+    };
+  };
+
+  const llmConfigPayload = (config: LlmConfigModel): LlmConfigPayload => {
+    const normalized = normalizedLlmConfig(config);
+    const providers = Object.fromEntries(
+      Object.entries(normalized.providers).map(([id, provider]) => {
+        const payload: ProviderConfigPayload = {
+          type: provider.type,
+          api_url: provider.api_url,
+          api_key_secret: provider.api_key_secret,
+          model: provider.model,
+          extra_headers: provider.extra_headers,
+          deployment_name: provider.deployment_name,
+          api_version: provider.api_version,
+        };
+        if (provider.timeout !== null) payload.timeout = provider.timeout;
+        if (provider.max_retries !== null) payload.max_retries = provider.max_retries;
+        if (provider.retry_delay !== null) payload.retry_delay = provider.retry_delay;
+        return [id, payload];
+      }),
+    );
+    return { ...normalized, providers };
+  };
+
+  const validateLlmConfig = (config: LlmConfigModel): string | null => {
+    for (const [profileId, profile] of Object.entries(config.profiles)) {
+      if (!config.providers[profile.provider]) {
+        return `Profile ${profileId} references missing provider ${profile.provider}.`;
+      }
+      if (profile.model.trim().length === 0) {
+        return `Profile ${profileId} model is required.`;
+      }
+    }
+    if (config.default_profile && !config.profiles[config.default_profile]) {
+      return `Default profile ${config.default_profile} does not exist.`;
+    }
+    return null;
+  };
+
+  const onSaveLlmProvider = (event: FormEvent<HTMLFormElement>): void => {
+    event.preventDefault();
+    setLlmError("");
+    setLlmMessage("");
+    try {
+      const id = llmProviderForm.id.trim();
+      if (!VALID_NAME_PATTERN.test(id)) throw new Error("Provider ID must match ^[a-zA-Z0-9][a-zA-Z0-9_.-]{0,127}$.");
+      if (llmProviderForm.type.trim().length === 0) throw new Error("Provider type is required.");
+      const provider: ProviderConfig = {
+        type: llmProviderForm.type.trim(),
+        api_url: toNullableString(llmProviderForm.apiUrl),
+        api_key_secret: toNullableString(llmProviderForm.apiKeySecret),
+        model: toNullableString(llmProviderForm.model),
+        timeout: numberField(llmProviderForm.timeout, "Timeout"),
+        max_retries: numberField(llmProviderForm.maxRetries, "Max retries"),
+        retry_delay: numberField(llmProviderForm.retryDelay, "Retry delay"),
+        extra_headers: parseExtraHeaders(llmProviderForm.extraHeaders),
+        deployment_name: toNullableString(llmProviderForm.deploymentName),
+        api_version: toNullableString(llmProviderForm.apiVersion),
+      };
+      setLlmConfig((current) => normalizedLlmConfig({
+        ...current,
+        providers: { ...current.providers, [id]: provider },
+      }));
+      setLlmProviderForm(DEFAULT_LLM_PROVIDER_FORM);
+      setLlmMessage(`Provider ${id} staged. Save LLM configuration to persist.`);
+    } catch (error) {
+      setLlmError(toUserError(error, "Unable to stage provider."));
+    }
+  };
+
+  const onEditLlmProvider = (providerId: string): void => {
+    const provider = llmConfig.providers[providerId];
+    if (!provider) return;
+    setLlmProviderForm(toLlmProviderForm(providerId, provider));
+    setLlmMessage(`Editing provider ${providerId}.`);
+  };
+
+  const onDeleteLlmProvider = (providerId: string): void => {
+    const referencingProfiles = Object.entries(llmConfig.profiles)
+      .filter(([, profile]) => profile.provider === providerId)
+      .map(([profileId]) => profileId);
+    setLlmError("");
+    setLlmMessage("");
+    if (referencingProfiles.length > 0) {
+      setLlmError(`Cannot delete provider ${providerId}; remove or reassign profiles first: ${referencingProfiles.join(", ")}.`);
+      return;
+    }
+    setLlmConfig((current) => {
+      const nextProviders = { ...current.providers };
+      delete nextProviders[providerId];
+      return normalizedLlmConfig({ ...current, providers: nextProviders });
+    });
+    setLlmMessage(`Provider ${providerId} staged for deletion. Save LLM configuration to persist.`);
+  };
+
+  const onSaveLlmProfile = (event: FormEvent<HTMLFormElement>): void => {
+    event.preventDefault();
+    setLlmError("");
+    setLlmMessage("");
+    try {
+      const id = llmProfileForm.id.trim();
+      if (!VALID_NAME_PATTERN.test(id)) throw new Error("Profile ID must match ^[a-zA-Z0-9][a-zA-Z0-9_.-]{0,127}$.");
+      if (!llmConfig.providers[llmProfileForm.provider]) throw new Error("Profile provider must reference an existing provider.");
+      const model = llmProfileForm.model.trim();
+      if (model.length === 0) throw new Error("Profile model is required.");
+      const profile: ProfileConfig = {
+        provider: llmProfileForm.provider,
+        model,
+        temperature: numberField(llmProfileForm.temperature, "Temperature"),
+        max_tokens: numberField(llmProfileForm.maxTokens, "Max tokens"),
+        description: toNullableString(llmProfileForm.description),
+      };
+      setLlmConfig((current) => normalizedLlmConfig({
+        ...current,
+        profiles: { ...current.profiles, [id]: profile },
+      }));
+      setLlmProfileForm(DEFAULT_LLM_PROFILE_FORM);
+      setLlmMessage(`Profile ${id} staged. Save LLM configuration to persist.`);
+    } catch (error) {
+      setLlmError(toUserError(error, "Unable to stage profile."));
+    }
+  };
+
+  const onEditLlmProfile = (profileId: string): void => {
+    const profile = llmConfig.profiles[profileId];
+    if (!profile) return;
+    setLlmProfileForm(toLlmProfileForm(profileId, profile));
+    setLlmMessage(`Editing profile ${profileId}.`);
+  };
+
+  const onDeleteLlmProfile = (profileId: string): void => {
+    setLlmError("");
+    setLlmMessage("");
+    setLlmConfig((current) => {
+      const nextProfiles = { ...current.profiles };
+      delete nextProfiles[profileId];
+      return normalizedLlmConfig({
+        ...current,
+        profiles: nextProfiles,
+        default_profile: current.default_profile === profileId ? null : current.default_profile,
+      });
+    });
+    setLlmMessage(`Profile ${profileId} staged for deletion. Save LLM configuration to persist.`);
+  };
+
+  const onSaveLlmConfig = async (): Promise<void> => {
+    setLlmSaving(true);
+    setLlmError("");
+    setLlmMessage("");
+    try {
+      const normalized = normalizedLlmConfig(llmConfig);
+      const validationError = validateLlmConfig(normalized);
+      if (validationError) {
+        setLlmError(validationError);
+        return;
+      }
+      const payload = llmConfigPayload(normalized);
+      const saved = await api.updateLlmConfig(payload);
+      setLlmConfig(toLlmConfigModel(saved));
+      setLlmMessage("LLM configuration saved.");
+    } catch (error) {
+      setLlmError(toUserError(error, "Unable to save LLM configuration."));
+    } finally {
+      setLlmSaving(false);
+    }
+  };
+
+  const onExportLlmYaml = async (): Promise<void> => {
+    setLlmError("");
+    setLlmMessage("");
+    try {
+      const payload = await api.exportLlmConfig();
+      const rawYaml = typeof payload.raw_yaml === "string" ? payload.raw_yaml : JSON.stringify(payload, null, 2);
+      setLlmYamlExport(rawYaml);
+      setLlmMessage("LLM YAML exported.");
+    } catch (error) {
+      setLlmError(toUserError(error, "Unable to export LLM YAML."));
+    }
+  };
+
+  const onPreviewLlmYaml = async (): Promise<void> => {
+    setLlmError("");
+    setLlmMessage("");
+    try {
+      const preview = toLlmConfigModel(await api.previewLlmConfig(llmYamlImport));
+      setLlmPreview(preview);
+      setLlmMessage(
+        `Preview loaded: ${Object.keys(preview.providers).length} providers, ${Object.keys(preview.profiles).length} profiles.`,
+      );
+    } catch (error) {
+      setLlmError(toUserError(error, "Unable to preview LLM YAML."));
+    }
+  };
+
+  const onImportLlmYaml = async (): Promise<void> => {
+    setLlmError("");
+    setLlmMessage("");
+    try {
+      const imported = toLlmConfigModel(await api.importLlmConfig(llmYamlImport));
+      setLlmConfig(imported);
+      setLlmPreview(null);
+      setLlmMessage("LLM YAML imported into SQLite-backed config.");
+    } catch (error) {
+      setLlmError(toUserError(error, "Unable to import LLM YAML."));
+    }
+  };
+
   const page = route
     ? { title: route.title, description: route.description, unknown: false }
     : currentPath === "/"
@@ -1560,18 +2096,41 @@ export function App(): JSX.Element {
   const previewUsername = dbForm.username.trim().length > 0 ? dbForm.username.trim() : "<username>";
   const previewPort = dbForm.port.trim().length > 0 ? dbForm.port.trim() : "5432";
   const previewContainerPort = dbForm.containerHostPort.trim().length > 0 ? dbForm.containerHostPort.trim() : "5432";
-  const dockerPreview =
-    `docker run --name ${quoteShellPreview(dbForm.containerName)} ` +
+  const buildRuntimeCommand = (engine: "docker" | "podman", password: string): string =>
+    `${engine} run --name ${quoteShellPreview(dbForm.containerName)} ` +
     `-e POSTGRES_DB=${quoteShellPreview(previewDatabase)} ` +
     `-e POSTGRES_USER=${quoteShellPreview(previewUsername)} ` +
-    `-e POSTGRES_PASSWORD=${quoteShellPreview(previewPassword)} ` +
+    `-e POSTGRES_PASSWORD=${quoteShellPreview(password)} ` +
     `-p ${quoteShellPreview(previewContainerPort)}:5432 ` +
     `-v ${quoteShellPreview(dbForm.volumeName)}:/var/lib/postgresql/data ` +
     `${quoteShellPreview(dbForm.containerImage)}`;
-  const podmanPreview = dockerPreview.replace(/^docker/, "podman");
+  const dockerPreview = buildRuntimeCommand("docker", previewPassword);
+  const podmanPreview = buildRuntimeCommand("podman", previewPassword);
+  const copyPassword =
+    dbForm.password.length > 0
+      ? dbForm.password
+      : !dbForm.passwordClear && dbSavedPasswordForCopy
+        ? dbSavedPasswordForCopy
+        : previewPassword;
+  const dockerCopyCommand = buildRuntimeCommand("docker", copyPassword);
+  const podmanCopyCommand = buildRuntimeCommand("podman", copyPassword);
   const dsnPreview =
     `postgresql://${quoteShellPreview(previewUsername)}:${quoteShellPreview(previewPassword)}` +
     `@${quoteShellPreview(previewHost)}:${quoteShellPreview(previewPort)}/${quoteShellPreview(previewDatabase)}`;
+  const projectReferenceById = new Map(projects.map((project) => [project.id, `${project.name} (${project.id})`]));
+  const formatProjectReference = (projectId: string): string => projectReferenceById.get(projectId) ?? projectId;
+  const visibleSyncRows = selectedSyncProjectId
+    ? syncRows.filter((row) => row.projectId === selectedSyncProjectId)
+    : syncRows;
+  const selectedSyncRow = selectedSyncProjectId
+    ? syncRows.find((row) => row.projectId === selectedSyncProjectId) ?? null
+    : null;
+  const syncDirtyTotal = syncRows.reduce((total, row) => total + row.dirtyCount, 0);
+  const syncReconcileCount = syncRows.filter((row) => row.requiresReconciliation).length;
+  const syncQueuedCount = syncRows.filter((row) => row.dirtyCount > 0 || row.syncState !== "idle").length;
+  const llmProviderEntries = Object.entries(llmConfig.providers);
+  const llmProfileEntries = Object.entries(llmConfig.profiles);
+  const llmDefaultProfileLabel = llmConfig.default_profile ?? "None";
 
   return (
     <div className="admin-shell">
@@ -1730,32 +2289,213 @@ export function App(): JSX.Element {
           ) : null}
 
           {currentPath === "/database" ? (
-            <section className="admin-section database-console" aria-label="Database management">
+            <section className="admin-section database-workbench" aria-label="Database management">
               {dbLoadError ? <p role="alert">{dbLoadError}</p> : null}
-              <div className="database-terminal-bar">
-                <p className="database-terminal-title">workflowsctl / database-profile / local</p>
-                <div className="database-terminal-chips" aria-label="Database profile status chips">
-                  <span className="database-chip">enabled: {dbForm.enabled ? "on" : "off"}</span>
-                  <span className="database-chip">configured: {dbSettings?.configured ? "yes" : "no"}</span>
-                  <span className="database-chip">
-                    password: {dbForm.password.length > 0 ? "typed" : dbForm.passwordConfigured ? "configured" : "pending"}
-                  </span>
-                  <span className="database-chip">legacy re-entry: {dbForm.dsnImport.trim().length > 0 ? "staged" : "clean"}</span>
+
+              <section className="database-status-panel" aria-label="Profile status">
+                <div className="database-status-panel__copy">
+                  <p className="database-kicker">workflowsctl / database-profile / local</p>
+                  <h2>PostgreSQL metadata profile</h2>
+                  <p>Configure the durable store used by workflow metadata, sync queues, and run history.</p>
                 </div>
-              </div>
-              <div className="database-grid">
-                <aside className="database-rail">
-                  <article className="admin-card" aria-labelledby="db-rail-steps-title">
+                <dl className="database-status-grid" aria-label="Database profile status chips">
+                  <div>
+                    <dt>Backend</dt>
+                    <dd>
+                      <StatusBadge tone={dbForm.enabled ? "success" : "warning"}>
+                        enabled: {dbForm.enabled ? "on" : "off"}
+                      </StatusBadge>
+                    </dd>
+                  </div>
+                  <div>
+                    <dt>Profile</dt>
+                    <dd>
+                      <StatusBadge tone={dbSettings?.configured ? "success" : "warning"}>
+                        configured: {dbSettings?.configured ? "yes" : "no"}
+                      </StatusBadge>
+                    </dd>
+                  </div>
+                  <div>
+                    <dt>Secret</dt>
+                    <dd>
+                      <StatusBadge tone={dbForm.password.length > 0 || dbForm.passwordConfigured ? "success" : "warning"}>
+                        password: {dbForm.password.length > 0 ? "typed" : dbForm.passwordConfigured ? "configured" : "pending"}
+                      </StatusBadge>
+                    </dd>
+                  </div>
+                  <div>
+                    <dt>Import</dt>
+                    <dd>
+                      <StatusBadge tone={dbForm.dsnImport.trim().length > 0 ? "info" : "neutral"}>
+                        legacy re-entry: {dbForm.dsnImport.trim().length > 0 ? "staged" : "clean"}
+                      </StatusBadge>
+                    </dd>
+                  </div>
+                </dl>
+              </section>
+
+              <div className="database-workbench__grid">
+                <article className="admin-card database-profile-card" aria-labelledby="db-settings-title">
+                  <div className="database-card-header">
+                    <div>
+                      <p className="database-kicker">Profile</p>
+                      <h2 id="db-settings-title">Database settings</h2>
+                      {dbSettings ? (
+                        <p>
+                          Configured: {dbSettings.configured ? "Yes" : "No"} · Last updated: {dbSettings.updatedAt}
+                        </p>
+                      ) : null}
+                    </div>
+                  </div>
+
+                  <form className="admin-form database-profile-form" onSubmit={(event) => void onSaveDatabaseSettings(event)}>
+                    <label className="database-toggle">
+                      <input
+                        type="checkbox"
+                        checked={dbForm.enabled}
+                        onChange={(event) => setDbForm((current) => ({ ...current, enabled: event.target.checked }))}
+                      />
+                      <span>
+                        <strong>Enable PostgreSQL metadata backend</strong>
+                        <small>Use this profile for shared metadata persistence instead of local-only storage.</small>
+                      </span>
+                    </label>
+
+                    <fieldset className="database-fieldset">
+                      <legend>Connection profile</legend>
+                      <p>Endpoint, credentials, and TLS behavior for the PostgreSQL database.</p>
+                      <div className="database-form-grid">
+                        <div className="field-group">
+                          <label htmlFor="database-host">Host</label>
+                          <input id="database-host" value={dbForm.host} onChange={(event) => setDbForm((current) => ({ ...current, host: event.target.value }))} />
+                          {dbFieldErrors.host ? <p role="alert">{dbFieldErrors.host}</p> : null}
+                        </div>
+                        <div className="field-group">
+                          <label htmlFor="database-port">Port</label>
+                          <input id="database-port" value={dbForm.port} onChange={(event) => setDbForm((current) => ({ ...current, port: event.target.value }))} />
+                          {dbFieldErrors.port ? <p role="alert">{dbFieldErrors.port}</p> : null}
+                        </div>
+                        <div className="field-group">
+                          <label htmlFor="database-name">Database</label>
+                          <input id="database-name" value={dbForm.database} onChange={(event) => setDbForm((current) => ({ ...current, database: event.target.value }))} />
+                          {dbFieldErrors.database ? <p role="alert">{dbFieldErrors.database}</p> : null}
+                        </div>
+                        <div className="field-group">
+                          <label htmlFor="database-username">Username</label>
+                          <input id="database-username" value={dbForm.username} onChange={(event) => setDbForm((current) => ({ ...current, username: event.target.value }))} />
+                          {dbFieldErrors.username ? <p role="alert">{dbFieldErrors.username}</p> : null}
+                        </div>
+                        <div className="field-group">
+                          <label htmlFor="database-password">Password</label>
+                          <input
+                            id="database-password"
+                            type="password"
+                            autoComplete="off"
+                            value={dbForm.password}
+                            onChange={(event) => setDbForm((current) => ({ ...current, password: event.target.value, passwordClear: false }))}
+                          />
+                          {dbFieldErrors.password ? <p role="alert">{dbFieldErrors.password}</p> : null}
+                        </div>
+                        <div className="field-group">
+                          <label htmlFor="database-ssl-mode">SSL mode</label>
+                          <select id="database-ssl-mode" value={dbForm.sslMode} onChange={(event) => setDbForm((current) => ({ ...current, sslMode: event.target.value as DatabaseSslMode }))}>
+                            <option value="disable">disable</option>
+                            <option value="prefer">prefer</option>
+                            <option value="require">require</option>
+                            <option value="verify-ca">verify-ca</option>
+                            <option value="verify-full">verify-full</option>
+                          </select>
+                        </div>
+                        <div className="field-group database-form-grid__wide">
+                          <label htmlFor="database-extra-params">Extra parameters</label>
+                          <input id="database-extra-params" value={dbForm.extraParams} onChange={(event) => setDbForm((current) => ({ ...current, extraParams: event.target.value }))} />
+                        </div>
+                      </div>
+                      <label className="database-inline-check">
+                        <input
+                          type="checkbox"
+                          checked={dbForm.passwordClear}
+                          onChange={(event) => setDbForm((current) => ({ ...current, passwordClear: event.target.checked }))}
+                        />
+                        Clear configured password
+                      </label>
+                    </fieldset>
+
+                    <fieldset className="database-fieldset">
+                      <legend>Runtime container</legend>
+                      <p>Values used to generate local Docker and Podman bootstrap commands.</p>
+                      <div className="database-form-grid">
+                        <div className="field-group">
+                          <label htmlFor="database-container-name">Container name</label>
+                          <input id="database-container-name" value={dbForm.containerName} onChange={(event) => setDbForm((current) => ({ ...current, containerName: event.target.value }))} />
+                          {dbFieldErrors.containerName ? <p role="alert">{dbFieldErrors.containerName}</p> : null}
+                        </div>
+                        <div className="field-group">
+                          <label htmlFor="database-container-image">Container image</label>
+                          <input id="database-container-image" value={dbForm.containerImage} onChange={(event) => setDbForm((current) => ({ ...current, containerImage: event.target.value }))} />
+                          {dbFieldErrors.containerImage ? <p role="alert">{dbFieldErrors.containerImage}</p> : null}
+                        </div>
+                        <div className="field-group">
+                          <label htmlFor="database-host-port">Host port</label>
+                          <input id="database-host-port" value={dbForm.containerHostPort} onChange={(event) => setDbForm((current) => ({ ...current, containerHostPort: event.target.value }))} />
+                          {dbFieldErrors.containerHostPort ? <p role="alert">{dbFieldErrors.containerHostPort}</p> : null}
+                        </div>
+                        <div className="field-group">
+                          <label htmlFor="database-volume-name">Volume name</label>
+                          <input id="database-volume-name" value={dbForm.volumeName} onChange={(event) => setDbForm((current) => ({ ...current, volumeName: event.target.value }))} />
+                          {dbFieldErrors.volumeName ? <p role="alert">{dbFieldErrors.volumeName}</p> : null}
+                        </div>
+                      </div>
+                    </fieldset>
+
+                    <div className="database-form-actions">
+                      <button type="submit" disabled={dbSavePending}>
+                        Save settings
+                      </button>
+                      {dbSaveMessage ? <p role="status">{dbSaveMessage}</p> : null}
+                    </div>
+                  </form>
+                </article>
+
+                <aside className="database-operations" aria-label="Database operator guidance">
+                  <article className="admin-card database-steps-card" aria-labelledby="db-rail-steps-title">
+                    <p className="database-kicker">Runbook</p>
                     <h2 id="db-rail-steps-title">Operator steps</h2>
-                    <ol>
-                      <li>Connection profile</li>
-                      <li>Container command</li>
-                      <li>Connection test</li>
-                      <li>Persist settings</li>
+                    <ol className="database-step-list">
+                      <li>
+                        <span>01</span>
+                        <div>
+                          <strong>Connection profile</strong>
+                          <p>Fill endpoint and credential fields.</p>
+                        </div>
+                      </li>
+                      <li>
+                        <span>02</span>
+                        <div>
+                          <strong>Container command</strong>
+                          <p>Review generated Docker or Podman command.</p>
+                        </div>
+                      </li>
+                      <li>
+                        <span>03</span>
+                        <div>
+                          <strong>Connection test</strong>
+                          <p>Probe reachability before saving shared settings.</p>
+                        </div>
+                      </li>
+                      <li>
+                        <span>04</span>
+                        <div>
+                          <strong>Persist settings</strong>
+                          <p>Save the structured profile without storing raw DSNs.</p>
+                        </div>
+                      </li>
                     </ol>
                   </article>
+
                   {dbGuidance ? (
-                    <article className="admin-card" aria-labelledby="db-setup-guidance-title">
+                    <article className="admin-card database-guidance-card" aria-labelledby="db-setup-guidance-title">
+                      <p className="database-kicker">Recommended runtime</p>
                       <h2 id="db-setup-guidance-title">Database setup guidance</h2>
                       <p>Recommended image: {dbGuidance.image}</p>
                       {dbGuidance.notes.length > 0 ? (
@@ -1767,8 +2507,10 @@ export function App(): JSX.Element {
                       ) : null}
                     </article>
                   ) : null}
+
                   <article className="admin-card database-side-panel">
-                    <h3>Advanced DSN import</h3>
+                    <p className="database-kicker">Legacy import</p>
+                    <h2>Advanced DSN import</h2>
                     <label htmlFor="database-dsn-import">Advanced DSN import</label>
                     <textarea
                       id="database-dsn-import"
@@ -1780,128 +2522,480 @@ export function App(): JSX.Element {
                     {dbFieldErrors.dsnImport ? <p role="alert">{dbFieldErrors.dsnImport}</p> : null}
                   </article>
                 </aside>
+              </div>
 
-                <article className="admin-card" aria-labelledby="db-settings-title">
-                <h2 id="db-settings-title">Database settings</h2>
-                {dbSettings ? (
-                  <p>
-                    Configured: {dbSettings.configured ? "Yes" : "No"} · Last updated: {dbSettings.updatedAt}
-                  </p>
-                ) : null}
-                <form className="admin-form" onSubmit={(event) => void onSaveDatabaseSettings(event)}>
-                  <label>
-                    <input
-                      type="checkbox"
-                      checked={dbForm.enabled}
-                      onChange={(event) => setDbForm((current) => ({ ...current, enabled: event.target.checked }))}
-                    />
-                    Enable PostgreSQL metadata backend
-                  </label>
-                  <label htmlFor="database-host">Host</label>
-                  <input id="database-host" value={dbForm.host} onChange={(event) => setDbForm((current) => ({ ...current, host: event.target.value }))} />
-                  {dbFieldErrors.host ? <p role="alert">{dbFieldErrors.host}</p> : null}
-                  <label htmlFor="database-port">Port</label>
-                  <input id="database-port" value={dbForm.port} onChange={(event) => setDbForm((current) => ({ ...current, port: event.target.value }))} />
-                  {dbFieldErrors.port ? <p role="alert">{dbFieldErrors.port}</p> : null}
-                  <label htmlFor="database-name">Database</label>
-                  <input id="database-name" value={dbForm.database} onChange={(event) => setDbForm((current) => ({ ...current, database: event.target.value }))} />
-                  {dbFieldErrors.database ? <p role="alert">{dbFieldErrors.database}</p> : null}
-                  <label htmlFor="database-username">Username</label>
-                  <input id="database-username" value={dbForm.username} onChange={(event) => setDbForm((current) => ({ ...current, username: event.target.value }))} />
-                  {dbFieldErrors.username ? <p role="alert">{dbFieldErrors.username}</p> : null}
-                  <label htmlFor="database-password">Password</label>
-                  <input
-                    id="database-password"
-                    type="password"
-                    autoComplete="off"
-                    value={dbForm.password}
-                    onChange={(event) => setDbForm((current) => ({ ...current, password: event.target.value, passwordClear: false }))}
-                  />
-                  <label>
-                    <input
-                      type="checkbox"
-                      checked={dbForm.passwordClear}
-                      onChange={(event) => setDbForm((current) => ({ ...current, passwordClear: event.target.checked }))}
-                    />
-                    Clear configured password
-                  </label>
-                  {dbFieldErrors.password ? <p role="alert">{dbFieldErrors.password}</p> : null}
-                  <label htmlFor="database-ssl-mode">SSL mode</label>
-                  <select id="database-ssl-mode" value={dbForm.sslMode} onChange={(event) => setDbForm((current) => ({ ...current, sslMode: event.target.value as DatabaseSslMode }))}>
-                    <option value="disable">disable</option>
-                    <option value="prefer">prefer</option>
-                    <option value="require">require</option>
-                    <option value="verify-ca">verify-ca</option>
-                    <option value="verify-full">verify-full</option>
-                  </select>
-                  <label htmlFor="database-extra-params">Extra parameters</label>
-                  <input id="database-extra-params" value={dbForm.extraParams} onChange={(event) => setDbForm((current) => ({ ...current, extraParams: event.target.value }))} />
-                  <label htmlFor="database-container-name">Container name</label>
-                  <input id="database-container-name" value={dbForm.containerName} onChange={(event) => setDbForm((current) => ({ ...current, containerName: event.target.value }))} />
-                  {dbFieldErrors.containerName ? <p role="alert">{dbFieldErrors.containerName}</p> : null}
-                  <label htmlFor="database-container-image">Container image</label>
-                  <input id="database-container-image" value={dbForm.containerImage} onChange={(event) => setDbForm((current) => ({ ...current, containerImage: event.target.value }))} />
-                  {dbFieldErrors.containerImage ? <p role="alert">{dbFieldErrors.containerImage}</p> : null}
-                  <label htmlFor="database-host-port">Host port</label>
-                  <input id="database-host-port" value={dbForm.containerHostPort} onChange={(event) => setDbForm((current) => ({ ...current, containerHostPort: event.target.value }))} />
-                  {dbFieldErrors.containerHostPort ? <p role="alert">{dbFieldErrors.containerHostPort}</p> : null}
-                  <label htmlFor="database-volume-name">Volume name</label>
-                  <input id="database-volume-name" value={dbForm.volumeName} onChange={(event) => setDbForm((current) => ({ ...current, volumeName: event.target.value }))} />
-                  {dbFieldErrors.volumeName ? <p role="alert">{dbFieldErrors.volumeName}</p> : null}
-                  <button type="submit" disabled={dbSavePending}>
-                    Save settings
+              <article className="admin-card database-command-pane" aria-labelledby="db-runtime-title">
+                <div className="database-command-pane__header">
+                  <div>
+                    <p className="database-kicker">Verification and bootstrap</p>
+                    <h2 id="db-runtime-title">Runtime commands</h2>
+                    <p>Test the active profile and copy generated commands for local metadata storage.</p>
+                  </div>
+                  <button type="button" onClick={() => void onTestDatabaseConnection()} disabled={dbTestPending}>
+                    Test connection
                   </button>
-                </form>
-                {dbSaveMessage ? <p role="status">{dbSaveMessage}</p> : null}
+                </div>
+
+                <div className="database-runtime-grid">
+                  <section className="database-check-card" aria-labelledby="db-test-title">
+                    <h3 id="db-test-title">Connection check</h3>
+                    {dbConnectionMessage ? <p role="status">{dbConnectionMessage}</p> : null}
+                    {dbConnectionResult ? (
+                      <div role="status" aria-live="polite">
+                        <p>Connection status: {dbConnectionResult.status}</p>
+                        <p>Configured: {dbConnectionResult.configured ? "Yes" : "No"}</p>
+                        {dbConnectionResult.blockers.length > 0 ? (
+                          <ul>
+                            {dbConnectionResult.blockers.map((blocker) => (
+                              <li key={blocker}>{blocker}</li>
+                            ))}
+                          </ul>
+                        ) : null}
+                        {dbConnectionResult.actionable.length > 0 ? (
+                          <ul>
+                            {dbConnectionResult.actionable.map((step) => (
+                              <li key={step}>{step}</li>
+                            ))}
+                          </ul>
+                        ) : null}
+                      </div>
+                    ) : (
+                      <p>Run a check after updating fields to confirm network and credential readiness.</p>
+                    )}
+                  </section>
+
+                  <section className="database-command-card" aria-labelledby="db-command-title">
+                    <h3 id="db-command-title">Command preview</h3>
+                    <div className="database-command-block">
+                      <p>Connection DSN preview</p>
+                      <pre>{dsnPreview}</pre>
+                    </div>
+                    <div className="database-command-block">
+                      <div className="database-command-block__header">
+                        <p><strong>Docker</strong></p>
+                        <button
+                          type="button"
+                          className="icon-button database-copy-button"
+                          aria-label="Copy Docker command"
+                          title="Copy Docker command"
+                          onClick={() => void onCopyDatabaseCommand("Docker", dockerCopyCommand)}
+                        >
+                          <CopyIcon />
+                        </button>
+                      </div>
+                      <pre>{dockerPreview}</pre>
+                    </div>
+                    <div className="database-command-block">
+                      <div className="database-command-block__header">
+                        <p><strong>Podman</strong></p>
+                        <button
+                          type="button"
+                          className="icon-button database-copy-button"
+                          aria-label="Copy Podman command"
+                          title="Copy Podman command"
+                          onClick={() => void onCopyDatabaseCommand("Podman", podmanCopyCommand)}
+                        >
+                          <CopyIcon />
+                        </button>
+                      </div>
+                      <pre>{podmanPreview}</pre>
+                    </div>
+                    {dbCopyStatus ? (
+                      <p role="status" aria-live="polite" aria-label="Clipboard status">
+                        {dbCopyStatus}
+                      </p>
+                    ) : null}
+                    {dbCopyError ? <p role="alert">{dbCopyError}</p> : null}
+                  </section>
+                </div>
+              </article>
+            </section>
+          ) : null}
+
+          {currentPath === "/llm" ? (
+            <section className="admin-section llm-workbench" aria-label="LLM configuration management">
+              <section className="llm-status-panel" aria-label="LLM source of truth">
+                <div>
+                  <p className="database-kicker">runtime configuration</p>
+                  <h2>LLM configuration</h2>
+                  <p>Source of truth: SQLite-backed.</p>
+                </div>
+                <dl className="llm-status-grid">
+                  <div>
+                    <dt>Providers</dt>
+                    <dd>Providers: {llmProviderEntries.length}</dd>
+                  </div>
+                  <div>
+                    <dt>Profiles</dt>
+                    <dd>Profiles: {llmProfileEntries.length}</dd>
+                  </div>
+                  <div>
+                    <dt>Default</dt>
+                    <dd>Default profile: {llmDefaultProfileLabel}</dd>
+                  </div>
+                </dl>
+              </section>
+
+              <div className="llm-status-stack">
+                {llmLoading ? <p role="status">Loading LLM configuration…</p> : null}
+                {llmMessage ? <p role="status">{llmMessage}</p> : null}
+                {llmError ? <p role="alert">{llmError}</p> : null}
+              </div>
+
+              <div className="llm-workbench__grid">
+                <article className="admin-card" aria-labelledby="llm-providers-title">
+                  <div className="inline-actions">
+                    <h2 id="llm-providers-title">Providers</h2>
+                    <button type="button" className="secondary-button" onClick={() => void loadLlmConfig()}>
+                      Reload
+                    </button>
+                  </div>
+                  {llmProviderEntries.length === 0 ? <p>No providers configured.</p> : null}
+                  {llmProviderEntries.length > 0 ? (
+                    <ul className="entity-list" aria-label="LLM providers list">
+                      {llmProviderEntries.map(([providerId, provider]) => (
+                        <li key={providerId} className="entity-item">
+                          <div>
+                            <strong>{providerId}</strong>
+                            <p>Type: {provider.type || "Not set"}</p>
+                            <p>Model: {provider.model ?? "Not set"}</p>
+                            <p>API URL: {provider.api_url ?? "Default endpoint"}</p>
+                            <p>API key secret: {provider.api_key_secret ?? "Not set"}</p>
+                            <p>
+                              Timeout: {provider.timeout ?? "default"} · Retries: {provider.max_retries ?? "default"} · Delay:{" "}
+                              {provider.retry_delay ?? "default"}
+                            </p>
+                            <p>Headers: {Object.keys(provider.extra_headers).length}</p>
+                            {provider.deployment_name ? <p>Deployment: {provider.deployment_name}</p> : null}
+                            {provider.api_version ? <p>API version: {provider.api_version}</p> : null}
+                          </div>
+                          <div className="inline-actions">
+                            <button type="button" className="secondary-button" onClick={() => onEditLlmProvider(providerId)}>
+                              Edit provider {providerId}
+                            </button>
+                            <button type="button" onClick={() => onDeleteLlmProvider(providerId)}>
+                              Delete provider {providerId}
+                            </button>
+                          </div>
+                        </li>
+                      ))}
+                    </ul>
+                  ) : null}
                 </article>
 
-                <article className="admin-card database-command-pane" aria-labelledby="db-test-title">
-                <h2 id="db-test-title">Connection check</h2>
-                <button type="button" onClick={() => void onTestDatabaseConnection()} disabled={dbTestPending}>
-                  Test connection
-                </button>
-                {dbConnectionMessage ? <p role="status">{dbConnectionMessage}</p> : null}
-                {dbConnectionResult ? (
-                  <div role="status" aria-live="polite">
-                    <p>Connection status: {dbConnectionResult.status}</p>
-                    <p>Configured: {dbConnectionResult.configured ? "Yes" : "No"}</p>
-                    {dbConnectionResult.blockers.length > 0 ? (
-                      <ul>
-                        {dbConnectionResult.blockers.map((blocker) => (
-                          <li key={blocker}>{blocker}</li>
-                        ))}
-                      </ul>
-                    ) : null}
-                    {dbConnectionResult.actionable.length > 0 ? (
-                      <ul>
-                        {dbConnectionResult.actionable.map((step) => (
-                          <li key={step}>{step}</li>
-                        ))}
-                      </ul>
-                    ) : null}
-                  </div>
-                ) : null}
-                  <h3>Command preview</h3>
-                  <p>Connection DSN preview</p>
-                  <pre>{dsnPreview}</pre>
-                  <p><strong>Docker</strong></p>
-                  <pre>{dockerPreview}</pre>
-                  <button type="button" onClick={() => void onCopyDatabaseCommand("Docker", dockerPreview)}>
-                    Copy Docker command
-                  </button>
-                  <p><strong>Podman</strong></p>
-                  <pre>{podmanPreview}</pre>
-                  <button type="button" onClick={() => void onCopyDatabaseCommand("Podman", podmanPreview)}>
-                    Copy Podman command
-                  </button>
-                  {dbCopyStatus ? (
-                    <p role="status" aria-live="polite" aria-label="Clipboard status">
-                      {dbCopyStatus}
-                    </p>
-                  ) : null}
-                  {dbCopyError ? <p role="alert">{dbCopyError}</p> : null}
+                <article className="admin-card" aria-labelledby="llm-provider-form-title">
+                  <h2 id="llm-provider-form-title">Provider editor</h2>
+                  <form className="admin-form llm-form" onSubmit={onSaveLlmProvider}>
+                    <div className="field-group">
+                      <label htmlFor="llm-provider-id">Provider ID</label>
+                      <input
+                        id="llm-provider-id"
+                        value={llmProviderForm.id}
+                        onChange={(event) => setLlmProviderForm((current) => ({ ...current, id: event.target.value }))}
+                        required
+                      />
+                    </div>
+                    <div className="field-group">
+                      <label htmlFor="llm-provider-type">Provider type</label>
+                      <input
+                        id="llm-provider-type"
+                        value={llmProviderForm.type}
+                        onChange={(event) => setLlmProviderForm((current) => ({ ...current, type: event.target.value }))}
+                        placeholder="openai"
+                        required
+                      />
+                    </div>
+                    <div className="field-group">
+                      <label htmlFor="llm-provider-model">Provider model</label>
+                      <input
+                        id="llm-provider-model"
+                        value={llmProviderForm.model}
+                        onChange={(event) => setLlmProviderForm((current) => ({ ...current, model: event.target.value }))}
+                        placeholder="gpt-4.1-mini"
+                      />
+                    </div>
+                    <div className="field-group">
+                      <label htmlFor="llm-provider-api-key-secret">API key secret</label>
+                      <input
+                        id="llm-provider-api-key-secret"
+                        value={llmProviderForm.apiKeySecret}
+                        onChange={(event) => setLlmProviderForm((current) => ({ ...current, apiKeySecret: event.target.value }))}
+                        placeholder="OPENAI_API_KEY"
+                      />
+                    </div>
+                    <div className="field-group">
+                      <label htmlFor="llm-provider-api-url">API URL</label>
+                      <input
+                        id="llm-provider-api-url"
+                        value={llmProviderForm.apiUrl}
+                        onChange={(event) => setLlmProviderForm((current) => ({ ...current, apiUrl: event.target.value }))}
+                        placeholder="https://api.openai.com/v1"
+                      />
+                    </div>
+                    <div className="llm-three-column">
+                      <div className="field-group">
+                        <label htmlFor="llm-provider-timeout">Timeout</label>
+                        <input
+                          id="llm-provider-timeout"
+                          value={llmProviderForm.timeout}
+                          onChange={(event) => setLlmProviderForm((current) => ({ ...current, timeout: event.target.value }))}
+                          inputMode="decimal"
+                        />
+                      </div>
+                      <div className="field-group">
+                        <label htmlFor="llm-provider-max-retries">Max retries</label>
+                        <input
+                          id="llm-provider-max-retries"
+                          value={llmProviderForm.maxRetries}
+                          onChange={(event) => setLlmProviderForm((current) => ({ ...current, maxRetries: event.target.value }))}
+                          inputMode="numeric"
+                        />
+                      </div>
+                      <div className="field-group">
+                        <label htmlFor="llm-provider-retry-delay">Retry delay</label>
+                        <input
+                          id="llm-provider-retry-delay"
+                          value={llmProviderForm.retryDelay}
+                          onChange={(event) => setLlmProviderForm((current) => ({ ...current, retryDelay: event.target.value }))}
+                          inputMode="decimal"
+                        />
+                      </div>
+                    </div>
+                    <div className="field-group">
+                      <label htmlFor="llm-provider-extra-headers">Extra headers JSON</label>
+                      <textarea
+                        id="llm-provider-extra-headers"
+                        value={llmProviderForm.extraHeaders}
+                        onChange={(event) => setLlmProviderForm((current) => ({ ...current, extraHeaders: event.target.value }))}
+                      />
+                    </div>
+                    <div className="llm-two-column">
+                      <div className="field-group">
+                        <label htmlFor="llm-provider-deployment-name">Deployment name</label>
+                        <input
+                          id="llm-provider-deployment-name"
+                          value={llmProviderForm.deploymentName}
+                          onChange={(event) => setLlmProviderForm((current) => ({ ...current, deploymentName: event.target.value }))}
+                        />
+                      </div>
+                      <div className="field-group">
+                        <label htmlFor="llm-provider-api-version">API version</label>
+                        <input
+                          id="llm-provider-api-version"
+                          value={llmProviderForm.apiVersion}
+                          onChange={(event) => setLlmProviderForm((current) => ({ ...current, apiVersion: event.target.value }))}
+                        />
+                      </div>
+                    </div>
+                    <div className="inline-actions">
+                      <button type="submit">Save provider</button>
+                      <button
+                        type="button"
+                        className="secondary-button"
+                        onClick={() => setLlmProviderForm(DEFAULT_LLM_PROVIDER_FORM)}
+                      >
+                        Clear provider form
+                      </button>
+                    </div>
+                  </form>
                 </article>
               </div>
+
+              <div className="llm-workbench__grid">
+                <article className="admin-card" aria-labelledby="llm-profiles-title">
+                  <h2 id="llm-profiles-title">Profiles</h2>
+                  {llmProfileEntries.length === 0 ? <p>No profiles configured.</p> : null}
+                  {llmProfileEntries.length > 0 ? (
+                    <ul className="entity-list" aria-label="LLM profiles list">
+                      {llmProfileEntries.map(([profileId, profile]) => (
+                        <li key={profileId} className="entity-item">
+                          <div>
+                            <strong>{profileId}</strong>
+                            <p>Provider: {profile.provider || "Not set"}</p>
+                            <p>Model: {profile.model ?? "Provider default"}</p>
+                            <p>Temperature: {profile.temperature ?? "default"}</p>
+                            <p>Max tokens: {profile.max_tokens ?? "default"}</p>
+                            {profile.description ? <p>{profile.description}</p> : null}
+                          </div>
+                          <div className="inline-actions">
+                            <button type="button" className="secondary-button" onClick={() => onEditLlmProfile(profileId)}>
+                              Edit profile {profileId}
+                            </button>
+                            <button type="button" onClick={() => onDeleteLlmProfile(profileId)}>
+                              Delete profile {profileId}
+                            </button>
+                          </div>
+                        </li>
+                      ))}
+                    </ul>
+                  ) : null}
+                </article>
+
+                <article className="admin-card" aria-labelledby="llm-profile-form-title">
+                  <h2 id="llm-profile-form-title">Profile editor</h2>
+                  <form className="admin-form llm-form" onSubmit={onSaveLlmProfile}>
+                    <div className="field-group">
+                      <label htmlFor="llm-profile-id">Profile ID</label>
+                      <input
+                        id="llm-profile-id"
+                        value={llmProfileForm.id}
+                        onChange={(event) => setLlmProfileForm((current) => ({ ...current, id: event.target.value }))}
+                        required
+                      />
+                    </div>
+                    <div className="field-group">
+                      <label htmlFor="llm-profile-provider">Profile provider</label>
+                      <select
+                        id="llm-profile-provider"
+                        value={llmProfileForm.provider}
+                        onChange={(event) => setLlmProfileForm((current) => ({ ...current, provider: event.target.value }))}
+                        required
+                      >
+                        <option value="">Select provider</option>
+                        {llmProviderEntries.map(([providerId]) => (
+                          <option key={providerId} value={providerId}>
+                            {providerId}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                    <div className="field-group">
+                      <label htmlFor="llm-profile-model">Profile model</label>
+                      <input
+                        id="llm-profile-model"
+                        value={llmProfileForm.model}
+                        onChange={(event) => setLlmProfileForm((current) => ({ ...current, model: event.target.value }))}
+                        placeholder="gpt-4.1-mini"
+                      />
+                    </div>
+                    <div className="llm-two-column">
+                      <div className="field-group">
+                        <label htmlFor="llm-profile-temperature">Temperature</label>
+                        <input
+                          id="llm-profile-temperature"
+                          value={llmProfileForm.temperature}
+                          onChange={(event) => setLlmProfileForm((current) => ({ ...current, temperature: event.target.value }))}
+                          inputMode="decimal"
+                        />
+                      </div>
+                      <div className="field-group">
+                        <label htmlFor="llm-profile-max-tokens">Max tokens</label>
+                        <input
+                          id="llm-profile-max-tokens"
+                          value={llmProfileForm.maxTokens}
+                          onChange={(event) => setLlmProfileForm((current) => ({ ...current, maxTokens: event.target.value }))}
+                          inputMode="numeric"
+                        />
+                      </div>
+                    </div>
+                    <div className="field-group">
+                      <label htmlFor="llm-profile-description">Description</label>
+                      <input
+                        id="llm-profile-description"
+                        value={llmProfileForm.description}
+                        onChange={(event) => setLlmProfileForm((current) => ({ ...current, description: event.target.value }))}
+                      />
+                    </div>
+                    <div className="inline-actions">
+                      <button type="submit" disabled={llmProviderEntries.length === 0}>
+                        Save profile
+                      </button>
+                      <button
+                        type="button"
+                        className="secondary-button"
+                        onClick={() => setLlmProfileForm(DEFAULT_LLM_PROFILE_FORM)}
+                      >
+                        Clear profile form
+                      </button>
+                    </div>
+                  </form>
+                </article>
+              </div>
+
+              <article className="admin-card llm-persist-panel" aria-labelledby="llm-persist-title">
+                <h2 id="llm-persist-title">Persist configuration</h2>
+                <div className="llm-two-column">
+                  <div className="field-group">
+                    <label htmlFor="llm-default-profile">Default profile</label>
+                    <select
+                      id="llm-default-profile"
+                      value={llmConfig.default_profile ?? ""}
+                      onChange={(event) =>
+                        setLlmConfig((current) =>
+                          normalizedLlmConfig({ ...current, default_profile: event.target.value || null }),
+                        )
+                      }
+                    >
+                      <option value="">No default profile</option>
+                      {llmProfileEntries.map(([profileId]) => (
+                        <option key={profileId} value={profileId}>
+                          {profileId}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                  <div className="llm-save-actions">
+                    <button type="button" disabled={llmSaving} onClick={() => void onSaveLlmConfig()}>
+                      Save LLM configuration
+                    </button>
+                    <button type="button" className="secondary-button" onClick={() => void loadLlmConfig()}>
+                      Discard local changes
+                    </button>
+                  </div>
+                </div>
+              </article>
+
+              <article className="admin-card llm-yaml-panel" aria-labelledby="llm-yaml-title">
+                <div className="inline-actions">
+                  <h2 id="llm-yaml-title">YAML migration</h2>
+                  <button type="button" className="secondary-button" onClick={() => void onExportLlmYaml()}>
+                    Export YAML
+                  </button>
+                </div>
+                <div className="llm-two-column">
+                  <div className="field-group">
+                    <label htmlFor="llm-yaml-import">YAML import</label>
+                    <textarea
+                      id="llm-yaml-import"
+                      value={llmYamlImport}
+                      onChange={(event) => setLlmYamlImport(event.target.value)}
+                      placeholder="version: '1.0'"
+                    />
+                    <div className="inline-actions">
+                      <button
+                        type="button"
+                        className="secondary-button"
+                        disabled={llmYamlImport.trim().length === 0}
+                        onClick={() => void onPreviewLlmYaml()}
+                      >
+                        Preview import
+                      </button>
+                      <button
+                        type="button"
+                        disabled={llmYamlImport.trim().length === 0}
+                        onClick={() => void onImportLlmYaml()}
+                      >
+                        Import YAML
+                      </button>
+                    </div>
+                  </div>
+                  <div className="field-group">
+                    <label htmlFor="llm-yaml-export">YAML export</label>
+                    <textarea
+                      id="llm-yaml-export"
+                      value={llmYamlExport}
+                      onChange={(event) => setLlmYamlExport(event.target.value)}
+                      readOnly
+                    />
+                    {llmPreview ? (
+                      <p>
+                        Preview default profile: {llmPreview.default_profile ?? "None"} · Providers:{" "}
+                        {Object.keys(llmPreview.providers).join(", ") || "None"}
+                      </p>
+                    ) : null}
+                  </div>
+                </div>
+              </article>
             </section>
           ) : null}
 
@@ -2064,15 +3158,21 @@ export function App(): JSX.Element {
                 <form className="admin-form" onSubmit={(event) => void onCreateMcpClient(event)}>
                   <label htmlFor="mcp-label">Client label</label>
                   <input id="mcp-label" value={mcpLabel} onChange={(event) => setMcpLabel(event.target.value)} required />
-                  <label htmlFor="mcp-project-ids">Project IDs</label>
-                  <input
+                  <ProjectMultiSelect
                     id="mcp-project-ids"
-                    value={mcpProjectIdsInput}
-                    onChange={(event) => setMcpProjectIdsInput(event.target.value)}
-                    placeholder="project-1,project-2"
-                    required
+                    label="Project access"
+                    projects={projects}
+                    selectedIds={mcpSelectedProjectIds}
+                    onChange={setMcpSelectedProjectIds}
+                    disabled={projectsLoading || mcpCreatePending}
+                    helperText={
+                      projects.length > 0
+                        ? "Select every project this token may access."
+                        : "Create a project before issuing MCP client tokens."
+                    }
                   />
-                  <button type="submit" disabled={mcpCreatePending}>
+                  {projectError ? <p role="alert">{projectError}</p> : null}
+                  <button type="submit" disabled={mcpCreatePending || mcpSelectedProjectIds.length === 0}>
                     Create MCP client
                   </button>
                 </form>
@@ -2110,7 +3210,7 @@ export function App(): JSX.Element {
                         <div>
                           <strong>{client.label}</strong>
                           <p>ID: {client.id}</p>
-                          <p>Projects: {client.projectIds.length > 0 ? client.projectIds.join(", ") : "None"}</p>
+                          <p>Projects: {client.projectIds.length > 0 ? client.projectIds.map(formatProjectReference).join(", ") : "None"}</p>
                           <p>Created: {client.createdAt || "Unknown"}</p>
                           <p>Last used: {client.lastUsedAt ?? "Never"}</p>
                           <p>Status: {client.revokedAt ? `Revoked at ${client.revokedAt}` : "Active"}</p>
@@ -2184,46 +3284,131 @@ export function App(): JSX.Element {
           ) : null}
 
           {currentPath === "/sync" ? (
-            <section className="admin-section" aria-label="Sync dashboard">
-              <article className="admin-card">
-                <div className="inline-actions">
-                  <h2>Project sync queue</h2>
+            <section className="admin-section sync-workbench" aria-label="Sync dashboard">
+              <article className="sync-hero-panel">
+                <div className="sync-hero-panel__copy">
+                  <p className="database-kicker">Live sync queue</p>
+                  <h2>Project sync operations</h2>
+                  <p>
+                    Review registered projects, spot queued files, and run targeted sync maintenance without copying project IDs.
+                  </p>
+                </div>
+                <div className="sync-toolbar">
+                  <ProjectSelect
+                    id="sync-project-filter"
+                    label="Project"
+                    projects={projects}
+                    value={selectedSyncProjectId}
+                    onChange={setSelectedSyncProjectId}
+                    allLabel="All projects"
+                    disabled={syncLoading && projects.length === 0}
+                    helperText={
+                      selectedSyncRow
+                        ? `Focused on ${selectedSyncRow.projectName ?? selectedSyncRow.projectId}.`
+                        : "Choose a project to narrow the queue."
+                    }
+                  />
                   <button type="button" className="secondary-button" onClick={() => void refreshSyncState()}>
                     Refresh
                   </button>
                 </div>
+              </article>
+
+              <dl className="sync-stats-grid" aria-label="Sync summary">
+                <div>
+                  <dt>Projects</dt>
+                  <dd>{syncRows.length}</dd>
+                </div>
+                <div>
+                  <dt>Dirty files</dt>
+                  <dd>{syncDirtyTotal}</dd>
+                </div>
+                <div>
+                  <dt>Queued</dt>
+                  <dd>{syncQueuedCount}</dd>
+                </div>
+                <div>
+                  <dt>Needs reconcile</dt>
+                  <dd>{syncReconcileCount}</dd>
+                </div>
+              </dl>
+
+              <div className="sync-status-stack">
                 {syncLoading ? <p role="status">Loading sync queue status…</p> : null}
                 {syncMessage ? <p role="status">{syncMessage}</p> : null}
                 {syncError ? <p role="alert">{syncError}</p> : null}
-                {!syncLoading && syncRows.length === 0 ? (
+              </div>
+
+              {!syncLoading && syncRows.length === 0 ? (
+                <article className="sync-empty-state">
+                  <h2>Queue is empty</h2>
                   <p>
                     No sync queue entries yet. <a href="/projects">Create a project</a> to enqueue files for sync.
                   </p>
-                ) : null}
-                {syncRows.length > 0 ? (
-                  <ul className="entity-list" aria-label="Sync projects list">
-                    {syncRows.map((row) => (
-                      <li key={row.projectId} className="entity-item">
-                        <div>
-                          <strong>{row.projectName ?? row.projectId}</strong>
-                          <p>Project ID: {row.projectId}</p>
-                          <p>Dirty count: {row.dirtyCount}</p>
-                          <p>Sync state: {row.syncState}</p>
-                          <p>Reconcile state: {row.reconcileState}</p>
-                          <p>Rebuild state: {row.rebuildState}</p>
-                          <p>Requires reconciliation: {row.requiresReconciliation ? "Yes" : "No"}</p>
-                          <p>Lifecycle telemetry: {row.lifecycleTelemetry}</p>
+                </article>
+              ) : null}
+
+              {syncRows.length > 0 ? (
+                <section className="sync-project-grid" aria-label="Sync projects list">
+                  {visibleSyncRows.map((row) => {
+                    const statusTone = row.requiresReconciliation ? "warning" : row.dirtyCount > 0 ? "info" : "success";
+                    const statusLabel = row.requiresReconciliation ? "Needs reconcile" : row.dirtyCount > 0 ? "Queued" : "Clean";
+                    return (
+                      <article key={row.projectId} className="sync-project-card">
+                        <div className="sync-card-header">
+                          <div>
+                            <p className="database-kicker">{row.projectId}</p>
+                            <h3>{row.projectName ?? row.projectId}</h3>
+                          </div>
+                          <StatusBadge tone={statusTone}>{statusLabel}</StatusBadge>
                         </div>
-                        <div className="inline-actions">
-                          <button type="button" className="secondary-button" disabled={syncPendingAction !== null} onClick={() => void onSyncAction(row.projectId, "now")}>Sync now {row.projectId}</button>
-                          <button type="button" className="secondary-button" disabled={syncPendingAction !== null} onClick={() => void onSyncAction(row.projectId, "reconcile")}>Reconcile {row.projectId}</button>
-                          <button type="button" disabled={syncPendingAction !== null} onClick={() => void onSyncAction(row.projectId, "rebuild")}>Rebuild {row.projectId}</button>
+                        <div className="sync-card-body">
+                          <div className="sync-primary-metric">
+                            <span>{row.dirtyCount}</span>
+                            <p>Dirty count: {row.dirtyCount}</p>
+                          </div>
+                          <div className="sync-state-list">
+                            <p>Project ID: {row.projectId}</p>
+                            <p>Sync state: {row.syncState}</p>
+                            <p>Reconcile state: {row.reconcileState}</p>
+                            <p>Rebuild state: {row.rebuildState}</p>
+                            <p>Requires reconciliation: {row.requiresReconciliation ? "Yes" : "No"}</p>
+                            <p>Lifecycle telemetry: {row.lifecycleTelemetry}</p>
+                          </div>
                         </div>
-                      </li>
-                    ))}
-                  </ul>
-                ) : null}
-              </article>
+                        <div className="sync-card-actions">
+                          <button
+                            type="button"
+                            className="secondary-button"
+                            aria-label={`Sync now ${row.projectId}`}
+                            disabled={syncPendingAction !== null}
+                            onClick={() => void onSyncAction(row.projectId, "now")}
+                          >
+                            Sync now
+                          </button>
+                          <button
+                            type="button"
+                            className="secondary-button"
+                            aria-label={`Reconcile ${row.projectId}`}
+                            disabled={syncPendingAction !== null}
+                            onClick={() => void onSyncAction(row.projectId, "reconcile")}
+                          >
+                            Reconcile
+                          </button>
+                          <button
+                            type="button"
+                            aria-label={`Rebuild ${row.projectId}`}
+                            disabled={syncPendingAction !== null}
+                            onClick={() => void onSyncAction(row.projectId, "rebuild")}
+                          >
+                            Rebuild
+                          </button>
+                        </div>
+                      </article>
+                    );
+                  })}
+                </section>
+              ) : null}
             </section>
           ) : null}
 
@@ -2323,12 +3508,17 @@ export function App(): JSX.Element {
                 )}
 
                 <form className="admin-form" onSubmit={(event) => void onCreateWorkflowSource(event)}>
-                  <label htmlFor="workflow-source-project-id">Project ID</label>
-                  <input
+                  <ProjectSelect
                     id="workflow-source-project-id"
+                    label="Project"
+                    projects={projects}
                     value={workflowSourceProjectId}
-                    onChange={(event) => setWorkflowSourceProjectId(event.target.value)}
-                    placeholder="p1"
+                    onChange={setWorkflowSourceProjectId}
+                    helperText={
+                      projects.length > 0
+                        ? "Workflow sources are attached to one registered project."
+                        : "Create a project before adding workflow sources."
+                    }
                     required
                   />
                   <label htmlFor="workflow-source-path">Source path</label>
@@ -2349,7 +3539,10 @@ export function App(): JSX.Element {
                   {workflowProjectsCount === 0 ? (
                     <p>Once a project exists, add a workflow source path below.</p>
                   ) : null}
-                  <button type="submit" disabled={workflowSourcePending || workflowProjectsCount === 0}>
+                  <button
+                    type="submit"
+                    disabled={workflowSourcePending || workflowProjectsCount === 0 || workflowSourceProjectId.trim().length === 0}
+                  >
                     Add workflow source
                   </button>
                 </form>

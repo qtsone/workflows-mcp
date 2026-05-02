@@ -346,7 +346,7 @@ def test_watcher_state_controls_persist_and_status_exposes_metadata(app_client: 
     assert project_id in ids
 
 
-def test_sync_now_scans_project_root_and_queues_discovered_files(
+def test_sync_now_scans_project_root_and_clears_processed_queue(
     app_client: TestClient,
     tmp_path: Path,
 ) -> None:
@@ -370,8 +370,8 @@ def test_sync_now_scans_project_root_and_queues_discovered_files(
     assert idle_now.status_code == 200
     idle_payload = idle_now.json()
     assert idle_payload["project_id"] == project_id
-    assert idle_payload["status"] == "queued"
-    assert idle_payload["dirty_count"] == 2
+    assert idle_payload["status"] == "idle"
+    assert idle_payload["dirty_count"] == 0
 
     reconcile = app_client.post(
         f"/api/admin/v1/sync/{project_id}/reconcile",
@@ -389,8 +389,8 @@ def test_sync_now_scans_project_root_and_queues_discovered_files(
     assert queued_now.status_code == 200
     queued_payload = queued_now.json()
     assert queued_payload["project_id"] == project_id
-    assert queued_payload["status"] == "queued"
-    assert queued_payload["dirty_count"] >= 2
+    assert queued_payload["status"] == "idle"
+    assert queued_payload["dirty_count"] == 0
 
     rebuild = app_client.post(
         f"/api/admin/v1/sync/{project_id}/rebuild",
@@ -436,6 +436,46 @@ def test_sync_now_empty_project_root_is_deterministic_noop(
     assert payload["project_id"] == project_id
     assert payload["status"] == "idle"
     assert payload["dirty_count"] == 0
+
+
+def test_sync_now_clears_existing_dirty_queue_after_successful_scan(
+    app_client: TestClient,
+    tmp_path: Path,
+) -> None:
+    csrf_token = _login_and_csrf(app_client)
+    project_root = tmp_path / "sync-now-clears"
+    _write(project_root / "workflow.yaml", "steps: []\n")
+    project_id = _create_project(
+        app_client,
+        csrf_token,
+        slug="sync-now-clears",
+        palace="sync-now-clears-palace",
+        fs_root=str(project_root),
+        fs_allowlist=[str(project_root)],
+    )
+
+    reconcile = app_client.post(
+        f"/api/admin/v1/sync/{project_id}/reconcile",
+        headers={"X-CSRF-Token": csrf_token},
+    )
+    assert reconcile.status_code == 200
+    assert reconcile.json()["dirty_count"] == 1
+
+    synced = app_client.post(
+        f"/api/admin/v1/sync/{project_id}/now",
+        headers={"X-CSRF-Token": csrf_token},
+    )
+    assert synced.status_code == 200
+    synced_payload = synced.json()
+    assert synced_payload["project_id"] == project_id
+    assert synced_payload["status"] == "idle"
+    assert synced_payload["dirty_count"] == 0
+
+    listed = app_client.get("/api/admin/v1/sync")
+    assert listed.status_code == 200
+    summaries = listed.json().get("projects", [])
+    by_project = {entry["project_id"]: entry for entry in summaries}
+    assert project_id not in by_project
 
 
 def test_events_watchers_sse_and_polling_state_are_equivalent(app_client: TestClient) -> None:

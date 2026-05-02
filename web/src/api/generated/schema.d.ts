@@ -878,10 +878,34 @@ export interface components {
         DatabaseSettingsResponse: {
             /** Configured */
             configured: boolean;
+            /** Container Host Port */
+            container_host_port: number;
+            /** Container Image */
+            container_image: string;
+            /** Container Name */
+            container_name: string;
+            /** Database */
+            database: string;
             /** Enabled */
             enabled: boolean;
+            /** Extra Params */
+            extra_params: string;
+            /** Host */
+            host: string;
+            /** Legacy Profile Reentry Required */
+            legacy_profile_reentry_required: boolean;
+            /** Password Configured */
+            password_configured: boolean;
+            /** Port */
+            port: number;
+            /** Ssl Mode */
+            ssl_mode: string;
             /** Updated At */
             updated_at: string;
+            /** Username */
+            username: string;
+            /** Volume Name */
+            volume_name: string;
         };
         /** DatabaseSetupResponse */
         DatabaseSetupResponse: {
@@ -945,7 +969,7 @@ export interface components {
          * LLMConfig
          * @description Root LLM configuration model.
          *
-         *     Validates the complete llm-config.yml structure with schema versioning.
+         *     Validates the complete LLM provider/profile structure with schema versioning.
          */
         LLMConfig: {
             /**
@@ -1262,21 +1286,73 @@ export interface components {
             /** Runs */
             runs: components["schemas"]["RunRowResponse"][];
         };
-        /**
-         * SavePostgresSettingsRequest
-         * @example {
-         *       "dsn": "postgresql://wf_user:password@127.0.0.1:5432/workflows",
-         *       "enabled": true
-         *     }
-         */
+        /** SavePostgresSettingsRequest */
         SavePostgresSettingsRequest: {
-            /** Dsn */
-            dsn?: string | null;
+            /**
+             * Container Host Port
+             * @default 5432
+             */
+            container_host_port: number;
+            /**
+             * Container Image
+             * @default pgvector/pgvector:pg17
+             */
+            container_image: string;
+            /**
+             * Container Name
+             * @default workflows-postgres
+             */
+            container_name: string;
+            /**
+             * Database
+             * @default workflows
+             */
+            database: string;
+            /** Dsn Import */
+            dsn_import?: string | null;
             /**
              * Enabled
              * @default true
              */
             enabled: boolean;
+            /**
+             * Extra Params
+             * @default
+             */
+            extra_params: string;
+            /**
+             * Host
+             * @default 127.0.0.1
+             */
+            host: string;
+            /** Password */
+            password?: string | null;
+            /**
+             * Password Clear
+             * @default false
+             */
+            password_clear: boolean;
+            /**
+             * Port
+             * @default 5432
+             */
+            port: number;
+            /**
+             * Ssl Mode
+             * @default disable
+             * @enum {string}
+             */
+            ssl_mode: "disable" | "prefer" | "require" | "verify-ca" | "verify-full";
+            /**
+             * Username
+             * @default workflows
+             */
+            username: string;
+            /**
+             * Volume Name
+             * @default workflows-postgres-data
+             */
+            volume_name: string;
         };
         /** SecretMetadataResponse */
         SecretMetadataResponse: {
