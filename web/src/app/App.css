@@ -1073,22 +1073,22 @@ button:focus-visible,
   background: #ffffff;
 }
 
-.llm-provider-table {
+.llm-configuration-table {
   width: 100%;
   min-width: 46rem;
   border-collapse: collapse;
   font-size: 0.9rem;
 }
 
-.llm-provider-table th,
-.llm-provider-table td {
+.llm-configuration-table th,
+.llm-configuration-table td {
   border-bottom: 1px solid var(--border);
   padding: 0.72rem 0.8rem;
   text-align: left;
   vertical-align: middle;
 }
 
-.llm-provider-table thead th {
+.llm-configuration-table thead th {
   background: var(--surface-muted);
   color: var(--muted-strong);
   font-size: 0.75rem;
@@ -1096,32 +1096,32 @@ button:focus-visible,
   text-transform: uppercase;
 }
 
-.llm-provider-table tbody tr {
+.llm-configuration-table tbody tr {
   cursor: pointer;
   transition: background-color 160ms ease;
 }
 
-.llm-provider-table tbody tr:hover,
-.llm-provider-table tbody tr:focus-visible {
+.llm-configuration-table tbody tr:hover,
+.llm-configuration-table tbody tr:focus-visible {
   background: var(--accent-soft);
   outline: none;
 }
 
-.llm-provider-table tbody tr:last-child th,
-.llm-provider-table tbody tr:last-child td {
+.llm-configuration-table tbody tr:last-child th,
+.llm-configuration-table tbody tr:last-child td {
   border-bottom: 0;
 }
 
-.llm-provider-table tbody th {
+.llm-configuration-table tbody th {
   color: var(--ink);
   font-weight: 760;
 }
 
-.llm-provider-table td {
+.llm-configuration-table td {
   color: var(--ink-soft);
 }
 
-.llm-provider-table td:last-child {
+.llm-configuration-table td:last-child {
   width: 1%;
   white-space: nowrap;
 }
@@ -1195,6 +1195,25 @@ button:focus-visible,
   border-color: var(--border-strong) !important;
   background: #ffffff !important;
   color: var(--ink-soft) !important;
+}
+
+.llm-modal-feedback {
+  margin: 0;
+  border-radius: var(--control-radius);
+  padding: 0.62rem 0.75rem;
+  font-weight: 690;
+}
+
+.llm-modal-feedback[role="status"] {
+  border: 1px solid rgba(46, 111, 98, 0.22);
+  background: var(--accent-soft);
+  color: var(--accent-strong);
+}
+
+.llm-modal-feedback[role="alert"] {
+  border: 1px solid rgba(157, 63, 59, 0.3);
+  background: var(--danger-soft);
+  color: var(--danger);
 }
 
 .llm-preview-summary {

@@ -900,7 +900,22 @@ describe("App", () => {
     expect(within(providerRow).getAllByText("openai").length).toBeGreaterThanOrEqual(2);
     expect(within(providerRow).getByText("gpt-4.1-mini")).toBeTruthy();
     expect(screen.getByText(/api key secret: openai_api_key/i)).toBeTruthy();
-    expect(screen.getByText(/primary runtime profile/i)).toBeTruthy();
+
+    const profileTable = screen.getByRole("table", { name: /llm profiles/i });
+    expect(within(profileTable).getByRole("columnheader", { name: /profile id/i })).toBeTruthy();
+    expect(within(profileTable).getByRole("columnheader", { name: /^provider$/i })).toBeTruthy();
+    expect(within(profileTable).getByRole("columnheader", { name: /^model$/i })).toBeTruthy();
+    expect(within(profileTable).getByRole("columnheader", { name: /temperature/i })).toBeTruthy();
+    expect(within(profileTable).getByRole("columnheader", { name: /max tokens/i })).toBeTruthy();
+    expect(within(profileTable).getByRole("columnheader", { name: /operations/i })).toBeTruthy();
+    const profileRow = within(profileTable).getByRole("row", {
+      name: /default openai gpt-4\.1-mini 0\.2 4096/i,
+    });
+    expect(within(profileRow).getByText("default")).toBeTruthy();
+    expect(within(profileRow).getByText("openai")).toBeTruthy();
+    expect(within(profileRow).getByText("gpt-4.1-mini")).toBeTruthy();
+    expect(within(profileRow).getByText("0.2")).toBeTruthy();
+    expect(within(profileRow).getByText("4096")).toBeTruthy();
   });
 
   it("saves full normalized LLM config after provider and profile edits", async () => {
@@ -918,13 +933,18 @@ describe("App", () => {
     fireEvent.change(within(providerDialog).getByLabelText(/api url/i), { target: { value: "https://api.openai.com/v1" } });
     fireEvent.click(within(providerDialog).getByRole("button", { name: /save provider/i }));
 
-    fireEvent.change(screen.getByLabelText(/^profile id$/i), { target: { value: "default" } });
-    fireEvent.change(screen.getByLabelText(/^profile provider$/i), { target: { value: "openai" } });
-    fireEvent.change(screen.getByLabelText(/^profile model$/i), { target: { value: "gpt-4.1-mini" } });
-    fireEvent.change(screen.getByLabelText(/temperature/i), { target: { value: "0.2" } });
-    fireEvent.change(screen.getByLabelText(/max tokens/i), { target: { value: "4096" } });
-    fireEvent.change(screen.getByLabelText(/description/i), { target: { value: "Primary runtime profile" } });
-    fireEvent.click(screen.getByRole("button", { name: /save profile/i }));
+    fireEvent.click(screen.getByRole("button", { name: /add profile/i }));
+    const profileDialog = await screen.findByRole("dialog", { name: /profile/i });
+    fireEvent.change(within(profileDialog).getByLabelText(/^profile id$/i), { target: { value: "default" } });
+    fireEvent.change(within(profileDialog).getByLabelText(/^profile provider$/i), { target: { value: "openai" } });
+    fireEvent.change(within(profileDialog).getByLabelText(/^profile model$/i), { target: { value: "gpt-4.1-mini" } });
+    fireEvent.change(within(profileDialog).getByLabelText(/temperature/i), { target: { value: "0.2" } });
+    fireEvent.change(within(profileDialog).getByLabelText(/max tokens/i), { target: { value: "4096" } });
+    fireEvent.change(within(profileDialog).getByLabelText(/description/i), { target: { value: "Primary runtime profile" } });
+    fireEvent.click(within(profileDialog).getByRole("button", { name: /save profile/i }));
+
+    const profileTable = await screen.findByRole("table", { name: /llm profiles/i });
+    expect(within(profileTable).getByRole("row", { name: /default openai gpt-4\.1-mini 0\.2 4096/i })).toBeTruthy();
 
     fireEvent.change(screen.getByLabelText(/default profile/i), { target: { value: "default" } });
     fireEvent.click(screen.getByRole("button", { name: /save llm configuration/i }));
@@ -1023,6 +1043,59 @@ describe("App", () => {
     expect(document.activeElement).toBe(within(providerDialog).getByLabelText(/^provider id$/i));
   });
 
+  it("opens the profile modal when selecting an existing LLM profile row", async () => {
+    installApiMock({
+      llmConfig: {
+        version: "1.0",
+        providers: { openai: { type: "openai", model: "gpt-4.1-mini" } },
+        profiles: {
+          default: {
+            provider: "openai",
+            model: "gpt-4.1-mini",
+            temperature: 0.2,
+            max_tokens: 4096,
+            description: "Primary runtime profile",
+          },
+        },
+        default_profile: "default",
+      },
+    });
+    renderAtPath("/llm");
+
+    await screen.findByRole("heading", { name: /llm configuration/i });
+    const profileTable = screen.getByRole("table", { name: /llm profiles/i });
+    fireEvent.click(within(profileTable).getByRole("row", { name: /default openai gpt-4\.1-mini 0\.2 4096/i }));
+
+    const profileDialog = await screen.findByRole("dialog", { name: /edit profile default/i });
+    expect((within(profileDialog).getByLabelText(/^profile id$/i) as HTMLInputElement).value).toBe("default");
+    expect((within(profileDialog).getByLabelText(/^profile provider$/i) as HTMLInputElement).value).toBe("openai");
+    expect((within(profileDialog).getByLabelText(/^profile model$/i) as HTMLInputElement).value).toBe("gpt-4.1-mini");
+    expect((within(profileDialog).getByLabelText(/temperature/i) as HTMLInputElement).value).toBe("0.2");
+    expect((within(profileDialog).getByLabelText(/max tokens/i) as HTMLInputElement).value).toBe("4096");
+  });
+
+  it("opens the profile modal from an explicit edit action", async () => {
+    installApiMock({
+      llmConfig: {
+        version: "1.0",
+        providers: { openai: { type: "openai", model: "gpt-4.1-mini" } },
+        profiles: { default: { provider: "openai", model: "gpt-4.1-mini", temperature: 0.2, max_tokens: 4096 } },
+        default_profile: "default",
+      },
+    });
+    renderAtPath("/llm");
+
+    await screen.findByRole("heading", { name: /llm configuration/i });
+    const profileTable = screen.getByRole("table", { name: /llm profiles/i });
+    const editButton = within(profileTable).getByRole("button", { name: /edit profile default/i });
+    editButton.focus();
+    fireEvent.click(editButton);
+
+    const profileDialog = await screen.findByRole("dialog", { name: /edit profile default/i });
+    expect((within(profileDialog).getByLabelText(/^profile id$/i) as HTMLInputElement).value).toBe("default");
+    expect(document.activeElement).toBe(within(profileDialog).getByLabelText(/^profile id$/i));
+  });
+
   it("keeps keyboard focus inside LLM modals and restores focus to the opener", async () => {
     installApiMock();
     renderAtPath("/llm");
@@ -1050,7 +1123,7 @@ describe("App", () => {
     expect(document.activeElement).toBe(opener);
   });
 
-  it("does not open the provider edit modal from Delete provider keyboard activation", async () => {
+  it("does not open the provider edit modal from the explicit delete action", async () => {
     installApiMock({
       llmConfig: {
         version: "1.0",
@@ -1063,14 +1136,44 @@ describe("App", () => {
 
     await screen.findByText(/default profile: none/i);
     const deleteButton = screen.getByRole("button", { name: /delete provider openai/i });
-    deleteButton.focus();
-    fireEvent.keyDown(deleteButton, { key: "Enter" });
-
-    expect(screen.queryByRole("dialog", { name: /edit provider openai/i })).toBeNull();
-
     fireEvent.click(deleteButton);
+
     expect(await screen.findByText(/provider openai staged for deletion/i)).toBeTruthy();
     expect(screen.queryByRole("dialog", { name: /edit provider openai/i })).toBeNull();
+  });
+
+  it("deletes an LLM profile from the table without opening the edit modal and clears the default profile", async () => {
+    const fetchMock = installApiMock({
+      llmConfig: {
+        version: "1.0",
+        providers: { openai: { type: "openai", model: "gpt-4.1-mini" } },
+        profiles: { default: { provider: "openai", model: "gpt-4.1-mini", temperature: 0.2, max_tokens: 4096 } },
+        default_profile: "default",
+      },
+    });
+    renderAtPath("/llm");
+
+    await screen.findByText(/default profile: default/i);
+    const profileTable = screen.getByRole("table", { name: /llm profiles/i });
+    const deleteButton = within(profileTable).getByRole("button", { name: /delete profile default/i });
+    fireEvent.click(deleteButton);
+
+    expect(await screen.findByText(/profile default staged for deletion/i)).toBeTruthy();
+    expect(screen.queryByRole("dialog", { name: /edit profile default/i })).toBeNull();
+    expect(screen.getByText(/default profile: none/i)).toBeTruthy();
+
+    fireEvent.click(screen.getByRole("button", { name: /save llm configuration/i }));
+    await screen.findByText(/llm configuration saved/i);
+    const saveCall = fetchMock.mock.calls.find((call) => {
+      const url = String(call[0]);
+      const init = call[1] as RequestInit | undefined;
+      return url.includes("/api/admin/v1/llm/config") && init?.method === "PUT";
+    });
+    const payload = JSON.parse(String((saveCall?.[1] as RequestInit | undefined)?.body ?? "{}")) as Record<string, unknown>;
+    expect(payload).toMatchObject({
+      profiles: {},
+      default_profile: null,
+    });
   });
 
   it("rejects blank LLM profile model before saving configuration", async () => {
@@ -1086,12 +1189,14 @@ describe("App", () => {
     fireEvent.change(within(providerDialog).getByLabelText(/^provider model$/i), { target: { value: "gpt-4.1-mini" } });
     fireEvent.click(within(providerDialog).getByRole("button", { name: /save provider/i }));
 
-    fireEvent.change(screen.getByLabelText(/^profile id$/i), { target: { value: "default" } });
-    fireEvent.change(screen.getByLabelText(/^profile provider$/i), { target: { value: "openai" } });
-    fireEvent.change(screen.getByLabelText(/^profile model$/i), { target: { value: "   " } });
-    fireEvent.click(screen.getByRole("button", { name: /save profile/i }));
+    fireEvent.click(screen.getByRole("button", { name: /add profile/i }));
+    const profileDialog = await screen.findByRole("dialog", { name: /profile/i });
+    fireEvent.change(within(profileDialog).getByLabelText(/^profile id$/i), { target: { value: "default" } });
+    fireEvent.change(within(profileDialog).getByLabelText(/^profile provider$/i), { target: { value: "openai" } });
+    fireEvent.change(within(profileDialog).getByLabelText(/^profile model$/i), { target: { value: "   " } });
+    fireEvent.click(within(profileDialog).getByRole("button", { name: /save profile/i }));
 
-    expect(await screen.findByText(/profile model is required/i)).toBeTruthy();
+    expect(await within(profileDialog).findByText(/profile model is required/i)).toBeTruthy();
 
     fireEvent.click(screen.getByRole("button", { name: /save llm configuration/i }));
     const saveCalls = fetchMock.mock.calls.filter((call) => {

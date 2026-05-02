@@ -238,6 +238,12 @@ type ModalShellProps = {
   onClose: () => void;
 };
 
+type LlmFeedbackMessagesProps = {
+  error: string;
+  message: string;
+  className?: string;
+};
+
 type ConnectionTestModel = {
   ok: boolean;
   status: string;
@@ -484,6 +490,15 @@ function ModalShell({ titleId, title, eyebrow, children, onClose }: ModalShellPr
         <div className="llm-modal__body">{children}</div>
       </section>
     </div>
+  );
+}
+
+function LlmFeedbackMessages({ error, message, className }: LlmFeedbackMessagesProps) {
+  return (
+    <>
+      {message ? <p className={className} role="status">{message}</p> : null}
+      {error ? <p className={className} role="alert">{error}</p> : null}
+    </>
   );
 }
 
@@ -978,6 +993,7 @@ export function App(): JSX.Element {
   const [llmProviderForm, setLlmProviderForm] = useState<LlmProviderForm>(DEFAULT_LLM_PROVIDER_FORM);
   const [llmProviderModalOpen, setLlmProviderModalOpen] = useState(false);
   const [llmProfileForm, setLlmProfileForm] = useState<LlmProfileForm>(DEFAULT_LLM_PROFILE_FORM);
+  const [llmProfileModalOpen, setLlmProfileModalOpen] = useState(false);
   const [llmYamlImport, setLlmYamlImport] = useState("");
   const [llmYamlModalOpen, setLlmYamlModalOpen] = useState(false);
   const [llmPreview, setLlmPreview] = useState<LlmConfigModel | null>(null);
@@ -2026,6 +2042,18 @@ export function App(): JSX.Element {
     setLlmProviderModalOpen(false);
   };
 
+  const openNewLlmProfileModal = (): void => {
+    setLlmError("");
+    setLlmMessage("");
+    setLlmProfileForm(DEFAULT_LLM_PROFILE_FORM);
+    setLlmProfileModalOpen(true);
+  };
+
+  const closeLlmProfileModal = (): void => {
+    setLlmProfileForm(DEFAULT_LLM_PROFILE_FORM);
+    setLlmProfileModalOpen(false);
+  };
+
   const openLlmYamlModal = (): void => {
     setLlmError("");
     setLlmMessage("");
@@ -2119,6 +2147,7 @@ export function App(): JSX.Element {
         profiles: { ...current.profiles, [id]: profile },
       }));
       setLlmProfileForm(DEFAULT_LLM_PROFILE_FORM);
+      setLlmProfileModalOpen(false);
       setLlmMessage(`Profile ${id} staged. Save LLM configuration to persist.`);
     } catch (error) {
       setLlmError(toUserError(error, "Unable to stage profile."));
@@ -2128,7 +2157,9 @@ export function App(): JSX.Element {
   const onEditLlmProfile = (profileId: string): void => {
     const profile = llmConfig.profiles[profileId];
     if (!profile) return;
+    setLlmError("");
     setLlmProfileForm(toLlmProfileForm(profileId, profile));
+    setLlmProfileModalOpen(true);
     setLlmMessage(`Editing profile ${profileId}.`);
   };
 
@@ -2284,6 +2315,7 @@ export function App(): JSX.Element {
   const llmProviderEntries = Object.entries(llmConfig.providers);
   const llmProfileEntries = Object.entries(llmConfig.profiles);
   const llmDefaultProfileLabel = llmConfig.default_profile ?? "None";
+  const llmModalOpen = llmProviderModalOpen || llmProfileModalOpen || llmYamlModalOpen;
 
   return (
     <div className="admin-shell">
@@ -2791,8 +2823,10 @@ export function App(): JSX.Element {
 
               <div className="llm-status-stack">
                 {llmLoading ? <p role="status">Loading LLM configuration…</p> : null}
-                {llmMessage ? <p role="status">{llmMessage}</p> : null}
-                {llmError ? <p role="alert">{llmError}</p> : null}
+                <LlmFeedbackMessages
+                  message={llmModalOpen ? "" : llmMessage}
+                  error={llmModalOpen ? "" : llmError}
+                />
               </div>
 
               <div className="llm-workbench__grid llm-workbench__grid--single">
@@ -2810,7 +2844,7 @@ export function App(): JSX.Element {
                   </div>
                   {llmProviderEntries.length === 0 ? <p>No providers configured.</p> : null}
                   <div className="llm-table-wrap">
-                    <table className="llm-provider-table" aria-label="LLM providers">
+                    <table className="llm-configuration-table" aria-label="LLM providers">
                       <thead>
                         <tr>
                           <th scope="col">Provider ID</th>
@@ -2876,114 +2910,75 @@ export function App(): JSX.Element {
                 </article>
               </div>
 
-              <div className="llm-workbench__grid">
+              <div className="llm-workbench__grid llm-workbench__grid--single">
                 <article className="admin-card" aria-labelledby="llm-profiles-title">
-                  <h2 id="llm-profiles-title">Profiles</h2>
+                  <div className="inline-actions">
+                    <h2 id="llm-profiles-title">Profiles</h2>
+                    <button type="button" onClick={openNewLlmProfileModal}>
+                      Add profile
+                    </button>
+                  </div>
                   {llmProfileEntries.length === 0 ? <p>No profiles configured.</p> : null}
-                  {llmProfileEntries.length > 0 ? (
-                    <ul className="entity-list" aria-label="LLM profiles list">
-                      {llmProfileEntries.map(([profileId, profile]) => (
-                        <li key={profileId} className="entity-item">
-                          <div>
-                            <strong>{profileId}</strong>
-                            <p>Provider: {profile.provider || "Not set"}</p>
-                            <p>Model: {profile.model ?? "Provider default"}</p>
-                            <p>Temperature: {profile.temperature ?? "default"}</p>
-                            <p>Max tokens: {profile.max_tokens ?? "default"}</p>
-                            {profile.description ? <p>{profile.description}</p> : null}
-                          </div>
-                          <div className="inline-actions">
-                            <button type="button" className="secondary-button" onClick={() => onEditLlmProfile(profileId)}>
-                              Edit profile {profileId}
-                            </button>
-                            <button type="button" onClick={() => onDeleteLlmProfile(profileId)}>
-                              Delete profile {profileId}
-                            </button>
-                          </div>
-                        </li>
-                      ))}
-                    </ul>
-                  ) : null}
-                </article>
-
-                <article className="admin-card" aria-labelledby="llm-profile-form-title">
-                  <h2 id="llm-profile-form-title">Profile editor</h2>
-                  <form className="admin-form llm-form" onSubmit={onSaveLlmProfile}>
-                    <div className="field-group">
-                      <label htmlFor="llm-profile-id">Profile ID</label>
-                      <input
-                        id="llm-profile-id"
-                        value={llmProfileForm.id}
-                        onChange={(event) => setLlmProfileForm((current) => ({ ...current, id: event.target.value }))}
-                        required
-                      />
-                    </div>
-                    <div className="field-group">
-                      <label htmlFor="llm-profile-provider">Profile provider</label>
-                      <select
-                        id="llm-profile-provider"
-                        value={llmProfileForm.provider}
-                        onChange={(event) => setLlmProfileForm((current) => ({ ...current, provider: event.target.value }))}
-                        required
-                      >
-                        <option value="">Select provider</option>
-                        {llmProviderEntries.map(([providerId]) => (
-                          <option key={providerId} value={providerId}>
-                            {providerId}
-                          </option>
+                  <div className="llm-table-wrap">
+                    <table className="llm-configuration-table" aria-label="LLM profiles">
+                      <thead>
+                        <tr>
+                          <th scope="col">Profile ID</th>
+                          <th scope="col">Provider</th>
+                          <th scope="col">Model</th>
+                          <th scope="col">Temperature</th>
+                          <th scope="col">Max tokens</th>
+                          <th scope="col">Operations</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {llmProfileEntries.map(([profileId, profile]) => (
+                          <tr key={profileId} onClick={() => onEditLlmProfile(profileId)}>
+                            <th scope="row">{profileId}</th>
+                            <td>{profile.provider || "Not set"}</td>
+                            <td>{profile.model || "Not set"}</td>
+                            <td>{profile.temperature ?? "default"}</td>
+                            <td>{profile.max_tokens ?? "default"}</td>
+                            <td>
+                              <div className="inline-actions">
+                                <button
+                                  type="button"
+                                  className="secondary-button"
+                                  onClick={(event) => {
+                                    event.stopPropagation();
+                                    onEditLlmProfile(profileId);
+                                  }}
+                                >
+                                  Edit profile {profileId}
+                                </button>
+                                <button
+                                  type="button"
+                                  className="secondary-button"
+                                  onClick={(event) => {
+                                    event.stopPropagation();
+                                    onDeleteLlmProfile(profileId);
+                                  }}
+                                >
+                                  Delete profile {profileId}
+                                </button>
+                              </div>
+                            </td>
+                          </tr>
                         ))}
-                      </select>
+                      </tbody>
+                    </table>
+                  </div>
+                  {llmProfileEntries.some(([, profile]) => profile.description) ? (
+                    <div className="llm-provider-details" aria-label="LLM profile descriptions">
+                      {llmProfileEntries.map(([profileId, profile]) =>
+                        profile.description ? (
+                          <p key={profileId}>
+                            <strong>{profileId}</strong> {profile.description}
+                          </p>
+                        ) : null,
+                      )}
                     </div>
-                    <div className="field-group">
-                      <label htmlFor="llm-profile-model">Profile model</label>
-                      <input
-                        id="llm-profile-model"
-                        value={llmProfileForm.model}
-                        onChange={(event) => setLlmProfileForm((current) => ({ ...current, model: event.target.value }))}
-                        placeholder="gpt-4.1-mini"
-                      />
-                    </div>
-                    <div className="llm-two-column">
-                      <div className="field-group">
-                        <label htmlFor="llm-profile-temperature">Temperature</label>
-                        <input
-                          id="llm-profile-temperature"
-                          value={llmProfileForm.temperature}
-                          onChange={(event) => setLlmProfileForm((current) => ({ ...current, temperature: event.target.value }))}
-                          inputMode="decimal"
-                        />
-                      </div>
-                      <div className="field-group">
-                        <label htmlFor="llm-profile-max-tokens">Max tokens</label>
-                        <input
-                          id="llm-profile-max-tokens"
-                          value={llmProfileForm.maxTokens}
-                          onChange={(event) => setLlmProfileForm((current) => ({ ...current, maxTokens: event.target.value }))}
-                          inputMode="numeric"
-                        />
-                      </div>
-                    </div>
-                    <div className="field-group">
-                      <label htmlFor="llm-profile-description">Description</label>
-                      <input
-                        id="llm-profile-description"
-                        value={llmProfileForm.description}
-                        onChange={(event) => setLlmProfileForm((current) => ({ ...current, description: event.target.value }))}
-                      />
-                    </div>
-                    <div className="inline-actions">
-                      <button type="submit" disabled={llmProviderEntries.length === 0}>
-                        Save profile
-                      </button>
-                      <button
-                        type="button"
-                        className="secondary-button"
-                        onClick={() => setLlmProfileForm(DEFAULT_LLM_PROFILE_FORM)}
-                      >
-                        Clear profile form
-                      </button>
-                    </div>
-                  </form>
+                  ) : null}
                 </article>
               </div>
 
@@ -3041,6 +3036,7 @@ export function App(): JSX.Element {
                   onClose={closeLlmProviderModal}
                 >
                   <form className="admin-form llm-form" onSubmit={onSaveLlmProvider}>
+                    <LlmFeedbackMessages className="llm-modal-feedback" message={llmMessage} error={llmError} />
                     <div className="field-group">
                       <label htmlFor="llm-provider-id">Provider ID</label>
                       <input
@@ -3159,9 +3155,100 @@ export function App(): JSX.Element {
                 </ModalShell>
               ) : null}
 
+              {llmProfileModalOpen ? (
+                <ModalShell
+                  titleId="llm-profile-dialog-title"
+                  title={llmProfileForm.id.trim() ? `Edit profile ${llmProfileForm.id.trim()}` : "Add profile"}
+                  eyebrow="Profile"
+                  onClose={closeLlmProfileModal}
+                >
+                  <form className="admin-form llm-form" onSubmit={onSaveLlmProfile}>
+                    <LlmFeedbackMessages className="llm-modal-feedback" message={llmMessage} error={llmError} />
+                    <div className="field-group">
+                      <label htmlFor="llm-profile-id">Profile ID</label>
+                      <input
+                        id="llm-profile-id"
+                        value={llmProfileForm.id}
+                        onChange={(event) => setLlmProfileForm((current) => ({ ...current, id: event.target.value }))}
+                        required
+                      />
+                    </div>
+                    <div className="field-group">
+                      <label htmlFor="llm-profile-provider">Profile provider</label>
+                      <select
+                        id="llm-profile-provider"
+                        value={llmProfileForm.provider}
+                        onChange={(event) => setLlmProfileForm((current) => ({ ...current, provider: event.target.value }))}
+                        required
+                      >
+                        <option value="">Select provider</option>
+                        {llmProviderEntries.map(([providerId]) => (
+                          <option key={providerId} value={providerId}>
+                            {providerId}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                    <div className="field-group">
+                      <label htmlFor="llm-profile-model">Profile model</label>
+                      <input
+                        id="llm-profile-model"
+                        value={llmProfileForm.model}
+                        onChange={(event) => setLlmProfileForm((current) => ({ ...current, model: event.target.value }))}
+                        placeholder="gpt-4.1-mini"
+                      />
+                    </div>
+                    <div className="llm-two-column">
+                      <div className="field-group">
+                        <label htmlFor="llm-profile-temperature">Temperature</label>
+                        <input
+                          id="llm-profile-temperature"
+                          value={llmProfileForm.temperature}
+                          onChange={(event) => setLlmProfileForm((current) => ({ ...current, temperature: event.target.value }))}
+                          inputMode="decimal"
+                        />
+                      </div>
+                      <div className="field-group">
+                        <label htmlFor="llm-profile-max-tokens">Max tokens</label>
+                        <input
+                          id="llm-profile-max-tokens"
+                          value={llmProfileForm.maxTokens}
+                          onChange={(event) => setLlmProfileForm((current) => ({ ...current, maxTokens: event.target.value }))}
+                          inputMode="numeric"
+                        />
+                      </div>
+                    </div>
+                    <div className="field-group">
+                      <label htmlFor="llm-profile-description">Description</label>
+                      <input
+                        id="llm-profile-description"
+                        value={llmProfileForm.description}
+                        onChange={(event) => setLlmProfileForm((current) => ({ ...current, description: event.target.value }))}
+                      />
+                    </div>
+                    <div className="inline-actions">
+                      <button type="submit" disabled={llmProviderEntries.length === 0}>
+                        Save profile
+                      </button>
+                      <button
+                        type="button"
+                        className="secondary-button"
+                        onClick={() => setLlmProfileForm(DEFAULT_LLM_PROFILE_FORM)}
+                      >
+                        Clear profile
+                      </button>
+                      <button type="button" className="secondary-button" onClick={closeLlmProfileModal}>
+                        Cancel
+                      </button>
+                    </div>
+                  </form>
+                </ModalShell>
+              ) : null}
+
               {llmYamlModalOpen ? (
                 <ModalShell titleId="llm-yaml-dialog-title" title="Import YAML" eyebrow="YAML migration" onClose={closeLlmYamlModal}>
                   <div className="admin-form llm-form">
+                    <LlmFeedbackMessages className="llm-modal-feedback" message={llmMessage} error={llmError} />
                     <div className="field-group">
                       <label htmlFor="llm-yaml-import">YAML import</label>
                       <textarea
