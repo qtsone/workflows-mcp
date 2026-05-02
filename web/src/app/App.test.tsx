@@ -1,4 +1,4 @@
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { App } from "./App";
@@ -888,7 +888,17 @@ describe("App", () => {
     expect(screen.getByText(/providers: 1/i)).toBeTruthy();
     expect(screen.getByText(/profiles: 1/i)).toBeTruthy();
     expect(screen.getByText(/default profile: default/i)).toBeTruthy();
-    expect(screen.getAllByText(/openai/i).length).toBeGreaterThan(0);
+    expect(screen.queryByText(/persist configuration/i)).toBeNull();
+    expect(screen.getByRole("button", { name: /save llm configuration/i })).toBeTruthy();
+    expect(screen.getByRole("button", { name: /discard local changes/i })).toBeTruthy();
+
+    const providerTable = screen.getByRole("table", { name: /llm providers/i });
+    expect(within(providerTable).getByRole("columnheader", { name: /provider id/i })).toBeTruthy();
+    expect(within(providerTable).getByRole("columnheader", { name: /^type$/i })).toBeTruthy();
+    expect(within(providerTable).getByRole("columnheader", { name: /^model$/i })).toBeTruthy();
+    const providerRow = within(providerTable).getByRole("row", { name: /openai openai gpt-4\.1-mini/i });
+    expect(within(providerRow).getAllByText("openai").length).toBeGreaterThanOrEqual(2);
+    expect(within(providerRow).getByText("gpt-4.1-mini")).toBeTruthy();
     expect(screen.getByText(/api key secret: openai_api_key/i)).toBeTruthy();
     expect(screen.getByText(/primary runtime profile/i)).toBeTruthy();
   });
@@ -899,12 +909,14 @@ describe("App", () => {
 
     await screen.findByRole("heading", { name: /llm configuration/i });
 
-    fireEvent.change(screen.getByLabelText(/^provider id$/i), { target: { value: "openai" } });
-    fireEvent.change(screen.getByLabelText(/^provider type$/i), { target: { value: "openai" } });
-    fireEvent.change(screen.getByLabelText(/^provider model$/i), { target: { value: "gpt-4.1-mini" } });
-    fireEvent.change(screen.getByLabelText(/api key secret/i), { target: { value: "OPENAI_API_KEY" } });
-    fireEvent.change(screen.getByLabelText(/api url/i), { target: { value: "https://api.openai.com/v1" } });
-    fireEvent.click(screen.getByRole("button", { name: /save provider/i }));
+    fireEvent.click(screen.getByRole("button", { name: /add provider/i }));
+    const providerDialog = await screen.findByRole("dialog", { name: /provider/i });
+    fireEvent.change(within(providerDialog).getByLabelText(/^provider id$/i), { target: { value: "openai" } });
+    fireEvent.change(within(providerDialog).getByLabelText(/^provider type$/i), { target: { value: "openai" } });
+    fireEvent.change(within(providerDialog).getByLabelText(/^provider model$/i), { target: { value: "gpt-4.1-mini" } });
+    fireEvent.change(within(providerDialog).getByLabelText(/api key secret/i), { target: { value: "OPENAI_API_KEY" } });
+    fireEvent.change(within(providerDialog).getByLabelText(/api url/i), { target: { value: "https://api.openai.com/v1" } });
+    fireEvent.click(within(providerDialog).getByRole("button", { name: /save provider/i }));
 
     fireEvent.change(screen.getByLabelText(/^profile id$/i), { target: { value: "default" } });
     fireEvent.change(screen.getByLabelText(/^profile provider$/i), { target: { value: "openai" } });
@@ -955,16 +967,124 @@ describe("App", () => {
     });
   });
 
+  it("opens the provider modal when selecting an existing LLM provider row", async () => {
+    installApiMock({
+      llmConfig: {
+        version: "1.0",
+        providers: {
+          openai: {
+            type: "openai",
+            api_url: "https://api.openai.com/v1",
+            api_key_secret: "OPENAI_API_KEY",
+            model: "gpt-4.1-mini",
+          },
+        },
+        profiles: {},
+        default_profile: null,
+      },
+    });
+    renderAtPath("/llm");
+
+    await screen.findByRole("heading", { name: /llm configuration/i });
+    const providerTable = screen.getByRole("table", { name: /llm providers/i });
+    fireEvent.click(within(providerTable).getByRole("row", { name: /openai openai gpt-4\.1-mini/i }));
+
+    const providerDialog = await screen.findByRole("dialog", { name: /edit provider openai/i });
+    expect((within(providerDialog).getByLabelText(/^provider id$/i) as HTMLInputElement).value).toBe("openai");
+    expect((within(providerDialog).getByLabelText(/^provider type$/i) as HTMLInputElement).value).toBe("openai");
+    expect((within(providerDialog).getByLabelText(/^provider model$/i) as HTMLInputElement).value).toBe("gpt-4.1-mini");
+  });
+
+  it("opens the provider modal from an explicit edit action", async () => {
+    installApiMock({
+      llmConfig: {
+        version: "1.0",
+        providers: {
+          openai: {
+            type: "openai",
+            api_url: "https://api.openai.com/v1",
+            api_key_secret: "OPENAI_API_KEY",
+            model: "gpt-4.1-mini",
+          },
+        },
+        profiles: {},
+        default_profile: null,
+      },
+    });
+    renderAtPath("/llm");
+
+    await screen.findByRole("heading", { name: /llm configuration/i });
+    const editButton = screen.getByRole("button", { name: /edit provider openai/i });
+    editButton.focus();
+    fireEvent.click(editButton);
+
+    const providerDialog = await screen.findByRole("dialog", { name: /edit provider openai/i });
+    expect((within(providerDialog).getByLabelText(/^provider id$/i) as HTMLInputElement).value).toBe("openai");
+    expect(document.activeElement).toBe(within(providerDialog).getByLabelText(/^provider id$/i));
+  });
+
+  it("keeps keyboard focus inside LLM modals and restores focus to the opener", async () => {
+    installApiMock();
+    renderAtPath("/llm");
+
+    await screen.findByRole("heading", { name: /llm configuration/i });
+    const opener = screen.getByRole("button", { name: /add provider/i });
+    opener.focus();
+    fireEvent.click(opener);
+
+    const providerDialog = await screen.findByRole("dialog", { name: /provider/i });
+    const firstField = within(providerDialog).getByLabelText(/^provider id$/i);
+    await waitFor(() => expect(document.activeElement).toBe(firstField));
+
+    const closeButton = within(providerDialog).getByRole("button", { name: /close/i });
+    const cancelButton = within(providerDialog).getByRole("button", { name: /cancel/i });
+    closeButton.focus();
+    fireEvent.keyDown(closeButton, { key: "Tab", shiftKey: true });
+    expect(document.activeElement).toBe(cancelButton);
+
+    fireEvent.keyDown(cancelButton, { key: "Tab" });
+    expect(document.activeElement).toBe(closeButton);
+
+    fireEvent.keyDown(firstField, { key: "Escape" });
+    await waitFor(() => expect(screen.queryByRole("dialog", { name: /provider/i })).toBeNull());
+    expect(document.activeElement).toBe(opener);
+  });
+
+  it("does not open the provider edit modal from Delete provider keyboard activation", async () => {
+    installApiMock({
+      llmConfig: {
+        version: "1.0",
+        providers: { openai: { type: "openai", model: "gpt-4.1-mini" } },
+        profiles: {},
+        default_profile: null,
+      },
+    });
+    renderAtPath("/llm");
+
+    await screen.findByText(/default profile: none/i);
+    const deleteButton = screen.getByRole("button", { name: /delete provider openai/i });
+    deleteButton.focus();
+    fireEvent.keyDown(deleteButton, { key: "Enter" });
+
+    expect(screen.queryByRole("dialog", { name: /edit provider openai/i })).toBeNull();
+
+    fireEvent.click(deleteButton);
+    expect(await screen.findByText(/provider openai staged for deletion/i)).toBeTruthy();
+    expect(screen.queryByRole("dialog", { name: /edit provider openai/i })).toBeNull();
+  });
+
   it("rejects blank LLM profile model before saving configuration", async () => {
     const fetchMock = installApiMock();
     renderAtPath("/llm");
 
     await screen.findByRole("heading", { name: /llm configuration/i });
 
-    fireEvent.change(screen.getByLabelText(/^provider id$/i), { target: { value: "openai" } });
-    fireEvent.change(screen.getByLabelText(/^provider type$/i), { target: { value: "openai" } });
-    fireEvent.change(screen.getByLabelText(/^provider model$/i), { target: { value: "gpt-4.1-mini" } });
-    fireEvent.click(screen.getByRole("button", { name: /save provider/i }));
+    fireEvent.click(screen.getByRole("button", { name: /add provider/i }));
+    const providerDialog = await screen.findByRole("dialog", { name: /provider/i });
+    fireEvent.change(within(providerDialog).getByLabelText(/^provider id$/i), { target: { value: "openai" } });
+    fireEvent.change(within(providerDialog).getByLabelText(/^provider type$/i), { target: { value: "openai" } });
+    fireEvent.change(within(providerDialog).getByLabelText(/^provider model$/i), { target: { value: "gpt-4.1-mini" } });
+    fireEvent.click(within(providerDialog).getByRole("button", { name: /save provider/i }));
 
     fireEvent.change(screen.getByLabelText(/^profile id$/i), { target: { value: "default" } });
     fireEvent.change(screen.getByLabelText(/^profile provider$/i), { target: { value: "openai" } });
@@ -1012,18 +1132,49 @@ describe("App", () => {
 
     await screen.findByRole("heading", { name: /llm configuration/i });
 
-    fireEvent.click(screen.getByRole("button", { name: /export yaml/i }));
-    await screen.findByText(/llm yaml exported/i);
-    expect((screen.getByLabelText(/yaml export/i) as HTMLTextAreaElement).value).toContain("providers:\n  openai:");
+    const createObjectUrl = vi.fn(() => "blob:llm-config");
+    const revokeObjectUrl = vi.fn();
+    Object.defineProperty(URL, "createObjectURL", { configurable: true, value: createObjectUrl });
+    Object.defineProperty(URL, "revokeObjectURL", { configurable: true, value: revokeObjectUrl });
+    const linkClick = vi.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(() => undefined);
 
-    fireEvent.change(screen.getByLabelText(/yaml import/i), {
-      target: { value: "version: '1.0'\nproviders:\n  anthropic:\n    type: anthropic\n" },
-    });
-    fireEvent.click(screen.getByRole("button", { name: /preview import/i }));
-    expect(await screen.findByText(/preview loaded: 1 providers, 1 profiles/i)).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: /export yaml/i }));
+    await waitFor(() => expect(createObjectUrl).toHaveBeenCalledWith(expect.any(Blob)));
+    await waitFor(() => expect(linkClick).toHaveBeenCalled());
+    expect(revokeObjectUrl).toHaveBeenCalledWith("blob:llm-config");
+
+    const downloadedLink = linkClick.mock.contexts.find(
+      (context): context is HTMLAnchorElement => context instanceof HTMLAnchorElement,
+    );
+    expect(downloadedLink?.download).toBe("llm-config.yaml");
+    expect(downloadedLink?.href).toBe("blob:llm-config");
 
     fireEvent.click(screen.getByRole("button", { name: /^import yaml$/i }));
+    const yamlDialog = await screen.findByRole("dialog", { name: /import yaml/i });
+    fireEvent.change(within(yamlDialog).getByLabelText(/yaml import/i), {
+      target: { value: "version: '1.0'\nproviders:\n  anthropic:\n    type: anthropic\n" },
+    });
+    fireEvent.click(within(yamlDialog).getByRole("button", { name: /preview import/i }));
+    expect(await screen.findByText(/preview loaded: 1 providers, 1 profiles/i)).toBeTruthy();
+
+    const uploadedYaml = "version: '1.0'\nproviders:\n  uploaded:\n    type: openai\n";
+    const upload = new File([uploadedYaml], "llm-config.yaml", { type: "application/x-yaml" });
+    fireEvent.change(within(yamlDialog).getByLabelText(/upload yaml file/i), {
+      target: { files: [upload] },
+    });
+    await waitFor(() =>
+      expect((within(yamlDialog).getByLabelText(/yaml import/i) as HTMLTextAreaElement).value).toBe(uploadedYaml),
+    );
+
+    fireEvent.click(within(yamlDialog).getByRole("button", { name: /^import yaml$/i }));
     expect(await screen.findByText(/llm yaml imported into sqlite-backed config/i)).toBeTruthy();
+    const importCall = vi.mocked(fetch).mock.calls.find((call) => {
+      const url = String(call[0]);
+      const init = call[1] as RequestInit | undefined;
+      return url.endsWith("/api/admin/v1/llm/import") && init?.method === "POST";
+    });
+    expect(importCall).toBeTruthy();
+    expect(JSON.parse(String((importCall?.[1] as RequestInit | undefined)?.body ?? "{}"))).toEqual({ raw_yaml: uploadedYaml });
     expect(screen.getAllByText(/anthropic/i).length).toBeGreaterThan(0);
     expect(screen.getByText(/default profile: review/i)).toBeTruthy();
   });

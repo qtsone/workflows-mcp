@@ -1,5 +1,5 @@
 import "./App.css";
-import { FormEvent, useEffect, useMemo, useRef, useState } from "react";
+import { ChangeEvent, FormEvent, KeyboardEvent, ReactNode, useEffect, useMemo, useRef, useState } from "react";
 
 import { ApiHttpError, createApiClient, type DatabaseSslMode } from "../api/client";
 import {
@@ -230,6 +230,14 @@ type LlmProfileForm = {
   description: string;
 };
 
+type ModalShellProps = {
+  titleId: string;
+  title: string;
+  eyebrow: string;
+  children: ReactNode;
+  onClose: () => void;
+};
+
 type ConnectionTestModel = {
   ok: boolean;
   status: string;
@@ -409,6 +417,89 @@ const DEFAULT_LLM_PROFILE_FORM: LlmProfileForm = {
   description: "",
 };
 
+function ModalShell({ titleId, title, eyebrow, children, onClose }: ModalShellProps) {
+  const dialogRef = useRef<HTMLElement | null>(null);
+  const openerRef = useRef<HTMLElement | null>(null);
+
+  useEffect(() => {
+    openerRef.current = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    const dialog = dialogRef.current;
+    const initialFocusable = dialog ? getInitialModalFocusElement(dialog) : null;
+    initialFocusable?.focus();
+
+    return () => {
+      openerRef.current?.focus();
+    };
+  }, []);
+
+  const onDialogKeyDown = (event: KeyboardEvent<HTMLElement>): void => {
+    if (event.key === "Escape") {
+      event.preventDefault();
+      onClose();
+      return;
+    }
+
+    if (event.key !== "Tab") return;
+
+    const dialog = dialogRef.current;
+    if (!dialog) return;
+    const focusableElements = getModalFocusableElements(dialog);
+    if (focusableElements.length === 0) {
+      event.preventDefault();
+      return;
+    }
+
+    const firstElement = focusableElements[0];
+    const lastElement = focusableElements[focusableElements.length - 1];
+    if (event.shiftKey && document.activeElement === firstElement) {
+      event.preventDefault();
+      lastElement.focus();
+      return;
+    }
+    if (!event.shiftKey && document.activeElement === lastElement) {
+      event.preventDefault();
+      firstElement.focus();
+    }
+  };
+
+  return (
+    <div className="llm-modal__backdrop">
+      <section
+        ref={dialogRef}
+        className="llm-modal"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby={titleId}
+        onKeyDown={onDialogKeyDown}
+      >
+        <header className="llm-modal__header">
+          <div>
+            <p className="llm-modal__eyebrow">{eyebrow}</p>
+            <h2 id={titleId}>{title}</h2>
+          </div>
+          <button type="button" className="llm-modal__close" onClick={onClose}>
+            Close
+          </button>
+        </header>
+        <div className="llm-modal__body">{children}</div>
+      </section>
+    </div>
+  );
+}
+
+function getModalFocusableElements(container: HTMLElement): HTMLElement[] {
+  return Array.from(
+    container.querySelectorAll<HTMLElement>(
+      'a[href], button:not([disabled]), textarea:not([disabled]), input:not([disabled]), select:not([disabled]), [tabindex]:not([tabindex="-1"])',
+    ),
+  ).filter((element) => !element.hasAttribute("disabled") && element.getAttribute("aria-hidden") !== "true");
+}
+
+function getInitialModalFocusElement(container: HTMLElement): HTMLElement | null {
+  const body = container.querySelector<HTMLElement>(".llm-modal__body");
+  return (body ? getModalFocusableElements(body)[0] : null) ?? getModalFocusableElements(container)[0] ?? null;
+}
+
 function toNonEmptyString(value: unknown): string | null {
   if (typeof value !== "string") return null;
   const trimmed = value.trim();
@@ -546,6 +637,16 @@ function numberField(value: string, label: string): number | null {
   const parsed = Number(trimmed);
   if (!Number.isFinite(parsed)) throw new Error(`${label} must be a number.`);
   return parsed;
+}
+
+function readUploadText(file: File): Promise<string> {
+  if (typeof file.text === "function") return file.text();
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(typeof reader.result === "string" ? reader.result : "");
+    reader.onerror = () => reject(reader.error ?? new Error("Unable to read YAML file."));
+    reader.readAsText(file);
+  });
 }
 
 function toDatabaseSettingsModel(payload: unknown): DatabaseSettingsModel {
@@ -875,9 +976,10 @@ export function App(): JSX.Element {
   const [llmError, setLlmError] = useState("");
   const [llmMessage, setLlmMessage] = useState("");
   const [llmProviderForm, setLlmProviderForm] = useState<LlmProviderForm>(DEFAULT_LLM_PROVIDER_FORM);
+  const [llmProviderModalOpen, setLlmProviderModalOpen] = useState(false);
   const [llmProfileForm, setLlmProfileForm] = useState<LlmProfileForm>(DEFAULT_LLM_PROFILE_FORM);
   const [llmYamlImport, setLlmYamlImport] = useState("");
-  const [llmYamlExport, setLlmYamlExport] = useState("");
+  const [llmYamlModalOpen, setLlmYamlModalOpen] = useState(false);
   const [llmPreview, setLlmPreview] = useState<LlmConfigModel | null>(null);
 
   const api = useMemo(
@@ -1162,8 +1264,9 @@ export function App(): JSX.Element {
             setContentState("");
             setLlmMessage("");
             setLlmError("");
-            setLlmYamlExport("");
             setLlmPreview(null);
+            setLlmProviderModalOpen(false);
+            setLlmYamlModalOpen(false);
             await loadLlmConfig();
           }
           return;
@@ -1911,6 +2014,30 @@ export function App(): JSX.Element {
     return null;
   };
 
+  const openNewLlmProviderModal = (): void => {
+    setLlmError("");
+    setLlmMessage("");
+    setLlmProviderForm(DEFAULT_LLM_PROVIDER_FORM);
+    setLlmProviderModalOpen(true);
+  };
+
+  const closeLlmProviderModal = (): void => {
+    setLlmProviderForm(DEFAULT_LLM_PROVIDER_FORM);
+    setLlmProviderModalOpen(false);
+  };
+
+  const openLlmYamlModal = (): void => {
+    setLlmError("");
+    setLlmMessage("");
+    setLlmPreview(null);
+    setLlmYamlModalOpen(true);
+  };
+
+  const closeLlmYamlModal = (): void => {
+    setLlmPreview(null);
+    setLlmYamlModalOpen(false);
+  };
+
   const onSaveLlmProvider = (event: FormEvent<HTMLFormElement>): void => {
     event.preventDefault();
     setLlmError("");
@@ -1936,6 +2063,7 @@ export function App(): JSX.Element {
         providers: { ...current.providers, [id]: provider },
       }));
       setLlmProviderForm(DEFAULT_LLM_PROVIDER_FORM);
+      setLlmProviderModalOpen(false);
       setLlmMessage(`Provider ${id} staged. Save LLM configuration to persist.`);
     } catch (error) {
       setLlmError(toUserError(error, "Unable to stage provider."));
@@ -1945,7 +2073,9 @@ export function App(): JSX.Element {
   const onEditLlmProvider = (providerId: string): void => {
     const provider = llmConfig.providers[providerId];
     if (!provider) return;
+    setLlmError("");
     setLlmProviderForm(toLlmProviderForm(providerId, provider));
+    setLlmProviderModalOpen(true);
     setLlmMessage(`Editing provider ${providerId}.`);
   };
 
@@ -2045,10 +2175,32 @@ export function App(): JSX.Element {
     try {
       const payload = await api.exportLlmConfig();
       const rawYaml = typeof payload.raw_yaml === "string" ? payload.raw_yaml : JSON.stringify(payload, null, 2);
-      setLlmYamlExport(rawYaml);
-      setLlmMessage("LLM YAML exported.");
+      const blob = new Blob([rawYaml], { type: "application/x-yaml;charset=utf-8" });
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = "llm-config.yaml";
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      URL.revokeObjectURL(url);
+      setLlmMessage("LLM YAML downloaded.");
     } catch (error) {
       setLlmError(toUserError(error, "Unable to export LLM YAML."));
+    }
+  };
+
+  const onUploadLlmYaml = async (event: ChangeEvent<HTMLInputElement>): Promise<void> => {
+    const file = event.currentTarget.files?.[0];
+    if (!file) return;
+    setLlmError("");
+    setLlmMessage("");
+    try {
+      const rawYaml = await readUploadText(file);
+      setLlmYamlImport(rawYaml);
+      setLlmPreview(null);
+    } catch (error) {
+      setLlmError(toUserError(error, "Unable to read YAML file."));
     }
   };
 
@@ -2073,6 +2225,7 @@ export function App(): JSX.Element {
       const imported = toLlmConfigModel(await api.importLlmConfig(llmYamlImport));
       setLlmConfig(imported);
       setLlmPreview(null);
+      setLlmYamlModalOpen(false);
       setLlmMessage("LLM YAML imported into SQLite-backed config.");
     } catch (error) {
       setLlmError(toUserError(error, "Unable to import LLM YAML."));
@@ -2642,162 +2795,84 @@ export function App(): JSX.Element {
                 {llmError ? <p role="alert">{llmError}</p> : null}
               </div>
 
-              <div className="llm-workbench__grid">
+              <div className="llm-workbench__grid llm-workbench__grid--single">
                 <article className="admin-card" aria-labelledby="llm-providers-title">
                   <div className="inline-actions">
                     <h2 id="llm-providers-title">Providers</h2>
-                    <button type="button" className="secondary-button" onClick={() => void loadLlmConfig()}>
-                      Reload
-                    </button>
-                  </div>
-                  {llmProviderEntries.length === 0 ? <p>No providers configured.</p> : null}
-                  {llmProviderEntries.length > 0 ? (
-                    <ul className="entity-list" aria-label="LLM providers list">
-                      {llmProviderEntries.map(([providerId, provider]) => (
-                        <li key={providerId} className="entity-item">
-                          <div>
-                            <strong>{providerId}</strong>
-                            <p>Type: {provider.type || "Not set"}</p>
-                            <p>Model: {provider.model ?? "Not set"}</p>
-                            <p>API URL: {provider.api_url ?? "Default endpoint"}</p>
-                            <p>API key secret: {provider.api_key_secret ?? "Not set"}</p>
-                            <p>
-                              Timeout: {provider.timeout ?? "default"} · Retries: {provider.max_retries ?? "default"} · Delay:{" "}
-                              {provider.retry_delay ?? "default"}
-                            </p>
-                            <p>Headers: {Object.keys(provider.extra_headers).length}</p>
-                            {provider.deployment_name ? <p>Deployment: {provider.deployment_name}</p> : null}
-                            {provider.api_version ? <p>API version: {provider.api_version}</p> : null}
-                          </div>
-                          <div className="inline-actions">
-                            <button type="button" className="secondary-button" onClick={() => onEditLlmProvider(providerId)}>
-                              Edit provider {providerId}
-                            </button>
-                            <button type="button" onClick={() => onDeleteLlmProvider(providerId)}>
-                              Delete provider {providerId}
-                            </button>
-                          </div>
-                        </li>
-                      ))}
-                    </ul>
-                  ) : null}
-                </article>
-
-                <article className="admin-card" aria-labelledby="llm-provider-form-title">
-                  <h2 id="llm-provider-form-title">Provider editor</h2>
-                  <form className="admin-form llm-form" onSubmit={onSaveLlmProvider}>
-                    <div className="field-group">
-                      <label htmlFor="llm-provider-id">Provider ID</label>
-                      <input
-                        id="llm-provider-id"
-                        value={llmProviderForm.id}
-                        onChange={(event) => setLlmProviderForm((current) => ({ ...current, id: event.target.value }))}
-                        required
-                      />
-                    </div>
-                    <div className="field-group">
-                      <label htmlFor="llm-provider-type">Provider type</label>
-                      <input
-                        id="llm-provider-type"
-                        value={llmProviderForm.type}
-                        onChange={(event) => setLlmProviderForm((current) => ({ ...current, type: event.target.value }))}
-                        placeholder="openai"
-                        required
-                      />
-                    </div>
-                    <div className="field-group">
-                      <label htmlFor="llm-provider-model">Provider model</label>
-                      <input
-                        id="llm-provider-model"
-                        value={llmProviderForm.model}
-                        onChange={(event) => setLlmProviderForm((current) => ({ ...current, model: event.target.value }))}
-                        placeholder="gpt-4.1-mini"
-                      />
-                    </div>
-                    <div className="field-group">
-                      <label htmlFor="llm-provider-api-key-secret">API key secret</label>
-                      <input
-                        id="llm-provider-api-key-secret"
-                        value={llmProviderForm.apiKeySecret}
-                        onChange={(event) => setLlmProviderForm((current) => ({ ...current, apiKeySecret: event.target.value }))}
-                        placeholder="OPENAI_API_KEY"
-                      />
-                    </div>
-                    <div className="field-group">
-                      <label htmlFor="llm-provider-api-url">API URL</label>
-                      <input
-                        id="llm-provider-api-url"
-                        value={llmProviderForm.apiUrl}
-                        onChange={(event) => setLlmProviderForm((current) => ({ ...current, apiUrl: event.target.value }))}
-                        placeholder="https://api.openai.com/v1"
-                      />
-                    </div>
-                    <div className="llm-three-column">
-                      <div className="field-group">
-                        <label htmlFor="llm-provider-timeout">Timeout</label>
-                        <input
-                          id="llm-provider-timeout"
-                          value={llmProviderForm.timeout}
-                          onChange={(event) => setLlmProviderForm((current) => ({ ...current, timeout: event.target.value }))}
-                          inputMode="decimal"
-                        />
-                      </div>
-                      <div className="field-group">
-                        <label htmlFor="llm-provider-max-retries">Max retries</label>
-                        <input
-                          id="llm-provider-max-retries"
-                          value={llmProviderForm.maxRetries}
-                          onChange={(event) => setLlmProviderForm((current) => ({ ...current, maxRetries: event.target.value }))}
-                          inputMode="numeric"
-                        />
-                      </div>
-                      <div className="field-group">
-                        <label htmlFor="llm-provider-retry-delay">Retry delay</label>
-                        <input
-                          id="llm-provider-retry-delay"
-                          value={llmProviderForm.retryDelay}
-                          onChange={(event) => setLlmProviderForm((current) => ({ ...current, retryDelay: event.target.value }))}
-                          inputMode="decimal"
-                        />
-                      </div>
-                    </div>
-                    <div className="field-group">
-                      <label htmlFor="llm-provider-extra-headers">Extra headers JSON</label>
-                      <textarea
-                        id="llm-provider-extra-headers"
-                        value={llmProviderForm.extraHeaders}
-                        onChange={(event) => setLlmProviderForm((current) => ({ ...current, extraHeaders: event.target.value }))}
-                      />
-                    </div>
-                    <div className="llm-two-column">
-                      <div className="field-group">
-                        <label htmlFor="llm-provider-deployment-name">Deployment name</label>
-                        <input
-                          id="llm-provider-deployment-name"
-                          value={llmProviderForm.deploymentName}
-                          onChange={(event) => setLlmProviderForm((current) => ({ ...current, deploymentName: event.target.value }))}
-                        />
-                      </div>
-                      <div className="field-group">
-                        <label htmlFor="llm-provider-api-version">API version</label>
-                        <input
-                          id="llm-provider-api-version"
-                          value={llmProviderForm.apiVersion}
-                          onChange={(event) => setLlmProviderForm((current) => ({ ...current, apiVersion: event.target.value }))}
-                        />
-                      </div>
-                    </div>
                     <div className="inline-actions">
-                      <button type="submit">Save provider</button>
-                      <button
-                        type="button"
-                        className="secondary-button"
-                        onClick={() => setLlmProviderForm(DEFAULT_LLM_PROVIDER_FORM)}
-                      >
-                        Clear provider form
+                      <button type="button" onClick={openNewLlmProviderModal}>
+                        Add provider
+                      </button>
+                      <button type="button" className="secondary-button" onClick={() => void loadLlmConfig()}>
+                        Reload
                       </button>
                     </div>
-                  </form>
+                  </div>
+                  {llmProviderEntries.length === 0 ? <p>No providers configured.</p> : null}
+                  <div className="llm-table-wrap">
+                    <table className="llm-provider-table" aria-label="LLM providers">
+                      <thead>
+                        <tr>
+                          <th scope="col">Provider ID</th>
+                          <th scope="col">Type</th>
+                          <th scope="col">Model</th>
+                          <th scope="col">Endpoint</th>
+                          <th scope="col">Secret</th>
+                          <th scope="col">Operations</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                      {llmProviderEntries.map(([providerId, provider]) => (
+                        <tr
+                          key={providerId}
+                          onClick={() => onEditLlmProvider(providerId)}
+                        >
+                          <th scope="row">{providerId}</th>
+                          <td>{provider.type || "Not set"}</td>
+                          <td>{provider.model ?? "Not set"}</td>
+                          <td>{provider.api_url ?? "Default endpoint"}</td>
+                          <td>{provider.api_key_secret ?? "Not set"}</td>
+                          <td>
+                            <div className="inline-actions">
+                              <button
+                                type="button"
+                                className="secondary-button"
+                                onClick={(event) => {
+                                  event.stopPropagation();
+                                  onEditLlmProvider(providerId);
+                                }}
+                              >
+                                Edit provider {providerId}
+                              </button>
+                              <button
+                                type="button"
+                                className="secondary-button"
+                                onClick={(event) => {
+                                  event.stopPropagation();
+                                  onDeleteLlmProvider(providerId);
+                                }}
+                              >
+                                Delete provider {providerId}
+                              </button>
+                            </div>
+                          </td>
+                        </tr>
+                      ))}
+                      </tbody>
+                    </table>
+                  </div>
+                  {llmProviderEntries.length > 0 ? (
+                    <div className="llm-provider-details" aria-label="LLM provider details">
+                      {llmProviderEntries.map(([providerId, provider]) => (
+                        <p key={providerId}>
+                          <strong>{providerId}</strong> API key secret: {provider.api_key_secret ?? "Not set"} · Headers:{" "}
+                          {Object.keys(provider.extra_headers).length}
+                          {provider.deployment_name ? ` · Deployment: ${provider.deployment_name}` : ""}
+                          {provider.api_version ? ` · API version: ${provider.api_version}` : ""}
+                        </p>
+                      ))}
+                    </div>
+                  ) : null}
                 </article>
               </div>
 
@@ -2912,8 +2987,8 @@ export function App(): JSX.Element {
                 </article>
               </div>
 
-              <article className="admin-card llm-persist-panel" aria-labelledby="llm-persist-title">
-                <h2 id="llm-persist-title">Persist configuration</h2>
+              <article className="admin-card llm-persist-panel" aria-labelledby="llm-save-title">
+                <h2 id="llm-save-title">Configuration changes</h2>
                 <div className="llm-two-column">
                   <div className="field-group">
                     <label htmlFor="llm-default-profile">Default profile</label>
@@ -2948,19 +3023,167 @@ export function App(): JSX.Element {
               <article className="admin-card llm-yaml-panel" aria-labelledby="llm-yaml-title">
                 <div className="inline-actions">
                   <h2 id="llm-yaml-title">YAML migration</h2>
+                  <button type="button" onClick={openLlmYamlModal}>
+                    Import YAML
+                  </button>
                   <button type="button" className="secondary-button" onClick={() => void onExportLlmYaml()}>
                     Export YAML
                   </button>
                 </div>
-                <div className="llm-two-column">
-                  <div className="field-group">
-                    <label htmlFor="llm-yaml-import">YAML import</label>
-                    <textarea
-                      id="llm-yaml-import"
-                      value={llmYamlImport}
-                      onChange={(event) => setLlmYamlImport(event.target.value)}
-                      placeholder="version: '1.0'"
-                    />
+                <p>Import legacy YAML or download the current SQLite-backed LLM configuration.</p>
+              </article>
+
+              {llmProviderModalOpen ? (
+                <ModalShell
+                  titleId="llm-provider-dialog-title"
+                  title={llmProviderForm.id.trim() ? `Edit provider ${llmProviderForm.id.trim()}` : "Add provider"}
+                  eyebrow="Provider"
+                  onClose={closeLlmProviderModal}
+                >
+                  <form className="admin-form llm-form" onSubmit={onSaveLlmProvider}>
+                    <div className="field-group">
+                      <label htmlFor="llm-provider-id">Provider ID</label>
+                      <input
+                        id="llm-provider-id"
+                        value={llmProviderForm.id}
+                        onChange={(event) => setLlmProviderForm((current) => ({ ...current, id: event.target.value }))}
+                        required
+                      />
+                    </div>
+                    <div className="field-group">
+                      <label htmlFor="llm-provider-type">Provider type</label>
+                      <input
+                        id="llm-provider-type"
+                        value={llmProviderForm.type}
+                        onChange={(event) => setLlmProviderForm((current) => ({ ...current, type: event.target.value }))}
+                        placeholder="openai"
+                        required
+                      />
+                    </div>
+                    <div className="field-group">
+                      <label htmlFor="llm-provider-model">Provider model</label>
+                      <input
+                        id="llm-provider-model"
+                        value={llmProviderForm.model}
+                        onChange={(event) => setLlmProviderForm((current) => ({ ...current, model: event.target.value }))}
+                        placeholder="gpt-4.1-mini"
+                      />
+                    </div>
+                    <div className="field-group">
+                      <label htmlFor="llm-provider-api-key-secret">API key secret</label>
+                      <input
+                        id="llm-provider-api-key-secret"
+                        value={llmProviderForm.apiKeySecret}
+                        onChange={(event) => setLlmProviderForm((current) => ({ ...current, apiKeySecret: event.target.value }))}
+                        placeholder="OPENAI_API_KEY"
+                      />
+                    </div>
+                    <div className="field-group">
+                      <label htmlFor="llm-provider-api-url">API URL</label>
+                      <input
+                        id="llm-provider-api-url"
+                        value={llmProviderForm.apiUrl}
+                        onChange={(event) => setLlmProviderForm((current) => ({ ...current, apiUrl: event.target.value }))}
+                        placeholder="https://api.openai.com/v1"
+                      />
+                    </div>
+                    <div className="llm-three-column">
+                      <div className="field-group">
+                        <label htmlFor="llm-provider-timeout">Timeout</label>
+                        <input
+                          id="llm-provider-timeout"
+                          value={llmProviderForm.timeout}
+                          onChange={(event) => setLlmProviderForm((current) => ({ ...current, timeout: event.target.value }))}
+                          inputMode="decimal"
+                        />
+                      </div>
+                      <div className="field-group">
+                        <label htmlFor="llm-provider-max-retries">Max retries</label>
+                        <input
+                          id="llm-provider-max-retries"
+                          value={llmProviderForm.maxRetries}
+                          onChange={(event) => setLlmProviderForm((current) => ({ ...current, maxRetries: event.target.value }))}
+                          inputMode="numeric"
+                        />
+                      </div>
+                      <div className="field-group">
+                        <label htmlFor="llm-provider-retry-delay">Retry delay</label>
+                        <input
+                          id="llm-provider-retry-delay"
+                          value={llmProviderForm.retryDelay}
+                          onChange={(event) => setLlmProviderForm((current) => ({ ...current, retryDelay: event.target.value }))}
+                          inputMode="decimal"
+                        />
+                      </div>
+                    </div>
+                    <div className="field-group">
+                      <label htmlFor="llm-provider-extra-headers">Extra headers JSON</label>
+                      <textarea
+                        id="llm-provider-extra-headers"
+                        value={llmProviderForm.extraHeaders}
+                        onChange={(event) => setLlmProviderForm((current) => ({ ...current, extraHeaders: event.target.value }))}
+                      />
+                    </div>
+                    <div className="llm-two-column">
+                      <div className="field-group">
+                        <label htmlFor="llm-provider-deployment-name">Deployment name</label>
+                        <input
+                          id="llm-provider-deployment-name"
+                          value={llmProviderForm.deploymentName}
+                          onChange={(event) => setLlmProviderForm((current) => ({ ...current, deploymentName: event.target.value }))}
+                        />
+                      </div>
+                      <div className="field-group">
+                        <label htmlFor="llm-provider-api-version">API version</label>
+                        <input
+                          id="llm-provider-api-version"
+                          value={llmProviderForm.apiVersion}
+                          onChange={(event) => setLlmProviderForm((current) => ({ ...current, apiVersion: event.target.value }))}
+                        />
+                      </div>
+                    </div>
+                    <div className="inline-actions">
+                      <button type="submit">Save provider</button>
+                      <button
+                        type="button"
+                        className="secondary-button"
+                        onClick={() => setLlmProviderForm(DEFAULT_LLM_PROVIDER_FORM)}
+                      >
+                        Clear provider
+                      </button>
+                      <button type="button" className="secondary-button" onClick={closeLlmProviderModal}>
+                        Cancel
+                      </button>
+                    </div>
+                  </form>
+                </ModalShell>
+              ) : null}
+
+              {llmYamlModalOpen ? (
+                <ModalShell titleId="llm-yaml-dialog-title" title="Import YAML" eyebrow="YAML migration" onClose={closeLlmYamlModal}>
+                  <div className="admin-form llm-form">
+                    <div className="field-group">
+                      <label htmlFor="llm-yaml-import">YAML import</label>
+                      <textarea
+                        id="llm-yaml-import"
+                        value={llmYamlImport}
+                        onChange={(event) => {
+                          setLlmYamlImport(event.target.value);
+                          setLlmPreview(null);
+                        }}
+                        placeholder="version: '1.0'"
+                      />
+                    </div>
+                    <div className="field-group">
+                      <label htmlFor="llm-yaml-upload">Upload YAML file</label>
+                      <input id="llm-yaml-upload" type="file" accept=".yaml,.yml,application/x-yaml,text/yaml,text/plain" onChange={(event) => void onUploadLlmYaml(event)} />
+                    </div>
+                    {llmPreview ? (
+                      <p className="llm-preview-summary">
+                        Preview default profile: {llmPreview.default_profile ?? "None"} · Providers:{" "}
+                        {Object.keys(llmPreview.providers).join(", ") || "None"}
+                      </p>
+                    ) : null}
                     <div className="inline-actions">
                       <button
                         type="button"
@@ -2977,25 +3200,13 @@ export function App(): JSX.Element {
                       >
                         Import YAML
                       </button>
+                      <button type="button" className="secondary-button" onClick={closeLlmYamlModal}>
+                        Cancel
+                      </button>
                     </div>
                   </div>
-                  <div className="field-group">
-                    <label htmlFor="llm-yaml-export">YAML export</label>
-                    <textarea
-                      id="llm-yaml-export"
-                      value={llmYamlExport}
-                      onChange={(event) => setLlmYamlExport(event.target.value)}
-                      readOnly
-                    />
-                    {llmPreview ? (
-                      <p>
-                        Preview default profile: {llmPreview.default_profile ?? "None"} · Providers:{" "}
-                        {Object.keys(llmPreview.providers).join(", ") || "None"}
-                      </p>
-                    ) : null}
-                  </div>
-                </div>
-              </article>
+                </ModalShell>
+              ) : null}
             </section>
           ) : null}
 
