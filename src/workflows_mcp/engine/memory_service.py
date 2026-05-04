@@ -2438,28 +2438,40 @@ class MemoryService:
             item_id: str | None = None
             source_name: str | None = None
             if request.source and request.path:
+                ingest_palace = _normalize_scope_value(_get_palace(request)) or "default"
                 source_result = await self._backend.query(
                     """
                     INSERT INTO knowledge_sources
-                        (id, name, source_type, category_ids)
-                    VALUES ($1::uuid, $2, $3, '{}'::uuid[])
-                    ON CONFLICT (name) DO UPDATE SET updated_at = NOW()
+                        (id, palace, name, source_type, category_ids)
+                    VALUES ($1::uuid, $2, $3, $4, '{}'::uuid[])
+                    ON CONFLICT (palace, name) DO UPDATE SET updated_at = NOW()
                     RETURNING id
                     """,
-                    (str(uuid.uuid4()), request.source, request.source_type),
+                    (str(uuid.uuid4()), ingest_palace, request.source, request.source_type),
                 )
                 if source_result.rows:
                     actual_source_id = str(source_result.rows[0]["id"])
                     item_title = os.path.basename(request.path) or request.path
                     item_result = await self._backend.query(
                         """
-                        INSERT INTO knowledge_items (id, source_id, path, title)
-                        VALUES ($1::uuid, $2::uuid, $3, $4)
-                        ON CONFLICT (source_id, path) DO UPDATE SET
+                        INSERT INTO knowledge_items
+                            (id, palace, source_id, path, title,
+                             content_hash, size_bytes, mtime_ns)
+                        VALUES ($1::uuid, $2, $3::uuid, $4, $5, $6, $7, $8)
+                        ON CONFLICT (palace, source_id, path) DO UPDATE SET
                             title = EXCLUDED.title, updated_at = NOW()
                         RETURNING id
                         """,
-                        (str(uuid.uuid4()), actual_source_id, request.path, item_title),
+                        (
+                            str(uuid.uuid4()),
+                            ingest_palace,
+                            actual_source_id,
+                            request.path,
+                            item_title,
+                            "unknown",
+                            0,
+                            0,
+                        ),
                     )
                     if item_result.rows:
                         item_id = str(item_result.rows[0]["id"])

@@ -623,7 +623,7 @@ class TestStructuredIngestService:
             for call in backend.query.await_args_list
             if "INSERT INTO knowledge_sources" in call.args[0]
         )
-        assert source_insert_call.args[1][2] == "WORKFLOW"
+        assert source_insert_call.args[1][3] == "WORKFLOW"
 
     def test_ingest_structured_rejects_unknown_nested_memory_fields(self) -> None:
         """Nested structured memory records must reject extra legacy or unsupported keys."""
