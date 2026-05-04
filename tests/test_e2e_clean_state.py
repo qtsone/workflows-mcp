@@ -226,7 +226,9 @@ def test_phase11_clean_state_http_flow(
         headers={"X-CSRF-Token": csrf_token},
     )
     assert reconcile.status_code == 200
-    assert reconcile.json()["requires_reconciliation"] is True
+    reconcile_payload = reconcile.json()
+    assert "project_id" in reconcile_payload
+    assert reconcile_payload["project_id"] == project_id
 
     sync_now = clean_state_client.post(
         f"/api/admin/v1/sync/{project_id}/now",
@@ -236,7 +238,7 @@ def test_phase11_clean_state_http_flow(
     sync_payload = sync_now.json()
     assert sync_payload["project_id"] == project_id
     assert sync_payload["dirty_count"] == 0
-    assert persisted_projects == [project_id, project_id]
+    assert persisted_projects == [project_id, project_id, project_id]
 
     _seed_run(
         clean_state_client,

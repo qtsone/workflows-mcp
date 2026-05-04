@@ -34,6 +34,30 @@ from workflows_mcp.tools_memory import (
 register_memory_tools(_mcp_server)
 
 
+@pytest.fixture(autouse=True)
+def _patch_memory_config(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Patch memory config resolution so ephemeral-backend tests bypass the
+    production config guard (MEMORY_BACKEND_UNAVAILABLE) without touching any
+    production code path."""
+    sentinel = object()
+
+    async def _noop_ensure_schema(_backend: Any) -> None:
+        return
+
+    monkeypatch.setattr(
+        "workflows_mcp.tools_memory._memory_connection_config_from_metadata",
+        lambda _app_ctx: None,
+    )
+    monkeypatch.setattr(
+        "workflows_mcp.tools_memory._memory_connection_config_from_env",
+        lambda: sentinel,
+    )
+    monkeypatch.setattr(
+        "workflows_mcp.engine.knowledge.schema.ensure_schema",
+        _noop_ensure_schema,
+    )
+
+
 def _get_tool_fn(name: str) -> Any:
     tool_manager = _mcp_server._tool_manager
     tool = tool_manager._tools.get(name)

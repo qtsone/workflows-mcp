@@ -18,7 +18,7 @@ from __future__ import annotations
 import json
 import uuid
 from typing import Any
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -50,7 +50,7 @@ def _get_tool_fn(name: str) -> Any:
 def mock_ctx() -> MagicMock:
     ctx = MagicMock()
     app_ctx = MagicMock()
-    app_ctx.memory_backend = None
+    app_ctx.memory_backend = AsyncMock()
     app_ctx.memory_backend_lock = None
     app_ctx.memory_backend_unavailable_error = None
     ctx.request_context.lifespan_context = app_ctx
@@ -598,18 +598,23 @@ class TestActiveScopeSourceLabeling:
         mock_ctx.request_context.lifespan_context.get_active_context.return_value = candidate
 
         memory = _get_tool_fn("memory")
-        mock_backend = AsyncMock()
-        # Simulate DB returning empty results so the call proceeds past scope resolution.
-        mock_backend.query_memories = AsyncMock(
-            return_value={"memories": [], "facts": [], "communities": []}
-        )
-        fake_embedding = [0.0] * 1536
-        with (
-            patch("workflows_mcp.tools_memory.PostgresBackend", return_value=mock_backend),
-            patch(
-                "workflows_mcp.engine.memory_service.compute_embedding",
-                return_value=(fake_embedding, "text-embedding-3-small", 1, 0.0),
+        from workflows_mcp.engine.memory_service import MemoryResult, QueryMemoryResult
+
+        query_result = MemoryResult(
+            operation="query",
+            query=QueryMemoryResult(
+                facts=[],
+                memories=[],
+                communities=[],
+                diagnostics={},
+                evidence=[],
+                paths=[],
             ),
+        )
+        with patch(
+            "workflows_mcp.engine.memory_service.MemoryService.execute",
+            new_callable=AsyncMock,
+            return_value=query_result,
         ):
             result = await memory(
                 operation="query",
@@ -1033,8 +1038,6 @@ class TestPlacementWritesDoNotUseSessionFallback:
     ) -> None:
         """memory(operation='ingest') with no scope must fail with INSUFFICIENT_LOCALITY
         even when an active context is present in the session."""
-        from unittest.mock import AsyncMock
-
         from workflows_mcp.engine.memory_scope_resolver import SyncContextCandidate, scope_key
 
         # Arrange: active context candidate with a fully qualified scope.
@@ -1053,17 +1056,12 @@ class TestPlacementWritesDoNotUseSessionFallback:
         mock_ctx.request_context.lifespan_context.get_active_context.return_value = candidate
 
         memory = _get_tool_fn("memory")
-        mock_backend = AsyncMock()
-        mock_backend.ingest_memory = AsyncMock(
-            return_value={"id": "fake-uuid", "status": "created"}
-        )
 
-        with patch("workflows_mcp.tools_memory.PostgresBackend", return_value=mock_backend):
-            result = await memory(
-                operation="ingest",
-                record={"content": "some content"},
-                ctx=mock_ctx,
-            )
+        result = await memory(
+            operation="ingest",
+            record={"content": "some content"},
+            ctx=mock_ctx,
+        )
 
         payload = json.loads(result.content[0].text)
         assert "error" in payload, f"Expected error envelope, got: {payload}"

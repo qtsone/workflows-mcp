@@ -57,7 +57,7 @@ def _make_mock_ctx(
     ctx = MagicMock()
     if app_ctx is None:
         app_ctx = MagicMock()
-    app_ctx.memory_backend = None
+    app_ctx.memory_backend = AsyncMock()
     app_ctx.memory_backend_lock = None
     app_ctx.memory_backend_unavailable_error = None
     ctx.request_context.lifespan_context = app_ctx
@@ -656,19 +656,11 @@ class TestPlacementWritesDoNotUseActiveContext:
         )
         ctx.request_context.lifespan_context.set_active_context(session_a, candidate)
 
-        mock_backend = MagicMock()
-        mock_backend.connect = AsyncMock()
-        mock_backend.disconnect = AsyncMock()
-        mock_backend.ingest_memory = AsyncMock(
-            return_value={"id": "fake-uuid", "status": "created"}
+        result = await memory(
+            operation="ingest",
+            record={"content": "some content"},
+            ctx=ctx,
         )
-
-        with patch("workflows_mcp.tools_memory.PostgresBackend", return_value=mock_backend):
-            result = await memory(
-                operation="ingest",
-                record={"content": "some content"},
-                ctx=ctx,
-            )
 
         payload = _parse(result)
         assert "error" in payload, f"Expected error envelope, got: {payload}"

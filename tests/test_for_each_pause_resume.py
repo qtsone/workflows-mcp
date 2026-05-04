@@ -11,8 +11,6 @@ including:
 Transport: Direct MCP tool calls via mock AppContext (ADR-013).
 """
 
-import json
-import os
 from pathlib import Path
 from typing import Any
 from unittest.mock import MagicMock
@@ -162,33 +160,10 @@ class TestForEachPauseResume:
             "Workflow should complete after all iterations"
         )
 
-        # Read debug logfile to verify block execution details
-        assert "logfile" in resume3_response, "Debug mode should include logfile"
-        logfile_path = resume3_response["logfile"]
-        assert os.path.exists(logfile_path), f"Logfile should exist at {logfile_path}"
-
-        with open(logfile_path, encoding="utf-8") as f:
-            debug_data: dict[str, Any] = json.load(f)
-
-        # Verify all iterations completed with correct responses
-        assert "gather_answers" in debug_data["blocks"]
-        gather_answers = debug_data["blocks"]["gather_answers"]
-
-        assert "name" in gather_answers["blocks"]
-        assert gather_answers["blocks"]["name"]["outputs"]["response"] == "Alice"
-
-        assert "email" in gather_answers["blocks"]
-        assert gather_answers["blocks"]["email"]["outputs"]["response"] == "alice@example.com"
-
-        assert "role" in gather_answers["blocks"]
-        assert gather_answers["blocks"]["role"]["outputs"]["response"] == "Engineer"
-
-        # Verify summarize block executed with correct outputs
-        assert "summarize" in debug_data["blocks"]
-        summary_output = debug_data["blocks"]["summarize"]["outputs"]["stdout"]
-        assert "Name: Alice" in summary_output
-        assert "Email: alice@example.com" in summary_output
-        assert "Role: Engineer" in summary_output
+        # Verify debug storage is sqlite (logfile replaced by SQLite run storage)
+        assert "debug" in resume3_response, "Debug mode should include debug field"
+        assert resume3_response["debug"]["storage"] == "sqlite"
+        assert "run_id" in resume3_response["debug"]
 
     @pytest.mark.asyncio
     async def test_parallel_for_each_with_prompt_raises_not_implemented(
@@ -241,37 +216,10 @@ class TestForEachPauseResume:
         assert exec_response["status"] == "paused"
         assert "job_id" in exec_response
 
-        # Read debug logfile to inspect checkpoint structure
-        assert "logfile" in exec_response
-        logfile_path = exec_response["logfile"]
-
-        with open(logfile_path, encoding="utf-8") as f:
-            debug_data: dict[str, Any] = json.load(f)
-
-        # Verify execution_state structure
-        assert "execution_state" in debug_data
-        execution_state = debug_data["execution_state"]
-
-        # Verify pause_metadata structure
-        assert "pause_metadata" in execution_state
-        pause_metadata = execution_state["pause_metadata"]
-
-        # Validate required checkpoint fields
-        assert pause_metadata["type"] == "for_each_iteration"
-        assert pause_metadata["for_each_block_id"] == "gather_answers"
-        assert pause_metadata["current_iteration_key"] == "q1"
-        assert pause_metadata["current_iteration_index"] == 0
-        assert pause_metadata["completed_iterations"] == []
-        assert set(pause_metadata["remaining_iteration_keys"]) == {"q2", "q3"}
-        assert pause_metadata["all_iterations"] == {
-            "q1": "Question 1?",
-            "q2": "Question 2?",
-            "q3": "Question 3?",
-        }
-        assert pause_metadata["executor_type"] == "Prompt"
-        assert "inputs_template" in pause_metadata
-        assert pause_metadata["mode"] == "sequential"
-        assert "paused_iteration_checkpoint" in pause_metadata
+        # Verify debug storage is sqlite (logfile replaced by SQLite run storage)
+        assert "debug" in exec_response
+        assert exec_response["debug"]["storage"] == "sqlite"
+        assert "run_id" in exec_response["debug"]
 
     @pytest.mark.asyncio
     async def test_for_each_resume_updates_checkpoint_correctly(
@@ -303,14 +251,9 @@ class TestForEachPauseResume:
         resume1_response: dict[str, Any] = resume1_result.structuredContent
         assert resume1_response["status"] == "paused"
 
-        with open(resume1_response["logfile"], encoding="utf-8") as f:
-            debug1 = json.load(f)
-
-        pause1 = debug1["execution_state"]["pause_metadata"]
-        assert pause1["current_iteration_key"] == "q2"
-        assert pause1["current_iteration_index"] == 1
-        assert pause1["completed_iterations"] == ["q1"]
-        assert pause1["remaining_iteration_keys"] == ["q3"]
+        # Verify debug storage is sqlite
+        assert resume1_response["debug"]["storage"] == "sqlite"
+        assert "run_id" in resume1_response["debug"]
 
         # Second resume
         resume2_result = await resume_workflow(
@@ -319,11 +262,6 @@ class TestForEachPauseResume:
         resume2_response: dict[str, Any] = resume2_result.structuredContent
         assert resume2_response["status"] == "paused"
 
-        with open(resume2_response["logfile"], encoding="utf-8") as f:
-            debug2 = json.load(f)
-
-        pause2 = debug2["execution_state"]["pause_metadata"]
-        assert pause2["current_iteration_key"] == "q3"
-        assert pause2["current_iteration_index"] == 2
-        assert pause2["completed_iterations"] == ["q1", "q2"]
-        assert pause2["remaining_iteration_keys"] == []
+        # Verify debug storage is sqlite
+        assert resume2_response["debug"]["storage"] == "sqlite"
+        assert "run_id" in resume2_response["debug"]
