@@ -1895,17 +1895,25 @@ class MemoryService:
                 stable_id = entity.get("stable_id")
                 metadata = entity.get("metadata") or {}
                 confidence = entity.get("confidence")
+                # Track 4 prereqs (v14): first-class structural identity columns.
+                # qualified_name is required for STRUCTURAL Class/Function/Method/Module
+                # entities (Track 4 enforces; this handler does not). parent_class_id
+                # is set only for Method entities; the FK enforces existence.
+                qualified_name = entity.get("qualified_name")
+                parent_class_id = entity.get("parent_class_id")
 
                 row = await self._backend.query(
                     """
                     INSERT INTO knowledge_entities
                         (id, palace, namespace, room, corridor,
                          entity_type, name, source, authority,
-                         stable_id, source_item_id, confidence, metadata)
+                         stable_id, source_item_id, confidence, metadata,
+                         qualified_name, parent_class_id)
                     VALUES
                         ($1::uuid, $2, $3, $4, $5,
                          $6, $7, $8, $9,
-                         $10, $11::uuid, $12, $13::jsonb)
+                         $10, $11::uuid, $12, $13::jsonb,
+                         $14, $15::uuid)
                     ON CONFLICT (palace, source, stable_id)
                         WHERE stable_id IS NOT NULL
                         DO UPDATE SET
@@ -1914,6 +1922,8 @@ class MemoryService:
                             source_item_id = EXCLUDED.source_item_id,
                             confidence = EXCLUDED.confidence,
                             metadata = EXCLUDED.metadata,
+                            qualified_name = EXCLUDED.qualified_name,
+                            parent_class_id = EXCLUDED.parent_class_id,
                             updated_at = NOW()
                     RETURNING id
                     """,
@@ -1931,6 +1941,8 @@ class MemoryService:
                         request.item_id,
                         confidence if confidence is not None else request.confidence,
                         json.dumps(metadata),
+                        qualified_name,
+                        parent_class_id,
                     ),
                 )
                 if row.rows:
@@ -1972,6 +1984,8 @@ class MemoryService:
                 rel_type = relation["relation_type"]
                 confidence = relation.get("confidence")
                 evidence_ids = relation.get("evidence_memory_ids") or []
+                # v14: per-edge metadata (e.g. {"resolution": "unresolved"} for CALLS).
+                relation_metadata = relation.get("metadata") or {}
 
                 check = await self._backend.query(
                     "SELECT id, palace FROM knowledge_entities "
@@ -1997,9 +2011,9 @@ class MemoryService:
                     """
                     INSERT INTO knowledge_relations
                         (id, source_entity_id, target_entity_id, relation_type,
-                         confidence, evidence_memory_ids)
+                         confidence, evidence_memory_ids, metadata)
                     VALUES
-                        ($1::uuid, $2::uuid, $3::uuid, $4, $5, $6::uuid[])
+                        ($1::uuid, $2::uuid, $3::uuid, $4, $5, $6::uuid[], $7::jsonb)
                     RETURNING id
                     """,
                     (
@@ -2009,6 +2023,7 @@ class MemoryService:
                         rel_type,
                         confidence if confidence is not None else request.confidence,
                         list(evidence_ids),
+                        json.dumps(relation_metadata),
                     ),
                 )
                 if row.rows:

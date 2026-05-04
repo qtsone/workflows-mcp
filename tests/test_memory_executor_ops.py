@@ -958,3 +958,210 @@ async def test_mark_item_dirty_rejects_cross_palace_item(
     # Should fail — item belongs to a different palace
     assert not result.manage.success
     assert "MEM_PALACE_MISMATCH" in (result.manage.error or "")
+
+
+# ---------------------------------------------------------------------------
+# Track 4 prereqs (v14): qualified_name, parent_class_id, relations.metadata
+# ---------------------------------------------------------------------------
+
+
+async def test_store_entities_persists_qualified_name_and_parent_class_id(
+    memory_service, knowledge_backend, clean_palace
+) -> None:
+    """store_entities must persist qualified_name and parent_class_id columns."""
+    from workflows_mcp.engine.memory_service import MemoryRequest
+
+    # Seed parent Class entity first.
+    parent_resp = await memory_service.execute(MemoryRequest.model_validate({
+        "operation": "store_entities",
+        "scope": _scope(),
+        "record": {
+            "format": "structured",
+            "source": "STRUCTURAL",
+            "entities": [{
+                "entity_type": "Class",
+                "name": "MyClass",
+                "stable_id": "src/m.py::MyClass",
+                "qualified_name": "src.m.MyClass",
+            }],
+        },
+    }))
+    assert parent_resp.manage.success
+    parent_id = parent_resp.manage.entity_ids[0]
+
+    # Insert Method that points at parent_class_id.
+    method_resp = await memory_service.execute(MemoryRequest.model_validate({
+        "operation": "store_entities",
+        "scope": _scope(),
+        "record": {
+            "format": "structured",
+            "source": "STRUCTURAL",
+            "entities": [{
+                "entity_type": "Method",
+                "name": "do_thing",
+                "stable_id": "src/m.py::MyClass.do_thing",
+                "qualified_name": "src.m.MyClass.do_thing",
+                "parent_class_id": parent_id,
+            }],
+        },
+    }))
+    assert method_resp.manage.success
+    method_id = method_resp.manage.entity_ids[0]
+
+    rows = await knowledge_backend.query(
+        "SELECT id, qualified_name, parent_class_id FROM knowledge_entities "
+        "WHERE id = $1::uuid",
+        (method_id,),
+    )
+    assert rows.rows[0]["qualified_name"] == "src.m.MyClass.do_thing"
+    assert str(rows.rows[0]["parent_class_id"]) == parent_id
+
+
+async def test_store_entities_upsert_updates_qualified_name_and_parent(
+    memory_service, knowledge_backend, clean_palace
+) -> None:
+    """Upsert path (ON CONFLICT) must refresh qualified_name and parent_class_id."""
+    from workflows_mcp.engine.memory_service import MemoryRequest
+
+    # Seed two Class entities to swap parents between.
+    classes = await memory_service.execute(MemoryRequest.model_validate({
+        "operation": "store_entities",
+        "scope": _scope(),
+        "record": {
+            "format": "structured",
+            "source": "STRUCTURAL",
+            "entities": [
+                {"entity_type": "Class", "name": "A", "stable_id": "f::A",
+                 "qualified_name": "f.A"},
+                {"entity_type": "Class", "name": "B", "stable_id": "f::B",
+                 "qualified_name": "f.B"},
+            ],
+        },
+    }))
+    a_id, b_id = classes.manage.entity_ids
+
+    # First insert with parent A.
+    payload = {
+        "operation": "store_entities",
+        "scope": _scope(),
+        "record": {
+            "format": "structured",
+            "source": "STRUCTURAL",
+            "entities": [{
+                "entity_type": "Method",
+                "name": "m",
+                "stable_id": "f::A.m",
+                "qualified_name": "f.A.m",
+                "parent_class_id": a_id,
+            }],
+        },
+    }
+    first = await memory_service.execute(MemoryRequest.model_validate(payload))
+    method_id = first.manage.entity_ids[0]
+
+    # Re-upsert with parent B and a renamed qualified_name.
+    payload["record"]["entities"][0]["parent_class_id"] = b_id
+    payload["record"]["entities"][0]["qualified_name"] = "f.B.m"
+    second = await memory_service.execute(MemoryRequest.model_validate(payload))
+    assert second.manage.entity_ids[0] == method_id  # same row
+
+    rows = await knowledge_backend.query(
+        "SELECT qualified_name, parent_class_id FROM knowledge_entities "
+        "WHERE id = $1::uuid",
+        (method_id,),
+    )
+    assert rows.rows[0]["qualified_name"] == "f.B.m"
+    assert str(rows.rows[0]["parent_class_id"]) == b_id
+
+
+async def test_store_relations_persists_metadata(
+    memory_service, knowledge_backend, clean_palace
+) -> None:
+    """store_relations must persist per-edge metadata JSONB."""
+    import json as _json
+
+    from workflows_mcp.engine.memory_service import MemoryRequest
+
+    seeded = await memory_service.execute(MemoryRequest.model_validate({
+        "operation": "store_entities",
+        "scope": _scope(),
+        "record": {
+            "format": "structured",
+            "source": "STRUCTURAL",
+            "entities": [
+                {"entity_type": "Function", "name": "a", "stable_id": "f::a"},
+                {"entity_type": "Function", "name": "b", "stable_id": "f::b"},
+            ],
+        },
+    }))
+    a_id, b_id = seeded.manage.entity_ids
+
+    result = await memory_service.execute(MemoryRequest.model_validate({
+        "operation": "store_relations",
+        "scope": _scope(),
+        "record": {
+            "format": "structured",
+            "relations": [{
+                "source_entity_id": a_id,
+                "target_entity_id": b_id,
+                "relation_type": "CALLS",
+                "metadata": {"resolution": "unresolved", "call_site_line": 42},
+            }],
+        },
+    }))
+    assert result.manage.success
+    rel_id = result.manage.relation_ids[0]
+
+    rows = await knowledge_backend.query(
+        "SELECT metadata FROM knowledge_relations WHERE id = $1::uuid",
+        (rel_id,),
+    )
+    raw = rows.rows[0]["metadata"]
+    meta = raw if isinstance(raw, dict) else _json.loads(raw)
+    assert meta == {"resolution": "unresolved", "call_site_line": 42}
+
+
+async def test_store_relations_metadata_defaults_to_empty_object(
+    memory_service, knowledge_backend, clean_palace
+) -> None:
+    """Omitting metadata must default to empty JSONB object (NOT NULL column)."""
+    import json as _json
+
+    from workflows_mcp.engine.memory_service import MemoryRequest
+
+    seeded = await memory_service.execute(MemoryRequest.model_validate({
+        "operation": "store_entities",
+        "scope": _scope(),
+        "record": {
+            "format": "structured",
+            "source": "STRUCTURAL",
+            "entities": [
+                {"entity_type": "Function", "name": "x", "stable_id": "f::x"},
+                {"entity_type": "Function", "name": "y", "stable_id": "f::y"},
+            ],
+        },
+    }))
+    x_id, y_id = seeded.manage.entity_ids
+
+    result = await memory_service.execute(MemoryRequest.model_validate({
+        "operation": "store_relations",
+        "scope": _scope(),
+        "record": {
+            "format": "structured",
+            "relations": [{
+                "source_entity_id": x_id,
+                "target_entity_id": y_id,
+                "relation_type": "CALLS",
+            }],
+        },
+    }))
+    assert result.manage.success
+    rel_id = result.manage.relation_ids[0]
+
+    rows = await knowledge_backend.query(
+        "SELECT metadata FROM knowledge_relations WHERE id = $1::uuid",
+        (rel_id,),
+    )
+    raw = rows.rows[0]["metadata"]
+    meta = raw if isinstance(raw, dict) else _json.loads(raw)
+    assert meta == {}
