@@ -512,3 +512,118 @@ async def test_reload_workflows_tool_uses_context_callback_and_stable_failure() 
 
     assert failed_data["status"] == "failure"
     assert failed_data["message"] == "Workflow reload is not available in current server context."
+
+
+# ---------------------------------------------------------------------------
+# Built-in workflow source mechanism (Track 4 prereqs / Phase 3)
+# ---------------------------------------------------------------------------
+
+
+def test_builtin_path_with_no_workflows_loads_cleanly(tmp_path: Path) -> None:
+    """Empty built-in directory must load with zero workflows and no errors."""
+    registry = WorkflowRegistry()
+    builtin_dir = tmp_path / "builtins"
+    builtin_dir.mkdir()
+
+    summary = reload_registry_from_source_paths(
+        registry, [], builtin_paths=[builtin_dir]
+    )
+
+    assert summary.workflow_count == 0
+    assert summary.builtin_workflow_count == 0
+    assert summary.workflow_names == []
+    assert registry.list_names() == []
+
+
+def test_builtin_workflow_loads_and_appears_in_registry(tmp_path: Path) -> None:
+    """Workflows in the built-in path are registered and counted as built-ins."""
+    registry = WorkflowRegistry()
+    builtin_dir = tmp_path / "builtins"
+    builtin_dir.mkdir()
+    _write_workflow_yaml(builtin_dir, filename="foo.yaml", name="builtin-foo")
+
+    summary = reload_registry_from_source_paths(
+        registry, [], builtin_paths=[builtin_dir]
+    )
+
+    assert summary.builtin_workflow_count == 1
+    assert summary.workflow_count == 1
+    assert summary.workflow_names == ["builtin-foo"]
+    assert registry.exists("builtin-foo")
+
+
+def test_user_workflow_shadowing_builtin_is_rejected(tmp_path: Path) -> None:
+    """User workflow with same name as a built-in must be rejected atomically."""
+    registry = WorkflowRegistry()
+    builtin_dir = tmp_path / "builtins"
+    user_dir = tmp_path / "user"
+    builtin_dir.mkdir()
+    user_dir.mkdir()
+    _write_workflow_yaml(builtin_dir, filename="b.yaml", name="system1-scan")
+    user_yaml = _write_workflow_yaml(user_dir, filename="u.yaml", name="system1-scan")
+
+    with pytest.raises(WorkflowSourceReloadError) as exc:
+        reload_registry_from_source_paths(
+            registry, [user_dir], builtin_paths=[builtin_dir]
+        )
+
+    assert exc.value.code == "user_workflow_shadows_builtin"
+    assert "system1-scan" in exc.value.message
+    assert str(user_yaml) in exc.value.message
+    # Registry untouched (no successful reload happened).
+    assert registry.list_names() == []
+
+
+def test_user_workflow_with_unique_name_loads_alongside_builtin(tmp_path: Path) -> None:
+    """User workflow with a non-conflicting name coexists with built-ins."""
+    registry = WorkflowRegistry()
+    builtin_dir = tmp_path / "builtins"
+    user_dir = tmp_path / "user"
+    builtin_dir.mkdir()
+    user_dir.mkdir()
+    _write_workflow_yaml(builtin_dir, filename="b.yaml", name="system1-scan")
+    _write_workflow_yaml(user_dir, filename="u.yaml", name="my-pipeline")
+
+    summary = reload_registry_from_source_paths(
+        registry, [user_dir], builtin_paths=[builtin_dir]
+    )
+
+    assert summary.workflow_count == 2
+    assert summary.builtin_workflow_count == 1
+    assert sorted(summary.workflow_names) == ["my-pipeline", "system1-scan"]
+    assert registry.exists("system1-scan")
+    assert registry.exists("my-pipeline")
+
+
+def test_builtin_duplicate_name_within_builtin_dir_is_rejected(tmp_path: Path) -> None:
+    """Two built-in YAMLs sharing a name must raise builtin_workflow_duplicate_name."""
+    registry = WorkflowRegistry()
+    builtin_dir = tmp_path / "builtins"
+    builtin_dir.mkdir()
+    _write_workflow_yaml(builtin_dir, filename="a.yaml", name="builtin-foo")
+    _write_workflow_yaml(builtin_dir, filename="b.yaml", name="builtin-foo")
+
+    with pytest.raises(WorkflowSourceReloadError) as exc:
+        reload_registry_from_source_paths(
+            registry, [], builtin_paths=[builtin_dir]
+        )
+
+    assert exc.value.code == "builtin_workflow_duplicate_name"
+    assert "builtin-foo" in exc.value.message
+
+
+def test_invalid_builtin_workflow_yaml_is_rejected_with_distinct_code(
+    tmp_path: Path,
+) -> None:
+    """Invalid built-in YAML raises builtin_workflow_invalid_definition (not the user code)."""
+    registry = WorkflowRegistry()
+    builtin_dir = tmp_path / "builtins"
+    builtin_dir.mkdir()
+    _write_invalid_workflow_yaml(builtin_dir, filename="broken.yaml")
+
+    with pytest.raises(WorkflowSourceReloadError) as exc:
+        reload_registry_from_source_paths(
+            registry, [], builtin_paths=[builtin_dir]
+        )
+
+    assert exc.value.code == "builtin_workflow_invalid_definition"

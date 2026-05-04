@@ -260,13 +260,25 @@ def get_graceful_shutdown_timeout() -> int:
     return timeout
 
 
+def _builtin_workflow_path() -> Path:
+    """Resolve the packaged builtin_workflows directory."""
+    from importlib.resources import files
+
+    return Path(str(files("workflows_mcp").joinpath("builtin_workflows")))
+
+
 def load_workflows(resources: AppResources) -> WorkflowSourceReloadSummary:
-    """Load workflows from SQLite-managed source records into the registry."""
+    """Load workflows from packaged built-ins and SQLite-managed user sources."""
     repo = SQLiteWorkflowSourcesRepository(resources.metadata_db_conn)
     sources = repo.list()
-    source_paths = [source.source_path for source in sources]
+    user_paths = [source.source_path for source in sources]
+    builtin_paths = [_builtin_workflow_path()]
     try:
-        summary = reload_registry_from_source_paths(resources.workflow_registry, source_paths)
+        summary = reload_registry_from_source_paths(
+            resources.workflow_registry,
+            user_paths,
+            builtin_paths=builtin_paths,
+        )
     except WorkflowSourceReloadError as exc:
         for source in sources:
             repo.update_reload_state(
