@@ -242,7 +242,8 @@ export interface paths {
         delete: operations["revoke_mcp_client_api_admin_v1_mcp_clients__token_id__delete"];
         options?: never;
         head?: never;
-        patch?: never;
+        /** Update Mcp Client */
+        patch: operations["update_mcp_client_api_admin_v1_mcp_clients__token_id__patch"];
         trace?: never;
     };
     "/api/admin/v1/mcp-clients/{token_id}/regenerate": {
@@ -257,6 +258,23 @@ export interface paths {
         /** Regenerate Mcp Client */
         post: operations["regenerate_mcp_client_api_admin_v1_mcp_clients__token_id__regenerate_post"];
         delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/admin/v1/mcp-clients/{token_id}/registration": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /** Delete Mcp Client */
+        delete: operations["delete_mcp_client_api_admin_v1_mcp_clients__token_id__registration_delete"];
         options?: never;
         head?: never;
         patch?: never;
@@ -411,6 +429,23 @@ export interface paths {
         };
         /** List Sync Queue */
         get: operations["list_sync_queue_api_admin_v1_sync_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/admin/v1/sync/{project_id}/logs": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List Sync Logs */
+        get: operations["list_sync_logs_api_admin_v1_sync__project_id__logs_get"];
         put?: never;
         post?: never;
         delete?: never;
@@ -838,9 +873,9 @@ export interface components {
          */
         CreateProjectRequest: {
             /** Default Room */
-            default_room: string;
+            default_room?: string | null;
             /** Default Wing */
-            default_wing: string;
+            default_wing?: string | null;
             /** Fs Allowlist */
             fs_allowlist?: string[] | null;
             /** Fs Root */
@@ -1012,9 +1047,7 @@ export interface components {
          *         ]
          *       },
          *       "label": "ci-agent",
-         *       "project_ids": [
-         *         "project-id"
-         *       ]
+         *       "project_ids": []
          *     }
          */
         MCPClientCreateRequest: {
@@ -1025,7 +1058,7 @@ export interface components {
             /** Label */
             label: string;
             /** Project Ids */
-            project_ids: string[];
+            project_ids?: string[];
         };
         /** MCPClientCreateResponse */
         MCPClientCreateResponse: {
@@ -1050,6 +1083,11 @@ export interface components {
             /** Token */
             token: string;
         };
+        /** MCPClientDeleteResponse */
+        MCPClientDeleteResponse: {
+            /** Deleted */
+            deleted: boolean;
+        };
         /** MCPClientResponse */
         MCPClientResponse: {
             /** Capabilities */
@@ -1073,6 +1111,18 @@ export interface components {
         MCPClientRevokeResponse: {
             /** Revoked */
             revoked: boolean;
+        };
+        /**
+         * MCPClientUpdateRequest
+         * @example {
+         *       "project_ids": [
+         *         "project-id"
+         *       ]
+         *     }
+         */
+        MCPClientUpdateRequest: {
+            /** Project Ids */
+            project_ids?: string[];
         };
         /** MCPClientsListResponse */
         MCPClientsListResponse: {
@@ -1118,9 +1168,9 @@ export interface components {
             /** Created At */
             created_at: string;
             /** Default Room */
-            default_room: string;
+            default_room: string | null;
             /** Default Wing */
-            default_wing: string;
+            default_wing: string | null;
             /** Fs Allowlist */
             fs_allowlist: string[];
             /** Fs Root */
@@ -1227,18 +1277,63 @@ export interface components {
              */
             response: string;
         };
+        /** RunBlockResponse */
+        RunBlockResponse: {
+            /** Block Id */
+            block_id: string;
+            /** Block Type */
+            block_type: string | null;
+            /** Duration Ms */
+            duration_ms: number | null;
+            /** Inputs */
+            inputs: {
+                [key: string]: unknown;
+            };
+            /** Message */
+            message: string | null;
+            /** Metadata */
+            metadata: {
+                [key: string]: unknown;
+            };
+            /** Outcome */
+            outcome: string | null;
+            /** Outputs */
+            outputs: {
+                [key: string]: unknown;
+            };
+            /** Status */
+            status: string | null;
+        };
         /** RunDetailResponse */
         RunDetailResponse: {
+            /** Blocks */
+            blocks: components["schemas"]["RunBlockResponse"][];
             /** Cancellable */
             cancellable: boolean;
             /** Created At */
             created_at: string;
+            /** Duration Ms */
+            duration_ms: number | null;
+            /** Error */
+            error: string | null;
             /** Error Summary */
             error_summary: string | null;
+            /** Execution Mode */
+            execution_mode: string;
             /** Finished At */
             finished_at: string | null;
+            /** Inputs */
+            inputs: {
+                [key: string]: unknown;
+            };
             /** Job Id */
             job_id: string;
+            /** Metadata */
+            metadata: {
+                [key: string]: unknown;
+            };
+            /** Outputs */
+            outputs: unknown;
             /** Project Id */
             project_id: string | null;
             /** Result Summary */
@@ -1249,6 +1344,10 @@ export interface components {
             started_at: string | null;
             /** Status */
             status: string;
+            /** Technical Json */
+            technical_json: {
+                [key: string]: unknown;
+            };
             /** Token Id */
             token_id: string | null;
             /** Updated At */
@@ -1262,6 +1361,10 @@ export interface components {
             cancellable: boolean;
             /** Created At */
             created_at: string;
+            /** Duration Ms */
+            duration_ms: number | null;
+            /** Execution Mode */
+            execution_mode: string;
             /** Finished At */
             finished_at: string | null;
             /** Job Id */
@@ -1283,8 +1386,14 @@ export interface components {
         };
         /** RunsListResponse */
         RunsListResponse: {
+            /** Limit */
+            limit: number;
+            /** Offset */
+            offset: number;
             /** Runs */
             runs: components["schemas"]["RunRowResponse"][];
+            /** Total */
+            total: number;
         };
         /** SavePostgresSettingsRequest */
         SavePostgresSettingsRequest: {
@@ -1370,15 +1479,51 @@ export interface components {
             /** Secrets */
             secrets: components["schemas"]["SecretMetadataResponse"][];
         };
+        /** SyncErrorDetail */
+        SyncErrorDetail: {
+            /** Code */
+            code: string;
+            /** Message */
+            message: string;
+        };
         /** SyncListResponse */
         SyncListResponse: {
             /** Projects */
             projects: components["schemas"]["SyncProjectSummary"][];
         };
+        /** SyncLogEntry */
+        SyncLogEntry: {
+            /** Enqueued At */
+            enqueued_at: string;
+            /** Event Type */
+            event_type: string;
+            /** Id */
+            id: number;
+            /** Path */
+            path: string;
+            /** Processed At */
+            processed_at: string | null;
+            /** Project Id */
+            project_id: string;
+            /** Reason */
+            reason: string;
+            /** Status */
+            status: string;
+            /** Updated At */
+            updated_at: string;
+        };
+        /** SyncLogsResponse */
+        SyncLogsResponse: {
+            /** Entries */
+            entries: components["schemas"]["SyncLogEntry"][];
+            /** Project Id */
+            project_id: string;
+        };
         /** SyncNowResponse */
         SyncNowResponse: {
             /** Dirty Count */
             dirty_count: number;
+            error?: components["schemas"]["SyncErrorDetail"] | null;
             /** Project Id */
             project_id: string;
             /** Status */
@@ -1386,15 +1531,6 @@ export interface components {
         };
         /** SyncProjectSummary */
         SyncProjectSummary: {
-            /** Dirty Count */
-            dirty_count: number;
-            /** Project Id */
-            project_id: string;
-            /** Requires Reconciliation */
-            requires_reconciliation: boolean;
-        };
-        /** SyncReconcileResponse */
-        SyncReconcileResponse: {
             /** Dirty Count */
             dirty_count: number;
             /** Project Id */
@@ -2022,6 +2158,43 @@ export interface operations {
             };
         };
     };
+    update_mcp_client_api_admin_v1_mcp_clients__token_id__patch: {
+        parameters: {
+            query?: never;
+            header?: {
+                "X-CSRF-Token"?: string | null;
+            };
+            path: {
+                token_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["MCPClientUpdateRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MCPClientResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     regenerate_mcp_client_api_admin_v1_mcp_clients__token_id__regenerate_post: {
         parameters: {
             query?: never;
@@ -2042,6 +2215,39 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["MCPClientCreateResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    delete_mcp_client_api_admin_v1_mcp_clients__token_id__registration_delete: {
+        parameters: {
+            query?: never;
+            header?: {
+                "X-CSRF-Token"?: string | null;
+            };
+            path: {
+                token_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MCPClientDeleteResponse"];
                 };
             };
             /** @description Validation Error */
@@ -2215,6 +2421,9 @@ export interface operations {
         parameters: {
             query?: {
                 status?: string | null;
+                mode?: string | null;
+                workflow?: string | null;
+                project_id?: string | null;
                 limit?: number;
                 offset?: number;
             };
@@ -2457,6 +2666,39 @@ export interface operations {
             };
         };
     };
+    list_sync_logs_api_admin_v1_sync__project_id__logs_get: {
+        parameters: {
+            query?: {
+                limit?: number;
+            };
+            header?: never;
+            path: {
+                project_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SyncLogsResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     sync_now_api_admin_v1_sync__project_id__now_post: {
         parameters: {
             query?: never;
@@ -2509,7 +2751,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["SyncReconcileResponse"];
+                    "application/json": components["schemas"]["SyncNowResponse"];
                 };
             };
             /** @description Validation Error */
@@ -2542,7 +2784,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["SyncReconcileResponse"];
+                    "application/json": components["schemas"]["SyncNowResponse"];
                 };
             };
             /** @description Validation Error */

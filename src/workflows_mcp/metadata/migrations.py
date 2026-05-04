@@ -3,7 +3,7 @@ from __future__ import annotations
 import sqlite3
 from pathlib import Path
 
-CURRENT_SCHEMA_VERSION = 7
+CURRENT_SCHEMA_VERSION = 8
 DEFAULT_JOB_TIMEOUT_SECONDS = 3600
 
 
@@ -45,8 +45,21 @@ def migrate_metadata_db(conn: sqlite3.Connection) -> None:
     sql = _schema_sql_path().read_text(encoding="utf-8")
     statements = _split_sql_statements(sql)
 
-    conn.execute("BEGIN IMMEDIATE")
+    project_defaults_rebuild_may_be_needed = (
+        _project_default_locations_rebuild_may_be_needed(conn)
+    )
+    foreign_keys_row = conn.execute("PRAGMA foreign_keys").fetchone()
+    foreign_keys_were_enabled = int(foreign_keys_row[0]) if foreign_keys_row else 0
+    foreign_keys_disabled = False
+    if project_defaults_rebuild_may_be_needed and foreign_keys_were_enabled:
+        conn.execute("PRAGMA foreign_keys = OFF")
+        foreign_keys_disabled = True
+
+    transaction_started = False
     try:
+        conn.execute("BEGIN IMMEDIATE")
+        transaction_started = True
+
         max_version = 0
         schema_table_exists = conn.execute(
             "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'schema_migrations'"
@@ -98,14 +111,25 @@ def migrate_metadata_db(conn: sqlite3.Connection) -> None:
             conn.execute(
                 "INSERT OR IGNORE INTO schema_migrations(version) VALUES (7)"
             )
+        if max_version < 8:
+            _migrate_v7_to_v8(conn)
+            conn.execute(
+                "INSERT OR IGNORE INTO schema_migrations(version) VALUES (8)"
+            )
 
         # Phase 10+ internal-only resumable state for paused runs.
         # Keep schema version stable while ensuring additive column exists.
         _ensure_job_runs_execution_state_column(conn)
+        _ensure_job_runs_execution_columns(conn)
+        _ensure_project_default_locations_nullable(conn)
         conn.commit()
     except Exception:
-        conn.rollback()
+        if transaction_started:
+            conn.rollback()
         raise
+    finally:
+        if foreign_keys_disabled:
+            conn.execute("PRAGMA foreign_keys = ON")
 
 
 def _table_columns(conn: sqlite3.Connection, table_name: str) -> set[str]:
@@ -460,6 +484,10 @@ def _migrate_v6_to_v7(conn: sqlite3.Connection) -> None:
     _ensure_postgresql_settings_structured_columns(conn)
 
 
+def _migrate_v7_to_v8(conn: sqlite3.Connection) -> None:
+    _ensure_job_runs_execution_columns(conn)
+
+
 def _ensure_postgresql_settings_structured_columns(conn: sqlite3.Connection) -> None:
     columns = _table_columns(conn, "postgresql_settings")
     if "host" not in columns:
@@ -518,6 +546,133 @@ def _ensure_job_runs_execution_state_column(conn: sqlite3.Connection) -> None:
     if "execution_state_json" in columns:
         return
     conn.execute("ALTER TABLE job_runs ADD COLUMN execution_state_json TEXT")
+
+
+def _ensure_job_runs_execution_columns(conn: sqlite3.Connection) -> None:
+    columns = _table_columns(conn, "job_runs")
+    if "execution_mode" not in columns:
+        conn.execute(
+            "ALTER TABLE job_runs ADD COLUMN execution_mode TEXT NOT NULL DEFAULT 'async'"
+        )
+    if "execution_json" not in columns:
+        conn.execute("ALTER TABLE job_runs ADD COLUMN execution_json TEXT")
+    if not _index_exists(conn, "idx_job_runs_workflow"):
+        conn.execute(
+            "CREATE INDEX idx_job_runs_workflow "
+            "ON job_runs(workflow_name ASC, created_at DESC, run_id ASC)"
+        )
+    if not _index_exists(conn, "idx_job_runs_mode"):
+        conn.execute(
+            "CREATE INDEX idx_job_runs_mode "
+            "ON job_runs(execution_mode ASC, created_at DESC, run_id ASC)"
+        )
+
+
+def _project_default_locations_rebuild_may_be_needed(conn: sqlite3.Connection) -> bool:
+    projects_table_exists = conn.execute(
+        "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'projects'"
+    ).fetchone()
+    if projects_table_exists is None:
+        return True
+
+    columns = conn.execute("PRAGMA table_info('projects')").fetchall()
+    return _projects_default_locations_need_rebuild(columns)
+
+
+def _ensure_project_default_locations_nullable(conn: sqlite3.Connection) -> None:
+    columns = conn.execute("PRAGMA table_info('projects')").fetchall()
+    if not _projects_default_locations_need_rebuild(columns):
+        return
+
+    legacy_alter_table_row = conn.execute("PRAGMA legacy_alter_table").fetchone()
+    legacy_alter_table = (
+        int(legacy_alter_table_row[0]) if legacy_alter_table_row else 0
+    )
+    conn.execute("PRAGMA legacy_alter_table = ON")
+    try:
+        _rebuild_projects_with_nullable_default_locations(conn)
+    finally:
+        conn.execute(f"PRAGMA legacy_alter_table = {legacy_alter_table}")
+
+
+def _projects_default_locations_need_rebuild(
+    columns: list[sqlite3.Row | tuple[object, ...]],
+) -> bool:
+    by_name: dict[str, sqlite3.Row | tuple[object, ...]] = {
+        str(column[1]): column for column in columns
+    }
+    required = {
+        "id",
+        "name",
+        "slug",
+        "palace",
+        "default_wing",
+        "default_room",
+        "fs_root",
+        "fs_allowlist_json",
+        "created_at",
+        "updated_at",
+    }
+    if not required.issubset(set(by_name.keys())):
+        return False
+
+    default_wing_not_null_raw = by_name["default_wing"][3]
+    default_room_not_null_raw = by_name["default_room"][3]
+    if not isinstance(default_wing_not_null_raw, int) or not isinstance(
+        default_room_not_null_raw, int
+    ):
+        raise RuntimeError("invalid projects default location notnull metadata type")
+
+    return default_wing_not_null_raw != 0 or default_room_not_null_raw != 0
+
+
+def _rebuild_projects_with_nullable_default_locations(conn: sqlite3.Connection) -> None:
+    conn.execute("ALTER TABLE projects RENAME TO projects_legacy_default_locations")
+    conn.execute(
+        """
+        CREATE TABLE projects (
+            id TEXT PRIMARY KEY,
+            name TEXT NOT NULL,
+            slug TEXT NOT NULL UNIQUE,
+            palace TEXT NOT NULL UNIQUE,
+            default_wing TEXT,
+            default_room TEXT,
+            fs_root TEXT NOT NULL,
+            fs_allowlist_json TEXT,
+            created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+        )
+        """
+    )
+    conn.execute(
+        """
+        INSERT INTO projects (
+            id,
+            name,
+            slug,
+            palace,
+            default_wing,
+            default_room,
+            fs_root,
+            fs_allowlist_json,
+            created_at,
+            updated_at
+        )
+        SELECT
+            id,
+            name,
+            slug,
+            palace,
+            default_wing,
+            default_room,
+            fs_root,
+            fs_allowlist_json,
+            created_at,
+            updated_at
+        FROM projects_legacy_default_locations
+        """
+    )
+    conn.execute("DROP TABLE projects_legacy_default_locations")
 
 
 def _watcher_queue_needs_rebuild(columns: list[sqlite3.Row | tuple[object, ...]]) -> bool:

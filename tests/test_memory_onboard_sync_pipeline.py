@@ -30,12 +30,15 @@ from __future__ import annotations
 import json
 import uuid
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+import workflows_mcp.engine.knowledge.schema as knowledge_schema
 import workflows_mcp.tools_memory as _tools_memory
+import workflows_mcp.tools_memory as tools_memory
 from workflows_mcp.context import SessionProjectContext
 from workflows_mcp.engine.llm_config import (
     LLMConfig,
@@ -927,6 +930,121 @@ class TestOnboardProgrammaticFastPath:
         payload = json.loads(result.content[0].text)
         assert "graph" in payload, f"Missing graph key: {payload}"
         assert payload["graph"]["nodes"] >= 4
+
+
+@pytest.mark.asyncio
+async def test_ephemeral_memory_request_ensures_schema_before_graph_execution(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    events: list[str] = []
+
+    class FakePostgresBackend:
+        async def connect(self, config: object) -> None:
+            events.append("connect")
+
+        async def disconnect(self) -> None:
+            events.append("disconnect")
+
+    backend = FakePostgresBackend()
+
+    class FakeMemoryService:
+        def __init__(self, service_backend: object, execution: object) -> None:
+            assert service_backend is backend
+            events.append("service")
+
+        async def execute(self, request: object) -> object:
+            events.append("execute")
+            return object()
+
+    async def fake_ensure_schema(schema_backend: object) -> None:
+        assert schema_backend is backend
+        events.append("ensure_schema")
+
+    monkeypatch.setattr(tools_memory, "PostgresBackend", lambda: backend)
+    monkeypatch.setattr(
+        tools_memory,
+        "_memory_connection_config_from_metadata",
+        lambda app_ctx: object(),
+    )
+    monkeypatch.setattr(tools_memory, "_memory_connection_config_from_env", lambda: None)
+    monkeypatch.setattr(tools_memory, "MemoryService", FakeMemoryService)
+    monkeypatch.setattr(
+        tools_memory,
+        "_shape_memory_response",
+        lambda result, response: {"ok": True},
+    )
+    monkeypatch.setattr(knowledge_schema, "ensure_schema", fake_ensure_schema)
+
+    result = await tools_memory._execute_memory_request(
+        app_ctx=SimpleNamespace(memory_backend=None, memory_backend_lock=None),
+        execution=object(),
+        operation="graph_upsert",
+        scope={},
+        scope_token=None,
+        context_id=None,
+        query=None,
+        record=None,
+        graph={"kind": "place", "place_name": "Root", "place_type": "Palace"},
+        maintenance=None,
+        response={},
+    )
+
+    assert result == {"ok": True}
+    assert events == ["connect", "ensure_schema", "service", "execute", "disconnect"]
+
+    @pytest.mark.asyncio
+    async def test_programmatic_onboard_persists_graph_payload_when_memory_backend_ready(
+        self, mock_ctx: MagicMock, tmp_path: Path
+    ) -> None:
+        (tmp_path / "service.py").write_text("def main(): pass")
+        app_ctx = mock_ctx.request_context.lifespan_context
+        app_ctx.memory_backend = object()
+
+        persisted: list[dict[str, Any]] = []
+
+        async def _capture_memory_request(**kwargs: Any) -> dict[str, Any]:
+            graph = dict(kwargs["graph"])
+            persisted.append(graph)
+            if graph["kind"] == "place":
+                return {"entity_id": f"entity-{len(persisted)}"}
+            return {"relation_id": f"relation-{len(persisted)}"}
+
+        onboard = _get_tool_fn("onboard")
+        with patch(
+            "workflows_mcp.tools_memory._execute_memory_request",
+            new=AsyncMock(side_effect=_capture_memory_request),
+        ):
+            result = await onboard(
+                scope={"palace": "org", "wing": "api", "room": "runtime"},
+                scan={
+                    "patterns": ["*.py"],
+                    "root": str(tmp_path),
+                    "max_files": 5,
+                    "max_size_kb": 10,
+                },
+                ingestion={"mode": "programmatic"},
+                ctx=mock_ctx,
+            )
+
+        payload = json.loads(result.content[0].text)
+        assert payload["status"] == "completed"
+        assert payload["graph"]["nodes"] == len(
+            [item for item in persisted if item["kind"] == "place"]
+        )
+        assert payload["graph"]["corridors"] == len(
+            [item for item in persisted if item["kind"] == "link"]
+        )
+        assert any(
+            item["kind"] == "place" and item["place_type"] == "Palace"
+            for item in persisted
+        )
+        assert any(
+            item["kind"] == "link"
+            and item["link_type"] == "contains"
+            and str(item["from"]).startswith("entity-")
+            and str(item["to"]).startswith("entity-")
+            for item in persisted
+        )
 
     @pytest.mark.asyncio
     async def test_scan_no_checkpoint_concise_omits_diagnostics(

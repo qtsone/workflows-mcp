@@ -237,3 +237,4 @@ web/test-results/
 src/workflows_mcp/static/admin/
 .playwright-mcp/
 .superpowers/
+MagicMock/

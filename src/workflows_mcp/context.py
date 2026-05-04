@@ -8,6 +8,7 @@ import asyncio
 import uuid
 from collections.abc import Callable
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from mcp.server.fastmcp import Context
@@ -19,6 +20,7 @@ from .engine.executor_base import ExecutorRegistry
 from .engine.io_queue import IOQueue
 from .engine.job_queue import JobQueue
 from .engine.llm_config import LLMConfigLoader
+from .engine.secrets import SecretProvider
 
 if TYPE_CHECKING:
     from .engine.memory_scope_resolver import SyncContextCandidate
@@ -45,7 +47,7 @@ class SessionProjectContext:
     palace: str
     default_wing: str | None
     default_room: str | None
-    source: str  # token_bound | session_selected
+    source: str  # token_bound | token_unbound | session_selected
     fs_root: str | None = None
     fs_allowlist: tuple[str, ...] = ()
 
@@ -74,6 +76,9 @@ class AppContext:
     memory_backend: Any | None = None  # Optional shared memory backend (lifespan-scoped)
     memory_backend_lock: asyncio.Lock | None = None  # Serialize shared memory backend access
     memory_backend_unavailable_error: MemoryBackendUnavailableError | None = None
+    metadata_base_dir: Path | None = None
+    metadata_db_path: Path | None = None
+    secret_provider: SecretProvider | None = None
     watcher_manager: "WatcherManager | None" = None
     max_recursion_depth: int = 50  # Default recursion depth limit
     # Optional callback for user context resolution.
@@ -230,6 +235,7 @@ class AppContext:
             workflow_stack=workflow_stack or [],
             max_recursion_depth=self.max_recursion_depth,
             execution_memory=execution_memory,
+            secret_provider=self.secret_provider,
             user_id=user_id,
             auth_method=auth_method,
         )

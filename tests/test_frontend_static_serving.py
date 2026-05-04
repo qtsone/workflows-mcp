@@ -324,6 +324,26 @@ def test_vite_build_outputs_to_packaged_admin_static_directory() -> None:
     assert "../src/workflows_mcp/static/admin" in config_text
 
 
+def test_packaged_project_onboarding_assets_allow_optional_default_location() -> None:
+    with with_fresh_frontend_build_assets() as repo_root:
+        admin_dir = repo_root / "src" / "workflows_mcp" / "static" / "admin"
+        js_content = "\n".join(
+            path.read_text(encoding="utf-8", errors="ignore")
+            for path in sorted((admin_dir / "assets").glob("*.js"))
+        )
+        css_content = "\n".join(
+            path.read_text(encoding="utf-8", errors="ignore")
+            for path in sorted((admin_dir / "assets").glob("*.css"))
+        )
+
+        assert "project-default-wing" in js_content
+        assert "project-default-room" in js_content
+        assert not re.search(r"id:`project-default-wing`[^}]+required:!0", js_content)
+        assert not re.search(r"id:`project-default-room`[^}]+required:!0", js_content)
+        assert re.search(r"\.project-form__actions\{[^}]*bottom:-1rem", css_content)
+        assert re.search(r"\.project-form__actions\{[^}]*margin:0 -1rem -1rem", css_content)
+
+
 def test_frontend_bundle_does_not_leak_sensitive_env_literals(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

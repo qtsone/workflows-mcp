@@ -129,3 +129,26 @@ def test_main_rejects_invalid_port(
     assert exc_info.value.code == 1
     # Must emit a clear config-level message, not a raw int() ValueError traceback
     assert any("WORKFLOWS_PORT" in record.message for record in caplog.records)
+
+
+def test_main_configures_finite_graceful_shutdown_timeout(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Active Streamable HTTP sessions must not keep Ctrl-C shutdown waiting forever."""
+    from workflows_mcp import server
+
+    observed_kwargs: dict[str, object] = {}
+
+    def _fake_uvicorn_run(*_args: object, **kwargs: object) -> None:
+        observed_kwargs.update(kwargs)
+
+    monkeypatch.setenv("WORKFLOWS_PORT", "8765")
+    monkeypatch.setenv("WORKFLOWS_LOG_LEVEL", "WARNING")
+
+    with (
+        patch.object(server, "build_app", return_value=None),
+        patch("uvicorn.run", side_effect=_fake_uvicorn_run),
+    ):
+        server.main()
+
+    assert observed_kwargs["timeout_graceful_shutdown"] == 5

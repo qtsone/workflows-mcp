@@ -349,6 +349,110 @@ describe("createApiClient admin helpers", () => {
     expect(createHeaders.get("X-CSRF-Token")).toBe("csrf-bootstrap");
   });
 
+  it("fetches csrf first when updating MCP client project access", async () => {
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
+      const method = (init?.method ?? "GET").toUpperCase();
+      const url = typeof input === "string" ? input : input.toString();
+
+      if (url.endsWith("/api/admin/v1/auth/csrf") && method === "GET") {
+        return new Response(JSON.stringify({ csrf_token: "csrf-bootstrap" }), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        });
+      }
+      if (url.endsWith("/api/admin/v1/mcp-clients/m1") && method === "PATCH") {
+        return new Response(JSON.stringify({ id: "m1", label: "ci", project_ids: [] }), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        });
+      }
+
+      return new Response(JSON.stringify({ message: `unexpected ${method} ${url}` }), {
+        status: 404,
+        headers: { "content-type": "application/json" },
+      });
+    });
+
+    const client = createApiClient({
+      baseUrl: "https://admin.example.test",
+      fetchImpl: fetchMock,
+    });
+
+    await client.updateMcpClient("m1", { project_ids: [] });
+
+    const updateCallIndex = fetchMock.mock.calls.findIndex((call) => {
+      const init = call[1] as RequestInit | undefined;
+      return String(call[0]).endsWith("/api/admin/v1/mcp-clients/m1") && init?.method === "PATCH";
+    });
+
+    expect(updateCallIndex).toBeGreaterThanOrEqual(0);
+    const updateInit = fetchMock.mock.calls[updateCallIndex]?.[1] as RequestInit | undefined;
+    const updateHeaders = new Headers(updateInit?.headers);
+    expect(updateHeaders.get("X-CSRF-Token")).toBe("csrf-bootstrap");
+    expect(JSON.parse(String(updateInit?.body ?? "{}"))).toEqual({ project_ids: [] });
+  });
+
+  it("fetches csrf first when revoking and deleting MCP clients", async () => {
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
+      const method = (init?.method ?? "GET").toUpperCase();
+      const url = typeof input === "string" ? input : input.toString();
+
+      if (url.endsWith("/api/admin/v1/auth/csrf") && method === "GET") {
+        return new Response(JSON.stringify({ csrf_token: "csrf-bootstrap" }), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        });
+      }
+      if (url.endsWith("/api/admin/v1/mcp-clients/m1") && method === "DELETE") {
+        return new Response(JSON.stringify({ revoked: true }), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        });
+      }
+      if (url.endsWith("/api/admin/v1/mcp-clients/m1/registration") && method === "DELETE") {
+        return new Response(JSON.stringify({ deleted: true }), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        });
+      }
+
+      return new Response(JSON.stringify({ message: `unexpected ${method} ${url}` }), {
+        status: 404,
+        headers: { "content-type": "application/json" },
+      });
+    });
+
+    const client = createApiClient({
+      baseUrl: "https://admin.example.test",
+      fetchImpl: fetchMock,
+    });
+
+    await client.revokeMcpClient("m1");
+    await client.deleteMcpClient("m1");
+
+    const csrfCallIndex = fetchMock.mock.calls.findIndex((call) =>
+      String(call[0]).includes("/api/admin/v1/auth/csrf"),
+    );
+    const revokeCallIndex = fetchMock.mock.calls.findIndex((call) => {
+      const init = call[1] as RequestInit | undefined;
+      return String(call[0]).endsWith("/api/admin/v1/mcp-clients/m1") && init?.method === "DELETE";
+    });
+    const deleteCallIndex = fetchMock.mock.calls.findIndex((call) => {
+      const init = call[1] as RequestInit | undefined;
+      return String(call[0]).endsWith("/api/admin/v1/mcp-clients/m1/registration") && init?.method === "DELETE";
+    });
+
+    expect(csrfCallIndex).toBeGreaterThanOrEqual(0);
+    expect(revokeCallIndex).toBeGreaterThanOrEqual(0);
+    expect(deleteCallIndex).toBeGreaterThanOrEqual(0);
+    expect(csrfCallIndex).toBeLessThan(revokeCallIndex);
+
+    const revokeHeaders = new Headers((fetchMock.mock.calls[revokeCallIndex]?.[1] as RequestInit | undefined)?.headers);
+    const deleteHeaders = new Headers((fetchMock.mock.calls[deleteCallIndex]?.[1] as RequestInit | undefined)?.headers);
+    expect(revokeHeaders.get("X-CSRF-Token")).toBe("csrf-bootstrap");
+    expect(deleteHeaders.get("X-CSRF-Token")).toBe("csrf-bootstrap");
+  });
+
   it("lists server path entries without requiring csrf for default request", async () => {
     const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
       const method = (init?.method ?? "GET").toUpperCase();
@@ -468,7 +572,9 @@ describe("createApiClient admin helpers", () => {
     expect(typeof client.rebuildSync).toBe("function");
     expect(typeof client.listMcpClients).toBe("function");
     expect(typeof client.createMcpClient).toBe("function");
+    expect(typeof client.updateMcpClient).toBe("function");
     expect(typeof client.revokeMcpClient).toBe("function");
+    expect(typeof client.deleteMcpClient).toBe("function");
     expect(typeof client.regenerateMcpClient).toBe("function");
     expect(typeof client.listWorkflows).toBe("function");
     expect(typeof client.getWorkflowDetail).toBe("function");
@@ -618,6 +724,12 @@ describe("createApiClient admin helpers", () => {
           headers: { "content-type": "application/json" },
         });
       }
+      if (url.endsWith("/api/admin/v1/mcp-clients/m1") && method === "PATCH") {
+        return new Response(JSON.stringify({ id: "m1", label: "x", project_ids: [] }), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        });
+      }
       if (url.endsWith("/api/admin/v1/workflows/sources/source-1/validate") && method === "POST") {
         return new Response(JSON.stringify({ valid: true, workflow_names: ["wf"], total: 1 }), {
           status: 200,
@@ -677,6 +789,7 @@ describe("createApiClient admin helpers", () => {
     await client.pauseWatcher("proj-1");
     await client.reconcileSync("proj-1");
     await client.createMcpClient({ label: "x", project_ids: ["proj-1"] });
+    await client.updateMcpClient("m1", { project_ids: [] });
     await client.validateWorkflowSource("source-1");
     await client.listRuns({ status: "paused" });
     await client.getLlmConfig();

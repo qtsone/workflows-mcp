@@ -26,7 +26,11 @@ from workflows_mcp.http_models import ReadinessState
 from workflows_mcp.metadata.db import connect_metadata_db
 from workflows_mcp.metadata.migrations import migrate_metadata_db
 from workflows_mcp.metadata.repos import SQLiteLLMConfigRepository
-from workflows_mcp.postgres_probe import PostgresProbe
+from workflows_mcp.metadata.repos.postgres_repo import (
+    PostgresProfileInput,
+    SQLitePostgresSettingsRepository,
+)
+from workflows_mcp.postgres_probe import ConfiguredPostgresProbe, PostgresProbe
 from workflows_mcp.readiness import ReadinessService
 
 
@@ -69,6 +73,37 @@ def _write_valid_sqlite_llm_config(base_dir: Path) -> None:
             default_profile="default",
         )
         SQLiteLLMConfigRepository(conn).replace_config(config)
+    finally:
+        conn.close()
+
+
+def _write_valid_sqlite_postgres_profile(base_dir: Path) -> None:
+    base_dir.mkdir(parents=True, exist_ok=True)
+    (base_dir / "secrets.key").write_bytes(b"x" * 32)
+    conn = connect_metadata_db(base_dir / "server.db")
+    try:
+        migrate_metadata_db(conn)
+        SQLitePostgresSettingsRepository(
+            conn=conn,
+            key_path=base_dir / "secrets.key",
+        ).save_settings(
+            PostgresProfileInput(
+                enabled=True,
+                host="db.internal",
+                port=5544,
+                database="workflows",
+                username="wf_admin",
+                password="safe-secret",
+                password_was_provided=True,
+                password_clear=False,
+                ssl_mode="disable",
+                extra_params="application_name=workflows",
+                container_name="workflows-postgres",
+                container_image="pgvector/pgvector:pg17",
+                container_host_port=5432,
+                volume_name="workflows-postgres-data",
+            )
+        )
     finally:
         conn.close()
 
@@ -195,6 +230,46 @@ async def test_postgres_probe_from_env_without_dsn_reports_missing(
     ok, blockers = await probe.check()
     assert ok is False
     assert "postgresql_dsn_missing" in blockers
+
+
+@pytest.mark.asyncio
+async def test_configured_postgres_probe_uses_sqlite_profile_without_env(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Saved admin database settings are the runtime source of truth for readiness."""
+
+    class FakeConn:
+        async def fetchval(self, query: str, *args: object) -> object:
+            if "server_version_num" in query:
+                return "150000"
+            if "pg_extension" in query:
+                return True
+            if "readiness_probe" in query:
+                return 1
+            return None
+
+        async def execute(self, query: str, *args: object) -> None:
+            pass
+
+        async def close(self) -> None:
+            pass
+
+    base_dir = tmp_path / ".workflows"
+    _write_valid_sqlite_llm_config(base_dir)
+    _write_valid_sqlite_postgres_profile(base_dir)
+    monkeypatch.delenv("WORKFLOWS_POSTGRES_DSN", raising=False)
+
+    probe = ConfiguredPostgresProbe(
+        base_dir=base_dir,
+        require_pgvector=True,
+        _connection_factory=lambda: _async_return(FakeConn()),
+    )
+
+    ok, blockers = await probe.check()
+
+    assert ok is True
+    assert blockers == []
 
 
 @pytest.mark.asyncio

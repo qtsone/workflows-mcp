@@ -394,6 +394,54 @@ async def test_server_load_workflows_ignores_env_and_uses_sqlite_sources(
         assert summary.workflow_names == ["wf-sqlite"]
         assert resources.workflow_registry.list_names() == ["wf-sqlite"]
         assert "wf-env" not in resources.workflow_registry.list_names()
+        reloaded_sources = sources_repo.list()
+        assert [(source.status, source.error_message) for source in reloaded_sources] == [
+            ("loaded", None)
+        ]
+    finally:
+        await stop_resources(resources)
+
+
+@pytest.mark.asyncio
+async def test_server_load_workflows_marks_all_configured_sources_failed_on_error(
+    tmp_path: Path,
+) -> None:
+    good_source = tmp_path / "sqlite-good"
+    bad_source = tmp_path / "sqlite-bad"
+    good_source.mkdir()
+    bad_source.mkdir()
+    _write_workflow_yaml(good_source, filename="good.yaml", name="wf-good")
+
+    resources = build_resources(base_dir=tmp_path)
+    try:
+        projects_repo = SQLiteProjectsRepository(resources.metadata_db_conn)
+        sources_repo = SQLiteWorkflowSourcesRepository(resources.metadata_db_conn)
+        project_id = _create_project(projects_repo, slug="reload-failure")
+        sources_repo.create(
+            WorkflowSourceCreate(project_id=project_id, source_path=str(good_source))
+        )
+
+        initial = server.load_workflows(resources)
+        assert initial.workflow_names == ["wf-good"]
+        assert resources.workflow_registry.list_names() == ["wf-good"]
+
+        _write_invalid_workflow_yaml(bad_source, filename="broken.yaml")
+        sources_repo.create(
+            WorkflowSourceCreate(project_id=project_id, source_path=str(bad_source))
+        )
+
+        with pytest.raises(WorkflowSourceReloadError) as exc:
+            server.load_workflows(resources)
+
+        assert exc.value.code == "workflow_invalid_definition"
+        assert resources.workflow_registry.list_names() == ["wf-good"]
+        reloaded_sources = sources_repo.list()
+        assert [source.status for source in reloaded_sources] == ["failed", "failed"]
+        assert all(
+            source.error_message is not None
+            and "Invalid workflow definition" in source.error_message
+            for source in reloaded_sources
+        )
     finally:
         await stop_resources(resources)
 

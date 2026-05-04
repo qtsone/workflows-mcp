@@ -1,10 +1,12 @@
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Any
 
 import pytest
 from fastapi.testclient import TestClient
 
+import workflows_mcp.http.routes.admin_v1.sync as sync_routes
 from workflows_mcp.bootstrap import bootstrap_if_needed
 from workflows_mcp.server import build_app
 
@@ -34,7 +36,11 @@ def _login_and_csrf(client: TestClient) -> str:
 
 
 def _project_create_payload(
-    *, slug: str = "wf-service", palace: str = "wf-palace"
+    *,
+    slug: str = "wf-service",
+    palace: str = "wf-palace",
+    fs_root: str = "/workspace/workflows",
+    fs_allowlist: list[str] | None = None,
 ) -> dict[str, object]:
     return {
         "name": "Workflow Service",
@@ -42,8 +48,10 @@ def _project_create_payload(
         "palace": palace,
         "default_wing": "platform",
         "default_room": "runtime",
-        "fs_root": "/workspace/workflows",
-        "fs_allowlist": ["/workspace/workflows", "/workspace/shared"],
+        "fs_root": fs_root,
+        "fs_allowlist": fs_allowlist
+        if fs_allowlist is not None
+        else ["/workspace/workflows", "/workspace/shared"],
     }
 
 
@@ -140,6 +148,137 @@ def test_admin_project_create_initializes_watcher_enabled_by_default(
     assert watcher_status["state"] == "enabled"
 
     assert project_id in resources.watcher_manager.active_project_ids
+
+
+def test_admin_project_create_allows_default_wing_and_room_to_be_absent_or_null(
+    app_client: TestClient,
+    tmp_path: Path,
+) -> None:
+    csrf_token = _login_and_csrf(app_client)
+
+    omitted_root = tmp_path / "omitted-defaults"
+    omitted_root.mkdir()
+    omitted_payload = _project_create_payload(
+        slug="omitted-defaults",
+        palace="omitted-defaults-palace",
+        fs_root=str(omitted_root),
+        fs_allowlist=[str(omitted_root)],
+    )
+    omitted_payload.pop("default_wing")
+    omitted_payload.pop("default_room")
+
+    omitted_response = app_client.post(
+        "/api/admin/v1/projects",
+        json=omitted_payload,
+        headers={"X-CSRF-Token": csrf_token},
+    )
+    assert omitted_response.status_code == 201
+    omitted = omitted_response.json()
+    assert omitted["default_wing"] is None
+    assert omitted["default_room"] is None
+
+    null_root = tmp_path / "null-defaults"
+    null_root.mkdir()
+    null_response = app_client.post(
+        "/api/admin/v1/projects",
+        json={
+            **_project_create_payload(
+                slug="null-defaults",
+                palace="null-defaults-palace",
+                fs_root=str(null_root),
+                fs_allowlist=[str(null_root)],
+            ),
+            "default_wing": None,
+            "default_room": None,
+        },
+        headers={"X-CSRF-Token": csrf_token},
+    )
+    assert null_response.status_code == 201
+    explicit_null = null_response.json()
+    assert explicit_null["default_wing"] is None
+    assert explicit_null["default_room"] is None
+
+
+def test_admin_project_create_normalizes_blank_default_wing_and_room_to_null(
+    app_client: TestClient,
+    tmp_path: Path,
+) -> None:
+    csrf_token = _login_and_csrf(app_client)
+    project_root = tmp_path / "blank-defaults"
+    project_root.mkdir()
+
+    response = app_client.post(
+        "/api/admin/v1/projects",
+        json={
+            **_project_create_payload(
+                slug="blank-defaults",
+                palace="blank-defaults-palace",
+                fs_root=str(project_root),
+                fs_allowlist=[str(project_root)],
+            ),
+            "default_wing": "",
+            "default_room": "   ",
+        },
+        headers={"X-CSRF-Token": csrf_token},
+    )
+    assert response.status_code == 201
+    created = response.json()
+    assert created["default_wing"] is None
+    assert created["default_room"] is None
+
+
+def test_admin_project_create_enqueues_initial_graph_rebuild_status(
+    app_client: TestClient,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    csrf_token = _login_and_csrf(app_client)
+    project_root = tmp_path / "initial-sync-project"
+    project_root.mkdir()
+    (project_root / "workflow.yaml").write_text("steps: []\n")
+
+    persisted: list[str] = []
+
+    async def _persist_graph_from_scan(**kwargs: Any) -> dict[str, int]:
+        persisted.append(kwargs["project"].id)
+        return {"nodes": 4, "corridors": 3}
+
+    monkeypatch.setattr(sync_routes, "_persist_project_graph_from_scan", _persist_graph_from_scan)
+
+    created_response = app_client.post(
+        "/api/admin/v1/projects",
+        json=_project_create_payload(
+            slug="initial-sync",
+            palace="initial-sync-palace",
+            fs_root=str(project_root),
+            fs_allowlist=[str(project_root)],
+        ),
+        headers={"X-CSRF-Token": csrf_token},
+    )
+    assert created_response.status_code == 201
+    project_id = str(created_response.json()["id"])
+
+    watcher_status_response = app_client.get(f"/api/admin/v1/watchers/{project_id}")
+    assert watcher_status_response.status_code == 200
+    watcher_status = watcher_status_response.json()
+    assert watcher_status["dirty_count"] == 0
+    assert watcher_status["requires_reconciliation"] is False
+    assert watcher_status["last_event_at"] is not None
+    assert persisted == [project_id]
+
+    sync_response = app_client.get("/api/admin/v1/sync")
+    assert sync_response.status_code == 200
+    summaries = sync_response.json()["projects"]
+    by_project = {item["project_id"]: item for item in summaries}
+    assert project_id not in by_project
+
+    logs_response = app_client.get(f"/api/admin/v1/sync/{project_id}/logs")
+    assert logs_response.status_code == 200
+    entries = logs_response.json()["entries"]
+    assert entries[0]["path"] == "."
+    assert entries[0]["event_type"] == "rebuild"
+    assert entries[0]["reason"] == "reconciliation_required:project_created"
+    assert entries[0]["status"] == "processed"
 
 
 def test_admin_project_create_watcher_init_failure_rolls_back_project_persistence(

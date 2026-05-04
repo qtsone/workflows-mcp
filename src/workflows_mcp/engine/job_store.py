@@ -92,6 +92,7 @@ class JobStore:
         def _write() -> None:
             result_summary = self._build_result_summary(job)
             execution_state_json = self._build_execution_state_json(job)
+            execution_json = self._build_execution_json(job)
             cancellable = job.status.value in {"queued", "running"}
             inputs_json = json.dumps(job.inputs, separators=(",", ":"), default=str)
             created_at = job.created_at.isoformat()
@@ -118,6 +119,7 @@ class JobStore:
                     result_summary=result_summary,
                     error_summary=job.error,
                     execution_state_json=execution_state_json,
+                    execution_json=execution_json,
                 )
             else:
                 run_repo.update_run(
@@ -130,6 +132,7 @@ class JobStore:
                     result_summary=result_summary,
                     error_summary=job.error,
                     execution_state_json=execution_state_json,
+                    execution_json=execution_json,
                     inputs_json=inputs_json,
                 )
             conn.close()
@@ -393,6 +396,12 @@ class JobStore:
         if not isinstance(execution_state, dict):
             return None
         return json.dumps(execution_state, separators=(",", ":"), default=str)
+
+    @staticmethod
+    def _build_execution_json(job: Job) -> str | None:
+        if not isinstance(job.result, dict):
+            return None
+        return json.dumps(job.result, separators=(",", ":"), default=str)
 
     @staticmethod
     def _parse_result_summary(summary: str | None) -> dict[str, Any] | None:

@@ -206,6 +206,23 @@ class SQLiteWatcherRepository:
         ).fetchall()
         return [self._queue_row_to_record(row) for row in rows]
 
+    def list_dirty_history(self, *, project_id: str, limit: int = 25) -> list[DirtyQueueEntry]:
+        normalized_limit = max(1, min(limit, 100))
+        rows = self._conn.execute(
+            """
+            SELECT id, project_id, path, event_type, reason, enqueued_at, updated_at, processed_at
+            FROM watcher_queue
+            WHERE project_id = ?
+            ORDER BY
+                CASE WHEN processed_at IS NULL THEN 0 ELSE 1 END ASC,
+                COALESCE(processed_at, updated_at, enqueued_at) DESC,
+                id DESC
+            LIMIT ?
+            """,
+            (project_id, normalized_limit),
+        ).fetchall()
+        return [self._queue_row_to_record(row) for row in rows]
+
     def count_active_dirty(self, *, project_id: str) -> int:
         row = self._conn.execute(
             """

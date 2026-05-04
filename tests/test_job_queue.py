@@ -105,6 +105,50 @@ async def test_job_queue_workflow_not_found(job_queue):
 
 
 @pytest.mark.asyncio
+async def test_job_queue_persists_runner_failure_as_failed_status(
+    app_context,
+    tmp_path: Path,
+):
+    """Runner-level ExecutionResult.failure must not be stored as completed."""
+    failing_workflow = WorkflowSchema(
+        name="test-runner-failure",
+        description="Workflow that fails while resolving a missing input",
+        blocks=[
+            {
+                "id": "echo",
+                "type": "Shell",
+                "inputs": {"command": "echo {{inputs.required_value}}"},
+            }
+        ],
+        inputs={
+            "required_value": {
+                "type": "str",
+                "description": "Required value",
+                "required": True,
+            }
+        },
+    )
+    app_context.registry.register(failing_workflow)
+    queue = JobQueue(app_context, num_workers=1, db_path=str(tmp_path / "server.db"))
+    await queue.start()
+    try:
+        job_id = await queue.submit_job("test-runner-failure", {})
+
+        for _ in range(50):
+            await asyncio.sleep(0.1)
+            status = await queue.get_status(job_id)
+            if status["status"] in ("completed", "failed"):
+                break
+
+        status = await queue.get_status(job_id)
+        assert status["status"] == "failed"
+        assert status["error"] is not None
+        assert "required_value" in status["error"]
+    finally:
+        await queue.stop(wait_for_completion=False)
+
+
+@pytest.mark.asyncio
 async def test_job_queue_cancel_queued_job(job_queue):
     """Test cancellation of queued job."""
     # Submit multiple jobs to fill queue

@@ -67,6 +67,18 @@ def _resolve_header_env_vars(headers: dict[str, str]) -> dict[str, str]:
     return resolved
 
 
+async def _resolve_secret_from_context(secret_name: str, context: Execution) -> str:
+    """Resolve profile secrets through the runtime provider when available."""
+    execution_context = context.execution_context
+    if execution_context is None:
+        raise ValueError("ExecutionContext not available. Cannot resolve secret.")
+
+    from .secrets import EnvVarSecretProvider
+
+    secret_provider = execution_context.secret_provider or EnvVarSecretProvider()
+    return await secret_provider.get_secret(secret_name)
+
+
 # ===========================================================================
 # LLMCall Executor
 # ===========================================================================
@@ -667,11 +679,9 @@ class LLMCallExecutor(BlockExecutor):
         # Resolve API key from secrets if api_key_secret is specified
         api_key = None
         if resolved_config.api_key_secret:
-            # Get secret provider (use default EnvVarSecretProvider)
-            from .secrets import EnvVarSecretProvider
-
-            secret_provider = EnvVarSecretProvider()
-            api_key = await secret_provider.get_secret(resolved_config.api_key_secret)
+            api_key = await _resolve_secret_from_context(
+                resolved_config.api_key_secret, context
+            )
 
         # Create new LLMCallInput with resolved values
         # Preserve original prompt and validation settings
@@ -1727,10 +1737,9 @@ async def compute_embedding(
 
         # Resolve API key from secrets if not provided
         if api_key is None and resolved_config.api_key_secret:
-            from .secrets import EnvVarSecretProvider
-
-            secret_provider = EnvVarSecretProvider()
-            api_key = await secret_provider.get_secret(resolved_config.api_key_secret)
+            api_key = await _resolve_secret_from_context(
+                resolved_config.api_key_secret, context
+            )
 
     # Default model if still not set
     if model is None:
@@ -1850,10 +1859,9 @@ async def compute_embedding_batch(
 
         # Resolve API key from secrets if not provided
         if api_key is None and resolved_config.api_key_secret:
-            from .secrets import EnvVarSecretProvider
-
-            secret_provider = EnvVarSecretProvider()
-            api_key = await secret_provider.get_secret(resolved_config.api_key_secret)
+            api_key = await _resolve_secret_from_context(
+                resolved_config.api_key_secret, context
+            )
 
     # Default model if still not set
     if model is None:

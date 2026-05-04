@@ -16,7 +16,9 @@ Example:
 """
 
 import os
+import sqlite3
 from abc import ABC, abstractmethod
+from pathlib import Path
 
 from .exceptions import SecretNotFoundError
 
@@ -165,6 +167,97 @@ class EnvVarSecretProvider(SecretProvider):
                 secret_keys.append(key)
 
         return secret_keys
+
+
+class SQLiteSecretProvider(SecretProvider):
+    """Secret provider that reads encrypted admin-managed secrets from SQLite."""
+
+    def __init__(self, db_path: Path, key_path: Path) -> None:
+        self.db_path = db_path
+        self.key_path = key_path
+
+    def _connect(self) -> sqlite3.Connection:
+        conn = sqlite3.connect(self.db_path)
+        conn.row_factory = sqlite3.Row
+        conn.execute("PRAGMA foreign_keys = ON")
+        conn.execute("PRAGMA busy_timeout = 5000")
+        return conn
+
+    def _key_candidates(self, key: str) -> tuple[str, ...]:
+        candidates = [key]
+        for variant in (key.upper(), key.lower()):
+            if variant not in candidates:
+                candidates.append(variant)
+        return tuple(candidates)
+
+    async def get_secret(self, key: str) -> str:
+        from workflows_mcp.metadata.repos.secrets_repo import SQLiteSecretsRepository
+
+        if not self.db_path.exists():
+            raise SecretNotFoundError(
+                key=key,
+                provider_hint=f"Create admin secret in SQLite store: {self.db_path.name}",
+            )
+
+        conn = self._connect()
+        try:
+            repo = SQLiteSecretsRepository(conn=conn, key_path=self.key_path)
+            for candidate in self._key_candidates(key):
+                value = repo.get_secret_value(candidate)
+                if value is not None:
+                    return value
+        finally:
+            conn.close()
+
+        raise SecretNotFoundError(
+            key=key,
+            provider_hint="Create secret via the admin secrets store",
+        )
+
+    async def list_secret_keys(self) -> list[str]:
+        from workflows_mcp.metadata.repos.secrets_repo import SQLiteSecretsRepository
+
+        if not self.db_path.exists():
+            return []
+
+        conn = self._connect()
+        try:
+            repo = SQLiteSecretsRepository(conn=conn, key_path=self.key_path)
+            return [metadata.name for metadata in repo.list_metadata()]
+        finally:
+            conn.close()
+
+
+class CompositeSecretProvider(SecretProvider):
+    """Secret provider that checks multiple providers in priority order."""
+
+    def __init__(self, providers: list[SecretProvider]) -> None:
+        self.providers = providers
+
+    async def get_secret(self, key: str) -> str:
+        last_error: SecretNotFoundError | None = None
+        for provider in self.providers:
+            try:
+                return await provider.get_secret(key)
+            except SecretNotFoundError as exc:
+                last_error = exc
+
+        if last_error is not None:
+            raise SecretNotFoundError(key=key, provider_hint=str(last_error))
+
+        raise SecretNotFoundError(key=key)
+
+    async def list_secret_keys(self) -> list[str]:
+        keys: list[str] = []
+        seen: set[str] = set()
+        for provider in self.providers:
+            for key in await provider.list_secret_keys():
+                normalized = key.lower()
+                if normalized in seen:
+                    continue
+                seen.add(normalized)
+                keys.append(key)
+        return keys
 
 
 class VaultSecretProvider(SecretProvider):

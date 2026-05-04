@@ -49,6 +49,8 @@ def _seed_run(
     cancellable: bool,
     result_summary: str | None = None,
     error_summary: str | None = None,
+    execution_mode: str = "async",
+    execution_json: str | None = None,
     project_id: str | None = None,
     token_id: str | None = None,
 ) -> None:
@@ -60,6 +62,7 @@ def _seed_run(
         run_id=run_id,
         workflow_name=workflow_name,
         status=status,
+        execution_mode=execution_mode,
         timeout_seconds=300,
         created_at=created_at,
         started_at=started_at,
@@ -69,6 +72,7 @@ def _seed_run(
         cancellable=cancellable,
         result_summary=result_summary,
         error_summary=error_summary,
+        execution_json=execution_json,
     )
     if finished_at is not None:
         repo.update_run(
@@ -79,6 +83,7 @@ def _seed_run(
             cancellable=cancellable,
             result_summary=result_summary,
             error_summary=error_summary,
+            execution_json=execution_json,
         )
     conn.close()
 
@@ -136,6 +141,7 @@ def test_list_runs_supports_status_filter_and_deterministic_pagination(
         updated_at="2026-04-29T09:00:00Z",
         finished_at=None,
         cancellable=True,
+        execution_mode="sync",
         project_id=None,
         token_id=None,
     )
@@ -168,15 +174,19 @@ def test_list_runs_supports_status_filter_and_deterministic_pagination(
 
     filtered = app_client.get(
         "/api/admin/v1/runs",
-        params={"status": "queued", "limit": 10, "offset": 0},
+        params={"status": "queued", "mode": "sync", "limit": 10, "offset": 0},
     )
     assert filtered.status_code == 200
     payload = filtered.json()
     runs = payload["runs"]
-    assert [item["run_id"] for item in runs] == ["run-001", "run-003"]
+    assert payload["total"] == 1
+    assert payload["limit"] == 10
+    assert payload["offset"] == 0
+    assert [item["run_id"] for item in runs] == ["run-001"]
     row = runs[0]
     assert row["job_id"] == row["run_id"]
     assert row["workflow_name"] == "wf-a"
+    assert row["execution_mode"] == "sync"
     assert row["status"] == "queued"
     assert row["created_at"] == "2026-04-29T09:00:00Z"
     assert row["started_at"] is None
@@ -188,7 +198,9 @@ def test_list_runs_supports_status_filter_and_deterministic_pagination(
 
     paged = app_client.get("/api/admin/v1/runs", params={"limit": 1, "offset": 1})
     assert paged.status_code == 200
-    paged_runs = paged.json()["runs"]
+    paged_payload = paged.json()
+    paged_runs = paged_payload["runs"]
+    assert paged_payload["total"] == 3
     assert [item["run_id"] for item in paged_runs] == ["run-002"]
 
 
@@ -208,6 +220,14 @@ def test_get_run_detail_returns_compact_summaries_and_missing_is_404(
         cancellable=False,
         result_summary="result-summary",
         error_summary="error-summary",
+        execution_mode="sync",
+        execution_json=(
+            '{"status":"failure","outputs":null,"error":"boom",'
+            '"metadata":{"workflow_name":"wf-detail","execution_time_seconds":1.25},'
+            '"blocks":{"setup":{"inputs":{"x":1},"outputs":{"stdout":"hi"},'
+            '"metadata":{"id":"setup","type":"Shell","status":"completed",'
+            '"duration_ms":12,"outcome":"success"}}}}'
+        ),
     )
 
     detail = app_client.get("/api/admin/v1/runs/run-det-1")
@@ -215,10 +235,17 @@ def test_get_run_detail_returns_compact_summaries_and_missing_is_404(
     payload = detail.json()
     assert payload["run_id"] == "run-det-1"
     assert payload["job_id"] == "run-det-1"
+    assert payload["execution_mode"] == "sync"
     assert payload["result_summary"] == "result-summary"
     assert payload["error_summary"] == "error-summary"
-    assert "logs" not in payload
-    assert "artifacts" not in payload
+    assert payload["inputs"] == {}
+    assert payload["outputs"] is None
+    assert payload["error"] == "boom"
+    assert payload["metadata"]["workflow_name"] == "wf-detail"
+    assert payload["blocks"][0]["block_id"] == "setup"
+    assert payload["blocks"][0]["status"] == "completed"
+    assert payload["blocks"][0]["duration_ms"] == 12
+    assert payload["technical_json"]["status"] == "failure"
 
     missing = app_client.get("/api/admin/v1/runs/does-not-exist")
     assert missing.status_code == 404

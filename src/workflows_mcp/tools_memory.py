@@ -9,6 +9,7 @@ import os
 import uuid
 from pathlib import Path
 from typing import Annotated, Any, Literal
+from urllib.parse import parse_qsl, unquote, urlparse
 
 from mcp.server.fastmcp import FastMCP
 from mcp.types import CallToolResult, TextContent, ToolAnnotations
@@ -20,6 +21,7 @@ from .context import (
     MemoryBackendUnavailableError,
     SessionProjectContext,
 )
+from .engine.memory_graph_builder import GraphPayload
 from .engine.memory_graph_validator import (
     GraphValidationResult,
     build_graph_error_envelope,
@@ -117,7 +119,7 @@ def _prime_session_project_context_from_auth(ctx: AppContextType) -> None:
     allowed = list(projects)
     app_ctx.register_allowed_projects(session, allowed)
 
-    if len(allowed) == 1:
+    if len(allowed) == 1 and allowed[0].source == "token_bound":
         app_ctx.set_active_project(session, allowed[0])
         return
 
@@ -979,6 +981,91 @@ def _get_standalone_user_context() -> tuple[uuid.UUID | None, str | None, str]:
         return (SYSTEM_USER_UUID, "system", "SYSTEM")
 
 
+def _memory_connection_config_from_dsn(dsn: str) -> Any:
+    from .engine.sql import ConnectionConfig, DatabaseEngine
+
+    parsed = urlparse(dsn)
+    if parsed.scheme not in {"postgres", "postgresql"}:
+        raise MemoryContractError(
+            code="MEMORY_BACKEND_UNAVAILABLE",
+            message="MEMORY_BACKEND_UNAVAILABLE: configured PostgreSQL DSN is invalid",
+            retryable=False,
+        )
+    if parsed.hostname is None or not parsed.path.strip("/"):
+        raise MemoryContractError(
+            code="MEMORY_BACKEND_UNAVAILABLE",
+            message="MEMORY_BACKEND_UNAVAILABLE: configured PostgreSQL DSN is incomplete",
+            retryable=False,
+        )
+    query = dict(parse_qsl(parsed.query, keep_blank_values=True))
+    ssl_mode = query.get("sslmode", "disable")
+    return ConnectionConfig(
+        dialect=DatabaseEngine.POSTGRESQL,
+        host=parsed.hostname,
+        port=parsed.port or 5432,
+        database=unquote(parsed.path.strip("/")),
+        username=unquote(parsed.username) if parsed.username else None,
+        password=unquote(parsed.password) if parsed.password else None,
+        ssl=False if ssl_mode == "disable" else ssl_mode,
+    )
+
+
+def _memory_connection_config_from_metadata(app_ctx: Any) -> Any | None:
+    metadata_db_path = getattr(app_ctx, "metadata_db_path", None)
+    metadata_base_dir = getattr(app_ctx, "metadata_base_dir", None)
+    if not isinstance(metadata_db_path, (str, Path)) or not isinstance(
+        metadata_base_dir, (str, Path)
+    ):
+        return None
+    if metadata_db_path is None or metadata_base_dir is None:
+        return None
+    from .metadata.db import connect_metadata_db
+    from .metadata.repos.postgres_repo import SQLitePostgresSettingsRepository
+
+    try:
+        conn = connect_metadata_db(Path(metadata_db_path))
+    except Exception:  # noqa: BLE001
+        return None
+    try:
+        repo = SQLitePostgresSettingsRepository(
+            conn=conn,
+            key_path=Path(metadata_base_dir) / "secrets.key",
+        )
+        try:
+            dsn = repo.load_dsn()
+        except Exception:  # noqa: BLE001
+            dsn = None
+    finally:
+        conn.close()
+    if not dsn:
+        return None
+    return _memory_connection_config_from_dsn(dsn)
+
+
+def _memory_connection_config_from_env() -> Any | None:
+    raw_host = os.environ.get("MEMORY_DB_HOST")
+    if not raw_host:
+        return None
+    from .engine.sql import ConnectionConfig, DatabaseEngine
+
+    return ConnectionConfig(
+        dialect=DatabaseEngine.POSTGRESQL,
+        host=raw_host,
+        port=int(os.environ.get("MEMORY_DB_PORT", "5432")),
+        database=os.environ.get("MEMORY_DB_NAME", "memory_db"),
+        username=os.environ.get("MEMORY_DB_USER"),
+        password=os.environ.get("MEMORY_DB_PASSWORD"),
+    )
+
+
+def _has_configured_memory_connection(app_ctx: Any) -> bool:
+    if getattr(app_ctx, "memory_backend", None) is not None:
+        return True
+    if _memory_connection_config_from_env() is not None:
+        return True
+    return _memory_connection_config_from_metadata(app_ctx) is not None
+
+
 def _create_memory_execution(ctx: AppContextType) -> Any:
     from .engine.execution import Execution
 
@@ -1011,8 +1098,6 @@ async def _execute_memory_request(
     maintenance: dict[str, Any] | None,
     response: dict[str, Any] | None,
 ) -> dict[str, Any]:
-    from .engine.sql import ConnectionConfig, DatabaseEngine
-
     shared_backend = getattr(app_ctx, "memory_backend", None)
     shared_backend_lock = getattr(app_ctx, "memory_backend_lock", None)
     uses_ephemeral_backend = shared_backend is None
@@ -1020,16 +1105,23 @@ async def _execute_memory_request(
 
     try:
         if uses_ephemeral_backend:
-            await backend.connect(
-                ConnectionConfig(
-                    dialect=DatabaseEngine.POSTGRESQL,
-                    host=os.environ.get("MEMORY_DB_HOST", "localhost"),
-                    port=int(os.environ.get("MEMORY_DB_PORT", "5432")),
-                    database=os.environ.get("MEMORY_DB_NAME", "memory_db"),
-                    username=os.environ.get("MEMORY_DB_USER"),
-                    password=os.environ.get("MEMORY_DB_PASSWORD"),
-                )
+            config = (
+                _memory_connection_config_from_metadata(app_ctx)
+                or _memory_connection_config_from_env()
             )
+            if config is None:
+                raise MemoryContractError(
+                    code="MEMORY_BACKEND_UNAVAILABLE",
+                    message=(
+                        "MEMORY_BACKEND_UNAVAILABLE: no memory PostgreSQL backend is "
+                        "configured. Save database settings or set MEMORY_DB_HOST."
+                    ),
+                    retryable=False,
+                )
+            await backend.connect(config)
+            from .engine.knowledge.schema import ensure_schema
+
+            await ensure_schema(backend)
 
         service = MemoryService(backend, execution)
         request = MemoryRequest.model_validate(
@@ -1057,6 +1149,122 @@ async def _execute_memory_request(
     finally:
         if uses_ephemeral_backend:
             await backend.disconnect()
+
+
+async def persist_graph_payload(
+    *,
+    app_ctx: Any,
+    execution: Any,
+    scope: dict[str, Any] | None,
+    graph: GraphPayload,
+    response: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Persist a validated onboard graph payload through graph_upsert operations."""
+    entity_ids_by_node_id: dict[str, str] = {}
+    relation_ids: list[str] = []
+
+    for node in graph.nodes:
+        result = await _execute_memory_request(
+            app_ctx=app_ctx,
+            execution=execution,
+            operation="graph_upsert",
+            scope=scope,
+            scope_token=None,
+            context_id=None,
+            query=None,
+            record=None,
+            graph={
+                "kind": "place",
+                "place_name": node.label,
+                "place_type": node.node_type.value,
+            },
+            maintenance=None,
+            response=response,
+        )
+        entity_id = result.get("entity_id")
+        if not isinstance(entity_id, str) or not entity_id:
+            raise MemoryContractError(
+                code="MEM_GRAPH_PERSIST_FAILED",
+                message=(
+                    "MEM_GRAPH_PERSIST_FAILED: graph node persistence did not return "
+                    f"an entity id for {node.node_id!r}"
+                ),
+                retryable=False,
+            )
+        entity_ids_by_node_id[node.node_id] = entity_id
+
+    for corridor in graph.corridors:
+        source_entity_id = entity_ids_by_node_id.get(corridor.source_id)
+        target_entity_id = entity_ids_by_node_id.get(corridor.target_id)
+        if source_entity_id is None or target_entity_id is None:
+            raise MemoryContractError(
+                code="MEM_GRAPH_PERSIST_FAILED",
+                message=(
+                    "MEM_GRAPH_PERSIST_FAILED: graph corridor references a node "
+                    "that was not persisted"
+                ),
+                retryable=False,
+            )
+        graph_payload: dict[str, Any] = {
+            "kind": "link",
+            "from": source_entity_id,
+            "to": target_entity_id,
+            "link_type": corridor.semantic_type.value,
+            "curated": not bool(corridor.evidence),
+        }
+        if corridor.evidence:
+            graph_payload["evidence_memory_ids"] = list(corridor.evidence)
+
+        result = await _execute_memory_request(
+            app_ctx=app_ctx,
+            execution=execution,
+            operation="graph_upsert",
+            scope=scope,
+            scope_token=None,
+            context_id=None,
+            query=None,
+            record=None,
+            graph=graph_payload,
+            maintenance=None,
+            response=response,
+        )
+        relation_id = result.get("relation_id")
+        if not isinstance(relation_id, str) or not relation_id:
+            raise MemoryContractError(
+                code="MEM_GRAPH_PERSIST_FAILED",
+                message=(
+                    "MEM_GRAPH_PERSIST_FAILED: graph corridor persistence did not "
+                    "return a relation id"
+                ),
+                retryable=False,
+            )
+        relation_ids.append(relation_id)
+
+    return {
+        "nodes": len(entity_ids_by_node_id),
+        "corridors": len(relation_ids),
+        "entity_ids": list(entity_ids_by_node_id.values()),
+        "relation_ids": relation_ids,
+    }
+
+
+async def _persist_graph_payload_if_configured(
+    *,
+    app_ctx: Any,
+    execution: Any,
+    scope: dict[str, Any] | None,
+    graph: GraphPayload | None,
+    response: dict[str, Any] | None,
+) -> dict[str, Any] | None:
+    if graph is None or not _has_configured_memory_connection(app_ctx):
+        return None
+    return await persist_graph_payload(
+        app_ctx=app_ctx,
+        execution=execution,
+        scope=scope,
+        graph=graph,
+        response=response,
+    )
 
 
 def _project_flow_plan(
@@ -1869,6 +2077,13 @@ def register_memory_tools(
                 )
                 result = run_programmatic_onboard(request)
                 if result.status == "completed":
+                    persistence = await _persist_graph_payload_if_configured(
+                        app_ctx=app_ctx,
+                        execution=execution,
+                        scope=result.scope,
+                        graph=result.graph,
+                        response=response,
+                    )
                     candidate = _register_onboard_context_for_session(
                         ctx,
                         result.scope,
@@ -1876,6 +2091,13 @@ def register_memory_tools(
                     )
                     _set_active_context(ctx, candidate)
                     _enable_watcher_for_active_project_after_onboard(ctx)
+                    payload = build_programmatic_onboard_response(result, debug=debug)
+                    if persistence is not None:
+                        payload["graph"]["persisted"] = {
+                            "nodes": persistence["nodes"],
+                            "corridors": persistence["corridors"],
+                        }
+                    return _json_response(payload)
                 return _json_response(build_programmatic_onboard_response(result, debug=debug))
 
             # --- Phase 5: LLM onboard fast-path ---
@@ -1932,6 +2154,13 @@ def register_memory_tools(
                     loader=app_ctx.llm_config_loader,
                 )
                 if llm_result.status == "completed":
+                    persistence = await _persist_graph_payload_if_configured(
+                        app_ctx=app_ctx,
+                        execution=execution,
+                        scope=llm_result.scope,
+                        graph=llm_result.graph,
+                        response=response,
+                    )
                     candidate = _register_onboard_context_for_session(
                         ctx,
                         llm_result.scope,
@@ -1939,6 +2168,13 @@ def register_memory_tools(
                     )
                     _set_active_context(ctx, candidate)
                     _enable_watcher_for_active_project_after_onboard(ctx)
+                    payload = build_llm_onboard_response(llm_result, debug=debug)
+                    if persistence is not None:
+                        payload["graph"]["persisted"] = {
+                            "nodes": persistence["nodes"],
+                            "corridors": persistence["corridors"],
+                        }
+                    return _json_response(payload)
                 return _json_response(build_llm_onboard_response(llm_result, debug=debug))
 
             # --- scan handling for new flows (checkpoint not provided) ---

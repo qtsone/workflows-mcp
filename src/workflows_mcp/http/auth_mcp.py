@@ -42,6 +42,19 @@ class MCPAuthContext:
     projects: tuple[SessionProjectContext, ...]
 
 
+def _to_session_project_context(project: Any, *, source: str) -> SessionProjectContext:
+    return SessionProjectContext(
+        project_id=project.id,
+        slug=project.slug,
+        palace=project.palace,
+        default_wing=project.default_wing,
+        default_room=project.default_room,
+        source=source,
+        fs_root=project.fs_root,
+        fs_allowlist=tuple(project.fs_allowlist),
+    )
+
+
 def _extract_header(scope: Scope, header_name: bytes) -> str | None:
     headers = dict(scope.get("headers", []))
     raw = headers.get(header_name)
@@ -70,25 +83,19 @@ def _resolve_sqlite_auth_context(scope: Scope, token: str) -> MCPAuthContext | N
 
     try:
         resolved_projects: list[SessionProjectContext] = []
-        for project_id in token_record.project_ids:
-            project = project_repo.get_by_id(project_id)
-            if project is None:
-                continue
-            resolved_projects.append(
-                SessionProjectContext(
-                    project_id=project.id,
-                    slug=project.slug,
-                    palace=project.palace,
-                    default_wing=project.default_wing,
-                    default_room=project.default_room,
-                    source="token_bound",
-                    fs_root=project.fs_root,
-                    fs_allowlist=tuple(project.fs_allowlist),
+        if token_record.project_ids:
+            for project_id in token_record.project_ids:
+                project = project_repo.get_by_id(project_id)
+                if project is None:
+                    continue
+                resolved_projects.append(
+                    _to_session_project_context(project, source="token_bound")
                 )
-            )
-
-        if not resolved_projects:
-            return MCPAuthContext(token_id="", projects=())
+        else:
+            resolved_projects = [
+                _to_session_project_context(project, source="token_unbound")
+                for project in project_repo.list_all()
+            ]
 
         token_repo.mark_last_used(token_record.id)
         return MCPAuthContext(token_id=token_record.id, projects=tuple(resolved_projects))
@@ -145,7 +152,7 @@ class MCPAuthMiddleware:
         if token is not None:
             sqlite_ctx = _resolve_sqlite_auth_context(scope, token)
             if sqlite_ctx is not None:
-                if sqlite_ctx.token_id and sqlite_ctx.projects:
+                if sqlite_ctx.token_id:
                     scope[_AUTH_SCOPE_KEY] = sqlite_ctx
                     authenticated = True
                 else:

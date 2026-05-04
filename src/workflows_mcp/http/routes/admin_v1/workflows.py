@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+from pathlib import Path as FilePath
 from sqlite3 import Connection
 from typing import Annotated, Any
 
+import yaml
 from fastapi import APIRouter, Depends, HTTPException, Path, status
 from pydantic import BaseModel, ConfigDict, StringConstraints
 
@@ -93,6 +95,77 @@ class WorkflowValidateResponse(BaseModel):
     total: int
 
 
+def _workflow_yaml_candidates(source_dir: FilePath) -> list[FilePath]:
+    candidates: list[FilePath] = []
+    for pattern in ("*.yaml", "*.yml"):
+        try:
+            paths = source_dir.rglob(pattern)
+            for path in paths:
+                try:
+                    if path.is_file():
+                        candidates.append(path)
+                except OSError:
+                    continue
+        except OSError:
+            continue
+    return sorted(candidates)
+
+
+def _workflow_yaml_detail(workflow_name: str, source: FilePath | None) -> dict[str, Any]:
+    if source is None:
+        return {
+            "raw_yaml": None,
+            "yaml_path": None,
+            "load_logs": ["Workflow YAML not found because no source path is registered."],
+        }
+
+    source_dir = FilePath(source)
+    try:
+        source_available = source_dir.exists() and source_dir.is_dir()
+    except OSError:
+        source_available = False
+
+    if not source_available:
+        return {
+            "raw_yaml": None,
+            "yaml_path": None,
+            "load_logs": [
+                f"Workflow YAML not found because source path is unavailable: {source_dir}"
+            ],
+        }
+
+    load_logs: list[str] = []
+    for yaml_path in _workflow_yaml_candidates(source_dir):
+        try:
+            raw_yaml = yaml_path.read_text(encoding="utf-8")
+        except (OSError, UnicodeError):
+            load_logs.append(f"Skipped unreadable YAML candidate: {yaml_path}")
+            continue
+
+        try:
+            parsed = yaml.safe_load(raw_yaml)
+        except yaml.YAMLError:
+            load_logs.append(f"Skipped unparsable YAML candidate: {yaml_path}")
+            continue
+
+        if isinstance(parsed, dict):
+            name = parsed.get("name")
+            if isinstance(name, str) and name == workflow_name:
+                return {
+                    "raw_yaml": raw_yaml,
+                    "yaml_path": str(yaml_path),
+                    "load_logs": [f"Workflow YAML loaded from: {yaml_path}"],
+                }
+
+    load_logs.append(f"Workflow YAML not found for workflow: {workflow_name}")
+
+    return {
+        "raw_yaml": None,
+        "yaml_path": None,
+        "load_logs": load_logs,
+    }
+
+
 def _repo(resources: AppResources) -> tuple[SQLiteWorkflowSourcesRepository, Connection]:
     conn = connect_metadata_db(resources.metadata.base_dir / "server.db")
     return SQLiteWorkflowSourcesRepository(conn), conn
@@ -128,7 +201,10 @@ def _map_reload_error(exc: WorkflowSourceReloadError) -> HTTPException:
 
 def _reload_from_sqlite_sources(resources: AppResources) -> WorkflowReloadResponse:
     if resources.app_context.reload_workflows is not None:
-        summary = resources.app_context.reload_workflows()
+        try:
+            summary = resources.app_context.reload_workflows()
+        except WorkflowSourceReloadError as exc:
+            raise _map_reload_error(exc) from exc
         return WorkflowReloadResponse(
             status="ok",
             total=summary.workflow_count,
@@ -307,6 +383,7 @@ async def workflow_detail(
         ) from exc
     source = resources.workflow_registry.get_workflow_source(workflow_name)
     metadata["source_path"] = str(source) if source is not None else None
+    metadata.update(_workflow_yaml_detail(workflow_name, source))
     return metadata
 
 

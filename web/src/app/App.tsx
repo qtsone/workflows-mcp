@@ -1,5 +1,5 @@
 import "./App.css";
-import { ChangeEvent, FormEvent, KeyboardEvent, ReactNode, useEffect, useMemo, useRef, useState } from "react";
+import { ChangeEvent, FormEvent, Fragment, KeyboardEvent, ReactNode, useEffect, useMemo, useRef, useState } from "react";
 
 import { ApiHttpError, createApiClient, type DatabaseSslMode } from "../api/client";
 import {
@@ -230,10 +230,24 @@ type LlmProfileForm = {
   description: string;
 };
 
+type SecretModel = {
+  name: string;
+  keyId: string | null;
+  createdAt: string;
+  updatedAt: string;
+};
+
+type SecretForm = {
+  name: string;
+  value: string;
+  keyId: string;
+};
+
 type ModalShellProps = {
   titleId: string;
   title: string;
   eyebrow: string;
+  className?: string;
   children: ReactNode;
   onClose: () => void;
 };
@@ -242,6 +256,13 @@ type LlmFeedbackMessagesProps = {
   error: string;
   message: string;
   className?: string;
+};
+
+type TablePaginationProps = {
+  label: string;
+  page: number;
+  totalItems: number;
+  onPageChange: (page: number) => void;
 };
 
 type ConnectionTestModel = {
@@ -284,6 +305,32 @@ type WatcherDashboardRow = {
   updatedAt: string;
 };
 
+type StatusTone = "neutral" | "info" | "success" | "warning" | "danger";
+
+function toWatcherRows(items: WatcherStateItem[], projectNameById: Map<string, string>): WatcherDashboardRow[] {
+  return items.map((item) => ({
+    projectId: item.project_id,
+    projectName: projectNameById.get(item.project_id) ?? null,
+    state: item.state,
+    dirtyCount: item.dirty_count,
+    requiresReconciliation: item.requires_reconciliation,
+    lastEventAt: item.last_event_at,
+    updatedAt: item.updated_at,
+  }));
+}
+
+function watcherStatusTone(row: WatcherDashboardRow): StatusTone {
+  if (row.requiresReconciliation) return "warning";
+  if (row.state === "enabled") return "success";
+  if (row.state === "paused") return "info";
+  if (row.state === "disabled") return "danger";
+  return "neutral";
+}
+
+function watcherStatusLabel(row: WatcherDashboardRow): string {
+  return row.requiresReconciliation ? "Needs reconcile" : formatStatusValue(row.state);
+}
+
 type SyncDashboardRow = {
   projectId: string;
   projectName: string | null;
@@ -292,7 +339,20 @@ type SyncDashboardRow = {
   syncState: string;
   reconcileState: string;
   rebuildState: string;
+  updatedAt: string | null;
   lifecycleTelemetry: string;
+};
+
+type SyncLogEntryModel = {
+  id: number;
+  projectId: string;
+  path: string;
+  eventType: string;
+  reason: string;
+  status: string;
+  enqueuedAt: string;
+  updatedAt: string;
+  processedAt: string | null;
 };
 
 function buildSyncDashboardRows(items: SyncStateItem[], projects: ProjectModel[]): SyncDashboardRow[] {
@@ -317,6 +377,7 @@ function buildSyncDashboardRows(items: SyncStateItem[], projects: ProjectModel[]
             ? "required"
             : "clear",
       rebuildState: typeof item?.rebuild_state === "string" ? item.rebuild_state : "available as manual action",
+      updatedAt: typeof item?.updated_at === "string" && item.updated_at.trim().length > 0 ? item.updated_at : null,
       lifecycleTelemetry:
         typeof item?.updated_at === "string" && item.updated_at.trim().length > 0
           ? `updated_at=${item.updated_at}`
@@ -325,12 +386,233 @@ function buildSyncDashboardRows(items: SyncStateItem[], projects: ProjectModel[]
   });
 }
 
+function syncStatusTone(row: SyncDashboardRow): StatusTone {
+  const states = [row.syncState, row.reconcileState, row.rebuildState].join(" ").toLowerCase();
+  if (states.includes("fail") || states.includes("error")) return "danger";
+  if (row.requiresReconciliation) return "warning";
+  if (row.dirtyCount > 0 || row.syncState !== "idle") return "info";
+  return "success";
+}
+
+function syncStatusLabel(row: SyncDashboardRow): string {
+  if (row.requiresReconciliation) return "Needs reconcile";
+  if (row.dirtyCount > 0) return "Queued";
+  if (row.syncState !== "idle") return formatStatusValue(row.syncState);
+  return "Clean";
+}
+
+function formatStatusValue(value: string): string {
+  const trimmed = value.trim();
+  if (trimmed.length === 0) return "Unknown";
+  return trimmed
+    .split(/[-_\s]+/)
+    .filter(Boolean)
+    .map((part) => `${part.charAt(0).toUpperCase()}${part.slice(1)}`)
+    .join(" ");
+}
+
+function formatLogValue(value: string): string {
+  const trimmed = value.trim();
+  if (trimmed.length === 0) return "Unknown";
+  return trimmed
+    .split(/[:\-_\s]+/)
+    .filter(Boolean)
+    .map((part) => `${part.charAt(0).toUpperCase()}${part.slice(1)}`)
+    .join(" ");
+}
+
+type YamlTokenSegment = {
+  text: string;
+  className?: string;
+};
+
+function findYamlCommentStart(text: string): number {
+  let quote: "\"" | "'" | null = null;
+  for (let index = 0; index < text.length; index += 1) {
+    const char = text[index];
+    const previous = index > 0 ? text[index - 1] : "";
+    if (char === "\"" && quote !== "'" && previous !== "\\") {
+      quote = quote === "\"" ? null : "\"";
+    } else if (char === "'" && quote !== "\"") {
+      quote = quote === "'" ? null : "'";
+    } else if (char === "#" && quote === null && (index === 0 || /\s/.test(previous))) {
+      return index;
+    }
+  }
+  return -1;
+}
+
+function yamlScalarSegments(text: string): YamlTokenSegment[] {
+  const commentStart = findYamlCommentStart(text);
+  const mainText = commentStart >= 0 ? text.slice(0, commentStart) : text;
+  const commentText = commentStart >= 0 ? text.slice(commentStart) : "";
+  const tokenPattern =
+    /({{[^}]+}}|"(?:\\.|[^"\\])*"|'(?:''|[^'])*'|\b(?:true|false|null|yes|no|on|off)\b|-?\b\d+(?:\.\d+)?\b|\[[^\]]*\]|\{[^{}]*\})/gi;
+  const segments: YamlTokenSegment[] = [];
+  let cursor = 0;
+  for (const match of mainText.matchAll(tokenPattern)) {
+    const index = match.index ?? 0;
+    if (index > cursor) segments.push({ text: mainText.slice(cursor, index) });
+    const value = match[0];
+    let className = "yaml-token yaml-token--scalar";
+    if (value.startsWith("{{")) className = "yaml-token yaml-token--template";
+    else if (value.startsWith("\"") || value.startsWith("'")) className = "yaml-token yaml-token--string";
+    else if (/^-?\d/.test(value)) className = "yaml-token yaml-token--number";
+    else if (value.startsWith("[") || value.startsWith("{")) className = "yaml-token yaml-token--collection";
+    segments.push({ text: value, className });
+    cursor = index + value.length;
+  }
+  if (cursor < mainText.length) segments.push({ text: mainText.slice(cursor) });
+  if (commentText) segments.push({ text: commentText, className: "yaml-token yaml-token--comment" });
+  return segments;
+}
+
+function renderYamlSegments(segments: YamlTokenSegment[], keyPrefix: string): ReactNode {
+  return segments.map((segment, index) =>
+    segment.className ? (
+      <span key={`${keyPrefix}-${index}`} className={segment.className}>
+        {segment.text}
+      </span>
+    ) : (
+      <Fragment key={`${keyPrefix}-${index}`}>{segment.text}</Fragment>
+    ),
+  );
+}
+
+function renderYamlLineContent(line: string, lineIndex: number): ReactNode {
+  const indentMatch = line.match(/^\s*/);
+  const indent = indentMatch?.[0] ?? "";
+  const body = line.slice(indent.length);
+  const keyPrefix = `yaml-${lineIndex}`;
+  if (body.length === 0) return <Fragment>{indent || " "}</Fragment>;
+  if (body.startsWith("#")) {
+    return (
+      <>
+        {indent}
+        <span className="yaml-token yaml-token--comment">{body}</span>
+      </>
+    );
+  }
+
+  const sequenceMatch = body.match(/^-\s+(.*)$/);
+  const prefix = sequenceMatch ? "- " : "";
+  const content = sequenceMatch ? sequenceMatch[1] : body;
+  const keyMatch = content.match(/^([^:#]+):(.*)$/);
+
+  return (
+    <>
+      {indent}
+      {prefix ? <span className="yaml-token yaml-token--dash">{prefix}</span> : null}
+      {keyMatch ? (
+        <>
+          <span className="yaml-token yaml-token--key">{keyMatch[1]}</span>
+          <span className="yaml-token yaml-token--punctuation">:</span>
+          {renderYamlSegments(yamlScalarSegments(keyMatch[2]), keyPrefix)}
+        </>
+      ) : (
+        renderYamlSegments(yamlScalarSegments(content), keyPrefix)
+      )}
+    </>
+  );
+}
+
+function YamlCodeBlock({ yaml }: { yaml: string }): ReactNode {
+  const lines = yaml.split(/\r?\n/);
+  return (
+    <div className="workflow-yaml-viewer">
+      <div className="workflow-yaml-viewer__toolbar" aria-hidden="true">
+        <span>syntax highlighted</span>
+        <span>{lines.length} lines</span>
+      </div>
+      <pre className="workflow-yaml-viewer__code" tabIndex={0}>
+        <code>
+          {lines.map((line, index) => (
+            <span className="yaml-line" key={`${index}-${line}`}>
+              <span className="yaml-line-number" aria-hidden="true">
+                {index + 1}
+              </span>
+              <span className="yaml-line-content">{renderYamlLineContent(line, index)}</span>
+            </span>
+          ))}
+        </code>
+      </pre>
+    </div>
+  );
+}
+
+function formatJsonCodeValue(value: unknown, parseString = false): string {
+  if (typeof value === "string") {
+    const trimmed = value.trim();
+    if (parseString && trimmed.length > 0) {
+      try {
+        return JSON.stringify(JSON.parse(trimmed) as unknown, null, 2);
+      } catch {
+        return value;
+      }
+    }
+    return value;
+  }
+
+  try {
+    return JSON.stringify(value, null, 2) ?? String(value);
+  } catch {
+    return String(value);
+  }
+}
+
+function jsonTokenClassName(token: string, source: string, index: number): string {
+  if (token.startsWith("\"")) {
+    return /^\s*:/.test(source.slice(index + token.length)) ? "json-token json-token--key" : "json-token json-token--string";
+  }
+  if (/^-?\d/.test(token)) return "json-token json-token--number";
+  if (token === "true" || token === "false") return "json-token json-token--boolean";
+  if (token === "null") return "json-token json-token--null";
+  return "json-token json-token--punctuation";
+}
+
+function renderJsonSegments(source: string): ReactNode {
+  const tokenPattern = /"(?:\\.|[^"\\])*"|-?\d+(?:\.\d+)?(?:[eE][+-]?\d+)?|\b(?:true|false|null)\b|[{}\[\],:]/g;
+  const segments: ReactNode[] = [];
+  let cursor = 0;
+
+  for (const match of source.matchAll(tokenPattern)) {
+    const index = match.index ?? 0;
+    if (index > cursor) segments.push(<Fragment key={`json-text-${cursor}`}>{source.slice(cursor, index)}</Fragment>);
+
+    const token = match[0];
+    segments.push(
+      <span key={`json-token-${index}`} className={jsonTokenClassName(token, source, index)}>
+        {token}
+      </span>,
+    );
+    cursor = index + token.length;
+  }
+
+  if (cursor < source.length) segments.push(<Fragment key={`json-text-${cursor}`}>{source.slice(cursor)}</Fragment>);
+  return segments;
+}
+
+function JsonCodeBlock({ value, parseString = false }: { value: unknown; parseString?: boolean }): ReactNode {
+  const source = formatJsonCodeValue(value, parseString);
+  return (
+    <pre className="runs-json-code" tabIndex={0}>
+      <code>{renderJsonSegments(source)}</code>
+    </pre>
+  );
+}
+
 type WorkflowSummaryModel = {
   name: string;
   description: string;
   version: string;
   tags: string[];
   sourcePath: string | null;
+};
+
+type WorkflowDetailModel = WorkflowSummaryModel & {
+  yamlPath: string | null;
+  rawYaml: string | null;
+  loadLogs: string[];
 };
 
 type WorkflowSourceModel = {
@@ -348,19 +630,37 @@ type RunRowModel = {
   jobId: string;
   workflowName: string;
   status: string;
+  executionMode: string;
   createdAt: string;
   startedAt: string | null;
   finishedAt: string | null;
   updatedAt: string;
+  durationMs: number | null;
   cancellable: boolean;
   projectId: string | null;
   tokenId: string | null;
 };
 
+type RunBlockModel = {
+  blockId: string;
+  blockType: string | null;
+  status: string | null;
+  outcome: string | null;
+  durationMs: number | null;
+  message: string | null;
+  inputs: Record<string, unknown>;
+  outputs: Record<string, unknown>;
+  metadata: Record<string, unknown>;
+};
+
 type RunDetailModel = RunRowModel & {
   resultSummary: string | null;
   errorSummary: string | null;
+  inputs: Record<string, unknown>;
+  outputs: unknown;
+  error: string | null;
   metadata: Record<string, unknown>;
+  blocks: RunBlockModel[];
   technicalJson: string;
 };
 
@@ -368,12 +668,15 @@ type OneTimeMcpSecret = {
   token: string;
   configSnippet: string | null;
   label: string;
+  clientId?: string | null;
 };
 
 type FolderBrowserTarget = "fsRoot" | "allowlist";
+type ProjectModalMode = "new" | "edit";
 
 const MCP_SECRET_MISSING_ERROR = "Token issuance response was incomplete; no secret was returned.";
 const VALID_NAME_PATTERN = /^[a-zA-Z0-9][a-zA-Z0-9_.-]{0,127}$/;
+const SECRET_NAME_PATTERN = /^[A-Za-z_][A-Za-z0-9_]*$/;
 
 const DEFAULT_DATABASE_FORM: DatabaseProfileForm = {
   enabled: false,
@@ -423,17 +726,28 @@ const DEFAULT_LLM_PROFILE_FORM: LlmProfileForm = {
   description: "",
 };
 
-function ModalShell({ titleId, title, eyebrow, children, onClose }: ModalShellProps) {
+const DEFAULT_SECRET_FORM: SecretForm = {
+  name: "",
+  value: "",
+  keyId: "",
+};
+
+const TABLE_PAGE_SIZE = 10;
+
+function ModalShell({ titleId, title, eyebrow, className, children, onClose }: ModalShellProps) {
   const dialogRef = useRef<HTMLElement | null>(null);
   const openerRef = useRef<HTMLElement | null>(null);
 
   useEffect(() => {
     openerRef.current = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    const previousBodyOverflow = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
     const dialog = dialogRef.current;
     const initialFocusable = dialog ? getInitialModalFocusElement(dialog) : null;
     initialFocusable?.focus();
 
     return () => {
+      document.body.style.overflow = previousBodyOverflow;
       openerRef.current?.focus();
     };
   }, []);
@@ -472,7 +786,7 @@ function ModalShell({ titleId, title, eyebrow, children, onClose }: ModalShellPr
     <div className="llm-modal__backdrop">
       <section
         ref={dialogRef}
-        className="llm-modal"
+        className={["llm-modal", className].filter(Boolean).join(" ")}
         role="dialog"
         aria-modal="true"
         aria-labelledby={titleId}
@@ -483,8 +797,10 @@ function ModalShell({ titleId, title, eyebrow, children, onClose }: ModalShellPr
             <p className="llm-modal__eyebrow">{eyebrow}</p>
             <h2 id={titleId}>{title}</h2>
           </div>
-          <button type="button" className="llm-modal__close" onClick={onClose}>
-            Close
+          <button type="button" className="llm-modal__close" aria-label="Close dialog" title="Close" onClick={onClose}>
+            <svg aria-hidden="true" viewBox="0 0 24 24" focusable="false">
+              <path d="M6 6l12 12M18 6 6 18" />
+            </svg>
           </button>
         </header>
         <div className="llm-modal__body">{children}</div>
@@ -499,6 +815,80 @@ function LlmFeedbackMessages({ error, message, className }: LlmFeedbackMessagesP
       {message ? <p className={className} role="status">{message}</p> : null}
       {error ? <p className={className} role="alert">{error}</p> : null}
     </>
+  );
+}
+
+function OneTimeMcpTokenCard({ secret }: { secret: OneTimeMcpSecret }) {
+  const cardRef = useRef<HTMLDivElement | null>(null);
+
+  useEffect(() => {
+    cardRef.current?.focus();
+  }, [secret.token]);
+
+  return (
+    <div ref={cardRef} className="token-card" role="status" aria-live="polite" tabIndex={0}>
+      <h3>Copy once: token and snippet</h3>
+      <p>Client label: {secret.label}</p>
+      <pre>{secret.token}</pre>
+      {secret.configSnippet ? (
+        <pre>{secret.configSnippet}</pre>
+      ) : (
+        <p>No configuration snippet was returned. Use the token directly in your MCP client settings.</p>
+      )}
+    </div>
+  );
+}
+
+function pageCountFor(totalItems: number): number {
+  return Math.max(1, Math.ceil(totalItems / TABLE_PAGE_SIZE));
+}
+
+function clampTablePage(page: number, totalItems: number): number {
+  return Math.min(Math.max(1, page), pageCountFor(totalItems));
+}
+
+function paginateItems<T>(items: T[], page: number): T[] {
+  const currentPage = clampTablePage(page, items.length);
+  const startIndex = (currentPage - 1) * TABLE_PAGE_SIZE;
+  return items.slice(startIndex, startIndex + TABLE_PAGE_SIZE);
+}
+
+function TablePagination({ label, page, totalItems, onPageChange }: TablePaginationProps) {
+  if (totalItems <= TABLE_PAGE_SIZE) return null;
+
+  const currentPage = clampTablePage(page, totalItems);
+  const pageCount = pageCountFor(totalItems);
+  const firstItem = (currentPage - 1) * TABLE_PAGE_SIZE + 1;
+  const lastItem = Math.min(totalItems, currentPage * TABLE_PAGE_SIZE);
+
+  return (
+    <nav className="table-pagination" aria-label={`${label} pagination`}>
+      <p>
+        Showing {firstItem}-{lastItem} of {totalItems}
+        <span>10/page</span>
+      </p>
+      <div className="table-pagination__controls">
+        <button
+          type="button"
+          className="secondary-button"
+          disabled={currentPage === 1}
+          onClick={() => onPageChange(currentPage - 1)}
+        >
+          Previous page
+        </button>
+        <span>
+          Page {currentPage} of {pageCount}
+        </span>
+        <button
+          type="button"
+          className="secondary-button"
+          disabled={currentPage === pageCount}
+          onClick={() => onPageChange(currentPage + 1)}
+        >
+          Next page
+        </button>
+      </div>
+    </nav>
   );
 }
 
@@ -535,6 +925,16 @@ function toUserError(error: unknown, fallback: string): string {
   }
   if (error instanceof Error && error.message.trim().length > 0) return error.message;
   return fallback;
+}
+
+function syncActionFailureMessage(payload: unknown): string | null {
+  const obj = toObject(payload);
+  if (typeof obj.status !== "string" || obj.status.toLowerCase() !== "failed") return null;
+  const error = toObject(obj.error);
+  if (typeof error.message === "string" && error.message.trim().length > 0) {
+    return error.message;
+  }
+  return "Project sync failed.";
 }
 
 function toObject(value: unknown): Record<string, unknown> {
@@ -644,6 +1044,12 @@ function parseExtraHeaders(value: string): Record<string, string> {
   const invalid = Object.entries(obj).find(([, val]) => typeof val !== "string");
   if (invalid) throw new Error("Extra headers must be a JSON object with string values.");
   return toStringMap(obj);
+}
+
+function formatJsonFieldValue(value: string): string {
+  const trimmed = value.trim();
+  if (trimmed.length === 0) return "{}";
+  return JSON.stringify(JSON.parse(trimmed) as unknown, null, 2);
 }
 
 function numberField(value: string, label: string): number | null {
@@ -776,6 +1182,22 @@ function toProjectModel(payload: unknown): ProjectModel {
   };
 }
 
+function toSyncLogEntryModel(payload: unknown): SyncLogEntryModel {
+  const obj = toObject(payload);
+  const rawId = typeof obj.id === "number" ? obj.id : Number(obj.id);
+  return {
+    id: Number.isFinite(rawId) ? rawId : 0,
+    projectId: typeof obj.project_id === "string" ? obj.project_id : "",
+    path: typeof obj.path === "string" ? obj.path : "",
+    eventType: typeof obj.event_type === "string" ? obj.event_type : "",
+    reason: typeof obj.reason === "string" ? obj.reason : "",
+    status: typeof obj.status === "string" ? obj.status : "unknown",
+    enqueuedAt: typeof obj.enqueued_at === "string" ? obj.enqueued_at : "",
+    updatedAt: typeof obj.updated_at === "string" ? obj.updated_at : "",
+    processedAt: typeof obj.processed_at === "string" ? obj.processed_at : null,
+  };
+}
+
 function toMcpClientModel(payload: unknown): MpcClientModel {
   const obj = toObject(payload);
   return {
@@ -790,6 +1212,16 @@ function toMcpClientModel(payload: unknown): MpcClientModel {
   };
 }
 
+function toSecretModel(payload: unknown): SecretModel {
+  const obj = toObject(payload);
+  return {
+    name: typeof obj.name === "string" ? obj.name : "",
+    keyId: toNullableString(obj.key_id),
+    createdAt: typeof obj.created_at === "string" ? obj.created_at : "Unavailable",
+    updatedAt: typeof obj.updated_at === "string" ? obj.updated_at : "Unavailable",
+  };
+}
+
 function normalizePathList(input: string): string[] {
   const unique = new Set<string>();
   for (const part of input.split(/[\n,]/)) {
@@ -799,15 +1231,44 @@ function normalizePathList(input: string): string[] {
   return Array.from(unique);
 }
 
+function sameStringSet(left: string[], right: string[]): boolean {
+  if (left.length !== right.length) return false;
+  const rightValues = new Set(right);
+  return left.every((value) => rightValues.has(value));
+}
+
+function slugifyProjectIdentifier(value: string): string {
+  return value
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 128);
+}
+
+function toStringList(value: unknown): string[] {
+  return Array.isArray(value) ? value.filter((item): item is string => typeof item === "string") : [];
+}
+
 function toWorkflowSummaryModel(payload: unknown): WorkflowSummaryModel {
   const obj = toObject(payload);
-  const tags = Array.isArray(obj.tags) ? obj.tags.filter((item): item is string => typeof item === "string") : [];
   return {
     name: typeof obj.name === "string" ? obj.name : "",
     description: typeof obj.description === "string" ? obj.description : "",
     version: typeof obj.version === "string" ? obj.version : "",
-    tags,
+    tags: toStringList(obj.tags),
     sourcePath: typeof obj.source_path === "string" ? obj.source_path : null,
+  };
+}
+
+function toWorkflowDetailModel(payload: unknown): WorkflowDetailModel {
+  const summary = toWorkflowSummaryModel(payload);
+  const obj = toObject(payload);
+  return {
+    ...summary,
+    yamlPath: toNullableString(obj.yaml_path),
+    rawYaml: toNullableString(obj.raw_yaml),
+    loadLogs: toStringList(obj.load_logs),
   };
 }
 
@@ -824,6 +1285,69 @@ function toWorkflowSourceModel(payload: unknown): WorkflowSourceModel {
   };
 }
 
+function workflowBelongsToSource(workflow: WorkflowSummaryModel, source: WorkflowSourceModel): boolean {
+  if (!workflow.sourcePath) return false;
+  const workflowPath = workflow.sourcePath.replace(/\/+$/, "");
+  const sourcePath = source.sourcePath.replace(/\/+$/, "");
+  return workflowPath === sourcePath || workflowPath.startsWith(`${sourcePath}/`);
+}
+
+function workflowSourceStatus(source: WorkflowSourceModel, workflowCount: number): string {
+  if (source.status && source.status.trim().length > 0) return source.status;
+  return workflowCount > 0 ? "loaded" : "pending";
+}
+
+function statusToneForValue(status: string | null | undefined): StatusTone {
+  const normalized = (status ?? "").trim().toLowerCase();
+  if (["loaded", "completed", "success", "ok", "clean", "active", "enabled"].includes(normalized)) return "success";
+  if (["failed", "failure", "error", "invalid", "blocked"].includes(normalized)) return "danger";
+  if (["pending", "queued", "running", "loading", "validating"].includes(normalized)) return "warning";
+  if (["paused", "unknown", ""].includes(normalized)) return "neutral";
+  return "info";
+}
+
+function formatRunTimestamp(value: string | null): string {
+  if (!value) return "Not recorded";
+  const parsed = Date.parse(value);
+  if (!Number.isFinite(parsed)) return value;
+  return new Intl.DateTimeFormat(undefined, {
+    month: "short",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+  }).format(new Date(parsed));
+}
+
+function formatDurationMs(value: number | null): string {
+  if (value === null) return "Pending";
+  if (value < 1000) return `${value} ms`;
+  const seconds = value / 1000;
+  if (seconds < 60) return `${seconds.toFixed(seconds < 10 ? 1 : 0)} s`;
+  const minutes = Math.floor(seconds / 60);
+  const remainder = Math.round(seconds % 60);
+  return `${minutes}m ${remainder}s`;
+}
+
+function runCanResume(run: RunRowModel): boolean {
+  return run.status.toLowerCase() === "paused";
+}
+
+function toRunBlockModel(payload: unknown): RunBlockModel {
+  const obj = toObject(payload);
+  return {
+    blockId: typeof obj.block_id === "string" ? obj.block_id : "",
+    blockType: typeof obj.block_type === "string" ? obj.block_type : null,
+    status: typeof obj.status === "string" ? obj.status : null,
+    outcome: typeof obj.outcome === "string" ? obj.outcome : null,
+    durationMs: toNullableNumber(obj.duration_ms),
+    message: typeof obj.message === "string" ? obj.message : null,
+    inputs: toObject(obj.inputs),
+    outputs: toObject(obj.outputs),
+    metadata: toObject(obj.metadata),
+  };
+}
+
 function toRunRowModel(payload: unknown): RunRowModel {
   const obj = toObject(payload);
   return {
@@ -831,10 +1355,12 @@ function toRunRowModel(payload: unknown): RunRowModel {
     jobId: typeof obj.job_id === "string" ? obj.job_id : "",
     workflowName: typeof obj.workflow_name === "string" ? obj.workflow_name : "",
     status: typeof obj.status === "string" ? obj.status : "unknown",
+    executionMode: typeof obj.execution_mode === "string" ? obj.execution_mode : "async",
     createdAt: typeof obj.created_at === "string" ? obj.created_at : "Unavailable",
     startedAt: typeof obj.started_at === "string" ? obj.started_at : null,
     finishedAt: typeof obj.finished_at === "string" ? obj.finished_at : null,
     updatedAt: typeof obj.updated_at === "string" ? obj.updated_at : "Unavailable",
+    durationMs: toNullableNumber(obj.duration_ms),
     cancellable: obj.cancellable === true,
     projectId: typeof obj.project_id === "string" ? obj.project_id : null,
     tokenId: typeof obj.token_id === "string" ? obj.token_id : null,
@@ -845,12 +1371,17 @@ function toRunDetailModel(payload: unknown): RunDetailModel {
   const obj = toObject(payload);
   const row = toRunRowModel(payload);
   const metadata = toObject(obj.metadata);
+  const blocks = Array.isArray(obj.blocks) ? obj.blocks.map(toRunBlockModel) : [];
   return {
     ...row,
     resultSummary: typeof obj.result_summary === "string" ? obj.result_summary : null,
     errorSummary: typeof obj.error_summary === "string" ? obj.error_summary : null,
+    inputs: toObject(obj.inputs),
+    outputs: obj.outputs,
+    error: typeof obj.error === "string" ? obj.error : null,
     metadata,
-    technicalJson: JSON.stringify(obj, null, 2),
+    blocks,
+    technicalJson: JSON.stringify(obj.technical_json ?? obj, null, 2),
   };
 }
 
@@ -926,17 +1457,21 @@ export function App(): JSX.Element {
   const [projectsLoading, setProjectsLoading] = useState(false);
   const [projectMessage, setProjectMessage] = useState("");
   const [projectError, setProjectError] = useState("");
-  const [projectDeleteTarget, setProjectDeleteTarget] = useState<ProjectModel | null>(null);
+  const [projectModalMode, setProjectModalMode] = useState<ProjectModalMode | null>(null);
+  const [projectModalProject, setProjectModalProject] = useState<ProjectModel | null>(null);
   const [projectDeleteConfirm, setProjectDeleteConfirm] = useState("");
   const [projectDeletePending, setProjectDeletePending] = useState(false);
-  const [projectCreatePending, setProjectCreatePending] = useState(false);
+  const [projectSavePending, setProjectSavePending] = useState(false);
   const [projectName, setProjectName] = useState("");
   const [projectSlug, setProjectSlug] = useState("");
+  const [projectSlugTouched, setProjectSlugTouched] = useState(false);
   const [projectPalace, setProjectPalace] = useState("");
+  const [projectPalaceTouched, setProjectPalaceTouched] = useState(false);
   const [projectDefaultWing, setProjectDefaultWing] = useState("");
   const [projectDefaultRoom, setProjectDefaultRoom] = useState("");
   const [projectFsRoot, setProjectFsRoot] = useState(DEFAULT_PROJECT_FS_ROOT);
   const [projectAllowlistInput, setProjectAllowlistInput] = useState("");
+  const [projectsTablePage, setProjectsTablePage] = useState(1);
   const projectFsRootRef = useRef<HTMLInputElement | null>(null);
   const projectAllowlistRef = useRef<HTMLTextAreaElement | null>(null);
   const [pathPickerOpen, setPathPickerOpen] = useState(false);
@@ -950,18 +1485,28 @@ export function App(): JSX.Element {
   const [mcpMutationPendingId, setMcpMutationPendingId] = useState<string | null>(null);
   const [mcpLabel, setMcpLabel] = useState("");
   const [mcpSelectedProjectIds, setMcpSelectedProjectIds] = useState<string[]>([]);
+  const [mcpProjectEditIds, setMcpProjectEditIds] = useState<string[]>([]);
   const [oneTimeMcpSecret, setOneTimeMcpSecret] = useState<OneTimeMcpSecret | null>(null);
+  const [mcpCreateModalOpen, setMcpCreateModalOpen] = useState(false);
+  const [selectedMcpClientId, setSelectedMcpClientId] = useState<string | null>(null);
+  const [mcpClientsTablePage, setMcpClientsTablePage] = useState(1);
   const [watchersRows, setWatchersRows] = useState<WatcherDashboardRow[]>([]);
   const [watchersLoading, setWatchersLoading] = useState(false);
   const [watchersError, setWatchersError] = useState("");
   const [watchersMessage, setWatchersMessage] = useState("");
   const [watchersPendingAction, setWatchersPendingAction] = useState<string | null>(null);
+  const [watchersTablePage, setWatchersTablePage] = useState(1);
+  const [selectedWatcherProjectId, setSelectedWatcherProjectId] = useState<string | null>(null);
   const [syncRows, setSyncRows] = useState<SyncDashboardRow[]>([]);
   const [syncLoading, setSyncLoading] = useState(false);
   const [syncError, setSyncError] = useState("");
   const [syncMessage, setSyncMessage] = useState("");
   const [syncPendingAction, setSyncPendingAction] = useState<string | null>(null);
-  const [selectedSyncProjectId, setSelectedSyncProjectId] = useState("");
+  const [syncTablePage, setSyncTablePage] = useState(1);
+  const [selectedSyncProjectId, setSelectedSyncProjectId] = useState<string | null>(null);
+  const [syncLogs, setSyncLogs] = useState<SyncLogEntryModel[]>([]);
+  const [syncLogsLoading, setSyncLogsLoading] = useState(false);
+  const [syncLogsError, setSyncLogsError] = useState("");
   const [workflowsLoading, setWorkflowsLoading] = useState(false);
   const [workflowsError, setWorkflowsError] = useState("");
   const [workflowsMessage, setWorkflowsMessage] = useState("");
@@ -973,18 +1518,30 @@ export function App(): JSX.Element {
   const [workflowSourcePending, setWorkflowSourcePending] = useState(false);
   const [workflowActionPendingId, setWorkflowActionPendingId] = useState<string | null>(null);
   const [workflowProjectsCount, setWorkflowProjectsCount] = useState(0);
+  const [workflowSourcesTablePage, setWorkflowSourcesTablePage] = useState(1);
+  const [workflowSourceModalOpen, setWorkflowSourceModalOpen] = useState(false);
+  const [expandedWorkflowSourceIds, setExpandedWorkflowSourceIds] = useState<Set<string>>(new Set());
+  const [workflowSourcePathPickerOpen, setWorkflowSourcePathPickerOpen] = useState(false);
   const [selectedWorkflowName, setSelectedWorkflowName] = useState<string | null>(null);
-  const [workflowDetailText, setWorkflowDetailText] = useState<string>("");
+  const [selectedWorkflowDetail, setSelectedWorkflowDetail] = useState<WorkflowDetailModel | null>(null);
+  const [workflowDetailLoading, setWorkflowDetailLoading] = useState(false);
   const [workflowSchemaText, setWorkflowSchemaText] = useState<string>("");
+  const workflowSourcePathRef = useRef<HTMLInputElement | null>(null);
   const [runsLoading, setRunsLoading] = useState(false);
   const [runsError, setRunsError] = useState("");
   const [runsMessage, setRunsMessage] = useState("");
   const [runsRows, setRunsRows] = useState<RunRowModel[]>([]);
   const [runDetail, setRunDetail] = useState<RunDetailModel | null>(null);
   const [runFilterStatus, setRunFilterStatus] = useState("");
+  const [runFilterMode, setRunFilterMode] = useState("");
+  const [runFilterWorkflow, setRunFilterWorkflow] = useState("");
+  const [runFilterProjectId, setRunFilterProjectId] = useState("");
   const [runFilterLimit, setRunFilterLimit] = useState("50");
   const [runFilterOffset, setRunFilterOffset] = useState("0");
+  const [runsTotal, setRunsTotal] = useState(0);
   const [runActionPendingId, setRunActionPendingId] = useState<string | null>(null);
+  const [runResumeTarget, setRunResumeTarget] = useState<RunRowModel | null>(null);
+  const [runResumeResponse, setRunResumeResponse] = useState("");
   const [llmConfig, setLlmConfig] = useState<LlmConfigModel>(EMPTY_LLM_CONFIG);
   const [llmLoading, setLlmLoading] = useState(false);
   const [llmSaving, setLlmSaving] = useState(false);
@@ -992,11 +1549,25 @@ export function App(): JSX.Element {
   const [llmMessage, setLlmMessage] = useState("");
   const [llmProviderForm, setLlmProviderForm] = useState<LlmProviderForm>(DEFAULT_LLM_PROVIDER_FORM);
   const [llmProviderModalOpen, setLlmProviderModalOpen] = useState(false);
+  const [llmProviderEditId, setLlmProviderEditId] = useState<string | null>(null);
   const [llmProfileForm, setLlmProfileForm] = useState<LlmProfileForm>(DEFAULT_LLM_PROFILE_FORM);
   const [llmProfileModalOpen, setLlmProfileModalOpen] = useState(false);
+  const [llmProfileEditId, setLlmProfileEditId] = useState<string | null>(null);
   const [llmYamlImport, setLlmYamlImport] = useState("");
   const [llmYamlModalOpen, setLlmYamlModalOpen] = useState(false);
   const [llmPreview, setLlmPreview] = useState<LlmConfigModel | null>(null);
+  const [llmProvidersTablePage, setLlmProvidersTablePage] = useState(1);
+  const [llmProfilesTablePage, setLlmProfilesTablePage] = useState(1);
+  const [secrets, setSecrets] = useState<SecretModel[]>([]);
+  const [secretsLoading, setSecretsLoading] = useState(false);
+  const [secretsError, setSecretsError] = useState("");
+  const [secretsMessage, setSecretsMessage] = useState("");
+  const [secretForm, setSecretForm] = useState<SecretForm>(DEFAULT_SECRET_FORM);
+  const [selectedSecretName, setSelectedSecretName] = useState<string | null>(null);
+  const [secretModalOpen, setSecretModalOpen] = useState(false);
+  const [secretSavePending, setSecretSavePending] = useState(false);
+  const [secretDeletePending, setSecretDeletePending] = useState(false);
+  const [secretDeleteConfirm, setSecretDeleteConfirm] = useState("");
 
   const api = useMemo(
     () =>
@@ -1012,6 +1583,27 @@ export function App(): JSX.Element {
     [],
   );
 
+  useEffect(() => {
+    setProjectsTablePage((current) => clampTablePage(current, projects.length));
+  }, [projects.length]);
+
+  useEffect(() => {
+    setWatchersTablePage((current) => clampTablePage(current, watchersRows.length));
+  }, [watchersRows.length]);
+
+  useEffect(() => {
+    setSyncTablePage((current) => clampTablePage(current, syncRows.length));
+  }, [syncRows.length]);
+
+  useEffect(() => {
+    setMcpClientsTablePage((current) => clampTablePage(current, mcpClients.length));
+  }, [mcpClients.length]);
+
+  useEffect(() => {
+    setLlmProvidersTablePage((current) => clampTablePage(current, Object.keys(llmConfig.providers).length));
+    setLlmProfilesTablePage((current) => clampTablePage(current, Object.keys(llmConfig.profiles).length));
+  }, [llmConfig.providers, llmConfig.profiles]);
+
   const loadProjects = async (): Promise<ProjectModel[]> => {
     setProjectsLoading(true);
     setProjectError("");
@@ -1021,8 +1613,9 @@ export function App(): JSX.Element {
       const validProjectIds = new Set(projectModels.map((project) => project.id));
       setProjects(projectModels);
       setMcpSelectedProjectIds((current) => current.filter((projectId) => validProjectIds.has(projectId)));
+      setMcpProjectEditIds((current) => current.filter((projectId) => validProjectIds.has(projectId)));
       if (selectedSyncProjectId && !validProjectIds.has(selectedSyncProjectId)) {
-        setSelectedSyncProjectId("");
+        setSelectedSyncProjectId(null);
       }
       if (workflowSourceProjectId && !validProjectIds.has(workflowSourceProjectId)) {
         setWorkflowSourceProjectId("");
@@ -1042,7 +1635,11 @@ export function App(): JSX.Element {
     setOneTimeMcpSecret(null);
     try {
       const result = await api.listMcpClients();
-      setMcpClients(result.mcp_clients.map(toMcpClientModel));
+      const clientModels = result.mcp_clients.map(toMcpClientModel);
+      setMcpClients(clientModels);
+      if (selectedMcpClientId && !clientModels.some((client) => client.id === selectedMcpClientId)) {
+        setSelectedMcpClientId(null);
+      }
     } catch (error) {
       setMcpError(toUserError(error, "Unable to load MCP clients. Confirm your admin session and retry."));
     } finally {
@@ -1081,10 +1678,14 @@ export function App(): JSX.Element {
       const offset = Number.parseInt(runFilterOffset, 10);
       const payload = await api.listRuns({
         status: runFilterStatus.trim() || undefined,
+        mode: runFilterMode.trim() || undefined,
+        workflow: runFilterWorkflow.trim() || undefined,
+        projectId: runFilterProjectId.trim() || undefined,
         limit: Number.isFinite(limit) && limit > 0 ? limit : 50,
         offset: Number.isFinite(offset) && offset >= 0 ? offset : 0,
       });
       setRunsRows(payload.runs.map(toRunRowModel));
+      setRunsTotal(typeof payload.total === "number" ? payload.total : payload.runs.length);
     } catch (error) {
       setRunsError(toUserError(error, "Unable to load runs. Confirm your admin session and retry."));
     } finally {
@@ -1102,6 +1703,19 @@ export function App(): JSX.Element {
       setLlmError(toUserError(error, "Unable to load LLM configuration."));
     } finally {
       setLlmLoading(false);
+    }
+  };
+
+  const loadSecrets = async (): Promise<void> => {
+    setSecretsLoading(true);
+    setSecretsError("");
+    try {
+      const payload = await api.listSecrets();
+      setSecrets(payload.secrets.map(toSecretModel));
+    } catch (error) {
+      setSecretsError(toUserError(error, "Unable to load secrets."));
+    } finally {
+      setSecretsLoading(false);
     }
   };
 
@@ -1140,18 +1754,24 @@ export function App(): JSX.Element {
   };
 
   const onResumeRun = async (runId: string): Promise<void> => {
+    const target = runsRows.find((run) => run.runId === runId) ?? runDetail;
+    setRunResumeTarget(target);
+    setRunResumeResponse("");
+  };
+
+  const onSubmitRunResume = async (event: FormEvent<HTMLFormElement>): Promise<void> => {
+    event.preventDefault();
+    const target = runResumeTarget;
+    if (!target) return;
+    const runId = target.runId;
     setRunActionPendingId(`resume:${runId}`);
     setRunsError("");
     setRunsMessage("");
     try {
-      const promptResult = window.prompt("Resume response text (optional)", "");
-      if (promptResult === null) {
-        setRunsMessage("Resume cancelled.");
-        return;
-      }
-      const responseText = promptResult;
-      await api.resumeRun(runId, responseText);
+      await api.resumeRun(runId, runResumeResponse);
       setRunsMessage(`Run ${runId} resume submitted.`);
+      setRunResumeTarget(null);
+      setRunResumeResponse("");
       await loadRuns();
       await onViewRunDetail(runId);
     } catch (error) {
@@ -1185,18 +1805,6 @@ export function App(): JSX.Element {
 
     const toProjectNameById = (items: ProjectModel[]): Map<string, string> => {
       return new Map(items.map((project) => [project.id, project.name]));
-    };
-
-    const toWatcherRows = (items: WatcherStateItem[], projectNameById: Map<string, string>): WatcherDashboardRow[] => {
-      return items.map((item) => ({
-        projectId: item.project_id,
-        projectName: projectNameById.get(item.project_id) ?? null,
-        state: item.state,
-        dirtyCount: item.dirty_count,
-        requiresReconciliation: item.requires_reconciliation,
-        lastEventAt: item.last_event_at,
-        updatedAt: item.updated_at,
-      }));
     };
 
     const run = async (): Promise<void> => {
@@ -1288,7 +1896,16 @@ export function App(): JSX.Element {
           return;
         }
         if (currentPath === "/secrets") {
-          if (!cancelled) setContentState("Secrets admin controls are available in a follow-up slice.");
+          if (!cancelled) {
+            setContentState("");
+            setSecretsMessage("");
+            setSecretsError("");
+            setSecretModalOpen(false);
+            setSelectedSecretName(null);
+            setSecretDeleteConfirm("");
+            setSecretForm(DEFAULT_SECRET_FORM);
+            await loadSecrets();
+          }
           return;
         }
         if (currentPath === "/watchers") {
@@ -1297,6 +1914,7 @@ export function App(): JSX.Element {
             setWatchersLoading(true);
             setWatchersError("");
             setWatchersMessage("");
+            setSelectedWatcherProjectId(null);
           }
           const projectsPayload = await api.listProjects();
           const projectModels = projectsPayload.projects.map(toProjectModel);
@@ -1352,13 +1970,17 @@ export function App(): JSX.Element {
             setSyncLoading(true);
             setSyncError("");
             setSyncMessage("");
+            setSyncLogs([]);
+            setSyncLogsError("");
+            setSyncLogsLoading(false);
+            setSelectedSyncProjectId(null);
           }
           const projectsPayload = await api.listProjects();
           const projectModels = projectsPayload.projects.map(toProjectModel);
           if (!cancelled) {
             setProjects(projectModels);
             if (selectedSyncProjectId && !projectModels.some((project) => project.id === selectedSyncProjectId)) {
-              setSelectedSyncProjectId("");
+              setSelectedSyncProjectId(null);
             }
           }
           const statePayload = await fetchSyncState();
@@ -1420,7 +2042,8 @@ export function App(): JSX.Element {
             setWorkflowsMessage("");
             setWorkflowsError("");
             setSelectedWorkflowName(null);
-            setWorkflowDetailText("");
+            setSelectedWorkflowDetail(null);
+            setWorkflowDetailLoading(false);
             setWorkflowSchemaText("");
             await loadWorkflowsPageData();
           }
@@ -1432,6 +2055,7 @@ export function App(): JSX.Element {
             setRunsMessage("");
             setRunsError("");
             setRunDetail(null);
+            setRunResumeTarget(null);
             await loadRuns();
           }
         }
@@ -1467,17 +2091,7 @@ export function App(): JSX.Element {
     try {
       const projectNameById = new Map((await api.listProjects()).projects.map(toProjectModel).map((p) => [p.id, p.name]));
       const payload = await fetchWatcherState();
-      setWatchersRows(
-        payload.items.map((item) => ({
-          projectId: item.project_id,
-          projectName: projectNameById.get(item.project_id) ?? null,
-          state: item.state,
-          dirtyCount: item.dirty_count,
-          requiresReconciliation: item.requires_reconciliation,
-          lastEventAt: item.last_event_at,
-          updatedAt: item.updated_at,
-        })),
-      );
+      setWatchersRows(toWatcherRows(payload.items, projectNameById));
     } catch (error) {
       setWatchersError(toUserError(error, "Unable to refresh watcher status."));
     }
@@ -1490,12 +2104,56 @@ export function App(): JSX.Element {
       const payload = await fetchSyncState();
       setProjects(projects);
       if (selectedSyncProjectId && !projects.some((project) => project.id === selectedSyncProjectId)) {
-        setSelectedSyncProjectId("");
+        setSelectedSyncProjectId(null);
       }
       setSyncRows(buildSyncDashboardRows(payload.items, projects));
     } catch (error) {
       setSyncError(toUserError(error, "Unable to refresh sync queue status."));
     }
+  };
+
+  const loadSyncLogs = async (projectId: string): Promise<void> => {
+    setSyncLogsLoading(true);
+    setSyncLogsError("");
+    try {
+      const payload = await api.listSyncLogs(projectId);
+      setSyncLogs(payload.entries.map(toSyncLogEntryModel));
+    } catch (error) {
+      setSyncLogs([]);
+      setSyncLogsError(toUserError(error, `Unable to load sync activity for ${projectId}.`));
+    } finally {
+      setSyncLogsLoading(false);
+    }
+  };
+
+  const refreshSyncDetails = async (projectId: string): Promise<void> => {
+    await Promise.all([refreshSyncState(), loadSyncLogs(projectId)]);
+  };
+
+  const openWatcherStatusModal = (row: WatcherDashboardRow): void => {
+    setSelectedWatcherProjectId(row.projectId);
+    setWatchersError("");
+    setWatchersMessage("");
+  };
+
+  const closeWatcherStatusModal = (): void => {
+    setSelectedWatcherProjectId(null);
+  };
+
+  const openSyncStatusModal = (row: SyncDashboardRow): void => {
+    setSelectedSyncProjectId(row.projectId);
+    setSyncError("");
+    setSyncMessage("");
+    setSyncLogs([]);
+    setSyncLogsError("");
+    void loadSyncLogs(row.projectId);
+  };
+
+  const closeSyncStatusModal = (): void => {
+    setSelectedSyncProjectId(null);
+    setSyncLogs([]);
+    setSyncLogsError("");
+    setSyncLogsLoading(false);
   };
 
   const onWatcherAction = async (projectId: string, action: "pause" | "resume" | "disable"): Promise<void> => {
@@ -1521,18 +2179,24 @@ export function App(): JSX.Element {
     setSyncMessage("");
     try {
       if (action === "now") {
-        await api.syncNow(projectId);
+        const result = await api.syncNow(projectId);
+        const failureMessage = syncActionFailureMessage(result);
+        if (failureMessage) throw new Error(failureMessage);
         setSyncMessage(`Sync requested for ${projectId}.`);
       }
       if (action === "reconcile") {
-        await api.reconcileSync(projectId);
+        const result = await api.reconcileSync(projectId);
+        const failureMessage = syncActionFailureMessage(result);
+        if (failureMessage) throw new Error(failureMessage);
         setSyncMessage(`Reconcile requested for ${projectId}.`);
       }
       if (action === "rebuild") {
-        await api.rebuildSync(projectId);
+        const result = await api.rebuildSync(projectId);
+        const failureMessage = syncActionFailureMessage(result);
+        if (failureMessage) throw new Error(failureMessage);
         setSyncMessage(`Rebuild requested for ${projectId}.`);
       }
-      await refreshSyncState();
+      await refreshSyncDetails(projectId);
     } catch (error) {
       setSyncError(toUserError(error, `Unable to ${action} sync state for ${projectId}.`));
     } finally {
@@ -1571,19 +2235,35 @@ export function App(): JSX.Element {
 
   const onCreateWorkflowSource = async (event: FormEvent<HTMLFormElement>): Promise<void> => {
     event.preventDefault();
+    const projectId = workflowSourceProjectId.trim();
     setWorkflowSourcePending(true);
     setWorkflowsError("");
     setWorkflowsMessage("");
     try {
       await api.createWorkflowSource({
-        project_id: workflowSourceProjectId.trim(),
+        project_id: projectId,
         source_path: workflowSourcePath.trim(),
         checksum: workflowSourceChecksum.trim() || null,
       });
-      setWorkflowsMessage(`Workflow source added for project ${workflowSourceProjectId.trim()}.`);
+      let nextMessage = "";
+      let nextError = "";
+      try {
+        const payload = await api.reloadWorkflows();
+        nextMessage = `Workflow source added for project ${projectId}. Workflow registry reloaded: ${payload.total} workflows from ${payload.source_count} source(s).`;
+      } catch (reloadError) {
+        nextError = `Workflow source added, but reload failed: ${toUserError(reloadError, "reload failed")}`;
+      }
       setWorkflowSourcePath("");
       setWorkflowSourceChecksum("");
+      setWorkflowSourcePathPickerOpen(false);
+      setWorkflowSourceModalOpen(false);
       await loadWorkflowsPageData();
+      if (nextMessage) {
+        setWorkflowsMessage(nextMessage);
+      }
+      if (nextError) {
+        setWorkflowsError(nextError);
+      }
     } catch (error) {
       setWorkflowsError(toUserError(error, "Unable to add workflow source."));
     } finally {
@@ -1606,20 +2286,6 @@ export function App(): JSX.Element {
     }
   };
 
-  const onValidateWorkflowSource = async (sourceId: string): Promise<void> => {
-    setWorkflowActionPendingId(`validate:${sourceId}`);
-    setWorkflowsError("");
-    setWorkflowsMessage("");
-    try {
-      const result = await api.validateWorkflowSource(sourceId);
-      setWorkflowsMessage(`Validation passed for ${sourceId}: ${result.total} workflow(s) discovered.`);
-    } catch (error) {
-      setWorkflowsError(`Unable to validate source ${sourceId}: ${toUserError(error, "validation failed")}`);
-    } finally {
-      setWorkflowActionPendingId(null);
-    }
-  };
-
   const onLoadWorkflowSchema = async (): Promise<void> => {
     setWorkflowsError("");
     setWorkflowsMessage("");
@@ -1632,16 +2298,38 @@ export function App(): JSX.Element {
     }
   };
 
+  const toggleWorkflowSource = (sourceId: string): void => {
+    setExpandedWorkflowSourceIds((current) => {
+      const next = new Set(current);
+      if (next.has(sourceId)) {
+        next.delete(sourceId);
+      } else {
+        next.add(sourceId);
+      }
+      return next;
+    });
+  };
+
+  const closeWorkflowDetailModal = (): void => {
+    setSelectedWorkflowName(null);
+    setSelectedWorkflowDetail(null);
+    setWorkflowDetailLoading(false);
+  };
+
   const onViewWorkflowDetails = async (workflowName: string): Promise<void> => {
     setSelectedWorkflowName(workflowName);
+    setSelectedWorkflowDetail(null);
+    setWorkflowDetailLoading(true);
     setWorkflowsError("");
     setWorkflowsMessage("");
     try {
       const details = await api.getWorkflowDetail(workflowName);
-      setWorkflowDetailText(JSON.stringify(details, null, 2));
+      setSelectedWorkflowDetail(toWorkflowDetailModel(details));
     } catch (error) {
       setWorkflowsError(toUserError(error, `Unable to load workflow details for ${workflowName}.`));
-      setWorkflowDetailText("");
+      setSelectedWorkflowDetail(null);
+    } finally {
+      setWorkflowDetailLoading(false);
     }
   };
 
@@ -1755,34 +2443,114 @@ export function App(): JSX.Element {
     }
   };
 
-  const onCreateProject = async (event: FormEvent<HTMLFormElement>): Promise<void> => {
+  const resetProjectForm = (): void => {
+    setProjectName("");
+    setProjectSlug("");
+    setProjectSlugTouched(false);
+    setProjectPalace("");
+    setProjectPalaceTouched(false);
+    setProjectDefaultWing("");
+    setProjectDefaultRoom("");
+    setProjectFsRoot(DEFAULT_PROJECT_FS_ROOT);
+    setProjectAllowlistInput("");
+  };
+
+  const setProjectFormFromProject = (project: ProjectModel): void => {
+    setProjectName(project.name);
+    setProjectSlug(project.slug);
+    setProjectSlugTouched(true);
+    setProjectPalace(project.palace);
+    setProjectPalaceTouched(true);
+    setProjectDefaultWing(project.defaultWing);
+    setProjectDefaultRoom(project.defaultRoom);
+    setProjectFsRoot(project.fsRoot || DEFAULT_PROJECT_FS_ROOT);
+    setProjectAllowlistInput(project.fsAllowlist.join("\n"));
+  };
+
+  const onProjectNameChange = (value: string): void => {
+    setProjectName(value);
+    if (projectModalMode !== "new") return;
+
+    const derivedIdentifier = slugifyProjectIdentifier(value);
+    if (!projectSlugTouched) {
+      setProjectSlug(derivedIdentifier);
+    }
+    if (!projectPalaceTouched) {
+      setProjectPalace(derivedIdentifier);
+    }
+  };
+
+  const onProjectSlugChange = (value: string): void => {
+    setProjectSlug(value);
+    setProjectSlugTouched(true);
+    if (projectModalMode === "new" && !projectPalaceTouched) {
+      setProjectPalace(value);
+    }
+  };
+
+  const onProjectPalaceChange = (value: string): void => {
+    setProjectPalace(value);
+    setProjectPalaceTouched(true);
+  };
+
+  const openNewProjectModal = (): void => {
+    setProjectError("");
+    setProjectMessage("");
+    setProjectDeleteConfirm("");
+    setProjectModalProject(null);
+    resetProjectForm();
+    setPathPickerOpen(false);
+    setProjectModalMode("new");
+  };
+
+  const openProjectConfigModal = (project: ProjectModel): void => {
+    setProjectError("");
+    setProjectMessage("");
+    setProjectDeleteConfirm("");
+    setProjectModalProject(project);
+    setProjectFormFromProject(project);
+    setPathPickerOpen(false);
+    setProjectModalMode("edit");
+  };
+
+  const closeProjectModal = (): void => {
+    setProjectModalMode(null);
+    setProjectModalProject(null);
+    setProjectDeleteConfirm("");
+    setPathPickerOpen(false);
+    resetProjectForm();
+  };
+
+  const projectFormPayload = (): Record<string, unknown> => ({
+    name: projectName.trim(),
+    slug: projectSlug.trim(),
+    palace: projectPalace.trim(),
+    default_wing: projectDefaultWing.trim() || null,
+    default_room: projectDefaultRoom.trim() || null,
+    fs_root: projectFsRoot.trim(),
+    fs_allowlist: normalizePathList(projectAllowlistInput),
+  });
+
+  const onSaveProject = async (event: FormEvent<HTMLFormElement>): Promise<void> => {
     event.preventDefault();
-    setProjectCreatePending(true);
+    setProjectSavePending(true);
     setProjectError("");
     setProjectMessage("");
     try {
-      await api.createProject({
-        name: projectName.trim(),
-        slug: projectSlug.trim(),
-        palace: projectPalace.trim(),
-        default_wing: projectDefaultWing.trim(),
-        default_room: projectDefaultRoom.trim(),
-        fs_root: projectFsRoot.trim(),
-        fs_allowlist: normalizePathList(projectAllowlistInput),
-      });
-      setProjectMessage("Project registered successfully.");
-      setProjectName("");
-      setProjectSlug("");
-      setProjectPalace("");
-      setProjectDefaultWing("");
-      setProjectDefaultRoom("");
-      setProjectFsRoot(DEFAULT_PROJECT_FS_ROOT);
-      setProjectAllowlistInput("");
+      const payload = projectFormPayload();
+      if (projectModalMode === "edit" && projectModalProject) {
+        await api.updateProject(projectModalProject.id, payload);
+        setProjectMessage(`Project ${projectModalProject.id} saved.`);
+      } else {
+        await api.createProject(payload);
+        setProjectMessage("Project registered successfully.");
+      }
+      closeProjectModal();
       await loadProjects();
     } catch (error) {
-      setProjectError(toUserError(error, "Unable to register project. Review values and retry."));
+      setProjectError(toUserError(error, "Unable to save project. Review values and retry."));
     } finally {
-      setProjectCreatePending(false);
+      setProjectSavePending(false);
     }
   };
 
@@ -1851,22 +2619,72 @@ export function App(): JSX.Element {
     closePathPicker();
   };
 
+  const closeWorkflowSourcePathPicker = (): void => {
+    setWorkflowSourcePathPickerOpen(false);
+    queueMicrotask(() => workflowSourcePathRef.current?.focus());
+  };
+
+  const openNewWorkflowSourceModal = (): void => {
+    setWorkflowsError("");
+    setWorkflowsMessage("");
+    setWorkflowSourcePath("");
+    setWorkflowSourceChecksum("");
+    setWorkflowSourcePathPickerOpen(false);
+    setWorkflowSourceModalOpen(true);
+  };
+
+  const closeWorkflowSourceModal = (): void => {
+    setWorkflowSourceModalOpen(false);
+    setWorkflowSourcePathPickerOpen(false);
+    setWorkflowSourcePath("");
+    setWorkflowSourceChecksum("");
+    setWorkflowsError("");
+  };
+
+  const onSelectWorkflowSourcePath = (selectedPath: string): void => {
+    setWorkflowSourcePath(selectedPath);
+    setWorkflowsMessage(`Workflow source path set to ${selectedPath}.`);
+    closeWorkflowSourcePathPicker();
+  };
+
   const onConfirmDeleteProject = async (): Promise<void> => {
-    if (!projectDeleteTarget) return;
+    if (!projectModalProject) return;
+    const target = projectModalProject;
     setProjectDeletePending(true);
     setProjectError("");
     setProjectMessage("");
     try {
-      await api.deleteProject(projectDeleteTarget.id);
-      setProjectMessage(`Project ${projectDeleteTarget.id} deleted.`);
-      setProjectDeleteTarget(null);
-      setProjectDeleteConfirm("");
+      await api.deleteProject(target.id);
+      setProjectMessage(`Project ${target.id} deleted.`);
+      closeProjectModal();
       await loadProjects();
     } catch (error) {
       setProjectError(toUserError(error, "Unable to delete project. Retry if this project is still required."));
     } finally {
       setProjectDeletePending(false);
     }
+  };
+
+  const openNewMcpClientModal = (): void => {
+    setMcpError("");
+    setMcpMessage("");
+    setMcpCreateModalOpen(true);
+  };
+
+  const closeNewMcpClientModal = (): void => {
+    setMcpCreateModalOpen(false);
+  };
+
+  const openMcpClientDetailModal = (client: MpcClientModel): void => {
+    setSelectedMcpClientId(client.id);
+    setMcpProjectEditIds(client.projectIds);
+    setMcpError("");
+    setMcpMessage("");
+  };
+
+  const closeMcpClientDetailModal = (): void => {
+    setSelectedMcpClientId(null);
+    setMcpProjectEditIds([]);
   };
 
   const onCreateMcpClient = async (event: FormEvent<HTMLFormElement>): Promise<void> => {
@@ -1891,6 +2709,7 @@ export function App(): JSX.Element {
         token,
         configSnippet: toNonEmptyString(result.config_snippet),
         label: secretLabel,
+        clientId: toNonEmptyString(result.id),
       });
       setMcpMessage("MCP client created. Save the token now—it will not be shown again.");
       setMcpLabel("");
@@ -1900,7 +2719,9 @@ export function App(): JSX.Element {
         token,
         configSnippet: toNonEmptyString(result.config_snippet),
         label: secretLabel,
+        clientId: toNonEmptyString(result.id),
       });
+      setMcpCreateModalOpen(false);
     } catch (error) {
       setMcpError(toUserError(error, "Unable to create MCP client. Confirm label and project access."));
     } finally {
@@ -1923,6 +2744,44 @@ export function App(): JSX.Element {
     }
   };
 
+  const onDeleteMcpClient = async (tokenId: string): Promise<void> => {
+    setMcpMutationPendingId(tokenId);
+    setMcpError("");
+    setMcpMessage("");
+    try {
+      await api.deleteMcpClient(tokenId);
+      setSelectedMcpClientId(null);
+      setOneTimeMcpSecret((current) => (current?.clientId === tokenId ? null : current));
+      setMcpMessage(`MCP client ${tokenId} deleted.`);
+      await loadMcpClients();
+    } catch (error) {
+      setMcpError(toUserError(error, "Unable to delete MCP client token."));
+    } finally {
+      setMcpMutationPendingId(null);
+    }
+  };
+
+  const onUpdateMcpClientProjects = async (tokenId: string): Promise<void> => {
+    setMcpMutationPendingId(tokenId);
+    setMcpError("");
+    setMcpMessage("");
+    try {
+      const updated = await api.updateMcpClient(tokenId, {
+        project_ids: mcpProjectEditIds,
+      });
+      const updatedProjects = Array.isArray(updated.project_ids)
+        ? updated.project_ids.filter((item): item is string => typeof item === "string")
+        : mcpProjectEditIds;
+      setMcpProjectEditIds(updatedProjects);
+      setMcpMessage(`MCP client ${tokenId} project access updated.`);
+      await loadMcpClients();
+    } catch (error) {
+      setMcpError(toUserError(error, "Unable to update MCP client project access."));
+    } finally {
+      setMcpMutationPendingId(null);
+    }
+  };
+
   const onRegenerateMcpClient = async (tokenId: string): Promise<void> => {
     setMcpMutationPendingId(tokenId);
     setMcpError("");
@@ -1940,6 +2799,7 @@ export function App(): JSX.Element {
         token,
         configSnippet: toNonEmptyString(result.config_snippet),
         label: toNonEmptyString(result.label) ?? tokenId,
+        clientId: tokenId,
       });
       setMcpMessage("MCP token regenerated. Save the new token now—it will not be shown again.");
       await loadMcpClients();
@@ -1947,6 +2807,7 @@ export function App(): JSX.Element {
         token,
         configSnippet: toNonEmptyString(result.config_snippet),
         label: toNonEmptyString(result.label) ?? tokenId,
+        clientId: tokenId,
       });
     } catch (error) {
       setMcpError(toUserError(error, "Unable to regenerate MCP client token."));
@@ -2033,11 +2894,13 @@ export function App(): JSX.Element {
   const openNewLlmProviderModal = (): void => {
     setLlmError("");
     setLlmMessage("");
+    setLlmProviderEditId(null);
     setLlmProviderForm(DEFAULT_LLM_PROVIDER_FORM);
     setLlmProviderModalOpen(true);
   };
 
   const closeLlmProviderModal = (): void => {
+    setLlmProviderEditId(null);
     setLlmProviderForm(DEFAULT_LLM_PROVIDER_FORM);
     setLlmProviderModalOpen(false);
   };
@@ -2045,11 +2908,13 @@ export function App(): JSX.Element {
   const openNewLlmProfileModal = (): void => {
     setLlmError("");
     setLlmMessage("");
+    setLlmProfileEditId(null);
     setLlmProfileForm(DEFAULT_LLM_PROFILE_FORM);
     setLlmProfileModalOpen(true);
   };
 
   const closeLlmProfileModal = (): void => {
+    setLlmProfileEditId(null);
     setLlmProfileForm(DEFAULT_LLM_PROFILE_FORM);
     setLlmProfileModalOpen(false);
   };
@@ -2091,6 +2956,7 @@ export function App(): JSX.Element {
         providers: { ...current.providers, [id]: provider },
       }));
       setLlmProviderForm(DEFAULT_LLM_PROVIDER_FORM);
+      setLlmProviderEditId(null);
       setLlmProviderModalOpen(false);
       setLlmMessage(`Provider ${id} staged. Save LLM configuration to persist.`);
     } catch (error) {
@@ -2102,12 +2968,13 @@ export function App(): JSX.Element {
     const provider = llmConfig.providers[providerId];
     if (!provider) return;
     setLlmError("");
+    setLlmMessage("");
+    setLlmProviderEditId(providerId);
     setLlmProviderForm(toLlmProviderForm(providerId, provider));
     setLlmProviderModalOpen(true);
-    setLlmMessage(`Editing provider ${providerId}.`);
   };
 
-  const onDeleteLlmProvider = (providerId: string): void => {
+  const onDeleteLlmProvider = (providerId: string): boolean => {
     const referencingProfiles = Object.entries(llmConfig.profiles)
       .filter(([, profile]) => profile.provider === providerId)
       .map(([profileId]) => profileId);
@@ -2115,7 +2982,7 @@ export function App(): JSX.Element {
     setLlmMessage("");
     if (referencingProfiles.length > 0) {
       setLlmError(`Cannot delete provider ${providerId}; remove or reassign profiles first: ${referencingProfiles.join(", ")}.`);
-      return;
+      return false;
     }
     setLlmConfig((current) => {
       const nextProviders = { ...current.providers };
@@ -2123,6 +2990,14 @@ export function App(): JSX.Element {
       return normalizedLlmConfig({ ...current, providers: nextProviders });
     });
     setLlmMessage(`Provider ${providerId} staged for deletion. Save LLM configuration to persist.`);
+    return true;
+  };
+
+  const onDeleteCurrentLlmProvider = (): void => {
+    if (!llmProviderEditId) return;
+    if (onDeleteLlmProvider(llmProviderEditId)) {
+      closeLlmProviderModal();
+    }
   };
 
   const onSaveLlmProfile = (event: FormEvent<HTMLFormElement>): void => {
@@ -2147,6 +3022,7 @@ export function App(): JSX.Element {
         profiles: { ...current.profiles, [id]: profile },
       }));
       setLlmProfileForm(DEFAULT_LLM_PROFILE_FORM);
+      setLlmProfileEditId(null);
       setLlmProfileModalOpen(false);
       setLlmMessage(`Profile ${id} staged. Save LLM configuration to persist.`);
     } catch (error) {
@@ -2158,9 +3034,10 @@ export function App(): JSX.Element {
     const profile = llmConfig.profiles[profileId];
     if (!profile) return;
     setLlmError("");
+    setLlmMessage("");
+    setLlmProfileEditId(profileId);
     setLlmProfileForm(toLlmProfileForm(profileId, profile));
     setLlmProfileModalOpen(true);
-    setLlmMessage(`Editing profile ${profileId}.`);
   };
 
   const onDeleteLlmProfile = (profileId: string): void => {
@@ -2176,6 +3053,103 @@ export function App(): JSX.Element {
       });
     });
     setLlmMessage(`Profile ${profileId} staged for deletion. Save LLM configuration to persist.`);
+  };
+
+  const onDeleteCurrentLlmProfile = (): void => {
+    if (!llmProfileEditId) return;
+    onDeleteLlmProfile(llmProfileEditId);
+    closeLlmProfileModal();
+  };
+
+  const onFormatLlmProviderExtraHeaders = (): void => {
+    setLlmProviderForm((current) => {
+      try {
+        return { ...current, extraHeaders: formatJsonFieldValue(current.extraHeaders) };
+      } catch {
+        return current;
+      }
+    });
+  };
+
+  const openNewSecretModal = (): void => {
+    setSelectedSecretName(null);
+    setSecretForm(DEFAULT_SECRET_FORM);
+    setSecretDeleteConfirm("");
+    setSecretsMessage("");
+    setSecretsError("");
+    setSecretModalOpen(true);
+  };
+
+  const openSecretManagement = (secret: SecretModel): void => {
+    setSelectedSecretName(secret.name);
+    setSecretForm({ name: secret.name, value: "", keyId: secret.keyId ?? "" });
+    setSecretDeleteConfirm("");
+    setSecretsMessage("");
+    setSecretsError("");
+    setSecretModalOpen(true);
+  };
+
+  const closeSecretModal = (): void => {
+    setSecretModalOpen(false);
+    setSelectedSecretName(null);
+    setSecretForm(DEFAULT_SECRET_FORM);
+    setSecretDeleteConfirm("");
+    setSecretsError("");
+  };
+
+  const onSaveSecret = async (event: FormEvent<HTMLFormElement>): Promise<void> => {
+    event.preventDefault();
+    const name = secretForm.name.trim();
+    const value = secretForm.value;
+    const keyId = secretForm.keyId.trim();
+
+    setSecretsError("");
+    setSecretsMessage("");
+
+    if (!SECRET_NAME_PATTERN.test(name)) {
+      setSecretsError("Secret name must start with a letter or underscore and use only letters, numbers, or underscores.");
+      return;
+    }
+    if (value.length === 0) {
+      setSecretsError("Enter a new secret value before saving.");
+      return;
+    }
+
+    setSecretSavePending(true);
+    try {
+      await api.upsertSecret({ name, value, key_id: keyId || null });
+      await loadSecrets();
+      closeSecretModal();
+      setSecretsMessage(`Secret ${name} saved.`);
+    } catch (error) {
+      setSecretsError(toUserError(error, `Unable to save secret ${name}.`));
+    } finally {
+      setSecretSavePending(false);
+    }
+  };
+
+  const onDeleteSelectedSecret = async (): Promise<void> => {
+    if (!selectedSecretName || secretDeleteConfirm !== selectedSecretName) return;
+
+    setSecretDeletePending(true);
+    setSecretsError("");
+    setSecretsMessage("");
+    try {
+      await api.deleteSecret(selectedSecretName);
+      await loadSecrets();
+      closeSecretModal();
+      setSecretsMessage(`Secret ${selectedSecretName} deleted.`);
+    } catch (error) {
+      setSecretsError(toUserError(error, `Unable to delete secret ${selectedSecretName}.`));
+    } finally {
+      setSecretDeletePending(false);
+    }
+  };
+
+  const onConfigurationTableRowKeyDown = (event: KeyboardEvent<HTMLTableRowElement>, onActivate: () => void): void => {
+    if (event.key !== "Enter" && event.key !== " ") return;
+    event.preventDefault();
+    onActivate();
   };
 
   const onSaveLlmConfig = async (): Promise<void> => {
@@ -2303,19 +3277,92 @@ export function App(): JSX.Element {
     `@${quoteShellPreview(previewHost)}:${quoteShellPreview(previewPort)}/${quoteShellPreview(previewDatabase)}`;
   const projectReferenceById = new Map(projects.map((project) => [project.id, `${project.name} (${project.id})`]));
   const formatProjectReference = (projectId: string): string => projectReferenceById.get(projectId) ?? projectId;
-  const visibleSyncRows = selectedSyncProjectId
-    ? syncRows.filter((row) => row.projectId === selectedSyncProjectId)
-    : syncRows;
+  const paginatedMcpClients = paginateItems(mcpClients, mcpClientsTablePage);
+  const selectedMcpClient = selectedMcpClientId
+    ? mcpClients.find((client) => client.id === selectedMcpClientId) ?? null
+    : null;
+  const mcpProjectEditChanged = selectedMcpClient
+    ? !sameStringSet(selectedMcpClient.projectIds, mcpProjectEditIds)
+    : false;
+  const selectedMcpClientOneTimeSecret =
+    selectedMcpClient && oneTimeMcpSecret
+      ? oneTimeMcpSecret.clientId === selectedMcpClient.id ||
+        oneTimeMcpSecret.label === selectedMcpClient.id ||
+        oneTimeMcpSecret.label === selectedMcpClient.label
+        ? oneTimeMcpSecret
+        : null
+      : null;
+  const paginatedSyncRows = paginateItems(syncRows, syncTablePage);
   const selectedSyncRow = selectedSyncProjectId
     ? syncRows.find((row) => row.projectId === selectedSyncProjectId) ?? null
     : null;
+  const selectedSyncLabel = selectedSyncRow?.projectName ?? selectedSyncRow?.projectId ?? "";
   const syncDirtyTotal = syncRows.reduce((total, row) => total + row.dirtyCount, 0);
   const syncReconcileCount = syncRows.filter((row) => row.requiresReconciliation).length;
   const syncQueuedCount = syncRows.filter((row) => row.dirtyCount > 0 || row.syncState !== "idle").length;
+  const watchersDirtyTotal = watchersRows.reduce((total, row) => total + row.dirtyCount, 0);
+  const watchersReconcileCount = watchersRows.filter((row) => row.requiresReconciliation).length;
+  const watchersEnabledCount = watchersRows.filter((row) => row.state === "enabled").length;
+  const paginatedWatchers = paginateItems(watchersRows, watchersTablePage);
+  const selectedWatcher = selectedWatcherProjectId
+    ? watchersRows.find((row) => row.projectId === selectedWatcherProjectId) ?? null
+    : null;
+  const selectedWatcherLabel = selectedWatcher?.projectName ?? selectedWatcher?.projectId ?? "";
   const llmProviderEntries = Object.entries(llmConfig.providers);
   const llmProfileEntries = Object.entries(llmConfig.profiles);
+  const paginatedLlmProviderEntries = paginateItems(llmProviderEntries, llmProvidersTablePage);
+  const paginatedLlmProfileEntries = paginateItems(llmProfileEntries, llmProfilesTablePage);
   const llmDefaultProfileLabel = llmConfig.default_profile ?? "None";
   const llmModalOpen = llmProviderModalOpen || llmProfileModalOpen || llmYamlModalOpen;
+  const selectedSecret = selectedSecretName
+    ? secrets.find((secret) => secret.name === selectedSecretName) ?? null
+    : null;
+  const secretModalTitle = selectedSecret ? `Secret ${selectedSecret.name}` : "New secret";
+  const secretDeleteAllowed = Boolean(selectedSecret && secretDeleteConfirm === selectedSecret.name);
+  const projectModalOpen = projectModalMode !== null;
+  const paginatedProjects = paginateItems(projects, projectsTablePage);
+  const projectAllowlistCount = projects.filter((project) => project.fsAllowlist.length > 0).length;
+  const projectHintCount = projects.filter((project) => project.watcherHint || project.defaultStateHint).length;
+  const projectModalTitle =
+    projectModalMode === "edit" && projectModalProject
+      ? `Project ${projectModalProject.name || projectModalProject.id}`
+      : "New project";
+  const projectSummaryName = projectName.trim() || "Untitled project";
+  const projectSummarySlug = projectSlug.trim() || "Slug pending";
+  const projectSummaryPalace = projectPalace.trim() || "Palace pending";
+  const projectSummaryDefault = `${projectDefaultWing.trim() || "Not set"}/${projectDefaultRoom.trim() || "Not set"}`;
+  const projectSummaryFsRoot = projectFsRoot.trim() || "FS root pending";
+  const projectSummaryAllowlist = normalizePathList(projectAllowlistInput);
+  const projectModalClassName = projectModalMode === "new" ? "project-modal project-modal--new" : "project-modal";
+  const workflowsBySourceId = new Map(
+    workflowSources.map((source) => [
+      source.sourceId,
+      workflowsList.filter((workflow) => workflowBelongsToSource(workflow, source)),
+    ]),
+  );
+  const paginatedWorkflowSources = paginateItems(workflowSources, workflowSourcesTablePage);
+  const loadedWorkflowSourceCount = workflowSources.filter((source) =>
+    workflowSourceStatus(source, workflowsBySourceId.get(source.sourceId)?.length ?? 0).toLowerCase() === "loaded"
+  ).length;
+  const failedWorkflowSourceCount = workflowSources.filter((source) =>
+    workflowSourceStatus(source, workflowsBySourceId.get(source.sourceId)?.length ?? 0).toLowerCase() === "failed"
+  ).length;
+  const selectedWorkflowLogs =
+    selectedWorkflowDetail?.loadLogs && selectedWorkflowDetail.loadLogs.length > 0
+      ? selectedWorkflowDetail.loadLogs
+      : selectedWorkflowDetail
+        ? ["No load warnings or errors were reported for this workflow."]
+        : [];
+  const workflowModalOpen = workflowSourceModalOpen || selectedWorkflowName !== null;
+  const runsStatusCounts = runsRows.reduce<Record<string, number>>((counts, run) => {
+    const key = run.status.toLowerCase() || "unknown";
+    counts[key] = (counts[key] ?? 0) + 1;
+    return counts;
+  }, {});
+  const runsFailureCount = (runsStatusCounts.failed ?? 0) + (runsStatusCounts.failure ?? 0);
+  const runsActiveCount = (runsStatusCounts.queued ?? 0) + (runsStatusCounts.running ?? 0) + (runsStatusCounts.paused ?? 0);
+  const runsCompletedCount = runsStatusCounts.completed ?? 0;
+  const selectedRunSummary = runDetail?.error ?? runDetail?.errorSummary ?? runDetail?.resultSummary ?? null;
 
   return (
     <div className="admin-shell">
@@ -2797,6 +3844,182 @@ export function App(): JSX.Element {
             </section>
           ) : null}
 
+          {currentPath === "/secrets" ? (
+            <section className="admin-section llm-workbench secrets-workbench" aria-label="Secrets management">
+              <section className="llm-status-panel" aria-label="Secrets registry summary">
+                <div>
+                  <p className="database-kicker">secret registry</p>
+                  <h2>Secret configuration</h2>
+                  <p>Rows open the secret configuration dialog. Values remain write-only.</p>
+                </div>
+                <dl className="llm-status-grid">
+                  <div>
+                    <dt>Configured</dt>
+                    <dd>Secrets: {secrets.length}</dd>
+                  </div>
+                  <div>
+                    <dt>Selected</dt>
+                    <dd>Selected: {selectedSecret?.name ?? "None"}</dd>
+                  </div>
+                  <div>
+                    <dt>Value visibility</dt>
+                    <dd>Values: write-only</dd>
+                  </div>
+                </dl>
+              </section>
+
+              <div className="llm-status-stack">
+                {secretsLoading ? (
+                  <p role="status" aria-label="Loading secrets">
+                    Loading secrets...
+                  </p>
+                ) : null}
+                {secretsError ? <p role="alert">{secretsError}</p> : null}
+                {!secretModalOpen && secretsMessage ? (
+                  <p
+                    role="status"
+                    aria-label={secretsMessage.includes("deleted") ? "Secret delete status" : "Secret save status"}
+                  >
+                    {secretsMessage}
+                  </p>
+                ) : null}
+              </div>
+
+              <div className="llm-workbench__grid llm-workbench__grid--single">
+                <article className="admin-card" aria-labelledby="secrets-table-title">
+                  <div className="inline-actions projects-table-actions">
+                    <h2 id="secrets-table-title">Configured secrets</h2>
+                    <button type="button" onClick={openNewSecretModal}>
+                      New
+                    </button>
+                    <button type="button" className="secondary-button" onClick={() => void loadSecrets()}>
+                      Reload
+                    </button>
+                  </div>
+                  <p id="secret-row-action-hint" className="visually-hidden">
+                    Opens the secret configuration dialog. Press Enter or Space to activate.
+                  </p>
+                  {secrets.length === 0 && !secretsLoading ? (
+                    <p>No secrets configured. Use New to register the first secret.</p>
+                  ) : null}
+                  <div className="llm-table-wrap">
+                    <table className="llm-configuration-table secrets-table" aria-label="Configured secrets">
+                      <thead>
+                        <tr>
+                          <th scope="col">Name</th>
+                          <th scope="col">Key ID</th>
+                          <th scope="col">Created</th>
+                          <th scope="col">Updated</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {secrets.map((secret) => (
+                          <tr
+                            key={secret.name}
+                            aria-describedby="secret-row-action-hint"
+                            aria-haspopup="dialog"
+                            aria-label={`Open secret ${secret.name} configuration`}
+                            aria-keyshortcuts="Enter Space"
+                            tabIndex={0}
+                            onClick={() => openSecretManagement(secret)}
+                            onKeyDown={(event) => onConfigurationTableRowKeyDown(event, () => openSecretManagement(secret))}
+                          >
+                            <th scope="row">{secret.name}</th>
+                            <td>{secret.keyId ?? "Server default"}</td>
+                            <td>{secret.createdAt}</td>
+                            <td>{secret.updatedAt}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </article>
+              </div>
+
+              {secretModalOpen ? (
+                <ModalShell
+                  titleId="secret-dialog-title"
+                  title={secretModalTitle}
+                  eyebrow="Secret configuration"
+                  onClose={closeSecretModal}
+                >
+                  <form className="admin-form llm-form secrets-form" onSubmit={(event) => void onSaveSecret(event)}>
+                    <LlmFeedbackMessages className="llm-modal-feedback" message={secretsMessage} error={secretsError} />
+                    <p>Saving requires entering a new value. Stored values are not displayed after save.</p>
+                    <div className="field-group">
+                      <label htmlFor="secret-name">Secret name</label>
+                      <input
+                        id="secret-name"
+                        value={secretForm.name}
+                        onChange={(event) =>
+                          setSecretForm((current) => ({ ...current, name: event.target.value }))
+                        }
+                        autoComplete="off"
+                        required
+                      />
+                    </div>
+                    <div className="field-group">
+                      <label htmlFor="secret-value">Secret value</label>
+                      <input
+                        id="secret-value"
+                        type="password"
+                        value={secretForm.value}
+                        onChange={(event) =>
+                          setSecretForm((current) => ({ ...current, value: event.target.value }))
+                        }
+                        autoComplete="new-password"
+                        required
+                      />
+                    </div>
+                    <div className="field-group">
+                      <label htmlFor="secret-key-id">Key ID</label>
+                      <input
+                        id="secret-key-id"
+                        value={secretForm.keyId}
+                        onChange={(event) =>
+                          setSecretForm((current) => ({ ...current, keyId: event.target.value }))
+                        }
+                        autoComplete="off"
+                      />
+                    </div>
+                    <div className="inline-actions">
+                      <button type="submit" disabled={secretSavePending}>
+                        {selectedSecret ? "Save secret" : "Register secret"}
+                      </button>
+                      <button type="button" className="secondary-button" onClick={closeSecretModal}>
+                        Cancel
+                      </button>
+                    </div>
+
+                    {selectedSecret ? (
+                      <section className="secrets-delete-panel" aria-labelledby="secret-delete-title">
+                        <h3 id="secret-delete-title">Delete secret</h3>
+                        <p>Type the secret name to confirm deletion.</p>
+                        <div className="field-group">
+                          <label htmlFor="secret-delete-confirm">Confirm secret name</label>
+                          <input
+                            id="secret-delete-confirm"
+                            value={secretDeleteConfirm}
+                            onChange={(event) => setSecretDeleteConfirm(event.target.value)}
+                            autoComplete="off"
+                          />
+                        </div>
+                        <button
+                          type="button"
+                          className="danger-button"
+                          disabled={!secretDeleteAllowed || secretDeletePending}
+                          onClick={() => void onDeleteSelectedSecret()}
+                        >
+                          Confirm delete {selectedSecret.name}
+                        </button>
+                      </section>
+                    ) : null}
+                  </form>
+                </ModalShell>
+              ) : null}
+            </section>
+          ) : null}
+
           {currentPath === "/llm" ? (
             <section className="admin-section llm-workbench" aria-label="LLM configuration management">
               <section className="llm-status-panel" aria-label="LLM source of truth">
@@ -2831,17 +4054,10 @@ export function App(): JSX.Element {
 
               <div className="llm-workbench__grid llm-workbench__grid--single">
                 <article className="admin-card" aria-labelledby="llm-providers-title">
-                  <div className="inline-actions">
-                    <h2 id="llm-providers-title">Providers</h2>
-                    <div className="inline-actions">
-                      <button type="button" onClick={openNewLlmProviderModal}>
-                        Add provider
-                      </button>
-                      <button type="button" className="secondary-button" onClick={() => void loadLlmConfig()}>
-                        Reload
-                      </button>
-                    </div>
-                  </div>
+                  <h2 id="llm-providers-title">Providers</h2>
+                  <p id="llm-provider-row-action-hint" className="visually-hidden">
+                    Opens the provider edit dialog. Press Enter or Space to activate.
+                  </p>
                   {llmProviderEntries.length === 0 ? <p>No providers configured.</p> : null}
                   <div className="llm-table-wrap">
                     <table className="llm-configuration-table" aria-label="LLM providers">
@@ -2852,72 +4068,53 @@ export function App(): JSX.Element {
                           <th scope="col">Model</th>
                           <th scope="col">Endpoint</th>
                           <th scope="col">Secret</th>
-                          <th scope="col">Operations</th>
                         </tr>
                       </thead>
                       <tbody>
-                      {llmProviderEntries.map(([providerId, provider]) => (
+                      {paginatedLlmProviderEntries.map(([providerId, provider]) => (
                         <tr
                           key={providerId}
+                          aria-describedby="llm-provider-row-action-hint"
+                          aria-haspopup="dialog"
+                          aria-keyshortcuts="Enter Space"
+                          aria-label={`Edit provider ${providerId}`}
+                          tabIndex={0}
                           onClick={() => onEditLlmProvider(providerId)}
+                          onKeyDown={(event) => onConfigurationTableRowKeyDown(event, () => onEditLlmProvider(providerId))}
                         >
                           <th scope="row">{providerId}</th>
                           <td>{provider.type || "Not set"}</td>
                           <td>{provider.model ?? "Not set"}</td>
                           <td>{provider.api_url ?? "Default endpoint"}</td>
                           <td>{provider.api_key_secret ?? "Not set"}</td>
-                          <td>
-                            <div className="inline-actions">
-                              <button
-                                type="button"
-                                className="secondary-button"
-                                onClick={(event) => {
-                                  event.stopPropagation();
-                                  onEditLlmProvider(providerId);
-                                }}
-                              >
-                                Edit provider {providerId}
-                              </button>
-                              <button
-                                type="button"
-                                className="secondary-button"
-                                onClick={(event) => {
-                                  event.stopPropagation();
-                                  onDeleteLlmProvider(providerId);
-                                }}
-                              >
-                                Delete provider {providerId}
-                              </button>
-                            </div>
-                          </td>
                         </tr>
                       ))}
                       </tbody>
                     </table>
                   </div>
-                  {llmProviderEntries.length > 0 ? (
-                    <div className="llm-provider-details" aria-label="LLM provider details">
-                      {llmProviderEntries.map(([providerId, provider]) => (
-                        <p key={providerId}>
-                          <strong>{providerId}</strong> API key secret: {provider.api_key_secret ?? "Not set"} · Headers:{" "}
-                          {Object.keys(provider.extra_headers).length}
-                          {provider.deployment_name ? ` · Deployment: ${provider.deployment_name}` : ""}
-                          {provider.api_version ? ` · API version: ${provider.api_version}` : ""}
-                        </p>
-                      ))}
-                    </div>
-                  ) : null}
+                  <div className="inline-actions llm-card-actions">
+                    <button type="button" onClick={openNewLlmProviderModal}>
+                      Add provider
+                    </button>
+                    <button type="button" className="secondary-button" onClick={() => void loadLlmConfig()}>
+                      Reload
+                    </button>
+                  </div>
+                  <TablePagination
+                    label="LLM providers"
+                    page={llmProvidersTablePage}
+                    totalItems={llmProviderEntries.length}
+                    onPageChange={setLlmProvidersTablePage}
+                  />
                 </article>
               </div>
 
               <div className="llm-workbench__grid llm-workbench__grid--single">
                 <article className="admin-card" aria-labelledby="llm-profiles-title">
-                  <div className="inline-actions">
-                    <h2 id="llm-profiles-title">Profiles</h2>
-                    <button type="button" onClick={openNewLlmProfileModal}>
-                      Add profile
-                    </button>
-                  </div>
+                  <h2 id="llm-profiles-title">Profiles</h2>
+                  <p id="llm-profile-row-action-hint" className="visually-hidden">
+                    Opens the profile edit dialog. Press Enter or Space to activate.
+                  </p>
                   {llmProfileEntries.length === 0 ? <p>No profiles configured.</p> : null}
                   <div className="llm-table-wrap">
                     <table className="llm-configuration-table" aria-label="LLM profiles">
@@ -2928,57 +4125,41 @@ export function App(): JSX.Element {
                           <th scope="col">Model</th>
                           <th scope="col">Temperature</th>
                           <th scope="col">Max tokens</th>
-                          <th scope="col">Operations</th>
                         </tr>
                       </thead>
                       <tbody>
-                        {llmProfileEntries.map(([profileId, profile]) => (
-                          <tr key={profileId} onClick={() => onEditLlmProfile(profileId)}>
+                        {paginatedLlmProfileEntries.map(([profileId, profile]) => (
+                          <tr
+                            key={profileId}
+                            aria-describedby="llm-profile-row-action-hint"
+                            aria-haspopup="dialog"
+                            aria-keyshortcuts="Enter Space"
+                            aria-label={`Edit profile ${profileId}`}
+                            tabIndex={0}
+                            onClick={() => onEditLlmProfile(profileId)}
+                            onKeyDown={(event) => onConfigurationTableRowKeyDown(event, () => onEditLlmProfile(profileId))}
+                          >
                             <th scope="row">{profileId}</th>
                             <td>{profile.provider || "Not set"}</td>
                             <td>{profile.model || "Not set"}</td>
                             <td>{profile.temperature ?? "default"}</td>
                             <td>{profile.max_tokens ?? "default"}</td>
-                            <td>
-                              <div className="inline-actions">
-                                <button
-                                  type="button"
-                                  className="secondary-button"
-                                  onClick={(event) => {
-                                    event.stopPropagation();
-                                    onEditLlmProfile(profileId);
-                                  }}
-                                >
-                                  Edit profile {profileId}
-                                </button>
-                                <button
-                                  type="button"
-                                  className="secondary-button"
-                                  onClick={(event) => {
-                                    event.stopPropagation();
-                                    onDeleteLlmProfile(profileId);
-                                  }}
-                                >
-                                  Delete profile {profileId}
-                                </button>
-                              </div>
-                            </td>
                           </tr>
                         ))}
                       </tbody>
                     </table>
                   </div>
-                  {llmProfileEntries.some(([, profile]) => profile.description) ? (
-                    <div className="llm-provider-details" aria-label="LLM profile descriptions">
-                      {llmProfileEntries.map(([profileId, profile]) =>
-                        profile.description ? (
-                          <p key={profileId}>
-                            <strong>{profileId}</strong> {profile.description}
-                          </p>
-                        ) : null,
-                      )}
-                    </div>
-                  ) : null}
+                  <div className="inline-actions llm-card-actions">
+                    <button type="button" onClick={openNewLlmProfileModal}>
+                      Add profile
+                    </button>
+                  </div>
+                  <TablePagination
+                    label="LLM profiles"
+                    page={llmProfilesTablePage}
+                    totalItems={llmProfileEntries.length}
+                    onPageChange={setLlmProfilesTablePage}
+                  />
                 </article>
               </div>
 
@@ -3118,6 +4299,8 @@ export function App(): JSX.Element {
                         id="llm-provider-extra-headers"
                         value={llmProviderForm.extraHeaders}
                         onChange={(event) => setLlmProviderForm((current) => ({ ...current, extraHeaders: event.target.value }))}
+                        onBlur={onFormatLlmProviderExtraHeaders}
+                        spellCheck={false}
                       />
                     </div>
                     <div className="llm-two-column">
@@ -3139,14 +4322,12 @@ export function App(): JSX.Element {
                       </div>
                     </div>
                     <div className="inline-actions">
-                      <button type="submit">Save provider</button>
-                      <button
-                        type="button"
-                        className="secondary-button"
-                        onClick={() => setLlmProviderForm(DEFAULT_LLM_PROVIDER_FORM)}
-                      >
-                        Clear provider
-                      </button>
+                      <button type="submit">Save</button>
+                      {llmProviderEditId ? (
+                        <button type="button" className="danger-button" onClick={onDeleteCurrentLlmProvider}>
+                          Delete
+                        </button>
+                      ) : null}
                       <button type="button" className="secondary-button" onClick={closeLlmProviderModal}>
                         Cancel
                       </button>
@@ -3228,15 +4409,13 @@ export function App(): JSX.Element {
                     </div>
                     <div className="inline-actions">
                       <button type="submit" disabled={llmProviderEntries.length === 0}>
-                        Save profile
+                        Save
                       </button>
-                      <button
-                        type="button"
-                        className="secondary-button"
-                        onClick={() => setLlmProfileForm(DEFAULT_LLM_PROFILE_FORM)}
-                      >
-                        Clear profile
-                      </button>
+                      {llmProfileEditId ? (
+                        <button type="button" className="danger-button" onClick={onDeleteCurrentLlmProfile}>
+                          Delete
+                        </button>
+                      ) : null}
                       <button type="button" className="secondary-button" onClick={closeLlmProfileModal}>
                         Cancel
                       </button>
@@ -3298,321 +4477,828 @@ export function App(): JSX.Element {
           ) : null}
 
           {currentPath === "/projects" ? (
-            <section className="admin-section" aria-label="Projects management">
-              <article className="admin-card">
-                <h2>Registered projects</h2>
-                <p>Topology inference and guided onboarding controls are not yet available from the backend API.</p>
-                {projectsLoading ? <p role="status">Loading projects…</p> : null}
-                {projectError ? <p role="alert">{projectError}</p> : null}
-                {projectMessage ? <p role="status">{projectMessage}</p> : null}
-                {!projectsLoading && projects.length === 0 ? (
-                  <p>No projects yet. Register the first project below to continue setup.</p>
-                ) : null}
-                {projects.length > 0 ? (
-                  <ul className="entity-list" aria-label="Projects list">
-                    {projects.map((project) => (
-                      <li key={project.id} className="entity-item">
+            <section className="admin-section llm-workbench projects-workbench" aria-label="Projects management">
+              <section className="llm-status-panel" aria-label="Projects registry summary">
+                <div>
+                  <p className="database-kicker">project registry</p>
+                  <h2>Project configuration</h2>
+                  <p>Rows open the project configuration dialog.</p>
+                </div>
+                <dl className="llm-status-grid">
+                  <div>
+                    <dt>Registered</dt>
+                    <dd>Projects: {projects.length}</dd>
+                  </div>
+                  <div>
+                    <dt>Allowlists</dt>
+                    <dd>Allowlisted: {projectAllowlistCount}</dd>
+                  </div>
+                  <div>
+                    <dt>Hints</dt>
+                    <dd>Runtime hints: {projectHintCount}</dd>
+                  </div>
+                </dl>
+              </section>
+
+              <div className="llm-status-stack">
+                {projectsLoading ? <p role="status">Loading projects...</p> : null}
+                <LlmFeedbackMessages
+                  message={projectModalOpen ? "" : projectMessage}
+                  error={projectModalOpen ? "" : projectError}
+                />
+              </div>
+
+              <div className="llm-workbench__grid llm-workbench__grid--single">
+                <article className="admin-card" aria-labelledby="projects-table-title">
+                  <div className="inline-actions projects-table-actions">
+                    <h2 id="projects-table-title">Registered projects</h2>
+                    <button type="button" onClick={openNewProjectModal}>
+                      New
+                    </button>
+                    <button type="button" className="secondary-button" onClick={() => void loadProjects()}>
+                      Reload
+                    </button>
+                  </div>
+                  <p id="project-row-action-hint" className="visually-hidden">
+                    Opens the project configuration dialog. Press Enter or Space to activate.
+                  </p>
+                  {!projectsLoading && projects.length === 0 ? (
+                    <p>No projects yet. Use New to register the first project.</p>
+                  ) : null}
+                  <div className="llm-table-wrap">
+                    <table className="llm-configuration-table projects-configuration-table" aria-label="Registered projects">
+                      <thead>
+                        <tr>
+                          <th scope="col">Project</th>
+                          <th scope="col">Slug</th>
+                          <th scope="col">Palace</th>
+                          <th scope="col">Default</th>
+                          <th scope="col">FS root</th>
+                          <th scope="col">Allowlist</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {paginatedProjects.map((project) => (
+                          <tr
+                            key={project.id}
+                            aria-describedby="project-row-action-hint"
+                            aria-haspopup="dialog"
+                            aria-keyshortcuts="Enter Space"
+                            aria-label={`Open project ${project.name || project.id} configuration`}
+                            tabIndex={0}
+                            onClick={() => openProjectConfigModal(project)}
+                            onKeyDown={(event) =>
+                              onConfigurationTableRowKeyDown(event, () => openProjectConfigModal(project))
+                            }
+                          >
+                            <th scope="row">{project.name || project.id}</th>
+                            <td>{project.slug || "Not set"}</td>
+                            <td>{project.palace || "Not set"}</td>
+                            <td>
+                              {project.defaultWing || "Not set"}/{project.defaultRoom || "Not set"}
+                            </td>
+                            <td>{project.fsRoot || "Not set"}</td>
+                            <td>
+                              {project.fsAllowlist.length > 0
+                                ? `${project.fsAllowlist.length} path${project.fsAllowlist.length === 1 ? "" : "s"}`
+                                : "No explicit allowlist"}
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                  <TablePagination
+                    label="Registered projects"
+                    page={projectsTablePage}
+                    totalItems={projects.length}
+                    onPageChange={setProjectsTablePage}
+                  />
+                </article>
+              </div>
+
+              {projectModalOpen ? (
+                <ModalShell
+                  titleId="project-dialog-title"
+                  title={projectModalTitle}
+                  eyebrow={projectModalMode === "new" ? "Project onboarding" : "Project configuration"}
+                  className={projectModalClassName}
+                  onClose={closeProjectModal}
+                >
+                  <form className="admin-form llm-form project-form" onSubmit={(event) => void onSaveProject(event)}>
+                    {projectModalMode === "new" ? (
+                      <section className="project-onboarding-hero" aria-label="Project onboarding steps">
                         <div>
-                          <strong>{project.name}</strong>
+                          <p className="database-kicker">guided setup</p>
+                          <h3>Register the project boundary</h3>
                           <p>
-                            Slug: {project.slug} · Palace: {project.palace} · Default wing/room: {project.defaultWing}/
-                            {project.defaultRoom}
-                          </p>
-                          <p>FS root: {project.fsRoot}</p>
-                          <p>
-                            Allowlist: {project.fsAllowlist.length > 0 ? project.fsAllowlist.join(", ") : "No explicit allowlist"}
-                          </p>
-                          <p>
-                            Watcher default hint: {project.watcherHint ?? "Watcher state hints are unavailable from the current projects API response."}
-                          </p>
-                          <p>
-                            Default state hint: {project.defaultStateHint ?? "Default state hints are unavailable from the current projects API response."}
+                            Start with the project identity, confirm runtime defaults, then pin the filesystem root the
+                            server can browse.
                           </p>
                         </div>
-                        <button type="button" onClick={() => setProjectDeleteTarget(project)}>
-                          Delete project {project.id}
-                        </button>
-                      </li>
-                    ))}
-                  </ul>
-                ) : null}
-              </article>
+                        <ol className="project-onboarding-steps">
+                          <li>
+                            <span>01</span>
+                            <strong>Identity</strong>
+                            <small>Name, slug, palace</small>
+                          </li>
+                          <li>
+                            <span>02</span>
+                            <strong>Defaults</strong>
+                            <small>Wing and room</small>
+                          </li>
+                          <li>
+                            <span>03</span>
+                            <strong>Filesystem</strong>
+                            <small>Root and allowlist</small>
+                          </li>
+                        </ol>
+                      </section>
+                    ) : null}
 
-              {projectDeleteTarget ? (
-                <article className="admin-card">
-                  <h3>Delete project</h3>
-                  <p>Type DELETE to confirm removing {projectDeleteTarget.id}.</p>
-                  <label htmlFor="project-delete-confirm">Confirm deletion</label>
-                  <input
-                    id="project-delete-confirm"
-                    type="text"
-                    value={projectDeleteConfirm}
-                    onChange={(event) => setProjectDeleteConfirm(event.target.value)}
-                  />
-                  <div className="actions-row inline-actions">
-                    <button
-                      type="button"
-                      disabled={projectDeletePending || projectDeleteConfirm !== "DELETE"}
-                      onClick={() => void onConfirmDeleteProject()}
-                    >
-                      Confirm delete {projectDeleteTarget.id}
-                    </button>
-                    <button
-                      type="button"
-                      className="secondary-button"
-                      onClick={() => {
-                        setProjectDeleteTarget(null);
-                        setProjectDeleteConfirm("");
-                      }}
-                    >
-                      Cancel
-                    </button>
-                  </div>
-                </article>
+                    <div className="project-onboarding-layout">
+                      <div className="project-onboarding-main">
+                        <LlmFeedbackMessages className="llm-modal-feedback" message={projectMessage} error={projectError} />
+
+                        <fieldset className="project-fieldset">
+                          <legend>Identity</legend>
+                          <p>Stable project identifiers used by admin tables, tokens, and metadata records.</p>
+                          <div className="project-identity-grid">
+                            <div className="field-group project-field-wide">
+                              <label htmlFor="project-name">Name</label>
+                              <input
+                                id="project-name"
+                                value={projectName}
+                                onChange={(event) => onProjectNameChange(event.target.value)}
+                                autoComplete="off"
+                                required
+                              />
+                            </div>
+                            <div className="field-group">
+                              <label htmlFor="project-slug">Slug</label>
+                              <input
+                                id="project-slug"
+                                value={projectSlug}
+                                onChange={(event) => onProjectSlugChange(event.target.value)}
+                                autoComplete="off"
+                                required
+                              />
+                              {projectModalMode === "new" && !projectSlugTouched ? (
+                                <p className="field-hint">Auto-filled from the project name.</p>
+                              ) : null}
+                            </div>
+                            <div className="field-group">
+                              <label htmlFor="project-palace">Palace</label>
+                              <input
+                                id="project-palace"
+                                value={projectPalace}
+                                onChange={(event) => onProjectPalaceChange(event.target.value)}
+                                disabled={projectModalMode === "edit"}
+                                autoComplete="off"
+                                required
+                              />
+                              {projectModalMode === "edit" ? (
+                                <p className="field-hint">Palace is immutable after registration.</p>
+                              ) : projectModalMode === "new" && !projectPalaceTouched ? (
+                                <p className="field-hint">Mirrors the slug until edited.</p>
+                              ) : null}
+                            </div>
+                          </div>
+                        </fieldset>
+
+                        <fieldset className="project-fieldset">
+                          <legend>Runtime defaults</legend>
+                          <p>The initial state namespace used when a workflow does not provide a narrower target.</p>
+                          <div className="llm-two-column">
+                            <div className="field-group">
+                              <label htmlFor="project-default-wing">Default wing</label>
+                              <input
+                                id="project-default-wing"
+                                value={projectDefaultWing}
+                                onChange={(event) => setProjectDefaultWing(event.target.value)}
+                              />
+                            </div>
+                            <div className="field-group">
+                              <label htmlFor="project-default-room">Default room</label>
+                              <input
+                                id="project-default-room"
+                                value={projectDefaultRoom}
+                                onChange={(event) => setProjectDefaultRoom(event.target.value)}
+                              />
+                            </div>
+                          </div>
+                        </fieldset>
+
+                        <fieldset className="project-fieldset">
+                          <legend>Filesystem boundary</legend>
+                          <p>Filesystem scope for workflow source discovery and server-side folder browsing.</p>
+                          <div className="field-group">
+                            <label htmlFor="project-fs-root">FS root</label>
+                            <div className="project-path-control">
+                              <input
+                                id="project-fs-root"
+                                ref={projectFsRootRef}
+                                value={projectFsRoot}
+                                onChange={(event) => setProjectFsRoot(event.target.value)}
+                                required
+                              />
+                              <button
+                                type="button"
+                                className="secondary-button icon-button"
+                                aria-label="Browse FS root"
+                                title="Browse FS root"
+                                onClick={() => openPathPicker("fsRoot")}
+                              >
+                                <FolderIcon />
+                              </button>
+                            </div>
+                          </div>
+                          <div className="field-group">
+                            <label htmlFor="project-allowlist">Allowlist paths</label>
+                            <div className="project-textarea-control">
+                              <textarea
+                                id="project-allowlist"
+                                ref={projectAllowlistRef}
+                                value={projectAllowlistInput}
+                                onChange={(event) => setProjectAllowlistInput(event.target.value)}
+                                placeholder="/workspace/workflows, /workspace/shared"
+                              />
+                              <button
+                                type="button"
+                                className="secondary-button icon-button"
+                                aria-label="Browse allowlist paths"
+                                title="Browse allowlist paths"
+                                onClick={() => openPathPicker("allowlist")}
+                              >
+                                <FolderIcon />
+                              </button>
+                            </div>
+                          </div>
+                        </fieldset>
+
+                        {pathPickerOpen ? (
+                          <ServerPathPicker
+                            key={pathPickerTarget}
+                            title="Browse server folders"
+                            selectionMode="folder"
+                            startPath={pathPickerTarget === "fsRoot" ? projectFsRoot : undefined}
+                            listEntries={listServerPathEntries}
+                            onSelect={onSelectPath}
+                            onCancel={closePathPicker}
+                          />
+                        ) : null}
+
+                        {projectModalMode === "edit" && projectModalProject ? (
+                          <div className="project-runtime-hints" aria-label="Project runtime hints">
+                            <p>
+                              Watcher default hint:{" "}
+                              {projectModalProject.watcherHint ??
+                                "Watcher state hints are unavailable from the current projects API response."}
+                            </p>
+                            <p>
+                              Default state hint:{" "}
+                              {projectModalProject.defaultStateHint ??
+                                "Default state hints are unavailable from the current projects API response."}
+                            </p>
+                          </div>
+                        ) : null}
+
+                        {projectModalMode === "edit" && projectModalProject ? (
+                          <section className="project-delete-panel" aria-labelledby="project-delete-title">
+                            <h3 id="project-delete-title">Delete project</h3>
+                            <p>Type DELETE to confirm removing {projectModalProject.id}.</p>
+                            <label htmlFor="project-delete-confirm">Confirm deletion</label>
+                            <input
+                              id="project-delete-confirm"
+                              type="text"
+                              value={projectDeleteConfirm}
+                              onChange={(event) => setProjectDeleteConfirm(event.target.value)}
+                            />
+                            <div className="actions-row inline-actions">
+                              <ActionButton
+                                type="button"
+                                variant="danger"
+                                disabled={projectDeletePending || projectDeleteConfirm !== "DELETE"}
+                                onClick={() => void onConfirmDeleteProject()}
+                              >
+                                Confirm delete {projectModalProject.id}
+                              </ActionButton>
+                            </div>
+                          </section>
+                        ) : null}
+                      </div>
+
+                      <aside className="project-onboarding-summary" aria-label="Project onboarding summary">
+                        <p className="database-kicker">registration preview</p>
+                        <dl>
+                          <div>
+                            <dt>Project</dt>
+                            <dd>{projectSummaryName}</dd>
+                          </div>
+                          <div>
+                            <dt>Slug</dt>
+                            <dd>{projectSummarySlug}</dd>
+                          </div>
+                          <div>
+                            <dt>Palace</dt>
+                            <dd>{projectSummaryPalace}</dd>
+                          </div>
+                          <div>
+                            <dt>Default</dt>
+                            <dd>{projectSummaryDefault}</dd>
+                          </div>
+                          <div>
+                            <dt>FS root</dt>
+                            <dd>{projectSummaryFsRoot}</dd>
+                          </div>
+                          <div>
+                            <dt>Allowlist</dt>
+                            <dd>
+                              {projectSummaryAllowlist.length > 0
+                                ? `${projectSummaryAllowlist.length} path${projectSummaryAllowlist.length === 1 ? "" : "s"}`
+                                : "No explicit allowlist"}
+                            </dd>
+                          </div>
+                        </dl>
+                      </aside>
+                    </div>
+
+                    {!pathPickerOpen ? (
+                      <div className="inline-actions project-form__actions">
+                        <ActionButton type="submit" variant="primary" disabled={projectSavePending}>
+                          {projectModalMode === "edit" ? "Save project" : "Register project"}
+                        </ActionButton>
+                        <ActionButton type="button" variant="secondary" onClick={closeProjectModal}>
+                          Cancel
+                        </ActionButton>
+                      </div>
+                    ) : null}
+                  </form>
+                </ModalShell>
               ) : null}
-
-              <article className="admin-card">
-                <h2>Register project</h2>
-                <form className="admin-form" onSubmit={(event) => void onCreateProject(event)}>
-                  <label htmlFor="project-name">Name</label>
-                  <input id="project-name" value={projectName} onChange={(event) => setProjectName(event.target.value)} required />
-                  <label htmlFor="project-slug">Slug</label>
-                  <input id="project-slug" value={projectSlug} onChange={(event) => setProjectSlug(event.target.value)} required />
-                  <label htmlFor="project-palace">Palace</label>
-                  <input id="project-palace" value={projectPalace} onChange={(event) => setProjectPalace(event.target.value)} required />
-                  <label htmlFor="project-default-wing">Default wing</label>
-                  <input
-                    id="project-default-wing"
-                    value={projectDefaultWing}
-                    onChange={(event) => setProjectDefaultWing(event.target.value)}
-                    required
-                  />
-                  <label htmlFor="project-default-room">Default room</label>
-                  <input
-                    id="project-default-room"
-                    value={projectDefaultRoom}
-                    onChange={(event) => setProjectDefaultRoom(event.target.value)}
-                    required
-                  />
-                  <label htmlFor="project-fs-root">FS root</label>
-                  <div className="inline-actions">
-                    <input
-                      id="project-fs-root"
-                      ref={projectFsRootRef}
-                      value={projectFsRoot}
-                      onChange={(event) => setProjectFsRoot(event.target.value)}
-                      required
-                    />
-                    <button
-                      type="button"
-                      className="secondary-button icon-button"
-                      aria-label="Browse FS root"
-                      title="Browse FS root"
-                      onClick={() => openPathPicker("fsRoot")}
-                    >
-                      <FolderIcon />
-                    </button>
-                  </div>
-                  <label htmlFor="project-allowlist">Allowlist paths</label>
-                  <textarea
-                    id="project-allowlist"
-                    ref={projectAllowlistRef}
-                    value={projectAllowlistInput}
-                    onChange={(event) => setProjectAllowlistInput(event.target.value)}
-                    placeholder="/workspace/workflows, /workspace/shared"
-                  />
-                  <button
-                    type="button"
-                    className="secondary-button icon-button"
-                    aria-label="Browse allowlist paths"
-                    title="Browse allowlist paths"
-                    onClick={() => openPathPicker("allowlist")}
-                  >
-                    <FolderIcon />
-                  </button>
-                  {pathPickerOpen ? (
-                    <ServerPathPicker
-                      key={pathPickerTarget}
-                      title="Browse server folders"
-                      selectionMode="folder"
-                      startPath={pathPickerTarget === "fsRoot" ? projectFsRoot : undefined}
-                      listEntries={listServerPathEntries}
-                      onSelect={onSelectPath}
-                      onCancel={closePathPicker}
-                    />
-                  ) : null}
-                  <button type="submit" disabled={projectCreatePending}>
-                    Register project
-                  </button>
-                </form>
-              </article>
             </section>
           ) : null}
 
           {currentPath === "/mcp-clients" ? (
-            <section className="admin-section" aria-label="MCP clients management">
-              <article className="admin-card">
-                <h2>Issue MCP client token</h2>
-                <form className="admin-form" onSubmit={(event) => void onCreateMcpClient(event)}>
-                  <label htmlFor="mcp-label">Client label</label>
-                  <input id="mcp-label" value={mcpLabel} onChange={(event) => setMcpLabel(event.target.value)} required />
-                  <ProjectMultiSelect
-                    id="mcp-project-ids"
-                    label="Project access"
-                    projects={projects}
-                    selectedIds={mcpSelectedProjectIds}
-                    onChange={setMcpSelectedProjectIds}
-                    disabled={projectsLoading || mcpCreatePending}
-                    helperText={
-                      projects.length > 0
-                        ? "Select every project this token may access."
-                        : "Create a project before issuing MCP client tokens."
-                    }
-                  />
-                  {projectError ? <p role="alert">{projectError}</p> : null}
-                  <button type="submit" disabled={mcpCreatePending || mcpSelectedProjectIds.length === 0}>
-                    Create MCP client
-                  </button>
-                </form>
-                {mcpMessage ? <p role="status">{mcpMessage}</p> : null}
-                {mcpError ? <p role="alert">{mcpError}</p> : null}
-                {oneTimeMcpSecret ? (
-                  <div className="token-card" role="status" aria-live="polite">
-                    <h3>Copy once: token and snippet</h3>
-                    <p>Client label: {oneTimeMcpSecret.label}</p>
-                    <pre>{oneTimeMcpSecret.token}</pre>
-                    {oneTimeMcpSecret.configSnippet ? (
-                      <pre>{oneTimeMcpSecret.configSnippet}</pre>
-                    ) : (
-                      <p>No configuration snippet was returned. Use the token directly in your MCP client settings.</p>
-                    )}
-                  </div>
+            <section className="admin-section llm-workbench" aria-label="MCP clients management">
+              <div className="llm-status-stack">
+                {mcpLoading ? <p role="status">Loading MCP clients...</p> : null}
+                <LlmFeedbackMessages
+                  message={mcpCreateModalOpen || selectedMcpClient ? "" : mcpMessage}
+                  error={mcpCreateModalOpen || selectedMcpClient ? "" : mcpError}
+                />
+                {oneTimeMcpSecret && !selectedMcpClientOneTimeSecret ? (
+                  <OneTimeMcpTokenCard secret={oneTimeMcpSecret} />
                 ) : null}
-              </article>
+              </div>
 
-              <article className="admin-card">
-                <div className="inline-actions">
-                  <h2>Registered MCP clients</h2>
-                  <button type="button" className="secondary-button" onClick={() => void loadMcpClients()}>
-                    Reload MCP clients
-                  </button>
-                </div>
-                {mcpLoading ? <p role="status">Loading MCP clients…</p> : null}
-                {!mcpLoading && mcpClients.length === 0 ? (
-                  <p>No MCP clients yet. Create one token to unblock integrations.</p>
-                ) : null}
-                {mcpClients.length > 0 ? (
-                  <ul className="entity-list" aria-label="MCP clients list">
-                    {mcpClients.map((client) => (
-                      <li key={client.id} className="entity-item">
-                        <div>
-                          <strong>{client.label}</strong>
-                          <p>ID: {client.id}</p>
-                          <p>Projects: {client.projectIds.length > 0 ? client.projectIds.map(formatProjectReference).join(", ") : "None"}</p>
-                          <p>Created: {client.createdAt || "Unknown"}</p>
-                          <p>Last used: {client.lastUsedAt ?? "Never"}</p>
-                          <p>Status: {client.revokedAt ? `Revoked at ${client.revokedAt}` : "Active"}</p>
-                        </div>
-                        <div className="inline-actions">
-                          <button
-                            type="button"
-                            className="secondary-button"
-                            disabled={mcpMutationPendingId === client.id}
-                            onClick={() => void onRegenerateMcpClient(client.id)}
-                          >
-                            Regenerate
-                          </button>
-                          <button
-                            type="button"
-                            disabled={mcpMutationPendingId === client.id}
-                            onClick={() => void onRevokeMcpClient(client.id)}
-                          >
-                            Revoke
-                          </button>
-                        </div>
-                      </li>
-                    ))}
-                  </ul>
-                ) : null}
-              </article>
+              <div className="llm-workbench__grid llm-workbench__grid--single">
+                <article className="admin-card" aria-labelledby="mcp-clients-table-title">
+                  <div className="inline-actions projects-table-actions">
+                    <h2 id="mcp-clients-table-title">Registered MCP clients</h2>
+                    <button type="button" onClick={openNewMcpClientModal}>
+                      New
+                    </button>
+                    <button
+                      type="button"
+                      className="secondary-button"
+                      aria-label="Reload MCP clients"
+                      onClick={() => void loadMcpClients()}
+                    >
+                      Reload
+                    </button>
+                  </div>
+                  <p id="mcp-client-row-action-hint" className="visually-hidden">
+                    Opens the MCP client detail dialog. Press Enter or Space to activate.
+                  </p>
+                  {!mcpLoading && mcpClients.length === 0 ? (
+                    <p>No MCP clients yet. Use New to issue the first client token.</p>
+                  ) : null}
+                  <div className="llm-table-wrap">
+                    <table className="llm-configuration-table mcp-clients-configuration-table" aria-label="Registered MCP clients">
+                      <thead>
+                        <tr>
+                          <th scope="col">Client</th>
+                          <th scope="col">Status</th>
+                          <th scope="col">Projects</th>
+                          <th scope="col">Created</th>
+                          <th scope="col">Last used</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {paginatedMcpClients.map((client) => {
+                          const statusLabel = client.revokedAt ? "Revoked" : "Active";
+                          const projectLabel =
+                            client.projectIds.length > 0
+                              ? client.projectIds.map(formatProjectReference).join(", ")
+                              : "Client-selected";
+                          return (
+                            <tr
+                              key={client.id}
+                              aria-describedby="mcp-client-row-action-hint"
+                              aria-haspopup="dialog"
+                              aria-keyshortcuts="Enter Space"
+                              aria-label={`Open MCP client ${client.label || client.id} details ${statusLabel}`}
+                              tabIndex={0}
+                              onClick={() => openMcpClientDetailModal(client)}
+                              onKeyDown={(event) =>
+                                onConfigurationTableRowKeyDown(event, () => openMcpClientDetailModal(client))
+                              }
+                            >
+                              <th scope="row">
+                                <span className="watchers-project-cell">
+                                  <strong>{client.label || client.id}</strong>
+                                  <span>{client.id}</span>
+                                </span>
+                              </th>
+                              <td>
+                                <StatusBadge tone={client.revokedAt ? "danger" : "success"}>{statusLabel}</StatusBadge>
+                              </td>
+                              <td>{projectLabel}</td>
+                              <td>{client.createdAt || "Unknown"}</td>
+                              <td>{client.lastUsedAt ?? "Never"}</td>
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                    </table>
+                  </div>
+                  <TablePagination
+                    label="Registered MCP clients"
+                    page={mcpClientsTablePage}
+                    totalItems={mcpClients.length}
+                    onPageChange={setMcpClientsTablePage}
+                  />
+                </article>
+              </div>
+
+              {mcpCreateModalOpen ? (
+                <ModalShell
+                  titleId="mcp-client-create-title"
+                  title="New MCP client"
+                  eyebrow="Client token"
+                  onClose={closeNewMcpClientModal}
+                >
+                  <form className="admin-form" onSubmit={(event) => void onCreateMcpClient(event)}>
+                    <LlmFeedbackMessages className="llm-modal-feedback" message={mcpMessage} error={mcpError} />
+                    <label htmlFor="mcp-label">Client label</label>
+                    <input
+                      id="mcp-label"
+                      value={mcpLabel}
+                      onChange={(event) => setMcpLabel(event.target.value)}
+                      required
+                    />
+                    <ProjectMultiSelect
+                      id="mcp-project-ids"
+                      label="Project access"
+                      projects={projects}
+                      selectedIds={mcpSelectedProjectIds}
+                      onChange={setMcpSelectedProjectIds}
+                      disabled={projectsLoading || mcpCreatePending}
+                      helperText={
+                        projects.length > 0
+                          ? "Leave empty for client-selected project access."
+                          : "No registered projects yet. This client can select a project after one exists."
+                      }
+                    />
+                    {projectError ? <p role="alert">{projectError}</p> : null}
+                    <div className="inline-actions">
+                      <button type="submit" disabled={mcpCreatePending}>
+                        Create MCP client
+                      </button>
+                      <button type="button" className="secondary-button" onClick={closeNewMcpClientModal}>
+                        Cancel
+                      </button>
+                    </div>
+                  </form>
+                </ModalShell>
+              ) : null}
+
+              {selectedMcpClient ? (
+                <ModalShell
+                  titleId="mcp-client-detail-title"
+                  title={`MCP client ${selectedMcpClient.label || selectedMcpClient.id}`}
+                  eyebrow="Client access"
+                  onClose={closeMcpClientDetailModal}
+                >
+                  <div className="sync-status-modal">
+                    <LlmFeedbackMessages className="llm-modal-feedback" message={mcpMessage} error={mcpError} />
+                    {selectedMcpClientOneTimeSecret ? (
+                      <OneTimeMcpTokenCard secret={selectedMcpClientOneTimeSecret} />
+                    ) : null}
+                    <dl className="sync-detail-grid" aria-label="MCP client details">
+                      <div>
+                        <dt>Client ID</dt>
+                        <dd>{selectedMcpClient.id}</dd>
+                      </div>
+                      <div>
+                        <dt>Label</dt>
+                        <dd>{selectedMcpClient.label || "Not set"}</dd>
+                      </div>
+                      <div>
+                        <dt>Status</dt>
+                        <dd>{selectedMcpClient.revokedAt ? `Revoked at ${selectedMcpClient.revokedAt}` : "Active"}</dd>
+                      </div>
+                      <div>
+                        <dt>Projects</dt>
+                        <dd>
+                          {selectedMcpClient.projectIds.length > 0
+                            ? selectedMcpClient.projectIds.map(formatProjectReference).join(", ")
+                            : "Client-selected"}
+                        </dd>
+                      </div>
+                      <div>
+                        <dt>Created</dt>
+                        <dd>{selectedMcpClient.createdAt || "Unknown"}</dd>
+                      </div>
+                      <div>
+                        <dt>Last used</dt>
+                        <dd>{selectedMcpClient.lastUsedAt ?? "Never"}</dd>
+                      </div>
+                    </dl>
+                    <section className="sync-command-panel" aria-labelledby="mcp-client-projects-title">
+                      <h3 id="mcp-client-projects-title">Project access</h3>
+                      <ProjectMultiSelect
+                        id="mcp-client-project-edit"
+                        label="Allowed projects"
+                        projects={projects}
+                        selectedIds={mcpProjectEditIds}
+                        onChange={setMcpProjectEditIds}
+                        disabled={projectsLoading || mcpMutationPendingId === selectedMcpClient.id}
+                        helperText={
+                          projects.length > 0
+                            ? "Leave empty for client-selected project access."
+                            : "No registered projects yet. This client can select a project after one exists."
+                        }
+                      />
+                      <div className="inline-actions">
+                        <button
+                          type="button"
+                          className="secondary-button"
+                          disabled={mcpMutationPendingId === selectedMcpClient.id || !mcpProjectEditChanged}
+                          onClick={() => void onUpdateMcpClientProjects(selectedMcpClient.id)}
+                        >
+                          Save project access
+                        </button>
+                      </div>
+                    </section>
+                    <section className="sync-command-panel" aria-labelledby="mcp-client-commands-title">
+                      <h3 id="mcp-client-commands-title">Commands</h3>
+                      <div className="inline-actions">
+                        <button
+                          type="button"
+                          className="secondary-button"
+                          disabled={mcpMutationPendingId === selectedMcpClient.id}
+                          onClick={() => void onRegenerateMcpClient(selectedMcpClient.id)}
+                        >
+                          Regenerate
+                        </button>
+                        <button
+                          type="button"
+                          disabled={mcpMutationPendingId === selectedMcpClient.id}
+                          onClick={() => void onRevokeMcpClient(selectedMcpClient.id)}
+                        >
+                          Revoke
+                        </button>
+                        <button
+                          type="button"
+                          className="danger-button"
+                          disabled={mcpMutationPendingId === selectedMcpClient.id}
+                          onClick={() => void onDeleteMcpClient(selectedMcpClient.id)}
+                        >
+                          Delete
+                        </button>
+                      </div>
+                    </section>
+                  </div>
+                </ModalShell>
+              ) : null}
             </section>
           ) : null}
 
           {currentPath === "/watchers" ? (
-            <section className="admin-section" aria-label="Watchers dashboard">
-              <article className="admin-card">
-                <div className="inline-actions">
-                  <h2>Watcher status</h2>
-                  <button type="button" className="secondary-button" onClick={() => void refreshWatchersState()}>
-                    Refresh
-                  </button>
+            <section className="admin-section status-workbench" aria-label="Watchers dashboard">
+              <article className="status-hero-panel">
+                <div className="status-hero-panel__copy">
+                  <p className="database-kicker">Live watcher status</p>
+                  <h2>Project file watchers</h2>
+                  <p>
+                    Monitor persisted watcher state, queued file changes, and reconciliation needs for every registered project.
+                  </p>
                 </div>
+                <div className="status-toolbar">
+                  <ActionButton variant="secondary" onClick={() => void refreshWatchersState()}>
+                    Refresh
+                  </ActionButton>
+                </div>
+              </article>
+
+              <dl className="status-stats-grid" aria-label="Watcher summary">
+                <div>
+                  <dt>Registered</dt>
+                  <dd>{watchersRows.length}</dd>
+                </div>
+                <div>
+                  <dt>Enabled</dt>
+                  <dd>{watchersEnabledCount}</dd>
+                </div>
+                <div>
+                  <dt>Dirty files</dt>
+                  <dd>{watchersDirtyTotal}</dd>
+                </div>
+                <div>
+                  <dt>Needs reconcile</dt>
+                  <dd>{watchersReconcileCount}</dd>
+                </div>
+              </dl>
+
+              <div className="status-status-stack">
                 {watchersLoading ? <p role="status">Loading watcher status…</p> : null}
-                {watchersMessage ? <p role="status">{watchersMessage}</p> : null}
-                {watchersError ? <p role="alert">{watchersError}</p> : null}
-                {!watchersLoading && watchersRows.length === 0 ? (
+                {!selectedWatcher && watchersMessage ? <p role="status">{watchersMessage}</p> : null}
+                {!selectedWatcher && watchersError ? <p role="alert">{watchersError}</p> : null}
+              </div>
+
+              {!watchersLoading && watchersRows.length === 0 ? (
+                <article className="status-empty-state">
+                  <h2>Watcher list is empty</h2>
                   <p>
                     No watchers available yet. <a href="/projects">Create a project</a> to initialize watcher management.
                   </p>
-                ) : null}
-                {watchersRows.length > 0 ? (
-                  <ul className="entity-list" aria-label="Watchers list">
-                    {watchersRows.map((row) => (
-                      <li key={row.projectId} className="entity-item">
-                        <div>
-                          <strong>{row.projectName ?? row.projectId}</strong>
-                          <p>Project ID: {row.projectId}</p>
-                          <p>State: {row.state}</p>
-                          <p>Dirty count: {row.dirtyCount}</p>
-                          <p>Requires reconciliation: {row.requiresReconciliation ? "Yes" : "No"}</p>
-                          <p>Last event: {row.lastEventAt ?? "Not yet recorded"}</p>
-                          <p>Updated: {row.updatedAt || "Unavailable"}</p>
-                        </div>
-                        <div className="inline-actions">
-                          <button type="button" className="secondary-button" disabled={watchersPendingAction !== null} onClick={() => void onWatcherAction(row.projectId, "pause")}>Pause watcher {row.projectId}</button>
-                          <button type="button" className="secondary-button" disabled={watchersPendingAction !== null} onClick={() => void onWatcherAction(row.projectId, "resume")}>Resume watcher {row.projectId}</button>
-                          <button type="button" disabled={watchersPendingAction !== null} onClick={() => void onWatcherAction(row.projectId, "disable")}>Disable watcher {row.projectId}</button>
-                        </div>
-                      </li>
-                    ))}
-                  </ul>
-                ) : null}
-              </article>
+                </article>
+              ) : null}
+
+              {watchersRows.length > 0 ? (
+                <article className="admin-card" aria-labelledby="watchers-table-title">
+                  <div className="inline-actions projects-table-actions">
+                    <h2 id="watchers-table-title">Registered watchers</h2>
+                    <button type="button" className="secondary-button" onClick={() => void refreshWatchersState()}>
+                      Reload
+                    </button>
+                  </div>
+                  <p id="watcher-row-action-hint" className="visually-hidden">
+                    Opens the watcher status dialog. Press Enter or Space to activate.
+                  </p>
+                  <div className="llm-table-wrap">
+                    <table className="llm-configuration-table watchers-configuration-table" aria-label="Registered watchers">
+                      <thead>
+                        <tr>
+                          <th scope="col">Project</th>
+                          <th scope="col">Status</th>
+                          <th scope="col">Dirty</th>
+                          <th scope="col">Reconcile</th>
+                          <th scope="col">Last event</th>
+                          <th scope="col">Updated</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {paginatedWatchers.map((row) => {
+                          const statusTone = watcherStatusTone(row);
+                          const statusLabel = watcherStatusLabel(row);
+                          const projectLabel = row.projectName ?? row.projectId;
+                          return (
+                            <tr
+                              key={row.projectId}
+                              className={`watchers-table-row watchers-table-row--${statusTone}`}
+                              aria-describedby="watcher-row-action-hint"
+                              aria-haspopup="dialog"
+                              aria-keyshortcuts="Enter Space"
+                              aria-label={`Open watcher ${projectLabel} status ${statusLabel} dirty files ${row.dirtyCount}`}
+                              tabIndex={0}
+                              onClick={() => openWatcherStatusModal(row)}
+                              onKeyDown={(event) =>
+                                onConfigurationTableRowKeyDown(event, () => openWatcherStatusModal(row))
+                              }
+                            >
+                              <th scope="row">
+                                <span className="watchers-project-cell">
+                                  <strong>{projectLabel}</strong>
+                                  <span>{row.projectId}</span>
+                                </span>
+                              </th>
+                              <td>
+                                <StatusBadge tone={statusTone}>{statusLabel}</StatusBadge>
+                              </td>
+                              <td className="watchers-number-cell">{row.dirtyCount}</td>
+                              <td className="watchers-reconcile-cell">{row.requiresReconciliation ? "Yes" : "No"}</td>
+                              <td>{row.lastEventAt ?? "Not yet recorded"}</td>
+                              <td>{row.updatedAt || "Unavailable"}</td>
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                    </table>
+                  </div>
+                  <TablePagination
+                    label="Registered watchers"
+                    page={watchersTablePage}
+                    totalItems={watchersRows.length}
+                    onPageChange={setWatchersTablePage}
+                  />
+                </article>
+              ) : null}
+
+              {selectedWatcher ? (
+                <ModalShell
+                  titleId="watcher-dialog-title"
+                  title={`Watcher ${selectedWatcherLabel}`}
+                  eyebrow="Watcher status"
+                  onClose={closeWatcherStatusModal}
+                >
+                  <div className="watcher-status-modal">
+                    <LlmFeedbackMessages className="llm-modal-feedback" message={watchersMessage} error={watchersError} />
+                    <dl className="watcher-detail-grid" aria-label="Watcher details">
+                      <div>
+                        <dt>Project ID</dt>
+                        <dd>{selectedWatcher.projectId}</dd>
+                      </div>
+                      <div>
+                        <dt>State</dt>
+                        <dd>{formatStatusValue(selectedWatcher.state)}</dd>
+                      </div>
+                      <div>
+                        <dt>Dirty files</dt>
+                        <dd>{selectedWatcher.dirtyCount}</dd>
+                      </div>
+                      <div>
+                        <dt>Requires reconciliation</dt>
+                        <dd>{selectedWatcher.requiresReconciliation ? "Yes" : "No"}</dd>
+                      </div>
+                      <div>
+                        <dt>Last event</dt>
+                        <dd>{selectedWatcher.lastEventAt ?? "Not yet recorded"}</dd>
+                      </div>
+                      <div>
+                        <dt>Updated</dt>
+                        <dd>{selectedWatcher.updatedAt || "Unavailable"}</dd>
+                      </div>
+                    </dl>
+                    <section className="watcher-command-panel" aria-labelledby="watcher-command-title">
+                      <h3 id="watcher-command-title">Commands</h3>
+                      <div className="inline-actions">
+                        {selectedWatcher.state === "enabled" || selectedWatcher.state === "unknown" ? (
+                          <ActionButton
+                            variant="secondary"
+                            aria-label={`Pause watcher ${selectedWatcher.projectId}`}
+                            disabled={watchersPendingAction !== null}
+                            onClick={() => void onWatcherAction(selectedWatcher.projectId, "pause")}
+                          >
+                            Pause
+                          </ActionButton>
+                        ) : null}
+                        {selectedWatcher.state === "paused" || selectedWatcher.state === "disabled" || selectedWatcher.state === "unknown" ? (
+                          <ActionButton
+                            variant="secondary"
+                            aria-label={`Resume watcher ${selectedWatcher.projectId}`}
+                            disabled={watchersPendingAction !== null}
+                            onClick={() => void onWatcherAction(selectedWatcher.projectId, "resume")}
+                          >
+                            Resume
+                          </ActionButton>
+                        ) : null}
+                        {selectedWatcher.state !== "disabled" ? (
+                          <ActionButton
+                            variant="danger"
+                            aria-label={`Disable watcher ${selectedWatcher.projectId}`}
+                            disabled={watchersPendingAction !== null}
+                            onClick={() => void onWatcherAction(selectedWatcher.projectId, "disable")}
+                          >
+                            Disable
+                          </ActionButton>
+                        ) : null}
+                        <ActionButton
+                          variant="secondary"
+                          aria-label={`Refresh watcher ${selectedWatcher.projectId}`}
+                          disabled={watchersPendingAction !== null}
+                          onClick={() => void refreshWatchersState()}
+                        >
+                          Refresh
+                        </ActionButton>
+                      </div>
+                    </section>
+                  </div>
+                </ModalShell>
+              ) : null}
             </section>
           ) : null}
 
           {currentPath === "/sync" ? (
-            <section className="admin-section sync-workbench" aria-label="Sync dashboard">
-              <article className="sync-hero-panel">
-                <div className="sync-hero-panel__copy">
+            <section className="admin-section status-workbench" aria-label="Sync dashboard">
+              <article className="status-hero-panel">
+                <div className="status-hero-panel__copy">
                   <p className="database-kicker">Live sync queue</p>
                   <h2>Project sync operations</h2>
                   <p>
                     Review registered projects, spot queued files, and run targeted sync maintenance without copying project IDs.
                   </p>
                 </div>
-                <div className="sync-toolbar">
-                  <ProjectSelect
-                    id="sync-project-filter"
-                    label="Project"
-                    projects={projects}
-                    value={selectedSyncProjectId}
-                    onChange={setSelectedSyncProjectId}
-                    allLabel="All projects"
-                    disabled={syncLoading && projects.length === 0}
-                    helperText={
-                      selectedSyncRow
-                        ? `Focused on ${selectedSyncRow.projectName ?? selectedSyncRow.projectId}.`
-                        : "Choose a project to narrow the queue."
-                    }
-                  />
-                  <button type="button" className="secondary-button" onClick={() => void refreshSyncState()}>
+                <div className="status-toolbar">
+                  <ActionButton variant="secondary" onClick={() => void refreshSyncState()}>
                     Refresh
-                  </button>
+                  </ActionButton>
                 </div>
               </article>
 
-              <dl className="sync-stats-grid" aria-label="Sync summary">
+              <dl className="status-stats-grid" aria-label="Sync summary">
                 <div>
                   <dt>Projects</dt>
                   <dd>{syncRows.length}</dd>
@@ -3631,14 +5317,14 @@ export function App(): JSX.Element {
                 </div>
               </dl>
 
-              <div className="sync-status-stack">
+              <div className="status-status-stack">
                 {syncLoading ? <p role="status">Loading sync queue status…</p> : null}
-                {syncMessage ? <p role="status">{syncMessage}</p> : null}
-                {syncError ? <p role="alert">{syncError}</p> : null}
+                {!selectedSyncRow && syncMessage ? <p role="status">{syncMessage}</p> : null}
+                {!selectedSyncRow && syncError ? <p role="alert">{syncError}</p> : null}
               </div>
 
               {!syncLoading && syncRows.length === 0 ? (
-                <article className="sync-empty-state">
+                <article className="status-empty-state">
                   <h2>Queue is empty</h2>
                   <p>
                     No sync queue entries yet. <a href="/projects">Create a project</a> to enqueue files for sync.
@@ -3647,210 +5333,531 @@ export function App(): JSX.Element {
               ) : null}
 
               {syncRows.length > 0 ? (
-                <section className="sync-project-grid" aria-label="Sync projects list">
-                  {visibleSyncRows.map((row) => {
-                    const statusTone = row.requiresReconciliation ? "warning" : row.dirtyCount > 0 ? "info" : "success";
-                    const statusLabel = row.requiresReconciliation ? "Needs reconcile" : row.dirtyCount > 0 ? "Queued" : "Clean";
-                    return (
-                      <article key={row.projectId} className="sync-project-card">
-                        <div className="sync-card-header">
-                          <div>
-                            <p className="database-kicker">{row.projectId}</p>
-                            <h3>{row.projectName ?? row.projectId}</h3>
-                          </div>
-                          <StatusBadge tone={statusTone}>{statusLabel}</StatusBadge>
+                <article className="admin-card" aria-labelledby="sync-table-title">
+                  <div className="inline-actions projects-table-actions">
+                    <h2 id="sync-table-title">Registered sync projects</h2>
+                    <button type="button" className="secondary-button" onClick={() => void refreshSyncState()}>
+                      Reload
+                    </button>
+                  </div>
+                  <p id="sync-row-action-hint" className="visually-hidden">
+                    Opens the sync status dialog. Press Enter or Space to activate.
+                  </p>
+                  <div className="llm-table-wrap">
+                    <table className="llm-configuration-table sync-configuration-table" aria-label="Registered sync projects">
+                      <thead>
+                        <tr>
+                          <th scope="col">Project</th>
+                          <th scope="col">Status</th>
+                          <th scope="col">Dirty</th>
+                          <th scope="col">Reconcile</th>
+                          <th scope="col">Sync state</th>
+                          <th scope="col">Updated</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {paginatedSyncRows.map((row) => {
+                          const statusTone = syncStatusTone(row);
+                          const statusLabel = syncStatusLabel(row);
+                          const projectLabel = row.projectName ?? row.projectId;
+                          return (
+                            <tr
+                              key={row.projectId}
+                              className={`sync-table-row sync-table-row--${statusTone}`}
+                              aria-describedby="sync-row-action-hint"
+                              aria-haspopup="dialog"
+                              aria-keyshortcuts="Enter Space"
+                              aria-label={`Open sync ${projectLabel} status ${statusLabel} dirty files ${row.dirtyCount}`}
+                              tabIndex={0}
+                              onClick={() => openSyncStatusModal(row)}
+                              onKeyDown={(event) =>
+                                onConfigurationTableRowKeyDown(event, () => openSyncStatusModal(row))
+                              }
+                            >
+                              <th scope="row">
+                                <span className="watchers-project-cell">
+                                  <strong>{projectLabel}</strong>
+                                  <span>{row.projectId}</span>
+                                </span>
+                              </th>
+                              <td>
+                                <StatusBadge tone={statusTone}>{statusLabel}</StatusBadge>
+                              </td>
+                              <td className="watchers-number-cell">{row.dirtyCount}</td>
+                              <td className="watchers-reconcile-cell">{row.requiresReconciliation ? "Yes" : "No"}</td>
+                              <td>{formatStatusValue(row.syncState)}</td>
+                              <td>{row.updatedAt ?? "Not reported"}</td>
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                    </table>
+                  </div>
+                  <TablePagination
+                    label="Registered sync projects"
+                    page={syncTablePage}
+                    totalItems={syncRows.length}
+                    onPageChange={setSyncTablePage}
+                  />
+                </article>
+              ) : null}
+
+              {selectedSyncRow ? (
+                <ModalShell
+                  titleId="sync-dialog-title"
+                  title={`Sync ${selectedSyncLabel}`}
+                  eyebrow="Sync status"
+                  onClose={closeSyncStatusModal}
+                >
+                  <div className="sync-status-modal">
+                    <LlmFeedbackMessages className="llm-modal-feedback" message={syncMessage} error={syncError} />
+                    <dl className="sync-detail-grid" aria-label="Sync details">
+                      <div>
+                        <dt>Project ID</dt>
+                        <dd>{selectedSyncRow.projectId}</dd>
+                      </div>
+                      <div>
+                        <dt>Dirty files</dt>
+                        <dd>{selectedSyncRow.dirtyCount}</dd>
+                      </div>
+                      <div>
+                        <dt>Sync state</dt>
+                        <dd>{formatStatusValue(selectedSyncRow.syncState)}</dd>
+                      </div>
+                      <div>
+                        <dt>Reconcile state</dt>
+                        <dd>{formatStatusValue(selectedSyncRow.reconcileState)}</dd>
+                      </div>
+                      <div>
+                        <dt>Rebuild state</dt>
+                        <dd>{formatStatusValue(selectedSyncRow.rebuildState)}</dd>
+                      </div>
+                      <div>
+                        <dt>Requires reconciliation</dt>
+                        <dd>{selectedSyncRow.requiresReconciliation ? "Yes" : "No"}</dd>
+                      </div>
+                      <div>
+                        <dt>Updated</dt>
+                        <dd>{selectedSyncRow.updatedAt ?? "Not reported"}</dd>
+                      </div>
+                      <div>
+                        <dt>Lifecycle telemetry</dt>
+                        <dd>{selectedSyncRow.lifecycleTelemetry}</dd>
+                      </div>
+                    </dl>
+                    <section className="sync-activity-panel" aria-labelledby="sync-activity-title">
+                      <div className="sync-activity-panel__header">
+                        <h3 id="sync-activity-title">Recent sync activity</h3>
+                        <span>{syncLogs.length} entries</span>
+                      </div>
+                      {syncLogsLoading ? <p role="status">Loading sync activity...</p> : null}
+                      {syncLogsError ? <p role="alert">{syncLogsError}</p> : null}
+                      {!syncLogsLoading && !syncLogsError && syncLogs.length === 0 ? (
+                        <p>No sync activity recorded for this project yet.</p>
+                      ) : null}
+                      {syncLogs.length > 0 ? (
+                        <div className="sync-activity-table-wrap">
+                          <table className="sync-activity-table" aria-label="Recent sync activity entries">
+                            <thead>
+                              <tr>
+                                <th scope="col">Status</th>
+                                <th scope="col">Path</th>
+                                <th scope="col">Event</th>
+                                <th scope="col">Reason</th>
+                                <th scope="col">Updated</th>
+                              </tr>
+                            </thead>
+                            <tbody>
+                              {syncLogs.map((entry) => {
+                                const updatedAt = (entry.processedAt ?? entry.updatedAt) || entry.enqueuedAt;
+                                const tone: StatusTone = entry.status === "processed" ? "success" : "info";
+                                return (
+                                  <tr key={`${entry.id}:${entry.path}:${entry.eventType}`}>
+                                    <td>
+                                      <StatusBadge tone={tone}>{formatStatusValue(entry.status)}</StatusBadge>
+                                    </td>
+                                    <td>{entry.path || "."}</td>
+                                    <td>{formatLogValue(entry.eventType)}</td>
+                                    <td>{formatLogValue(entry.reason)}</td>
+                                    <td>{updatedAt || "Not reported"}</td>
+                                  </tr>
+                                );
+                              })}
+                            </tbody>
+                          </table>
                         </div>
-                        <div className="sync-card-body">
-                          <div className="sync-primary-metric">
-                            <span>{row.dirtyCount}</span>
-                            <p>Dirty count: {row.dirtyCount}</p>
-                          </div>
-                          <div className="sync-state-list">
-                            <p>Project ID: {row.projectId}</p>
-                            <p>Sync state: {row.syncState}</p>
-                            <p>Reconcile state: {row.reconcileState}</p>
-                            <p>Rebuild state: {row.rebuildState}</p>
-                            <p>Requires reconciliation: {row.requiresReconciliation ? "Yes" : "No"}</p>
-                            <p>Lifecycle telemetry: {row.lifecycleTelemetry}</p>
-                          </div>
-                        </div>
-                        <div className="sync-card-actions">
-                          <button
-                            type="button"
-                            className="secondary-button"
-                            aria-label={`Sync now ${row.projectId}`}
-                            disabled={syncPendingAction !== null}
-                            onClick={() => void onSyncAction(row.projectId, "now")}
-                          >
-                            Sync now
-                          </button>
-                          <button
-                            type="button"
-                            className="secondary-button"
-                            aria-label={`Reconcile ${row.projectId}`}
-                            disabled={syncPendingAction !== null}
-                            onClick={() => void onSyncAction(row.projectId, "reconcile")}
-                          >
-                            Reconcile
-                          </button>
-                          <button
-                            type="button"
-                            aria-label={`Rebuild ${row.projectId}`}
-                            disabled={syncPendingAction !== null}
-                            onClick={() => void onSyncAction(row.projectId, "rebuild")}
-                          >
-                            Rebuild
-                          </button>
-                        </div>
-                      </article>
-                    );
-                  })}
-                </section>
+                      ) : null}
+                    </section>
+                    <section className="sync-command-panel" aria-labelledby="sync-command-title">
+                      <h3 id="sync-command-title">Commands</h3>
+                      <div className="inline-actions">
+                        <ActionButton
+                          variant="secondary"
+                          aria-label={`Sync now ${selectedSyncRow.projectId}`}
+                          disabled={syncPendingAction !== null}
+                          onClick={() => void onSyncAction(selectedSyncRow.projectId, "now")}
+                        >
+                          Sync now
+                        </ActionButton>
+                        <ActionButton
+                          variant="secondary"
+                          aria-label={`Reconcile ${selectedSyncRow.projectId}`}
+                          disabled={syncPendingAction !== null}
+                          onClick={() => void onSyncAction(selectedSyncRow.projectId, "reconcile")}
+                        >
+                          Reconcile
+                        </ActionButton>
+                        <ActionButton
+                          variant="danger"
+                          aria-label={`Rebuild ${selectedSyncRow.projectId}`}
+                          disabled={syncPendingAction !== null}
+                          onClick={() => void onSyncAction(selectedSyncRow.projectId, "rebuild")}
+                        >
+                          Rebuild
+                        </ActionButton>
+                        <ActionButton
+                          variant="secondary"
+                          aria-label={`Refresh sync ${selectedSyncRow.projectId}`}
+                          disabled={syncPendingAction !== null}
+                          onClick={() => void refreshSyncDetails(selectedSyncRow.projectId)}
+                        >
+                          Refresh
+                        </ActionButton>
+                      </div>
+                    </section>
+                  </div>
+                </ModalShell>
               ) : null}
             </section>
           ) : null}
 
           {currentPath === "/workflows" ? (
-            <section className="admin-section" aria-label="Workflows management">
-              <article className="admin-card">
-                <div className="inline-actions">
-                  <h2>Workflow registry</h2>
-                  <button type="button" className="secondary-button" onClick={() => void loadWorkflowsPageData()}>
-                    Refresh
-                  </button>
-                  <button type="button" onClick={() => void onReloadWorkflows()}>
-                    Reload workflows
-                  </button>
-                  <button type="button" className="secondary-button" onClick={() => void onLoadWorkflowSchema()}>
-                    Load schema
-                  </button>
+            <section className="admin-section llm-workbench workflows-workbench" aria-label="Workflows management">
+              <section className="llm-status-panel workflow-registry-panel" aria-label="Workflow registry summary">
+                <div className="workflow-registry-panel__header">
+                  <div className="workflow-registry-panel__copy">
+                    <p className="database-kicker">workflow registry</p>
+                    <h2>Sources first, workflows inside each directory</h2>
+                  </div>
+                  <div className="workflow-registry-panel__actions" aria-label="Workflow registry actions">
+                    <button type="button" onClick={openNewWorkflowSourceModal}>
+                      New
+                    </button>
+                    <button type="button" className="secondary-button" onClick={() => void loadWorkflowsPageData()}>
+                      Refresh
+                    </button>
+                    <button type="button" onClick={() => void onReloadWorkflows()}>
+                      Reload workflows
+                    </button>
+                    <button type="button" className="secondary-button" onClick={() => void onLoadWorkflowSchema()}>
+                      Load schema
+                    </button>
+                  </div>
                 </div>
-                {workflowsLoading ? <p role="status">Loading workflows dashboard…</p> : null}
-                {workflowsMessage ? <p role="status">{workflowsMessage}</p> : null}
-                {workflowsError ? <p role="alert">{workflowsError}</p> : null}
-                {workflowsList.length === 0 ? (
-                  <p>
-                    No workflows discovered yet. Add at least one source and reload the registry.
+                <dl className="status-stats-grid workflow-stats-grid">
+                  <div>
+                    <dt>Sources</dt>
+                    <dd>{workflowSources.length}</dd>
+                  </div>
+                  <div>
+                    <dt>Workflows</dt>
+                    <dd>{workflowsList.length}</dd>
+                  </div>
+                  <div>
+                    <dt>Loaded</dt>
+                    <dd>{loadedWorkflowSourceCount}</dd>
+                  </div>
+                  <div>
+                    <dt>Failed</dt>
+                    <dd>{failedWorkflowSourceCount}</dd>
+                  </div>
+                </dl>
+              </section>
+
+              <div className="llm-status-stack">
+                {workflowsLoading ? <p role="status">Loading workflows dashboard...</p> : null}
+                <LlmFeedbackMessages
+                  message={workflowModalOpen ? "" : workflowsMessage}
+                  error={workflowModalOpen ? "" : workflowsError}
+                />
+              </div>
+
+              <div className="llm-workbench__grid llm-workbench__grid--single">
+                <article className="admin-card workflow-sources-card" aria-labelledby="workflow-sources-table-title">
+                  <div className="workflow-sources-card__header">
+                    <div>
+                      <h2 id="workflow-sources-table-title">Workflow sources</h2>
+                      <p>
+                        {workflowSources.length} source{workflowSources.length === 1 ? "" : "s"} tracking {workflowsList.length} workflow
+                        {workflowsList.length === 1 ? "" : "s"}.
+                      </p>
+                    </div>
+                  </div>
+                  <p id="workflow-row-action-hint" className="visually-hidden">
+                    Opens the workflow details dialog. Press Enter or Space to activate.
                   </p>
-                ) : (
-                  <ul className="entity-list" aria-label="Workflows list">
-                    {workflowsList.map((workflow) => (
-                      <li key={workflow.name} className="entity-item">
-                        <div>
-                          <strong>{workflow.name}</strong>
-                          <p>{workflow.description || "No description"}</p>
-                          <p>Version: {workflow.version || "Not set"}</p>
-                          <p>Tags: {workflow.tags.length > 0 ? workflow.tags.join(", ") : "None"}</p>
-                          <p>Source path: {workflow.sourcePath ?? "Unknown"}</p>
-                        </div>
+                  {workflowSources.length === 0 ? (
+                    <p>
+                      No workflow sources configured.
+                      {workflowProjectsCount === 0 ? (
+                        <>
+                          {" "}
+                          <a href="/projects">Create a project first</a>. Once a project exists, use New to add a workflow source path.
+                        </>
+                      ) : (
+                        " Use New to add a workflow source path."
+                      )}
+                    </p>
+                  ) : null}
+                  <div className="llm-table-wrap">
+                    <table className="llm-configuration-table workflow-sources-configuration-table" aria-label="Workflow sources">
+                      <thead>
+                        <tr>
+                          <th scope="col">Source</th>
+                          <th scope="col">Registry state</th>
+                          <th scope="col">Last loaded</th>
+                          <th scope="col">Actions</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {paginatedWorkflowSources.map((source) => {
+                          const sourceWorkflows = workflowsBySourceId.get(source.sourceId) ?? [];
+                          const sourceStatus = workflowSourceStatus(source, sourceWorkflows.length);
+                          const sourceStatusLabel = formatStatusValue(sourceStatus);
+                          const sourceExpanded = expandedWorkflowSourceIds.has(source.sourceId);
+                          return (
+                            <Fragment key={source.sourceId}>
+                              <tr
+                                className="workflow-source-row"
+                                aria-label={`Expand workflow source ${source.sourcePath} status ${sourceStatusLabel} workflows ${sourceWorkflows.length}`}
+                              >
+                                <th scope="row">
+                                  <button
+                                    type="button"
+                                    className="workflow-source-toggle"
+                                    aria-expanded={sourceExpanded}
+                                    aria-controls={`workflow-source-${source.sourceId}-workflows`}
+                                    aria-label={`${sourceExpanded ? "Collapse" : "Expand"} workflow source ${source.sourcePath}`}
+                                    onClick={() => toggleWorkflowSource(source.sourceId)}
+                                  >
+                                    <span aria-hidden="true">{sourceExpanded ? "v" : ">"}</span>
+                                    <span className="workflow-source-toggle__text">
+                                      <span className="workflow-source-toggle__path">{source.sourcePath}</span>
+                                    </span>
+                                  </button>
+                                </th>
+                                <td>
+                                  <div className="workflow-source-state">
+                                    <StatusBadge tone={statusToneForValue(sourceStatus)}>{sourceStatusLabel}</StatusBadge>
+                                    <span>
+                                      {sourceWorkflows.length} workflow{sourceWorkflows.length === 1 ? "" : "s"}
+                                    </span>
+                                  </div>
+                                </td>
+                                <td className="workflow-source-last-loaded">{source.lastLoadedAt ?? "Never"}</td>
+                                <td className="workflow-source-actions-cell">
+                                  <button
+                                    type="button"
+                                    className="danger-button workflow-source-delete-button"
+                                    disabled={workflowActionPendingId !== null}
+                                    onClick={() => void onDeleteWorkflowSource(source.sourceId)}
+                                  >
+                                    Delete
+                                  </button>
+                                </td>
+                              </tr>
+                              {sourceExpanded ? (
+                                <tr className="workflow-source-detail-row">
+                                  <td colSpan={4}>
+                                    <div id={`workflow-source-${source.sourceId}-workflows`} className="workflow-source-detail-panel">
+                                      {source.errorMessage ? (
+                                        <p role="alert" className="workflow-source-error">
+                                          {source.errorMessage}
+                                        </p>
+                                      ) : null}
+                                      {sourceWorkflows.length === 0 ? (
+                                        <p>No workflows loaded from this source.</p>
+                                      ) : (
+                                        <div className="sync-activity-table-wrap workflow-source-workflows-wrap">
+                                          <table
+                                            className="sync-activity-table workflow-source-workflows-table"
+                                            aria-label={`Workflows loaded from ${source.sourcePath}`}
+                                          >
+                                            <thead>
+                                              <tr>
+                                                <th scope="col">Workflow</th>
+                                                <th scope="col">Version</th>
+                                                <th scope="col">Tags</th>
+                                              </tr>
+                                            </thead>
+                                            <tbody>
+                                              {sourceWorkflows.map((workflow) => {
+                                                const tagsLabel = workflow.tags.length > 0 ? workflow.tags.join(", ") : "None";
+                                                return (
+                                                  <tr
+                                                    key={workflow.name}
+                                                    aria-describedby="workflow-row-action-hint"
+                                                    aria-haspopup="dialog"
+                                                    aria-keyshortcuts="Enter Space"
+                                                    aria-label={`Open workflow ${workflow.name} details ${workflow.version || "Not set"} ${tagsLabel}`}
+                                                    tabIndex={0}
+                                                    onClick={() => void onViewWorkflowDetails(workflow.name)}
+                                                    onKeyDown={(event) =>
+                                                      onConfigurationTableRowKeyDown(event, () => void onViewWorkflowDetails(workflow.name))
+                                                    }
+                                                  >
+                                                    <th scope="row">{workflow.name}</th>
+                                                    <td>{workflow.version || "Not set"}</td>
+                                                    <td>{tagsLabel}</td>
+                                                  </tr>
+                                                );
+                                              })}
+                                            </tbody>
+                                          </table>
+                                        </div>
+                                      )}
+                                    </div>
+                                  </td>
+                                </tr>
+                              ) : null}
+                            </Fragment>
+                          );
+                        })}
+                      </tbody>
+                    </table>
+                  </div>
+                  <TablePagination
+                    label="Workflow sources"
+                    page={workflowSourcesTablePage}
+                    totalItems={workflowSources.length}
+                    onPageChange={setWorkflowSourcesTablePage}
+                  />
+                </article>
+              </div>
+
+              {workflowSourceModalOpen ? (
+                <ModalShell
+                  titleId="workflow-source-dialog-title"
+                  title="New workflow source"
+                  eyebrow="Workflow directory"
+                  className="workflow-source-modal"
+                  onClose={closeWorkflowSourceModal}
+                >
+                  <form className="admin-form workflow-source-form" onSubmit={(event) => void onCreateWorkflowSource(event)}>
+                    <LlmFeedbackMessages className="llm-modal-feedback" message={workflowsMessage} error={workflowsError} />
+                    <ProjectSelect
+                      id="workflow-source-project-id"
+                      label="Project"
+                      projects={projects}
+                      value={workflowSourceProjectId}
+                      onChange={setWorkflowSourceProjectId}
+                      helperText={
+                        projects.length > 0
+                          ? "Workflow sources are attached to one registered project."
+                          : "Create a project before adding workflow sources."
+                      }
+                      required
+                    />
+                    <div className="field-group">
+                      <label htmlFor="workflow-source-path">Source path</label>
+                      <div className="project-path-control">
+                        <input
+                          id="workflow-source-path"
+                          ref={workflowSourcePathRef}
+                          value={workflowSourcePath}
+                          onChange={(event) => setWorkflowSourcePath(event.target.value)}
+                          placeholder="/workspace/workflows"
+                          required
+                        />
                         <button
                           type="button"
-                          className="secondary-button"
-                          onClick={() => void onViewWorkflowDetails(workflow.name)}
+                          className="secondary-button icon-button"
+                          aria-label="Browse workflow source path"
+                          title="Browse workflow source path"
+                          onClick={() => setWorkflowSourcePathPickerOpen(true)}
                         >
-                          View details
+                          <FolderIcon />
                         </button>
-                      </li>
-                    ))}
-                  </ul>
-                )}
-              </article>
-
-              <article className="admin-card">
-                <h2>Workflow sources</h2>
-                {workflowSources.length === 0 ? (
-                  <p>
-                    No workflow sources configured.
+                      </div>
+                    </div>
+                    <div className="field-group">
+                      <label htmlFor="workflow-source-checksum">Checksum (optional)</label>
+                      <input
+                        id="workflow-source-checksum"
+                        value={workflowSourceChecksum}
+                        onChange={(event) => setWorkflowSourceChecksum(event.target.value)}
+                        placeholder="sha256:..."
+                      />
+                    </div>
                     {workflowProjectsCount === 0 ? (
+                      <p>Once a project exists, use New to add a workflow source path.</p>
+                    ) : null}
+                    {workflowSourcePathPickerOpen ? (
+                      <ServerPathPicker
+                        title="Browse workflow source folders"
+                        selectionMode="folder"
+                        startPath={workflowSourcePath.trim() || undefined}
+                        listEntries={listServerPathEntries}
+                        onSelect={onSelectWorkflowSourcePath}
+                        onCancel={closeWorkflowSourcePathPicker}
+                      />
+                    ) : null}
+                    {!workflowSourcePathPickerOpen ? (
+                      <div className="inline-actions workflow-source-form__actions">
+                        <button
+                          type="submit"
+                          disabled={
+                            workflowSourcePending ||
+                            workflowProjectsCount === 0 ||
+                            workflowSourceProjectId.trim().length === 0
+                          }
+                        >
+                          Add workflow source
+                        </button>
+                        <button type="button" className="secondary-button" onClick={closeWorkflowSourceModal}>
+                          Cancel
+                        </button>
+                      </div>
+                    ) : null}
+                  </form>
+                </ModalShell>
+              ) : null}
+
+              {selectedWorkflowName ? (
+                <ModalShell
+                  titleId="workflow-detail-dialog-title"
+                  title={`Workflow ${selectedWorkflowName}`}
+                  eyebrow="Workflow definition"
+                  className="workflow-detail-modal"
+                  onClose={closeWorkflowDetailModal}
+                >
+                  <div className="workflow-detail-body">
+                    <LlmFeedbackMessages className="llm-modal-feedback" message="" error={workflowsError} />
+                    {workflowDetailLoading ? <p role="status">Loading workflow details...</p> : null}
+                    {selectedWorkflowDetail ? (
                       <>
-                        {" "}
-                        <a href="/projects">Create a project first</a>, then add a workflow source path.
+                        <dl className="sync-detail-grid workflow-detail-grid" aria-label="Workflow details">
+                          <div>
+                            <dt>Version</dt>
+                            <dd>{selectedWorkflowDetail.version || "Not set"}</dd>
+                          </div>
+                          <div>
+                            <dt>YAML path</dt>
+                            <dd>{selectedWorkflowDetail.yamlPath ?? selectedWorkflowDetail.sourcePath ?? "Unknown"}</dd>
+                          </div>
+                        </dl>
+                        <section className="workflow-detail-section workflow-yaml-section" aria-label="Workflow YAML">
+                          <h3>YAML</h3>
+                          <YamlCodeBlock yaml={selectedWorkflowDetail.rawYaml ?? "Raw YAML is not available from the current API response."} />
+                        </section>
+                        <section className="workflow-detail-section" aria-label="Workflow load logs">
+                          <h3>Load logs</h3>
+                          <pre className="workflow-code-block" tabIndex={0}>{selectedWorkflowLogs.join("\n")}</pre>
+                        </section>
                       </>
-                    ) : (
-                      " Add a workflow source path below to begin discovery."
-                    )}
-                  </p>
-                ) : (
-                  <ul className="entity-list" aria-label="Workflow sources list">
-                    {workflowSources.map((source) => (
-                      <li key={source.sourceId} className="entity-item">
-                        <div>
-                          <strong>{source.sourceId}</strong>
-                          <p>Project: {source.projectId}</p>
-                          <p>Path: {source.sourcePath}</p>
-                          <p>Status: {source.status ?? "Unknown"}</p>
-                          <p>Discovered: {source.discoveredAt || "Unavailable"}</p>
-                          <p>Last loaded: {source.lastLoadedAt ?? "Never"}</p>
-                          {source.errorMessage ? <p>Last error: {source.errorMessage}</p> : null}
-                        </div>
-                        <div className="inline-actions">
-                          <button
-                            type="button"
-                            className="secondary-button"
-                            disabled={workflowActionPendingId !== null}
-                            onClick={() => void onValidateWorkflowSource(source.sourceId)}
-                          >
-                            Validate {source.sourceId}
-                          </button>
-                          <button
-                            type="button"
-                            disabled={workflowActionPendingId !== null}
-                            onClick={() => void onDeleteWorkflowSource(source.sourceId)}
-                          >
-                            Delete {source.sourceId}
-                          </button>
-                        </div>
-                      </li>
-                    ))}
-                  </ul>
-                )}
-
-                <form className="admin-form" onSubmit={(event) => void onCreateWorkflowSource(event)}>
-                  <ProjectSelect
-                    id="workflow-source-project-id"
-                    label="Project"
-                    projects={projects}
-                    value={workflowSourceProjectId}
-                    onChange={setWorkflowSourceProjectId}
-                    helperText={
-                      projects.length > 0
-                        ? "Workflow sources are attached to one registered project."
-                        : "Create a project before adding workflow sources."
-                    }
-                    required
-                  />
-                  <label htmlFor="workflow-source-path">Source path</label>
-                  <input
-                    id="workflow-source-path"
-                    value={workflowSourcePath}
-                    onChange={(event) => setWorkflowSourcePath(event.target.value)}
-                    placeholder="/workspace/workflows"
-                    required
-                  />
-                  <label htmlFor="workflow-source-checksum">Checksum (optional)</label>
-                  <input
-                    id="workflow-source-checksum"
-                    value={workflowSourceChecksum}
-                    onChange={(event) => setWorkflowSourceChecksum(event.target.value)}
-                    placeholder="sha256:..."
-                  />
-                  {workflowProjectsCount === 0 ? (
-                    <p>Once a project exists, add a workflow source path below.</p>
-                  ) : null}
-                  <button
-                    type="submit"
-                    disabled={workflowSourcePending || workflowProjectsCount === 0 || workflowSourceProjectId.trim().length === 0}
-                  >
-                    Add workflow source
-                  </button>
-                </form>
-              </article>
-
-              {selectedWorkflowName && workflowDetailText ? (
-                <article className="admin-card">
-                  <h2>Workflow details for {selectedWorkflowName}</h2>
-                  <pre>{workflowDetailText}</pre>
-                </article>
+                    ) : null}
+                  </div>
+                </ModalShell>
               ) : null}
 
               {workflowSchemaText ? (
@@ -3863,107 +5870,279 @@ export function App(): JSX.Element {
           ) : null}
 
           {currentPath === "/runs" ? (
-            <section className="admin-section" aria-label="Runs management">
-              <article className="admin-card">
-                <div className="inline-actions">
-                  <h2>Run history</h2>
+            <section className="admin-section runs-console" aria-label="Workflow execution runs">
+              <PageHeader
+                eyebrow="Workflow runs"
+                title="Execution recorder"
+                description="Inspect workflow executions from MCP clients and local admin actions, including sync failures, async jobs, pause/resume state, and block-level diagnostics."
+              />
+
+              <div className="runs-metrics" aria-label="Run summary">
+                <div className="runs-metric" data-tone="danger">
+                  <span>Failed</span>
+                  <strong>{runsFailureCount}</strong>
+                </div>
+                <div className="runs-metric" data-tone="warning">
+                  <span>Active</span>
+                  <strong>{runsActiveCount}</strong>
+                </div>
+                <div className="runs-metric" data-tone="success">
+                  <span>Completed</span>
+                  <strong>{runsCompletedCount}</strong>
+                </div>
+                <div className="runs-metric" data-tone="info">
+                  <span>Total match</span>
+                  <strong>{runsTotal}</strong>
+                </div>
+              </div>
+
+              <article className="admin-card runs-filter-card" aria-labelledby="runs-filter-title">
+                <h2 id="runs-filter-title">Filters</h2>
+                <form className="admin-form llm-form runs-filter-form" onSubmit={(event) => void onApplyRunsFilters(event)}>
+                  <div className="runs-filter-grid">
+                    <label htmlFor="runs-status-filter">Status filter</label>
+                    <select
+                      id="runs-status-filter"
+                      value={runFilterStatus}
+                      onChange={(event) => setRunFilterStatus(event.target.value)}
+                    >
+                      <option value="">Any</option>
+                      <option value="failed">Failed</option>
+                      <option value="running">Running</option>
+                      <option value="paused">Paused</option>
+                      <option value="completed">Completed</option>
+                    </select>
+                    <label htmlFor="runs-mode-filter">Mode</label>
+                    <select id="runs-mode-filter" value={runFilterMode} onChange={(event) => setRunFilterMode(event.target.value)}>
+                      <option value="">Any</option>
+                      <option value="sync">Sync</option>
+                      <option value="async">Async</option>
+                      <option value="inline">Inline</option>
+                    </select>
+                    <label htmlFor="runs-workflow-filter">Workflow</label>
+                    <input
+                      id="runs-workflow-filter"
+                      value={runFilterWorkflow}
+                      onChange={(event) => setRunFilterWorkflow(event.target.value)}
+                      placeholder="python-ci-pipeline"
+                    />
+                    <label htmlFor="runs-project-filter">Project ID</label>
+                    <input
+                      id="runs-project-filter"
+                      value={runFilterProjectId}
+                      onChange={(event) => setRunFilterProjectId(event.target.value)}
+                      placeholder="p1"
+                    />
+                    <label htmlFor="runs-limit">Limit</label>
+                    <input
+                      id="runs-limit"
+                      value={runFilterLimit}
+                      onChange={(event) => setRunFilterLimit(event.target.value)}
+                      inputMode="numeric"
+                    />
+                    <label htmlFor="runs-offset">Offset</label>
+                    <input
+                      id="runs-offset"
+                      value={runFilterOffset}
+                      onChange={(event) => setRunFilterOffset(event.target.value)}
+                      inputMode="numeric"
+                    />
+                  </div>
+                  <div className="inline-actions">
+                    <button type="submit" disabled={runsLoading || runActionPendingId !== null}>
+                      Apply
+                    </button>
+                    <button
+                      type="button"
+                      className="secondary-button"
+                      onClick={() => {
+                        setRunFilterStatus("");
+                        setRunFilterMode("");
+                        setRunFilterWorkflow("");
+                        setRunFilterProjectId("");
+                        setRunFilterOffset("0");
+                      }}
+                    >
+                      Reset
+                    </button>
+                  </div>
+                </form>
+              </article>
+
+              <article className="admin-card" aria-labelledby="runs-table-title">
+                <div className="inline-actions projects-table-actions">
+                  <h2 id="runs-table-title">Execution runs</h2>
                   <button type="button" className="secondary-button" onClick={() => void loadRuns()}>
-                    Reload runs
+                    Reload
                   </button>
                 </div>
-                <p className="runs-filter-note">
-                  Project and workflow filters are not available yet because the backend runs endpoint currently supports
-                  only status, limit, and offset query parameters.
+
+                {runsLoading ? <p role="status" className="runs-state-line">Loading runs...</p> : null}
+                {runsMessage ? <p role="status" className="runs-state-line">{runsMessage}</p> : null}
+                {runsError ? <p role="alert" className="runs-state-line runs-state-line--error">{runsError}</p> : null}
+
+                <p id="run-row-action-hint" className="visually-hidden">
+                  Opens the run detail dialog. Press Enter or Space to activate.
                 </p>
-                <form className="admin-form runs-filter-form" onSubmit={(event) => void onApplyRunsFilters(event)}>
-                  <label htmlFor="runs-status-filter">Status filter</label>
-                  <input
-                    id="runs-status-filter"
-                    value={runFilterStatus}
-                    onChange={(event) => setRunFilterStatus(event.target.value)}
-                    placeholder="paused"
-                  />
-                  <label htmlFor="runs-limit">Limit</label>
-                  <input
-                    id="runs-limit"
-                    value={runFilterLimit}
-                    onChange={(event) => setRunFilterLimit(event.target.value)}
-                    inputMode="numeric"
-                  />
-                  <label htmlFor="runs-offset">Offset</label>
-                  <input
-                    id="runs-offset"
-                    value={runFilterOffset}
-                    onChange={(event) => setRunFilterOffset(event.target.value)}
-                    inputMode="numeric"
-                  />
-                  <button type="submit" disabled={runsLoading || runActionPendingId !== null}>
-                    Apply run filters
-                  </button>
-                </form>
-                {runsLoading ? <p role="status">Loading runs…</p> : null}
-                {runsMessage ? <p role="status">{runsMessage}</p> : null}
-                {runsError ? <p role="alert">{runsError}</p> : null}
-                {!runsLoading && runsRows.length === 0 ? <p>No runs found for the current filter. Adjust status or pagination and retry.</p> : null}
+                {!runsLoading && runsRows.length === 0 ? (
+                  <div className="runs-empty">
+                    <h2>No runs match this view</h2>
+                    <p>Executed registered workflows will appear here after the MCP server records them in SQLite.</p>
+                  </div>
+                ) : null}
+
                 {runsRows.length > 0 ? (
-                  <ul className="entity-list" aria-label="Runs list">
-                    {runsRows.map((run) => (
-                      <li key={run.runId} className="entity-item">
-                        <div>
-                          <strong>{run.workflowName || "Unknown workflow"}</strong>
-                          <p>Run ID: {run.runId || "Unavailable"}</p>
-                          <p>Job ID: {run.jobId || "Unavailable"}</p>
-                          <p>Status: {run.status}</p>
-                          <p>Created: {run.createdAt}</p>
-                          <p>Started: {run.startedAt ?? "Not started"}</p>
-                          <p>Finished: {run.finishedAt ?? "Not finished"}</p>
-                          <p>Updated: {run.updatedAt}</p>
-                          <p>Project ID: {run.projectId ?? "Not provided"}</p>
-                          <p>Token ID: {run.tokenId ?? "Not provided"}</p>
-                          <p>Cancellable: {run.cancellable ? "Yes" : "No"}</p>
-                        </div>
-                        <div className="inline-actions">
-                          <button
-                            type="button"
-                            className="secondary-button"
-                            disabled={runActionPendingId !== null}
+                  <div className="llm-table-wrap">
+                    <table className="llm-configuration-table projects-configuration-table runs-configuration-table" aria-label="Workflow execution runs">
+                      <thead>
+                        <tr>
+                          <th scope="col">Workflow</th>
+                          <th scope="col">Run ID</th>
+                          <th scope="col">Status</th>
+                          <th scope="col">Mode</th>
+                          <th scope="col">Started</th>
+                          <th scope="col">Duration</th>
+                          <th scope="col">Project</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {runsRows.map((run) => (
+                          <tr
+                            key={run.runId}
+                            aria-describedby="run-row-action-hint"
+                            aria-haspopup="dialog"
+                            aria-keyshortcuts="Enter Space"
+                            aria-label={`Open run ${run.workflowName || run.runId} detail`}
+                            tabIndex={0}
                             onClick={() => void onViewRunDetail(run.runId)}
+                            onKeyDown={(event) =>
+                              onConfigurationTableRowKeyDown(event, () => void onViewRunDetail(run.runId))
+                            }
                           >
-                            View run {run.runId}
-                          </button>
-                          {run.cancellable ? (
-                            <button type="button" disabled={runActionPendingId !== null} onClick={() => void onCancelRun(run.runId)}>
-                              Cancel run {run.runId}
-                            </button>
-                          ) : null}
-                          <button
-                            type="button"
-                            className="secondary-button"
-                            disabled={runActionPendingId !== null}
-                            onClick={() => void onResumeRun(run.runId)}
-                          >
-                            Resume run {run.runId}
-                          </button>
-                        </div>
-                      </li>
-                    ))}
-                  </ul>
+                            <th scope="row">{run.workflowName || "Unknown workflow"}</th>
+                            <td>{run.runId || "Unavailable"}</td>
+                            <td>
+                              <StatusBadge tone={statusToneForValue(run.status)}>{formatStatusValue(run.status)}</StatusBadge>
+                            </td>
+                            <td>{formatStatusValue(run.executionMode)}</td>
+                            <td>{formatRunTimestamp(run.startedAt ?? run.createdAt)}</td>
+                            <td>{formatDurationMs(run.durationMs)}</td>
+                            <td>{run.projectId ?? "Unbound"}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
                 ) : null}
               </article>
 
               {runDetail ? (
-                <article className="admin-card">
-                  <h2>Run detail: {runDetail.runId}</h2>
-                  <p>Workflow: {runDetail.workflowName || "Unknown"}</p>
-                  <p>Status: {runDetail.status}</p>
-                  <p>Result summary: {runDetail.resultSummary ?? "None"}</p>
-                  <p>Error summary: {runDetail.errorSummary ?? "None"}</p>
-                  <p>
-                    Metadata keys: {Object.keys(runDetail.metadata).length > 0 ? Object.keys(runDetail.metadata).join(", ") : "None"}
-                  </p>
-                  <h3>Technical JSON</h3>
-                  <pre>{runDetail.technicalJson}</pre>
-                </article>
+                <ModalShell
+                  titleId="run-detail-dialog-title"
+                  title={`Run ${runDetail.workflowName || runDetail.runId}`}
+                  eyebrow="Run detail"
+                  className="run-detail-modal"
+                  onClose={() => setRunDetail(null)}
+                >
+                  <div className="runs-detail-body">
+                    <div className="runs-inspector__header">
+                      <p>Run detail</p>
+                      <h3>{runDetail.workflowName || "Unknown workflow"}</h3>
+                      <StatusBadge tone={statusToneForValue(runDetail.status)}>{formatStatusValue(runDetail.status)}</StatusBadge>
+                    </div>
+                    <dl className="runs-facts">
+                      <div><dt>Run ID</dt><dd>{runDetail.runId}</dd></div>
+                      <div><dt>Mode</dt><dd>{formatStatusValue(runDetail.executionMode)}</dd></div>
+                      <div><dt>Started</dt><dd>{formatRunTimestamp(runDetail.startedAt)}</dd></div>
+                      <div><dt>Finished</dt><dd>{formatRunTimestamp(runDetail.finishedAt)}</dd></div>
+                      <div><dt>Duration</dt><dd>{formatDurationMs(runDetail.durationMs)}</dd></div>
+                      <div><dt>Token</dt><dd>{runDetail.tokenId ?? "Unbound"}</dd></div>
+                    </dl>
+                    {(runDetail.cancellable || runCanResume(runDetail)) ? (
+                      <div className="inline-actions">
+                        {runDetail.cancellable ? (
+                          <button type="button" disabled={runActionPendingId !== null} onClick={() => void onCancelRun(runDetail.runId)}>
+                            Cancel run
+                          </button>
+                        ) : null}
+                        {runCanResume(runDetail) ? (
+                          <button
+                            type="button"
+                            className="secondary-button"
+                            disabled={runActionPendingId !== null}
+                            onClick={() => void onResumeRun(runDetail.runId)}
+                          >
+                            Resume run
+                          </button>
+                        ) : null}
+                      </div>
+                    ) : null}
+                    {selectedRunSummary ? (
+                      <section className="runs-diagnostic">
+                        <h3>Diagnostic</h3>
+                        <JsonCodeBlock value={selectedRunSummary} parseString />
+                      </section>
+                    ) : null}
+                    <section className="runs-diagnostic">
+                      <h3>Inputs</h3>
+                      <JsonCodeBlock value={runDetail.inputs} />
+                    </section>
+                    <section className="runs-timeline" aria-label="Block execution timeline">
+                      <h3>Blocks</h3>
+                      {runDetail.blocks.length > 0 ? (
+                        <ol>
+                          {runDetail.blocks.map((block) => (
+                            <li key={block.blockId}>
+                              <div>
+                                <strong>{block.blockId || "Unnamed block"}</strong>
+                                <span>{block.blockType ?? "Unknown type"} · {formatDurationMs(block.durationMs)}</span>
+                              </div>
+                              <StatusBadge tone={statusToneForValue(block.status ?? block.outcome)}>
+                                {formatStatusValue(block.status ?? block.outcome ?? "unknown")}
+                              </StatusBadge>
+                              {block.message ? <p>{block.message}</p> : null}
+                            </li>
+                          ))}
+                        </ol>
+                      ) : (
+                        <p>No block diagnostics were recorded for this run.</p>
+                      )}
+                    </section>
+                    <details className="runs-technical-json">
+                      <summary>Technical JSON</summary>
+                      <JsonCodeBlock value={runDetail.technicalJson} parseString />
+                    </details>
+                  </div>
+                </ModalShell>
+              ) : null}
+
+              {runResumeTarget ? (
+                <ModalShell
+                  titleId="run-resume-dialog-title"
+                  title={`Resume ${runResumeTarget.runId}`}
+                  eyebrow="Paused workflow"
+                  className="run-resume-modal"
+                  onClose={() => setRunResumeTarget(null)}
+                >
+                  <form className="admin-form" onSubmit={(event) => void onSubmitRunResume(event)}>
+                    <label htmlFor="run-resume-response">Response</label>
+                    <textarea
+                      id="run-resume-response"
+                      value={runResumeResponse}
+                      onChange={(event) => setRunResumeResponse(event.target.value)}
+                      rows={5}
+                      placeholder="approval, rejection, or other prompt response"
+                    />
+                    <div className="inline-actions">
+                      <button type="submit" disabled={runActionPendingId !== null}>
+                        Submit resume
+                      </button>
+                      <button type="button" className="secondary-button" onClick={() => setRunResumeTarget(null)}>
+                        Cancel
+                      </button>
+                    </div>
+                  </form>
+                </ModalShell>
               ) : null}
             </section>
           ) : null}

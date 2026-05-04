@@ -1,10 +1,13 @@
 from __future__ import annotations
 
+import json
+import os
+import re
 from sqlite3 import Connection
 from typing import Annotated, Any
 
 from fastapi import APIRouter, Depends, HTTPException, Path, status
-from pydantic import BaseModel, ConfigDict, StringConstraints
+from pydantic import BaseModel, ConfigDict, Field, StringConstraints
 
 from workflows_mcp.http.dependencies import (
     CurrentAdminSession,
@@ -27,6 +30,7 @@ router = APIRouter(prefix="/mcp-clients")
 
 TokenId = Annotated[str, Path(min_length=1, max_length=128)]
 NonEmptyString = Annotated[str, StringConstraints(min_length=1, max_length=1024)]
+_SAFE_SERVER_NAME_PATTERN = re.compile(r"[^a-z0-9_.-]+")
 
 
 class ErrorDetail(BaseModel):
@@ -59,7 +63,7 @@ class MCPClientCreateRequest(BaseModel):
             "examples": [
                 {
                     "label": "ci-agent",
-                    "project_ids": ["project-id"],
+                    "project_ids": [],
                     "capabilities": {"scopes": ["read:workflows"]},
                 }
             ]
@@ -67,12 +71,30 @@ class MCPClientCreateRequest(BaseModel):
     )
 
     label: NonEmptyString
-    project_ids: list[NonEmptyString]
+    project_ids: list[NonEmptyString] = Field(default_factory=list)
     capabilities: dict[str, Any] | None = None
+
+
+class MCPClientUpdateRequest(BaseModel):
+    model_config = ConfigDict(
+        json_schema_extra={
+            "examples": [
+                {
+                    "project_ids": ["project-id"],
+                }
+            ]
+        }
+    )
+
+    project_ids: list[NonEmptyString] = Field(default_factory=list)
 
 
 class MCPClientRevokeResponse(BaseModel):
     revoked: bool
+
+
+class MCPClientDeleteResponse(BaseModel):
+    deleted: bool
 
 
 def _repo(resources: AppResources) -> tuple[SQLiteTokensRepository, Connection]:
@@ -99,18 +121,44 @@ def _raise_http(status_code: int, code: str, message: str) -> None:
     )
 
 
-def _config_snippet(token: str) -> str:
-    return (
-        "{\n"
-        '  "transport": "streamable-http",\n'
-        '  "url": "https://<your-workflows-host>/mcp",\n'
-        '  "headers": {\n'
-        '    "Authorization": "Bearer '
-        + token
-        + '"\n'
-        "  }\n"
-        "}"
-    )
+def _safe_server_name(label: str, token_id: str) -> str:
+    candidate = _SAFE_SERVER_NAME_PATTERN.sub("-", label.strip().lower()).strip("-._")
+    if candidate:
+        return candidate
+
+    fallback = _SAFE_SERVER_NAME_PATTERN.sub("-", token_id.strip().lower()).strip("-._")
+    if fallback:
+        return f"workflows-mcp-{fallback}"
+    return "workflows-mcp-client"
+
+
+def _append_mcp_path(base_url: str) -> str:
+    normalized = base_url.strip().rstrip("/")
+    if normalized.endswith("/mcp"):
+        return normalized
+    return f"{normalized}/mcp"
+
+
+def _default_mcp_url() -> str:
+    public_base_url = os.getenv("WORKFLOWS_MCP_PUBLIC_BASE_URL", "").strip()
+    if public_base_url:
+        return _append_mcp_path(public_base_url)
+
+    port = os.getenv("WORKFLOWS_PORT", "8000").strip() or "8000"
+    return f"http://127.0.0.1:{port}/mcp"
+
+
+def _config_snippet(token: str, *, label: str, token_id: str) -> str:
+    server_name = _safe_server_name(label, token_id)
+    snippet = {
+        "mcpServers": {
+            server_name: {
+                "url": _default_mcp_url(),
+                "headers": {"Authorization": f"Bearer {token}"},
+            }
+        }
+    }
+    return json.dumps(snippet, indent=2)
 
 
 @router.get(
@@ -171,13 +219,55 @@ async def create_mcp_client(
             id=created.id,
             label=created.label,
             token=created.token_secret,
-            config_snippet=_config_snippet(created.token_secret),
+            config_snippet=_config_snippet(
+                created.token_secret,
+                label=created.label,
+                token_id=created.id,
+            ),
             capabilities=created.capabilities,
             project_ids=created.project_ids,
             created_at=created.created_at,
             last_used_at=created.last_used_at,
             revoked_at=created.revoked_at,
         )
+    finally:
+        conn.close()
+
+
+@router.patch(
+    "/{token_id}",
+    response_model=MCPClientResponse,
+    openapi_extra={"security": [{"AdminSessionCookie": [], "CsrfToken": []}]},
+)
+async def update_mcp_client(
+    token_id: TokenId,
+    body: MCPClientUpdateRequest,
+    _current: CurrentAdminSession = Depends(require_admin_csrf),
+    resources: AppResources = Depends(get_resources),
+) -> MCPClientResponse:
+    repo, conn = _repo(resources)
+    try:
+        try:
+            updated = repo.update_project_bindings(token_id, list(body.project_ids))
+        except UnknownTokenError:
+            _raise_http(
+                status.HTTP_404_NOT_FOUND,
+                "token_not_found",
+                "Token not found",
+            )
+        except InvalidTokenProjectBindingError:
+            _raise_http(
+                status.HTTP_400_BAD_REQUEST,
+                "invalid_project_binding",
+                "One or more project ids are invalid",
+            )
+        except TokenIntegrityError:
+            _raise_http(
+                status.HTTP_500_INTERNAL_SERVER_ERROR,
+                "token_integrity_error",
+                "Token operation failed",
+            )
+        return _to_response(updated)
     finally:
         conn.close()
 
@@ -213,6 +303,37 @@ async def revoke_mcp_client(
         conn.close()
 
 
+@router.delete(
+    "/{token_id}/registration",
+    response_model=MCPClientDeleteResponse,
+    openapi_extra={"security": [{"AdminSessionCookie": [], "CsrfToken": []}]},
+)
+async def delete_mcp_client(
+    token_id: TokenId,
+    _current: CurrentAdminSession = Depends(require_admin_csrf),
+    resources: AppResources = Depends(get_resources),
+) -> MCPClientDeleteResponse:
+    repo, conn = _repo(resources)
+    try:
+        try:
+            repo.delete(token_id)
+        except UnknownTokenError:
+            _raise_http(
+                status.HTTP_404_NOT_FOUND,
+                "token_not_found",
+                "Token not found",
+            )
+        except TokenIntegrityError:
+            _raise_http(
+                status.HTTP_500_INTERNAL_SERVER_ERROR,
+                "token_integrity_error",
+                "Token operation failed",
+            )
+        return MCPClientDeleteResponse(deleted=True)
+    finally:
+        conn.close()
+
+
 @router.post(
     "/{token_id}/regenerate",
     response_model=MCPClientCreateResponse,
@@ -243,7 +364,11 @@ async def regenerate_mcp_client(
             id=regenerated.id,
             label=regenerated.label,
             token=regenerated.token_secret,
-            config_snippet=_config_snippet(regenerated.token_secret),
+            config_snippet=_config_snippet(
+                regenerated.token_secret,
+                label=regenerated.label,
+                token_id=regenerated.id,
+            ),
             capabilities=regenerated.capabilities,
             project_ids=regenerated.project_ids,
             created_at=regenerated.created_at,

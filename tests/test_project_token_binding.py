@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import sqlite3
 from pathlib import Path
 
@@ -117,6 +118,39 @@ def test_unknown_and_revoked_tokens_are_rejected(tmp_path: Path) -> None:
         conn.close()
 
 
+def test_delete_removes_token_bindings_and_frees_label(tmp_path: Path) -> None:
+    conn, projects_repo, tokens_repo = _repos(tmp_path)
+    try:
+        project_id = _create_project(projects_repo, slug="delete-token", palace="delete-palace")
+        created = tokens_repo.create(
+            label="deletable-client",
+            project_ids=[project_id],
+            capabilities={"scopes": ["read:workflows"]},
+        )
+        tokens_repo.revoke(created.id)
+
+        tokens_repo.delete(created.id)
+
+        assert tokens_repo.list_tokens() == []
+        bindings = conn.execute(
+            "SELECT COUNT(*) FROM project_token_bindings WHERE token_id = ?",
+            (created.id,),
+        ).fetchone()
+        assert bindings is not None
+        assert bindings[0] == 0
+        with pytest.raises(UnknownTokenError):
+            tokens_repo.resolve(created.token_secret)
+
+        recreated = tokens_repo.create(
+            label="deletable-client",
+            project_ids=[project_id],
+            capabilities={"scopes": ["read:workflows"]},
+        )
+        assert recreated.id != created.id
+    finally:
+        conn.close()
+
+
 def test_mark_last_used_updates_timestamp(tmp_path: Path) -> None:
     conn, projects_repo, tokens_repo = _repos(tmp_path)
     try:
@@ -146,13 +180,19 @@ def test_mark_last_used_updates_timestamp(tmp_path: Path) -> None:
         conn.close()
 
 
-def test_create_rejects_empty_or_unknown_project_bindings(tmp_path: Path) -> None:
+def test_create_allows_unbound_token_and_rejects_unknown_project_bindings(
+    tmp_path: Path,
+) -> None:
     conn, projects_repo, tokens_repo = _repos(tmp_path)
     try:
         _create_project(projects_repo, slug="valid-binding", palace="valid-binding-palace")
 
-        with pytest.raises(InvalidTokenProjectBindingError):
-            tokens_repo.create(label="empty", project_ids=[], capabilities={"scopes": []})
+        created = tokens_repo.create(label="empty", project_ids=[], capabilities={"scopes": []})
+        assert created.project_ids == []
+        assert tokens_repo.resolve(created.token_secret).project_ids == []
+        listed = tokens_repo.list_tokens()
+        assert len(listed) == 1
+        assert listed[0].project_ids == []
 
         with pytest.raises(InvalidTokenProjectBindingError):
             tokens_repo.create(
@@ -160,6 +200,33 @@ def test_create_rejects_empty_or_unknown_project_bindings(tmp_path: Path) -> Non
                 project_ids=["does-not-exist"],
                 capabilities={"scopes": ["read:workflows"]},
             )
+    finally:
+        conn.close()
+
+
+def test_update_project_bindings_allows_bound_and_unbound_tokens(tmp_path: Path) -> None:
+    conn, projects_repo, tokens_repo = _repos(tmp_path)
+    try:
+        project_a = _create_project(projects_repo, slug="update-a", palace="update-palace-a")
+        project_b = _create_project(projects_repo, slug="update-b", palace="update-palace-b")
+        created = tokens_repo.create(
+            label="editable-token",
+            project_ids=[],
+            capabilities={"scopes": ["read:workflows"]},
+        )
+
+        updated = tokens_repo.update_project_bindings(created.id, [project_b, project_a])
+        assert sorted(updated.project_ids) == sorted([project_a, project_b])
+        assert sorted(tokens_repo.resolve(created.token_secret).project_ids) == sorted(
+            [project_a, project_b]
+        )
+
+        unbound = tokens_repo.update_project_bindings(created.id, [])
+        assert unbound.project_ids == []
+        assert tokens_repo.resolve(created.token_secret).project_ids == []
+
+        with pytest.raises(InvalidTokenProjectBindingError):
+            tokens_repo.update_project_bindings(created.id, ["does-not-exist"])
     finally:
         conn.close()
 
@@ -279,7 +346,23 @@ def _error_message(payload: dict[str, object]) -> str | None:
     return None
 
 
-def test_admin_mcp_clients_create_list_revoke_and_secret_one_time(app_client: TestClient) -> None:
+def _mcp_server_config(snippet: str, server_name: str) -> dict[str, object]:
+    parsed = json.loads(snippet)
+    assert set(parsed) == {"mcpServers"}
+    servers = parsed["mcpServers"]
+    assert isinstance(servers, dict)
+    assert set(servers) == {server_name}
+    server_config = servers[server_name]
+    assert isinstance(server_config, dict)
+    return server_config
+
+
+def test_admin_mcp_clients_create_list_revoke_and_secret_one_time(
+    app_client: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.delenv("WORKFLOWS_MCP_PUBLIC_BASE_URL", raising=False)
+    monkeypatch.delenv("WORKFLOWS_PORT", raising=False)
     csrf_token = _login_and_csrf(app_client)
 
     project_a = app_client.post(
@@ -301,7 +384,7 @@ def test_admin_mcp_clients_create_list_revoke_and_secret_one_time(app_client: Te
     create_response = app_client.post(
         "/api/admin/v1/mcp-clients",
         json={
-            "label": "ci-token",
+            "label": "CI Token / Prod!",
             "project_ids": [project_b_id, project_a_id],
             "capabilities": {"scopes": ["read:workflows"]},
         },
@@ -314,14 +397,13 @@ def test_admin_mcp_clients_create_list_revoke_and_secret_one_time(app_client: Te
     assert isinstance(created.get("config_snippet"), str)
     assert created["config_snippet"]
     assert created["token"] in created["config_snippet"]
-    assert "/mcp" in created["config_snippet"]
-    assert (
-        "streamable-http" in created["config_snippet"]
-        or '"transport": "http"' in created["config_snippet"]
-    )
-    assert "Authorization" in created["config_snippet"]
-    assert "Bearer" in created["config_snippet"]
+    server_config = _mcp_server_config(created["config_snippet"], "ci-token-prod")
+    assert server_config == {
+        "url": "http://127.0.0.1:8000/mcp",
+        "headers": {"Authorization": f"Bearer {created['token']}"},
+    }
     assert "stdio" not in created["config_snippet"].lower()
+    assert "transport" not in server_config
     assert sorted(created["project_ids"]) == sorted([project_a_id, project_b_id])
     token_id = created["id"]
 
@@ -330,7 +412,7 @@ def test_admin_mcp_clients_create_list_revoke_and_secret_one_time(app_client: Te
     listed = list_response.json()["mcp_clients"]
     assert len(listed) == 1
     assert listed[0]["id"] == token_id
-    assert listed[0]["label"] == "ci-token"
+    assert listed[0]["label"] == "CI Token / Prod!"
     assert sorted(listed[0]["project_ids"]) == sorted([project_a_id, project_b_id])
     assert "token" not in listed[0]
     assert "token_secret" not in listed[0]
@@ -351,8 +433,34 @@ def test_admin_mcp_clients_create_list_revoke_and_secret_one_time(app_client: Te
     assert "token" not in revoked
     assert "token_hash" not in revoked
 
+    delete_response = app_client.delete(
+        f"/api/admin/v1/mcp-clients/{token_id}/registration",
+        headers={"X-CSRF-Token": csrf_token},
+    )
+    assert delete_response.status_code == 200
+    assert delete_response.json() == {"deleted": True}
 
-def test_admin_mcp_clients_regenerate_rotates_secret_one_time(app_client: TestClient) -> None:
+    after_delete = app_client.get("/api/admin/v1/mcp-clients")
+    assert after_delete.status_code == 200
+    assert after_delete.json()["mcp_clients"] == []
+
+    recreate_response = app_client.post(
+        "/api/admin/v1/mcp-clients",
+        json={
+            "label": "CI Token / Prod!",
+            "project_ids": [project_a_id],
+            "capabilities": {"scopes": ["read:workflows"]},
+        },
+        headers={"X-CSRF-Token": csrf_token},
+    )
+    assert recreate_response.status_code == 201
+    assert recreate_response.json()["id"] != token_id
+
+
+def test_admin_mcp_clients_regenerate_rotates_secret_one_time(
+    app_client: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     csrf_token = _login_and_csrf(app_client)
     project = app_client.post(
         "/api/admin/v1/projects",
@@ -376,6 +484,10 @@ def test_admin_mcp_clients_regenerate_rotates_secret_one_time(app_client: TestCl
     token_id = created["id"]
     initial_token = created["token"]
 
+    monkeypatch.setenv(
+        "WORKFLOWS_MCP_PUBLIC_BASE_URL",
+        "https://workflows.example.com/workflows/mcp/",
+    )
     regenerate = app_client.post(
         f"/api/admin/v1/mcp-clients/{token_id}/regenerate",
         headers={"X-CSRF-Token": csrf_token},
@@ -385,7 +497,66 @@ def test_admin_mcp_clients_regenerate_rotates_secret_one_time(app_client: TestCl
     assert regenerated["id"] == token_id
     assert regenerated["token"]
     assert regenerated["token"] != initial_token
+    server_config = _mcp_server_config(regenerated["config_snippet"], "regen-token")
+    assert server_config == {
+        "url": "https://workflows.example.com/workflows/mcp",
+        "headers": {"Authorization": f"Bearer {regenerated['token']}"},
+    }
     assert "token_hash" not in regenerated
+
+
+def test_admin_mcp_clients_create_unbound_and_update_project_access(
+    app_client: TestClient,
+) -> None:
+    csrf_token = _login_and_csrf(app_client)
+    project_a = app_client.post(
+        "/api/admin/v1/projects",
+        json=_project_payload(slug="mcp-update-a", palace="mcp-update-palace-a"),
+        headers={"X-CSRF-Token": csrf_token},
+    )
+    assert project_a.status_code == 201
+    project_a_id = project_a.json()["id"]
+    project_b = app_client.post(
+        "/api/admin/v1/projects",
+        json=_project_payload(slug="mcp-update-b", palace="mcp-update-palace-b"),
+        headers={"X-CSRF-Token": csrf_token},
+    )
+    assert project_b.status_code == 201
+    project_b_id = project_b.json()["id"]
+
+    create_response = app_client.post(
+        "/api/admin/v1/mcp-clients",
+        json={"label": "client-selects-project"},
+        headers={"X-CSRF-Token": csrf_token},
+    )
+    assert create_response.status_code == 201
+    created = create_response.json()
+    assert created["project_ids"] == []
+    token_id = created["id"]
+
+    update_response = app_client.patch(
+        f"/api/admin/v1/mcp-clients/{token_id}",
+        json={"project_ids": [project_b_id, project_a_id]},
+        headers={"X-CSRF-Token": csrf_token},
+    )
+    assert update_response.status_code == 200
+    assert sorted(update_response.json()["project_ids"]) == sorted([project_a_id, project_b_id])
+
+    unbind_response = app_client.patch(
+        f"/api/admin/v1/mcp-clients/{token_id}",
+        json={"project_ids": []},
+        headers={"X-CSRF-Token": csrf_token},
+    )
+    assert unbind_response.status_code == 200
+    assert unbind_response.json()["project_ids"] == []
+
+    invalid_project = app_client.patch(
+        f"/api/admin/v1/mcp-clients/{token_id}",
+        json={"project_ids": ["does-not-exist"]},
+        headers={"X-CSRF-Token": csrf_token},
+    )
+    assert invalid_project.status_code == 400
+    assert _error_code(invalid_project.json()) == "invalid_project_binding"
 
 
 def test_admin_mcp_clients_error_and_auth_semantics(app_client: TestClient) -> None:
@@ -466,6 +637,17 @@ def test_admin_mcp_clients_error_and_auth_semantics(app_client: TestClient) -> N
     assert revoke_missing_message == "Token not found"
     assert "does-not-exist" not in revoke_missing_message
 
+    delete_missing = app_client.delete(
+        "/api/admin/v1/mcp-clients/does-not-exist/registration",
+        headers={"X-CSRF-Token": csrf_token},
+    )
+    assert delete_missing.status_code == 404
+    delete_missing_payload = delete_missing.json()
+    assert _error_code(delete_missing_payload) == "token_not_found"
+    delete_missing_message = _error_message(delete_missing_payload)
+    assert delete_missing_message == "Token not found"
+    assert "does-not-exist" not in delete_missing_message
+
     regenerate_missing = app_client.post(
         "/api/admin/v1/mcp-clients/does-not-exist/regenerate",
         headers={"X-CSRF-Token": csrf_token},
@@ -479,6 +661,9 @@ def test_admin_mcp_clients_error_and_auth_semantics(app_client: TestClient) -> N
 
     revoke_without_csrf = app_client.delete(f"/api/admin/v1/mcp-clients/{token_id}")
     assert revoke_without_csrf.status_code == 403
+
+    delete_without_csrf = app_client.delete(f"/api/admin/v1/mcp-clients/{token_id}/registration")
+    assert delete_without_csrf.status_code == 403
 
     regenerate_without_csrf = app_client.post(f"/api/admin/v1/mcp-clients/{token_id}/regenerate")
     assert regenerate_without_csrf.status_code == 403

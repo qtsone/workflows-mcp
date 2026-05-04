@@ -89,6 +89,7 @@ def test_run_history_repo_create_update_get_and_list(tmp_path: Path) -> None:
         run_id="run-a",
         workflow_name="build-and-test",
         status="running",
+        execution_mode="sync",
         timeout_seconds=120,
         created_at="2026-04-29T08:59:00Z",
         started_at="2026-04-29T09:00:00Z",
@@ -98,12 +99,15 @@ def test_run_history_repo_create_update_get_and_list(tmp_path: Path) -> None:
         token_id=None,
         cancellable=True,
         result_summary="starting",
+        execution_json='{"status":"running","blocks":{}}',
     )
     assert created.run_id == "run-a"
+    assert created.execution_mode == "sync"
     assert created.project_id is None
     assert created.token_id is None
     assert created.cancellable is True
     assert created.error_summary is None
+    assert created.execution_json == '{"status":"running","blocks":{}}'
     assert created.timeout_seconds == 120
     assert created.created_at == "2026-04-29T08:59:00Z"
     assert created.started_at == "2026-04-29T09:00:00Z"
@@ -117,10 +121,12 @@ def test_run_history_repo_create_update_get_and_list(tmp_path: Path) -> None:
         updated_at="2026-04-29T09:01:00Z",
         inputs_json='{"branch":"release"}',
         result_summary="done",
+        execution_json='{"status":"success","outputs":{"ok":true}}',
     )
     assert updated.status == "completed"
     assert updated.finished_at == "2026-04-28T10:00:00Z"
     assert updated.result_summary == "done"
+    assert updated.execution_json == '{"status":"success","outputs":{"ok":true}}'
     assert updated.updated_at == "2026-04-29T09:01:00Z"
     assert updated.inputs_json == '{"branch":"release"}'
 
@@ -128,6 +134,8 @@ def test_run_history_repo_create_update_get_and_list(tmp_path: Path) -> None:
     assert fetched is not None
     assert fetched.run_id == "run-a"
     assert fetched.timeout_seconds == 120
+    assert fetched.execution_mode == "sync"
+    assert fetched.execution_json == '{"status":"success","outputs":{"ok":true}}'
     assert fetched.updated_at == "2026-04-29T09:01:00Z"
     assert fetched.inputs_json == '{"branch":"release"}'
 
@@ -141,9 +149,18 @@ def test_run_history_repo_create_update_get_and_list(tmp_path: Path) -> None:
         updated_at="2026-04-29T09:02:00Z",
     )
     listed = repo.list_runs(limit=10, offset=0)
-    assert [item.run_id for item in listed] == ["run-a", "run-b"]
-    assert listed[0].timeout_seconds == 120
-    assert listed[1].timeout_seconds == 3600
+    assert [item.run_id for item in listed] == ["run-b", "run-a"]
+    assert listed[0].timeout_seconds == 3600
+    assert listed[1].timeout_seconds == 120
+
+    sync_runs = repo.list_runs(limit=10, offset=0, execution_mode="sync")
+    assert [item.run_id for item in sync_runs] == ["run-a"]
+
+    workflow_runs = repo.list_runs(limit=10, offset=0, workflow_name="deploy")
+    assert [item.run_id for item in workflow_runs] == ["run-b"]
+
+    assert repo.count_runs(status="completed") == 1
+    assert repo.count_runs(execution_mode="sync") == 1
 
 
 def test_update_run_keeps_inputs_json_when_not_provided(tmp_path: Path) -> None:

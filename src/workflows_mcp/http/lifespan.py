@@ -13,6 +13,11 @@ from workflows_mcp.engine.executor_base import ExecutorRegistry, create_default_
 from workflows_mcp.engine.io_queue import IOQueue
 from workflows_mcp.engine.job_queue import JobQueue
 from workflows_mcp.engine.llm_config import LLMConfigLoader
+from workflows_mcp.engine.secrets import (
+    CompositeSecretProvider,
+    EnvVarSecretProvider,
+    SQLiteSecretProvider,
+)
 from workflows_mcp.metadata.migrations import migrate_metadata_db
 from workflows_mcp.metadata.repos.watcher_repo import SQLiteWatcherRepository
 from workflows_mcp.watcher.manager import WatcherManager
@@ -70,6 +75,16 @@ def build_resources(*, base_dir: Path) -> AppResources:
     metadata_db_conn.execute("PRAGMA busy_timeout = 5000")
     migrate_metadata_db(metadata_db_conn)
 
+    secret_provider = CompositeSecretProvider(
+        [
+            EnvVarSecretProvider(),
+            SQLiteSecretProvider(
+                db_path=metadata_db_path,
+                key_path=base_dir / "secrets.key",
+            ),
+        ]
+    )
+
     app_context = AppContext(
         registry=workflow_registry,
         executor_registry=executor_registry,
@@ -77,6 +92,9 @@ def build_resources(*, base_dir: Path) -> AppResources:
         io_queue=io_queue,
         job_queue=None,
         max_recursion_depth=max_recursion_depth,
+        metadata_base_dir=base_dir,
+        metadata_db_path=metadata_db_path,
+        secret_provider=secret_provider,
     )
 
     job_queue = (

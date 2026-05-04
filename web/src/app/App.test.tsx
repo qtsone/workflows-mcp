@@ -60,8 +60,57 @@ const renderAtPath = (path: string): void => {
   render(<App />);
 };
 
+const openNewProjectModal = async (): Promise<void> => {
+  fireEvent.click(await screen.findByRole("button", { name: /^new$/i }));
+  await screen.findByRole("heading", { name: /new project/i });
+};
+
+const openNewMcpClientModal = async (): Promise<void> => {
+  fireEvent.click(await screen.findByRole("button", { name: /^new$/i }));
+  await screen.findByRole("dialog", { name: /new mcp client/i });
+};
+
+const openMcpClientDetailModal = async (label = "ci-agent"): Promise<void> => {
+  const table = await screen.findByRole("table", { name: /registered mcp clients/i });
+  const row = within(table).getByRole("row", { name: new RegExp(`open mcp client ${label} details`, "i") });
+  fireEvent.click(row);
+  await screen.findByRole("dialog", { name: new RegExp(`mcp client ${label}`, "i") });
+};
+
+const buildLargeLlmConfig = (count: number): Record<string, unknown> => {
+  const providers: Record<string, Record<string, unknown>> = {};
+  const profiles: Record<string, Record<string, unknown>> = {};
+  for (let index = 1; index <= count; index += 1) {
+    const suffix = String(index).padStart(2, "0");
+    providers[`provider-${suffix}`] = {
+      type: "openai",
+      api_url: `https://api-${suffix}.example.test/v1`,
+      api_key_secret: `API_KEY_${suffix}`,
+      model: `model-${suffix}`,
+      timeout: 30,
+      max_retries: 2,
+      retry_delay: 1,
+      extra_headers: {},
+    };
+    profiles[`profile-${suffix}`] = {
+      provider: `provider-${suffix}`,
+      model: `model-${suffix}`,
+      temperature: 0.2,
+      max_tokens: 1000 + index,
+      description: `Profile ${suffix}`,
+    };
+  }
+  return {
+    version: "1.0",
+    providers,
+    profiles,
+    default_profile: "profile-01",
+  };
+};
+
 afterEach(() => {
   cleanup();
+  document.body.style.overflow = "";
   window.history.pushState({}, "", "/");
   vi.restoreAllMocks();
   FakeEventSource.instances = [];
@@ -87,7 +136,7 @@ const deferred = <T,>() => {
   return { promise, resolve, reject };
 };
 
-  const installApiMock = (
+const installApiMock = (
   {
     projectCount = 1,
     projects: customProjects,
@@ -96,13 +145,13 @@ const deferred = <T,>() => {
     mcpClients: customMcpClients,
     watchers: customWatchers,
     syncProjects: customSyncProjects,
+    syncLogs: customSyncLogs,
+    syncActionResponses: customSyncActionResponses,
     workflows: customWorkflows,
     workflowSources: customWorkflowSources,
     workflowSchema: customWorkflowSchema,
     workflowReloadStatus = 200,
     workflowReloadErrorMessage = "reload failed due to duplicate names",
-    workflowValidateStatus = 200,
-    workflowValidateErrorMessage = "validation failed due to invalid YAML",
     runs: customRuns,
     runDetailById: customRunDetailById,
     cancelRunStatus = 200,
@@ -113,6 +162,10 @@ const deferred = <T,>() => {
     filesystemErrorByPath,
     initialDatabaseSettings,
     llmConfig: initialLlmConfig,
+    secrets: customSecrets,
+    secretsListPromise,
+    secretsListStatus = 200,
+    secretsListErrorMessage = "Unable to list secrets",
   }: {
     projectCount?: number;
     projects?: Array<Record<string, unknown>>;
@@ -121,13 +174,13 @@ const deferred = <T,>() => {
     mcpClients?: Array<Record<string, unknown>>;
     watchers?: Array<Record<string, unknown>>;
     syncProjects?: Array<Record<string, unknown>>;
+    syncLogs?: Record<string, Array<Record<string, unknown>>>;
+    syncActionResponses?: Record<string, Record<string, unknown>>;
     workflows?: Array<Record<string, unknown>>;
     workflowSources?: Array<Record<string, unknown>>;
     workflowSchema?: Record<string, unknown>;
     workflowReloadStatus?: number;
     workflowReloadErrorMessage?: string;
-    workflowValidateStatus?: number;
-    workflowValidateErrorMessage?: string;
     runs?: Array<Record<string, unknown>>;
     runDetailById?: Record<string, Record<string, unknown>>;
     cancelRunStatus?: number;
@@ -138,6 +191,10 @@ const deferred = <T,>() => {
     filesystemErrorByPath?: Record<string, { status: number; body: Record<string, unknown> }>;
     initialDatabaseSettings?: Record<string, unknown>;
     llmConfig?: Record<string, unknown>;
+    secrets?: Array<Record<string, unknown>>;
+    secretsListPromise?: Promise<Response>;
+    secretsListStatus?: number;
+    secretsListErrorMessage?: string;
   } = {},
 ) => {
   const projects: Array<Record<string, unknown>> =
@@ -160,6 +217,10 @@ const deferred = <T,>() => {
     [{ project_id: "p1", state: "enabled", dirty_count: 2, requires_reconciliation: true, last_event_at: null, updated_at: "2026-04-30T00:00:00Z" }];
   const syncProjects: Array<Record<string, unknown>> =
     customSyncProjects ?? [{ project_id: "p1", dirty_count: 2, requires_reconciliation: true }];
+  const syncLogsByProjectId: Record<string, Array<Record<string, unknown>>> = customSyncLogs
+    ? { ...customSyncLogs }
+    : {};
+  const syncActionResponses = customSyncActionResponses ?? {};
   const workflows: Array<Record<string, unknown>> =
     customWorkflows ??
     [
@@ -194,24 +255,43 @@ const deferred = <T,>() => {
         run_id: "run-1",
         job_id: "job-1",
         workflow_name: "python-ci-pipeline",
-        status: "paused",
+        status: "failed",
+        execution_mode: "sync",
         created_at: "2026-04-30T00:00:00Z",
         started_at: "2026-04-30T00:01:00Z",
-        finished_at: null,
+        finished_at: "2026-04-30T00:01:02Z",
         updated_at: "2026-04-30T00:02:00Z",
-        cancellable: true,
+        duration_ms: 2200,
+        cancellable: false,
         project_id: "p1",
         token_id: "t1",
       },
       {
         run_id: "run-2",
         job_id: "job-2",
-        workflow_name: "node-ci-pipeline",
-        status: "completed",
+        workflow_name: "deploy-gate",
+        status: "paused",
+        execution_mode: "async",
         created_at: "2026-04-30T01:00:00Z",
         started_at: "2026-04-30T01:01:00Z",
-        finished_at: "2026-04-30T01:04:00Z",
-        updated_at: "2026-04-30T01:04:00Z",
+        finished_at: null,
+        updated_at: "2026-04-30T01:02:00Z",
+        duration_ms: null,
+        cancellable: true,
+        project_id: "p1",
+        token_id: "t1",
+      },
+      {
+        run_id: "run-3",
+        job_id: "job-3",
+        workflow_name: "node-ci-pipeline",
+        status: "completed",
+        execution_mode: "async",
+        created_at: "2026-04-30T02:00:00Z",
+        started_at: "2026-04-30T02:01:00Z",
+        finished_at: "2026-04-30T02:04:00Z",
+        updated_at: "2026-04-30T02:04:00Z",
+        duration_ms: 180000,
         cancellable: false,
         project_id: null,
         token_id: null,
@@ -223,17 +303,98 @@ const deferred = <T,>() => {
         run_id: "run-1",
         job_id: "job-1",
         workflow_name: "python-ci-pipeline",
-        status: "paused",
+        status: "failed",
+        execution_mode: "sync",
         created_at: "2026-04-30T00:00:00Z",
         started_at: "2026-04-30T00:01:00Z",
-        finished_at: null,
+        finished_at: "2026-04-30T00:01:02Z",
         updated_at: "2026-04-30T00:02:00Z",
+        duration_ms: 2200,
+        cancellable: false,
+        project_id: "p1",
+        token_id: "t1",
+        result_summary: "Workflow failed: missing input required_param",
+        error_summary: "required_param is required",
+        inputs: { project_path: "/workspace/app" },
+        outputs: null,
+        error: "required_param is required",
+        metadata: { workflow_name: "python-ci-pipeline", execution_time_seconds: 2.2 },
+        blocks: [
+          {
+            block_id: "validate_inputs",
+            block_type: "Input",
+            status: "failed",
+            outcome: "failure",
+            duration_ms: 18,
+            message: "required_param is required",
+            inputs: { project_path: "/workspace/app" },
+            outputs: {},
+            metadata: { field: "required_param" },
+          },
+        ],
+        technical_json: {
+          status: "failure",
+          inputs: { project_path: "/workspace/app" },
+          error: "required_param is required",
+          metadata: { workflow_name: "python-ci-pipeline", execution_time_seconds: 2.2 },
+          blocks: [
+            {
+              block_id: "validate_inputs",
+              block_type: "Input",
+              status: "failed",
+              outcome: "failure",
+              duration_ms: 18,
+              message: "required_param is required",
+            },
+          ],
+        },
+      },
+      "run-2": {
+        run_id: "run-2",
+        job_id: "job-2",
+        workflow_name: "deploy-gate",
+        status: "paused",
+        execution_mode: "async",
+        created_at: "2026-04-30T01:00:00Z",
+        started_at: "2026-04-30T01:01:00Z",
+        finished_at: null,
+        updated_at: "2026-04-30T01:02:00Z",
+        duration_ms: null,
         cancellable: true,
         project_id: "p1",
         token_id: "t1",
         result_summary: "Awaiting user input",
         error_summary: null,
-        metadata: { prompt: "Approve deployment?", gate: "prod" },
+        inputs: { environment: "prod" },
+        outputs: null,
+        error: null,
+        metadata: { workflow_name: "deploy-gate", prompt: "Approve deployment?" },
+        blocks: [
+          {
+            block_id: "approval_gate",
+            block_type: "Prompt",
+            status: "paused",
+            outcome: "n/a",
+            duration_ms: null,
+            message: "Approve deployment?",
+            inputs: { environment: "prod" },
+            outputs: {},
+            metadata: { gate: "prod" },
+          },
+        ],
+        technical_json: {
+          status: "paused",
+          inputs: { environment: "prod" },
+          metadata: { workflow_name: "deploy-gate", prompt: "Approve deployment?" },
+          blocks: [
+            {
+              block_id: "approval_gate",
+              block_type: "Prompt",
+              status: "paused",
+              message: "Approve deployment?",
+            },
+          ],
+        },
       },
     };
   const pathEntriesListingByPath: Record<string, Record<string, unknown>> = filesystemListingByPath ?? {};
@@ -262,6 +423,16 @@ const deferred = <T,>() => {
     profiles: {},
     default_profile: null,
   };
+  const secrets: Array<Record<string, unknown>> = customSecrets
+    ? [...customSecrets]
+    : [
+        {
+          name: "OPENAI_API_KEY",
+          key_id: "openai-prod",
+          created_at: "2026-04-30T00:00:00Z",
+          updated_at: "2026-04-30T01:00:00Z",
+        },
+      ];
 
   const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
     const method = (init?.method ?? "GET").toUpperCase();
@@ -344,6 +515,41 @@ const deferred = <T,>() => {
       };
       return jsonResponse(llmConfig);
     }
+    if (url.endsWith("/api/admin/v1/secrets") && method === "GET") {
+      if (secretsListPromise) {
+        return secretsListPromise;
+      }
+      if (secretsListStatus >= 400) {
+        return jsonResponse({ message: secretsListErrorMessage }, secretsListStatus);
+      }
+      return jsonResponse({ secrets });
+    }
+    if (url.endsWith("/api/admin/v1/secrets") && method === "POST") {
+      const payload = JSON.parse(String(init?.body ?? "{}")) as Record<string, unknown>;
+      const name = String(payload.name ?? "");
+      const index = secrets.findIndex((secret) => secret.name === name);
+      const saved = {
+        name,
+        key_id: typeof payload.key_id === "string" && payload.key_id.trim().length > 0 ? payload.key_id : null,
+        created_at: index >= 0 ? secrets[index].created_at : "2026-04-30T02:00:00Z",
+        updated_at: "2026-04-30T02:00:00Z",
+      };
+      if (index >= 0) {
+        secrets[index] = saved;
+      } else {
+        secrets.push(saved);
+      }
+      return jsonResponse(saved);
+    }
+    if (/\/api\/admin\/v1\/secrets\/[^/]+$/.test(url) && method === "DELETE") {
+      const secretName = decodeURIComponent(url.split("/").pop() ?? "");
+      const index = secrets.findIndex((secret) => secret.name === secretName);
+      if (index < 0) {
+        return jsonResponse({ message: "Secret not found" }, 404);
+      }
+      secrets.splice(index, 1);
+      return jsonResponse({ deleted: true });
+    }
     if (url.endsWith("/api/admin/v1/projects") && method === "GET") {
       return jsonResponse({ projects });
     }
@@ -374,6 +580,27 @@ const deferred = <T,>() => {
       };
       projects.push(created);
       return jsonResponse(created, 201);
+    }
+    if (url.includes("/api/admin/v1/projects/") && method === "PATCH") {
+      const projectId = url.split("/").pop() ?? "";
+      const index = projects.findIndex((project) => project.id === projectId);
+      if (index < 0) {
+        return jsonResponse({ message: "Project not found" }, 404);
+      }
+      const payload = JSON.parse(String(init?.body ?? "{}")) as Record<string, unknown>;
+      const updated = {
+        ...projects[index],
+        name: typeof payload.name === "string" ? payload.name : projects[index].name,
+        slug: typeof payload.slug === "string" ? payload.slug : projects[index].slug,
+        palace: typeof payload.palace === "string" ? payload.palace : projects[index].palace,
+        default_wing: typeof payload.default_wing === "string" ? payload.default_wing : projects[index].default_wing,
+        default_room: typeof payload.default_room === "string" ? payload.default_room : projects[index].default_room,
+        fs_root: typeof payload.fs_root === "string" ? payload.fs_root : projects[index].fs_root,
+        fs_allowlist: Array.isArray(payload.fs_allowlist) ? payload.fs_allowlist : projects[index].fs_allowlist,
+        updated_at: "2026-04-30T00:00:01Z",
+      };
+      projects[index] = updated;
+      return jsonResponse(updated);
     }
     if (url.includes("/api/admin/v1/projects/") && method === "DELETE") {
       const projectId = url.split("/").pop() ?? "";
@@ -417,25 +644,74 @@ const deferred = <T,>() => {
     if (url.endsWith("/api/admin/v1/sync") && method === "GET") {
       return jsonResponse({ projects: syncProjects });
     }
+    if (/\/api\/admin\/v1\/sync\/[^/]+\/logs(?:\?|$)/.test(url) && method === "GET") {
+      const projectId = url.split("?")[0].split("/").at(-2) ?? "";
+      return jsonResponse({ project_id: projectId, entries: syncLogsByProjectId[projectId] ?? [] });
+    }
     if (/\/api\/admin\/v1\/sync\/[^/]+\/now$/.test(url) && method === "POST") {
       const projectId = url.split("/").at(-2) ?? "";
+      const configuredResponse = syncActionResponses[`${projectId}:now`];
+      if (configuredResponse) return jsonResponse(configuredResponse);
       const target = syncProjects.find((project) => project.project_id === projectId);
       if (!target) return jsonResponse({ message: "Project not found" }, 404);
       target.dirty_count = Number(target.dirty_count ?? 0) + 1;
+      const logs = syncLogsByProjectId[projectId] ?? [];
+      logs.unshift({
+        id: logs.length + 1,
+        project_id: projectId,
+        path: ".",
+        event_type: "manual_sync",
+        reason: "manual_sync_now",
+        status: "queued",
+        enqueued_at: "2026-04-30T00:20:00Z",
+        updated_at: "2026-04-30T00:20:00Z",
+        processed_at: null,
+      });
+      syncLogsByProjectId[projectId] = logs;
       return jsonResponse({ project_id: projectId, status: "queued", dirty_count: target.dirty_count });
     }
     if (/\/api\/admin\/v1\/sync\/[^/]+\/reconcile$/.test(url) && method === "POST") {
       const projectId = url.split("/").at(-2) ?? "";
+      const configuredResponse = syncActionResponses[`${projectId}:reconcile`];
+      if (configuredResponse) return jsonResponse(configuredResponse);
       const target = syncProjects.find((project) => project.project_id === projectId);
       if (!target) return jsonResponse({ message: "Project not found" }, 404);
       target.requires_reconciliation = true;
+      const logs = syncLogsByProjectId[projectId] ?? [];
+      logs.unshift({
+        id: logs.length + 1,
+        project_id: projectId,
+        path: ".",
+        event_type: "reconcile",
+        reason: "reconciliation_required:manual_reconcile",
+        status: "queued",
+        enqueued_at: "2026-04-30T00:21:00Z",
+        updated_at: "2026-04-30T00:21:00Z",
+        processed_at: null,
+      });
+      syncLogsByProjectId[projectId] = logs;
       return jsonResponse({ project_id: projectId, dirty_count: target.dirty_count, requires_reconciliation: true });
     }
     if (/\/api\/admin\/v1\/sync\/[^/]+\/rebuild$/.test(url) && method === "POST") {
       const projectId = url.split("/").at(-2) ?? "";
+      const configuredResponse = syncActionResponses[`${projectId}:rebuild`];
+      if (configuredResponse) return jsonResponse(configuredResponse);
       const target = syncProjects.find((project) => project.project_id === projectId);
       if (!target) return jsonResponse({ message: "Project not found" }, 404);
       target.requires_reconciliation = true;
+      const logs = syncLogsByProjectId[projectId] ?? [];
+      logs.unshift({
+        id: logs.length + 1,
+        project_id: projectId,
+        path: ".",
+        event_type: "rebuild",
+        reason: "reconciliation_required:manual_rebuild",
+        status: "queued",
+        enqueued_at: "2026-04-30T00:22:00Z",
+        updated_at: "2026-04-30T00:22:00Z",
+        processed_at: null,
+      });
+      syncLogsByProjectId[projectId] = logs;
       return jsonResponse({ project_id: projectId, dirty_count: target.dirty_count, requires_reconciliation: true });
     }
     if (url.endsWith("/api/events/v1/sync/state") && method === "GET") {
@@ -463,13 +739,33 @@ const deferred = <T,>() => {
         ...createMcpClientResponse,
       }, 201);
     }
-    if (url.includes("/api/admin/v1/mcp-clients/") && method === "DELETE") {
+    if (url.includes("/api/admin/v1/mcp-clients/") && method === "PATCH") {
       const tokenId = url.split("/").pop() ?? "";
+      const existing = mcpClients.find((client) => client.id === tokenId);
+      if (!existing) {
+        return jsonResponse({ message: "Token not found" }, 404);
+      }
+      const payload = JSON.parse(String(init?.body ?? "{}")) as Record<string, unknown>;
+      existing.project_ids = Array.isArray(payload.project_ids) ? payload.project_ids : [];
+      return jsonResponse(existing);
+    }
+    if (url.includes("/api/admin/v1/mcp-clients/") && url.endsWith("/registration") && method === "DELETE") {
+      const parts = url.split("/");
+      const tokenId = parts[parts.length - 2] ?? "";
       const index = mcpClients.findIndex((client) => client.id === tokenId);
       if (index < 0) {
         return jsonResponse({ message: "Token not found" }, 404);
       }
       mcpClients.splice(index, 1);
+      return jsonResponse({ deleted: true });
+    }
+    if (url.includes("/api/admin/v1/mcp-clients/") && method === "DELETE") {
+      const tokenId = url.split("/").pop() ?? "";
+      const existing = mcpClients.find((client) => client.id === tokenId);
+      if (!existing) {
+        return jsonResponse({ message: "Token not found" }, 404);
+      }
+      existing.revoked_at = "2026-04-30T00:10:00Z";
       return jsonResponse({ revoked: true });
     }
     if (url.includes("/api/admin/v1/mcp-clients/") && url.endsWith("/regenerate") && method === "POST") {
@@ -516,12 +812,6 @@ const deferred = <T,>() => {
       workflowSources.splice(index, 1);
       return jsonResponse({ deleted: true });
     }
-    if (/\/api\/admin\/v1\/workflows\/sources\/[^/]+\/validate$/.test(url) && method === "POST") {
-      if (workflowValidateStatus !== 200) {
-        return jsonResponse({ message: workflowValidateErrorMessage }, workflowValidateStatus);
-      }
-      return jsonResponse({ valid: true, workflow_names: ["python-ci-pipeline"], total: 1 });
-    }
     if (url.endsWith("/api/admin/v1/workflows/schema") && method === "GET") {
       return jsonResponse(workflowSchema);
     }
@@ -533,6 +823,9 @@ const deferred = <T,>() => {
       }
       return jsonResponse({
         ...found,
+        yaml_path: `${String(found.source_path ?? "/workspace/workflows")}`,
+        raw_yaml: `name: ${workflowName}\ndescription: ${String(found.description ?? "")}\nblocks:\n  - id: lint\n    type: Shell\n`,
+        load_logs: [`Loaded from ${String(found.source_path ?? "/workspace/workflows")}`],
         blocks: [{ id: "lint", type: "Shell" }],
       });
     }
@@ -548,11 +841,20 @@ const deferred = <T,>() => {
 
       const parsed = new URL(url, "http://localhost");
       const status = parsed.searchParams.get("status");
+      const mode = parsed.searchParams.get("mode");
+      const workflow = parsed.searchParams.get("workflow");
+      const projectId = parsed.searchParams.get("project_id");
       const limit = Number(parsed.searchParams.get("limit") ?? "50");
       const offset = Number(parsed.searchParams.get("offset") ?? "0");
-      const filtered = status ? runs.filter((run) => run.status === status) : runs;
+      const filtered = runs.filter((run) => {
+        if (status && run.status !== status) return false;
+        if (mode && run.execution_mode !== mode) return false;
+        if (workflow && run.workflow_name !== workflow) return false;
+        if (projectId && run.project_id !== projectId) return false;
+        return true;
+      });
       const paged = filtered.slice(offset, offset + limit);
-      return jsonResponse({ runs: paged });
+      return jsonResponse({ runs: paged, total: filtered.length, limit, offset });
     }
     if (/\/api\/admin\/v1\/runs\/[^/]+\/cancel$/.test(url) && method === "POST") {
       if (cancelRunStatus !== 200) {
@@ -659,37 +961,48 @@ describe("App", () => {
     });
   });
 
-  it("renders workflows and sources, and supports add/validate/delete/reload operations", async () => {
+  it("renders workflows and sources, and supports add/delete/reload operations", async () => {
     const fetchMock = installApiMock();
     renderAtPath("/workflows");
 
-    await waitFor(() => {
-      expect(screen.getByText(/python-ci-pipeline/i)).toBeTruthy();
-      expect(screen.getByText(/runs lint and test checks/i)).toBeTruthy();
-      expect(screen.getByText(/version: 1.2.0/i)).toBeTruthy();
-      expect(screen.getByText(/tags: python, ci/i)).toBeTruthy();
-      expect(screen.getByText(/project: p1/i)).toBeTruthy();
-      expect(screen.getByText("Source path: /workspace/workflows/python-ci.yaml")).toBeTruthy();
-      expect(screen.getByText("Path: /workspace/workflows")).toBeTruthy();
-      expect(screen.getByRole("button", { name: /load schema/i })).toBeTruthy();
-      expect(screen.getByRole("button", { name: /reload workflows/i })).toBeTruthy();
-    });
+    const sourceTable = await screen.findByRole("table", { name: /workflow sources/i });
+    expect(within(sourceTable).getByRole("row", { name: /expand workflow source \/workspace\/workflows/i })).toBeTruthy();
+    expect(screen.getByRole("button", { name: /^new$/i })).toBeTruthy();
+    expect(screen.getByRole("button", { name: /load schema/i })).toBeTruthy();
+    expect(screen.getByRole("button", { name: /reload workflows/i })).toBeTruthy();
 
-    fireEvent.change(screen.getByLabelText(/^project$/i, { selector: "select" }), { target: { value: "p1" } });
-    fireEvent.change(screen.getByLabelText(/source path/i), { target: { value: "/workspace/more-workflows" } });
-    fireEvent.click(screen.getByRole("button", { name: /add workflow source/i }));
+    fireEvent.click(within(sourceTable).getByRole("button", { name: /expand workflow source \/workspace\/workflows/i }));
+    const loadedWorkflows = await screen.findByRole("table", { name: /workflows loaded from \/workspace\/workflows/i });
+    expect(within(loadedWorkflows).getByRole("row", { name: /open workflow python-ci-pipeline details/i })).toBeTruthy();
+    expect(within(loadedWorkflows).getByText("1.2.0")).toBeTruthy();
+    expect(within(loadedWorkflows).getByText("python, ci")).toBeTruthy();
+
+    fireEvent.click(within(loadedWorkflows).getByRole("row", { name: /open workflow python-ci-pipeline details/i }));
+    const detailDialog = await screen.findByRole("dialog", { name: /workflow python-ci-pipeline/i });
+    expect(within(detailDialog).getByRole("region", { name: /workflow yaml/i })).toBeTruthy();
+    expect(detailDialog.querySelector(".workflow-yaml-viewer")).toBeTruthy();
+    expect(detailDialog.querySelector(".yaml-token--key")).toBeTruthy();
+    expect(within(detailDialog).queryByText(/technical json/i)).toBeNull();
+    fireEvent.click(within(detailDialog).getByRole("button", { name: /close dialog/i }));
+
+    fireEvent.click(screen.getByRole("button", { name: /^new$/i }));
+    const sourceDialog = await screen.findByRole("dialog", { name: /new workflow source/i });
+    fireEvent.change(within(sourceDialog).getByLabelText(/^project$/i, { selector: "select" }), { target: { value: "p1" } });
+    fireEvent.change(within(sourceDialog).getByLabelText(/^source path$/i, { selector: "input" }), {
+      target: { value: "/workspace/more-workflows" },
+    });
+    fireEvent.click(within(sourceDialog).getByRole("button", { name: /add workflow source/i }));
 
     await waitFor(() => {
       expect(screen.getByText(/workflow source added for project p1/i)).toBeTruthy();
-      expect(screen.getByText(/path: \/workspace\/more-workflows/i)).toBeTruthy();
+      expect(screen.getByRole("row", { name: /expand workflow source \/workspace\/more-workflows/i })).toBeTruthy();
+      expect(screen.queryByRole("dialog", { name: /new workflow source/i })).toBeNull();
     });
 
-    fireEvent.click(screen.getByRole("button", { name: /validate src-1/i }));
-    await waitFor(() => {
-      expect(screen.getByText(/validation passed for src-1/i)).toBeTruthy();
+    const sourceRowForDelete = within(sourceTable).getByRole("row", {
+      name: /expand workflow source \/workspace\/workflows/i,
     });
-
-    fireEvent.click(screen.getByRole("button", { name: /delete src-1/i }));
+    fireEvent.click(within(sourceRowForDelete).getByRole("button", { name: /^delete$/i }));
     await waitFor(() => {
       expect(screen.getByText(/source src-1 deleted/i)).toBeTruthy();
     });
@@ -698,12 +1011,6 @@ describe("App", () => {
     await waitFor(() => {
       expect(screen.getByText(/workflow schema loaded/i)).toBeTruthy();
       expect(screen.getByText(/workflowschema/i)).toBeTruthy();
-    });
-
-    fireEvent.click(screen.getByRole("button", { name: /view details/i }));
-    await waitFor(() => {
-      expect(screen.getByText(/workflow details for python-ci-pipeline/i)).toBeTruthy();
-      expect(screen.getByText(/"id": "lint"/i)).toBeTruthy();
     });
 
     fireEvent.click(screen.getByRole("button", { name: /reload workflows/i }));
@@ -725,6 +1032,94 @@ describe("App", () => {
     });
   });
 
+  it("renders workflow sources as expandable tables and opens workflow detail modals", async () => {
+    installApiMock({
+      workflows: [
+        {
+          name: "python-ci-pipeline",
+          description: "Runs lint and test checks",
+          version: "1.2.0",
+          tags: ["python", "ci"],
+          source_path: "/workspace/workflows/python-ci.yaml",
+        },
+        {
+          name: "node-ci-pipeline",
+          description: "Runs node checks",
+          version: "2.0.0",
+          tags: ["node"],
+          source_path: "/workspace/node-workflows",
+        },
+      ],
+      workflowSources: [
+        {
+          source_id: "src-1",
+          project_id: "p1",
+          source_path: "/workspace/workflows",
+          checksum: null,
+          discovered_at: "2026-04-30T00:00:00Z",
+          last_loaded_at: "2026-04-30T00:10:00Z",
+          status: "loaded",
+          error_message: null,
+        },
+        {
+          source_id: "src-2",
+          project_id: "p1",
+          source_path: "/workspace/node-workflows",
+          checksum: null,
+          discovered_at: "2026-04-30T00:00:00Z",
+          last_loaded_at: null,
+          status: "failed",
+          error_message: "Invalid workflow definition at node.yaml",
+        },
+      ],
+    });
+
+    renderAtPath("/workflows");
+
+    const sourceTable = await screen.findByRole("table", { name: /workflow sources/i });
+    expect(within(sourceTable).getByRole("columnheader", { name: /^source$/i })).toBeTruthy();
+    expect(within(sourceTable).getByRole("columnheader", { name: /^registry state$/i })).toBeTruthy();
+    expect(within(sourceTable).getByRole("columnheader", { name: /^actions$/i })).toBeTruthy();
+    expect(within(sourceTable).queryByRole("columnheader", { name: /^project$/i })).toBeNull();
+    expect(within(sourceTable).queryByRole("columnheader", { name: /^workflows$/i })).toBeNull();
+
+    const sourceRow = within(sourceTable).getByRole("row", {
+      name: /expand workflow source \/workspace\/workflows status loaded workflows 1/i,
+    });
+    const expandButton = within(sourceRow).getByRole("button", { name: /expand workflow source \/workspace\/workflows/i });
+    expect(expandButton.getAttribute("aria-expanded")).toBe("false");
+
+    fireEvent.click(expandButton);
+    expect(expandButton.getAttribute("aria-expanded")).toBe("true");
+    expect(screen.queryByText(/^Source src-1$/i)).toBeNull();
+    expect(screen.queryByText(/^Project p1$/i)).toBeNull();
+    expect(screen.queryByText(/Discovered 2026-04-30/i)).toBeNull();
+    expect(screen.queryByRole("button", { name: /validate src-1/i })).toBeNull();
+    expect(within(sourceRow).getByRole("button", { name: /^delete$/i })).toBeTruthy();
+
+    const workflowsTable = await screen.findByRole("table", { name: /workflows loaded from \/workspace\/workflows/i });
+    const workflowRow = within(workflowsTable).getByRole("row", {
+      name: /open workflow python-ci-pipeline details 1.2.0 python, ci/i,
+    });
+    expect(workflowRow.getAttribute("aria-haspopup")).toBe("dialog");
+
+    fireEvent.click(workflowRow);
+
+    const dialog = await screen.findByRole("dialog", { name: /workflow python-ci-pipeline/i });
+    expect(within(dialog).getByRole("heading", { name: /workflow python-ci-pipeline/i })).toBeTruthy();
+    expect(within(dialog).queryByText(/^Status$/i)).toBeNull();
+    expect(within(dialog).queryByText(/^Loaded$/i)).toBeNull();
+    expect(within(dialog).queryByText(/^Tags$/i)).toBeNull();
+    expect(within(dialog).queryByText(/technical json/i)).toBeNull();
+    const yamlRegion = within(dialog).getByRole("region", { name: /workflow yaml/i });
+    expect(within(yamlRegion).getByText("YAML")).toBeTruthy();
+    expect(yamlRegion.querySelector(".workflow-yaml-viewer")).toBeTruthy();
+    expect(yamlRegion.textContent).toContain("name: python-ci-pipeline");
+    const logRegion = within(dialog).getByRole("region", { name: /workflow load logs/i });
+    expect(within(logRegion).getByText("Load logs")).toBeTruthy();
+    expect(within(logRegion).getByText(/loaded from \/workspace\/workflows\/python-ci.yaml/i)).toBeTruthy();
+  });
+
   it("uses registered projects when adding workflow sources", async () => {
     const fetchMock = installApiMock({
       projects: [
@@ -735,22 +1130,33 @@ describe("App", () => {
     renderAtPath("/workflows");
 
     await waitFor(() => {
-      expect(screen.getByLabelText(/^project$/i, { selector: "select" })).toBeTruthy();
+      expect(screen.getByRole("button", { name: /^new$/i })).toBeTruthy();
     });
 
-    fireEvent.change(screen.getByLabelText(/^project$/i, { selector: "select" }), { target: { value: "p2" } });
-    fireEvent.change(screen.getByLabelText(/source path/i), { target: { value: "/workspace/docs-workflows" } });
-    fireEvent.click(screen.getByRole("button", { name: /add workflow source/i }));
+    fireEvent.click(screen.getByRole("button", { name: /^new$/i }));
+    const sourceDialog = await screen.findByRole("dialog", { name: /new workflow source/i });
+    fireEvent.change(within(sourceDialog).getByLabelText(/^project$/i, { selector: "select" }), { target: { value: "p2" } });
+    fireEvent.change(within(sourceDialog).getByLabelText(/^source path$/i, { selector: "input" }), {
+      target: { value: "/workspace/docs-workflows" },
+    });
+    fireEvent.click(within(sourceDialog).getByRole("button", { name: /add workflow source/i }));
 
     await waitFor(() => {
-      const createCall = fetchMock.mock.calls.find((call) => {
+      const createCallIndex = fetchMock.mock.calls.findIndex((call) => {
         const url = String(call[0]);
         const init = call[1] as RequestInit | undefined;
         return url.includes("/api/admin/v1/workflows/sources") && init?.method === "POST";
       });
-      expect(createCall).toBeTruthy();
+      expect(createCallIndex).toBeGreaterThanOrEqual(0);
+      const createCall = fetchMock.mock.calls[createCallIndex];
       const body = JSON.parse(String((createCall?.[1] as RequestInit | undefined)?.body ?? "{}")) as Record<string, unknown>;
       expect(body.project_id).toBe("p2");
+      const reloadCallIndex = fetchMock.mock.calls.findIndex((call, index) => {
+        const url = String(call[0]);
+        const init = call[1] as RequestInit | undefined;
+        return index > createCallIndex && url.includes("/api/admin/v1/workflows/reload") && init?.method === "POST";
+      });
+      expect(reloadCallIndex).toBeGreaterThan(createCallIndex);
     });
   });
 
@@ -763,26 +1169,15 @@ describe("App", () => {
     });
 
     expect(screen.getByRole("link", { name: /create a project first/i }).getAttribute("href")).toBe("/projects");
-    expect(screen.getByText(/once a project exists, add a workflow source path below/i)).toBeTruthy();
+    expect(screen.getByText(/once a project exists, use new to add a workflow source path/i)).toBeTruthy();
   });
 
-  it("shows readable errors for validate and reload failures", async () => {
+  it("shows readable errors for reload failures", async () => {
     installApiMock({
       workflowReloadStatus: 422,
       workflowReloadErrorMessage: "workflow reload failed because duplicate workflow names were detected",
-      workflowValidateStatus: 422,
-      workflowValidateErrorMessage: "source validation failed: invalid definition",
     });
     renderAtPath("/workflows");
-
-    await waitFor(() => {
-      expect(screen.getByRole("button", { name: /validate src-1/i })).toBeTruthy();
-    });
-
-    fireEvent.click(screen.getByRole("button", { name: /validate src-1/i }));
-    await waitFor(() => {
-      expect(screen.getByText(/unable to validate source src-1: source validation failed: invalid definition/i)).toBeTruthy();
-    });
 
     fireEvent.click(screen.getByRole("button", { name: /reload workflows/i }));
     await waitFor(() => {
@@ -852,6 +1247,163 @@ describe("App", () => {
     expect(screen.getAllByText(/^no$/i).length).toBeGreaterThan(1);
   });
 
+  it("shows loading, empty, and error states for secrets", async () => {
+    const listDeferred = deferred<Response>();
+    installApiMock({ secretsListPromise: listDeferred.promise });
+    renderAtPath("/secrets");
+
+    expect(await screen.findByRole("status", { name: /loading secrets/i })).toBeTruthy();
+
+    listDeferred.resolve(jsonResponse({ secrets: [] }));
+    expect(await screen.findByText(/no secrets configured/i)).toBeTruthy();
+    expect(screen.queryByText(/follow-up slice/i)).toBeNull();
+
+    cleanup();
+    installApiMock({ secrets: [], secretsListStatus: 500, secretsListErrorMessage: "vault unavailable" });
+    renderAtPath("/secrets");
+
+    expect((await screen.findByRole("alert")).textContent).toMatch(/vault unavailable/i);
+  });
+
+  it("loads secrets metadata with key-id fallback and accessible row activation", async () => {
+    installApiMock({
+      secrets: [
+        {
+          name: "OPENAI_API_KEY",
+          key_id: "openai-prod",
+          created_at: "2026-04-30T00:00:00Z",
+          updated_at: "2026-04-30T01:00:00Z",
+        },
+        {
+          name: "STRIPE_WEBHOOK_SECRET",
+          key_id: null,
+          created_at: "2026-04-29T00:00:00Z",
+          updated_at: "2026-04-29T00:00:00Z",
+        },
+      ],
+    });
+    renderAtPath("/secrets");
+
+    expect(await screen.findByRole("heading", { name: /secret configuration/i })).toBeTruthy();
+    expect(screen.queryByText(/secrets admin controls are available/i)).toBeNull();
+    expect(screen.getByText(/secrets: 2/i)).toBeTruthy();
+
+    const table = screen.getByRole("table", { name: /configured secrets/i });
+    expect(within(table).getByRole("columnheader", { name: /^name$/i })).toBeTruthy();
+    expect(within(table).getByRole("columnheader", { name: /key id/i })).toBeTruthy();
+    expect(within(table).getByRole("columnheader", { name: /created/i })).toBeTruthy();
+    expect(within(table).getByRole("columnheader", { name: /updated/i })).toBeTruthy();
+    expect(within(table).getByRole("row", {
+      name: /open secret openai_api_key configuration/i,
+      description: /opens the secret configuration dialog/i,
+    })).toBeTruthy();
+    expect(screen.getByRole("button", { name: /^new$/i })).toBeTruthy();
+    expect(screen.getByRole("button", { name: /^reload$/i })).toBeTruthy();
+    expect(within(table).getByText("openai-prod")).toBeTruthy();
+    expect(within(table).getByText("Server default")).toBeTruthy();
+    expect(screen.queryByRole("region", { name: /manage secret/i })).toBeNull();
+    expect(screen.queryByLabelText(/^secret value$/i)).toBeNull();
+
+    const fallbackRow = within(table).getByRole("row", { name: /open secret stripe_webhook_secret configuration/i });
+    fallbackRow.focus();
+    expect(document.activeElement).toBe(fallbackRow);
+    fireEvent.keyDown(fallbackRow, { key: "Enter" });
+
+    const dialog = await screen.findByRole("dialog", { name: /secret stripe_webhook_secret/i });
+    expect((within(dialog).getByLabelText(/^secret name$/i) as HTMLInputElement).value).toBe("STRIPE_WEBHOOK_SECRET");
+    const valueInput = within(dialog).getByLabelText(/^secret value$/i) as HTMLInputElement;
+    expect(valueInput.type).toBe("password");
+    expect(valueInput.value).toBe("");
+    expect(within(dialog).getByRole("button", { name: /save secret/i })).toBeTruthy();
+    expect(screen.queryByDisplayValue("sk-test-secret")).toBeNull();
+  });
+
+  it("upserts secrets through the API and clears the secret value after save", async () => {
+    const fetchMock = installApiMock({ secrets: [] });
+    renderAtPath("/secrets");
+
+    await screen.findByRole("heading", { name: /secret configuration/i });
+    fireEvent.click(screen.getByRole("button", { name: /^new$/i }));
+    const dialog = await screen.findByRole("dialog", { name: /new secret/i });
+    fireEvent.change(within(dialog).getByLabelText(/^secret name$/i), { target: { value: "STRIPE_API_KEY" } });
+    fireEvent.change(within(dialog).getByLabelText(/^secret value$/i), { target: { value: "sk-test-secret" } });
+    fireEvent.change(within(dialog).getByLabelText(/^key id$/i), { target: { value: "stripe-test" } });
+    fireEvent.click(within(dialog).getByRole("button", { name: /register secret/i }));
+
+    expect((await screen.findByRole("status", { name: /secret save status/i })).textContent).toMatch(
+      /secret stripe_api_key saved/i,
+    );
+    await waitFor(() => expect(screen.queryByRole("dialog", { name: /new secret/i })).toBeNull());
+    expect(screen.queryByDisplayValue("sk-test-secret")).toBeNull();
+
+    const saveCall = fetchMock.mock.calls.find((call) => {
+      const url = String(call[0]);
+      const init = call[1] as RequestInit | undefined;
+      return url.includes("/api/admin/v1/secrets") && init?.method === "POST";
+    });
+    expect(saveCall).toBeTruthy();
+    const headers = new Headers((saveCall?.[1] as RequestInit | undefined)?.headers);
+    expect(headers.get("X-CSRF-Token")).toBe("csrf-test-token");
+    const payload = JSON.parse(String((saveCall?.[1] as RequestInit | undefined)?.body ?? "{}")) as Record<string, unknown>;
+    expect(payload).toEqual({ name: "STRIPE_API_KEY", value: "sk-test-secret", key_id: "stripe-test" });
+  });
+
+  it("blocks invalid secret names before posting to the API", async () => {
+    const fetchMock = installApiMock({ secrets: [] });
+    renderAtPath("/secrets");
+
+    await screen.findByRole("heading", { name: /secret configuration/i });
+    fireEvent.click(screen.getByRole("button", { name: /^new$/i }));
+    const dialog = await screen.findByRole("dialog", { name: /new secret/i });
+
+    for (const invalidName of ["1INVALID", "BAD-NAME"]) {
+      fireEvent.change(within(dialog).getByLabelText(/^secret name$/i), { target: { value: invalidName } });
+      fireEvent.change(within(dialog).getByLabelText(/^secret value$/i), { target: { value: "sk-test-secret" } });
+      fireEvent.click(within(dialog).getByRole("button", { name: /register secret/i }));
+
+      expect((await within(dialog).findByRole("alert")).textContent).toMatch(
+        /secret name must start with a letter or underscore and use only letters, numbers, or underscores/i,
+      );
+      await waitFor(() => {
+        const saveCalls = fetchMock.mock.calls.filter((call) => {
+          const url = String(call[0]);
+          const init = call[1] as RequestInit | undefined;
+          return url.includes("/api/admin/v1/secrets") && init?.method === "POST";
+        });
+        expect(saveCalls).toHaveLength(0);
+      });
+    }
+  });
+
+  it("requires typed confirmation before deleting a selected secret", async () => {
+    const fetchMock = installApiMock();
+    renderAtPath("/secrets");
+
+    await screen.findByRole("heading", { name: /secret configuration/i });
+    const table = screen.getByRole("table", { name: /configured secrets/i });
+    fireEvent.click(within(table).getByRole("row", { name: /open secret openai_api_key configuration/i }));
+
+    const dialog = await screen.findByRole("dialog", { name: /secret openai_api_key/i });
+    const deleteButton = within(dialog).getByRole("button", { name: /confirm delete openai_api_key/i });
+    expect((deleteButton as HTMLButtonElement).disabled).toBe(true);
+    fireEvent.change(within(dialog).getByLabelText(/confirm secret name/i), { target: { value: "OPENAI_API_KEY" } });
+    expect((deleteButton as HTMLButtonElement).disabled).toBe(false);
+    fireEvent.click(deleteButton);
+
+    expect((await screen.findByRole("status", { name: /secret delete status/i })).textContent).toMatch(
+      /secret openai_api_key deleted/i,
+    );
+    await waitFor(() => expect(screen.queryByRole("dialog", { name: /secret openai_api_key/i })).toBeNull());
+    expect(within(table).queryByRole("row", { name: /open secret openai_api_key configuration/i })).toBeNull();
+
+    const deleteCall = fetchMock.mock.calls.find((call) => {
+      const url = String(call[0]);
+      const init = call[1] as RequestInit | undefined;
+      return url.includes("/api/admin/v1/secrets/OPENAI_API_KEY") && init?.method === "DELETE";
+    });
+    expect(deleteCall).toBeTruthy();
+  });
+
   it("loads SQLite-backed LLM config with provider and profile summaries", async () => {
     installApiMock({
       llmConfig: {
@@ -896,10 +1448,25 @@ describe("App", () => {
     expect(within(providerTable).getByRole("columnheader", { name: /provider id/i })).toBeTruthy();
     expect(within(providerTable).getByRole("columnheader", { name: /^type$/i })).toBeTruthy();
     expect(within(providerTable).getByRole("columnheader", { name: /^model$/i })).toBeTruthy();
-    const providerRow = within(providerTable).getByRole("row", { name: /openai openai gpt-4\.1-mini/i });
+    expect(within(providerTable).queryByRole("columnheader", { name: /operations/i })).toBeNull();
+    const providerRow = within(providerTable).getByRole("row", {
+      name: /edit provider openai/i,
+      description: /opens the provider edit dialog/i,
+    });
     expect(within(providerRow).getAllByText("openai").length).toBeGreaterThanOrEqual(2);
     expect(within(providerRow).getByText("gpt-4.1-mini")).toBeTruthy();
-    expect(screen.getByText(/api key secret: openai_api_key/i)).toBeTruthy();
+    expect(providerRow.getAttribute("aria-haspopup")).toBe("dialog");
+    expect(providerRow.getAttribute("aria-keyshortcuts")).toBe("Enter Space");
+    expect(within(providerTable).queryByRole("button", { name: /edit provider openai/i })).toBeNull();
+    expect(within(providerTable).queryByRole("button", { name: /delete provider openai/i })).toBeNull();
+    expect(screen.queryByLabelText(/llm provider details/i)).toBeNull();
+    expect(screen.queryByText(/api key secret: openai_api_key/i)).toBeNull();
+    const providersCard = screen.getByRole("heading", { name: /^providers$/i }).closest("article");
+    expect(providersCard).toBeTruthy();
+    const addProviderButton = within(providersCard as HTMLElement).getByRole("button", { name: /add provider/i });
+    const reloadButton = within(providersCard as HTMLElement).getByRole("button", { name: /reload/i });
+    expect(providerTable.compareDocumentPosition(addProviderButton) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(providerTable.compareDocumentPosition(reloadButton) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
 
     const profileTable = screen.getByRole("table", { name: /llm profiles/i });
     expect(within(profileTable).getByRole("columnheader", { name: /profile id/i })).toBeTruthy();
@@ -907,15 +1474,57 @@ describe("App", () => {
     expect(within(profileTable).getByRole("columnheader", { name: /^model$/i })).toBeTruthy();
     expect(within(profileTable).getByRole("columnheader", { name: /temperature/i })).toBeTruthy();
     expect(within(profileTable).getByRole("columnheader", { name: /max tokens/i })).toBeTruthy();
-    expect(within(profileTable).getByRole("columnheader", { name: /operations/i })).toBeTruthy();
+    expect(within(profileTable).queryByRole("columnheader", { name: /operations/i })).toBeNull();
     const profileRow = within(profileTable).getByRole("row", {
-      name: /default openai gpt-4\.1-mini 0\.2 4096/i,
+      name: /edit profile default/i,
+      description: /opens the profile edit dialog/i,
     });
     expect(within(profileRow).getByText("default")).toBeTruthy();
     expect(within(profileRow).getByText("openai")).toBeTruthy();
     expect(within(profileRow).getByText("gpt-4.1-mini")).toBeTruthy();
     expect(within(profileRow).getByText("0.2")).toBeTruthy();
     expect(within(profileRow).getByText("4096")).toBeTruthy();
+    expect(profileRow.getAttribute("aria-haspopup")).toBe("dialog");
+    expect(profileRow.getAttribute("aria-keyshortcuts")).toBe("Enter Space");
+    expect(within(profileTable).queryByRole("button", { name: /edit profile default/i })).toBeNull();
+    expect(within(profileTable).queryByRole("button", { name: /delete profile default/i })).toBeNull();
+    expect(screen.queryByLabelText(/llm profile descriptions/i)).toBeNull();
+    expect(screen.queryByText(/primary runtime profile/i)).toBeNull();
+    const profilesCard = screen.getByRole("heading", { name: /^profiles$/i }).closest("article");
+    expect(profilesCard).toBeTruthy();
+    const addProfileButton = within(profilesCard as HTMLElement).getByRole("button", { name: /add profile/i });
+    expect(profileTable.compareDocumentPosition(addProfileButton) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  });
+
+  it("paginates LLM provider and profile tables independently at ten rows per page", async () => {
+    installApiMock({ llmConfig: buildLargeLlmConfig(12) });
+    renderAtPath("/llm");
+
+    await screen.findByRole("heading", { name: /llm configuration/i });
+
+    const providerTable = screen.getByRole("table", { name: /llm providers/i });
+    expect(within(providerTable).getByRole("row", { name: /edit provider provider-01/i })).toBeTruthy();
+    expect(within(providerTable).getByRole("row", { name: /edit provider provider-10/i })).toBeTruthy();
+    expect(within(providerTable).queryByRole("row", { name: /edit provider provider-11/i })).toBeNull();
+
+    const providerPagination = screen.getByRole("navigation", { name: /llm providers pagination/i });
+    expect(within(providerPagination).getByText("Showing 1-10 of 12")).toBeTruthy();
+    fireEvent.click(within(providerPagination).getByRole("button", { name: /next page/i }));
+
+    expect(within(providerTable).queryByRole("row", { name: /edit provider provider-01/i })).toBeNull();
+    expect(within(providerTable).getByRole("row", { name: /edit provider provider-11/i })).toBeTruthy();
+    expect(within(providerPagination).getByText("Showing 11-12 of 12")).toBeTruthy();
+
+    const profileTable = screen.getByRole("table", { name: /llm profiles/i });
+    expect(within(profileTable).getByRole("row", { name: /edit profile profile-01/i })).toBeTruthy();
+    expect(within(profileTable).queryByRole("row", { name: /edit profile profile-11/i })).toBeNull();
+
+    const profilePagination = screen.getByRole("navigation", { name: /llm profiles pagination/i });
+    fireEvent.click(within(profilePagination).getByRole("button", { name: /next page/i }));
+
+    expect(within(profileTable).queryByRole("row", { name: /edit profile profile-01/i })).toBeNull();
+    expect(within(profileTable).getByRole("row", { name: /edit profile profile-11/i })).toBeTruthy();
+    expect(within(profilePagination).getByText("Showing 11-12 of 12")).toBeTruthy();
   });
 
   it("saves full normalized LLM config after provider and profile edits", async () => {
@@ -931,7 +1540,7 @@ describe("App", () => {
     fireEvent.change(within(providerDialog).getByLabelText(/^provider model$/i), { target: { value: "gpt-4.1-mini" } });
     fireEvent.change(within(providerDialog).getByLabelText(/api key secret/i), { target: { value: "OPENAI_API_KEY" } });
     fireEvent.change(within(providerDialog).getByLabelText(/api url/i), { target: { value: "https://api.openai.com/v1" } });
-    fireEvent.click(within(providerDialog).getByRole("button", { name: /save provider/i }));
+    fireEvent.click(within(providerDialog).getByRole("button", { name: /^save$/i }));
 
     fireEvent.click(screen.getByRole("button", { name: /add profile/i }));
     const profileDialog = await screen.findByRole("dialog", { name: /profile/i });
@@ -941,10 +1550,10 @@ describe("App", () => {
     fireEvent.change(within(profileDialog).getByLabelText(/temperature/i), { target: { value: "0.2" } });
     fireEvent.change(within(profileDialog).getByLabelText(/max tokens/i), { target: { value: "4096" } });
     fireEvent.change(within(profileDialog).getByLabelText(/description/i), { target: { value: "Primary runtime profile" } });
-    fireEvent.click(within(profileDialog).getByRole("button", { name: /save profile/i }));
+    fireEvent.click(within(profileDialog).getByRole("button", { name: /^save$/i }));
 
     const profileTable = await screen.findByRole("table", { name: /llm profiles/i });
-    expect(within(profileTable).getByRole("row", { name: /default openai gpt-4\.1-mini 0\.2 4096/i })).toBeTruthy();
+    expect(within(profileTable).getByRole("row", { name: /edit profile default/i })).toBeTruthy();
 
     fireEvent.change(screen.getByLabelText(/default profile/i), { target: { value: "default" } });
     fireEvent.click(screen.getByRole("button", { name: /save llm configuration/i }));
@@ -1007,15 +1616,22 @@ describe("App", () => {
 
     await screen.findByRole("heading", { name: /llm configuration/i });
     const providerTable = screen.getByRole("table", { name: /llm providers/i });
-    fireEvent.click(within(providerTable).getByRole("row", { name: /openai openai gpt-4\.1-mini/i }));
+    fireEvent.click(within(providerTable).getByRole("row", { name: /edit provider openai/i }));
 
     const providerDialog = await screen.findByRole("dialog", { name: /edit provider openai/i });
+    expect(within(providerDialog).queryByRole("status")).toBeNull();
+    expect(within(providerDialog).getByRole("button", { name: /^save$/i })).toBeTruthy();
+    expect(within(providerDialog).queryByRole("button", { name: /clear provider/i })).toBeNull();
     expect((within(providerDialog).getByLabelText(/^provider id$/i) as HTMLInputElement).value).toBe("openai");
     expect((within(providerDialog).getByLabelText(/^provider type$/i) as HTMLInputElement).value).toBe("openai");
     expect((within(providerDialog).getByLabelText(/^provider model$/i) as HTMLInputElement).value).toBe("gpt-4.1-mini");
+    const extraHeadersField = within(providerDialog).getByLabelText(/extra headers json/i) as HTMLTextAreaElement;
+    fireEvent.change(extraHeadersField, { target: { value: '{"X-Test":"ok"}' } });
+    fireEvent.blur(extraHeadersField);
+    expect(extraHeadersField.value).toBe('{\n  "X-Test": "ok"\n}');
   });
 
-  it("opens the provider modal from an explicit edit action", async () => {
+  it("opens the provider modal when pressing Enter on an existing LLM provider row", async () => {
     installApiMock({
       llmConfig: {
         version: "1.0",
@@ -1034,9 +1650,11 @@ describe("App", () => {
     renderAtPath("/llm");
 
     await screen.findByRole("heading", { name: /llm configuration/i });
-    const editButton = screen.getByRole("button", { name: /edit provider openai/i });
-    editButton.focus();
-    fireEvent.click(editButton);
+    const providerTable = screen.getByRole("table", { name: /llm providers/i });
+    const providerRow = within(providerTable).getByRole("row", { name: /edit provider openai/i });
+    providerRow.focus();
+    expect(document.activeElement).toBe(providerRow);
+    fireEvent.keyDown(providerRow, { key: "Enter" });
 
     const providerDialog = await screen.findByRole("dialog", { name: /edit provider openai/i });
     expect((within(providerDialog).getByLabelText(/^provider id$/i) as HTMLInputElement).value).toBe("openai");
@@ -1064,9 +1682,12 @@ describe("App", () => {
 
     await screen.findByRole("heading", { name: /llm configuration/i });
     const profileTable = screen.getByRole("table", { name: /llm profiles/i });
-    fireEvent.click(within(profileTable).getByRole("row", { name: /default openai gpt-4\.1-mini 0\.2 4096/i }));
+    fireEvent.click(within(profileTable).getByRole("row", { name: /edit profile default/i }));
 
     const profileDialog = await screen.findByRole("dialog", { name: /edit profile default/i });
+    expect(within(profileDialog).queryByRole("status")).toBeNull();
+    expect(within(profileDialog).getByRole("button", { name: /^save$/i })).toBeTruthy();
+    expect(within(profileDialog).queryByRole("button", { name: /clear profile/i })).toBeNull();
     expect((within(profileDialog).getByLabelText(/^profile id$/i) as HTMLInputElement).value).toBe("default");
     expect((within(profileDialog).getByLabelText(/^profile provider$/i) as HTMLInputElement).value).toBe("openai");
     expect((within(profileDialog).getByLabelText(/^profile model$/i) as HTMLInputElement).value).toBe("gpt-4.1-mini");
@@ -1074,7 +1695,7 @@ describe("App", () => {
     expect((within(profileDialog).getByLabelText(/max tokens/i) as HTMLInputElement).value).toBe("4096");
   });
 
-  it("opens the profile modal from an explicit edit action", async () => {
+  it("opens the profile modal when pressing Space on an existing LLM profile row", async () => {
     installApiMock({
       llmConfig: {
         version: "1.0",
@@ -1087,9 +1708,10 @@ describe("App", () => {
 
     await screen.findByRole("heading", { name: /llm configuration/i });
     const profileTable = screen.getByRole("table", { name: /llm profiles/i });
-    const editButton = within(profileTable).getByRole("button", { name: /edit profile default/i });
-    editButton.focus();
-    fireEvent.click(editButton);
+    const profileRow = within(profileTable).getByRole("row", { name: /edit profile default/i });
+    profileRow.focus();
+    expect(document.activeElement).toBe(profileRow);
+    fireEvent.keyDown(profileRow, { key: " " });
 
     const profileDialog = await screen.findByRole("dialog", { name: /edit profile default/i });
     expect((within(profileDialog).getByLabelText(/^profile id$/i) as HTMLInputElement).value).toBe("default");
@@ -1123,7 +1745,23 @@ describe("App", () => {
     expect(document.activeElement).toBe(opener);
   });
 
-  it("does not open the provider edit modal from the explicit delete action", async () => {
+  it("locks background scrolling while an LLM modal is open and restores it on close", async () => {
+    installApiMock();
+    document.body.style.overflow = "auto";
+    renderAtPath("/llm");
+
+    await screen.findByRole("heading", { name: /llm configuration/i });
+    fireEvent.click(screen.getByRole("button", { name: /add provider/i }));
+
+    const providerDialog = await screen.findByRole("dialog", { name: /provider/i });
+    expect(document.body.style.overflow).toBe("hidden");
+
+    fireEvent.click(within(providerDialog).getByRole("button", { name: /cancel/i }));
+    await waitFor(() => expect(screen.queryByRole("dialog", { name: /provider/i })).toBeNull());
+    expect(document.body.style.overflow).toBe("auto");
+  });
+
+  it("deletes an LLM provider from the edit modal without exposing table actions", async () => {
     installApiMock({
       llmConfig: {
         version: "1.0",
@@ -1135,14 +1773,19 @@ describe("App", () => {
     renderAtPath("/llm");
 
     await screen.findByText(/default profile: none/i);
-    const deleteButton = screen.getByRole("button", { name: /delete provider openai/i });
+    const providerTable = screen.getByRole("table", { name: /llm providers/i });
+    expect(within(providerTable).queryByRole("button", { name: /delete provider openai/i })).toBeNull();
+    fireEvent.click(within(providerTable).getByRole("row", { name: /edit provider openai/i }));
+    const providerDialog = await screen.findByRole("dialog", { name: /edit provider openai/i });
+    const deleteButton = within(providerDialog).getByRole("button", { name: /^delete$/i });
+    expect(deleteButton.className).toContain("danger-button");
     fireEvent.click(deleteButton);
 
     expect(await screen.findByText(/provider openai staged for deletion/i)).toBeTruthy();
-    expect(screen.queryByRole("dialog", { name: /edit provider openai/i })).toBeNull();
+    await waitFor(() => expect(screen.queryByRole("dialog", { name: /edit provider openai/i })).toBeNull());
   });
 
-  it("deletes an LLM profile from the table without opening the edit modal and clears the default profile", async () => {
+  it("deletes an LLM profile from the edit modal and clears the default profile", async () => {
     const fetchMock = installApiMock({
       llmConfig: {
         version: "1.0",
@@ -1155,11 +1798,15 @@ describe("App", () => {
 
     await screen.findByText(/default profile: default/i);
     const profileTable = screen.getByRole("table", { name: /llm profiles/i });
-    const deleteButton = within(profileTable).getByRole("button", { name: /delete profile default/i });
+    expect(within(profileTable).queryByRole("button", { name: /delete profile default/i })).toBeNull();
+    fireEvent.click(within(profileTable).getByRole("row", { name: /edit profile default/i }));
+    const profileDialog = await screen.findByRole("dialog", { name: /edit profile default/i });
+    const deleteButton = within(profileDialog).getByRole("button", { name: /^delete$/i });
+    expect(deleteButton.className).toContain("danger-button");
     fireEvent.click(deleteButton);
 
     expect(await screen.findByText(/profile default staged for deletion/i)).toBeTruthy();
-    expect(screen.queryByRole("dialog", { name: /edit profile default/i })).toBeNull();
+    await waitFor(() => expect(screen.queryByRole("dialog", { name: /edit profile default/i })).toBeNull());
     expect(screen.getByText(/default profile: none/i)).toBeTruthy();
 
     fireEvent.click(screen.getByRole("button", { name: /save llm configuration/i }));
@@ -1184,17 +1831,19 @@ describe("App", () => {
 
     fireEvent.click(screen.getByRole("button", { name: /add provider/i }));
     const providerDialog = await screen.findByRole("dialog", { name: /provider/i });
+    expect(within(providerDialog).queryByRole("button", { name: /^delete$/i })).toBeNull();
     fireEvent.change(within(providerDialog).getByLabelText(/^provider id$/i), { target: { value: "openai" } });
     fireEvent.change(within(providerDialog).getByLabelText(/^provider type$/i), { target: { value: "openai" } });
     fireEvent.change(within(providerDialog).getByLabelText(/^provider model$/i), { target: { value: "gpt-4.1-mini" } });
-    fireEvent.click(within(providerDialog).getByRole("button", { name: /save provider/i }));
+    fireEvent.click(within(providerDialog).getByRole("button", { name: /^save$/i }));
 
     fireEvent.click(screen.getByRole("button", { name: /add profile/i }));
     const profileDialog = await screen.findByRole("dialog", { name: /profile/i });
+    expect(within(profileDialog).queryByRole("button", { name: /^delete$/i })).toBeNull();
     fireEvent.change(within(profileDialog).getByLabelText(/^profile id$/i), { target: { value: "default" } });
     fireEvent.change(within(profileDialog).getByLabelText(/^profile provider$/i), { target: { value: "openai" } });
     fireEvent.change(within(profileDialog).getByLabelText(/^profile model$/i), { target: { value: "   " } });
-    fireEvent.click(within(profileDialog).getByRole("button", { name: /save profile/i }));
+    fireEvent.click(within(profileDialog).getByRole("button", { name: /^save$/i }));
 
     expect(await within(profileDialog).findByText(/profile model is required/i)).toBeTruthy();
 
@@ -1219,7 +1868,10 @@ describe("App", () => {
     renderAtPath("/llm");
 
     await screen.findByText(/default profile: default/i);
-    fireEvent.click(screen.getByRole("button", { name: /delete provider openai/i }));
+    const providerTable = screen.getByRole("table", { name: /llm providers/i });
+    fireEvent.click(within(providerTable).getByRole("row", { name: /edit provider openai/i }));
+    const providerDialog = await screen.findByRole("dialog", { name: /edit provider openai/i });
+    fireEvent.click(within(providerDialog).getByRole("button", { name: /^delete$/i }));
 
     await screen.findByText(/remove or reassign profiles first: default/i);
     expect(
@@ -1603,23 +2255,92 @@ describe("App", () => {
     expect(clipboardAlert.getAttribute("role")).toBe("alert");
   });
 
-  it("renders watcher dashboard rows and allows pause action", async () => {
+  it("renders watcher table rows, opens a detail modal, and runs watcher commands", async () => {
     installApiMock({
       projects: [{ id: "p1", name: "Main Project", slug: "main", palace: "x", default_wing: "w", default_room: "r", fs_root: "/tmp", fs_allowlist: [] }],
     });
     renderAtPath("/watchers");
 
-    await waitFor(() => {
-      expect(screen.getByText(/main project/i)).toBeTruthy();
-      expect(screen.getByText(/state: enabled/i)).toBeTruthy();
+    const watcherTable = await screen.findByRole("table", { name: /registered watchers/i });
+    const watcherRow = within(watcherTable).getByRole("row", {
+      name: /open watcher main project status needs reconcile dirty files 2/i,
     });
+    expect(watcherRow.className).toContain("watchers-table-row--warning");
 
-    fireEvent.click(screen.getByRole("button", { name: /pause watcher p1/i }));
+    fireEvent.click(watcherRow);
+    const dialog = await screen.findByRole("dialog", { name: /watcher main project/i });
+    expect(within(dialog).getByText("Project ID")).toBeTruthy();
+    expect(within(dialog).getByText("p1")).toBeTruthy();
+    expect(within(dialog).getByText("Enabled")).toBeTruthy();
+    expect(within(dialog).getByText("Dirty files")).toBeTruthy();
+
+    fireEvent.click(within(dialog).getByRole("button", { name: /pause watcher p1/i }));
 
     await waitFor(() => {
       expect(screen.getByText(/watcher p1 paused/i)).toBeTruthy();
-      expect(screen.getByText(/state: paused/i)).toBeTruthy();
+      expect(within(dialog).getByText("Paused")).toBeTruthy();
     });
+  });
+
+  it("renders watcher table status tones and long project ids without inline action buttons", async () => {
+    const longProjectId = "0eeb6dcb-64d5-4383-b81a-127d09346240";
+    installApiMock({
+      projects: [
+        {
+          id: longProjectId,
+          name: "Main Project",
+          slug: "main",
+          palace: "x",
+          default_wing: "w",
+          default_room: "r",
+          fs_root: "/tmp",
+          fs_allowlist: [],
+        },
+        {
+          id: "secondary-project",
+          name: "Secondary Project",
+          slug: "secondary",
+          palace: "x",
+          default_wing: "w",
+          default_room: "r",
+          fs_root: "/tmp",
+          fs_allowlist: [],
+        },
+      ],
+      watchers: [
+        {
+          project_id: longProjectId,
+          state: "enabled",
+          dirty_count: 12,
+          requires_reconciliation: true,
+          last_event_at: "2026-04-30T00:04:00Z",
+          updated_at: "2026-04-30T00:05:00Z",
+        },
+        {
+          project_id: "secondary-project",
+          state: "paused",
+          dirty_count: 0,
+          requires_reconciliation: false,
+          last_event_at: null,
+          updated_at: "2026-04-30T00:06:00Z",
+        },
+      ],
+    });
+
+    renderAtPath("/watchers");
+
+    const watcherTable = await screen.findByRole("table", { name: /registered watchers/i });
+    const mainRow = within(watcherTable).getByRole("row", {
+      name: new RegExp(`open watcher main project status needs reconcile dirty files 12`, "i"),
+    });
+    expect(within(mainRow).getByText(longProjectId)).toBeTruthy();
+    expect(mainRow.className).toContain("watchers-table-row--warning");
+
+    const secondaryRow = within(watcherTable).getByRole("row", {
+      name: /open watcher secondary project status paused dirty files 0/i,
+    });
+    expect(secondaryRow.className).toContain("watchers-table-row--info");
+    expect(within(watcherTable).queryByRole("button", { name: /pause watcher/i })).toBeNull();
   });
 
   it("shows actionable empty state on watchers and sync pages", async () => {
@@ -1646,11 +2367,19 @@ describe("App", () => {
     });
     renderAtPath("/sync");
 
-    await waitFor(() => {
-      expect(screen.getByRole("heading", { name: /main project/i })).toBeTruthy();
+    const syncTable = await screen.findByRole("table", { name: /registered sync projects/i });
+    const syncRow = within(syncTable).getByRole("row", {
+      name: /open sync main project status needs reconcile dirty files 2/i,
     });
+    expect(syncRow.className).toContain("sync-table-row--warning");
 
-    fireEvent.click(screen.getByRole("button", { name: /sync now p1/i }));
+    fireEvent.click(syncRow);
+    const dialog = await screen.findByRole("dialog", { name: /sync main project/i });
+    expect(within(dialog).getByText("Project ID")).toBeTruthy();
+    expect(within(dialog).getByText("p1")).toBeTruthy();
+    expect(within(dialog).getByText("Dirty files")).toBeTruthy();
+
+    fireEvent.click(within(dialog).getByRole("button", { name: /sync now p1/i }));
 
     await waitFor(() => {
       expect(screen.getByText(/sync requested for p1/i)).toBeTruthy();
@@ -1662,7 +2391,90 @@ describe("App", () => {
     });
   });
 
-  it("filters sync operations through a registered project selector", async () => {
+  it("shows sync action failure details returned by the API", async () => {
+    installApiMock({
+      projects: [{ id: "p1", name: "Main Project", slug: "main", palace: "x", default_wing: "w", default_room: "r", fs_root: "/tmp", fs_allowlist: [] }],
+      syncActionResponses: {
+        "p1:now": {
+          project_id: "p1",
+          status: "failed",
+          dirty_count: 2,
+          error: {
+            code: "project_graph_sync_failed",
+            message: "MEMORY_BACKEND_UNAVAILABLE: no memory PostgreSQL backend is configured.",
+          },
+        },
+      },
+    });
+    renderAtPath("/sync");
+
+    const syncTable = await screen.findByRole("table", { name: /registered sync projects/i });
+    const syncRow = within(syncTable).getByRole("row", {
+      name: /open sync main project status needs reconcile dirty files 2/i,
+    });
+    fireEvent.click(syncRow);
+
+    const dialog = await screen.findByRole("dialog", { name: /sync main project/i });
+    fireEvent.click(within(dialog).getByRole("button", { name: /sync now p1/i }));
+
+    await waitFor(() => {
+      expect(screen.getByText(/memory_backend_unavailable: no memory postgresql backend is configured/i)).toBeTruthy();
+    });
+    expect(screen.queryByText(/sync requested for p1/i)).toBeNull();
+  });
+
+  it("renders recent sync activity in the sync detail dialog", async () => {
+    const fetchMock = installApiMock({
+      projects: [{ id: "p1", name: "Main Project", slug: "main", palace: "x", default_wing: "w", default_room: "r", fs_root: "/tmp", fs_allowlist: [] }],
+      syncLogs: {
+        p1: [
+          {
+            id: 2,
+            project_id: "p1",
+            path: "src/app.py",
+            event_type: "modified",
+            reason: "file_event",
+            status: "queued",
+            enqueued_at: "2026-04-30T00:12:00Z",
+            updated_at: "2026-04-30T00:12:00Z",
+            processed_at: null,
+          },
+          {
+            id: 1,
+            project_id: "p1",
+            path: ".",
+            event_type: "reconcile",
+            reason: "reconciliation_required:manual_reconcile",
+            status: "processed",
+            enqueued_at: "2026-04-30T00:05:00Z",
+            updated_at: "2026-04-30T00:06:00Z",
+            processed_at: "2026-04-30T00:06:00Z",
+          },
+        ],
+      },
+    });
+    renderAtPath("/sync");
+
+    const syncTable = await screen.findByRole("table", { name: /registered sync projects/i });
+    const syncRow = within(syncTable).getByRole("row", {
+      name: /open sync main project status needs reconcile dirty files 2/i,
+    });
+    fireEvent.click(syncRow);
+
+    const dialog = await screen.findByRole("dialog", { name: /sync main project/i });
+    const activity = await within(dialog).findByRole("region", { name: /recent sync activity/i });
+
+    expect(within(activity).getByText("src/app.py")).toBeTruthy();
+    expect(within(activity).getByText(/file event/i)).toBeTruthy();
+    expect(within(activity).getByText(/queued/i)).toBeTruthy();
+    expect(within(activity).getByText(/processed/i)).toBeTruthy();
+    await waitFor(() => {
+      const logCalls = fetchMock.mock.calls.filter((call) => String(call[0]).includes("/api/admin/v1/sync/p1/logs"));
+      expect(logCalls.length).toBeGreaterThan(0);
+    });
+  });
+
+  it("opens sync rows for registered projects and runs targeted commands", async () => {
     const fetchMock = installApiMock({
       projects: [
         { id: "p1", name: "Main Project", slug: "main", palace: "x", default_wing: "w", default_room: "r", fs_root: "/tmp/main", fs_allowlist: [] },
@@ -1675,12 +2487,15 @@ describe("App", () => {
     });
     renderAtPath("/sync");
 
-    await waitFor(() => {
-      expect(screen.getByLabelText(/^project$/i, { selector: "select" })).toBeTruthy();
+    const syncTable = await screen.findByRole("table", { name: /registered sync projects/i });
+    const docsRow = within(syncTable).getByRole("row", {
+      name: /open sync docs project status clean dirty files 0/i,
     });
+    expect(docsRow.className).toContain("sync-table-row--success");
 
-    fireEvent.change(screen.getByLabelText(/^project$/i, { selector: "select" }), { target: { value: "p2" } });
-    fireEvent.click(screen.getByRole("button", { name: /sync now p2/i }));
+    fireEvent.click(docsRow);
+    const dialog = await screen.findByRole("dialog", { name: /sync docs project/i });
+    fireEvent.click(within(dialog).getByRole("button", { name: /sync now p2/i }));
 
     await waitFor(() => {
       const syncCall = fetchMock.mock.calls.find((call) => {
@@ -1700,16 +2515,22 @@ describe("App", () => {
 
     renderAtPath("/sync");
 
-    await waitFor(() => {
-      expect(screen.getByRole("heading", { name: /main project/i })).toBeTruthy();
-      expect(screen.getByText(/dirty count: 0/i)).toBeTruthy();
-      expect(screen.getByText(/sync state: idle/i)).toBeTruthy();
-      expect(screen.getByText(/reconcile state: clear/i)).toBeTruthy();
-      expect(screen.getByText(/rebuild state: available as manual action/i)).toBeTruthy();
-      expect(screen.getByRole("button", { name: /sync now p1/i })).toBeTruthy();
-      expect(screen.getByRole("button", { name: /reconcile p1/i })).toBeTruthy();
-      expect(screen.getByRole("button", { name: /rebuild p1/i })).toBeTruthy();
+    const syncTable = await screen.findByRole("table", { name: /registered sync projects/i });
+    const syncRow = within(syncTable).getByRole("row", {
+      name: /open sync main project status clean dirty files 0/i,
     });
+    expect(within(syncRow).getByText(/idle/i)).toBeTruthy();
+    expect(syncRow.className).toContain("sync-table-row--success");
+
+    fireEvent.click(syncRow);
+    const dialog = await screen.findByRole("dialog", { name: /sync main project/i });
+    expect(within(dialog).getByText(/^0$/i)).toBeTruthy();
+    expect(within(dialog).getByText(/idle/i)).toBeTruthy();
+    expect(within(dialog).getByText(/clear/i)).toBeTruthy();
+    expect(within(dialog).getByText(/available as manual action/i)).toBeTruthy();
+    expect(within(dialog).getByRole("button", { name: /sync now p1/i })).toBeTruthy();
+    expect(within(dialog).getByRole("button", { name: /reconcile p1/i })).toBeTruthy();
+    expect(within(dialog).getByRole("button", { name: /rebuild p1/i })).toBeTruthy();
 
     expect(screen.queryByText(/no sync queue entries/i)).toBeNull();
 
@@ -1746,7 +2567,7 @@ describe("App", () => {
 
     renderAtPath("/sync");
     await waitFor(() => {
-      expect(screen.getByRole("heading", { name: /main project/i })).toBeTruthy();
+      expect(screen.getByRole("table", { name: /registered sync projects/i })).toBeTruthy();
     });
 
     const syncInstance = FakeEventSource.instances.find((item) => item.url.includes("/api/events/v1/sync"));
@@ -1790,21 +2611,200 @@ describe("App", () => {
 
     renderAtPath("/sync");
 
+    const syncTable = await screen.findByRole("table", { name: /registered sync projects/i });
+    const syncRow = within(syncTable).getByRole("row", {
+      name: /open sync main project status needs reconcile dirty files 2/i,
+    });
+    fireEvent.click(syncRow);
+    const dialog = await screen.findByRole("dialog", { name: /sync main project/i });
+
+    expect(within(dialog).getByText(/queued/i)).toBeTruthy();
+    expect(within(dialog).getByText(/required/i)).toBeTruthy();
+    expect(within(dialog).getByText(/available as manual action/i)).toBeTruthy();
+    expect(within(dialog).getByText(/not reported by the current sync endpoint/i)).toBeTruthy();
+  });
+
+  it("renders registered projects as selectable table rows that open configuration modals", async () => {
+    installApiMock({
+      projects: [
+        {
+          id: "p1",
+          name: "Workflow Service",
+          slug: "workflow-service",
+          palace: "wf-palace",
+          default_wing: "platform",
+          default_room: "runtime",
+          fs_root: "/workspace/workflows",
+          fs_allowlist: ["/workspace/workflows", "/workspace/shared"],
+        },
+      ],
+    });
+
+    renderAtPath("/projects");
+
+    const projectTable = await screen.findByRole("table", { name: /registered projects/i });
+    expect(within(projectTable).getByRole("columnheader", { name: /^project$/i })).toBeTruthy();
+    expect(within(projectTable).getByRole("columnheader", { name: /^slug$/i })).toBeTruthy();
+    expect(within(projectTable).getByRole("columnheader", { name: /^palace$/i })).toBeTruthy();
+    expect(within(projectTable).queryByRole("columnheader", { name: /operations/i })).toBeNull();
+
+    const projectRow = within(projectTable).getByRole("row", {
+      name: /open project workflow service configuration/i,
+      description: /opens the project configuration dialog/i,
+    });
+    expect(projectRow.getAttribute("aria-haspopup")).toBe("dialog");
+    expect(projectRow.getAttribute("aria-keyshortcuts")).toBe("Enter Space");
+    expect(within(projectTable).queryByRole("button", { name: /delete project p1/i })).toBeNull();
+
+    fireEvent.click(projectRow);
+
+    expect(await screen.findByRole("heading", { name: /project workflow service/i })).toBeTruthy();
+    expect((screen.getByLabelText(/^name$/i) as HTMLInputElement).value).toBe("Workflow Service");
+    expect((screen.getByLabelText(/^slug$/i) as HTMLInputElement).value).toBe("workflow-service");
+    expect((screen.getByLabelText(/^palace$/i) as HTMLInputElement).value).toBe("wf-palace");
+    expect((screen.getByLabelText(/^fs root$/i, { selector: "input" }) as HTMLInputElement).value).toBe(
+      "/workspace/workflows",
+    );
+    expect((screen.getByLabelText(/^allowlist paths$/i, { selector: "textarea" }) as HTMLTextAreaElement).value).toBe(
+      "/workspace/workflows\n/workspace/shared",
+    );
+  });
+
+  it("opens project configuration from keyboard and saves edits through the project API", async () => {
+    const fetchMock = installApiMock({
+      projects: [
+        {
+          id: "p1",
+          name: "Workflow Service",
+          slug: "workflow-service",
+          palace: "wf-palace",
+          default_wing: "platform",
+          default_room: "runtime",
+          fs_root: "/workspace/workflows",
+          fs_allowlist: ["/workspace/workflows"],
+        },
+      ],
+    });
+
+    renderAtPath("/projects");
+
+    const projectTable = await screen.findByRole("table", { name: /registered projects/i });
+    const projectRow = within(projectTable).getByRole("row", { name: /open project workflow service configuration/i });
+    fireEvent.keyDown(projectRow, { key: "Enter" });
+
+    expect(await screen.findByRole("heading", { name: /project workflow service/i })).toBeTruthy();
+    fireEvent.change(screen.getByLabelText(/^name$/i), { target: { value: "Workflow Platform" } });
+    fireEvent.change(screen.getByLabelText(/default room/i), { target: { value: "orchestration" } });
+    fireEvent.change(screen.getByLabelText(/^allowlist paths$/i, { selector: "textarea" }), {
+      target: { value: "/workspace/workflows\n/workspace/shared" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: /save project/i }));
+
+    await screen.findByText(/project p1 saved/i);
+
+    const updateCall = fetchMock.mock.calls.find((call) => {
+      const url = String(call[0]);
+      const init = call[1] as RequestInit | undefined;
+      return url.includes("/api/admin/v1/projects/p1") && init?.method === "PATCH";
+    });
+    expect(updateCall).toBeTruthy();
+    expect(JSON.parse(String((updateCall?.[1] as RequestInit | undefined)?.body ?? "{}"))).toEqual({
+      name: "Workflow Platform",
+      slug: "workflow-service",
+      palace: "wf-palace",
+      default_wing: "platform",
+      default_room: "orchestration",
+      fs_root: "/workspace/workflows",
+      fs_allowlist: ["/workspace/workflows", "/workspace/shared"],
+    });
+  });
+
+  it("paginates registered projects at ten rows per page", async () => {
+    installApiMock({ projectCount: 12 });
+    renderAtPath("/projects");
+
+    const projectTable = await screen.findByRole("table", { name: /registered projects/i });
+    expect(within(projectTable).getByRole("row", { name: /open project p1 configuration/i })).toBeTruthy();
+    expect(within(projectTable).getByRole("row", { name: /open project p10 configuration/i })).toBeTruthy();
+    expect(within(projectTable).queryByRole("row", { name: /open project p11 configuration/i })).toBeNull();
+
+    const pagination = screen.getByRole("navigation", { name: /registered projects pagination/i });
+    expect(within(pagination).getByText("Showing 1-10 of 12")).toBeTruthy();
+    fireEvent.click(within(pagination).getByRole("button", { name: /next page/i }));
+
+    expect(within(projectTable).queryByRole("row", { name: /open project p1 configuration/i })).toBeNull();
+    expect(within(projectTable).getByRole("row", { name: /open project p11 configuration/i })).toBeTruthy();
+    expect(within(pagination).getByText("Showing 11-12 of 12")).toBeTruthy();
+
+    fireEvent.click(within(pagination).getByRole("button", { name: /previous page/i }));
+    expect(within(projectTable).getByRole("row", { name: /open project p1 configuration/i })).toBeTruthy();
+  });
+
+  it("pre-fills new project onboarding identifiers from the project name", async () => {
+    installApiMock();
+    renderAtPath("/projects");
+    await openNewProjectModal();
+
+    expect((screen.getByLabelText(/default wing/i) as HTMLInputElement).value).toBe("");
+    expect((screen.getByLabelText(/default room/i) as HTMLInputElement).value).toBe("");
+
+    fireEvent.change(screen.getByLabelText(/^name$/i), { target: { value: "Forge Runtime" } });
+    expect((screen.getByLabelText(/^slug$/i) as HTMLInputElement).value).toBe("forge-runtime");
+    expect((screen.getByLabelText(/^palace$/i) as HTMLInputElement).value).toBe("forge-runtime");
+
+    const summary = screen.getByRole("complementary", { name: /project onboarding summary/i });
+    expect(within(summary).getByText("Forge Runtime")).toBeTruthy();
+    expect(within(summary).getAllByText("forge-runtime")).toHaveLength(2);
+
+    fireEvent.change(screen.getByLabelText(/^slug$/i), { target: { value: "forge-custom" } });
+    expect((screen.getByLabelText(/^palace$/i) as HTMLInputElement).value).toBe("forge-custom");
+
+    fireEvent.change(screen.getByLabelText(/^palace$/i), { target: { value: "manual-palace" } });
+    fireEvent.change(screen.getByLabelText(/^slug$/i), { target: { value: "forge-final" } });
+    expect((screen.getByLabelText(/^palace$/i) as HTMLInputElement).value).toBe("manual-palace");
+  });
+
+  it("creates a palace-level project without default wing or room", async () => {
+    const fetchMock = installApiMock();
+    renderAtPath("/projects");
+    await openNewProjectModal();
+
+    const defaultWingInput = screen.getByLabelText(/default wing/i) as HTMLInputElement;
+    const defaultRoomInput = screen.getByLabelText(/default room/i) as HTMLInputElement;
+    expect(defaultWingInput.value).toBe("");
+    expect(defaultRoomInput.value).toBe("");
+    expect(defaultWingInput.required).toBe(false);
+    expect(defaultRoomInput.required).toBe(false);
+
+    fireEvent.change(screen.getByLabelText(/^name$/i), { target: { value: "Palace Registry" } });
+    fireEvent.change(screen.getByLabelText(/^fs root$/i, { selector: "input" }), { target: { value: "/workspace/palace" } });
+    fireEvent.click(screen.getByRole("button", { name: /register project/i }));
+
     await waitFor(() => {
-      expect(screen.getByText(/sync state: queued/i)).toBeTruthy();
-      expect(screen.getByText(/reconcile state: required/i)).toBeTruthy();
-      expect(screen.getByText(/rebuild state: available as manual action/i)).toBeTruthy();
-      expect(screen.getByText(/lifecycle telemetry: not reported by the current sync endpoint/i)).toBeTruthy();
+      expect(screen.getByText(/project registered successfully/i)).toBeTruthy();
+    });
+
+    const createCall = fetchMock.mock.calls.find((call) => {
+      const url = String(call[0]);
+      const init = call[1] as RequestInit | undefined;
+      return url.includes("/api/admin/v1/projects") && init?.method === "POST";
+    });
+    expect(createCall).toBeTruthy();
+    expect(JSON.parse(String((createCall?.[1] as RequestInit | undefined)?.body ?? "{}"))).toEqual({
+      name: "Palace Registry",
+      slug: "palace-registry",
+      palace: "palace-registry",
+      default_wing: null,
+      default_room: null,
+      fs_root: "/workspace/palace",
+      fs_allowlist: [],
     });
   });
 
   it("creates a project with normalized allowlist entries", async () => {
     const fetchMock = installApiMock();
     renderAtPath("/projects");
-
-    await waitFor(() => {
-      expect(screen.getByRole("button", { name: /register project/i })).toBeTruthy();
-    });
+    await openNewProjectModal();
 
     fireEvent.change(screen.getByLabelText(/^name$/i), { target: { value: "Workflow Service" } });
     fireEvent.change(screen.getByLabelText(/^slug$/i), { target: { value: "workflow-service" } });
@@ -1837,6 +2837,7 @@ describe("App", () => {
   it("defaults project fs root to the user home shortcut", async () => {
     const fetchMock = installApiMock();
     renderAtPath("/projects");
+    await openNewProjectModal();
 
     const fsRootInput = await screen.findByLabelText(/^fs root$/i, { selector: "input" });
     expect((fsRootInput as HTMLInputElement).value).toBe("~");
@@ -1891,8 +2892,7 @@ describe("App", () => {
     });
 
     renderAtPath("/projects");
-
-    await screen.findByRole("button", { name: /register project/i });
+    await openNewProjectModal();
 
     fireEvent.change(screen.getByLabelText(/^name$/i), { target: { value: "Workflow Service" } });
     fireEvent.change(screen.getByLabelText(/^slug$/i), { target: { value: "workflow-service" } });
@@ -1953,6 +2953,7 @@ describe("App", () => {
     });
 
     renderAtPath("/projects");
+    await openNewProjectModal();
 
     const browseButton = await screen.findByRole("button", { name: /browse fs root/i });
     fireEvent.click(browseButton);
@@ -1982,6 +2983,7 @@ describe("App", () => {
   it("renders icon-only browse buttons with accessible names", async () => {
     installApiMock();
     renderAtPath("/projects");
+    await openNewProjectModal();
 
     expect(await screen.findByRole("button", { name: "Browse FS root" })).toBeTruthy();
     expect(screen.getByRole("button", { name: "Browse allowlist paths" })).toBeTruthy();
@@ -2003,6 +3005,7 @@ describe("App", () => {
     });
 
     renderAtPath("/projects");
+    await openNewProjectModal();
 
     fireEvent.change(await screen.findByLabelText(/^fs root$/i), { target: { value: "" } });
     fireEvent.click(screen.getByRole("button", { name: /browse fs root/i }));
@@ -2039,6 +3042,7 @@ describe("App", () => {
     });
 
     renderAtPath("/projects");
+    await openNewProjectModal();
 
     const fsRootInput = await screen.findByLabelText(/^fs root$/i);
     fireEvent.change(fsRootInput, { target: { value: "/srv/workflows/missing" } });
@@ -2065,6 +3069,7 @@ describe("App", () => {
     });
 
     renderAtPath("/projects");
+    await openNewProjectModal();
 
     fireEvent.change(await screen.findByLabelText(/^fs root$/i), { target: { value: "/srv/workflows/prefilled" } });
     fireEvent.click(screen.getByRole("button", { name: /browse fs root/i }));
@@ -2103,6 +3108,7 @@ describe("App", () => {
     });
 
     renderAtPath("/projects");
+    await openNewProjectModal();
 
     const allowlistInput = await screen.findByLabelText(/^allowlist paths$/i, { selector: "textarea" });
     fireEvent.change(allowlistInput, { target: { value: "/srv/workflows/manual" } });
@@ -2143,6 +3149,7 @@ describe("App", () => {
     });
 
     renderAtPath("/projects");
+    await openNewProjectModal();
 
     const allowlistInput = await screen.findByLabelText(/^allowlist paths$/i, { selector: "textarea" });
     fireEvent.change(allowlistInput, { target: { value: "  /srv/workflows/shared " } });
@@ -2175,6 +3182,7 @@ describe("App", () => {
     });
 
     renderAtPath("/projects");
+    await openNewProjectModal();
 
     fireEvent.click(await screen.findByRole("button", { name: /browse fs root/i }));
     expect(await screen.findByText("No entries in this directory.")).toBeTruthy();
@@ -2198,6 +3206,7 @@ describe("App", () => {
     });
 
     renderAtPath("/projects");
+    await openNewProjectModal();
 
     fireEvent.click(await screen.findByRole("button", { name: /browse fs root/i }));
 
@@ -2229,6 +3238,7 @@ describe("App", () => {
     });
 
     renderAtPath("/projects");
+    await openNewProjectModal();
 
     const fsRootInput = await screen.findByLabelText(/^fs root$/i);
     fireEvent.click(screen.getByRole("button", { name: /browse fs root/i }));
@@ -2258,6 +3268,7 @@ describe("App", () => {
     });
 
     renderAtPath("/projects");
+    await openNewProjectModal();
 
     const allowlistInput = await screen.findByLabelText(/^allowlist paths$/i, { selector: "textarea" });
     fireEvent.click(screen.getByRole("button", { name: /browse allowlist paths/i }));
@@ -2275,8 +3286,9 @@ describe("App", () => {
     const fetchMock = installApiMock();
     renderAtPath("/projects");
 
-    const deleteButton = await screen.findByRole("button", { name: /delete project p1/i });
-    fireEvent.click(deleteButton);
+    const projectTable = await screen.findByRole("table", { name: /registered projects/i });
+    const projectRow = within(projectTable).getByRole("row", { name: /open project p1 configuration/i });
+    fireEvent.click(projectRow);
 
     expect(screen.getByText(/type delete to confirm removing p1/i)).toBeTruthy();
     expect(
@@ -2324,6 +3336,10 @@ describe("App", () => {
     });
     renderAtPath("/projects");
 
+    const projectTable = await screen.findByRole("table", { name: /registered projects/i });
+    const projectRow = within(projectTable).getByRole("row", { name: /open project workflow service configuration/i });
+    fireEvent.click(projectRow);
+
     expect(await screen.findByText(/watcher state defaults to enabled\./i)).toBeTruthy();
     expect(screen.getByText(/default state routes to platform\/runtime\./i)).toBeTruthy();
     expect(screen.queryByText(/watcher state hints are unavailable from the current projects api response\./i)).toBeNull();
@@ -2348,17 +3364,56 @@ describe("App", () => {
     });
     renderAtPath("/projects");
 
+    const projectTable = await screen.findByRole("table", { name: /registered projects/i });
+    const projectRow = within(projectTable).getByRole("row", { name: /open project workflow service configuration/i });
+    fireEvent.click(projectRow);
+
     expect(await screen.findByText(/watcher state hints are unavailable from the current projects api response\./i)).toBeTruthy();
     expect(screen.getByText(/default state hints are unavailable from the current projects api response\./i)).toBeTruthy();
+  });
+
+  it("renders MCP clients in a selectable table and opens creation from New", async () => {
+    installApiMock({
+      mcpClients: [
+        {
+          id: "t1",
+          label: "ci-agent",
+          project_ids: ["p1"],
+          created_at: "2026-04-30T00:00:00Z",
+          last_used_at: null,
+          revoked_at: null,
+        },
+      ],
+    });
+    renderAtPath("/mcp-clients");
+
+    const table = await screen.findByRole("table", { name: /registered mcp clients/i });
+    expect(screen.queryByRole("list", { name: /mcp clients list/i })).toBeNull();
+    expect(screen.queryByLabelText(/^client label$/i)).toBeNull();
+
+    const row = within(table).getByRole("row", { name: /open mcp client ci-agent details/i });
+    fireEvent.keyDown(row, { key: "Enter" });
+
+    expect(await screen.findByRole("dialog", { name: /mcp client ci-agent/i })).toBeTruthy();
+    expect(screen.getByRole("button", { name: /regenerate/i })).toBeTruthy();
+    expect(screen.getByRole("button", { name: /revoke/i })).toBeTruthy();
+    expect(screen.getByRole("button", { name: /delete/i })).toBeTruthy();
+
+    fireEvent.click(screen.getByRole("button", { name: /close dialog/i }));
+    fireEvent.click(screen.getByRole("button", { name: /^new$/i }));
+
+    expect(await screen.findByRole("dialog", { name: /new mcp client/i })).toBeTruthy();
+    expect(screen.getByLabelText(/^client label$/i)).toBeTruthy();
+    const createButton = screen.getByRole("button", { name: /create mcp client/i });
+    expect(createButton).toBeTruthy();
+    expect(createButton.hasAttribute("disabled")).toBe(false);
   });
 
   it("shows one-time mcp token after creation and hides it after reload", async () => {
     installApiMock();
     renderAtPath("/mcp-clients");
 
-    await waitFor(() => {
-      expect(screen.getByRole("button", { name: /create mcp client/i })).toBeTruthy();
-    });
+    await openNewMcpClientModal();
 
     fireEvent.change(screen.getByLabelText(/^client label$/i), { target: { value: "ci-agent" } });
     fireEvent.change(screen.getByLabelText(/project access/i, { selector: "select" }), { target: { value: "p1" } });
@@ -2385,9 +3440,7 @@ describe("App", () => {
     });
     renderAtPath("/mcp-clients");
 
-    await waitFor(() => {
-      expect(screen.getByLabelText(/project access/i, { selector: "select" })).toBeTruthy();
-    });
+    await openNewMcpClientModal();
 
     fireEvent.change(screen.getByLabelText(/^client label$/i), { target: { value: "docs-agent" } });
     fireEvent.change(screen.getByLabelText(/project access/i, { selector: "select" }), { target: { value: "p2" } });
@@ -2405,13 +3458,32 @@ describe("App", () => {
     });
   });
 
+  it("creates MCP clients without project bindings by default", async () => {
+    const fetchMock = installApiMock();
+    renderAtPath("/mcp-clients");
+
+    await openNewMcpClientModal();
+
+    fireEvent.change(screen.getByLabelText(/^client label$/i), { target: { value: "client-selects-project" } });
+    fireEvent.click(screen.getByRole("button", { name: /create mcp client/i }));
+
+    await waitFor(() => {
+      const createCall = fetchMock.mock.calls.find((call) => {
+        const url = String(call[0]);
+        const init = call[1] as RequestInit | undefined;
+        return url.includes("/api/admin/v1/mcp-clients") && init?.method === "POST";
+      });
+      expect(createCall).toBeTruthy();
+      const body = JSON.parse(String((createCall?.[1] as RequestInit | undefined)?.body ?? "{}")) as Record<string, unknown>;
+      expect(body.project_ids).toEqual([]);
+    });
+  });
+
   it("keeps form label in token card when create response omits label", async () => {
     installApiMock({ createMcpClientResponse: { label: undefined } });
     renderAtPath("/mcp-clients");
 
-    await waitFor(() => {
-      expect(screen.getByRole("button", { name: /create mcp client/i })).toBeTruthy();
-    });
+    await openNewMcpClientModal();
 
     fireEvent.change(screen.getByLabelText(/^client label$/i), { target: { value: "ci-agent" } });
     fireEvent.change(screen.getByLabelText(/project access/i, { selector: "select" }), { target: { value: "p1" } });
@@ -2428,9 +3500,7 @@ describe("App", () => {
     installApiMock({ createMcpClientResponse: { token: "" } });
     renderAtPath("/mcp-clients");
 
-    await waitFor(() => {
-      expect(screen.getByRole("button", { name: /create mcp client/i })).toBeTruthy();
-    });
+    await openNewMcpClientModal();
 
     fireEvent.change(screen.getByLabelText(/^client label$/i), { target: { value: "ci-agent" } });
     fireEvent.change(screen.getByLabelText(/project access/i, { selector: "select" }), { target: { value: "p1" } });
@@ -2462,9 +3532,7 @@ describe("App", () => {
     });
     renderAtPath("/mcp-clients");
 
-    await waitFor(() => {
-      expect(screen.getByRole("button", { name: /regenerate/i })).toBeTruthy();
-    });
+    await openMcpClientDetailModal();
 
     fireEvent.click(screen.getByRole("button", { name: /regenerate/i }));
 
@@ -2476,6 +3544,35 @@ describe("App", () => {
 
     expect(screen.queryByText(/mcp token regenerated\. save the new token now/i)).toBeNull();
     expect(screen.queryByText(/copy once: token and snippet/i)).toBeNull();
+  });
+
+  it("shows regenerated one-time MCP token inside the open detail dialog", async () => {
+    installApiMock({
+      mcpClients: [
+        {
+          id: "t1",
+          label: "ci-agent",
+          project_ids: ["p1"],
+          created_at: "2026-04-30T00:00:00Z",
+          last_used_at: null,
+          revoked_at: null,
+        },
+      ],
+    });
+    renderAtPath("/mcp-clients");
+
+    await openMcpClientDetailModal();
+    const dialog = screen.getByRole("dialog", { name: /mcp client ci-agent/i });
+
+    fireEvent.click(within(dialog).getByRole("button", { name: /regenerate/i }));
+
+    await waitFor(() => {
+      expect(within(dialog).getByText(/copy once: token and snippet/i)).toBeTruthy();
+      expect(within(dialog).getAllByText(/mcp-secret-token-regenerated/i).length).toBeGreaterThan(0);
+    });
+    const tokenCard = within(dialog).getByText(/copy once: token and snippet/i).closest(".token-card");
+    expect(tokenCard).toBeTruthy();
+    expect(document.activeElement).toBe(tokenCard);
   });
 
   it("falls back to token id when regenerate response label is empty", async () => {
@@ -2494,9 +3591,7 @@ describe("App", () => {
     });
     renderAtPath("/mcp-clients");
 
-    await waitFor(() => {
-      expect(screen.getByRole("button", { name: /regenerate/i })).toBeTruthy();
-    });
+    await openMcpClientDetailModal();
 
     fireEvent.click(screen.getByRole("button", { name: /regenerate/i }));
 
@@ -2506,119 +3601,278 @@ describe("App", () => {
     });
   });
 
-  it("renders runs list, supports status/limit/offset query, and handles detail/cancel/resume actions", async () => {
+  it("updates MCP client project access from the detail dialog", async () => {
+    const fetchMock = installApiMock({
+      projects: [
+        { id: "p1", name: "Main Project", slug: "main", palace: "x", default_wing: "w", default_room: "r", fs_root: "/tmp/main", fs_allowlist: [] },
+        { id: "p2", name: "Docs Project", slug: "docs", palace: "x", default_wing: "w", default_room: "r", fs_root: "/tmp/docs", fs_allowlist: [] },
+      ],
+      mcpClients: [
+        {
+          id: "t1",
+          label: "ci-agent",
+          project_ids: ["p1"],
+          created_at: "2026-04-30T00:00:00Z",
+          last_used_at: null,
+          revoked_at: null,
+        },
+      ],
+    });
+    renderAtPath("/mcp-clients");
+
+    await openMcpClientDetailModal();
+    const dialog = screen.getByRole("dialog", { name: /mcp client ci-agent/i });
+    fireEvent.change(within(dialog).getByLabelText(/allowed projects/i, { selector: "select" }), {
+      target: { value: "p2" },
+    });
+    fireEvent.click(within(dialog).getByRole("button", { name: /save project access/i }));
+
+    await waitFor(() => {
+      expect(screen.getByText(/mcp client t1 project access updated/i)).toBeTruthy();
+    });
+    const patchCall = fetchMock.mock.calls.find((call) => {
+      const init = call[1] as RequestInit | undefined;
+      return String(call[0]).endsWith("/api/admin/v1/mcp-clients/t1") && init?.method === "PATCH";
+    });
+    expect(patchCall).toBeTruthy();
+    const body = JSON.parse(String((patchCall?.[1] as RequestInit | undefined)?.body ?? "{}")) as Record<string, unknown>;
+    expect(body.project_ids).toEqual(["p2"]);
+  });
+
+  it("deletes an MCP client from the detail dialog and removes it from the table", async () => {
+    const fetchMock = installApiMock({
+      mcpClients: [
+        {
+          id: "t1",
+          label: "ci-agent",
+          project_ids: ["p1"],
+          created_at: "2026-04-30T00:00:00Z",
+          last_used_at: null,
+          revoked_at: "2026-04-30T00:10:00Z",
+        },
+      ],
+    });
+    renderAtPath("/mcp-clients");
+
+    await openMcpClientDetailModal();
+    fireEvent.click(screen.getByRole("button", { name: /delete/i }));
+
+    await waitFor(() => {
+      expect(screen.getByText(/mcp client t1 deleted/i)).toBeTruthy();
+    });
+    expect(screen.queryByRole("dialog", { name: /mcp client ci-agent/i })).toBeNull();
+    expect(screen.queryByRole("row", { name: /open mcp client ci-agent details/i })).toBeNull();
+
+    const deleteCall = fetchMock.mock.calls.find((call) => {
+      const init = call[1] as RequestInit | undefined;
+      return String(call[0]).endsWith("/api/admin/v1/mcp-clients/t1/registration") && init?.method === "DELETE";
+    });
+    expect(deleteCall).toBeTruthy();
+  });
+
+  it("renders the execution recorder, filters runs, and handles detail/cancel/resume actions", async () => {
     const fetchMock = installApiMock();
-    const promptSpy = vi.spyOn(window, "prompt").mockReturnValue("approved");
     renderAtPath("/runs");
 
+    const runsTable = await screen.findByRole("table", { name: /workflow execution runs/i });
     await waitFor(() => {
-      expect(screen.getByText(/python-ci-pipeline/i)).toBeTruthy();
-      expect(screen.getByText(/run id: run-1/i)).toBeTruthy();
-      expect(screen.getByText(/job id: job-1/i)).toBeTruthy();
-      expect(screen.getByText(/project id: p1/i)).toBeTruthy();
-      expect(screen.getByText(/token id: t1/i)).toBeTruthy();
-      expect(screen.getByText(/cancellable: yes/i)).toBeTruthy();
+      expect(screen.getByRole("heading", { name: /execution recorder/i })).toBeTruthy();
+      expect(within(runsTable).getByText(/python-ci-pipeline/i)).toBeTruthy();
+      expect(within(runsTable).getByText(/run-1/i)).toBeTruthy();
+      expect(within(runsTable).getByText(/deploy-gate/i)).toBeTruthy();
+      expect(screen.getByText(/total match/i)).toBeTruthy();
+      expect(screen.queryByRole("button", { name: /inspect run/i })).toBeNull();
+      expect(screen.getByRole("button", { name: /^reload$/i })).toBeTruthy();
     });
 
-    fireEvent.click(screen.getByRole("button", { name: /view run run-1/i }));
+    fireEvent.click(within(runsTable).getByRole("row", { name: /open run python-ci-pipeline detail/i }));
+    const detailDialog = await screen.findByRole("dialog", { name: /run python-ci-pipeline/i });
     await waitFor(() => {
-      expect(screen.getByText(/run detail: run-1/i)).toBeTruthy();
-      expect(screen.getByText(/result summary: awaiting user input/i)).toBeTruthy();
-      expect(screen.getByText(/error summary: none/i)).toBeTruthy();
-      expect(screen.getByText(/metadata keys: prompt, gate/i)).toBeTruthy();
-      expect(screen.getByText(/technical json/i)).toBeTruthy();
+      expect(within(detailDialog).getAllByText(/run detail/i).length).toBeGreaterThan(0);
+      expect(within(detailDialog).getAllByText(/required_param is required/i).length).toBeGreaterThan(0);
+      expect(within(detailDialog).getAllByText(/validate_inputs/i).length).toBeGreaterThan(0);
+      expect(within(detailDialog).getByText(/technical json/i)).toBeTruthy();
     });
+    fireEvent.click(within(detailDialog).getByRole("button", { name: /close dialog/i }));
 
     fireEvent.change(screen.getByLabelText(/status filter/i), { target: { value: "completed" } });
+    fireEvent.change(screen.getByLabelText(/^mode$/i), { target: { value: "async" } });
+    fireEvent.change(screen.getByLabelText(/^workflow$/i), { target: { value: "node-ci-pipeline" } });
     fireEvent.change(screen.getByLabelText(/^limit$/i), { target: { value: "1" } });
     fireEvent.change(screen.getByLabelText(/^offset$/i), { target: { value: "0" } });
-    fireEvent.click(screen.getByRole("button", { name: /apply run filters/i }));
+    fireEvent.click(screen.getByRole("button", { name: /^apply$/i }));
 
     await waitFor(() => {
-      const call = fetchMock.mock.calls.find((entry) => String(entry[0]).includes("/api/admin/v1/runs?status=completed&limit=1&offset=0"));
+      const call = fetchMock.mock.calls.find((entry) =>
+        String(entry[0]).includes("/api/admin/v1/runs?status=completed&mode=async&workflow=node-ci-pipeline&limit=1&offset=0"),
+      );
       expect(call).toBeTruthy();
     });
 
     await waitFor(() => {
-      expect(screen.getByText(/run id: run-2/i)).toBeTruthy();
-      expect(screen.queryByRole("button", { name: /cancel run run-2/i })).toBeNull();
+      expect(screen.getByText(/run-3/i)).toBeTruthy();
     });
 
     fireEvent.change(screen.getByLabelText(/status filter/i), { target: { value: "paused" } });
-    fireEvent.click(screen.getByRole("button", { name: /apply run filters/i }));
+    fireEvent.change(screen.getByLabelText(/^workflow$/i), { target: { value: "deploy-gate" } });
+    fireEvent.change(screen.getByLabelText(/project id/i), { target: { value: "p1" } });
+    fireEvent.click(screen.getByRole("button", { name: /^apply$/i }));
 
     await waitFor(() => {
-      expect(screen.getByRole("button", { name: /cancel run run-1/i })).toBeTruthy();
-      expect(screen.getByRole("button", { name: /resume run run-1/i })).toBeTruthy();
+      const call = fetchMock.mock.calls.find((entry) =>
+        String(entry[0]).includes("/api/admin/v1/runs?status=paused&mode=async&workflow=deploy-gate&project_id=p1&limit=1&offset=0"),
+      );
+      expect(call).toBeTruthy();
     });
 
-    fireEvent.click(screen.getByRole("button", { name: /cancel run run-1/i }));
+    const filteredRunsTable = screen.getByRole("table", { name: /workflow execution runs/i });
+    fireEvent.click(within(filteredRunsTable).getByRole("row", { name: /open run deploy-gate detail/i }));
+    const pausedDialog = await screen.findByRole("dialog", { name: /run deploy-gate/i });
+
+    fireEvent.click(within(pausedDialog).getByRole("button", { name: /cancel run/i }));
     await waitFor(() => {
-      expect(screen.getByText(/run run-1 cancellation requested/i)).toBeTruthy();
+      expect(screen.getByText(/run run-2 cancellation requested/i)).toBeTruthy();
     });
 
-    fireEvent.click(screen.getByRole("button", { name: /resume run run-1/i }));
+    fireEvent.click(within(pausedDialog).getByRole("button", { name: /resume run/i }));
+    const resumeDialog = await screen.findByRole("dialog", { name: /resume run-2/i });
+    fireEvent.change(within(resumeDialog).getByLabelText(/response/i), { target: { value: "approved" } });
+    fireEvent.click(within(resumeDialog).getByRole("button", { name: /submit resume/i }));
+
     await waitFor(() => {
-      expect(promptSpy).toHaveBeenCalled();
-      expect(screen.getByText(/run run-1 resume submitted/i)).toBeTruthy();
+      expect(screen.getByText(/run run-2 resume submitted/i)).toBeTruthy();
     });
 
     const resumeCall = fetchMock.mock.calls.find((entry) => {
       const url = String(entry[0]);
       const init = entry[1] as RequestInit | undefined;
-      return url.includes("/api/admin/v1/runs/run-1/resume") && init?.method === "POST";
+      return url.includes("/api/admin/v1/runs/run-2/resume") && init?.method === "POST";
     });
     expect(resumeCall).toBeTruthy();
     expect(JSON.parse(String((resumeCall?.[1] as RequestInit | undefined)?.body ?? "{}"))).toEqual({ response: "approved" });
   });
 
-  it("shows clear runs empty and filter limitation copy", async () => {
+  it("syntax-highlights JSON diagnostics and run inputs in the detail dialog", async () => {
+    installApiMock({
+      runDetailById: {
+        "run-1": {
+          run_id: "run-1",
+          job_id: "job-1",
+          workflow_name: "book-designer",
+          status: "completed",
+          execution_mode: "sync",
+          created_at: "2026-04-30T00:00:00Z",
+          started_at: "2026-04-30T00:01:00Z",
+          finished_at: "2026-04-30T00:01:01Z",
+          updated_at: "2026-04-30T00:01:01Z",
+          duration_ms: 67,
+          cancellable: false,
+          project_id: "p1",
+          token_id: "t1",
+          result_summary: null,
+          error_summary: null,
+          inputs: {
+            book_name: "The Adventures of Blinky the Bunny",
+            topic: "Friendship and sharing",
+            characters: 8,
+          },
+          outputs: {
+            _error: "Output evaluation failed",
+          },
+          error: JSON.stringify({
+            outputs: {
+              _error: "Output evaluation failed: Failed to evaluate expression",
+            },
+            _note: "Check debug log for partial execution details",
+          }),
+          metadata: { workflow_name: "book-designer" },
+          blocks: [],
+          technical_json: {
+            status: "completed",
+            inputs: {
+              book_name: "The Adventures of Blinky the Bunny",
+              topic: "Friendship and sharing",
+              characters: 8,
+            },
+          },
+        },
+      },
+    });
+    renderAtPath("/runs");
+
+    const runsTable = await screen.findByRole("table", { name: /workflow execution runs/i });
+    fireEvent.click(within(runsTable).getByRole("row", { name: /open run python-ci-pipeline detail/i }));
+    const detailDialog = await screen.findByRole("dialog", { name: /run book-designer/i });
+
+    const diagnosticSection = within(detailDialog).getByText("Diagnostic").closest("section");
+    const inputsSection = within(detailDialog).getByText("Inputs").closest("section");
+    expect(diagnosticSection?.querySelector(".runs-json-code")).toBeTruthy();
+    expect(inputsSection?.querySelector(".runs-json-code")).toBeTruthy();
+    expect(diagnosticSection?.querySelector(".json-token--key")?.textContent).toBe("\"outputs\"");
+    expect(
+      Array.from(inputsSection?.querySelectorAll(".json-token--key") ?? []).some((token) => token.textContent === "\"book_name\""),
+    ).toBe(true);
+    expect(
+      Array.from(inputsSection?.querySelectorAll(".json-token--string") ?? []).some((token) =>
+        token.textContent?.includes("The Adventures of Blinky the Bunny"),
+      ),
+    ).toBe(true);
+    expect(
+      Array.from(inputsSection?.querySelectorAll(".json-token--number") ?? []).some((token) => token.textContent === "8"),
+    ).toBe(true);
+  });
+
+  it("shows clear runs empty copy", async () => {
     installApiMock({ runs: [] });
     renderAtPath("/runs");
 
     await waitFor(() => {
-      expect(screen.getByText(/project and workflow filters are not available yet/i)).toBeTruthy();
-      expect(screen.getByText(/no runs found for the current filter/i)).toBeTruthy();
-      expect(screen.getByRole("button", { name: /reload runs/i })).toBeTruthy();
+      expect(screen.getByText(/no runs match this view/i)).toBeTruthy();
+      expect(screen.getByText(/records them in sqlite/i)).toBeTruthy();
+      expect(screen.getByRole("button", { name: /^reload$/i })).toBeTruthy();
     });
   });
 
-  it("shows readable runs errors for load, cancel, and resume failures", async () => {
+  it("shows readable runs errors for cancel and resume failures", async () => {
     installApiMock({ cancelRunStatus: 409, cancelRunErrorMessage: "Run is not cancellable", resumeRunStatus: 409, resumeRunErrorMessage: "Run is not resumable" });
-    vi.spyOn(window, "prompt").mockReturnValue("retry");
     renderAtPath("/runs");
 
-    const cancelButton = await screen.findByRole("button", { name: /cancel run run-1/i });
-    fireEvent.click(cancelButton);
+    const runsTable = await screen.findByRole("table", { name: /workflow execution runs/i });
+    fireEvent.click(within(runsTable).getByRole("row", { name: /open run deploy-gate detail/i }));
+    const detailDialog = await screen.findByRole("dialog", { name: /run deploy-gate/i });
+    fireEvent.click(within(detailDialog).getByRole("button", { name: /cancel run/i }));
     await waitFor(() => {
       expect(screen.getByText(/run is not cancellable/i)).toBeTruthy();
     });
 
-    fireEvent.click(screen.getByRole("button", { name: /resume run run-1/i }));
+    fireEvent.click(within(detailDialog).getByRole("button", { name: /resume run/i }));
+    const dialog = await screen.findByRole("dialog", { name: /resume run-2/i });
+    fireEvent.change(within(dialog).getByLabelText(/response/i), { target: { value: "retry" } });
+    fireEvent.click(within(dialog).getByRole("button", { name: /submit resume/i }));
     await waitFor(() => {
       expect(screen.getByText(/run is not resumable/i)).toBeTruthy();
     });
   });
 
-  it("does not submit resume when prompt is cancelled", async () => {
+  it("does not submit resume when the resume modal is cancelled", async () => {
     const fetchMock = installApiMock();
-    const promptSpy = vi.spyOn(window, "prompt").mockReturnValue(null);
     renderAtPath("/runs");
 
-    const resumeButton = await screen.findByRole("button", { name: /resume run run-1/i });
-    fireEvent.click(resumeButton);
+    const runsTable = await screen.findByRole("table", { name: /workflow execution runs/i });
+    fireEvent.click(within(runsTable).getByRole("row", { name: /open run deploy-gate detail/i }));
+    const detailDialog = await screen.findByRole("dialog", { name: /run deploy-gate/i });
+    fireEvent.click(within(detailDialog).getByRole("button", { name: /resume run/i }));
 
-    await waitFor(() => {
-      expect(promptSpy).toHaveBeenCalled();
-    });
+    const dialog = await screen.findByRole("dialog", { name: /resume run-2/i });
+    fireEvent.click(within(dialog).getByRole("button", { name: /^cancel$/i }));
 
     const resumeCall = fetchMock.mock.calls.find((entry) => {
       const url = String(entry[0]);
       const init = entry[1] as RequestInit | undefined;
-      return url.includes("/api/admin/v1/runs/run-1/resume") && init?.method === "POST";
+      return url.includes("/api/admin/v1/runs/run-2/resume") && init?.method === "POST";
     });
 
     expect(resumeCall).toBeUndefined();
-    expect(screen.queryByText(/run run-1 resume submitted/i)).toBeNull();
+    expect(screen.queryByText(/run run-2 resume submitted/i)).toBeNull();
   });
 });

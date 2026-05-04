@@ -10,11 +10,13 @@ history list/detail contracts.
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Any
 
 import pytest
 from fastapi.testclient import TestClient
 
 from workflows_mcp.bootstrap import bootstrap_if_needed
+from workflows_mcp.http.routes.admin_v1 import sync as sync_routes
 from workflows_mcp.metadata.db import connect_metadata_db
 from workflows_mcp.metadata.migrations import migrate_metadata_db
 from workflows_mcp.metadata.repos.run_history_repo import SQLiteRunHistoryRepository
@@ -78,8 +80,23 @@ def _seed_run(client: TestClient, *, run_id: str, project_id: str, token_id: str
         conn.close()
 
 
-def test_phase11_clean_state_http_flow(tmp_path: Path, clean_state_client: TestClient) -> None:
+def test_phase11_clean_state_http_flow(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    clean_state_client: TestClient,
+) -> None:
     csrf_token = _login_and_csrf(clean_state_client)
+    persisted_projects: list[str] = []
+
+    async def fake_persist_project_graph_from_scan(resources: Any, project: Any) -> dict[str, int]:
+        persisted_projects.append(str(project.id))
+        return {"nodes": 1, "corridors": 0}
+
+    monkeypatch.setattr(
+        sync_routes,
+        "_persist_project_graph_from_scan",
+        fake_persist_project_graph_from_scan,
+    )
 
     setup_response = clean_state_client.get("/api/admin/v1/database/setup")
     assert setup_response.status_code == 200
@@ -219,6 +236,7 @@ def test_phase11_clean_state_http_flow(tmp_path: Path, clean_state_client: TestC
     sync_payload = sync_now.json()
     assert sync_payload["project_id"] == project_id
     assert sync_payload["dirty_count"] == 0
+    assert persisted_projects == [project_id, project_id]
 
     _seed_run(
         clean_state_client,

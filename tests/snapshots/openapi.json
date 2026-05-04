@@ -18,16 +18,28 @@
         ],
         "properties": {
           "default_room": {
-            "maxLength": 1024,
-            "minLength": 1,
-            "title": "Default Room",
-            "type": "string"
+            "anyOf": [
+              {
+                "maxLength": 1024,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Default Room"
           },
           "default_wing": {
-            "maxLength": 1024,
-            "minLength": 1,
-            "title": "Default Wing",
-            "type": "string"
+            "anyOf": [
+              {
+                "maxLength": 1024,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Default Wing"
           },
           "fs_allowlist": {
             "anyOf": [
@@ -74,8 +86,6 @@
           "name",
           "slug",
           "palace",
-          "default_wing",
-          "default_room",
           "fs_root"
         ],
         "title": "CreateProjectRequest",
@@ -458,9 +468,7 @@
               ]
             },
             "label": "ci-agent",
-            "project_ids": [
-              "project-id"
-            ]
+            "project_ids": []
           }
         ],
         "properties": {
@@ -493,8 +501,7 @@
           }
         },
         "required": [
-          "label",
-          "project_ids"
+          "label"
         ],
         "title": "MCPClientCreateRequest",
         "type": "object"
@@ -570,6 +577,19 @@
         "title": "MCPClientCreateResponse",
         "type": "object"
       },
+      "MCPClientDeleteResponse": {
+        "properties": {
+          "deleted": {
+            "title": "Deleted",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "deleted"
+        ],
+        "title": "MCPClientDeleteResponse",
+        "type": "object"
+      },
       "MCPClientResponse": {
         "properties": {
           "capabilities": {
@@ -642,6 +662,28 @@
           "revoked"
         ],
         "title": "MCPClientRevokeResponse",
+        "type": "object"
+      },
+      "MCPClientUpdateRequest": {
+        "examples": [
+          {
+            "project_ids": [
+              "project-id"
+            ]
+          }
+        ],
+        "properties": {
+          "project_ids": {
+            "items": {
+              "maxLength": 1024,
+              "minLength": 1,
+              "type": "string"
+            },
+            "title": "Project Ids",
+            "type": "array"
+          }
+        },
+        "title": "MCPClientUpdateRequest",
         "type": "object"
       },
       "MCPClientsListResponse": {
@@ -728,12 +770,26 @@
             "type": "string"
           },
           "default_room": {
-            "title": "Default Room",
-            "type": "string"
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Default Room"
           },
           "default_wing": {
-            "title": "Default Wing",
-            "type": "string"
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Default Wing"
           },
           "fs_allowlist": {
             "items": {
@@ -950,8 +1006,106 @@
         "title": "ResumeRunRequest",
         "type": "object"
       },
+      "RunBlockResponse": {
+        "properties": {
+          "block_id": {
+            "title": "Block Id",
+            "type": "string"
+          },
+          "block_type": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Block Type"
+          },
+          "duration_ms": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Duration Ms"
+          },
+          "inputs": {
+            "additionalProperties": true,
+            "title": "Inputs",
+            "type": "object"
+          },
+          "message": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Message"
+          },
+          "metadata": {
+            "additionalProperties": true,
+            "title": "Metadata",
+            "type": "object"
+          },
+          "outcome": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Outcome"
+          },
+          "outputs": {
+            "additionalProperties": true,
+            "title": "Outputs",
+            "type": "object"
+          },
+          "status": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Status"
+          }
+        },
+        "required": [
+          "block_id",
+          "block_type",
+          "status",
+          "outcome",
+          "duration_ms",
+          "message",
+          "inputs",
+          "outputs",
+          "metadata"
+        ],
+        "title": "RunBlockResponse",
+        "type": "object"
+      },
       "RunDetailResponse": {
         "properties": {
+          "blocks": {
+            "items": {
+              "$ref": "#/components/schemas/RunBlockResponse"
+            },
+            "title": "Blocks",
+            "type": "array"
+          },
           "cancellable": {
             "title": "Cancellable",
             "type": "boolean"
@@ -959,6 +1113,28 @@
           "created_at": {
             "title": "Created At",
             "type": "string"
+          },
+          "duration_ms": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Duration Ms"
+          },
+          "error": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Error"
           },
           "error_summary": {
             "anyOf": [
@@ -971,6 +1147,10 @@
             ],
             "title": "Error Summary"
           },
+          "execution_mode": {
+            "title": "Execution Mode",
+            "type": "string"
+          },
           "finished_at": {
             "anyOf": [
               {
@@ -982,9 +1162,22 @@
             ],
             "title": "Finished At"
           },
+          "inputs": {
+            "additionalProperties": true,
+            "title": "Inputs",
+            "type": "object"
+          },
           "job_id": {
             "title": "Job Id",
             "type": "string"
+          },
+          "metadata": {
+            "additionalProperties": true,
+            "title": "Metadata",
+            "type": "object"
+          },
+          "outputs": {
+            "title": "Outputs"
           },
           "project_id": {
             "anyOf": [
@@ -1027,6 +1220,11 @@
             "title": "Status",
             "type": "string"
           },
+          "technical_json": {
+            "additionalProperties": true,
+            "title": "Technical Json",
+            "type": "object"
+          },
           "token_id": {
             "anyOf": [
               {
@@ -1052,15 +1250,23 @@
           "job_id",
           "workflow_name",
           "status",
+          "execution_mode",
           "created_at",
           "started_at",
           "finished_at",
           "updated_at",
+          "duration_ms",
           "cancellable",
           "project_id",
           "token_id",
           "result_summary",
-          "error_summary"
+          "error_summary",
+          "inputs",
+          "outputs",
+          "error",
+          "metadata",
+          "blocks",
+          "technical_json"
         ],
         "title": "RunDetailResponse",
         "type": "object"
@@ -1073,6 +1279,21 @@
           },
           "created_at": {
             "title": "Created At",
+            "type": "string"
+          },
+          "duration_ms": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Duration Ms"
+          },
+          "execution_mode": {
+            "title": "Execution Mode",
             "type": "string"
           },
           "finished_at": {
@@ -1145,10 +1366,12 @@
           "job_id",
           "workflow_name",
           "status",
+          "execution_mode",
           "created_at",
           "started_at",
           "finished_at",
           "updated_at",
+          "duration_ms",
           "cancellable",
           "project_id",
           "token_id"
@@ -1158,16 +1381,31 @@
       },
       "RunsListResponse": {
         "properties": {
+          "limit": {
+            "title": "Limit",
+            "type": "integer"
+          },
+          "offset": {
+            "title": "Offset",
+            "type": "integer"
+          },
           "runs": {
             "items": {
               "$ref": "#/components/schemas/RunRowResponse"
             },
             "title": "Runs",
             "type": "array"
+          },
+          "total": {
+            "title": "Total",
+            "type": "integer"
           }
         },
         "required": [
-          "runs"
+          "runs",
+          "total",
+          "limit",
+          "offset"
         ],
         "title": "RunsListResponse",
         "type": "object"
@@ -1335,6 +1573,24 @@
         "title": "SecretsListResponse",
         "type": "object"
       },
+      "SyncErrorDetail": {
+        "properties": {
+          "code": {
+            "title": "Code",
+            "type": "string"
+          },
+          "message": {
+            "title": "Message",
+            "type": "string"
+          }
+        },
+        "required": [
+          "code",
+          "message"
+        ],
+        "title": "SyncErrorDetail",
+        "type": "object"
+      },
       "SyncListResponse": {
         "properties": {
           "projects": {
@@ -1351,11 +1607,102 @@
         "title": "SyncListResponse",
         "type": "object"
       },
+      "SyncLogEntry": {
+        "properties": {
+          "enqueued_at": {
+            "title": "Enqueued At",
+            "type": "string"
+          },
+          "event_type": {
+            "title": "Event Type",
+            "type": "string"
+          },
+          "id": {
+            "title": "Id",
+            "type": "integer"
+          },
+          "path": {
+            "title": "Path",
+            "type": "string"
+          },
+          "processed_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Processed At"
+          },
+          "project_id": {
+            "title": "Project Id",
+            "type": "string"
+          },
+          "reason": {
+            "title": "Reason",
+            "type": "string"
+          },
+          "status": {
+            "title": "Status",
+            "type": "string"
+          },
+          "updated_at": {
+            "title": "Updated At",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "project_id",
+          "path",
+          "event_type",
+          "reason",
+          "status",
+          "enqueued_at",
+          "updated_at",
+          "processed_at"
+        ],
+        "title": "SyncLogEntry",
+        "type": "object"
+      },
+      "SyncLogsResponse": {
+        "properties": {
+          "entries": {
+            "items": {
+              "$ref": "#/components/schemas/SyncLogEntry"
+            },
+            "title": "Entries",
+            "type": "array"
+          },
+          "project_id": {
+            "title": "Project Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "project_id",
+          "entries"
+        ],
+        "title": "SyncLogsResponse",
+        "type": "object"
+      },
       "SyncNowResponse": {
         "properties": {
           "dirty_count": {
             "title": "Dirty Count",
             "type": "integer"
+          },
+          "error": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/SyncErrorDetail"
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "project_id": {
             "title": "Project Id",
@@ -1397,36 +1744,12 @@
         "title": "SyncProjectSummary",
         "type": "object"
       },
-      "SyncReconcileResponse": {
-        "properties": {
-          "dirty_count": {
-            "title": "Dirty Count",
-            "type": "integer"
-          },
-          "project_id": {
-            "title": "Project Id",
-            "type": "string"
-          },
-          "requires_reconciliation": {
-            "title": "Requires Reconciliation",
-            "type": "boolean"
-          }
-        },
-        "required": [
-          "project_id",
-          "dirty_count",
-          "requires_reconciliation"
-        ],
-        "title": "SyncReconcileResponse",
-        "type": "object"
-      },
       "UpdateProjectRequest": {
         "properties": {
           "default_room": {
             "anyOf": [
               {
                 "maxLength": 1024,
-                "minLength": 1,
                 "type": "string"
               },
               {
@@ -1439,7 +1762,6 @@
             "anyOf": [
               {
                 "maxLength": 1024,
-                "minLength": 1,
                 "type": "string"
               },
               {
@@ -2708,6 +3030,80 @@
         "tags": [
           "admin-v1"
         ]
+      },
+      "patch": {
+        "operationId": "update_mcp_client_api_admin_v1_mcp_clients__token_id__patch",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "token_id",
+            "required": true,
+            "schema": {
+              "maxLength": 128,
+              "minLength": 1,
+              "title": "Token Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-CSRF-Token",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Csrf-Token"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/MCPClientUpdateRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MCPClientResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "AdminSessionCookie": [],
+            "CsrfToken": []
+          }
+        ],
+        "summary": "Update Mcp Client",
+        "tags": [
+          "admin-v1"
+        ]
       }
     },
     "/api/admin/v1/mcp-clients/{token_id}/regenerate": {
@@ -2771,6 +3167,72 @@
           }
         ],
         "summary": "Regenerate Mcp Client",
+        "tags": [
+          "admin-v1"
+        ]
+      }
+    },
+    "/api/admin/v1/mcp-clients/{token_id}/registration": {
+      "delete": {
+        "operationId": "delete_mcp_client_api_admin_v1_mcp_clients__token_id__registration_delete",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "token_id",
+            "required": true,
+            "schema": {
+              "maxLength": 128,
+              "minLength": 1,
+              "title": "Token Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-CSRF-Token",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Csrf-Token"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MCPClientDeleteResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "AdminSessionCookie": [],
+            "CsrfToken": []
+          }
+        ],
+        "summary": "Delete Mcp Client",
         "tags": [
           "admin-v1"
         ]
@@ -3072,6 +3534,60 @@
                 }
               ],
               "title": "Status"
+            }
+          },
+          {
+            "in": "query",
+            "name": "mode",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 64,
+                  "minLength": 1,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Mode"
+            }
+          },
+          {
+            "in": "query",
+            "name": "workflow",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 64,
+                  "minLength": 1,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Workflow"
+            }
+          },
+          {
+            "in": "query",
+            "name": "project_id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 64,
+                  "minLength": 1,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Project Id"
             }
           },
           {
@@ -3515,6 +4031,67 @@
         ]
       }
     },
+    "/api/admin/v1/sync/{project_id}/logs": {
+      "get": {
+        "operationId": "list_sync_logs_api_admin_v1_sync__project_id__logs_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "project_id",
+            "required": true,
+            "schema": {
+              "maxLength": 128,
+              "minLength": 1,
+              "title": "Project Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 25,
+              "maximum": 100,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SyncLogsResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "AdminSessionCookie": []
+          }
+        ],
+        "summary": "List Sync Logs",
+        "tags": [
+          "admin-v1"
+        ]
+      }
+    },
     "/api/admin/v1/sync/{project_id}/now": {
       "post": {
         "operationId": "sync_now_api_admin_v1_sync__project_id__now_post",
@@ -3618,7 +4195,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/SyncReconcileResponse"
+                  "$ref": "#/components/schemas/SyncNowResponse"
                 }
               }
             },
@@ -3684,7 +4261,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/SyncReconcileResponse"
+                  "$ref": "#/components/schemas/SyncNowResponse"
                 }
               }
             },

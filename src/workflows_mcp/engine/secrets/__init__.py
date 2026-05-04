@@ -54,8 +54,10 @@ from .exceptions import (
 )
 from .provider import (
     AWSSecretsProvider,
+    CompositeSecretProvider,
     EnvVarSecretProvider,
     SecretProvider,
+    SQLiteSecretProvider,
     VaultSecretProvider,
 )
 from .redactor import SecretRedactor
@@ -68,7 +70,9 @@ __all__ = [
     "SecretProviderError",
     # Providers
     "SecretProvider",
+    "CompositeSecretProvider",
     "EnvVarSecretProvider",
+    "SQLiteSecretProvider",
     "VaultSecretProvider",
     "AWSSecretsProvider",
     # Redaction

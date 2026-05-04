@@ -112,6 +112,53 @@ async def test_sqlite_mcp_token_can_auth_and_select_bound_project(tmp_path: Path
 
 
 @pytest.mark.anyio
+async def test_unbound_sqlite_mcp_token_can_select_registered_project(
+    tmp_path: Path,
+) -> None:
+    app, resources = _build_app_with_resources(tmp_path)
+    projects_repo = SQLiteProjectsRepository(resources.metadata_db_conn)
+    project_a = _create_project(
+        projects_repo,
+        name="Project Alpha",
+        slug="alpha",
+        palace="palace-alpha",
+        root=tmp_path,
+    )
+    project_b = _create_project(
+        projects_repo,
+        name="Project Beta",
+        slug="beta",
+        palace="palace-beta",
+        root=tmp_path,
+    )
+    assert project_a.id != project_b.id
+    created_token = SQLiteTokensRepository(resources.metadata_db_conn).create(
+        label="unbound-token",
+        project_ids=[],
+    )
+
+    transport = httpx.ASGITransport(app=app)
+    async with httpx.AsyncClient(
+        transport=transport,
+        base_url="http://127.0.0.1",
+        headers={"Authorization": f"Bearer {created_token.token_secret}"},
+    ) as http_client:
+        async with streamable_http_client(
+            "http://127.0.0.1/mcp",
+            http_client=http_client,
+        ) as (read_stream, write_stream, _):
+            async with ClientSession(read_stream, write_stream) as session:
+                await session.initialize()
+                result = await session.call_tool("select", {"project": project_b.slug})
+                payload = result.structuredContent
+                assert payload["status"] == "selected"
+                active = payload["active_project"]
+                assert isinstance(active, dict)
+                assert active["project_id"] == project_b.id
+                assert active["source"] == "token_unbound"
+
+
+@pytest.mark.anyio
 async def test_token_a_cannot_select_token_b_project(tmp_path: Path) -> None:
     app, resources = _build_app_with_resources(tmp_path)
     projects_repo = SQLiteProjectsRepository(resources.metadata_db_conn)

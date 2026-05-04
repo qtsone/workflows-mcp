@@ -33,6 +33,8 @@ from workflows_mcp.engine.io_queue import IOQueue
 from workflows_mcp.engine.llm_config import LLMConfigLoader
 from workflows_mcp.engine.registry import WorkflowRegistry
 from workflows_mcp.engine.schema import WorkflowSchema
+from workflows_mcp.metadata.db import connect_metadata_db
+from workflows_mcp.metadata.repos.run_history_repo import SQLiteRunHistoryRepository
 from workflows_mcp.tools import (
     execute_inline_workflow,
     execute_workflow,
@@ -466,6 +468,64 @@ class TestWorkflowExecution:
         assert "required" in data["error"].lower() or "not found" in data["error"].lower()
 
     @pytest.mark.asyncio
+    async def test_execute_workflow_sync_failure_is_persisted_to_sqlite(
+        self,
+        mock_context,
+        tmp_path: Path,
+    ) -> None:
+        """Registered sync workflow failures should appear in /runs without debug files."""
+        app_ctx = mock_context.request_context.lifespan_context
+        app_ctx.metadata_base_dir = tmp_path
+        app_ctx.metadata_db_path = tmp_path / "server.db"
+        registry = app_ctx.registry
+
+        required_workflow = WorkflowSchema(
+            name="test-persisted-sync-failure",
+            description="Workflow with required inputs",
+            blocks=[
+                {
+                    "id": "echo1",
+                    "type": "Shell",
+                    "inputs": {"command": "echo {{inputs.required_param}}"},
+                }
+            ],
+            inputs={
+                "required_param": {
+                    "type": "str",
+                    "description": "Required parameter",
+                    "required": True,
+                }
+            },
+        )
+        registry.register(required_workflow)
+
+        result = await execute_workflow(
+            workflow="test-persisted-sync-failure",
+            inputs={},
+            debug=True,
+            mode="sync",
+            timeout=None,
+            ctx=mock_context,
+        )
+
+        data = result.structuredContent
+        assert data["status"] == "failure"
+        assert "run_id" in data
+        assert "logfile" not in data
+
+        conn = connect_metadata_db(tmp_path / "server.db")
+        try:
+            run = SQLiteRunHistoryRepository(conn).get_run(str(data["run_id"]))
+        finally:
+            conn.close()
+        assert run is not None
+        assert run.workflow_name == "test-persisted-sync-failure"
+        assert run.status == "failed"
+        assert run.execution_mode == "sync"
+        assert run.execution_json is not None
+        assert "required_param" in run.execution_json
+
+    @pytest.mark.asyncio
     async def test_execute_workflow_with_custom_inputs(self, mock_context) -> None:
         """Test execute_workflow with runtime inputs."""
         result = await execute_workflow(
@@ -512,6 +572,53 @@ outputs:
         data = result.structuredContent
         assert data["status"] == "success"
         assert "outputs" in data
+
+    @pytest.mark.asyncio
+    async def test_execute_inline_workflow_is_persisted_to_sqlite(
+        self,
+        mock_context,
+        tmp_path: Path,
+    ) -> None:
+        """Inline workflow executions should use run history instead of debug files."""
+        app_ctx = mock_context.request_context.lifespan_context
+        app_ctx.metadata_base_dir = tmp_path
+        app_ctx.metadata_db_path = tmp_path / "server.db"
+        workflow_yaml = """
+name: inline-persisted
+description: Inline workflow test
+blocks:
+  - id: echo
+    type: Shell
+    inputs:
+      command: echo 'Inline persisted'
+outputs:
+  result:
+    value: "{{blocks.echo.outputs.stdout}}"
+"""
+
+        result = await execute_inline_workflow(
+            workflow_yaml=workflow_yaml,
+            inputs=None,
+            debug=True,
+            ctx=mock_context,
+        )
+
+        data = result.structuredContent
+        assert data["status"] == "success"
+        assert "run_id" in data
+        assert "logfile" not in data
+
+        conn = connect_metadata_db(tmp_path / "server.db")
+        try:
+            run = SQLiteRunHistoryRepository(conn).get_run(str(data["run_id"]))
+        finally:
+            conn.close()
+        assert run is not None
+        assert run.workflow_name == "inline-persisted"
+        assert run.status == "completed"
+        assert run.execution_mode == "inline"
+        assert run.execution_json is not None
+        assert "Inline persisted" in run.execution_json
 
     @pytest.mark.asyncio
     async def test_execute_inline_workflow_empty_yaml(self, mock_context) -> None:

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from sqlite3 import Connection
 from typing import Annotated, Any
 
@@ -36,10 +37,12 @@ class RunRowResponse(BaseModel):
     job_id: str
     workflow_name: str
     status: str
+    execution_mode: str
     created_at: str
     started_at: str | None
     finished_at: str | None
     updated_at: str
+    duration_ms: int | None
     cancellable: bool
     project_id: str | None
     token_id: str | None
@@ -47,11 +50,32 @@ class RunRowResponse(BaseModel):
 
 class RunsListResponse(BaseModel):
     runs: list[RunRowResponse]
+    total: int
+    limit: int
+    offset: int
+
+
+class RunBlockResponse(BaseModel):
+    block_id: str
+    block_type: str | None
+    status: str | None
+    outcome: str | None
+    duration_ms: int | None
+    message: str | None
+    inputs: dict[str, Any]
+    outputs: dict[str, Any]
+    metadata: dict[str, Any]
 
 
 class RunDetailResponse(RunRowResponse):
     result_summary: str | None
     error_summary: str | None
+    inputs: dict[str, Any]
+    outputs: Any
+    error: str | None
+    metadata: dict[str, Any]
+    blocks: list[RunBlockResponse]
+    technical_json: dict[str, Any]
 
 
 class ResumeRunRequest(BaseModel):
@@ -65,20 +89,85 @@ def _repo(resources: AppResources) -> tuple[SQLiteRunHistoryRepository, Connecti
     return SQLiteRunHistoryRepository(conn), conn
 
 
-def _to_row(run: RunRecord) -> RunRowResponse:
+def _parse_json_object(raw: str | None) -> dict[str, Any]:
+    if raw is None:
+        return {}
+    try:
+        parsed = json.loads(raw)
+    except json.JSONDecodeError:
+        return {}
+    return parsed if isinstance(parsed, dict) else {}
+
+
+def _duration_ms(run: RunRecord, execution_json: dict[str, Any] | None = None) -> int | None:
+    metadata = execution_json.get("metadata") if execution_json else None
+    if isinstance(metadata, dict):
+        seconds = metadata.get("execution_time_seconds")
+        if isinstance(seconds, int | float):
+            return max(0, int(seconds * 1000))
+    return None
+
+
+def _to_row(run: RunRecord, execution_json: dict[str, Any] | None = None) -> RunRowResponse:
     return RunRowResponse(
         run_id=run.run_id,
         job_id=run.run_id,
         workflow_name=run.workflow_name,
         status=run.status,
+        execution_mode=run.execution_mode,
         created_at=run.created_at,
         started_at=run.started_at,
         finished_at=run.finished_at,
         updated_at=run.updated_at,
+        duration_ms=_duration_ms(run, execution_json),
         cancellable=run.cancellable,
         project_id=run.project_id,
         token_id=run.token_id,
     )
+
+
+def _to_block_rows(execution_json: dict[str, Any]) -> list[RunBlockResponse]:
+    blocks = execution_json.get("blocks")
+    if not isinstance(blocks, dict):
+        return []
+    rows: list[RunBlockResponse] = []
+    for block_id, raw_block in blocks.items():
+        block = raw_block if isinstance(raw_block, dict) else {}
+        metadata = block.get("metadata")
+        metadata_dict = metadata if isinstance(metadata, dict) else {}
+        inputs = block.get("inputs")
+        outputs = block.get("outputs")
+        duration_ms = metadata_dict.get("duration_ms")
+        rows.append(
+            RunBlockResponse(
+                block_id=str(block_id),
+                block_type=(
+                    str(metadata_dict["type"])
+                    if isinstance(metadata_dict.get("type"), str)
+                    else None
+                ),
+                status=(
+                    str(metadata_dict["status"])
+                    if isinstance(metadata_dict.get("status"), str)
+                    else None
+                ),
+                outcome=(
+                    str(metadata_dict["outcome"])
+                    if isinstance(metadata_dict.get("outcome"), str)
+                    else None
+                ),
+                duration_ms=duration_ms if isinstance(duration_ms, int) else None,
+                message=(
+                    str(metadata_dict["message"])
+                    if isinstance(metadata_dict.get("message"), str)
+                    else None
+                ),
+                inputs=inputs if isinstance(inputs, dict) else {},
+                outputs=outputs if isinstance(outputs, dict) else {},
+                metadata=metadata_dict,
+            )
+        )
+    return rows
 
 
 def _not_found(run_id: str) -> HTTPException:
@@ -111,16 +200,37 @@ async def list_runs(
     _current: CurrentAdminSession = Depends(require_current_admin_session),
     resources: AppResources = Depends(get_resources),
     status_filter: RunStatus | None = Query(default=None, alias="status"),
+    mode_filter: RunStatus | None = Query(default=None, alias="mode"),
+    workflow_filter: RunStatus | None = Query(default=None, alias="workflow"),
+    project_filter: RunStatus | None = Query(default=None, alias="project_id"),
     limit: int = Query(default=50, ge=1, le=500),
     offset: int = Query(default=0, ge=0),
 ) -> RunsListResponse:
     repo, conn = _repo(resources)
     try:
         try:
-            runs = repo.list_runs(limit=limit, offset=offset, status=status_filter)
+            runs = repo.list_runs(
+                limit=limit,
+                offset=offset,
+                status=status_filter,
+                execution_mode=mode_filter,
+                workflow_name=workflow_filter,
+                project_id=project_filter,
+            )
+            total = repo.count_runs(
+                status=status_filter,
+                execution_mode=mode_filter,
+                workflow_name=workflow_filter,
+                project_id=project_filter,
+            )
         except InvalidRunHistoryPaginationError as exc:
             raise _bad_request("invalid_pagination", str(exc)) from exc
-        return RunsListResponse(runs=[_to_row(run) for run in runs])
+        return RunsListResponse(
+            runs=[_to_row(run, _parse_json_object(run.execution_json)) for run in runs],
+            total=total,
+            limit=limit,
+            offset=offset,
+        )
     finally:
         conn.close()
 
@@ -140,11 +250,27 @@ async def get_run_detail(
         run = repo.get_run(run_id)
         if run is None:
             raise _not_found(run_id)
-        row = _to_row(run)
+        execution_json = _parse_json_object(run.execution_json)
+        row = _to_row(run, execution_json)
+        inputs = _parse_json_object(run.inputs_json)
         return RunDetailResponse(
             **row.model_dump(),
             result_summary=run.result_summary,
             error_summary=run.error_summary,
+            inputs=inputs,
+            outputs=execution_json.get("outputs"),
+            error=(
+                str(execution_json["error"])
+                if isinstance(execution_json.get("error"), str)
+                else run.error_summary
+            ),
+            metadata=(
+                execution_json["metadata"]
+                if isinstance(execution_json.get("metadata"), dict)
+                else {}
+            ),
+            blocks=_to_block_rows(execution_json),
+            technical_json=execution_json,
         )
     finally:
         conn.close()

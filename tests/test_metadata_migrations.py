@@ -50,7 +50,7 @@ def test_concurrent_metadata_migrations_apply_once(tmp_path: Path) -> None:
         versions = conn.execute(
             "SELECT version FROM schema_migrations ORDER BY version"
         ).fetchall()
-        assert [int(row[0]) for row in versions] == [1, 2, 3, 4, 5, 6, 7]
+        assert [int(row[0]) for row in versions] == [1, 2, 3, 4, 5, 6, 7, 8]
     finally:
         conn.close()
 
@@ -86,6 +86,178 @@ def test_incompatible_metadata_schema_fails_closed(tmp_path: Path) -> None:
             "SELECT version FROM schema_migrations ORDER BY version"
         ).fetchall()
         assert [int(row[0]) for row in versions] == [999]
+    finally:
+        conn.close()
+
+
+def test_project_defaults_are_nullable_after_v7_shape_repair(tmp_path: Path) -> None:
+    db_path = tmp_path / "metadata.db"
+
+    seed_conn = sqlite3.connect(db_path)
+    try:
+        seed_conn.execute(
+            "CREATE TABLE schema_migrations (version INTEGER PRIMARY KEY, applied_at TEXT)"
+        )
+        seed_conn.execute(
+            """
+            CREATE TABLE projects (
+                id TEXT PRIMARY KEY,
+                name TEXT NOT NULL,
+                slug TEXT NOT NULL UNIQUE,
+                palace TEXT NOT NULL UNIQUE,
+                default_wing TEXT NOT NULL,
+                default_room TEXT NOT NULL,
+                fs_root TEXT NOT NULL,
+                fs_allowlist_json TEXT,
+                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+            )
+            """
+        )
+        seed_conn.execute("CREATE TABLE mcp_tokens (id TEXT PRIMARY KEY)")
+        seed_conn.execute(
+            """
+            CREATE TABLE project_token_bindings (
+                token_id TEXT NOT NULL,
+                project_id TEXT NOT NULL,
+                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                PRIMARY KEY (token_id, project_id),
+                FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE CASCADE,
+                FOREIGN KEY (token_id) REFERENCES mcp_tokens(id) ON DELETE CASCADE
+            )
+            """
+        )
+        seed_conn.execute(
+            """
+            INSERT INTO projects (
+                id,
+                name,
+                slug,
+                palace,
+                default_wing,
+                default_room,
+                fs_root,
+                fs_allowlist_json,
+                created_at,
+                updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                "project-existing",
+                "Existing Project",
+                "existing-project",
+                "existing-palace",
+                "existing-wing",
+                "existing-room",
+                "/tmp/existing",
+                '["/tmp/existing"]',
+                "2026-05-01T10:00:00Z",
+                "2026-05-01T10:01:00Z",
+            ),
+        )
+        seed_conn.execute("INSERT INTO mcp_tokens(id) VALUES (?)", ("token-existing",))
+        seed_conn.execute(
+            """
+            INSERT INTO project_token_bindings(token_id, project_id)
+            VALUES (?, ?)
+            """,
+            ("token-existing", "project-existing"),
+        )
+        seed_conn.execute(
+            "INSERT INTO schema_migrations(version, applied_at) VALUES (7, CURRENT_TIMESTAMP)"
+        )
+        seed_conn.commit()
+    finally:
+        seed_conn.close()
+
+    conn = connect_metadata_db(db_path)
+    try:
+        migrate_metadata_db(conn)
+
+        columns = conn.execute("PRAGMA table_info('projects')").fetchall()
+        column_by_name = {str(column[1]): column for column in columns}
+        assert int(column_by_name["default_wing"][3]) == 0
+        assert int(column_by_name["default_room"][3]) == 0
+
+        existing = conn.execute(
+            """
+            SELECT
+                default_wing,
+                default_room,
+                fs_allowlist_json,
+                created_at,
+                updated_at
+            FROM projects
+            WHERE id = ?
+            """,
+            ("project-existing",),
+        ).fetchone()
+        assert existing is not None
+        assert str(existing[0]) == "existing-wing"
+        assert str(existing[1]) == "existing-room"
+        assert str(existing[2]) == '["/tmp/existing"]'
+        assert str(existing[3]) == "2026-05-01T10:00:00Z"
+        assert str(existing[4]) == "2026-05-01T10:01:00Z"
+
+        binding = conn.execute(
+            """
+            SELECT project_id
+            FROM project_token_bindings
+            WHERE token_id = ?
+            """,
+            ("token-existing",),
+        ).fetchone()
+        assert binding is not None
+        assert str(binding[0]) == "project-existing"
+
+        binding_foreign_keys = conn.execute(
+            "PRAGMA foreign_key_list('project_token_bindings')"
+        ).fetchall()
+        assert any(
+            str(row[2]) == "projects"
+            and str(row[3]) == "project_id"
+            and str(row[4]) == "id"
+            for row in binding_foreign_keys
+        )
+
+        conn.execute(
+            """
+            INSERT INTO projects (
+                id,
+                name,
+                slug,
+                palace,
+                default_wing,
+                default_room,
+                fs_root
+            ) VALUES (?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                "project-null-defaults",
+                "Null Defaults",
+                "null-defaults",
+                "null-defaults-palace",
+                None,
+                None,
+                "/tmp/null-defaults",
+            ),
+        )
+        inserted = conn.execute(
+            """
+            SELECT default_wing, default_room
+            FROM projects
+            WHERE id = ?
+            """,
+            ("project-null-defaults",),
+        ).fetchone()
+        assert inserted is not None
+        assert inserted[0] is None
+        assert inserted[1] is None
+
+        versions = conn.execute(
+            "SELECT version FROM schema_migrations ORDER BY version"
+        ).fetchall()
+        assert [int(row[0]) for row in versions] == [1, 7, 8]
     finally:
         conn.close()
 
@@ -155,7 +327,7 @@ def test_watcher_queue_v1_shape_is_upgraded_to_v2(tmp_path: Path) -> None:
         versions = conn.execute(
             "SELECT version FROM schema_migrations ORDER BY version"
         ).fetchall()
-        assert [int(row[0]) for row in versions] == [1, 2, 3, 4, 5, 6, 7]
+        assert [int(row[0]) for row in versions] == [1, 2, 3, 4, 5, 6, 7, 8]
 
         workflow_sources_indexes = {
             str(row[1])
@@ -182,7 +354,7 @@ def test_workflow_sources_unique_index_is_applied_idempotently_in_v3(tmp_path: P
         versions = conn.execute(
             "SELECT version FROM schema_migrations ORDER BY version"
         ).fetchall()
-        assert [int(row[0]) for row in versions] == [1, 2, 3, 4, 5, 6, 7]
+        assert [int(row[0]) for row in versions] == [1, 2, 3, 4, 5, 6, 7, 8]
     finally:
         conn.close()
 
@@ -382,7 +554,7 @@ def test_job_runs_v3_shape_is_upgraded_to_v4(tmp_path: Path) -> None:
         versions = conn.execute(
             "SELECT version FROM schema_migrations ORDER BY version"
         ).fetchall()
-        assert [int(row[0]) for row in versions] == [1, 3, 4, 5, 6, 7]
+        assert [int(row[0]) for row in versions] == [1, 3, 4, 5, 6, 7, 8]
     finally:
         conn.close()
 
@@ -508,7 +680,7 @@ def test_job_runs_v4_shape_is_upgraded_to_v5_with_safe_defaults(tmp_path: Path) 
         versions = conn.execute(
             "SELECT version FROM schema_migrations ORDER BY version"
         ).fetchall()
-        assert [int(row[0]) for row in versions] == [1, 4, 5, 6, 7]
+        assert [int(row[0]) for row in versions] == [1, 4, 5, 6, 7, 8]
     finally:
         conn.close()
 
@@ -644,6 +816,6 @@ def test_job_runs_v5_shape_is_upgraded_to_v6_with_created_started_contract(tmp_p
         versions = conn.execute(
             "SELECT version FROM schema_migrations ORDER BY version"
         ).fetchall()
-        assert [int(row[0]) for row in versions] == [1, 5, 6, 7]
+        assert [int(row[0]) for row in versions] == [1, 5, 6, 7, 8]
     finally:
         conn.close()

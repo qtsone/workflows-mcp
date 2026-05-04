@@ -1,7 +1,8 @@
 from __future__ import annotations
 
+import asyncio
 import json
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Callable
 from sqlite3 import Connection
 
 from fastapi import APIRouter, Depends
@@ -87,9 +88,22 @@ def _sync_status_payload(resources: AppResources) -> SyncStatusPayload:
         conn.close()
 
 
-async def _single_event_stream(event_name: str, payload: dict[str, object]) -> AsyncIterator[bytes]:
-    encoded = json.dumps(payload, separators=(",", ":"), ensure_ascii=False)
-    yield f"event: {event_name}\ndata: {encoded}\n\n".encode()
+async def _live_status_event_stream(
+    event_name: str,
+    payload_factory: Callable[[], dict[str, object]],
+    *,
+    interval_seconds: float = 15.0,
+    max_events: int | None = None,
+) -> AsyncIterator[bytes]:
+    emitted = 0
+    while max_events is None or emitted < max_events:
+        payload = payload_factory()
+        encoded = json.dumps(payload, separators=(",", ":"), ensure_ascii=False)
+        yield f"event: {event_name}\ndata: {encoded}\n\n".encode()
+        emitted += 1
+        if max_events is not None and emitted >= max_events:
+            return
+        await asyncio.sleep(interval_seconds)
 
 
 @router.get(
@@ -125,9 +139,11 @@ async def watcher_events(
     _: CurrentAdminSession = Depends(require_current_admin_session),
     resources: AppResources = Depends(get_resources),
 ) -> StreamingResponse:
-    payload = _watcher_status_payload(resources).model_dump(mode="json")
     return StreamingResponse(
-        _single_event_stream("watcher.status", payload),
+        _live_status_event_stream(
+            "watcher.status",
+            lambda: _watcher_status_payload(resources).model_dump(mode="json"),
+        ),
         media_type="text/event-stream",
     )
 
@@ -155,9 +171,11 @@ async def sync_events(
     _: CurrentAdminSession = Depends(require_current_admin_session),
     resources: AppResources = Depends(get_resources),
 ) -> StreamingResponse:
-    payload = _sync_status_payload(resources).model_dump(mode="json")
     return StreamingResponse(
-        _single_event_stream("sync.status", payload),
+        _live_status_event_stream(
+            "sync.status",
+            lambda: _sync_status_payload(resources).model_dump(mode="json"),
+        ),
         media_type="text/event-stream",
     )
 

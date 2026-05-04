@@ -90,17 +90,11 @@ class SQLiteTokensRepository:
     def __init__(self, conn: Connection) -> None:
         self._conn = conn
 
-    def create(
-        self,
-        *,
-        label: str,
-        project_ids: list[str],
-        capabilities: dict[str, Any] | None = None,
-    ) -> CreatedToken:
-        if not project_ids:
-            raise InvalidTokenProjectBindingError("token must bind to at least one project")
-
+    def _validated_project_ids(self, project_ids: list[str]) -> list[str]:
         unique_project_ids = sorted(set(project_ids))
+        if not unique_project_ids:
+            return []
+
         existing = self._conn.execute(
             f"SELECT id FROM projects WHERE id IN ({','.join(['?'] * len(unique_project_ids))})",
             tuple(unique_project_ids),
@@ -111,6 +105,16 @@ class SQLiteTokensRepository:
             raise InvalidTokenProjectBindingError(
                 f"token binding contains unknown project ids: {', '.join(missing)}"
             )
+        return unique_project_ids
+
+    def create(
+        self,
+        *,
+        label: str,
+        project_ids: list[str],
+        capabilities: dict[str, Any] | None = None,
+    ) -> CreatedToken:
+        unique_project_ids = self._validated_project_ids(project_ids)
 
         token_id = str(uuid.uuid4())
         token_secret = secrets.token_urlsafe(32)
@@ -130,15 +134,16 @@ class SQLiteTokensRepository:
                 """,
                 (token_id, label, token_hash, capabilities_json),
             )
-            self._conn.executemany(
-                """
-                INSERT INTO project_token_bindings (
-                    token_id,
-                    project_id
-                ) VALUES (?, ?)
-                """,
-                [(token_id, project_id) for project_id in unique_project_ids],
-            )
+            if unique_project_ids:
+                self._conn.executemany(
+                    """
+                    INSERT INTO project_token_bindings (
+                        token_id,
+                        project_id
+                    ) VALUES (?, ?)
+                    """,
+                    [(token_id, project_id) for project_id in unique_project_ids],
+                )
             row = self._conn.execute(
                 """
                 SELECT id, label, capabilities_json, created_at, last_used_at, revoked_at
@@ -225,6 +230,58 @@ class SQLiteTokensRepository:
         self._conn.commit()
         if cursor.rowcount == 0:
             raise UnknownTokenError(f"token not found: {token_id}")
+
+    def delete(self, token_id: str) -> None:
+        cursor = self._conn.execute(
+            "DELETE FROM mcp_tokens WHERE id = ?",
+            (token_id,),
+        )
+        self._conn.commit()
+        if cursor.rowcount == 0:
+            raise UnknownTokenError(f"token not found: {token_id}")
+
+    def update_project_bindings(self, token_id: str, project_ids: list[str]) -> TokenRecord:
+        unique_project_ids = self._validated_project_ids(project_ids)
+
+        self._conn.execute("BEGIN IMMEDIATE")
+        try:
+            row = self._conn.execute(
+                """
+                SELECT id, label, capabilities_json, created_at, last_used_at, revoked_at
+                FROM mcp_tokens
+                WHERE id = ?
+                """,
+                (token_id,),
+            ).fetchone()
+            if row is None:
+                self._conn.rollback()
+                raise UnknownTokenError(f"token not found: {token_id}")
+
+            self._conn.execute(
+                "DELETE FROM project_token_bindings WHERE token_id = ?",
+                (token_id,),
+            )
+            if unique_project_ids:
+                self._conn.executemany(
+                    """
+                    INSERT INTO project_token_bindings (
+                        token_id,
+                        project_id
+                    ) VALUES (?, ?)
+                    """,
+                    [(token_id, project_id) for project_id in unique_project_ids],
+                )
+            self._conn.commit()
+        except UnknownTokenError:
+            raise
+        except sqlite3.IntegrityError as exc:
+            self._conn.rollback()
+            raise TokenIntegrityError("token integrity violation") from exc
+        except Exception:
+            self._conn.rollback()
+            raise
+
+        return self._row_to_record(row)
 
     def regenerate(self, token_id: str) -> CreatedToken:
         token_secret = secrets.token_urlsafe(32)

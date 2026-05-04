@@ -254,6 +254,7 @@ export function createApiClient(options: CreateApiFetchOptions = {}) {
   type WatchersListResponse = { watchers: Array<Record<string, unknown>> };
   type SyncResponse = Record<string, unknown>;
   type SyncListResponse = { projects: Array<Record<string, unknown>> };
+  type SyncLogsResponse = { project_id: string; entries: Array<Record<string, unknown>> };
   type MCPClientPayload = Record<string, unknown>;
   type MCPClientsListResponse = { mcp_clients: Array<Record<string, unknown>> };
   type WorkflowSourcePayload = Record<string, unknown>;
@@ -263,7 +264,12 @@ export function createApiClient(options: CreateApiFetchOptions = {}) {
   type WorkflowSourcesListResponse = { sources: Array<Record<string, unknown>> };
   type WorkflowValidateResponse = Record<string, unknown>;
   type RunPayload = Record<string, unknown>;
-  type RunsListResponse = { runs: Array<Record<string, unknown>> };
+  type RunsListResponse = {
+    runs: Array<Record<string, unknown>>;
+    total?: number;
+    limit?: number;
+    offset?: number;
+  };
   type LlmConfigResponse = Record<string, unknown>;
   type LlmRawYamlResponse = { raw_yaml: string } & Record<string, unknown>;
   type SecretPayload = Record<string, unknown>;
@@ -305,13 +311,23 @@ export function createApiClient(options: CreateApiFetchOptions = {}) {
     }
   };
 
-  const runsListPath = (query?: { status?: string; limit?: number; offset?: number }): string => {
+  const runsListPath = (query?: {
+    status?: string;
+    mode?: string;
+    workflow?: string;
+    projectId?: string;
+    limit?: number;
+    offset?: number;
+  }): string => {
     if (!query) {
       return "/api/admin/v1/runs";
     }
 
     const params = new URLSearchParams();
     if (query.status) params.set("status", query.status);
+    if (query.mode) params.set("mode", query.mode);
+    if (query.workflow) params.set("workflow", query.workflow);
+    if (query.projectId) params.set("project_id", query.projectId);
     if (typeof query.limit === "number") params.set("limit", String(query.limit));
     if (typeof query.offset === "number") params.set("offset", String(query.offset));
     const suffix = params.toString();
@@ -476,6 +492,12 @@ export function createApiClient(options: CreateApiFetchOptions = {}) {
     async listSyncQueue(): Promise<SyncListResponse> {
       return json<SyncListResponse>(await fetcher("/api/admin/v1/sync"));
     },
+    async listSyncLogs(projectId: string, limit = 25): Promise<SyncLogsResponse> {
+      const params = new URLSearchParams({ limit: String(limit) });
+      return json<SyncLogsResponse>(
+        await fetcher(`/api/admin/v1/sync/${encodeURIComponent(projectId)}/logs?${params.toString()}`),
+      );
+    },
     async syncNow(projectId: string): Promise<SyncResponse> {
       await ensureCsrf();
       return json<SyncResponse>(
@@ -511,10 +533,26 @@ export function createApiClient(options: CreateApiFetchOptions = {}) {
         }),
       );
     },
+    async updateMcpClient(tokenId: string, payload: MCPClientPayload): Promise<MCPClientPayload> {
+      await ensureCsrf();
+      return json<MCPClientPayload>(
+        await fetcher(`/api/admin/v1/mcp-clients/${encodeURIComponent(tokenId)}`, {
+          method: "PATCH",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify(payload),
+        }),
+      );
+    },
     async revokeMcpClient(tokenId: string): Promise<{ revoked: boolean } & Record<string, unknown>> {
       await ensureCsrf();
       return json<{ revoked: boolean } & Record<string, unknown>>(
         await fetcher(`/api/admin/v1/mcp-clients/${encodeURIComponent(tokenId)}`, { method: "DELETE" }),
+      );
+    },
+    async deleteMcpClient(tokenId: string): Promise<{ deleted: boolean } & Record<string, unknown>> {
+      await ensureCsrf();
+      return json<{ deleted: boolean } & Record<string, unknown>>(
+        await fetcher(`/api/admin/v1/mcp-clients/${encodeURIComponent(tokenId)}/registration`, { method: "DELETE" }),
       );
     },
     async regenerateMcpClient(tokenId: string): Promise<MCPClientPayload> {
@@ -565,7 +603,14 @@ export function createApiClient(options: CreateApiFetchOptions = {}) {
         }),
       );
     },
-    async listRuns(query?: { status?: string; limit?: number; offset?: number }): Promise<RunsListResponse> {
+    async listRuns(query?: {
+      status?: string;
+      mode?: string;
+      workflow?: string;
+      projectId?: string;
+      limit?: number;
+      offset?: number;
+    }): Promise<RunsListResponse> {
       return json<RunsListResponse>(await fetcher(runsListPath(query)));
     },
     async getRunDetail(runId: string): Promise<RunPayload> {

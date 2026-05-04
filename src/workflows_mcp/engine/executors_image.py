@@ -82,6 +82,18 @@ def _get_model_capabilities(model: str | None) -> dict[str, set[str]]:
     return MODEL_CAPABILITIES["dall-e-3"]
 
 
+async def _resolve_secret_from_context(secret_name: str, context: Execution) -> str:
+    """Resolve profile secrets through the runtime provider when available."""
+    execution_context = context.execution_context
+    if execution_context is None:
+        raise ValueError("ExecutionContext not available. Cannot resolve secret.")
+
+    from .secrets import EnvVarSecretProvider
+
+    secret_provider = execution_context.secret_provider or EnvVarSecretProvider()
+    return await secret_provider.get_secret(secret_name)
+
+
 class ImageProvider(str, Enum):
     """Supported image generation providers."""
 
@@ -344,10 +356,9 @@ class ImageGenExecutor(BlockExecutor):
         # Resolve API key from secrets
         api_key = None
         if resolved_config.api_key_secret:
-            from .secrets import EnvVarSecretProvider
-
-            secret_provider = EnvVarSecretProvider()
-            api_key = await secret_provider.get_secret(resolved_config.api_key_secret)
+            api_key = await _resolve_secret_from_context(
+                resolved_config.api_key_secret, context
+            )
 
         # Map provider type
         provider_type = self._map_provider_type(resolved_config.provider, resolved_config.api_url)

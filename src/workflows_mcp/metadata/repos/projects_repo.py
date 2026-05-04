@@ -37,8 +37,8 @@ class ProjectCreate:
     name: str
     slug: str
     palace: str
-    default_wing: str
-    default_room: str
+    default_wing: str | None
+    default_room: str | None
     fs_root: str
     fs_allowlist: list[str] | None = None
 
@@ -60,8 +60,8 @@ class ProjectRecord:
     name: str
     slug: str
     palace: str
-    default_wing: str
-    default_room: str
+    default_wing: str | None
+    default_room: str | None
     fs_root: str
     fs_allowlist: list[str]
     created_at: str
@@ -90,6 +90,12 @@ def _decode_allowlist(value: str | None) -> list[str]:
         if isinstance(item, str):
             result.append(item)
     return result
+
+
+def _optional_text(value: object) -> str | None:
+    if value is None:
+        return None
+    return str(value)
 
 
 class SQLiteProjectsRepository:
@@ -250,8 +256,8 @@ class SQLiteProjectsRepository:
             name=str(row[1]),
             slug=str(row[2]),
             palace=str(row[3]),
-            default_wing=str(row[4]),
-            default_room=str(row[5]),
+            default_wing=_optional_text(row[4]),
+            default_room=_optional_text(row[5]),
             fs_root=str(row[6]),
             fs_allowlist=_decode_allowlist(str(row[7]) if row[7] is not None else None),
             created_at=str(row[8]),

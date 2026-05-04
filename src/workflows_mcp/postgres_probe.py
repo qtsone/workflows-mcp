@@ -31,6 +31,7 @@ import os
 import random
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any
 
 logger = logging.getLogger(__name__)
@@ -181,3 +182,55 @@ class PostgresProbe:
             await conn.close()
 
         return len(blockers) == 0, blockers
+
+
+def _load_saved_postgres_dsn(base_dir: Path) -> str | None:
+    from .metadata.db import connect_metadata_db
+    from .metadata.repos.postgres_repo import SQLitePostgresSettingsRepository
+
+    db_path = base_dir / "server.db"
+    if not db_path.exists():
+        return None
+
+    try:
+        conn = connect_metadata_db(db_path)
+    except Exception:  # noqa: BLE001
+        return None
+    try:
+        try:
+            return SQLitePostgresSettingsRepository(
+                conn=conn,
+                key_path=base_dir / "secrets.key",
+            ).load_dsn()
+        except Exception:  # noqa: BLE001
+            return None
+    finally:
+        conn.close()
+
+
+@dataclass
+class ConfiguredPostgresProbe:
+    """PostgreSQL probe that reads the saved admin database profile on each check."""
+
+    base_dir: Path
+    timeout: float = _PROBE_TIMEOUT_SECONDS
+    retries: int = _PROBE_RETRIES
+    require_pgvector: bool = True
+    _connection_factory: ConnectionFactory | None = field(default=None, repr=False)
+
+    async def check(self) -> tuple[bool, list[str]]:
+        """Check PostgreSQL using SQLite admin settings, falling back to env DSN."""
+        saved_dsn = _load_saved_postgres_dsn(self.base_dir)
+        env_dsn = os.getenv("WORKFLOWS_POSTGRES_DSN") or ""
+        dsn = saved_dsn or env_dsn
+        env_requires_pgvector = (
+            os.getenv("WORKFLOWS_POSTGRES_REQUIRE_PGVECTOR", "").lower() == "true"
+        )
+        probe = PostgresProbe(
+            dsn=dsn,
+            timeout=self.timeout,
+            retries=self.retries,
+            require_pgvector=self.require_pgvector or env_requires_pgvector,
+            _connection_factory=self._connection_factory,
+        )
+        return await probe.check()

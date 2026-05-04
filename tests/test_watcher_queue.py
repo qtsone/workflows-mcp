@@ -153,6 +153,47 @@ def test_dirty_queue_coalesces_active_entries(tmp_path: Path) -> None:
     conn.close()
 
 
+def test_dirty_history_includes_active_and_processed_entries(tmp_path: Path) -> None:
+    db_path = tmp_path / "metadata.db"
+
+    conn = connect_metadata_db(db_path)
+    migrate_metadata_db(conn)
+    project_id = _seed_project(conn)
+
+    repo = SQLiteWatcherRepository(conn)
+    repo.enqueue_dirty(
+        project_id=project_id,
+        path="workflows/build.yaml",
+        event_type="modified",
+        reason="file_event",
+    )
+    repo.enqueue_dirty(
+        project_id=project_id,
+        path="workflows/release.yaml",
+        event_type="created",
+        reason="file_event",
+    )
+    repo.mark_active_dirty_processed(project_id=project_id)
+    repo.enqueue_dirty(
+        project_id=project_id,
+        path="workflows/rebuild.yaml",
+        event_type="rebuild",
+        reason="reconciliation_required:manual_rebuild",
+    )
+
+    history = repo.list_dirty_history(project_id=project_id, limit=10)
+
+    assert [entry.path for entry in history] == [
+        "workflows/rebuild.yaml",
+        "workflows/release.yaml",
+        "workflows/build.yaml",
+    ]
+    assert history[0].processed_at is None
+    assert history[1].processed_at is not None
+    assert history[2].processed_at is not None
+    conn.close()
+
+
 def test_set_status_rejects_invalid_state(tmp_path: Path) -> None:
     db_path = tmp_path / "metadata.db"
 

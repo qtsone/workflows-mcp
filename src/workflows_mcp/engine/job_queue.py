@@ -752,6 +752,35 @@ class JobQueue:
                             f"Worker {worker_id} paused job: {job.id} "
                             f"(workflow={job.workflow}, prompt={prompt_preview}...)"
                         )
+                    elif getattr(result, "status", None) == "failure":
+                        async with self._state_lock:
+                            latest_before_write = await self._store.load_job(job.id)
+                            if latest_before_write["status"] == WorkflowStatus.CANCELLED.value:
+                                logger.info(
+                                    f"Worker {worker_id} failure result dropped "
+                                    f"for cancelled job: {job.id}"
+                                )
+                                continue
+                            job.status = WorkflowStatus.FAILED
+                            if hasattr(result, "_build_debug_data"):
+                                job.result = result._build_debug_data()
+                            elif isinstance(result, dict):
+                                job.result = dict(result)
+                            else:
+                                job.result = {"value": result}
+                            job.error = (
+                                getattr(result, "error", None) or "Workflow execution failed"
+                            )
+                            job.completed_at = datetime.now()
+                            job.updated_at = datetime.now()
+                            await self._store.save_job(job)
+                            await self._store.increment_stat("failed_jobs")
+
+                        duration = (job.completed_at - job.started_at).total_seconds()
+                        logger.error(
+                            f"Worker {worker_id} failed job: {job.id} "
+                            f"(workflow={job.workflow}, duration={duration:.1f}s): {job.error}"
+                        )
                     else:
                         async with self._state_lock:
                             latest_before_write = await self._store.load_job(job.id)

@@ -299,6 +299,83 @@ def test_mcp_409_includes_readiness_details(not_ready_client: TestClient) -> Non
     assert "readiness_state" in payload["error"]["details"]
 
 
+@pytest.mark.parametrize("host", ["127.0.0.1:8000", "localhost:8000"])
+def test_mcp_transport_accepts_generated_localhost_host_with_port(
+    tmp_path: Path,
+    host: str,
+) -> None:
+    """Generated local MCP URLs must satisfy transport Host validation."""
+    token_store = TokenStore(tmp_path / "auth.json")
+    token_store.write_token(_VALID_TOKEN)
+    sqlite_token, resources = _provision_sqlite_mcp_token(tmp_path)
+    app = create_app(
+        readiness_service=_FakeReadinessService(ready=True),
+        token_store=token_store,
+    )
+    app.state.resources = resources
+
+    response = TestClient(app, raise_server_exceptions=False).post(
+        "/mcp",
+        headers={
+            "Authorization": f"Bearer {sqlite_token}",
+            "Host": host,
+        },
+        json={"method": "schema"},
+    )
+    assert response.status_code not in {403, 421}
+
+
+def test_mcp_transport_rejects_public_host_by_default(tmp_path: Path) -> None:
+    """DNS rebinding protection must fail closed for unconfigured public hosts."""
+    token_store = TokenStore(tmp_path / "auth.json")
+    token_store.write_token(_VALID_TOKEN)
+    sqlite_token, resources = _provision_sqlite_mcp_token(tmp_path)
+    app = create_app(
+        readiness_service=_FakeReadinessService(ready=True),
+        token_store=token_store,
+    )
+    app.state.resources = resources
+
+    response = TestClient(app, raise_server_exceptions=False).post(
+        "/mcp",
+        headers={
+            "Authorization": f"Bearer {sqlite_token}",
+            "Host": "workflows.example.com",
+        },
+        json={"method": "schema"},
+    )
+    assert response.status_code in {403, 421}
+
+
+def test_mcp_transport_accepts_explicit_allowed_public_host(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Configured public hosts must be accepted for reverse-proxy deployments."""
+    monkeypatch.setenv(
+        "WORKFLOWS_MCP_ALLOWED_HOSTS",
+        "workflows.example.com:8443, api.example.com",
+    )
+    token_store = TokenStore(tmp_path / "auth.json")
+    token_store.write_token(_VALID_TOKEN)
+    sqlite_token, resources = _provision_sqlite_mcp_token(tmp_path)
+    app = create_app(
+        readiness_service=_FakeReadinessService(ready=True),
+        token_store=token_store,
+    )
+    app.state.resources = resources
+
+    response = TestClient(app, raise_server_exceptions=False).post(
+        "/mcp",
+        headers={
+            "Authorization": f"Bearer {sqlite_token}",
+            "Host": "workflows.example.com:8443",
+        },
+        json={"method": "schema"},
+    )
+    assert response.status_code not in {403, 421}
+
+
 @pytest.mark.anyio
 async def test_mcp_streamable_client_can_initialize_and_list_tools_when_ready(
     tmp_path: Path,

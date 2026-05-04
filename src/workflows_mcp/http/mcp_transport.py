@@ -14,12 +14,30 @@ from workflows_mcp.context import AppContext
 from workflows_mcp.tools import register_workflow_tools
 from workflows_mcp.tools_memory import register_memory_tools
 
+_DEFAULT_ALLOWED_HOSTS = (
+    "127.0.0.1",
+    "127.0.0.1:*",
+    "localhost",
+    "localhost:*",
+    "testserver",
+)
+
 
 def _is_enabled_env_flag(name: str, *, default: bool) -> bool:
     raw = os.getenv(name)
     if raw is None:
         return default
     return raw.strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _allowed_hosts() -> list[str]:
+    hosts = list(_DEFAULT_ALLOWED_HOSTS)
+    raw_extra_hosts = os.getenv("WORKFLOWS_MCP_ALLOWED_HOSTS", "")
+    for host in raw_extra_hosts.split(","):
+        normalized = host.strip()
+        if normalized and normalized not in hosts:
+            hosts.append(normalized)
+    return hosts
 
 
 def _register_tools(mounted_mcp: FastMCP) -> None:
@@ -96,7 +114,7 @@ def build_mcp_streamable_http_mount(
         lifespan=_shared_lifespan,
         transport_security=TransportSecuritySettings(
             enable_dns_rebinding_protection=True,
-            allowed_hosts=["127.0.0.1", "localhost", "testserver"],
+            allowed_hosts=_allowed_hosts(),
         ),
     )
     _register_tools(mounted_mcp)

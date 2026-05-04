@@ -4,7 +4,7 @@ from sqlite3 import Connection
 from typing import Annotated, NoReturn
 
 from fastapi import APIRouter, Depends, HTTPException, Path, status
-from pydantic import BaseModel, ConfigDict, StringConstraints
+from pydantic import BaseModel, ConfigDict, StringConstraints, field_validator
 
 from workflows_mcp.http.dependencies import (
     CurrentAdminSession,
@@ -24,11 +24,15 @@ from workflows_mcp.metadata.repos.projects_repo import (
     ProjectUpdate,
     SQLiteProjectsRepository,
 )
+from workflows_mcp.metadata.repos.watcher_repo import SQLiteWatcherRepository
+
+from .sync import process_project_sync_now
 
 router = APIRouter(prefix="/projects")
 
 ProjectId = Annotated[str, Path(min_length=1, max_length=128)]
 NonEmptyString = Annotated[str, StringConstraints(min_length=1, max_length=1024)]
+DefaultTopologyString = Annotated[str, StringConstraints(max_length=1024)] | None
 
 
 class ErrorDetail(BaseModel):
@@ -41,8 +45,8 @@ class ProjectResponse(BaseModel):
     name: str
     slug: str
     palace: str
-    default_wing: str
-    default_room: str
+    default_wing: str | None
+    default_room: str | None
     fs_root: str
     fs_allowlist: list[str]
     created_at: str
@@ -73,24 +77,40 @@ class CreateProjectRequest(BaseModel):
     name: NonEmptyString
     slug: NonEmptyString
     palace: NonEmptyString
-    default_wing: NonEmptyString
-    default_room: NonEmptyString
+    default_wing: DefaultTopologyString = None
+    default_room: DefaultTopologyString = None
     fs_root: NonEmptyString
     fs_allowlist: list[NonEmptyString] | None = None
+
+    @field_validator("default_wing", "default_room", mode="before")
+    @classmethod
+    def _normalize_blank_default_topology(cls, value: object) -> object:
+        return _blank_string_to_none(value)
 
 
 class UpdateProjectRequest(BaseModel):
     name: NonEmptyString | None = None
     slug: NonEmptyString | None = None
     palace: NonEmptyString | None = None
-    default_wing: NonEmptyString | None = None
-    default_room: NonEmptyString | None = None
+    default_wing: DefaultTopologyString = None
+    default_room: DefaultTopologyString = None
     fs_root: NonEmptyString | None = None
     fs_allowlist: list[NonEmptyString] | None = None
+
+    @field_validator("default_wing", "default_room", mode="before")
+    @classmethod
+    def _normalize_blank_default_topology(cls, value: object) -> object:
+        return _blank_string_to_none(value)
 
 
 class DeleteProjectResponse(BaseModel):
     deleted: bool
+
+
+def _blank_string_to_none(value: object) -> object:
+    if isinstance(value, str) and value.strip() == "":
+        return None
+    return value
 
 
 def _repo(resources: AppResources) -> tuple[SQLiteProjectsRepository, Connection]:
@@ -110,6 +130,15 @@ def _to_response(project: ProjectRecord) -> ProjectResponse:
         fs_allowlist=project.fs_allowlist,
         created_at=project.created_at,
         updated_at=project.updated_at,
+    )
+
+
+def _enqueue_initial_graph_rebuild(conn: Connection, project_id: str) -> None:
+    SQLiteWatcherRepository(conn).enqueue_dirty(
+        project_id=project_id,
+        path=".",
+        event_type="rebuild",
+        reason="reconciliation_required:project_created",
     )
 
 
@@ -179,7 +208,10 @@ async def create_project(
 
         try:
             resources.watcher_manager.enable_project_by_default(created.id)
+            _enqueue_initial_graph_rebuild(conn, created.id)
+            await process_project_sync_now(project_id=created.id, resources=resources)
         except Exception:
+            resources.watcher_manager.stop_project_watcher(created.id)
             repo.delete(created.id)
             raise
 

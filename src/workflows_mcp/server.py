@@ -30,6 +30,7 @@ if TYPE_CHECKING:
 
 from .context import AppContext, AppContextType, MemoryBackendUnavailableError
 from .engine.workflow_source_loader import (
+    WorkflowSourceReloadError,
     WorkflowSourceReloadSummary,
     reload_registry_from_source_paths,
 )
@@ -237,12 +238,54 @@ def get_max_recursion_depth() -> int:
         return 50
 
 
+def get_graceful_shutdown_timeout() -> int:
+    """Get Uvicorn graceful shutdown timeout from environment."""
+    raw = os.getenv("WORKFLOWS_GRACEFUL_SHUTDOWN_TIMEOUT", "5")
+    try:
+        timeout = int(raw)
+    except ValueError:
+        logger.warning(
+            "Invalid WORKFLOWS_GRACEFUL_SHUTDOWN_TIMEOUT value %r; using 5 seconds.",
+            raw,
+        )
+        return 5
+
+    if timeout < 0:
+        logger.warning(
+            "Invalid WORKFLOWS_GRACEFUL_SHUTDOWN_TIMEOUT value %r; using 5 seconds.",
+            raw,
+        )
+        return 5
+
+    return timeout
+
+
 def load_workflows(resources: AppResources) -> WorkflowSourceReloadSummary:
     """Load workflows from SQLite-managed source records into the registry."""
     repo = SQLiteWorkflowSourcesRepository(resources.metadata_db_conn)
     sources = repo.list()
     source_paths = [source.source_path for source in sources]
-    summary = reload_registry_from_source_paths(resources.workflow_registry, source_paths)
+    try:
+        summary = reload_registry_from_source_paths(resources.workflow_registry, source_paths)
+    except WorkflowSourceReloadError as exc:
+        for source in sources:
+            repo.update_reload_state(
+                source.source_id,
+                status="failed",
+                error_message=exc.message,
+            )
+        logger.warning(
+            "Workflow registry reload from SQLite sources failed",
+            extra={
+                "source_count": len(sources),
+                "error_code": exc.code,
+            },
+        )
+        raise
+
+    for source in sources:
+        repo.update_reload_state(source.source_id, status="loaded", error_message=None)
+
     logger.info(
         "Workflow registry reloaded from SQLite sources",
         extra={
@@ -295,7 +338,7 @@ async def app_lifespan(_server: FastMCP) -> AsyncIterator[AppContext]:
         # Initialize secret provider and check for configured secrets
         from .engine.secrets import EnvVarSecretProvider
 
-        secret_provider = EnvVarSecretProvider()
+        secret_provider = app_context.secret_provider or EnvVarSecretProvider()
         secret_keys = await secret_provider.list_secret_keys()
 
         logger.info(f"Secret provider: {secret_provider.__class__.__name__}")
@@ -508,7 +551,7 @@ def build_app(*, base_dir: Path | None = None) -> "FastAPI":
     """
     from .auth import TokenStore
     from .http_app import create_app
-    from .postgres_probe import PostgresProbe
+    from .postgres_probe import ConfiguredPostgresProbe
     from .readiness import ReadinessService
 
     resolved_base = _resolve_base_dir(base_dir)
@@ -519,7 +562,7 @@ def build_app(*, base_dir: Path | None = None) -> "FastAPI":
 
     readiness_service = ReadinessService(
         base_dir=resolved_base,
-        probe=PostgresProbe.from_env(),
+        probe=ConfiguredPostgresProbe(base_dir=resolved_base),
     )
     resources = build_resources(base_dir=resolved_base)
 
@@ -606,6 +649,7 @@ def main() -> None:
             host=os.getenv("WORKFLOWS_BIND_HOST", "127.0.0.1"),
             port=port,
             log_level=log_level_str.lower(),
+            timeout_graceful_shutdown=get_graceful_shutdown_timeout(),
         )
     except KeyboardInterrupt:
         logger.info("Received interrupt signal, shutting down gracefully...")

@@ -1,17 +1,24 @@
 from __future__ import annotations
 
+import asyncio
 import json
 import sqlite3
 import uuid
+from collections.abc import Callable
 from pathlib import Path
+from typing import Any
 
 import pytest
 from fastapi.testclient import TestClient
+from pydantic import ValidationError
 
+import workflows_mcp.http.routes.admin_v1.sync as sync_routes
 import workflows_mcp.server as server_module
 from workflows_mcp.bootstrap import bootstrap_if_needed
+from workflows_mcp.engine.memory_service import MemoryRequest
 from workflows_mcp.metadata.db import connect_metadata_db
 from workflows_mcp.metadata.migrations import migrate_metadata_db
+from workflows_mcp.metadata.repos.projects_repo import ProjectRecord
 from workflows_mcp.metadata.repos.watcher_repo import SQLiteWatcherRepository
 from workflows_mcp.server import build_app
 from workflows_mcp.watcher.ignore import WatcherIgnorePolicy
@@ -215,6 +222,75 @@ def _parse_single_sse_event(payload: str) -> tuple[str, dict[str, object]]:
     return event_name, parsed
 
 
+async def _collect_single_live_sse_event(
+    event_name: str,
+    payload_factory: Callable[[], dict[str, object]],
+) -> tuple[str, dict[str, object]]:
+    from workflows_mcp.http.routes.events_v1 import _live_status_event_stream
+
+    async for chunk in _live_status_event_stream(
+        event_name,
+        payload_factory,
+        interval_seconds=0,
+        max_events=1,
+    ):
+        return _parse_single_sse_event(chunk.decode())
+    raise AssertionError("live SSE stream did not emit an event")
+
+
+def _single_live_sse_event(
+    event_name: str,
+    payload_factory: Callable[[], dict[str, object]],
+) -> tuple[str, dict[str, object]]:
+    return asyncio.run(_collect_single_live_sse_event(event_name, payload_factory))
+
+
+def test_sync_scope_maps_project_slug_to_required_memory_compartment() -> None:
+    project = ProjectRecord(
+        id="project-id",
+        name="Project",
+        slug="project-slug",
+        palace="project-palace",
+        default_wing="platform",
+        default_room="runtime",
+        fs_root="/tmp/project",
+        fs_allowlist=["/tmp/project"],
+        created_at="2026-05-03T00:00:00Z",
+        updated_at="2026-05-03T00:00:00Z",
+    )
+
+    assert sync_routes._scope_for_project(project) == {
+        "palace": "project-palace",
+        "wing": "platform",
+        "room": "runtime",
+        "compartment": "project-slug",
+    }
+
+
+@pytest.mark.asyncio
+async def test_live_status_event_stream_can_emit_repeated_snapshots() -> None:
+    from workflows_mcp.http.routes.events_v1 import _live_status_event_stream
+
+    snapshots: list[dict[str, object]] = [
+        {"version": 1, "items": []},
+        {"version": 2, "items": [{"project_id": "p1"}]},
+    ]
+    emitted: list[str] = []
+
+    async for chunk in _live_status_event_stream(
+        "watcher.status",
+        lambda: snapshots[len(emitted)],
+        interval_seconds=0,
+        max_events=2,
+    ):
+        emitted.append(chunk.decode())
+
+    assert [_parse_single_sse_event(payload) for payload in emitted] == [
+        ("watcher.status", snapshots[0]),
+        ("watcher.status", snapshots[1]),
+    ]
+
+
 def test_admin_watcher_routes_require_session_and_csrf(app_client: TestClient) -> None:
     project_id = "missing-project"
 
@@ -294,9 +370,9 @@ def test_watcher_state_controls_persist_and_status_exposes_metadata(app_client: 
     paused_payload = paused.json()
     assert paused_payload["project_id"] == project_id
     assert paused_payload["state"] == "paused"
-    assert paused_payload["dirty_count"] == 0
-    assert paused_payload["requires_reconciliation"] is False
-    assert paused_payload["last_event_at"] is None
+    assert paused_payload["dirty_count"] == 1
+    assert paused_payload["requires_reconciliation"] is True
+    assert paused_payload["last_event_at"] is not None
     assert paused_payload["updated_at"]
     assert project_id not in watcher_manager.active_project_ids
 
@@ -334,9 +410,9 @@ def test_watcher_state_controls_persist_and_status_exposes_metadata(app_client: 
     detail_payload = detail.json()
     assert detail_payload["project_id"] == project_id
     assert detail_payload["state"] == "enabled"
-    assert detail_payload["dirty_count"] == 0
-    assert detail_payload["requires_reconciliation"] is False
-    assert detail_payload["last_event_at"] is None
+    assert detail_payload["dirty_count"] == 1
+    assert detail_payload["requires_reconciliation"] is True
+    assert detail_payload["last_event_at"] is not None
     assert detail_payload["updated_at"]
 
     listed = app_client.get("/api/admin/v1/watchers")
@@ -349,11 +425,19 @@ def test_watcher_state_controls_persist_and_status_exposes_metadata(app_client: 
 def test_sync_now_scans_project_root_and_clears_processed_queue(
     app_client: TestClient,
     tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     csrf_token = _login_and_csrf(app_client)
     project_root = tmp_path / "sync-now-project"
     _write(project_root / "workflow-a.yaml", "steps: []\n")
     _write(project_root / "nested" / "workflow-b.yaml", "steps: []\n")
+    persisted: list[str] = []
+
+    async def _persist_graph_from_scan(**kwargs: Any) -> dict[str, int]:
+        persisted.append(kwargs["project"].id)
+        return {"nodes": 5, "corridors": 4}
+
+    monkeypatch.setattr(sync_routes, "_persist_project_graph_from_scan", _persist_graph_from_scan)
     project_id = _create_project(
         app_client,
         csrf_token,
@@ -372,6 +456,7 @@ def test_sync_now_scans_project_root_and_clears_processed_queue(
     assert idle_payload["project_id"] == project_id
     assert idle_payload["status"] == "idle"
     assert idle_payload["dirty_count"] == 0
+    assert persisted == [project_id, project_id]
 
     reconcile = app_client.post(
         f"/api/admin/v1/sync/{project_id}/reconcile",
@@ -380,7 +465,9 @@ def test_sync_now_scans_project_root_and_clears_processed_queue(
     assert reconcile.status_code == 200
     reconcile_payload = reconcile.json()
     assert reconcile_payload["project_id"] == project_id
-    assert reconcile_payload["requires_reconciliation"] is True
+    assert reconcile_payload["status"] == "idle"
+    assert reconcile_payload["dirty_count"] == 0
+    assert persisted == [project_id, project_id, project_id]
 
     queued_now = app_client.post(
         f"/api/admin/v1/sync/{project_id}/now",
@@ -391,6 +478,7 @@ def test_sync_now_scans_project_root_and_clears_processed_queue(
     assert queued_payload["project_id"] == project_id
     assert queued_payload["status"] == "idle"
     assert queued_payload["dirty_count"] == 0
+    assert persisted == [project_id, project_id, project_id, project_id]
 
     rebuild = app_client.post(
         f"/api/admin/v1/sync/{project_id}/rebuild",
@@ -399,24 +487,222 @@ def test_sync_now_scans_project_root_and_clears_processed_queue(
     assert rebuild.status_code == 200
     rebuild_payload = rebuild.json()
     assert rebuild_payload["project_id"] == project_id
-    assert rebuild_payload["requires_reconciliation"] is True
+    assert rebuild_payload["status"] == "idle"
+    assert rebuild_payload["dirty_count"] == 0
+    assert persisted == [project_id, project_id, project_id, project_id, project_id]
 
     sync_list = app_client.get("/api/admin/v1/sync")
     assert sync_list.status_code == 200
     summaries = sync_list.json().get("projects", [])
     by_project = {entry["project_id"]: entry for entry in summaries}
-    assert project_id in by_project
-    assert by_project[project_id]["dirty_count"] >= 1
-    assert by_project[project_id]["requires_reconciliation"] is True
+    assert project_id not in by_project
+
+
+def test_sync_reconcile_runs_project_sync_and_clears_processed_queue(
+    app_client: TestClient,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    csrf_token = _login_and_csrf(app_client)
+    project_root = tmp_path / "sync-reconcile-project"
+    _write(project_root / "workflow.yaml", "steps: []\n")
+    persisted: list[str] = []
+
+    async def _persist_graph_from_scan(**kwargs: Any) -> dict[str, int]:
+        persisted.append(kwargs["project"].id)
+        return {"nodes": 4, "corridors": 3}
+
+    monkeypatch.setattr(sync_routes, "_persist_project_graph_from_scan", _persist_graph_from_scan)
+    project_id = _create_project(
+        app_client,
+        csrf_token,
+        slug="sync-reconcile-runs",
+        palace="sync-reconcile-runs-palace",
+        fs_root=str(project_root),
+        fs_allowlist=[str(project_root)],
+    )
+
+    reconcile = app_client.post(
+        f"/api/admin/v1/sync/{project_id}/reconcile",
+        headers={"X-CSRF-Token": csrf_token},
+    )
+    assert reconcile.status_code == 200
+    reconcile_payload = reconcile.json()
+    assert reconcile_payload["project_id"] == project_id
+    assert reconcile_payload["status"] == "idle"
+    assert reconcile_payload["dirty_count"] == 0
+    assert persisted == [project_id, project_id]
+
+    listed = app_client.get("/api/admin/v1/sync")
+    assert listed.status_code == 200
+    summaries = listed.json().get("projects", [])
+    by_project = {entry["project_id"]: entry for entry in summaries}
+    assert project_id not in by_project
+
+
+def test_sync_rebuild_runs_project_sync_and_clears_processed_queue(
+    app_client: TestClient,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    csrf_token = _login_and_csrf(app_client)
+    project_root = tmp_path / "sync-rebuild-project"
+    _write(project_root / "workflow.yaml", "steps: []\n")
+    persisted: list[str] = []
+
+    async def _persist_graph_from_scan(**kwargs: Any) -> dict[str, int]:
+        persisted.append(kwargs["project"].id)
+        return {"nodes": 4, "corridors": 3}
+
+    monkeypatch.setattr(sync_routes, "_persist_project_graph_from_scan", _persist_graph_from_scan)
+    project_id = _create_project(
+        app_client,
+        csrf_token,
+        slug="sync-rebuild-runs",
+        palace="sync-rebuild-runs-palace",
+        fs_root=str(project_root),
+        fs_allowlist=[str(project_root)],
+    )
+
+    rebuild = app_client.post(
+        f"/api/admin/v1/sync/{project_id}/rebuild",
+        headers={"X-CSRF-Token": csrf_token},
+    )
+    assert rebuild.status_code == 200
+    rebuild_payload = rebuild.json()
+    assert rebuild_payload["project_id"] == project_id
+    assert rebuild_payload["status"] == "idle"
+    assert rebuild_payload["dirty_count"] == 0
+    assert persisted == [project_id, project_id]
+
+    listed = app_client.get("/api/admin/v1/sync")
+    assert listed.status_code == 200
+    summaries = listed.json().get("projects", [])
+    by_project = {entry["project_id"]: entry for entry in summaries}
+    assert project_id not in by_project
+
+
+def test_sync_rebuild_derives_default_topology_when_project_defaults_are_blank(
+    app_client: TestClient,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    csrf_token = _login_and_csrf(app_client)
+    project_root = tmp_path / "sync-derived-defaults-project"
+    _write(project_root / "workflow.yaml", "steps: []\n")
+    captured_scopes: list[dict[str, Any] | None] = []
+
+    async def _persist_graph_payload(**kwargs: Any) -> dict[str, object]:
+        captured_scopes.append(kwargs["scope"])
+        return {"nodes": 4, "corridors": 3, "entity_ids": [], "relation_ids": []}
+
+    monkeypatch.setattr(sync_routes, "persist_graph_payload", _persist_graph_payload)
+
+    project_response = app_client.post(
+        "/api/admin/v1/projects",
+        json={
+            "name": "Derived Defaults Project",
+            "slug": "sync-derived-defaults",
+            "palace": "sync-derived-defaults-palace",
+            "default_wing": "",
+            "default_room": "",
+            "fs_root": str(project_root),
+            "fs_allowlist": [str(project_root)],
+        },
+        headers={"X-CSRF-Token": csrf_token},
+    )
+    assert project_response.status_code == 201
+    project_id = str(project_response.json()["id"])
+
+    rebuild = app_client.post(
+        f"/api/admin/v1/sync/{project_id}/rebuild",
+        headers={"X-CSRF-Token": csrf_token},
+    )
+    assert rebuild.status_code == 200
+    rebuild_payload = rebuild.json()
+    assert rebuild_payload["project_id"] == project_id
+    assert rebuild_payload["status"] == "idle"
+    assert rebuild_payload["dirty_count"] == 0
+    assert captured_scopes
+    assert all(
+        scope == {
+            "palace": "sync-derived-defaults-palace",
+            "wing": "default-wing",
+            "room": "default-room",
+            "compartment": "sync-derived-defaults",
+        }
+        for scope in captured_scopes
+    )
+
+
+def test_sync_error_detail_surfaces_wrapped_memory_contract_validation_error() -> None:
+    with pytest.raises(ValidationError) as exc_info:
+        MemoryRequest.model_validate(
+            {
+                "operation": "graph_upsert",
+                "scope": {
+                    "palace": "forge",
+                    "compartment": "forge",
+                },
+                "graph": {
+                    "kind": "place",
+                    "place_name": "forge",
+                    "place_type": "Palace",
+                },
+            }
+        )
+
+    detail = sync_routes._sync_error_detail(exc_info.value)
+
+    assert detail.code == "project_graph_sync_failed"
+    assert "MEM_SCOPE_HIERARCHY_VIOLATION" in detail.message
+
+
+def test_sync_now_reports_graph_persistence_failure_details(
+    app_client: TestClient,
+    tmp_path: Path,
+) -> None:
+    csrf_token = _login_and_csrf(app_client)
+    project_root = tmp_path / "sync-failure-project"
+    _write(project_root / "workflow.yaml", "steps: []\n")
+
+    project_id = _create_project(
+        app_client,
+        csrf_token,
+        slug="sync-failure-details",
+        palace="sync-failure-details-palace",
+        fs_root=str(project_root),
+        fs_allowlist=[str(project_root)],
+    )
+
+    response = app_client.post(
+        f"/api/admin/v1/sync/{project_id}/now",
+        headers={"X-CSRF-Token": csrf_token},
+    )
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["project_id"] == project_id
+    assert payload["status"] == "failed"
+    assert payload["dirty_count"] > 0
+    assert payload["error"]["code"] == "project_graph_sync_failed"
+    assert "memory PostgreSQL backend" in payload["error"]["message"]
 
 
 def test_sync_now_empty_project_root_is_deterministic_noop(
     app_client: TestClient,
     tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     csrf_token = _login_and_csrf(app_client)
     project_root = tmp_path / "sync-now-empty"
     project_root.mkdir(parents=True, exist_ok=True)
+    persisted: list[str] = []
+
+    async def _persist_graph_from_scan(**kwargs: Any) -> dict[str, int]:
+        persisted.append(kwargs["project"].id)
+        return {"nodes": 3, "corridors": 2}
+
+    monkeypatch.setattr(sync_routes, "_persist_project_graph_from_scan", _persist_graph_from_scan)
 
     project_id = _create_project(
         app_client,
@@ -436,15 +722,24 @@ def test_sync_now_empty_project_root_is_deterministic_noop(
     assert payload["project_id"] == project_id
     assert payload["status"] == "idle"
     assert payload["dirty_count"] == 0
+    assert persisted == [project_id, project_id]
 
 
 def test_sync_now_clears_existing_dirty_queue_after_successful_scan(
     app_client: TestClient,
     tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     csrf_token = _login_and_csrf(app_client)
     project_root = tmp_path / "sync-now-clears"
     _write(project_root / "workflow.yaml", "steps: []\n")
+    persisted: list[str] = []
+
+    async def _persist_graph_from_scan(**kwargs: Any) -> dict[str, int]:
+        persisted.append(kwargs["project"].id)
+        return {"nodes": 4, "corridors": 3}
+
+    monkeypatch.setattr(sync_routes, "_persist_project_graph_from_scan", _persist_graph_from_scan)
     project_id = _create_project(
         app_client,
         csrf_token,
@@ -454,12 +749,12 @@ def test_sync_now_clears_existing_dirty_queue_after_successful_scan(
         fs_allowlist=[str(project_root)],
     )
 
-    reconcile = app_client.post(
-        f"/api/admin/v1/sync/{project_id}/reconcile",
-        headers={"X-CSRF-Token": csrf_token},
+    SQLiteWatcherRepository(app_client.app.state.resources.metadata_db_conn).enqueue_dirty(
+        project_id=project_id,
+        path="workflow.yaml",
+        event_type="modified",
+        reason="file_event",
     )
-    assert reconcile.status_code == 200
-    assert reconcile.json()["dirty_count"] == 1
 
     synced = app_client.post(
         f"/api/admin/v1/sync/{project_id}/now",
@@ -470,6 +765,7 @@ def test_sync_now_clears_existing_dirty_queue_after_successful_scan(
     assert synced_payload["project_id"] == project_id
     assert synced_payload["status"] == "idle"
     assert synced_payload["dirty_count"] == 0
+    assert persisted == [project_id, project_id]
 
     listed = app_client.get("/api/admin/v1/sync")
     assert listed.status_code == 200
@@ -499,10 +795,14 @@ def test_events_watchers_sse_and_polling_state_are_equivalent(app_client: TestCl
     assert state_payload["version"] == 1
     assert isinstance(state_payload["items"], list)
 
-    sse_response = app_client.get("/api/events/v1/watchers")
-    assert sse_response.status_code == 200
-    assert sse_response.headers["content-type"].startswith("text/event-stream")
-    event_name, event_data = _parse_single_sse_event(sse_response.text)
+    from workflows_mcp.http.routes.events_v1 import _watcher_status_payload
+
+    event_name, event_data = _single_live_sse_event(
+        "watcher.status",
+        lambda: _watcher_status_payload(app_client.app.state.resources).model_dump(
+            mode="json"
+        ),
+    )
     assert event_name == "watcher.status"
     assert event_data == state_payload
 
@@ -528,12 +828,77 @@ def test_events_sync_sse_and_polling_state_are_equivalent(app_client: TestClient
     assert state_payload["version"] == 1
     assert isinstance(state_payload["items"], list)
 
-    sse_response = app_client.get("/api/events/v1/sync")
-    assert sse_response.status_code == 200
-    assert sse_response.headers["content-type"].startswith("text/event-stream")
-    event_name, event_data = _parse_single_sse_event(sse_response.text)
+    from workflows_mcp.http.routes.events_v1 import _sync_status_payload
+
+    event_name, event_data = _single_live_sse_event(
+        "sync.status",
+        lambda: _sync_status_payload(app_client.app.state.resources).model_dump(
+            mode="json"
+        ),
+    )
     assert event_name == "sync.status"
     assert event_data == state_payload
+
+
+def test_sync_project_logs_include_queued_and_processed_activity(
+    app_client: TestClient,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    csrf_token = _login_and_csrf(app_client)
+    persisted: list[str] = []
+
+    async def _persist_graph_from_scan(**kwargs: Any) -> dict[str, int]:
+        persisted.append(kwargs["project"].id)
+        return {"nodes": 4, "corridors": 3}
+
+    monkeypatch.setattr(sync_routes, "_persist_project_graph_from_scan", _persist_graph_from_scan)
+    project_id = _create_project(
+        app_client,
+        csrf_token,
+        slug="sync-project-logs",
+        palace="sync-project-logs-palace",
+        fs_root=str(tmp_path),
+        fs_allowlist=[str(tmp_path)],
+    )
+
+    reconcile = app_client.post(
+        f"/api/admin/v1/sync/{project_id}/reconcile",
+        headers={"X-CSRF-Token": csrf_token},
+    )
+    assert reconcile.status_code == 200
+
+    processed = app_client.post(
+        f"/api/admin/v1/sync/{project_id}/now",
+        headers={"X-CSRF-Token": csrf_token},
+    )
+    assert processed.status_code == 200
+
+    rebuild = app_client.post(
+        f"/api/admin/v1/sync/{project_id}/rebuild",
+        headers={"X-CSRF-Token": csrf_token},
+    )
+    assert rebuild.status_code == 200
+
+    logs = app_client.get(f"/api/admin/v1/sync/{project_id}/logs")
+
+    assert logs.status_code == 200
+    payload = logs.json()
+    assert payload["project_id"] == project_id
+    entries = payload["entries"]
+    assert [entry["event_type"] for entry in entries] == ["rebuild", "reconcile", "rebuild"]
+    assert [entry["reason"] for entry in entries] == [
+        "reconciliation_required:manual_rebuild",
+        "reconciliation_required:manual_reconcile",
+        "reconciliation_required:project_created",
+    ]
+    assert entries[0]["status"] == "processed"
+    assert entries[0]["processed_at"] is not None
+    assert entries[1]["status"] == "processed"
+    assert entries[1]["processed_at"] is not None
+    assert entries[2]["status"] == "processed"
+    assert entries[2]["processed_at"] is not None
+    assert persisted == [project_id, project_id, project_id, project_id]
 
 
 def test_events_watchers_and_sync_require_ui_session_not_bearer(app_client: TestClient) -> None:
@@ -549,6 +914,9 @@ def test_events_watchers_and_sync_require_ui_session_not_bearer(app_client: Test
     sync_state_unauth = app_client.get("/api/events/v1/sync/state")
     assert sync_state_unauth.status_code == 401
 
+    sync_logs_unauth = app_client.get("/api/admin/v1/sync/p1/logs")
+    assert sync_logs_unauth.status_code == 401
+
     _login_and_csrf(app_client)
 
     watcher_bearer = app_client.get(
@@ -562,6 +930,12 @@ def test_events_watchers_and_sync_require_ui_session_not_bearer(app_client: Test
         headers={"Authorization": f"Bearer {_MCP_BOOTSTRAP_TOKEN}"},
     )
     assert sync_bearer.status_code == 403
+
+    sync_logs_bearer = app_client.get(
+        "/api/admin/v1/sync/p1/logs",
+        headers={"Authorization": f"Bearer {_MCP_BOOTSTRAP_TOKEN}"},
+    )
+    assert sync_logs_bearer.status_code == 403
 
 
 def test_http_startup_restores_enabled_watchers_into_runtime_state(

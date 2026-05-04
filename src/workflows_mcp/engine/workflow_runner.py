@@ -24,6 +24,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Literal, cast
 
+from ..security.crypto import SecretCryptoError, SecretKeyError
 from .context_vars import block_custom_outputs, current_block_id, current_node_id
 from .exceptions import ExecutionPaused, RecursionDepthExceededError
 from .execution import Execution
@@ -33,7 +34,7 @@ from .metadata import Metadata
 from .orchestrator import BlockOrchestrator
 from .resolver import UnifiedVariableResolver
 from .schema import BlockDefinition, DependencySpec, InputType, WorkflowSchema
-from .secrets import EnvVarSecretProvider, SecretAuditLog, SecretRedactor
+from .secrets import EnvVarSecretProvider, SecretAuditLog, SecretProvider, SecretRedactor
 
 logger = logging.getLogger(__name__)
 
@@ -73,11 +74,24 @@ class WorkflowRunner:
         self.on_log = on_log
 
         # Initialize secret management components
-        self.secret_provider = EnvVarSecretProvider()
+        self.secret_provider: SecretProvider = EnvVarSecretProvider()
         self.secret_redactor = SecretRedactor(self.secret_provider)
         self.secret_audit_log: SecretAuditLog | None = None  # Created per execution
 
         # Initialize orchestrator with secret management
+        self.orchestrator = BlockOrchestrator(
+            secret_provider=self.secret_provider,
+            secret_redactor=self.secret_redactor,
+        )
+
+    def _configure_secret_provider(self, context: ExecutionContext) -> None:
+        """Use the execution context secret provider, falling back to env vars."""
+        provider: SecretProvider = context.secret_provider or EnvVarSecretProvider()
+        if provider is self.secret_provider:
+            return
+
+        self.secret_provider = provider
+        self.secret_redactor = SecretRedactor(provider)
         self.orchestrator = BlockOrchestrator(
             secret_provider=self.secret_provider,
             secret_redactor=self.secret_redactor,
@@ -123,6 +137,8 @@ class WorkflowRunner:
                 "Create one via AppContext.create_execution_context() "
                 "or ExecutionContext(...) with proper registries."
             )
+
+        self._configure_secret_provider(context)
 
         # Wire on_log callback into the execution context
         if self.on_log:
@@ -214,6 +230,8 @@ class WorkflowRunner:
             ValueError: If workflow not found or invalid state
         """
         try:
+            self._configure_secret_provider(context)
+
             # Get workflow from registry
             workflow = context.get_workflow(execution_state.workflow_name)
             if not workflow:
@@ -700,6 +718,9 @@ class WorkflowRunner:
                     raise result
                 elif isinstance(result, NotImplementedError):
                     # Not implemented (e.g., parallel for_each with pause) - bubble up
+                    raise result
+                elif isinstance(result, SecretKeyError | SecretCryptoError):
+                    # Stored secret key/crypto failures must fail closed.
                     raise result
                 elif isinstance(result, Exception):
                     # Execution error - mark as failed but continue
@@ -1292,13 +1313,17 @@ class WorkflowRunner:
     ) -> None:
         """Finalize execution context with outputs and metadata (async for secrets support).
 
-        CRITICAL: This method MUST NOT raise exceptions to ensure partial execution
-        is preserved even if output evaluation fails.
+        CRITICAL: This method preserves partial execution for ordinary output
+        evaluation failures. Stored secret key/crypto failures are re-raised so
+        workflow execution fails closed.
         """
         # Evaluate workflow outputs (wrapped to catch resolution errors)
         try:
             workflow_outputs = await self._evaluate_workflow_outputs(workflow, exec_context)
             exec_context.outputs = workflow_outputs
+        except (SecretKeyError, SecretCryptoError):
+            # Stored secret key/crypto failures must fail closed.
+            raise
         except Exception as output_error:
             # Output evaluation failed (e.g., variable resolution error)
             # Set outputs to empty dict with error info

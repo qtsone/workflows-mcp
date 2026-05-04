@@ -6,6 +6,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from workflows_mcp.bootstrap import bootstrap_if_needed
+from workflows_mcp.engine.workflow_source_loader import WorkflowSourceReloadError
 from workflows_mcp.server import build_app
 
 _MCP_BOOTSTRAP_TOKEN = "0123456789abcdef0123456789abcdef01234567"
@@ -161,6 +162,10 @@ def test_admin_workflow_sources_and_registry_happy_path(
     assert detail_payload["name"] == "wf-admin-good"
     assert detail_payload["description"] == "workflow wf-admin-good"
     assert detail_payload["source_path"]
+    assert detail_payload["raw_yaml"] is not None
+    assert "name: wf-admin-good" in detail_payload["raw_yaml"]
+    assert detail_payload["yaml_path"] == str(workflow_dir / "good.yaml")
+    assert detail_payload["load_logs"]
 
     schema_response = app_client.get("/api/admin/v1/workflows/schema")
     assert schema_response.status_code == 200
@@ -272,3 +277,82 @@ def test_reload_invalid_workflow_does_not_mutate_live_registry(
     assert list_after_failure.status_code == 200
     listed = list_after_failure.json()["workflows"]
     assert [item["name"] for item in listed] == ["wf-admin-good"]
+
+
+@pytest.mark.parametrize(
+    ("reload_error", "expected_status", "expected_code"),
+    [
+        (
+            WorkflowSourceReloadError(
+                code="workflow_duplicate_name",
+                message="Duplicate workflow name 'dup' found",
+            ),
+            409,
+            "workflow_duplicate_name",
+        ),
+        (
+            WorkflowSourceReloadError(
+                code="workflow_invalid_definition",
+                message="Invalid workflow definition at '/tmp/broken.yaml'",
+            ),
+            422,
+            "workflow_invalid_definition",
+        ),
+    ],
+)
+def test_reload_callback_errors_are_mapped_to_structured_admin_errors(
+    app_client: TestClient,
+    reload_error: WorkflowSourceReloadError,
+    expected_status: int,
+    expected_code: str,
+) -> None:
+    csrf_token = _login_and_csrf(app_client)
+
+    def _raise_reload_error() -> object:
+        raise reload_error
+
+    app_client.app.state.resources.app_context.reload_workflows = _raise_reload_error
+
+    response = app_client.post(
+        "/api/admin/v1/workflows/reload",
+        headers={"X-CSRF-Token": csrf_token},
+    )
+
+    assert response.status_code == expected_status
+    assert _error_code(response.json()) == expected_code
+
+
+def test_workflow_detail_reports_missing_raw_yaml_without_failing(
+    app_client: TestClient, tmp_path: Path
+) -> None:
+    csrf_token = _login_and_csrf(app_client)
+    project_id = _create_project(app_client, csrf_token)
+
+    workflow_dir = tmp_path / "wf-source-missing-yaml"
+    workflow_dir.mkdir(parents=True)
+    yaml_path = _write_workflow_yaml(workflow_dir, filename="loaded.yaml", name="wf-missing-raw")
+
+    create_source = app_client.post(
+        "/api/admin/v1/workflows/sources",
+        json={"project_id": project_id, "source_path": str(workflow_dir)},
+        headers={"X-CSRF-Token": csrf_token},
+    )
+    assert create_source.status_code == 201
+
+    reload_response = app_client.post(
+        "/api/admin/v1/workflows/reload",
+        headers={"X-CSRF-Token": csrf_token},
+    )
+    assert reload_response.status_code == 200
+
+    yaml_path.unlink()
+
+    detail_response = app_client.get("/api/admin/v1/workflows/wf-missing-raw")
+
+    assert detail_response.status_code == 200
+    detail_payload = detail_response.json()
+    assert detail_payload["name"] == "wf-missing-raw"
+    assert detail_payload["raw_yaml"] is None
+    assert detail_payload["yaml_path"] is None
+    assert detail_payload["load_logs"]
+    assert "not found" in detail_payload["load_logs"][0].lower()

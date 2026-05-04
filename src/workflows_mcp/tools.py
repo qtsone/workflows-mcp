@@ -13,7 +13,8 @@ Following official Anthropic MCP Python SDK patterns:
 
 import json
 from datetime import datetime
-from typing import Annotated, Any, Literal
+from typing import Annotated, Any, Literal, cast
+from uuid import uuid4
 
 from mcp.server.fastmcp import FastMCP
 from mcp.types import CallToolResult, TextContent, ToolAnnotations
@@ -26,6 +27,9 @@ from .formatting import (
     format_workflow_list_markdown,
     format_workflow_not_found_error,
 )
+from .metadata.db import connect_metadata_db
+from .metadata.migrations import migrate_metadata_db
+from .metadata.repos.run_history_repo import SQLiteRunHistoryRepository
 from .server import mcp
 
 # =============================================================================
@@ -74,7 +78,7 @@ def _resolve_run_binding(ctx: AppContextType) -> tuple[str | None, str | None]:
     projects = getattr(auth_ctx, "projects", ()) if auth_ctx is not None else ()
     if isinstance(projects, tuple) and all(isinstance(p, SessionProjectContext) for p in projects):
         app_ctx.register_allowed_projects(session, list(projects))
-        if len(projects) == 1:
+        if len(projects) == 1 and projects[0].source == "token_bound":
             app_ctx.set_active_project(session, projects[0])
         else:
             active = app_ctx.get_active_project(session)
@@ -92,6 +96,130 @@ def _resolve_run_binding(ctx: AppContextType) -> tuple[str | None, str | None]:
         else None
     )
     return project_id, token_id
+
+
+def _metadata_db_path(app_ctx: Any) -> Any | None:
+    return getattr(app_ctx, "metadata_db_path", None)
+
+
+def _json_dumps_compact(data: Any) -> str:
+    return json.dumps(data, separators=(",", ":"), default=str)
+
+
+def _run_status_from_execution_status(status: str) -> str:
+    if status == "success":
+        return "completed"
+    if status == "failure":
+        return "failed"
+    if status == "paused":
+        return "paused"
+    return status
+
+
+def _result_summary_from_execution_data(data: dict[str, Any]) -> str | None:
+    payload: dict[str, Any] = {}
+    if data.get("outputs") is not None:
+        payload["outputs"] = data["outputs"]
+    if data.get("prompt") is not None:
+        payload["prompt"] = data["prompt"]
+    if not payload:
+        return None
+    return _json_dumps_compact(payload)
+
+
+def _create_sync_run_record(
+    app_ctx: Any,
+    *,
+    workflow_name: str,
+    inputs: dict[str, Any],
+    project_id: str | None,
+    token_id: str | None,
+    execution_mode: str = "sync",
+) -> str | None:
+    db_path = _metadata_db_path(app_ctx)
+    if db_path is None:
+        return None
+
+    run_id = f"run_{uuid4().hex[:8]}"
+    now = datetime.now().isoformat()
+    conn = connect_metadata_db(db_path)
+    try:
+        migrate_metadata_db(conn)
+        SQLiteRunHistoryRepository(conn).create_run(
+            run_id=run_id,
+            workflow_name=workflow_name,
+            status="running",
+            execution_mode=execution_mode,
+            timeout_seconds=0,
+            created_at=now,
+            started_at=now,
+            updated_at=now,
+            inputs_json=_json_dumps_compact(inputs),
+            project_id=project_id,
+            token_id=token_id,
+            cancellable=False,
+        )
+    finally:
+        conn.close()
+    return run_id
+
+
+def _update_sync_run_record(
+    app_ctx: Any,
+    *,
+    run_id: str | None,
+    result: Any,
+    inputs: dict[str, Any],
+) -> None:
+    if run_id is None:
+        return
+    db_path = _metadata_db_path(app_ctx)
+    if db_path is None:
+        return
+
+    execution_data = (
+        result._build_debug_data()
+        if hasattr(result, "_build_debug_data")
+        else {"status": getattr(result, "status", "unknown")}
+    )
+    status = _run_status_from_execution_status(str(getattr(result, "status", "unknown")))
+    now = datetime.now().isoformat()
+    finished_at = now if status in {"completed", "failed", "cancelled"} else None
+    conn = connect_metadata_db(db_path)
+    try:
+        migrate_metadata_db(conn)
+        SQLiteRunHistoryRepository(conn).update_run(
+            run_id=run_id,
+            status=status,
+            updated_at=now,
+            finished_at=finished_at,
+            cancellable=False,
+            result_summary=_result_summary_from_execution_data(execution_data),
+            error_summary=(
+                str(execution_data["error"])
+                if isinstance(execution_data.get("error"), str)
+                else None
+            ),
+            execution_state_json=(
+                _json_dumps_compact(execution_data["execution_state"])
+                if isinstance(execution_data.get("execution_state"), dict)
+                else None
+            ),
+            execution_json=_json_dumps_compact(execution_data),
+            inputs_json=_json_dumps_compact(inputs),
+        )
+    finally:
+        conn.close()
+
+
+def _execution_response(result: Any, *, debug: bool, run_id: str | None) -> dict[str, Any]:
+    response = cast(dict[str, Any], result.to_response(debug and run_id is None))
+    if run_id is not None:
+        response["run_id"] = run_id
+        if debug:
+            response["debug"] = {"storage": "sqlite", "run_id": run_id}
+            response.pop("logfile", None)
+    return response
 
 
 def register_workflow_tools(target_mcp: FastMCP) -> None:
@@ -148,8 +276,8 @@ async def execute_workflow(
         bool,
         Field(
             description=(
-                "Write detailed execution trace to "
-                "/tmp/<workflow>-<timestamp>.json for troubleshooting"
+                "Include a reference to the SQLite run history record containing "
+                "the detailed execution trace"
             ),
             default=False,
         ),
@@ -188,7 +316,7 @@ async def execute_workflow(
     - workflow: The exact workflow name (e.g., "build-project", "deploy-app")
     - inputs: Key-value pairs the workflow needs (e.g., {"branch": "main"})
     - mode: "sync" waits for completion, "async" returns job_id immediately
-    - debug: Set True to write execution trace to /tmp for troubleshooting
+    - debug: Set True to include the SQLite run history reference for troubleshooting
 
     RETURNS: {status: "success"|"failure"|"paused", outputs: {...}, ...}
 
@@ -273,6 +401,17 @@ async def execute_workflow(
             }
         )
 
+    run_inputs = inputs or {}
+    project_id, token_id = _resolve_run_binding(ctx)
+    run_id = _create_sync_run_record(
+        app_ctx,
+        workflow_name=workflow,
+        inputs=run_inputs,
+        project_id=project_id,
+        token_id=token_id,
+        execution_mode="sync",
+    )
+
     # Create execution context
     exec_context = app_ctx.create_execution_context()
 
@@ -284,6 +423,7 @@ async def execute_workflow(
         context=exec_context,
         debug=debug,
     )
+    _update_sync_run_record(app_ctx, run_id=run_id, result=result, inputs=run_inputs)
 
     # Handle paused workflows (unified Job architecture)
     if result.status == "paused":
@@ -301,29 +441,29 @@ async def execute_workflow(
             )
 
         # Create Job with PAUSED status for resume (unified architecture)
-        from uuid import uuid4
-
         from .engine.job_queue import Job, WorkflowStatus
 
         # Generate unique job ID
-        job_id = f"job_{uuid4().hex[:8]}"
+        job_id = run_id or f"job_{uuid4().hex[:8]}"
 
         # Create Job with execution state embedded in result
         job = Job(
             id=job_id,
             workflow=workflow,
-            inputs=inputs or {},
+            inputs=run_inputs,
             status=WorkflowStatus.PAUSED,
             result=result._build_debug_data(),  # Contains execution_state for resume
             created_at=datetime.now(),
             started_at=datetime.now(),  # Started immediately in sync mode
+            project_id=project_id,
+            token_id=token_id,
         )
 
         # Save to JobStore for resume
         await app_ctx.job_queue._store.save_job(job)
 
         # Return response with job_id for resume
-        response = result.to_response(debug)
+        response = _execution_response(result, debug=debug, run_id=job_id)
         response["job_id"] = job_id
         response["message"] = (
             f"Workflow paused waiting for input. "
@@ -332,7 +472,7 @@ async def execute_workflow(
         return _json_response(response)
 
     # Format response using ExecutionResult.to_response()
-    return _json_response(result.to_response(debug))
+    return _json_response(_execution_response(result, debug=debug, run_id=run_id))
 
 
 @mcp.tool(
@@ -366,8 +506,8 @@ async def execute_inline_workflow(
         bool,
         Field(
             description=(
-                "Write detailed execution trace to "
-                "/tmp/<workflow>-<timestamp>.json for troubleshooting"
+                "Include a reference to the SQLite run history record containing "
+                "the detailed execution trace"
             ),
             default=False,
         ),
@@ -384,7 +524,7 @@ async def execute_inline_workflow(
     PARAMETERS:
     - workflow_yaml: Complete YAML with name, description, and blocks
     - inputs: Runtime values accessible via {{inputs.key}} in templates
-    - debug: Set True to write execution trace for troubleshooting
+    - debug: Set True to include the SQLite run history reference for troubleshooting
 
     EXAMPLE workflow_yaml:
         name: my-workflow
@@ -440,6 +580,17 @@ async def execute_inline_workflow(
             }
         )
 
+    run_inputs = inputs or {}
+    project_id, token_id = _resolve_run_binding(ctx)
+    run_id = _create_sync_run_record(
+        app_ctx,
+        workflow_name=workflow_schema.name,
+        inputs=run_inputs,
+        project_id=project_id,
+        token_id=token_id,
+        execution_mode="inline",
+    )
+
     # Create execution context
     exec_context = app_ctx.create_execution_context()
 
@@ -451,9 +602,10 @@ async def execute_inline_workflow(
         context=exec_context,
         debug=debug,
     )
+    _update_sync_run_record(app_ctx, run_id=run_id, result=result, inputs=run_inputs)
 
     # Format response using ExecutionResult.to_response()
-    return _json_response(result.to_response(debug))
+    return _json_response(_execution_response(result, debug=debug, run_id=run_id))
 
 
 @mcp.tool(
@@ -877,7 +1029,8 @@ async def resume_workflow(
         bool,
         Field(
             description=(
-                "Write execution trace to /tmp/<workflow>-<timestamp>.json for troubleshooting"
+                "Include a reference to the SQLite run history record containing "
+                "the detailed execution trace"
             ),
             default=False,
         ),
@@ -894,7 +1047,7 @@ async def resume_workflow(
     PARAMETERS:
     - job_id: The job_id returned when workflow paused (e.g., "job_a1b2c3d4")
     - response: Your answer to the prompt question
-    - debug: Set True for execution trace
+    - debug: Set True to include the SQLite run history reference for troubleshooting
 
     RETURNS: Workflow continues and returns final {status, outputs, ...}
 
@@ -1010,7 +1163,7 @@ async def resume_workflow(
         await app_ctx.job_queue._store.save_job(job)
 
         # Return response with same job_id
-        response_dict = result.to_response(debug)
+        response_dict = _execution_response(result, debug=debug, run_id=job_id)
         response_dict["job_id"] = job_id
         response_dict["message"] = (
             f"Workflow paused again. "
@@ -1019,7 +1172,9 @@ async def resume_workflow(
         return _json_response(response_dict)
 
     # Format response using ExecutionResult.to_response()
-    return _json_response(result.to_response(debug))
+    response_dict = _execution_response(result, debug=debug, run_id=job_id)
+    response_dict["job_id"] = job_id
+    return _json_response(response_dict)
 
 
 # =============================================================================

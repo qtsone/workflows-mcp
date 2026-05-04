@@ -28,6 +28,7 @@ if TYPE_CHECKING:
     from .llm_config import LLMConfigLoader
     from .registry import WorkflowRegistry
     from .schema import WorkflowSchema
+    from .secrets import SecretProvider
 
 
 class ExecutionContext:
@@ -57,6 +58,7 @@ class ExecutionContext:
         workflow_stack: list[str] | None = None,
         max_recursion_depth: int = 50,
         execution_memory: ExecutionMemory | None = None,
+        secret_provider: SecretProvider | None = None,
         user_id: uuid.UUID | None = None,
         auth_method: str | None = None,
         user_string_id: str | None = None,
@@ -73,6 +75,7 @@ class ExecutionContext:
             workflow_stack: Workflow execution stack (depth tracking)
             max_recursion_depth: Maximum allowed recursion depth (default: 50)
             execution_memory: Ephemeral SQLite memory for the execution (optional)
+            secret_provider: Secret provider for resolving workflow {{secrets.*}} references
             user_id: UUID of the user initiating the execution (for audit trails)
             auth_method: Authentication method used (PAT, SSO, SYSTEM) (for audit trails)
             user_string_id: Human-readable user identifier (e.g., OS username,
@@ -86,6 +89,7 @@ class ExecutionContext:
         self.workflow_stack = workflow_stack or []
         self.max_recursion_depth = max_recursion_depth
         self.execution_memory = execution_memory
+        self.secret_provider = secret_provider
         self.user_id = user_id
         self.auth_method = auth_method
         self.user_string_id = user_string_id
@@ -141,6 +145,7 @@ class ExecutionContext:
             workflow_stack=self.workflow_stack + [workflow_name],
             max_recursion_depth=self.max_recursion_depth,
             execution_memory=self.execution_memory,
+            secret_provider=self.secret_provider,
             user_id=self.user_id,
             auth_method=self.auth_method,
             user_string_id=self.user_string_id,
