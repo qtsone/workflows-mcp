@@ -1846,7 +1846,12 @@ def register_memory_tools(
         # 4) active context fallback (onboard/select scope context).
         effective_scope = scope
         _scope_from_active_context = False
-        if scope_token is None and context_id is None:
+        # Direct memory() locality source policy:
+        # - scope_token/context_id are handled in MemoryService and are never overridden here.
+        # - query may use active project defaults or active context for broad reads.
+        # - non-query operations reach MemoryService without session fallback so the
+        #   operation locality contract decides whether scope-less execution is valid.
+        if scope_token is None and context_id is None and operation == "query":
             active_project = _get_active_project(ctx)
             if active_project is not None:
                 effective_scope = _merge_scope_with_active_project(effective_scope, active_project)

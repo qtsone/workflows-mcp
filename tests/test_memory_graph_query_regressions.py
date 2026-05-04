@@ -419,8 +419,8 @@ async def test_graph_upsert_corridor_uses_effective_evidence_list_for_validation
             operation="graph_upsert",
             graph=MemoryGraphInput(
                 kind="link",
-                from_ref="service-a",
-                to_ref="service-b",
+                from_ref="11111111-1111-1111-1111-111111111111",
+                to_ref="22222222-2222-2222-2222-222222222222",
                 link_type="CORRIDOR",
                 curated=False,
                 evidence_memory_id="aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",

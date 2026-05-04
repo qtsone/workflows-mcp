@@ -625,3 +625,61 @@ class TestProjectSelection:
         by_palace = await select(project="forge-palace", ctx=ctx)
         payload_palace = _parse(by_palace)
         assert payload_palace.get("status") == "selected"
+
+
+# ---------------------------------------------------------------------------
+# Task 4: placement writes must not use active context as scope fallback
+# ---------------------------------------------------------------------------
+
+
+class TestPlacementWritesDoNotUseActiveContext:
+    """Non-query direct memory() calls must not inherit scope from active context.
+
+    Even when an active context is registered for the session, write operations
+    (ingest, supersede, etc.) must reach MemoryService without session-injected
+    scope so the operation locality contract can reject scope-less placement writes.
+    """
+
+    @pytest.mark.asyncio
+    async def test_memory_ingest_no_scope_rejects_even_with_active_context(
+        self, session_a: MagicMock
+    ) -> None:
+        """memory(operation='ingest') with no scope must return INSUFFICIENT_LOCALITY
+        even when a valid active context is set for the session."""
+        ctx = _make_mock_ctx(session=session_a)
+
+        # Inject registry entry and activate it for the session.
+        candidate = _inject_registry_entry(
+            {"palace": "forge", "wing": "core", "room": "main", "compartment": "slot-1"},
+            ctx=ctx,
+            session=session_a,
+        )
+        ctx.request_context.lifespan_context.set_active_context(session_a, candidate)
+
+        mock_backend = MagicMock()
+        mock_backend.connect = AsyncMock()
+        mock_backend.disconnect = AsyncMock()
+        mock_backend.ingest_memory = AsyncMock(
+            return_value={"id": "fake-uuid", "status": "created"}
+        )
+
+        with patch("workflows_mcp.tools_memory.PostgresBackend", return_value=mock_backend):
+            result = await memory(
+                operation="ingest",
+                record={"content": "some content"},
+                ctx=ctx,
+            )
+
+        payload = _parse(result)
+        assert "error" in payload, f"Expected error envelope, got: {payload}"
+        error = payload["error"]
+        assert error["code"] == "INSUFFICIENT_LOCALITY", (
+            f"Expected INSUFFICIENT_LOCALITY, got {error['code']!r}"
+        )
+        # Message must not contain 'standalone' (that would suggest wrong error path).
+        assert "standalone" not in error.get("message", "").lower(), (
+            f"Unexpected 'standalone' in message: {error.get('message')!r}"
+        )
+        assert "scope_token" in error.get("actionable_fix", ""), (
+            f"Expected 'scope_token' in actionable_fix, got: {error.get('actionable_fix')!r}"
+        )

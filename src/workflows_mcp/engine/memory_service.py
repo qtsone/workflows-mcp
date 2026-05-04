@@ -13,7 +13,6 @@ import math
 import os
 import uuid
 from collections import defaultdict
-from collections.abc import Mapping
 from datetime import UTC, datetime
 from typing import Any, Literal, cast
 
@@ -37,6 +36,9 @@ from .knowledge.graph import (
     graph_traverse,
 )
 from .knowledge.search import room_scoped_search
+from .memory_errors import MemoryContractError as MemoryContractError
+from .memory_errors import _raise_contract_error
+from .memory_locality import CONTRACT_SCOPE_FIELDS, LocalityRequest, resolve_memory_locality
 
 logger = logging.getLogger(__name__)
 
@@ -79,43 +81,6 @@ MEMORY_SECTION_REQUIRED_BY_OPERATION: dict[MemoryOperation, str] = {
     "graph_upsert": "graph",
     "graph_delete": "graph",
 }
-
-CONTRACT_SCOPE_FIELDS: tuple[str, str, str, str] = ("palace", "wing", "room", "compartment")
-
-SCOPE_REQUIRED_OPERATIONS: frozenset[MemoryOperation] = frozenset({"query", "ingest"})
-
-
-class MemoryContractError(ValueError):
-    """Deterministic contract error with machine-readable code."""
-
-    def __init__(
-        self,
-        *,
-        code: str,
-        message: str,
-        retryable: bool = False,
-        actionable_fix: str | None = None,
-    ) -> None:
-        super().__init__(message)
-        self.code = code
-        self.message = message
-        self.retryable = retryable
-        self.actionable_fix = actionable_fix
-
-
-def _raise_contract_error(
-    *,
-    code: str,
-    message: str,
-    retryable: bool = False,
-    actionable_fix: str | None = None,
-) -> None:
-    raise MemoryContractError(
-        code=code,
-        message=f"{code}: {message}",
-        retryable=retryable,
-        actionable_fix=actionable_fix,
-    )
 
 
 def _get_audit_user_id(context: Execution) -> uuid.UUID:
@@ -1189,96 +1154,6 @@ class StructuredRelationRecord(BaseModel):
     evidence_memory_index: int | None = Field(default=None)
 
 
-def _resolve_scope_from_context(
-    *,
-    request: MemoryRequest,
-    context: Execution,
-    required_fields: tuple[str, ...] = CONTRACT_SCOPE_FIELDS,
-) -> tuple[MemoryScope, dict[str, Literal["request", "token", "context"]]]:
-    """Resolve contract scope using precedence request > token > context."""
-    exec_context = context.execution_context
-
-    token_scopes = getattr(exec_context, "memory_scope_tokens", None) if exec_context else None
-    context_scopes = getattr(exec_context, "memory_context_scopes", None) if exec_context else None
-
-    token_scope = _lookup_scope_values(
-        scopes=token_scopes,
-        scope_key=request.scope_token,
-        source_name="memory_scope_tokens",
-    )
-    context_scope = _lookup_scope_values(
-        scopes=context_scopes,
-        scope_key=request.context_id,
-        source_name="memory_context_scopes",
-    )
-    request_scope = request.scope.model_dump(exclude_none=True)
-
-    resolved: dict[str, str] = {}
-    sources: dict[str, Literal["request", "token", "context"]] = {}
-    required = set(required_fields)
-    for field in CONTRACT_SCOPE_FIELDS:
-        req_val = request_scope.get(field)
-        token_val = token_scope.get(field) if isinstance(token_scope, dict) else None
-        context_val = context_scope.get(field) if isinstance(context_scope, dict) else None
-        if isinstance(req_val, str) and req_val:
-            resolved[field] = req_val
-            sources[field] = "request"
-        elif isinstance(token_val, str) and token_val:
-            resolved[field] = token_val
-            sources[field] = "token"
-        elif isinstance(context_val, str) and context_val:
-            resolved[field] = context_val
-            sources[field] = "context"
-        elif field in required:
-            _raise_contract_error(
-                code="SCOPE_UNRESOLVED",
-                message=(
-                    f"Unable to resolve scope field '{field}' from request/scope_token/context_id"
-                ),
-                actionable_fix=(
-                    f"Provide '{field}' in scope or pass a scope_token/context_id "
-                    "that resolves this field."
-                ),
-            )
-
-    return MemoryScope.model_validate(resolved), sources
-
-
-def _lookup_scope_values(
-    *,
-    scopes: Any,
-    scope_key: str | None,
-    source_name: str,
-) -> dict[str, Any]:
-    """Safely resolve keyed scope payloads from execution context."""
-    if scope_key is None:
-        return {}
-    if scopes is None:
-        return {}
-    if not isinstance(scopes, Mapping):
-        _raise_contract_error(
-            code="MEM_INVALID_CONTEXT_SCOPE",
-            message=(
-                f"execution context '{source_name}' must be a mapping; "
-                f"received {type(scopes).__name__}"
-            ),
-        )
-
-    scoped_value = scopes.get(scope_key)
-    if scoped_value is None:
-        return {}
-    if not isinstance(scoped_value, Mapping):
-        _raise_contract_error(
-            code="MEM_INVALID_CONTEXT_SCOPE",
-            message=(
-                f"execution context '{source_name}[{scope_key}]' must be a mapping; "
-                f"received {type(scoped_value).__name__}"
-            ),
-        )
-
-    return dict(scoped_value)
-
-
 # ---------------------------------------------------------------------------
 # Service
 # ---------------------------------------------------------------------------
@@ -1303,26 +1178,32 @@ class MemoryService:
     async def execute(self, request: MemoryRequest) -> MemoryResult:
         """Execute unified memory operation envelope."""
         op = request.operation
-        required_scope_fields: tuple[str, ...] = ()
-        if op == "query":
-            # Only palace is required for query routing; wing/room/compartment are
-            # optional narrowing filters that default to None when absent.  Requiring
-            # all four fields broke palace-only callers (post-onboard pattern where the
-            # agent knows the palace but not the derived wing/room).
-            required_scope_fields = ("palace",)
-        elif op == "ingest":
-            # Ingest requires palace for routing; wing/room/compartment are
-            # optional and may be None (defaults are applied at the manage layer).
-            # Compartment presence is enforced separately via COMPARTMENT_REQUIRED.
-            required_scope_fields = ("palace",)
-        elif op == "graph_upsert" and request.graph is not None and request.graph.kind == "place":
-            required_scope_fields = CONTRACT_SCOPE_FIELDS
+        exec_context = self._context.execution_context
 
-        resolved_scope, scope_source = _resolve_scope_from_context(
-            request=request,
-            context=self._context,
-            required_fields=required_scope_fields,
+        locality = resolve_memory_locality(
+            LocalityRequest(
+                operation=op,
+                request_scope=request.scope.model_dump(exclude_none=True),
+                scope_token=request.scope_token,
+                context_id=request.context_id,
+                token_scopes=getattr(exec_context, "memory_scope_tokens", None)
+                if exec_context
+                else None,
+                context_scopes=getattr(exec_context, "memory_context_scopes", None)
+                if exec_context
+                else None,
+                graph_kind=request.graph.kind if request.graph is not None else None,
+                graph_from=request.graph.from_ref if request.graph is not None else None,
+                graph_to=request.graph.to_ref if request.graph is not None else None,
+                graph_ids=request.graph.ids if request.graph is not None else None,
+                record_ids=request.record.ids if request.record is not None else None,
+                record_superseded_by=request.record.superseded_by
+                if request.record is not None
+                else None,
+            )
         )
+        resolved_scope = MemoryScope.model_validate(locality.resolved_scope)
+        scope_source = locality.scope_source
 
         if op == "query":
             if request.query is None:
@@ -1396,14 +1277,6 @@ class MemoryService:
         if op == "ingest":
             if request.record is None:
                 raise ValueError("'record' payload is required for operation='ingest'")
-            if not resolved_scope.compartment:
-                _raise_contract_error(
-                    code="COMPARTMENT_REQUIRED",
-                    message=(
-                        "Direct ingest requires scope.compartment "
-                        "(via scope, scope_token, or context_id)"
-                    ),
-                )
             if request.record.format == "structured":
                 manage_request = ManageMemoryRequest(
                     operation="ingest_structured",

@@ -219,15 +219,18 @@ Memory contract highlights:
 
 - Unified envelope: `operation` + optional `scope/query/record/graph/maintenance/response`.
 - Current memory taxonomy: `scope` accepts only `palace`, `wing`, `room`, `compartment`.
-- Context activation and scope defaulting:
-  - Resolution precedence is `scope` → `scope_token` → `context_id` (per-field merge).
+- Operation locality contracts:
+  - `query`: `palace` minimum; `wing`, `room`, and `compartment` narrow the search when present.
+  - `ingest`: complete topology (`palace/wing/room/compartment`) required, from explicit `scope`, `scope_token`, `context_id`, or operation-local `onboard`/`sync` data.
+  - `graph_upsert` (`kind=place`): complete topology required.
+  - `graph_upsert` (`kind=link`): UUID refs require no topology; name refs require complete topology for disambiguation.
+  - `validate`, `supersede`, `archive`, UUID-based `graph_delete`: ID-targeted; no topology required.
+  - Current `maintain` modes are global; no topology required.
+- Explicit reference precedence: `scope` → `scope_token` → `context_id` (per-field merge).
   - `scope_token` resolves from execution context `memory_scope_tokens`; `context_id` resolves from `memory_context_scopes`.
   - Responses include `resolved_scope` and `scope_source` when available.
-  - Required scope by operation:
-    - `query`: all four fields must resolve.
-    - `ingest`: all four fields must resolve (including `compartment`).
-    - `graph_upsert` with `graph.kind="place"`: all four fields must resolve.
-    - `validate|supersede|archive|maintain|graph_delete|graph_upsert(kind="link")`: scope is optional.
+- `sync` can use session active context as a continuation for incremental scans; standalone placement writes (`ingest`, `graph_upsert` with `kind=place`) do not use session active context as a fallback.
+- Insufficient locality fails with `INSUFFICIENT_LOCALITY`; the error includes missing fields and retry guidance.
 - Query request shape:
   - `operation="query"` requires `query` to be an object (for example `{"text": "...", "mode": "search"}`).
   - Passing `query` as a plain string is rejected by request validation.
@@ -548,7 +551,7 @@ Current memory behavior exposes query modes that map to retrieval strategies int
 | `query.mode="graph"` | `graph` | Graph traversal/path/stats retrieval. |
 | `query.mode="communities"` | `communities` | Community-focused retrieval strategy. |
 
-Every `query` call still requires a fully resolved current memory scope (`palace/wing/room/compartment`) resolved from request and/or context sources.
+Every `query` call requires at least a resolved `palace`; `wing`, `room`, and `compartment` narrow the search when present.
 
 #### Scope call shape (with context activation)
 
