@@ -32,6 +32,16 @@ def _make_service() -> MemoryService:
 @pytest.mark.asyncio
 async def test_query_graph_path_includes_evidence_when_path_exists() -> None:
     service = _make_service()
+    # Call 1: entity name resolution "a" → "a-id"
+    # Call 2: entity name resolution "b" → "b-id"
+    # Call 3: scope filter returns both node IDs so neither is dropped
+    service._backend.query = AsyncMock(
+        side_effect=[
+            MagicMock(rows=[{"id": "a-id"}]),
+            MagicMock(rows=[{"id": "b-id"}]),
+            MagicMock(rows=[{"id": "a-id"}, {"id": "b-id"}]),
+        ]
+    )
 
     path_result = {
         "nodes": [
@@ -83,6 +93,7 @@ async def test_query_graph_path_includes_evidence_when_path_exists() -> None:
                 graph_op="path",
                 start_entity="a",
                 end_entity="b",
+                palace="test-palace",
             )
         )
 
@@ -97,6 +108,14 @@ async def test_query_graph_path_includes_evidence_when_path_exists() -> None:
 @pytest.mark.asyncio
 async def test_query_graph_traverse_includes_evidence_when_neighbors_exist() -> None:
     service = _make_service()
+    # Call 1: entity name resolution "a" → "a-id"
+    # Call 2: scope filter returns both node IDs so neither is dropped
+    service._backend.query = AsyncMock(
+        side_effect=[
+            MagicMock(rows=[{"id": "a-id"}]),
+            MagicMock(rows=[{"id": "a-id"}, {"id": "b-id"}]),
+        ]
+    )
 
     traverse_result = {
         "nodes": [
@@ -129,6 +148,7 @@ async def test_query_graph_traverse_includes_evidence_when_neighbors_exist() -> 
                 strategy="graph",
                 graph_op="traverse",
                 start_entity="a",
+                palace="test-palace",
             )
         )
 
@@ -142,37 +162,25 @@ async def test_query_graph_traverse_includes_evidence_when_neighbors_exist() -> 
 @pytest.mark.asyncio
 async def test_query_graph_stats_without_start_entity_does_not_error() -> None:
     service = _make_service()
-
-    stats_result = {
-        "nodes": [],
-        "edges": [],
-        "paths": [],
-        "traversal_count": 0,
-        "diagnostics": {
-            "expanded_nodes": 0,
-            "pruned_edges": 0,
-            "latency_ms": 1.0,
-            "entity_count": 2,
-            "relation_count": 1,
-        },
-    }
-
-    with patch(
-        "workflows_mcp.engine.memory_service.graph_stats", new=AsyncMock(return_value=stats_result)
-    ) as mock_stats:
-        result = await service._query_graph(
-            QueryMemoryRequest(
-                query="graph stats",
-                strategy="graph",
-                graph_op="stats",
-                start_entity=None,
-            )
+    service._backend.query = AsyncMock(
+        return_value=MagicMock(
+            rows=[{"entity_count": 2, "relation_count": 1, "distinct_relation_types": 1}]
         )
+    )
+
+    result = await service._query_graph(
+        QueryMemoryRequest(
+            query="graph stats",
+            strategy="graph",
+            graph_op="stats",
+            start_entity=None,
+            palace="test-palace",
+        )
+    )
 
     assert "error" not in result.diagnostics
     assert result.diagnostics["fusion_version"] == "graph-only.v1"
     assert result.diagnostics["algorithm_versions"]["graph"] == "degree-stats.v1"
-    mock_stats.assert_awaited_once()
 
 
 @pytest.mark.asyncio
@@ -186,6 +194,7 @@ async def test_query_graph_rejects_interval_temporal_filters() -> None:
             graph_op="stats",
             from_="2026-04-01T00:00:00Z",
             to="2026-04-30T23:59:59Z",
+            palace="test-palace",
         )
     )
 
@@ -209,6 +218,7 @@ async def test_query_graph_applies_scope_for_start_entity_resolution() -> None:
             namespace="svc",
             room="component",
             scope={"corridor": "topic"},
+            palace="test-palace",
         )
     )
 
@@ -234,6 +244,7 @@ async def test_query_graph_stats_uses_scoped_aggregate_when_scope_present() -> N
             namespace="svc",
             room="component",
             scope={"corridor": "topic"},
+            palace="test-palace",
         )
     )
 
@@ -438,22 +449,29 @@ async def test_graph_upsert_corridor_uses_effective_evidence_list_for_validation
 @pytest.mark.asyncio
 async def test_query_graph_hydrates_supporting_memories_for_evidence_links() -> None:
     service = _make_service()
+    # Call 1: entity name resolution "a" → "a-id"
+    # Call 2: scope filter returns both node IDs so neither is dropped
+    # Call 3: memory hydration for evidence_memory_ids
     service._backend.query = AsyncMock(
-        return_value=MagicMock(
-            rows=[
-                {
-                    "id": "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
-                    "content": "Memory evidence",
-                    "confidence": 0.9,
-                    "authority": "USER_VALIDATED",
-                    "source_name": "src",
-                    "item_path": "path/to/file.py",
-                    "namespace": "payments",
-                    "room": "orders",
-                    "corridor": "events",
-                }
-            ]
-        )
+        side_effect=[
+            MagicMock(rows=[{"id": "a-id"}]),
+            MagicMock(rows=[{"id": "a-id"}, {"id": "b-id"}]),
+            MagicMock(
+                rows=[
+                    {
+                        "id": "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
+                        "content": "Memory evidence",
+                        "confidence": 0.9,
+                        "authority": "USER_VALIDATED",
+                        "source_name": "src",
+                        "item_path": "path/to/file.py",
+                        "namespace": "payments",
+                        "room": "orders",
+                        "corridor": "events",
+                    }
+                ]
+            ),
+        ]
     )
 
     traverse_result = {
@@ -490,6 +508,7 @@ async def test_query_graph_hydrates_supporting_memories_for_evidence_links() -> 
                 strategy="graph",
                 graph_op="traverse",
                 start_entity="a",
+                palace="test-palace",
             )
         )
 

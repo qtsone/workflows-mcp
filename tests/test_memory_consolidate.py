@@ -11,6 +11,7 @@ from workflows_mcp.engine.knowledge.constants import Authority
 from workflows_mcp.engine.memory_service import (
     ManageMemoryRequest,
     MemoryRequest,
+    MemoryScope,
     MemoryService,
     QueryMemoryRequest,
 )
@@ -284,7 +285,11 @@ class TestCommunityRefresh:
 
         with _embedding_patch():
             result = await service.execute(
-                MemoryRequest(operation="maintain", maintenance={"mode": "community_refresh"})
+                MemoryRequest(
+                    operation="maintain",
+                    maintenance={"mode": "community_refresh"},
+                    scope=MemoryScope(palace="test-palace"),
+                )
             )
 
         assert result.operation == "maintain"
