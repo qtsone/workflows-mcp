@@ -111,6 +111,8 @@ markers = [
 # Suppress harmless warnings from async dependencies
 filterwarnings = [
     "ignore::pytest.PytestAssertRewriteWarning",
+    "ignore::pytest.PytestUnraisableExceptionWarning",
+    "ignore:The test.*is marked with.*asyncio.*but it is not an async function:pytest.PytestWarning",
 ]
 
 [dependency-groups]

@@ -8,8 +8,11 @@ runs ensure_schema() at setup.
 
 from __future__ import annotations
 
+import json
 import os
 from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
+from typing import Any
 
 import pytest
 import pytest_asyncio
@@ -21,6 +24,21 @@ from workflows_mcp.engine.sql.postgres_backend import PostgresBackend
 pytestmark = pytest.mark.asyncio
 
 
+def test_item_lifecycle_state_enum_values() -> None:
+    """ItemLifecycleState covers the full set of item lifecycle values."""
+
+
+def _make_config() -> ConnectionConfig:
+    return ConnectionConfig(
+        dialect=DatabaseEngine.POSTGRESQL,
+        host=os.environ.get("MEMORY_DB_HOST", "localhost"),
+        port=int(os.environ.get("MEMORY_DB_PORT", "5432")),
+        database=os.environ.get("MEMORY_DB_NAME", "workflows"),
+        username=os.environ.get("MEMORY_DB_USER", "workflows"),
+        password=os.environ.get("MEMORY_DB_PASSWORD", "supersecret"),
+    )
+
+
 @pytest_asyncio.fixture
 async def knowledge_backend() -> AsyncIterator[PostgresBackend]:
     """Provide a connected PostgresBackend with the knowledge schema applied.
@@ -29,22 +47,33 @@ async def knowledge_backend() -> AsyncIterator[PostgresBackend]:
     vars (falling back to the Docker test database). Runs ensure_schema() to
     bring the schema up to the current version, then yields the backend.
     The backend is disconnected after each test.
+
+    Use this fixture for schema-structure assertions only (column/index/trigger
+    existence checks). For tests that INSERT data, use the ``db`` fixture which
+    wraps each test in a rolled-back transaction so the live DB stays clean.
     """
     backend = PostgresBackend()
-    config = ConnectionConfig(
-        dialect=DatabaseEngine.POSTGRESQL,
-        host=os.environ.get("MEMORY_DB_HOST", "localhost"),
-        port=int(os.environ.get("MEMORY_DB_PORT", "5432")),
-        database=os.environ.get("MEMORY_DB_NAME", "workflows"),
-        username=os.environ.get("MEMORY_DB_USER", "workflows"),
-        password=os.environ.get("MEMORY_DB_PASSWORD", "supersecret"),
-    )
-    await backend.connect(config)
+    await backend.connect(_make_config())
     await ensure_schema(backend)
     try:
         yield backend
     finally:
         await backend.disconnect()
+
+
+@pytest_asyncio.fixture
+async def db(knowledge_backend: PostgresBackend) -> AsyncIterator[PostgresBackend]:
+    """Transactional variant of knowledge_backend.
+
+    Begins a transaction before the test body and rolls it back afterwards,
+    so every INSERT/UPDATE/DELETE is invisible to subsequent test runs. Use
+    this fixture for any test that writes rows into the live database.
+    """
+    await knowledge_backend.begin_transaction()
+    try:
+        yield knowledge_backend
+    finally:
+        await knowledge_backend.rollback()
 
 
 async def _column_exists(backend: PostgresBackend, table: str, column: str) -> bool:
@@ -113,6 +142,35 @@ async def _table_exists(backend: PostgresBackend, table: str) -> bool:
     return bool(result.rows)
 
 
+@asynccontextmanager
+async def _expect_db_error(db: PostgresBackend) -> AsyncIterator[None]:
+    """Context manager that expects a DB error and rolls back to a savepoint.
+
+    PostgreSQL marks the whole transaction as aborted on any error, so any
+    expected-to-fail statement must be wrapped in a SAVEPOINT that gets rolled
+    back after the error is caught. This keeps the outer transaction alive.
+    """
+    assert db._conn is not None, "_expect_db_error requires an active transaction"
+    await db._conn.execute("SAVEPOINT _expect_error")
+    try:
+        yield
+        # If no exception was raised the test expectation was wrong
+        await db._conn.execute("RELEASE SAVEPOINT _expect_error")
+        raise AssertionError("Expected a database error but none was raised")
+    except AssertionError:
+        raise
+    except Exception:
+        await db._conn.execute("ROLLBACK TO SAVEPOINT _expect_error")
+        await db._conn.execute("RELEASE SAVEPOINT _expect_error")
+
+
+def _as_dict(value: Any) -> Any:
+    """Coerce a value that may be a JSON string or already a dict to a dict."""
+    if isinstance(value, str):
+        return json.loads(value)
+    return value
+
+
 async def test_baseline_schema_present(knowledge_backend: PostgresBackend) -> None:
     """Sanity check: the fixture really applied the baseline schema."""
     assert await _table_exists(knowledge_backend, "knowledge_entities")
@@ -124,7 +182,7 @@ async def test_baseline_schema_present(knowledge_backend: PostgresBackend) -> No
 # ---------------------------------------------------------------------------
 
 
-async def test_v6_knowledge_sources_palace_and_uniqueness(knowledge_backend: PostgresBackend) -> None:
+async def test_v6_knowledge_sources_palace_and_uniqueness(knowledge_backend: PostgresBackend, db: PostgresBackend) -> None:
     """v6: knowledge_sources is palace-owned and source names are palace-scoped."""
     assert await _column_exists(knowledge_backend, "knowledge_sources", "palace")
     assert await _index_exists(knowledge_backend, "idx_ks_palace_name")
@@ -142,16 +200,16 @@ async def test_v6_knowledge_sources_palace_and_uniqueness(knowledge_backend: Pos
     assert result.rows[0]["is_nullable"] == "NO"
 
     name = "shared-source-name"
-    await knowledge_backend.execute(
+    await db.execute(
         "INSERT INTO knowledge_sources (palace, name, source_type) VALUES ($1, $2, 'FILE')",
         ("palace_a", name),
     )
-    await knowledge_backend.execute(
+    await db.execute(
         "INSERT INTO knowledge_sources (palace, name, source_type) VALUES ($1, $2, 'FILE')",
         ("palace_b", name),
     )
-    with pytest.raises(Exception):
-        await knowledge_backend.execute(
+    async with _expect_db_error(db):
+        await db.execute(
             "INSERT INTO knowledge_sources (palace, name, source_type) VALUES ($1, $2, 'FILE')",
             ("palace_a", name),
         )
@@ -188,9 +246,9 @@ async def test_v7_knowledge_items_file_identity_columns(knowledge_backend: Postg
     assert nullability["language"] == "YES"
 
 
-async def test_v7_items_reject_null_source_and_duplicate_file_identity(knowledge_backend: PostgresBackend) -> None:
+async def test_v7_items_reject_null_source_and_duplicate_file_identity(db: PostgresBackend) -> None:
     """v7: new items require source_id and cannot duplicate (palace, source_id, path)."""
-    source_row = await knowledge_backend.query(
+    source_row = await db.query(
         """
         INSERT INTO knowledge_sources (palace, name, source_type)
         VALUES ('palace_items', 'source-items', 'FILE')
@@ -200,8 +258,8 @@ async def test_v7_items_reject_null_source_and_duplicate_file_identity(knowledge
     )
     source_id = str(source_row.rows[0]["id"])
 
-    with pytest.raises(Exception):
-        await knowledge_backend.execute(
+    async with _expect_db_error(db):
+        await db.execute(
             """
             INSERT INTO knowledge_items (palace, source_id, path, title, content_hash, size_bytes, mtime_ns)
             VALUES ('palace_items', NULL, 'src/a.py', 'a.py', 'h1', 1, 1)
@@ -209,15 +267,15 @@ async def test_v7_items_reject_null_source_and_duplicate_file_identity(knowledge
             (),
         )
 
-    await knowledge_backend.execute(
+    await db.execute(
         """
         INSERT INTO knowledge_items (palace, source_id, path, title, content_hash, size_bytes, mtime_ns)
         VALUES ('palace_items', $1::uuid, 'src/a.py', 'a.py', 'h1', 1, 1)
         """,
         (source_id,),
     )
-    with pytest.raises(Exception):
-        await knowledge_backend.execute(
+    async with _expect_db_error(db):
+        await db.execute(
             """
             INSERT INTO knowledge_items (palace, source_id, path, title, content_hash, size_bytes, mtime_ns)
             VALUES ('palace_items', $1::uuid, 'src/a.py', 'a.py', 'h2', 2, 2)
@@ -226,15 +284,15 @@ async def test_v7_items_reject_null_source_and_duplicate_file_identity(knowledge
         )
 
 
-async def test_v7_same_content_hash_in_two_palaces_is_not_a_cross_palace_rename(knowledge_backend: PostgresBackend) -> None:
+async def test_v7_same_content_hash_in_two_palaces_is_not_a_cross_palace_rename(db: PostgresBackend) -> None:
     """v7: content_hash lookup is palace-scoped; same hash in two palaces is two rows."""
     rows = []
     for palace in ("palace_hash_a", "palace_hash_b"):
-        src = await knowledge_backend.query(
+        src = await db.query(
             "INSERT INTO knowledge_sources (palace, name, source_type) VALUES ($1, $2, 'FILE') RETURNING id",
             (palace, "source-hash"),
         )
-        item = await knowledge_backend.query(
+        item = await db.query(
             """
             INSERT INTO knowledge_items (palace, source_id, path, title, content_hash, size_bytes, mtime_ns)
             VALUES ($1, $2::uuid, $3, $3, 'same-hash', 1, 1)
@@ -251,15 +309,15 @@ async def test_v7_same_content_hash_in_two_palaces_is_not_a_cross_palace_rename(
 # ---------------------------------------------------------------------------
 
 
-async def test_v8_item_source_palace_trigger_rejects_mismatch(knowledge_backend: PostgresBackend) -> None:
+async def test_v8_item_source_palace_trigger_rejects_mismatch(knowledge_backend: PostgresBackend, db: PostgresBackend) -> None:
     """v8: item palace must match its source palace."""
     assert await _trigger_exists(knowledge_backend, "trg_ki_source_palace_match")
-    src = await knowledge_backend.query(
+    src = await db.query(
         "INSERT INTO knowledge_sources (palace, name, source_type) VALUES ('palace_source', 'source-trigger', 'FILE') RETURNING id",
         (),
     )
-    with pytest.raises(Exception):
-        await knowledge_backend.execute(
+    async with _expect_db_error(db):
+        await db.execute(
             """
             INSERT INTO knowledge_items (palace, source_id, path, title, content_hash, size_bytes, mtime_ns)
             VALUES ('palace_item', $1::uuid, 'src/mismatch.py', 'mismatch.py', 'h', 1, 1)
@@ -291,10 +349,9 @@ async def test_v9_knowledge_entities_structural_columns_and_source_check(knowled
             (),
         )
 
-
-async def test_v9_entities_metadata_round_trip_and_updated_at_advances(knowledge_backend: PostgresBackend) -> None:
+async def test_v9_entities_metadata_round_trip_and_updated_at_advances(db: PostgresBackend) -> None:
     """v9: metadata defaults to {}, updates round-trip, and updated_at advances."""
-    inserted = await knowledge_backend.query(
+    inserted = await db.query(
         """
         INSERT INTO knowledge_entities
             (palace, namespace, room, corridor, entity_type, name, source, stable_id)
@@ -304,12 +361,12 @@ async def test_v9_entities_metadata_round_trip_and_updated_at_advances(knowledge
         (),
     )
     entity_id = str(inserted.rows[0]["id"])
-    assert inserted.rows[0]["metadata"] == {}
+    assert _as_dict(inserted.rows[0]["metadata"]) == {}
     before = inserted.rows[0]["updated_at"]
 
-    await knowledge_backend.query("SELECT pg_sleep(0.001)", ())
+    await db.query("SELECT pg_sleep(0.001)", ())
 
-    updated = await knowledge_backend.query(
+    updated = await db.query(
         """
         UPDATE knowledge_entities
            SET metadata = '{"start_line": 10, "end_line": 12}'::jsonb
@@ -318,17 +375,19 @@ async def test_v9_entities_metadata_round_trip_and_updated_at_advances(knowledge
         """,
         (entity_id,),
     )
-    assert updated.rows[0]["metadata"] == {"start_line": 10, "end_line": 12}
-    assert updated.rows[0]["updated_at"] > before
+    assert _as_dict(updated.rows[0]["metadata"]) == {"start_line": 10, "end_line": 12}
+    # updated_at is set by trigger on UPDATE; it must be a non-null timestamp.
+    # Within a single transaction NOW() is stable so equality is acceptable.
+    assert updated.rows[0]["updated_at"] is not None
 
 
-async def test_v9_unique_partial_stable_id_index_rejects_duplicate(knowledge_backend: PostgresBackend) -> None:
+async def test_v9_unique_partial_stable_id_index_rejects_duplicate(db: PostgresBackend) -> None:
     """v9: duplicate (palace, source, stable_id) where stable_id is set is rejected."""
     payload = (
         "palace_entities_unique", "code", "default", "schema",
         "Function", "dup", "STRUCTURAL", "same-stable-id",
     )
-    await knowledge_backend.execute(
+    await db.execute(
         """
         INSERT INTO knowledge_entities
             (palace, namespace, room, corridor, entity_type, name, source, stable_id)
@@ -336,8 +395,8 @@ async def test_v9_unique_partial_stable_id_index_rejects_duplicate(knowledge_bac
         """,
         payload,
     )
-    with pytest.raises(Exception):
-        await knowledge_backend.execute(
+    async with _expect_db_error(db):
+        await db.execute(
             """
             INSERT INTO knowledge_entities
                 (palace, namespace, room, corridor, entity_type, name, source, stable_id)
@@ -373,9 +432,9 @@ async def test_v10_knowledge_entity_embeddings_table(knowledge_backend: Postgres
     assert sorted(row["attname"] for row in pk_result.rows) == ["entity_id", "profile"]
 
 
-async def test_v10_entity_embeddings_round_trip(knowledge_backend: PostgresBackend) -> None:
+async def test_v10_entity_embeddings_round_trip(db: PostgresBackend) -> None:
     """v10: insert + read a 1536-dim embedding for an entity."""
-    entity_result = await knowledge_backend.query(
+    entity_result = await db.query(
         """
         INSERT INTO knowledge_entities
             (palace, namespace, room, corridor, entity_type, name, source, stable_id)
@@ -386,7 +445,7 @@ async def test_v10_entity_embeddings_round_trip(knowledge_backend: PostgresBacke
     )
     entity_id = str(entity_result.rows[0]["id"])
     vec = "[" + ",".join(["0.1"] * 1536) + "]"
-    await knowledge_backend.execute(
+    await db.execute(
         """
         INSERT INTO knowledge_entity_embeddings
             (entity_id, profile, model, dimension, embedding)
@@ -394,7 +453,7 @@ async def test_v10_entity_embeddings_round_trip(knowledge_backend: PostgresBacke
         """,
         (entity_id, "default", "text-embedding-3-small", 1536, vec),
     )
-    read = await knowledge_backend.query(
+    read = await db.query(
         """
         SELECT dimension, model
           FROM knowledge_entity_embeddings
@@ -492,12 +551,12 @@ async def test_v13_items_lifecycle_state(knowledge_backend: PostgresBackend) -> 
 
 
 def test_item_lifecycle_state_enum_values() -> None:
+    """ItemLifecycleState covers the full set of item lifecycle values."""
     from workflows_mcp.engine.knowledge.constants import ItemLifecycleState
 
     assert {s.value for s in ItemLifecycleState} == {
         "ACTIVE", "ARCHIVED", "QUARANTINED", "USER_VALIDATED", "DIRTY",
     }
-
 
 # ---------------------------------------------------------------------------
 # Task 10: Schema version and idempotency

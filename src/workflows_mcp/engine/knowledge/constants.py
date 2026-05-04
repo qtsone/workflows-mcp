@@ -15,6 +15,16 @@ class LifecycleState(str, Enum):
     ARCHIVED = "ARCHIVED"
 
 
+class ItemLifecycleState(str, Enum):
+    """Knowledge item lifecycle states matching knowledge_items.lifecycle_state."""
+
+    ACTIVE = "ACTIVE"
+    ARCHIVED = "ARCHIVED"
+    QUARANTINED = "QUARANTINED"
+    USER_VALIDATED = "USER_VALIDATED"
+    DIRTY = "DIRTY"
+
+
 class Authority(str, Enum):
     """Memory authority levels matching knowledge_memories.authority."""
 

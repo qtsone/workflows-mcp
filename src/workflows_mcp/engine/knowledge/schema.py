@@ -643,6 +643,232 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_ke_type_name
     ON knowledge_entities(palace, namespace, room, corridor, entity_type, name);
 """
 
+_V6_SOURCE_PALACE_SQL = """
+-- B3 hybrid palace ownership: sources are project-owned.
+-- Existing rows cannot be backfilled safely because source.name was global.
+
+DO $$
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1 FROM information_schema.columns
+        WHERE table_schema = 'public'
+          AND table_name = 'knowledge_sources'
+          AND column_name = 'palace'
+    ) AND EXISTS (SELECT 1 FROM knowledge_sources) THEN
+        RAISE EXCEPTION
+            'KS_PALACE_BACKFILL_REQUIRED: assign palace per row before v6';
+    END IF;
+END $$;
+
+ALTER TABLE knowledge_sources
+    ADD COLUMN IF NOT EXISTS palace TEXT;
+
+DO $$
+BEGIN
+    IF EXISTS (SELECT 1 FROM knowledge_sources WHERE palace IS NULL OR palace = '') THEN
+        RAISE EXCEPTION
+            'KS_PALACE_BACKFILL_REQUIRED: palace must be set before NOT NULL';
+    END IF;
+END $$;
+
+ALTER TABLE knowledge_sources
+    ALTER COLUMN palace SET NOT NULL;
+
+DROP INDEX IF EXISTS idx_ks_name;
+CREATE UNIQUE INDEX IF NOT EXISTS idx_ks_palace_name
+    ON knowledge_sources(palace, name);
+"""
+
+_V7_ITEM_FILE_IDENTITY_SQL = """
+-- §3.1 Knowledge ingestion architecture + B3 hybrid palace ownership.
+-- File-backed items are always tied to a source and palace.
+
+ALTER TABLE knowledge_items
+    ADD COLUMN IF NOT EXISTS content_hash TEXT NOT NULL DEFAULT '';
+ALTER TABLE knowledge_items
+    ADD COLUMN IF NOT EXISTS size_bytes BIGINT NOT NULL DEFAULT 0;
+ALTER TABLE knowledge_items
+    ADD COLUMN IF NOT EXISTS mtime_ns BIGINT NOT NULL DEFAULT 0;
+ALTER TABLE knowledge_items
+    ADD COLUMN IF NOT EXISTS language TEXT;
+ALTER TABLE knowledge_items
+    ADD COLUMN IF NOT EXISTS palace TEXT;
+
+UPDATE knowledge_items ki
+SET palace = ks.palace
+FROM knowledge_sources ks
+WHERE ki.source_id = ks.id
+  AND ki.palace IS NULL;
+
+DO $$
+BEGIN
+    IF EXISTS (SELECT 1 FROM knowledge_items WHERE source_id IS NULL) THEN
+        RAISE EXCEPTION
+            'KI_SOURCE_ID_REQUIRED: attach items to a source before v7';
+    END IF;
+    IF EXISTS (SELECT 1 FROM knowledge_items WHERE palace IS NULL OR palace = '') THEN
+        RAISE EXCEPTION
+            'KI_PALACE_BACKFILL_REQUIRED: palace not derivable from sources';
+    END IF;
+END $$;
+
+ALTER TABLE knowledge_items
+    ALTER COLUMN source_id SET NOT NULL;
+ALTER TABLE knowledge_items
+    ALTER COLUMN palace SET NOT NULL;
+
+DROP INDEX IF EXISTS idx_ki_source_path;
+CREATE UNIQUE INDEX IF NOT EXISTS idx_ki_palace_source_path
+    ON knowledge_items(palace, source_id, path);
+
+CREATE INDEX IF NOT EXISTS idx_ki_palace_content_hash
+    ON knowledge_items(palace, content_hash)
+    WHERE content_hash <> '';
+"""
+
+_V8_ITEM_SOURCE_PALACE_TRIGGER_SQL = """
+-- Cross-table invariant: knowledge_items.palace must equal knowledge_sources.palace.
+
+CREATE OR REPLACE FUNCTION enforce_ki_source_palace_match()
+RETURNS TRIGGER AS $$
+DECLARE
+    source_palace TEXT;
+BEGIN
+    SELECT palace INTO source_palace
+      FROM knowledge_sources
+     WHERE id = NEW.source_id;
+
+    IF source_palace IS NULL THEN
+        RAISE EXCEPTION 'KI_SOURCE_NOT_FOUND: source_id % missing', NEW.source_id;
+    END IF;
+
+    IF NEW.palace IS DISTINCT FROM source_palace THEN
+        RAISE EXCEPTION
+            'KNOWLEDGE_ITEM_SOURCE_PALACE_MISMATCH: item palace % does not match source palace %',
+            NEW.palace, source_palace;
+    END IF;
+
+    RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+DROP TRIGGER IF EXISTS trg_ki_source_palace_match ON knowledge_items;
+CREATE TRIGGER trg_ki_source_palace_match
+    BEFORE INSERT OR UPDATE OF palace, source_id ON knowledge_items
+    FOR EACH ROW EXECUTE FUNCTION enforce_ki_source_palace_match();
+"""
+
+_V9_ENTITY_STRUCTURAL_SQL = """
+-- §3.2 Knowledge ingestion architecture: structural identity columns.
+-- knowledge_entities.source is an origin enum, NOT a source/file name.
+-- File/source identity flows through source_item_id -> knowledge_items -> knowledge_sources.
+
+ALTER TABLE knowledge_entities
+    ADD COLUMN IF NOT EXISTS source TEXT NOT NULL DEFAULT 'EXTRACTED';
+ALTER TABLE knowledge_entities
+    ADD COLUMN IF NOT EXISTS authority TEXT NOT NULL DEFAULT 'EXTRACTED';
+ALTER TABLE knowledge_entities
+    ADD COLUMN IF NOT EXISTS stable_id TEXT;
+ALTER TABLE knowledge_entities
+    ADD COLUMN IF NOT EXISTS source_item_id UUID REFERENCES knowledge_items(id) ON DELETE SET NULL;
+ALTER TABLE knowledge_entities
+    ADD COLUMN IF NOT EXISTS metadata JSONB NOT NULL DEFAULT '{}'::jsonb;
+ALTER TABLE knowledge_entities
+    ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW();
+
+DO $$
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1 FROM pg_constraint WHERE conname = 'ck_ke_source_origin'
+    ) THEN
+        ALTER TABLE knowledge_entities
+            ADD CONSTRAINT ck_ke_source_origin
+            CHECK (source IN ('STRUCTURAL', 'EXTRACTED', 'USER'));
+    END IF;
+END $$;
+
+DROP INDEX IF EXISTS idx_ke_palace_source_stable_id;
+CREATE UNIQUE INDEX IF NOT EXISTS idx_ke_palace_source_stable_id
+    ON knowledge_entities(palace, source, stable_id)
+    WHERE stable_id IS NOT NULL;
+
+CREATE INDEX IF NOT EXISTS idx_ke_source_item_id
+    ON knowledge_entities(source_item_id)
+    WHERE source_item_id IS NOT NULL;
+
+DO $$
+BEGIN
+    IF NOT EXISTS (SELECT 1 FROM pg_trigger WHERE tgname = 'trg_ke_updated_at') THEN
+        CREATE TRIGGER trg_ke_updated_at
+            BEFORE UPDATE ON knowledge_entities
+            FOR EACH ROW EXECUTE FUNCTION update_updated_at();
+    END IF;
+END $$;
+"""
+
+_V10_ENTITY_EMBEDDINGS_SQL = """
+-- §3.3 Knowledge ingestion architecture: side table for entity embeddings.
+
+CREATE TABLE IF NOT EXISTS knowledge_entity_embeddings (
+    entity_id  UUID NOT NULL REFERENCES knowledge_entities(id) ON DELETE CASCADE,
+    profile    TEXT NOT NULL,
+    model      TEXT NOT NULL,
+    dimension  INTEGER NOT NULL,
+    embedding  vector NOT NULL,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    PRIMARY KEY (entity_id, profile)
+);
+
+CREATE INDEX IF NOT EXISTS idx_kee_profile
+    ON knowledge_entity_embeddings(profile);
+
+-- HNSW per profile is built lazily by the embedding workflow because
+-- different profiles can have different dimensions.
+"""
+
+_V11_ENTITY_MEMORY_ANCHOR_SQL = """
+-- §3.4 Knowledge ingestion architecture: span anchoring for memory→entity links.
+
+ALTER TABLE knowledge_entity_memories
+    ADD COLUMN IF NOT EXISTS start_line INTEGER;
+ALTER TABLE knowledge_entity_memories
+    ADD COLUMN IF NOT EXISTS end_line INTEGER;
+ALTER TABLE knowledge_entity_memories
+    ADD COLUMN IF NOT EXISTS start_col INTEGER;
+ALTER TABLE knowledge_entity_memories
+    ADD COLUMN IF NOT EXISTS end_col INTEGER;
+ALTER TABLE knowledge_entity_memories
+    ADD COLUMN IF NOT EXISTS anchor_kind TEXT NOT NULL DEFAULT 'symbol';
+"""
+
+_V12_COMMUNITY_FEDERATION_SQL = """
+-- §3.5 Knowledge ingestion architecture: federation provenance on communities.
+
+ALTER TABLE knowledge_communities
+    ADD COLUMN IF NOT EXISTS scope_kind TEXT NOT NULL DEFAULT 'palace_local';
+ALTER TABLE knowledge_communities
+    ADD COLUMN IF NOT EXISTS source_palaces TEXT[];
+ALTER TABLE knowledge_communities
+    ADD COLUMN IF NOT EXISTS member_provenance JSONB;
+ALTER TABLE knowledge_communities
+    ADD COLUMN IF NOT EXISTS consent_policy_id UUID;
+
+CREATE INDEX IF NOT EXISTS idx_kc_scope_kind
+    ON knowledge_communities(scope_kind);
+"""
+
+_V13_ITEM_LIFECYCLE_SQL = """
+-- §3.6 Knowledge ingestion architecture: item lifecycle states.
+
+ALTER TABLE knowledge_items
+    ADD COLUMN IF NOT EXISTS lifecycle_state VARCHAR(50) NOT NULL DEFAULT 'ACTIVE';
+ALTER TABLE knowledge_items
+    ADD COLUMN IF NOT EXISTS error_metadata JSONB;
+
+CREATE INDEX IF NOT EXISTS idx_ki_palace_lifecycle_state
+    ON knowledge_items(palace, lifecycle_state);
+"""
+
 _HAS_KNOWLEDGE_TABLES_SQL = """
 SELECT EXISTS (
         SELECT 1
@@ -659,7 +885,8 @@ SELECT EXISTS (
                 'knowledge_memory_categories',
                 'knowledge_relations',
                 'knowledge_entity_memories',
-                'knowledge_conflicts'
+                'knowledge_conflicts',
+                'knowledge_entity_embeddings'
             )
 ) AS has_tables;
 """
@@ -699,6 +926,46 @@ MIGRATIONS: list[tuple[int, str, str]] = [
         5,
         "Add palace column to topology tables for org-level isolation",
         _V5_PALACE_SQL,
+    ),
+    (
+        6,
+        "Add palace ownership and per-palace name uniqueness to knowledge_sources",
+        _V6_SOURCE_PALACE_SQL,
+    ),
+    (
+        7,
+        "Add file metadata and palace-scoped file identity to knowledge_items",
+        _V7_ITEM_FILE_IDENTITY_SQL,
+    ),
+    (
+        8,
+        "Enforce knowledge_items palace/source palace invariant",
+        _V8_ITEM_SOURCE_PALACE_TRIGGER_SQL,
+    ),
+    (
+        9,
+        "Add structural identity and metadata columns to knowledge_entities",
+        _V9_ENTITY_STRUCTURAL_SQL,
+    ),
+    (
+        10,
+        "Add knowledge_entity_embeddings side table",
+        _V10_ENTITY_EMBEDDINGS_SQL,
+    ),
+    (
+        11,
+        "Add anchor span columns to knowledge_entity_memories",
+        _V11_ENTITY_MEMORY_ANCHOR_SQL,
+    ),
+    (
+        12,
+        "Add federation provenance columns to knowledge_communities",
+        _V12_COMMUNITY_FEDERATION_SQL,
+    ),
+    (
+        13,
+        "Add lifecycle_state and error_metadata to knowledge_items",
+        _V13_ITEM_LIFECYCLE_SQL,
     ),
 ]
 
