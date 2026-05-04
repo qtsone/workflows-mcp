@@ -58,6 +58,14 @@ MemoryOperation = Literal[
     "maintain",
     "graph_upsert",
     "graph_delete",
+    "ensure_source",
+    "ensure_item",
+    "store_entities",
+    "store_relations",
+    "store_memories",
+    "store_entity_embeddings",
+    "archive_memories",
+    "mark_item_dirty",
 ]
 
 
@@ -70,6 +78,14 @@ MEMORY_OPERATION_ENUM: tuple[MemoryOperation, ...] = (
     "maintain",
     "graph_upsert",
     "graph_delete",
+    "ensure_source",
+    "ensure_item",
+    "store_entities",
+    "store_relations",
+    "store_memories",
+    "store_entity_embeddings",
+    "archive_memories",
+    "mark_item_dirty",
 )
 
 MEMORY_SECTION_REQUIRED_BY_OPERATION: dict[MemoryOperation, str] = {

@@ -153,3 +153,29 @@ def test_memory_record_input_accepts_item_and_embeddings() -> None:
     assert rec.entity_embeddings is not None
     assert len(rec.entity_embeddings[0].embedding) == 1536
     assert rec.entity_embeddings[0].dimension == 1536
+
+
+@pytest.mark.parametrize(
+    "op",
+    [
+        "ensure_source",
+        "ensure_item",
+        "store_entities",
+        "store_relations",
+        "store_memories",
+        "store_entity_embeddings",
+        "archive_memories",
+        "mark_item_dirty",
+    ],
+)
+def test_memory_request_accepts_new_operations(op: str) -> None:
+    """MemoryRequest must accept all eight new operation names without raising."""
+    from workflows_mcp.engine.memory_service import MemoryRequest
+
+    payload: dict[str, Any] = {
+        "operation": op,
+        "scope": _scope(),
+        "record": {"format": "raw"},
+    }
+    req = MemoryRequest.model_validate(payload)
+    assert req.operation == op
