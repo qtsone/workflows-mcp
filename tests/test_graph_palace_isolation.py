@@ -8,7 +8,6 @@ palace B rows. Before the fix, they do — these tests fail loudly.
 from __future__ import annotations
 
 import os
-import uuid
 from collections.abc import AsyncIterator
 from typing import Any
 
@@ -106,25 +105,27 @@ async def _seed_palace(
 
 
 @pytest_asyncio.fixture
-async def two_palaces(knowledge_backend: PostgresBackend) -> AsyncIterator[dict[str, dict[str, str]]]:
+async def two_palaces(
+    knowledge_backend: PostgresBackend,
+) -> AsyncIterator[dict[str, dict[str, str]]]:
     """Seed palace_a and palace_b with the same shape; return per-palace ids."""
     a_ids = await _seed_palace(knowledge_backend, palace="palace_a")
     b_ids = await _seed_palace(knowledge_backend, palace="palace_b")
     yield {"a": a_ids, "b": b_ids}
     # Cleanup after test
     await knowledge_backend.execute(
-        "DELETE FROM knowledge_relations "
-        "WHERE source_entity_id IN (SELECT id FROM knowledge_entities WHERE palace IN ('palace_a', 'palace_b'))",
+        "DELETE FROM knowledge_relations WHERE source_entity_id IN "
+        "(SELECT id FROM knowledge_entities WHERE palace IN ('palace_a', 'palace_b'))",
         (),
     )
     await knowledge_backend.execute(
-        "DELETE FROM knowledge_entity_memories "
-        "WHERE memory_id IN (SELECT id FROM knowledge_memories WHERE palace IN ('palace_a', 'palace_b'))",
+        "DELETE FROM knowledge_entity_memories WHERE memory_id IN "
+        "(SELECT id FROM knowledge_memories WHERE palace IN ('palace_a', 'palace_b'))",
         (),
     )
     await knowledge_backend.execute(
-        "DELETE FROM knowledge_entity_embeddings "
-        "WHERE entity_id IN (SELECT id FROM knowledge_entities WHERE palace IN ('palace_a', 'palace_b'))",
+        "DELETE FROM knowledge_entity_embeddings WHERE entity_id IN "
+        "(SELECT id FROM knowledge_entities WHERE palace IN ('palace_a', 'palace_b'))",
         (),
     )
     await knowledge_backend.execute(
@@ -138,7 +139,9 @@ async def two_palaces(knowledge_backend: PostgresBackend) -> AsyncIterator[dict[
     )
 
 
-async def test_two_palaces_seed_helper(knowledge_backend: PostgresBackend, two_palaces: dict[str, dict[str, str]]) -> None:
+async def test_two_palaces_seed_helper(
+    knowledge_backend: PostgresBackend, two_palaces: dict[str, dict[str, str]]
+) -> None:
     """Sanity: both palaces have an alpha and beta entity."""
     counts = await knowledge_backend.query(
         "SELECT palace, COUNT(*)::int AS n FROM knowledge_entities "
@@ -355,16 +358,13 @@ async def test_community_refresh_does_not_touch_other_palace(
     await knowledge_backend.execute(
         """
         INSERT INTO knowledge_communities
-            (palace, namespace, room, corridor, name)
+            (palace, namespace, room, corridor, content)
         VALUES ('palace_b', 'code', 'default', 'iso', 'pre_existing_b')
         """,
         (),
     )
 
-    from workflows_mcp.engine.memory_service import (
-        MemoryRequest,
-        MemoryMaintenanceInput,
-    )
+    from workflows_mcp.engine.memory_service import MemoryRequest
 
     request = MemoryRequest.model_validate(
         {
@@ -383,7 +383,7 @@ async def test_community_refresh_does_not_touch_other_palace(
     # palace_b's community must still exist
     surviving = await knowledge_backend.query(
         "SELECT COUNT(*)::int AS n FROM knowledge_communities "
-        "WHERE palace = 'palace_b' AND name = 'pre_existing_b'",
+        "WHERE palace = 'palace_b' AND content = 'pre_existing_b'",
         (),
     )
     assert surviving.rows[0]["n"] == 1, "community_refresh leaked across palace"
@@ -401,4 +401,6 @@ async def test_community_refresh_without_palace_is_rejected(memory_service: Any)
         }
     )
     result = await memory_service.execute(request)
-    assert not result.success or "MEM_PALACE_REQUIRED" in (result.error or "")
+    manage = result.manage
+    assert manage is not None
+    assert not manage.success or "MEM_PALACE_REQUIRED" in (manage.error or "")

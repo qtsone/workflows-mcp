@@ -239,15 +239,26 @@ async def _resolve_entity_id_manage(
 
 
 def _get_corridor(request: QueryMemoryRequest | ManageMemoryRequest) -> str | None:
-    """Resolve corridor from explicit request field or optional scope bag."""
+    """Resolve corridor from explicit request field or optional scope bag.
+
+    The external API surface uses ``compartment`` (MemoryScope vocabulary);
+    ``corridor`` is the internal DB column name.  Both are accepted here so
+    that callers using either form are handled uniformly.
+    """
     corridor = getattr(request, "corridor", None)
     if corridor:
         return str(corridor)
     scope = getattr(request, "scope", None)
     if isinstance(scope, dict):
-        raw_corridor = scope.get("corridor")
+        # Accept the external "compartment" alias as well as the internal "corridor" key.
+        raw_corridor = scope.get("corridor") or scope.get("compartment")
         if isinstance(raw_corridor, str) and raw_corridor:
             return raw_corridor
+    elif scope is not None:
+        # MemoryScope model: compartment is the public name for the DB corridor column.
+        raw_compartment = getattr(scope, "compartment", None)
+        if isinstance(raw_compartment, str) and raw_compartment:
+            return raw_compartment
     return None
 
 
@@ -1468,6 +1479,10 @@ class MemoryService:
                     auto_archive_threshold=maintenance.auto_archive_threshold,
                     review_threshold=maintenance.review_threshold,
                     grace_days=maintenance.grace_days,
+                    palace=resolved_scope.palace,
+                    namespace=resolved_scope.wing,
+                    room=resolved_scope.room,
+                    corridor=resolved_scope.compartment,
                 )
             )
             return MemoryResult(
@@ -3002,21 +3017,29 @@ class MemoryService:
             normalized_room = _normalize_scope_value(room)
             normalized_corridor = _normalize_scope_value(corridor)
 
+            scoped_clauses = ["palace = $1", "namespace = $2", "room = $3", "corridor = $4"]
+            stats_params: list[Any] = [
+                palace,
+                normalized_namespace,
+                normalized_room,
+                normalized_corridor,
+            ]
+
             temporal_clause = ""
-            params: list[Any] = [normalized_namespace, normalized_room, normalized_corridor]
             if as_of is not None:
+                as_of_idx = len(stats_params) + 1
                 temporal_clause = (
-                    "WHERE (kr.valid_from IS NULL OR kr.valid_from <= $4::timestamptz) "
-                    "AND (kr.valid_to IS NULL OR kr.valid_to >= $4::timestamptz)"
+                    f"WHERE (kr.valid_from IS NULL OR kr.valid_from <= ${as_of_idx}::timestamptz)"
+                    f" AND (kr.valid_to IS NULL OR kr.valid_to >= ${as_of_idx}::timestamptz)"
                 )
-                params.append(as_of)
+                stats_params.append(as_of)
 
             result = await self._backend.query(
                 f"""
                 WITH scoped_entities AS (
                     SELECT id
                     FROM knowledge_entities
-                    WHERE namespace = $1 AND room = $2 AND corridor = $3
+                    WHERE {' AND '.join(scoped_clauses)}
                 )
                 SELECT
                     (SELECT COUNT(*)::bigint FROM scoped_entities) AS entity_count,
@@ -3027,7 +3050,7 @@ class MemoryService:
                 JOIN scoped_entities dst ON dst.id = kr.target_entity_id
                 {temporal_clause}
                 """,
-                tuple(params),
+                tuple(stats_params),
             )
 
             row = result.rows[0] if result.rows else {}
@@ -3244,7 +3267,7 @@ class MemoryService:
             )
 
         if op == "stats":
-            if scope_applied and not start_entity:
+            if not start_entity:
                 scoped_stats = await _scoped_graph_stats(as_of)
                 has_scoped_results = bool(
                     scoped_stats["entity_count"] or scoped_stats["relation_count"]
@@ -4084,6 +4107,17 @@ class MemoryService:
         mode = request.mode
 
         if mode == "community_refresh":
+            if not request.palace:
+                return ManageMemoryResult(
+                    operation="maintain",
+                    success=False,
+                    error="MEM_PALACE_REQUIRED: community_refresh requires palace scope",
+                    diagnostics={
+                        "mode": mode,
+                        "status": "rejected",
+                        "error_code": "MEM_PALACE_REQUIRED",
+                    },
+                )
             consolidate_result = await self._manage_consolidate(request)
             return consolidate_result.model_copy(update={"operation": "maintain"})
 
@@ -4872,11 +4906,13 @@ class MemoryService:
     ) -> list[dict[str, Any]]:
         """Load the entity set participating in the requested memory scope."""
         corridor = _get_corridor(request)
+        palace = request.palace or None
         clauses, params, _ = _build_memory_scope_filters(
             request.namespace,
             request.room,
             corridor,
             alias="km",
+            palace=palace,
         )
         where_clause = " AND ".join(clauses) if clauses else "TRUE"
         result = await self._backend.query(
@@ -4911,6 +4947,7 @@ class MemoryService:
             corridor,
             alias="km",
             start_index=2,
+            palace=request.palace or None,
         )
         if scope_clauses:
             clauses.append("kr.evidence_memory_id IS NOT NULL")
@@ -4969,11 +5006,13 @@ class MemoryService:
             )
 
         corridor = _get_corridor(request)
+        palace = request.palace or None
         scope_clauses, scope_params, _ = _build_memory_scope_filters(
             request.namespace,
             request.room,
             corridor,
             alias="knowledge_memories",
+            palace=palace,
         )
         if scope_clauses:
             await self._backend.execute(
@@ -4989,6 +5028,7 @@ class MemoryService:
             request.room,
             corridor,
             alias="knowledge_communities",
+            palace=palace,
         )
         if community_scope_clauses:
             await self._backend.execute(
