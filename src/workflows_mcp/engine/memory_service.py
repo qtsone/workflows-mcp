@@ -2931,10 +2931,25 @@ class MemoryService:
             normalized_namespace = _normalize_scope_value(namespace)
             normalized_room = _normalize_scope_value(room)
             normalized_corridor = _normalize_scope_value(corridor)
+            clauses = [
+                "id = ANY($1::uuid[])",
+                "namespace = $2",
+                "room = $3",
+                "corridor = $4",
+            ]
+            filter_params: list[Any] = [
+                raw_node_ids,
+                normalized_namespace,
+                normalized_room,
+                normalized_corridor,
+            ]
+            if palace is not None:
+                clauses.append(f"palace = ${len(filter_params) + 1}")
+                filter_params.append(palace)
             scoped_nodes_result = await self._backend.query(
-                "SELECT id FROM knowledge_entities "
-                "WHERE id = ANY($1::uuid[]) AND namespace = $2 AND room = $3 AND corridor = $4",
-                (raw_node_ids, normalized_namespace, normalized_room, normalized_corridor),
+                "SELECT id FROM knowledge_entities WHERE "
+                + " AND ".join(clauses),
+                tuple(filter_params),
             )
             scoped_node_ids = {str(row["id"]) for row in scoped_nodes_result.rows}
 
