@@ -114,3 +114,42 @@ async def test_clean_palace_starts_empty(knowledge_backend: PostgresBackend, cle
         (PALACE,),
     )
     assert rows.rows[0]["n"] == 0
+
+
+def test_memory_item_input_schema_exists() -> None:
+    """MemoryItemInput must accept item identity + file metadata fields."""
+    from workflows_mcp.engine.memory_service import MemoryItemInput
+
+    item = MemoryItemInput.model_validate(
+        {
+            "id": str(uuid.uuid4()),
+            "content_hash": "abc123",
+            "size_bytes": 4096,
+            "mtime_ns": 1714780800_000_000_000,
+            "language": "python",
+            "error_metadata": {"reason": "test"},
+        }
+    )
+    assert item.content_hash == "abc123"
+    assert item.size_bytes == 4096
+
+
+def test_memory_record_input_accepts_item_and_embeddings() -> None:
+    from workflows_mcp.engine.memory_service import MemoryRecordInput
+
+    rec = MemoryRecordInput.model_validate(
+        {
+            "format": "structured",
+            "item": {"content_hash": "h", "size_bytes": 1, "mtime_ns": 1, "language": "py"},
+            "entity_embeddings": [
+                 {"entity_id": str(uuid.uuid4()), "profile": "embedding",
+                  "model": "text-embedding-3-small",
+                  "dimension": 1536,
+                  "embedding": [0.1] * 1536}
+            ],
+        }
+    )
+    assert rec.item is not None
+    assert rec.entity_embeddings is not None
+    assert len(rec.entity_embeddings[0].embedding) == 1536
+    assert rec.entity_embeddings[0].dimension == 1536

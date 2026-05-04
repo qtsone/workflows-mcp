@@ -839,6 +839,41 @@ class MemoryQueryInput(BaseModel):
         return self
 
 
+class MemoryItemInput(BaseModel):
+    """File / item identity payload for ensure_item, mark_item_dirty, archive_memories."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    id: str | None = Field(
+        default=None, description="Existing knowledge_items.id (uuid). None means lookup-or-create."
+    )
+    content_hash: str | None = Field(
+        default=None, description="Stable content hash for delta detection (§3.1)."
+    )
+    size_bytes: int | None = Field(default=None, ge=0)
+    mtime_ns: int | None = Field(default=None, ge=0)
+    language: str | None = Field(
+        default=None,
+        description="Language tag (e.g. 'python'); informs structural parser selection.",
+    )
+    error_metadata: dict[str, Any] | None = Field(
+        default=None,
+        description="Failure reason for mark_item_dirty (free-form jsonb).",
+    )
+
+
+class MemoryEntityEmbeddingInput(BaseModel):
+    """One row for store_entity_embeddings."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    entity_id: str = Field(description="knowledge_entities.id (uuid)")
+    profile: str = Field(default="embedding", description="Embedding profile name")
+    model: str = Field(description="Model identifier as returned by compute_embedding")
+    dimension: int = Field(ge=1, description="Vector dimension; must equal len(embedding)")
+    embedding: list[float] = Field(description="Vector; length must match model output")
+
+
 class MemoryRecordInput(BaseModel):
     """Write/lifecycle payload."""
 
@@ -864,6 +899,14 @@ class MemoryRecordInput(BaseModel):
     allow_create_categories: bool = Field(
         default=False,
         description="Explicit opt-in to create missing categories during ingest",
+    )
+    item: MemoryItemInput | None = Field(
+        default=None,
+        description="File/item identity for ensure_item/mark_item_dirty/archive_memories.",
+    )
+    entity_embeddings: list[MemoryEntityEmbeddingInput] | None = Field(
+        default=None,
+        description="Entity embeddings for store_entity_embeddings.",
     )
 
     @model_validator(mode="after")
