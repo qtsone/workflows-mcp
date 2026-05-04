@@ -128,7 +128,10 @@ _NEIGHBORS_SQL_TEMPLATE = """
         kr.valid_from,
         kr.valid_to
     FROM knowledge_relations kr
+    JOIN knowledge_entities src ON src.id = kr.source_entity_id
+    JOIN knowledge_entities dst ON dst.id = kr.target_entity_id
     WHERE ({direction_filter})
+      {palace_clause}
       {relation_type_clause}
       {confidence_clause}
       {temporal_clause}
@@ -141,11 +144,15 @@ def _build_neighbors_query(
     relation_types: list[str] | None,
     min_edge_confidence: float | None,
     as_of: datetime | None,
+    palace: str | None = None,
 ) -> tuple[str, list[Any]]:
     """Return (sql, params) for fetching all edges touching ``entity_id``.
 
     Fetches both outgoing (source = entity_id) and incoming (target = entity_id)
     edges in a single query so callers can derive undirected neighbourhoods.
+
+    When ``palace`` is provided, both endpoints must belong to that palace so
+    cross-palace relations are invisible to the walker.
     """
     params: list[Any] = []
     idx = 0
@@ -161,6 +168,12 @@ def _build_neighbors_query(
     direction_filter = (
         f"kr.source_entity_id = {eid_param}::uuid OR kr.target_entity_id = {eid_param}::uuid"
     )
+
+    # Palace filter (both endpoints must be in the same palace)
+    palace_clause = ""
+    if palace is not None:
+        palace_param = _p(palace)
+        palace_clause = f"AND src.palace = {palace_param} AND dst.palace = {palace_param}"
 
     # Relation type filter
     relation_type_clause = ""
@@ -185,6 +198,7 @@ def _build_neighbors_query(
 
     sql = _NEIGHBORS_SQL_TEMPLATE.format(
         direction_filter=direction_filter,
+        palace_clause=palace_clause,
         relation_type_clause=relation_type_clause,
         confidence_clause=confidence_clause,
         temporal_clause=temporal_clause,
@@ -284,6 +298,7 @@ async def graph_neighbors(
     max_nodes: int = 100,
     min_edge_confidence: float | None = None,
     as_of: datetime | None = None,
+    palace: str | None = None,
 ) -> GraphResult:
     """Return all direct (1-hop) neighbors of ``entity_ref``.
 
@@ -307,6 +322,7 @@ async def graph_neighbors(
         relation_types=relation_types,
         min_edge_confidence=min_edge_confidence,
         as_of=as_of,
+        palace=palace,
     )
     result = await backend.query(sql, tuple(params))
     all_edges: list[GraphEdge] = [_row_to_edge(dict(r)) for r in result.rows]
@@ -359,6 +375,7 @@ async def graph_traverse(
     max_nodes: int = 100,
     min_edge_confidence: float | None = None,
     as_of: datetime | None = None,
+    palace: str | None = None,
 ) -> GraphResult:
     """BFS subgraph traversal from ``start_entity_ref``.
 
@@ -401,6 +418,7 @@ async def graph_traverse(
             relation_types=relation_types,
             min_edge_confidence=min_edge_confidence,
             as_of=as_of,
+            palace=palace,
         )
         result = await backend.query(sql, tuple(params))
 
@@ -454,6 +472,7 @@ async def graph_path(
     max_nodes: int = 200,
     min_edge_confidence: float | None = None,
     as_of: datetime | None = None,
+    palace: str | None = None,
 ) -> GraphResult:
     """Find the shortest path(s) between two entities using BFS.
 
@@ -510,6 +529,7 @@ async def graph_path(
             relation_types=relation_types,
             min_edge_confidence=min_edge_confidence,
             as_of=as_of,
+            palace=palace,
         )
         result = await backend.query(sql, tuple(params))
 
@@ -590,6 +610,7 @@ async def graph_stats(
     backend: Any,
     *,
     as_of: datetime | None = None,
+    palace: str | None = None,
 ) -> GraphResult:
     """Return degree and connectivity statistics for an entity.
 

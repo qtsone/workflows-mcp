@@ -3123,6 +3123,7 @@ class MemoryService:
                 max_hops=request.max_hops,
                 max_nodes=request.max_nodes,
                 as_of=as_of,
+                palace=palace,
             )
             result, scope_filter_stats = await _filter_graph_result_to_scope(result)
             hydrated_edges, hydrated_memories = await self._hydrate_graph_supporting_memories(
@@ -3164,6 +3165,7 @@ class MemoryService:
                 relation_types=request.relation_types,
                 max_nodes=request.max_nodes,
                 as_of=as_of,
+                palace=palace,
             )
             result, scope_filter_stats = await _filter_graph_result_to_scope(result)
             hydrated_edges, hydrated_memories = await self._hydrate_graph_supporting_memories(
@@ -3207,6 +3209,7 @@ class MemoryService:
                 max_hops=request.max_hops,
                 max_nodes=request.max_nodes,
                 as_of=as_of,
+                palace=palace,
             )
             result, scope_filter_stats = await _filter_graph_result_to_scope(result)
             hydrated_edges, hydrated_memories = await self._hydrate_graph_supporting_memories(
@@ -3275,6 +3278,7 @@ class MemoryService:
                 start_entity,
                 self._backend,
                 as_of=as_of,
+                palace=palace,
             )
             stats_has_results = bool(
                 result["paths"]
