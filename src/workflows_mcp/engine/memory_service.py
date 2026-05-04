@@ -192,13 +192,20 @@ async def _resolve_entity_id_manage(
     namespace: str | None,
     room: str | None,
     corridor: str | None,
+    palace: str | None = None,
 ) -> str | None:
     """Resolve entity UUID or name to UUID string for manage operations."""
     try:
         uuid.UUID(entity_ref)
-        result = await backend.query(
-            "SELECT id FROM knowledge_entities WHERE id = $1::uuid", (entity_ref,)
-        )
+        if palace is not None:
+            result = await backend.query(
+                "SELECT id FROM knowledge_entities WHERE id = $1::uuid AND palace = $2",
+                (entity_ref, palace),
+            )
+        else:
+            result = await backend.query(
+                "SELECT id FROM knowledge_entities WHERE id = $1::uuid", (entity_ref,)
+            )
         return str(result.rows[0]["id"]) if result.rows else None
     except (ValueError, AttributeError):
         pass
@@ -207,11 +214,22 @@ async def _resolve_entity_id_manage(
     normalized_room = _normalize_scope_value(room)
     normalized_corridor = _normalize_scope_value(corridor)
 
+    clauses = [
+        "name = $1",
+        "namespace = $2",
+        "room = $3",
+        "corridor = $4",
+    ]
+    params: list[Any] = [entity_ref, normalized_namespace, normalized_room, normalized_corridor]
+    if palace is not None:
+        clauses.append(f"palace = ${len(params) + 1}")
+        params.append(palace)
+
     result = await backend.query(
-        "SELECT id FROM knowledge_entities "
-        "WHERE name = $1 AND namespace = $2 AND room = $3 AND corridor = $4 "
-        "ORDER BY id LIMIT 2",
-        (entity_ref, normalized_namespace, normalized_room, normalized_corridor),
+        "SELECT id FROM knowledge_entities WHERE "
+        + " AND ".join(clauses)
+        + " ORDER BY id LIMIT 2",
+        tuple(params),
     )
     if len(result.rows) > 1:
         raise ValueError(
@@ -2838,7 +2856,21 @@ class MemoryService:
         namespace = request.namespace
         room = request.room
         corridor = _get_corridor(request)
-        scope_applied = bool(namespace or room or corridor)
+        palace = _get_palace(request)
+        if palace is None:
+            return QueryMemoryResult(
+                diagnostics={
+                    **_base_query_diagnostics(
+                        scope_mode="graph_rejected",
+                        scope_applied=False,
+                        has_results=False,
+                        strategy="graph",
+                    ),
+                    "error_code": "MEM_PALACE_REQUIRED",
+                    "error": "MEM_PALACE_REQUIRED: graph queries require palace scope",
+                }
+            )
+        scope_applied = bool(namespace or room or corridor or palace)
         scope_mode = "graph_scoped" if scope_applied else "graph_global"
 
         async def _resolve_scoped_graph_entity(
@@ -2859,9 +2891,11 @@ class MemoryService:
             if entity_uuid is not None:
                 scoped_uuid_result = await self._backend.query(
                     "SELECT id FROM knowledge_entities "
-                    "WHERE id = $1::uuid AND namespace = $2 AND room = $3 AND corridor = $4",
+                    "WHERE id = $1::uuid AND palace = $2 "
+                    "AND namespace = $3 AND room = $4 AND corridor = $5",
                     (
                         entity_uuid,
+                        palace,
                         normalized_namespace,
                         normalized_room,
                         normalized_corridor,
@@ -2877,6 +2911,7 @@ class MemoryService:
                 namespace=namespace,
                 room=room,
                 corridor=corridor,
+                palace=palace,
             )
             if resolved is None:
                 return None
