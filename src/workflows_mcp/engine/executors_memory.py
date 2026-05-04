@@ -28,6 +28,14 @@ class MemoryInput(BlockInput):
         "maintain",
         "graph_upsert",
         "graph_delete",
+        "ensure_source",
+        "ensure_item",
+        "store_entities",
+        "store_relations",
+        "store_memories",
+        "store_entity_embeddings",
+        "archive_memories",
+        "mark_item_dirty",
     ] = Field(description="Memory operation")
 
     host: str = Field(

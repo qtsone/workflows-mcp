@@ -594,9 +594,17 @@ class ManageMemoryRequest(BaseModel):
         "graph_store_relation",
         "graph_forget_entity",
         "graph_forget_relation",
+        "ensure_source",
+        "ensure_item",
+        "store_entities",
+        "store_relations",
+        "store_memories",
+        "store_entity_embeddings",
+        "archive_memories",
+        "mark_item_dirty",
     ] = Field(description="Operation family to execute")
 
-    # Structured ingest
+    # Structured ingest (strict typed records with extra="forbid")
     memories: list[StructuredMemoryRecord] | None = Field(
         default=None,
         description="Structured memory records for ingest_structured",
@@ -608,6 +616,20 @@ class ManageMemoryRequest(BaseModel):
     relations: list[StructuredRelationRecord] | None = Field(
         default=None,
         description="Structured relation records for ingest_structured",
+    )
+
+    # Raw dict lists for new low-level ops (store_entities, store_relations, store_memories)
+    raw_entities: list[dict[str, Any]] | None = Field(
+        default=None,
+        description="Raw entity dicts for store_entities",
+    )
+    raw_relations: list[dict[str, Any]] | None = Field(
+        default=None,
+        description="Raw relation dicts for store_relations",
+    )
+    raw_memories: list[dict[str, Any]] | None = Field(
+        default=None,
+        description="Raw memory dicts for store_memories",
     )
 
     # Common
@@ -719,6 +741,19 @@ class ManageMemoryRequest(BaseModel):
         default=None, description="Relation UUIDs for graph_forget_relation"
     )
 
+    # New executor ops (Tasks 4-11)
+    item_id: str | None = Field(default=None, description="knowledge_items.id for item-scoped ops")
+    content_hash: str | None = Field(default=None, description="Stable content hash")
+    size_bytes: int | None = Field(default=None, ge=0, description="File size in bytes")
+    mtime_ns: int | None = Field(default=None, ge=0, description="File mtime in nanoseconds")
+    language: str | None = Field(default=None, description="Programming language tag")
+    error_metadata: dict[str, Any] | None = Field(
+        default=None, description="Error metadata for mark_item_dirty"
+    )
+    entity_embeddings: list[MemoryEntityEmbeddingInput] | None = Field(
+        default=None, description="Embeddings for store_entity_embeddings"
+    )
+
 
 class ManageMemoryResult(BaseModel):
     """Result for unified memory write and maintenance."""
@@ -788,6 +823,10 @@ class ManageMemoryResult(BaseModel):
     relation_id: str | None = Field(default=None, description="Stored relation UUID")
     deleted_entity_count: int = Field(default=0)
     deleted_relation_count: int = Field(default=0)
+
+    # New executor op outputs (Tasks 4-11)
+    source_id: str | None = Field(default=None, description="Upserted knowledge_sources.id")
+    item_id: str | None = Field(default=None, description="Upserted knowledge_items.id")
 
 
 # ---------------------------------------------------------------------------
@@ -1494,7 +1533,799 @@ class MemoryService:
                 scope_source=scope_source,
             )
 
+        if op in {
+            "ensure_source",
+            "ensure_item",
+            "store_entities",
+            "store_relations",
+            "store_memories",
+            "store_entity_embeddings",
+            "archive_memories",
+            "mark_item_dirty",
+        }:
+            manage_result = await self._dispatch_new_op(op, request, resolved_scope)
+            return MemoryResult(
+                operation=op,
+                manage=manage_result,
+                resolved_scope=resolved_scope,
+                scope_source=scope_source,
+            )
+
         raise ValueError(f"Unsupported operation: {op}")
+
+    # ------------------------------------------------------------------
+    # New executor ops: ensure_source, ensure_item, store_entities,
+    # store_relations, store_memories, store_entity_embeddings,
+    # archive_memories, mark_item_dirty
+    # ------------------------------------------------------------------
+
+    async def _dispatch_new_op(
+        self,
+        op: str,
+        request: MemoryRequest,
+        resolved_scope: MemoryScope,
+    ) -> ManageMemoryResult:
+        """Route the eight new low-level executor ops to their handlers."""
+        palace = resolved_scope.palace
+
+        if op == "ensure_source":
+            if request.record is None or not request.record.source:
+                raise ValueError("'record.source' is required for operation='ensure_source'")
+            return await self._manage_ensure_source(
+                ManageMemoryRequest(
+                    operation="ensure_source",
+                    source=request.record.source,
+                    source_type="FILE",
+                    palace=palace,
+                )
+            )
+
+        if op == "ensure_item":
+            if request.record is None or not request.record.source or not request.record.path:
+                raise ValueError(
+                    "'record.source' and 'record.path' are required for operation='ensure_item'"
+                )
+            item_payload = request.record.item or MemoryItemInput()
+            return await self._manage_ensure_item(
+                ManageMemoryRequest(
+                    operation="ensure_item",
+                    source=request.record.source,
+                    source_type="FILE",
+                    path=request.record.path,
+                    palace=palace,
+                    content_hash=item_payload.content_hash,
+                    size_bytes=item_payload.size_bytes,
+                    mtime_ns=item_payload.mtime_ns,
+                    language=item_payload.language,
+                )
+            )
+
+        if op == "store_entities":
+            if request.record is None or not request.record.entities:
+                raise ValueError("'record.entities' is required for operation='store_entities'")
+            if not request.record.source:
+                raise ValueError("'record.source' is required for operation='store_entities'")
+            item_payload = request.record.item or MemoryItemInput()
+            return await self._manage_store_entities(
+                ManageMemoryRequest(
+                    operation="store_entities",
+                    source=request.record.source,
+                    palace=palace,
+                    namespace=resolved_scope.wing,
+                    room=resolved_scope.room,
+                    corridor=resolved_scope.compartment,
+                    item_id=item_payload.id,
+                    raw_entities=request.record.entities,
+                    confidence=request.record.confidence,
+                    authority=request.record.authority,
+                )
+            )
+
+        if op == "store_relations":
+            if request.record is None or not request.record.relations:
+                raise ValueError("'record.relations' is required for operation='store_relations'")
+            return await self._manage_store_relations(
+                ManageMemoryRequest(
+                    operation="store_relations",
+                    palace=palace,
+                    raw_relations=request.record.relations,
+                    confidence=request.record.confidence,
+                )
+            )
+
+        if op == "store_memories":
+            if request.record is None or not request.record.memories:
+                raise ValueError("'record.memories' is required for operation='store_memories'")
+            return await self._manage_store_memories(
+                ManageMemoryRequest(
+                    operation="store_memories",
+                    palace=palace,
+                    namespace=resolved_scope.wing,
+                    room=resolved_scope.room,
+                    corridor=resolved_scope.compartment,
+                    raw_memories=request.record.memories,
+                    confidence=request.record.confidence,
+                    authority=request.record.authority,
+                    lifecycle_state=request.record.lifecycle_state,
+                )
+            )
+
+        if op == "store_entity_embeddings":
+            if request.record is None or not request.record.entity_embeddings:
+                raise ValueError(
+                    "'record.entity_embeddings' is required for operation='store_entity_embeddings'"
+                )
+            return await self._manage_store_entity_embeddings(
+                ManageMemoryRequest(
+                    operation="store_entity_embeddings",
+                    palace=palace,
+                    entity_embeddings=request.record.entity_embeddings,
+                )
+            )
+
+        if op == "archive_memories":
+            if request.record is None:
+                raise ValueError("'record' is required for operation='archive_memories'")
+            item_payload = request.record.item or MemoryItemInput()
+            if not item_payload.id and not request.record.ids:
+                raise ValueError(
+                    "operation='archive_memories' requires 'record.item.id' or 'record.ids'"
+                )
+            return await self._manage_archive_memories(
+                ManageMemoryRequest(
+                    operation="archive_memories",
+                    palace=palace,
+                    item_id=item_payload.id,
+                    memory_ids=request.record.ids,
+                    reason=request.record.reason,
+                )
+            )
+
+        if op == "mark_item_dirty":
+            if request.record is None or request.record.item is None or not request.record.item.id:
+                raise ValueError("'record.item.id' is required for operation='mark_item_dirty'")
+            return await self._manage_mark_item_dirty(
+                ManageMemoryRequest(
+                    operation="mark_item_dirty",
+                    palace=palace,
+                    item_id=request.record.item.id,
+                    error_metadata=request.record.item.error_metadata,
+                )
+            )
+
+        raise ValueError(f"Unsupported new op: {op}")
+
+    async def _manage_ensure_source(self, request: ManageMemoryRequest) -> ManageMemoryResult:
+        """Idempotent upsert of knowledge_sources by (palace, name)."""
+        if not request.source:
+            return ManageMemoryResult(
+                operation="ensure_source",
+                success=False,
+                error="MEM_FIELD_REQUIRED: 'source' is required for ensure_source",
+            )
+        palace = _normalize_scope_value(_get_palace(request))
+        if palace is None:
+            return ManageMemoryResult(
+                operation="ensure_source",
+                success=False,
+                error="MEM_PALACE_REQUIRED: 'palace' is required for ensure_source",
+            )
+
+        result = await self._backend.query(
+            """
+            INSERT INTO knowledge_sources (id, palace, name, source_type, category_ids)
+            VALUES ($1::uuid, $2, $3, $4, '{}'::uuid[])
+            ON CONFLICT (palace, name) DO UPDATE SET updated_at = NOW()
+            RETURNING id
+            """,
+            (str(uuid.uuid4()), palace, request.source, request.source_type or "FILE"),
+        )
+        if not result.rows:
+            return ManageMemoryResult(
+                operation="ensure_source",
+                success=False,
+                error="MEM_PERSIST_FAILED: ensure_source returned no row",
+            )
+        return ManageMemoryResult(
+            operation="ensure_source",
+            success=True,
+            source_id=str(result.rows[0]["id"]),
+        )
+
+    async def _manage_ensure_item(self, request: ManageMemoryRequest) -> ManageMemoryResult:
+        """Idempotent upsert of knowledge_items keyed on (palace, source_id, path)."""
+        if not request.source or not request.path:
+            return ManageMemoryResult(
+                operation="ensure_item",
+                success=False,
+                error="MEM_FIELD_REQUIRED: 'source' and 'path' are required for ensure_item",
+            )
+
+        missing_not_null = [
+            f for f in ("content_hash", "size_bytes", "mtime_ns")
+            if getattr(request, f, None) is None
+        ]
+        if missing_not_null:
+            return ManageMemoryResult(
+                operation="ensure_item",
+                success=False,
+                error=(
+                    "MEM_FIELD_REQUIRED: the following NOT NULL fields are required for "
+                    f"ensure_item: {', '.join(missing_not_null)}"
+                ),
+            )
+
+        ensure_source_result = await self._manage_ensure_source(
+            ManageMemoryRequest(
+                operation="ensure_source",
+                source=request.source,
+                source_type=request.source_type or "FILE",
+                palace=request.palace,
+            )
+        )
+        if not ensure_source_result.success or not ensure_source_result.source_id:
+            return ManageMemoryResult(
+                operation="ensure_item",
+                success=False,
+                error=ensure_source_result.error
+                or "MEM_PERSIST_FAILED: ensure_item could not resolve source",
+            )
+
+        palace = _normalize_scope_value(_get_palace(request))
+        if palace is None:
+            return ManageMemoryResult(
+                operation="ensure_item",
+                success=False,
+                error="MEM_PALACE_REQUIRED: 'palace' is required for ensure_item",
+            )
+
+        item_title = os.path.basename(request.path) or request.path
+        result = await self._backend.query(
+            """
+            INSERT INTO knowledge_items
+                (id, palace, source_id, path, title,
+                 content_hash, size_bytes, mtime_ns, language)
+            VALUES
+                ($1::uuid, $2, $3::uuid, $4, $5, $6, $7, $8, $9)
+            ON CONFLICT (palace, source_id, path) DO UPDATE SET
+                title = EXCLUDED.title,
+                content_hash = COALESCE(EXCLUDED.content_hash, knowledge_items.content_hash),
+                size_bytes = COALESCE(EXCLUDED.size_bytes, knowledge_items.size_bytes),
+                mtime_ns = COALESCE(EXCLUDED.mtime_ns, knowledge_items.mtime_ns),
+                language = COALESCE(EXCLUDED.language, knowledge_items.language),
+                updated_at = NOW()
+            RETURNING id
+            """,
+            (
+                str(uuid.uuid4()),
+                palace,
+                ensure_source_result.source_id,
+                request.path,
+                item_title,
+                request.content_hash,
+                request.size_bytes,
+                request.mtime_ns,
+                request.language,
+            ),
+        )
+        if not result.rows:
+            return ManageMemoryResult(
+                operation="ensure_item",
+                success=False,
+                error="MEM_PERSIST_FAILED: ensure_item returned no row",
+            )
+        return ManageMemoryResult(
+            operation="ensure_item",
+            success=True,
+            source_id=ensure_source_result.source_id,
+            item_id=str(result.rows[0]["id"]),
+        )
+
+    async def _manage_store_entities(self, request: ManageMemoryRequest) -> ManageMemoryResult:
+        """Bulk upsert structural entities keyed by (palace, source, stable_id)."""
+        if not request.raw_entities:
+            return ManageMemoryResult(
+                operation="store_entities",
+                success=False,
+                error="MEM_FIELD_REQUIRED: 'entities' is required for store_entities",
+            )
+        if not request.source:
+            return ManageMemoryResult(
+                operation="store_entities",
+                success=False,
+                error="MEM_FIELD_REQUIRED: 'source' is required for store_entities",
+            )
+        if request.source not in {"STRUCTURAL", "EXTRACTED", "USER"}:
+            return ManageMemoryResult(
+                operation="store_entities",
+                success=False,
+                error="MEM_INVALID_SOURCE: 'source' must be STRUCTURAL, EXTRACTED, or USER",
+            )
+
+        palace = _normalize_scope_value(_get_palace(request))
+        namespace = _normalize_scope_value(request.namespace)
+        room = _normalize_scope_value(request.room)
+        corridor = _normalize_scope_value(_get_corridor(request))
+        if palace is None:
+            return ManageMemoryResult(
+                operation="store_entities",
+                success=False,
+                error="MEM_PALACE_REQUIRED: 'palace' is required for store_entities",
+            )
+
+        entity_ids: list[str] = []
+        await self._backend.begin_transaction()
+        try:
+            for entity in request.raw_entities:
+                entity_type = entity["entity_type"]
+                name = entity["name"]
+                stable_id = entity.get("stable_id")
+                metadata = entity.get("metadata") or {}
+                confidence = entity.get("confidence")
+
+                row = await self._backend.query(
+                    """
+                    INSERT INTO knowledge_entities
+                        (id, palace, namespace, room, corridor,
+                         entity_type, name, source, authority,
+                         stable_id, source_item_id, confidence, metadata)
+                    VALUES
+                        ($1::uuid, $2, $3, $4, $5,
+                         $6, $7, $8, $9,
+                         $10, $11::uuid, $12, $13::jsonb)
+                    ON CONFLICT (palace, source, stable_id)
+                        WHERE stable_id IS NOT NULL
+                        DO UPDATE SET
+                            name = EXCLUDED.name,
+                            entity_type = EXCLUDED.entity_type,
+                            source_item_id = EXCLUDED.source_item_id,
+                            confidence = EXCLUDED.confidence,
+                            metadata = EXCLUDED.metadata,
+                            updated_at = NOW()
+                    RETURNING id
+                    """,
+                    (
+                        str(uuid.uuid4()),
+                        palace,
+                        namespace,
+                        room,
+                        corridor,
+                        entity_type,
+                        name,
+                        request.source,
+                        request.authority or "STRUCTURAL",
+                        stable_id,
+                        request.item_id,
+                        confidence if confidence is not None else request.confidence,
+                        json.dumps(metadata),
+                    ),
+                )
+                if row.rows:
+                    entity_ids.append(str(row.rows[0]["id"]))
+            await self._backend.commit()
+        except Exception:
+            await self._backend.rollback()
+            raise
+
+        return ManageMemoryResult(
+            operation="store_entities",
+            success=True,
+            entity_ids=entity_ids,
+            entities_stored_count=len(entity_ids),
+        )
+
+    async def _manage_store_relations(self, request: ManageMemoryRequest) -> ManageMemoryResult:
+        """Append-only relation insert. Entities must already exist in the same palace."""
+        if not request.raw_relations:
+            return ManageMemoryResult(
+                operation="store_relations",
+                success=False,
+                error="MEM_FIELD_REQUIRED: 'relations' is required for store_relations",
+            )
+        palace = _normalize_scope_value(_get_palace(request))
+        if palace is None:
+            return ManageMemoryResult(
+                operation="store_relations",
+                success=False,
+                error="MEM_PALACE_REQUIRED: 'palace' is required for store_relations",
+            )
+
+        relation_ids: list[str] = []
+        await self._backend.begin_transaction()
+        try:
+            for relation in request.raw_relations:
+                src_id = relation["source_entity_id"]
+                tgt_id = relation["target_entity_id"]
+                rel_type = relation["relation_type"]
+                confidence = relation.get("confidence")
+                evidence_ids = relation.get("evidence_memory_ids") or []
+
+                check = await self._backend.query(
+                    "SELECT id, palace FROM knowledge_entities "
+                    "WHERE id IN ($1::uuid, $2::uuid)",
+                    (src_id, tgt_id),
+                )
+                endpoint_palaces = {str(row["id"]): row["palace"] for row in check.rows}
+                if (
+                    len(endpoint_palaces) != 2
+                    or endpoint_palaces.get(str(src_id)) != palace
+                    or endpoint_palaces.get(str(tgt_id)) != palace
+                ):
+                    raise MemoryContractError(
+                        code="MEM_PALACE_MISMATCH",
+                        message=(
+                            "MEM_PALACE_MISMATCH: store_relations refuses to link entities "
+                            "outside the requesting palace"
+                        ),
+                        retryable=False,
+                    )
+
+                row = await self._backend.query(
+                    """
+                    INSERT INTO knowledge_relations
+                        (id, source_entity_id, target_entity_id, relation_type,
+                         confidence, evidence_memory_ids)
+                    VALUES
+                        ($1::uuid, $2::uuid, $3::uuid, $4, $5, $6::uuid[])
+                    RETURNING id
+                    """,
+                    (
+                        str(uuid.uuid4()),
+                        src_id,
+                        tgt_id,
+                        rel_type,
+                        confidence if confidence is not None else request.confidence,
+                        list(evidence_ids),
+                    ),
+                )
+                if row.rows:
+                    relation_ids.append(str(row.rows[0]["id"]))
+            await self._backend.commit()
+        except Exception:
+            await self._backend.rollback()
+            raise
+
+        return ManageMemoryResult(
+            operation="store_relations",
+            success=True,
+            relation_ids=relation_ids,
+            relations_stored_count=len(relation_ids),
+        )
+
+    async def _manage_store_memories(self, request: ManageMemoryRequest) -> ManageMemoryResult:
+        """Bulk insert memories with embeddings; optionally link to anchor entities with spans."""
+        if not request.raw_memories:
+            return ManageMemoryResult(
+                operation="store_memories",
+                success=False,
+                error="MEM_FIELD_REQUIRED: 'memories' is required for store_memories",
+            )
+        palace = _normalize_scope_value(_get_palace(request))
+        if palace is None:
+            return ManageMemoryResult(
+                operation="store_memories",
+                success=False,
+                error="MEM_PALACE_REQUIRED: 'palace' is required for store_memories",
+            )
+        if _normalize_scope_value(request.namespace) == "code":
+            return ManageMemoryResult(
+                operation="store_memories",
+                success=False,
+                error="MEM_RESERVED_WING: wing='code' is reserved for System 1 structural output",
+            )
+
+        created_by = _get_audit_user_id(self._context)
+        auth_method = _get_auth_method(self._context)
+        user_string = _get_user_string_id(self._context)
+
+        memory_ids: list[str] = []
+        await self._backend.begin_transaction()
+        try:
+            for memory in request.raw_memories:
+                content = memory["content"]
+                metadata = memory.get("metadata") or {}
+                anchor_entity_id = memory.get("anchor_entity_id")
+                anchor_kind = memory.get("anchor_kind") or "symbol"
+                start_line = memory.get("start_line")
+                end_line = memory.get("end_line")
+                start_col = memory.get("start_col")
+                end_col = memory.get("end_col")
+                confidence = memory.get("confidence")
+                authority = memory.get("authority") or request.authority
+                lifecycle = memory.get("lifecycle_state") or request.lifecycle_state
+
+                memory_id = str(uuid.uuid4())
+                memory_ids.append(memory_id)
+
+                try:
+                    embedding, model_name, _, _ = await compute_embedding(
+                        text=content,
+                        context=self._context,
+                        profile=request.embedding_profile,
+                    )
+                except Exception as embed_exc:
+                    raise MemoryContractError(
+                        code="MEM_EMBEDDING_FAILED",
+                        message=(
+                            f"MEM_EMBEDDING_FAILED: store_memories failed embedding: {embed_exc}"
+                        ),
+                        retryable=True,
+                    ) from embed_exc
+
+                await self._backend.execute(
+                    """
+                    INSERT INTO knowledge_memories
+                        (id, content, embedding, search_vector,
+                         authority, lifecycle_state, confidence, embedding_model,
+                         metadata, created_by, auth_method,
+                         palace, namespace, room, corridor,
+                         memory_tier, derived_kind, parent_memory_ids)
+                    VALUES
+                        ($1::uuid, $2, $3::vector, to_tsvector('english', $2),
+                         $4, $5, $6, $7,
+                         $8::jsonb, $9::uuid, $10,
+                         $11, $12, $13, $14,
+                         $15, $16, $17::uuid[])
+                    """,
+                    (
+                        memory_id,
+                        content,
+                        str(embedding),
+                        authority,
+                        lifecycle,
+                        confidence if confidence is not None else request.confidence,
+                        model_name,
+                        json.dumps(metadata),
+                        str(created_by),
+                        auth_method,
+                        palace,
+                        request.namespace,
+                        request.room,
+                        request.corridor,
+                        _MEMORY_TIER_DIRECT,
+                        None,
+                        [],
+                    ),
+                )
+                await self._log_audit_entry(
+                    memory_id=memory_id,
+                    action="CREATED",
+                    performed_by=created_by,
+                    auth_method=auth_method,
+                    user_string=user_string,
+                    metadata={"op": "store_memories"},
+                )
+
+                if anchor_entity_id is not None:
+                    anchor_check = await self._backend.query(
+                        "SELECT palace FROM knowledge_entities WHERE id = $1::uuid",
+                        (anchor_entity_id,),
+                    )
+                    if not anchor_check.rows or anchor_check.rows[0]["palace"] != palace:
+                        raise MemoryContractError(
+                            code="MEM_PALACE_MISMATCH",
+                            message=(
+                                "MEM_PALACE_MISMATCH: store_memories refuses to anchor "
+                                "a memory to an entity outside the requesting palace"
+                            ),
+                            retryable=False,
+                        )
+                    await self._backend.execute(
+                        """
+                        INSERT INTO knowledge_entity_memories
+                            (memory_id, entity_id, confidence,
+                             start_line, end_line, start_col, end_col, anchor_kind)
+                        VALUES
+                            ($1::uuid, $2::uuid, $3, $4, $5, $6, $7, $8)
+                        ON CONFLICT (memory_id, entity_id) DO UPDATE SET
+                            confidence = GREATEST(
+                                knowledge_entity_memories.confidence, EXCLUDED.confidence),
+                            start_line = COALESCE(EXCLUDED.start_line,
+                                knowledge_entity_memories.start_line),
+                            end_line = COALESCE(EXCLUDED.end_line,
+                                knowledge_entity_memories.end_line),
+                            start_col = COALESCE(EXCLUDED.start_col,
+                                knowledge_entity_memories.start_col),
+                            end_col = COALESCE(EXCLUDED.end_col,
+                                knowledge_entity_memories.end_col),
+                            anchor_kind = EXCLUDED.anchor_kind
+                        """,
+                        (
+                            memory_id,
+                            anchor_entity_id,
+                            confidence if confidence is not None else request.confidence,
+                            start_line,
+                            end_line,
+                            start_col,
+                            end_col,
+                            anchor_kind,
+                        ),
+                    )
+            await self._backend.commit()
+        except Exception:
+            await self._backend.rollback()
+            raise
+
+        return ManageMemoryResult(
+            operation="store_memories",
+            success=True,
+            memory_ids=memory_ids,
+            stored_count=len(memory_ids),
+        )
+
+    async def _manage_store_entity_embeddings(
+        self, request: ManageMemoryRequest
+    ) -> ManageMemoryResult:
+        """Upsert entity embeddings keyed on (entity_id, profile)."""
+        if not request.entity_embeddings:
+            return ManageMemoryResult(
+                operation="store_entity_embeddings",
+                success=False,
+                error="MEM_FIELD_REQUIRED: 'entity_embeddings' is required",
+            )
+        palace = _normalize_scope_value(_get_palace(request))
+        if palace is None:
+            return ManageMemoryResult(
+                operation="store_entity_embeddings",
+                success=False,
+                error="MEM_PALACE_REQUIRED: 'palace' is required",
+            )
+
+        await self._backend.begin_transaction()
+        try:
+            for emb in request.entity_embeddings:
+                if emb.dimension != len(emb.embedding):
+                    raise MemoryContractError(
+                        code="MEM_EMBEDDING_DIMENSION_MISMATCH",
+                        message=(
+                            "MEM_EMBEDDING_DIMENSION_MISMATCH: "
+                            "dimension must equal len(embedding)"
+                        ),
+                        retryable=False,
+                    )
+                check = await self._backend.query(
+                    "SELECT 1 FROM knowledge_entities WHERE id = $1::uuid AND palace = $2",
+                    (emb.entity_id, palace),
+                )
+                if not check.rows:
+                    raise MemoryContractError(
+                        code="MEM_PALACE_MISMATCH",
+                        message=(
+                            "MEM_PALACE_MISMATCH: store_entity_embeddings refuses to write "
+                            "for an entity outside the requesting palace"
+                        ),
+                        retryable=False,
+                    )
+                await self._backend.execute(
+                    """
+                    INSERT INTO knowledge_entity_embeddings
+                        (entity_id, profile, model, dimension, embedding)
+                    VALUES
+                        ($1::uuid, $2, $3, $4, $5::vector)
+                    ON CONFLICT (entity_id, profile) DO UPDATE SET
+                        model = EXCLUDED.model,
+                        dimension = EXCLUDED.dimension,
+                        embedding = EXCLUDED.embedding
+                    """,
+                    (
+                        emb.entity_id,
+                        emb.profile,
+                        emb.model,
+                        emb.dimension,
+                        str(emb.embedding),
+                    ),
+                )
+            await self._backend.commit()
+        except Exception:
+            await self._backend.rollback()
+            raise
+
+        return ManageMemoryResult(
+            operation="store_entity_embeddings",
+            success=True,
+            stored_count=len(request.entity_embeddings),
+        )
+
+    async def _manage_archive_memories(
+        self, request: ManageMemoryRequest
+    ) -> ManageMemoryResult:
+        """Soft-delete memories by item_id or explicit memory_ids; idempotent."""
+        palace = _normalize_scope_value(_get_palace(request))
+        if palace is None:
+            return ManageMemoryResult(
+                operation="archive_memories",
+                success=False,
+                error="MEM_PALACE_REQUIRED: 'palace' is required",
+            )
+
+        clauses: list[str] = ["palace = $1", "lifecycle_state <> 'ARCHIVED'"]
+        params: list[Any] = [palace]
+        if request.item_id:
+            item_check = await self._backend.query(
+                "SELECT palace FROM knowledge_items WHERE id = $1::uuid",
+                (request.item_id,),
+            )
+            if not item_check.rows or item_check.rows[0]["palace"] != palace:
+                raise MemoryContractError(
+                    code="MEM_PALACE_MISMATCH",
+                    message=(
+                        "MEM_PALACE_MISMATCH: archive_memories refuses to archive "
+                        "for an item outside the requesting palace"
+                    ),
+                    retryable=False,
+                )
+            clauses.append(f"item_id = ${len(params) + 1}::uuid")
+            params.append(request.item_id)
+        if request.memory_ids:
+            clauses.append(f"id = ANY(${len(params) + 1}::uuid[])")
+            params.append(list(request.memory_ids))
+        if not request.item_id and not request.memory_ids:
+            return ManageMemoryResult(
+                operation="archive_memories",
+                success=False,
+                error="MEM_FIELD_REQUIRED: provide item_id or memory_ids",
+            )
+
+        metadata_param = len(params) + 1
+        result = await self._backend.query(
+            f"""
+            UPDATE knowledge_memories
+               SET lifecycle_state = 'ARCHIVED',
+                   metadata = metadata || ${metadata_param}::jsonb,
+                   updated_at = NOW()
+             WHERE {' AND '.join(clauses)}
+            RETURNING id
+            """,
+            tuple(params + [json.dumps({"archived_reason": request.reason or "item_tombstoned"})]),
+        )
+        affected = [str(row["id"]) for row in result.rows]
+        return ManageMemoryResult(
+            operation="archive_memories",
+            success=True,
+            memory_ids=affected,
+            stored_count=len(affected),
+        )
+
+    async def _manage_mark_item_dirty(
+        self, request: ManageMemoryRequest
+    ) -> ManageMemoryResult:
+        """Set knowledge_items.lifecycle_state='DIRTY' and write error_metadata."""
+        if not request.item_id:
+            return ManageMemoryResult(
+                operation="mark_item_dirty",
+                success=False,
+                error="MEM_FIELD_REQUIRED: 'item_id' is required",
+            )
+        palace = _normalize_scope_value(_get_palace(request))
+        if palace is None:
+            return ManageMemoryResult(
+                operation="mark_item_dirty",
+                success=False,
+                error="MEM_PALACE_REQUIRED: 'palace' is required",
+            )
+
+        result = await self._backend.query(
+            """
+            UPDATE knowledge_items
+               SET lifecycle_state = 'DIRTY',
+                   error_metadata = $3::jsonb,
+                   updated_at = NOW()
+             WHERE id = $1::uuid AND palace = $2
+            RETURNING id
+            """,
+            (request.item_id, palace, json.dumps(request.error_metadata or {})),
+        )
+        if not result.rows:
+            return ManageMemoryResult(
+                operation="mark_item_dirty",
+                success=False,
+                error="MEM_PALACE_MISMATCH: item not found in requesting palace",
+            )
+        return ManageMemoryResult(
+            operation="mark_item_dirty",
+            success=True,
+            item_id=str(result.rows[0]["id"]),
+        )
 
     # ------------------------------------------------------------------
     # Query
@@ -2457,6 +3288,14 @@ class MemoryService:
             "graph_store_relation": self._manage_graph_store_relation,
             "graph_forget_entity": self._manage_graph_forget_entity,
             "graph_forget_relation": self._manage_graph_forget_relation,
+            "ensure_source": self._manage_ensure_source,
+            "ensure_item": self._manage_ensure_item,
+            "store_entities": self._manage_store_entities,
+            "store_relations": self._manage_store_relations,
+            "store_memories": self._manage_store_memories,
+            "store_entity_embeddings": self._manage_store_entity_embeddings,
+            "archive_memories": self._manage_archive_memories,
+            "mark_item_dirty": self._manage_mark_item_dirty,
         }
         handler = handlers.get(op)
         if handler is None:
@@ -2472,8 +3311,12 @@ class MemoryService:
                 error="'memories' is required for ingest_structured operation",
             )
 
-        entities = request.entities or []
-        relations = request.relations or []
+        entities: list[StructuredEntityRecord] = cast(
+            list[StructuredEntityRecord], request.entities or []
+        )
+        relations: list[StructuredRelationRecord] = cast(
+            list[StructuredRelationRecord], request.relations or []
+        )
 
         for relation in relations:
             if (
