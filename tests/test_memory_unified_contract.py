@@ -72,7 +72,7 @@ async def test_ingest_direct_requires_compartment() -> None:
     context = Execution()
     service = MemoryService(backend=object(), context=context)
 
-    with pytest.raises(MemoryContractError, match="COMPARTMENT_REQUIRED"):
+    with pytest.raises(MemoryContractError, match="INSUFFICIENT_LOCALITY"):
         await service.execute(request)
 
 
@@ -354,6 +354,7 @@ async def test_archive_operation_does_not_require_fully_resolved_scope() -> None
 
 @pytest.mark.asyncio
 async def test_graph_upsert_link_does_not_require_fully_resolved_scope() -> None:
+    """graph_upsert link with UUID refs requires no topology scope."""
     context = Execution()
     service = MemoryService(backend=object(), context=context)
 
@@ -365,7 +366,12 @@ async def test_graph_upsert_link_does_not_require_fully_resolved_scope() -> None
     result = await service.execute(
         MemoryRequest(
             operation="graph_upsert",
-            graph={"kind": "link", "from": "alice", "to": "acme", "link_type": "uses"},
+            graph={
+                "kind": "link",
+                "from": "11111111-1111-1111-1111-111111111111",
+                "to": "22222222-2222-2222-2222-222222222222",
+                "link_type": "uses",
+            },
         )
     )
 
@@ -380,10 +386,34 @@ async def test_query_operation_still_requires_resolved_scope() -> None:
     context = Execution()
     service = MemoryService(backend=object(), context=context)
 
-    with pytest.raises(MemoryContractError, match="SCOPE_UNRESOLVED"):
+    with pytest.raises(MemoryContractError, match="INSUFFICIENT_LOCALITY"):
         await service.execute(
             MemoryRequest(operation="query", query={"text": "incident", "mode": "search"})
         )
+
+
+def test_tool_error_payload_preserves_insufficient_locality_retry_guidance() -> None:
+    payload = _tool_error_payload(
+        "memory",
+        MemoryContractError(
+            code="INSUFFICIENT_LOCALITY",
+            message=(
+                "INSUFFICIENT_LOCALITY: ingest requires complete topology locality. "
+                "Missing: wing, room, compartment. Accepted sources: scope. "
+                "Provided: no scope source."
+            ),
+            retryable=False,
+            actionable_fix=(
+                "Retry ingest with scope.palace/wing/room/compartment, "
+                "scope_token, or context_id."
+            ),
+        ),
+    )
+
+    assert payload["error"]["code"] == "INSUFFICIENT_LOCALITY"
+    assert "Missing: wing, room, compartment" in payload["error"]["message"]
+    assert "scope_token" in payload["error"]["actionable_fix"]
+    assert payload["error"]["retryable"] is False
 
 
 def test_tool_error_payload_uses_machine_readable_envelope_for_contract_errors() -> None:
@@ -395,6 +425,23 @@ def test_tool_error_payload_uses_machine_readable_envelope_for_contract_errors()
     assert payload["error"]["message"] == "scope invalid"
     assert payload["error"]["retryable"] is False
     assert payload["error"].get("correlation_id")
+
+
+def test_memory_contract_error_remains_importable_from_memory_service() -> None:
+    from workflows_mcp.engine.memory_service import (
+        MemoryContractError as ImportedMemoryContractError,
+    )
+
+    error = ImportedMemoryContractError(
+        code="MEM_TEST",
+        message="test message",
+        retryable=True,
+        actionable_fix="retry with a valid request",
+    )
+    assert error.code == "MEM_TEST"
+    assert error.message == "test message"
+    assert error.retryable is True
+    assert error.actionable_fix == "retry with a valid request"
 
 
 def test_tool_error_payload_maps_unhandled_errors_to_mem_internal_error() -> None:
@@ -1534,3 +1581,155 @@ def test_b4_merge_transparency_both_naive_timestamps_org_wins_on_tie() -> None:
     )
     assert result is not None
     assert result.effective_source == "org"
+
+
+# ---------------------------------------------------------------------------
+# Memory operation locality contract tests (Tasks 2-3 slice)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_ingest_requires_complete_topology_scope() -> None:
+    """ingest must fail with INSUFFICIENT_LOCALITY when topology is incomplete."""
+    context = Execution()
+    service = MemoryService(backend=object(), context=context)
+
+    with pytest.raises(MemoryContractError) as exc:
+        await service.execute(
+            MemoryRequest(
+                operation="ingest",
+                scope={"palace": "acme", "wing": "svc", "room": "comp"},
+                record={"format": "raw", "content": "stored memory", "memory_tier": "direct"},
+            )
+        )
+    error = exc.value
+    assert error.code == "INSUFFICIENT_LOCALITY"
+    assert "ingest requires complete topology locality" in error.message
+    assert "Missing: compartment" in error.message
+    assert "scope_token" in (error.actionable_fix or "")
+
+
+@pytest.mark.asyncio
+async def test_graph_upsert_place_requires_complete_topology_scope() -> None:
+    """graph_upsert place must fail with INSUFFICIENT_LOCALITY when topology is incomplete."""
+    context = Execution()
+    service = MemoryService(backend=object(), context=context)
+
+    with pytest.raises(MemoryContractError) as exc:
+        await service.execute(
+            MemoryRequest(
+                operation="graph_upsert",
+                scope={"palace": "acme", "wing": "svc", "room": "comp"},
+                graph={"kind": "place", "place_name": "entity", "place_type": "concept"},
+            )
+        )
+    error = exc.value
+    assert error.code == "INSUFFICIENT_LOCALITY"
+    assert "graph_upsert place requires complete topology locality" in error.message
+    assert "Missing: compartment" in error.message
+
+
+@pytest.mark.asyncio
+async def test_graph_upsert_link_with_uuid_refs_does_not_require_topology() -> None:
+    """graph_upsert link with UUID from/to refs must succeed without topology scope."""
+    context = Execution()
+    service = MemoryService(backend=object(), context=context)
+
+    async def _fake_manage(_request: object) -> ManageMemoryResult:
+        return ManageMemoryResult(operation="graph_store_relation")
+
+    service.manage = _fake_manage  # type: ignore[method-assign]
+
+    result = await service.execute(
+        MemoryRequest(
+            operation="graph_upsert",
+            graph={
+                "kind": "link",
+                "from": "11111111-1111-1111-1111-111111111111",
+                "to": "22222222-2222-2222-2222-222222222222",
+                "link_type": "relates_to",
+            },
+        )
+    )
+
+    assert result.operation == "graph_upsert"
+    assert result.scope_source == {}
+
+
+@pytest.mark.asyncio
+async def test_graph_upsert_link_with_name_refs_requires_complete_topology() -> None:
+    """graph_upsert link with name refs must fail with INSUFFICIENT_LOCALITY."""
+    context = Execution()
+    service = MemoryService(backend=object(), context=context)
+
+    with pytest.raises(MemoryContractError) as exc:
+        await service.execute(
+            MemoryRequest(
+                operation="graph_upsert",
+                scope={"palace": "acme", "wing": "svc", "room": "comp"},
+                graph={"kind": "link", "from": "alice", "to": "acme", "link_type": "uses"},
+            )
+        )
+    error = exc.value
+    assert error.code == "INSUFFICIENT_LOCALITY"
+    assert "graph_upsert link" in error.message
+    assert "complete topology locality" in error.message
+    assert "Missing: compartment" in error.message
+
+
+@pytest.mark.asyncio
+async def test_graph_delete_requires_ids() -> None:
+    """graph_delete without ids must fail with INSUFFICIENT_LOCALITY."""
+    context = Execution()
+    service = MemoryService(backend=object(), context=context)
+
+    with pytest.raises(MemoryContractError) as exc:
+        await service.execute(
+            MemoryRequest(
+                operation="graph_delete",
+                graph={"kind": "place"},
+            )
+        )
+    error = exc.value
+    assert error.code == "INSUFFICIENT_LOCALITY"
+    assert "graph_delete" in error.message
+    assert "Missing: graph.ids" in error.message
+
+
+@pytest.mark.asyncio
+async def test_supersede_with_empty_ids_raises_insufficient_locality() -> None:
+    """supersede with record.ids=[] is treated as missing ids and raises INSUFFICIENT_LOCALITY."""
+    context = Execution()
+    service = MemoryService(backend=object(), context=context)
+
+    with pytest.raises(MemoryContractError) as exc:
+        await service.execute(
+            MemoryRequest(
+                operation="supersede",
+                record={"ids": [], "superseded_by": "11111111-1111-1111-1111-111111111111"},
+            )
+        )
+    error = exc.value
+    assert error.code == "INSUFFICIENT_LOCALITY"
+    assert "supersede" in error.message
+    assert "Missing: record.ids" in error.message
+
+
+@pytest.mark.asyncio
+async def test_current_maintain_modes_do_not_require_topology() -> None:
+    """maintain operation must not require any topology scope."""
+    context = Execution()
+    service = MemoryService(backend=object(), context=context)
+
+    async def _fake_manage(_request: object) -> ManageMemoryResult:
+        return ManageMemoryResult(operation="maintain")
+
+    service.manage = _fake_manage  # type: ignore[method-assign]
+
+    result = await service.execute(
+        MemoryRequest(
+            operation="maintain",
+        )
+    )
+
+    assert result.operation == "maintain"

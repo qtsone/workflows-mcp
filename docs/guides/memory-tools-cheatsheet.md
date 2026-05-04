@@ -39,29 +39,59 @@ Populate only the sections required by the selected `operation`.
 - Legacy `hall` is rejected with `MEM_INVALID_TAXONOMY_KEY`.
 - Unknown scope keys are rejected.
 
-## 3) Context activation and scope defaulting
+## 3) Locality and scope
 
-Scope resolution precedence is deterministic, field by field:
+Each operation has its own locality contract. Providing less topology than the operation requires fails closed with `INSUFFICIENT_LOCALITY`, which includes the missing fields and retry guidance.
 
-1. explicit `scope` in request
+### Topology keys
+
+Current memory topology keys, from broadest to narrowest: `palace`, `wing`, `room`, `compartment`.
+
+- Legacy key `hall` is rejected with `MEM_INVALID_TAXONOMY_KEY`.
+- The key `corridor` is rejected (`MEM_INVALID_TAXONOMY_KEY`) because it is an internal topology term.
+- Unknown scope keys are rejected.
+
+### Reference precedence
+
+Scope fields are resolved field-by-field in this order:
+
+1. explicit `scope` in the request
 2. `scope_token` lookup from execution context (`memory_scope_tokens`)
 3. `context_id` lookup from execution context (`memory_context_scopes`)
 
-The tool returns:
+The response includes `resolved_scope` (effective merged values) and `scope_source` (origin per field: `request|token|context|active_context`). The `active_context` origin appears only for `query` when the field is filled from session active context fallback.
 
-- `resolved_scope` (effective values after merge)
-- `scope_source` (`request|token|context` per field)
+### Direct `memory()` active context
 
-### Scope requirements by operation
+When using `memory()` directly, active project defaults and session active context apply as a fallback for `query` only. Standalone placement writes (`ingest`, `graph_upsert` with `kind=place`) do not use session active context as a fallback; they require an explicit locality reference.
 
-| Operation | Scope requirement |
+### Operation locality matrix
+
+| Operation | Locality requirement |
 | --- | --- |
-| `query` | all four fields must resolve (`palace/wing/room/compartment`) |
-| `ingest` | all four fields must resolve (includes required direct-ingest `compartment`) |
-| `graph_upsert` + `graph.kind=place` | all four fields must resolve |
-| `validate`, `supersede`, `archive`, `maintain`, `graph_delete`, `graph_upsert` + `graph.kind=link` | no scope required |
+| `query` | `palace` minimum; `wing`, `room`, `compartment` narrow the search when present |
+| `ingest` | complete topology (`palace/wing/room/compartment`) from explicit `scope`, `scope_token`, `context_id`, or operation-local `onboard`/`sync` data |
+| `validate` | no topology required (ID-targeted) |
+| `supersede` | no topology required; `record.superseded_by` (replacement ID) is required |
+| `archive` | no topology required (ID-targeted) |
+| `maintain` | current modes are global; no topology required |
+| `graph_upsert` (`kind=place`) | complete topology required |
+| `graph_upsert` (`kind=link`) with UUID refs | no topology required |
+| `graph_upsert` (`kind=link`) with name refs | complete topology required for disambiguation |
+| `graph_delete` with stable IDs | no topology required |
+| `onboard` | `palace` minimum; derives lower topology from scanned structure |
+| `sync` | uses session active context as continuation; supply narrowing `scope` to disambiguate multiple contexts |
 
-If a required scope field cannot be resolved from `scope`/`scope_token`/`context_id`, request fails with `SCOPE_UNRESOLVED`, except direct ingest missing `compartment`, which returns `COMPARTMENT_REQUIRED`.
+> **Note:** For `ingest` and `graph_upsert` (`kind=place`), the `onboard`/`sync` locality source refers to operation-local checkpoint or continuation state produced by those tools — not the session active context fallback that applies to `query`. Standalone placement writes always require an explicit locality reference.
+
+### Insufficient locality
+
+When required topology fields cannot be resolved, the operation fails with `INSUFFICIENT_LOCALITY`. The error response includes the missing fields and retry guidance. Retry options:
+
+- Supply a complete `scope` object.
+- Supply a `scope_token` that resolves the missing fields.
+- Supply a `context_id` that resolves the missing fields.
+- Run an `onboard` or `sync` checkpoint flow that carries operation-local scope.
 
 ## 4) Direct vs derived memory rules and community semantics
 
@@ -256,6 +286,22 @@ Invalid: legacy key `hall`.
   "query": {"text": "incident", "mode": "search"}
 }
 ```
+
+Invalid: placement write without complete locality (fails with `INSUFFICIENT_LOCALITY`).
+
+```json
+{
+  "operation": "ingest",
+  "scope": {"palace": "acme"},
+  "record": {"format": "raw", "content": "Memory direct", "memory_tier": "direct"}
+}
+```
+
+This fails because `ingest` requires complete topology (`palace/wing/room/compartment`). The error response includes the missing fields (`wing`, `room`, `compartment`) and retry guidance. To resolve:
+
+- Add the missing `wing`, `room`, and `compartment` fields to `scope`.
+- Supply a `scope_token` or `context_id` that resolves the missing fields.
+- Run an `onboard` or `sync` checkpoint flow first; the resulting operation-local scope carries the complete topology needed for placement writes.
 
 ## 9) Additional query and lifecycle controls
 

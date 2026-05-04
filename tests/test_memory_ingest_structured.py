@@ -1040,9 +1040,16 @@ class TestStructuredIngestService:
         with patch(
             "workflows_mcp.engine.memory_service.uuid.uuid4", return_value="relation-created-id"
         ):
+            scope = {
+                "palace": "corp",
+                "wing": "eng",
+                "room": "backend",
+                "compartment": "services",
+            }
             first = await service.execute(
                 MemoryRequest(
                     operation="graph_upsert",
+                    scope=scope,
                     graph={
                         "kind": "link",
                         "from": "Alice",
@@ -1054,6 +1061,7 @@ class TestStructuredIngestService:
             second = await service.execute(
                 MemoryRequest(
                     operation="graph_upsert",
+                    scope=scope,
                     graph={
                         "kind": "link",
                         "from": "Alice",

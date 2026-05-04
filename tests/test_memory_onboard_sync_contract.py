@@ -465,13 +465,15 @@ class TestIngestionLLMValidation:
         )
 
     @pytest.mark.asyncio
-    async def test_memory_query_no_palace_raises_scope_unresolved(
+    async def test_memory_query_no_palace_raises_insufficient_locality(
         self, mock_ctx: MagicMock
     ) -> None:
-        """memory(query) with no scope at all must raise SCOPE_UNRESOLVED for 'palace'.
+        """memory(query) with no palace must raise INSUFFICIENT_LOCALITY.
 
-        Ensures the palace requirement is still enforced — only wing/room/compartment
-        are relaxed to optional.
+        Query requires palace-minimum locality; an empty scope fails locality
+        resolution before any scope lookup occurs. The error envelope must include
+        actionable retry guidance referencing palace or an alternative resolution
+        source (scope_token, context_id, active project defaults).
         """
         from unittest.mock import AsyncMock
 
@@ -486,8 +488,14 @@ class TestIngestionLLMValidation:
             )
         payload = json.loads(result.content[0].text)
         err = payload.get("error", {})
-        assert err.get("code") == "SCOPE_UNRESOLVED", (
-            f"Expected SCOPE_UNRESOLVED when palace is absent, got: {err.get('code')} — {payload}"
+        assert err.get("code") == "INSUFFICIENT_LOCALITY", (
+            f"Expected INSUFFICIENT_LOCALITY when palace is absent, "
+            f"got: {err.get('code')} — {payload}"
+        )
+        actionable_fix = err.get("actionable_fix", "")
+        assert "palace" in actionable_fix.lower(), (
+            f"actionable_fix must mention 'palace' so the caller knows what to supply; "
+            f"got: {actionable_fix!r}"
         )
 
 
@@ -846,6 +854,59 @@ class TestActiveProjectDefaultResolution:
         assert captured[1].scope.wing == "backend"
         assert captured[1].scope.room == "agents"
 
+    @pytest.mark.asyncio
+    async def test_explicit_scope_wins_over_active_project_defaults(
+        self, mock_ctx: MagicMock
+    ) -> None:
+        from unittest.mock import AsyncMock
+
+        from workflows_mcp.context import SessionProjectContext
+
+        app_ctx = mock_ctx.request_context.lifespan_context
+        app_ctx.get_active_project.return_value = SessionProjectContext(
+            project_id="p3",
+            slug="forge",
+            palace="project-palace",
+            default_wing="project-wing",
+            default_room="project-room",
+            source="session_selected",
+        )
+
+        captured: list[Any] = []
+
+        async def _capture_execute(self: Any, request: Any) -> Any:
+            captured.append(request)
+            from workflows_mcp.engine.memory_service import MemoryResult, QueryMemoryResult
+
+            return MemoryResult(
+                operation="query",
+                query=QueryMemoryResult(
+                    facts=[], memories=[], communities=[], diagnostics={}, evidence=[], paths=[]
+                ),
+            )
+
+        memory = _get_tool_fn("memory")
+        with (
+            patch("workflows_mcp.tools_memory.PostgresBackend", return_value=AsyncMock()),
+            patch(
+                "workflows_mcp.engine.memory_service.MemoryService.execute",
+                new=_capture_execute,
+            ),
+        ):
+            # Palace matches active project → wing/room defaults apply.
+            # Explicit wing overrides default_wing; room fills from default_room.
+            await memory(
+                operation="query",
+                scope={"palace": "project-palace", "wing": "explicit-wing"},
+                query={"text": "test"},
+                ctx=mock_ctx,
+            )
+
+        assert captured, "Expected memory request to be captured"
+        assert captured[0].scope.palace == "project-palace"
+        assert captured[0].scope.wing == "explicit-wing"
+        assert captured[0].scope.room == "project-room"
+
 
 # ---------------------------------------------------------------------------
 # Task 6: strict HTTP adapter contract (onboard_http / sync_http)
@@ -951,3 +1012,68 @@ class TestStrictHttpAdapters:
             )
         # Result must be a dict (JSON-decoded orchestration output).
         assert isinstance(result, dict)
+
+
+# ---------------------------------------------------------------------------
+# Task 4: placement writes must not inherit session fallback scope
+# ---------------------------------------------------------------------------
+
+
+class TestPlacementWritesDoNotUseSessionFallback:
+    """Non-query operations must not receive scope from the active context fallback.
+
+    When operation != 'query' and no scope/scope_token/context_id is provided,
+    the tool must pass scope=None to MemoryService so the operation locality
+    contract decides validity — not silently inject the session active context.
+    """
+
+    @pytest.mark.asyncio
+    async def test_direct_ingest_without_scope_does_not_use_active_context(
+        self, mock_ctx: MagicMock
+    ) -> None:
+        """memory(operation='ingest') with no scope must fail with INSUFFICIENT_LOCALITY
+        even when an active context is present in the session."""
+        from unittest.mock import AsyncMock
+
+        from workflows_mcp.engine.memory_scope_resolver import SyncContextCandidate, scope_key
+
+        # Arrange: active context candidate with a fully qualified scope.
+        candidate_scope = {
+            "palace": "forge",
+            "wing": "core",
+            "room": "main",
+            "compartment": "slot-1",
+        }
+        candidate = SyncContextCandidate(
+            scope=candidate_scope,
+            scope_key_value=scope_key(candidate_scope),
+            checkpoint_data={},
+            source="stored_checkpoint",
+        )
+        mock_ctx.request_context.lifespan_context.get_active_context.return_value = candidate
+
+        memory = _get_tool_fn("memory")
+        mock_backend = AsyncMock()
+        mock_backend.ingest_memory = AsyncMock(
+            return_value={"id": "fake-uuid", "status": "created"}
+        )
+
+        with patch("workflows_mcp.tools_memory.PostgresBackend", return_value=mock_backend):
+            result = await memory(
+                operation="ingest",
+                record={"content": "some content"},
+                ctx=mock_ctx,
+            )
+
+        payload = json.loads(result.content[0].text)
+        assert "error" in payload, f"Expected error envelope, got: {payload}"
+        error = payload["error"]
+        assert error["code"] == "INSUFFICIENT_LOCALITY", (
+            f"Expected INSUFFICIENT_LOCALITY, got {error['code']!r}"
+        )
+        assert "ingest" in error["message"].lower() or "Missing" in error["message"], (
+            f"Expected 'ingest' or 'Missing' in message, got: {error['message']!r}"
+        )
+        assert "scope_token" in error.get("actionable_fix", ""), (
+            f"Expected 'scope_token' in actionable_fix, got: {error.get('actionable_fix')!r}"
+        )
