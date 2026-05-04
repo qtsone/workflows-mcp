@@ -869,6 +869,40 @@ CREATE INDEX IF NOT EXISTS idx_ki_palace_lifecycle_state
     ON knowledge_items(palace, lifecycle_state);
 """
 
+_V14_TRACK4_PREREQS_SQL = """
+-- v14: Track 4 prerequisites — structural entity columns + relation metadata.
+-- See docs/architecture/knowledge-ingestion.md §4.3, §4.4.
+
+-- knowledge_entities: promote qualified_name to first-class for symbol lookup,
+-- stable_id derivation join, and CALLS-edge resolution joins.
+ALTER TABLE knowledge_entities
+    ADD COLUMN IF NOT EXISTS qualified_name TEXT;
+
+-- knowledge_entities: parent_class_id as self-FK for Class->Method containment.
+-- ON DELETE SET NULL: deleting a class must not cascade-delete its methods,
+-- which would lose memory anchoring. Methods become detectable orphans.
+ALTER TABLE knowledge_entities
+    ADD COLUMN IF NOT EXISTS parent_class_id UUID
+        REFERENCES knowledge_entities(id) ON DELETE SET NULL;
+
+-- Lookup index for symbol resolution (used by CALLS-edge construction in System 1).
+-- Includes palace + source_item_id to keep cardinality low and lookups palace-isolated.
+CREATE INDEX IF NOT EXISTS idx_knowledge_entities_qualified_name
+    ON knowledge_entities(palace, source_item_id, qualified_name)
+    WHERE qualified_name IS NOT NULL;
+
+-- Reverse-index for "find methods of class X".
+CREATE INDEX IF NOT EXISTS idx_knowledge_entities_parent_class
+    ON knowledge_entities(parent_class_id)
+    WHERE parent_class_id IS NOT NULL;
+
+-- knowledge_relations: metadata JSONB for resolution flags, call-site spans,
+-- and any future per-edge provenance. NOT NULL with empty default keeps
+-- existing rows valid and avoids null-handling at every read site.
+ALTER TABLE knowledge_relations
+    ADD COLUMN IF NOT EXISTS metadata JSONB NOT NULL DEFAULT '{}'::jsonb;
+"""
+
 _HAS_KNOWLEDGE_TABLES_SQL = """
 SELECT EXISTS (
         SELECT 1
@@ -966,6 +1000,11 @@ MIGRATIONS: list[tuple[int, str, str]] = [
         13,
         "Add lifecycle_state and error_metadata to knowledge_items",
         _V13_ITEM_LIFECYCLE_SQL,
+    ),
+    (
+        14,
+        "Add qualified_name + parent_class_id to entities, metadata to relations (Track 4 prereqs)",
+        _V14_TRACK4_PREREQS_SQL,
     ),
 ]
 

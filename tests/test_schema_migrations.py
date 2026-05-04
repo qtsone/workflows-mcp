@@ -563,17 +563,17 @@ def test_item_lifecycle_state_enum_values() -> None:
 # ---------------------------------------------------------------------------
 
 
-async def test_schema_version_advanced_to_thirteen(knowledge_backend: PostgresBackend) -> None:
-    """All new migrations applied; SCHEMA_VERSION reaches 13."""
+async def test_schema_version_advanced_to_fourteen(knowledge_backend: PostgresBackend) -> None:
+    """All new migrations applied; SCHEMA_VERSION reaches 14."""
     from workflows_mcp.engine.knowledge.schema import SCHEMA_VERSION
 
-    assert SCHEMA_VERSION == 13
+    assert SCHEMA_VERSION == 14
 
     result = await knowledge_backend.query(
         "SELECT value FROM _knowledge_meta WHERE key = 'schema_version'", ()
     )
     assert result.rows
-    assert int(result.rows[0]["value"]) == 13
+    assert int(result.rows[0]["value"]) == 14
 
 
 async def test_re_running_ensure_schema_is_idempotent(knowledge_backend: PostgresBackend) -> None:
@@ -585,4 +585,92 @@ async def test_re_running_ensure_schema_is_idempotent(knowledge_backend: Postgre
     result = await knowledge_backend.query(
         "SELECT value FROM _knowledge_meta WHERE key = 'schema_version'", ()
     )
-    assert int(result.rows[0]["value"]) == 13
+    assert int(result.rows[0]["value"]) == 14
+
+
+# ---------------------------------------------------------------------------
+# v14: Track 4 prerequisites — qualified_name, parent_class_id, relations.metadata
+# ---------------------------------------------------------------------------
+
+
+async def test_v14_qualified_name_column_present(knowledge_backend: PostgresBackend) -> None:
+    """v14: knowledge_entities.qualified_name TEXT column exists."""
+    assert await _column_exists(knowledge_backend, "knowledge_entities", "qualified_name")
+
+
+async def test_v14_parent_class_id_column_present(knowledge_backend: PostgresBackend) -> None:
+    """v14: knowledge_entities.parent_class_id UUID column exists."""
+    assert await _column_exists(knowledge_backend, "knowledge_entities", "parent_class_id")
+
+
+async def test_v14_relations_metadata_column_present(knowledge_backend: PostgresBackend) -> None:
+    """v14: knowledge_relations.metadata JSONB column exists."""
+    assert await _column_exists(knowledge_backend, "knowledge_relations", "metadata")
+
+
+async def test_v14_qualified_name_index_present(knowledge_backend: PostgresBackend) -> None:
+    """v14: idx_knowledge_entities_qualified_name partial index exists."""
+    assert await _index_exists(knowledge_backend, "idx_knowledge_entities_qualified_name")
+
+
+async def test_v14_parent_class_index_present(knowledge_backend: PostgresBackend) -> None:
+    """v14: idx_knowledge_entities_parent_class partial index exists."""
+    assert await _index_exists(knowledge_backend, "idx_knowledge_entities_parent_class")
+
+
+async def test_v14_parent_class_id_is_self_fk_set_null(knowledge_backend: PostgresBackend) -> None:
+    """v14: parent_class_id must reference knowledge_entities(id) ON DELETE SET NULL."""
+    result = await knowledge_backend.query(
+        """
+        SELECT confdeltype, confrelid::regclass::text AS ref_table
+          FROM pg_constraint
+         WHERE conrelid = 'knowledge_entities'::regclass
+           AND contype = 'f'
+           AND conname = 'knowledge_entities_parent_class_id_fkey'
+        """,
+        (),
+    )
+    assert result.rows, "parent_class_id FK constraint missing"
+    # 'n' = SET NULL in pg_constraint.confdeltype (returned as bytes by asyncpg)
+    confdeltype = result.rows[0]["confdeltype"]
+    if isinstance(confdeltype, bytes):
+        confdeltype = confdeltype.decode()
+    assert confdeltype == "n"
+    assert result.rows[0]["ref_table"] == "knowledge_entities"
+
+
+async def test_v14_relations_metadata_default_empty_jsonb(db: PostgresBackend) -> None:
+    """v14: new relation rows default metadata to '{}'::jsonb.
+
+    knowledge_relations has no palace column (palace is inherited via the
+    referenced entities), so this test only inserts entities + a relation.
+    """
+    palace = "test_palace_v14"
+    src = await db.query(
+        """
+        INSERT INTO knowledge_entities
+            (palace, namespace, room, corridor, entity_type, name, source, stable_id)
+        VALUES ($1, 'code', 'default', 'schema', 'File', 'src.py', 'STRUCTURAL', 'src.py-stable')
+        RETURNING id
+        """,
+        (palace,),
+    )
+    tgt = await db.query(
+        """
+        INSERT INTO knowledge_entities
+            (palace, namespace, room, corridor, entity_type, name, source, stable_id)
+        VALUES ($1, 'code', 'default', 'schema', 'File', 'tgt.py', 'STRUCTURAL', 'tgt.py-stable')
+        RETURNING id
+        """,
+        (palace,),
+    )
+    rel = await db.query(
+        """
+        INSERT INTO knowledge_relations
+            (source_entity_id, target_entity_id, relation_type)
+        VALUES ($1::uuid, $2::uuid, 'IMPORTS')
+        RETURNING metadata
+        """,
+        (str(src.rows[0]["id"]), str(tgt.rows[0]["id"])),
+    )
+    assert _as_dict(rel.rows[0]["metadata"]) == {}
