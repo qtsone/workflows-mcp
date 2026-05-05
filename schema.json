@@ -117,6 +117,7 @@
               "WriteJSONState",
               "MergeJSONState",
               "Sql",
+              "TreeSitter",
               "Memory"
             ],
             "description": "Block type"
@@ -814,7 +815,7 @@
                         }
                       ],
                       "default": null,
-                      "description": "Profile name from ~/.workflows/llm-config.yml (e.g., 'cloud', 'local', 'default'). If specified, provider/model are loaded from config. Mutually exclusive with direct provider/model specification.",
+                      "description": "Profile name from the SQLite-backed admin /llm config (e.g., 'cloud', 'local', 'default'). If specified, provider/model are loaded from config. Mutually exclusive with direct provider/model specification.",
                       "title": "Profile"
                     },
                     "provider": {
@@ -1018,7 +1019,7 @@
                   "properties": {
                     "profile": {
                       "default": "embedding",
-                      "description": "Profile name from ~/.workflows/llm-config.yml (defaults to 'embedding')",
+                      "description": "Profile name from admin /llm config (defaults to 'embedding')",
                       "title": "Profile",
                       "type": "string"
                     },
@@ -1147,7 +1148,7 @@
                         }
                       ],
                       "default": null,
-                      "description": "Profile name from ~/.workflows/llm-config.yml. If specified, provider/model are loaded from config. Mutually exclusive with direct provider/model specification.",
+                      "description": "Profile name from SQLite-backed admin /llm config. If specified, provider/model are loaded from config. Mutually exclusive with direct provider/model specification.",
                       "title": "Profile"
                     },
                     "provider": {
@@ -1922,6 +1923,99 @@
             "if": {
               "properties": {
                 "type": {
+                  "const": "TreeSitter"
+                }
+              }
+            },
+            "then": {
+              "properties": {
+                "inputs": {
+                  "additionalProperties": false,
+                  "description": "Inputs for TreeSitter block",
+                  "properties": {
+                    "path": {
+                      "description": "Path to the source file to parse. May be absolute or workspace-relative. No path sandboxing is applied \u2014 the caller is responsible for scoping.",
+                      "title": "Path",
+                      "type": "string"
+                    },
+                    "language": {
+                      "anyOf": [
+                        {
+                          "enum": [
+                            "python",
+                            "typescript",
+                            "tsx",
+                            "javascript",
+                            "go",
+                            "rust",
+                            "markdown",
+                            "yaml",
+                            "json",
+                            "unsupported"
+                          ],
+                          "type": "string"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ],
+                      "default": null,
+                      "description": "Override language detection. If omitted, language is inferred from extension.",
+                      "title": "Language"
+                    },
+                    "repo_relative_path": {
+                      "anyOf": [
+                        {
+                          "type": "string"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ],
+                      "default": null,
+                      "description": "Path of the file relative to the repository root (used for qualified names).",
+                      "title": "Repo Relative Path"
+                    },
+                    "palace": {
+                      "anyOf": [
+                        {
+                          "type": "string"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ],
+                      "default": null,
+                      "description": "Memory palace name (used for stable ID generation).",
+                      "title": "Palace"
+                    },
+                    "item_id": {
+                      "anyOf": [
+                        {
+                          "type": "string"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ],
+                      "default": null,
+                      "description": "Source item ID (used for stable ID generation).",
+                      "title": "Item Id"
+                    }
+                  },
+                  "required": [
+                    "path"
+                  ],
+                  "title": "TreeSitterInput",
+                  "type": "object"
+                }
+              }
+            }
+          },
+          {
+            "if": {
+              "properties": {
+                "type": {
                   "const": "Memory"
                 }
               }
@@ -1942,7 +2036,16 @@
                         "archive",
                         "maintain",
                         "graph_upsert",
-                        "graph_delete"
+                        "graph_delete",
+                        "ensure_source",
+                        "ensure_item",
+                        "store_entities",
+                        "store_relations",
+                        "store_relations_by_qname",
+                        "store_memories",
+                        "store_entity_embeddings",
+                        "archive_memories",
+                        "mark_item_dirty"
                       ],
                       "title": "Operation",
                       "type": "string"
@@ -2805,7 +2908,7 @@
     },
     "LLMCallInput": {
       "additionalProperties": false,
-      "description": "Input schema for LLMCall block.\n\nSupports two configuration modes:\n- Profile-based: Load settings from ~/.workflows/llm-config.yml\n- Direct: Specify provider and model inline\n\nVariables are resolved by VariableResolver before execution. Schema validation\nuses OpenAI native structured outputs (strict mode) or client-side validation\nwith retry feedback for other providers.",
+      "description": "Input schema for LLMCall block.\n\nSupports two configuration modes:\n- Profile-based: Load settings from SQLite-backed admin /llm config\n- Direct: Specify provider and model inline\n\nVariables are resolved by VariableResolver before execution. Schema validation\nuses OpenAI native structured outputs (strict mode) or client-side validation\nwith retry feedback for other providers.",
       "properties": {
         "profile": {
           "anyOf": [
@@ -2817,7 +2920,7 @@
             }
           ],
           "default": null,
-          "description": "Profile name from ~/.workflows/llm-config.yml (e.g., 'cloud', 'local', 'default'). If specified, provider/model are loaded from config. Mutually exclusive with direct provider/model specification.",
+          "description": "Profile name from the SQLite-backed admin /llm config (e.g., 'cloud', 'local', 'default'). If specified, provider/model are loaded from config. Mutually exclusive with direct provider/model specification.",
           "title": "Profile"
         },
         "provider": {
@@ -3004,11 +3107,11 @@
     },
     "EmbeddingInput": {
       "additionalProperties": false,
-      "description": "Input schema for Embedding block.\n\nGenerates vector embeddings for text using OpenAI-compatible embedding API.\nWorks with OpenAI, LMStudio, Ollama (--api-compat), LocalAI, vLLM, and other\nservers implementing the /v1/embeddings endpoint.\n\nSupports two modes:\n- **Single**: Provide `text` for a single embedding vector.\n- **Batch**: Provide `texts` (list) to embed multiple texts in one API call.\n\nExactly one of `text` or `texts` must be specified.\n\nDefaults to 'embedding' profile from ~/.workflows/llm-config.yml.",
+      "description": "Input schema for Embedding block.\n\nGenerates vector embeddings for text using OpenAI-compatible embedding API.\nWorks with OpenAI, LMStudio, Ollama (--api-compat), LocalAI, vLLM, and other\nservers implementing the /v1/embeddings endpoint.\n\nSupports two modes:\n- **Single**: Provide `text` for a single embedding vector.\n- **Batch**: Provide `texts` (list) to embed multiple texts in one API call.\n\nExactly one of `text` or `texts` must be specified.\n\nDefaults to the 'embedding' profile from SQLite-backed admin /llm config.",
       "properties": {
         "profile": {
           "default": "embedding",
-          "description": "Profile name from ~/.workflows/llm-config.yml (defaults to 'embedding')",
+          "description": "Profile name from admin /llm config (defaults to 'embedding')",
           "title": "Profile",
           "type": "string"
         },
@@ -3133,7 +3236,7 @@
             }
           ],
           "default": null,
-          "description": "Profile name from ~/.workflows/llm-config.yml. If specified, provider/model are loaded from config. Mutually exclusive with direct provider/model specification.",
+          "description": "Profile name from SQLite-backed admin /llm config. If specified, provider/model are loaded from config. Mutually exclusive with direct provider/model specification.",
           "title": "Profile"
         },
         "provider": {
@@ -3836,6 +3939,86 @@
       "title": "SqlInput",
       "type": "object"
     },
+    "TreeSitterInput": {
+      "additionalProperties": false,
+      "description": "Input for the TreeSitter executor.\n\nSecurity note: this is a TRUSTED executor that reads the provided path\ndirectly with no boundary enforcement. The caller is responsible for\nensuring the path is within the intended scope before invoking this block.",
+      "properties": {
+        "path": {
+          "description": "Path to the source file to parse. May be absolute or workspace-relative. No path sandboxing is applied \u2014 the caller is responsible for scoping.",
+          "title": "Path",
+          "type": "string"
+        },
+        "language": {
+          "anyOf": [
+            {
+              "enum": [
+                "python",
+                "typescript",
+                "tsx",
+                "javascript",
+                "go",
+                "rust",
+                "markdown",
+                "yaml",
+                "json",
+                "unsupported"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Override language detection. If omitted, language is inferred from extension.",
+          "title": "Language"
+        },
+        "repo_relative_path": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Path of the file relative to the repository root (used for qualified names).",
+          "title": "Repo Relative Path"
+        },
+        "palace": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Memory palace name (used for stable ID generation).",
+          "title": "Palace"
+        },
+        "item_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Source item ID (used for stable ID generation).",
+          "title": "Item Id"
+        }
+      },
+      "required": [
+        "path"
+      ],
+      "title": "TreeSitterInput",
+      "type": "object"
+    },
     "MemoryInput": {
       "additionalProperties": false,
       "description": "Unified memory block input.",
@@ -3850,7 +4033,16 @@
             "archive",
             "maintain",
             "graph_upsert",
-            "graph_delete"
+            "graph_delete",
+            "ensure_source",
+            "ensure_item",
+            "store_entities",
+            "store_relations",
+            "store_relations_by_qname",
+            "store_memories",
+            "store_entity_embeddings",
+            "archive_memories",
+            "mark_item_dirty"
           ],
           "title": "Operation",
           "type": "string"

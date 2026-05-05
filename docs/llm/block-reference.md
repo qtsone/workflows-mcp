@@ -24,6 +24,7 @@ Field names are **exact** - use them precisely in your workflows.
 | WriteJSONState | path, data |
 | MergeJSONState | path, updates |
 | Sql | engine |
+| TreeSitter | path |
 | Memory | operation |
 
 ### Common Field Name Mistakes
@@ -674,6 +675,35 @@ Without this, execution fails with configuration error.
     order: [created_at:desc]
     limit: 10
 ```
+
+---
+
+## TreeSitter
+
+**Description**: Parse source files and emit a static-analysis entity graph.
+
+### Required Inputs
+
+- **`path`** (string): Path to the source file to parse. May be absolute or workspace-relative. No path sandboxing is applied — the caller is responsible for scoping.
+
+### Optional Inputs
+
+- **`language`** (string): Override language detection. If omitted, language is inferred from extension.
+- **`repo_relative_path`** (string): Path of the file relative to the repository root (used for qualified names).
+- **`palace`** (string): Memory palace name (used for stable ID generation).
+- **`item_id`** (string): Source item ID (used for stable ID generation).
+
+### Outputs
+
+- **`meta`** (object): Executor-specific metadata fields (exit_code, tokens_used, etc.)
+- **`language`** (string): Detected or overridden language.
+- **`content_hash`** (string): SHA-256 hex digest of the file content.
+- **`size_bytes`** (integer): File size in bytes.
+- **`mtime_ns`** (integer): File modification time in nanoseconds.
+- **`module_qualified_name`** (string): Qualified name of the top-level module entity.
+- **`entities`** (array): Extracted graph entities (File, Module, …).
+- **`relations`** (array): Extracted graph relations (CONTAINS, IMPORTS, …).
+- **`unresolved_imports`** (array): Import strings that could not be resolved to known entities.
 
 ---
 
