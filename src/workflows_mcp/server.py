@@ -39,11 +39,51 @@ from .metadata.repos.workflow_sources_repo import SQLiteWorkflowSourcesRepositor
 
 logger = logging.getLogger(__name__)
 
+_SYSTEM_PROJECT_SLUG = "system"
+_SYSTEM_PROJECT_PALACE = "__system__"
+
+
+def _seed_system_project_and_source(resources: "AppResources") -> None:
+    """Idempotently create the System project and its packaged workflow source row.
+
+    This seeds a visible System project (name='System', slug='system') and a
+    system/read-only workflow source pointing to the packaged templates/memory
+    directory.  Safe to call on every load; duplicate rows are never created.
+    """
+    from .metadata.repos.projects_repo import ProjectCreate, SQLiteProjectsRepository
+    from .metadata.repos.workflow_sources_repo import (
+        WorkflowSourceCreate,
+    )
+
+    builtin_path = _builtin_workflow_path()
+
+    projects_repo = SQLiteProjectsRepository(resources.metadata_db_conn)
+    system_project = projects_repo.get_or_create(
+        ProjectCreate(
+            name="System",
+            slug=_SYSTEM_PROJECT_SLUG,
+            palace=_SYSTEM_PROJECT_PALACE,
+            default_wing=None,
+            default_room=None,
+            fs_root=str(builtin_path),
+        )
+    )
+
+    sources_repo = SQLiteWorkflowSourcesRepository(resources.metadata_db_conn)
+    sources_repo.get_or_create_system_source(
+        WorkflowSourceCreate(
+            project_id=system_project.id,
+            source_path=str(builtin_path),
+            is_system=True,
+        )
+    )
+
 
 def _has_registered_memory_tools(mcp_server: FastMCP) -> bool:
     """Return True when memory MCP tools are already registered."""
     tools = mcp_server._tool_manager._tools
     return "memory" in tools
+
 
 def _resolve_base_dir(base_dir: Path | None = None) -> Path:
     """Resolve runtime base directory from explicit value or environment."""
@@ -261,23 +301,25 @@ def get_graceful_shutdown_timeout() -> int:
 
 
 def _builtin_workflow_path() -> Path:
-    """Resolve the packaged builtin_workflows directory."""
+    """Resolve the packaged builtin workflow directory (templates/memory)."""
     from importlib.resources import files
 
-    return Path(str(files("workflows_mcp").joinpath("builtin_workflows")))
+    return Path(str(files("workflows_mcp").joinpath("templates").joinpath("memory")))
 
 
 def load_workflows(resources: AppResources) -> WorkflowSourceReloadSummary:
     """Load workflows from packaged built-ins and SQLite-managed user sources."""
+    _seed_system_project_and_source(resources)
     repo = SQLiteWorkflowSourcesRepository(resources.metadata_db_conn)
     sources = repo.list()
-    user_paths = [source.source_path for source in sources]
-    builtin_paths = [_builtin_workflow_path()]
+    # System sources are loaded first (as built-ins, non-shadowable); user sources second.
+    system_paths = [source.source_path for source in sources if source.is_system]
+    user_paths = [source.source_path for source in sources if not source.is_system]
     try:
         summary = reload_registry_from_source_paths(
             resources.workflow_registry,
             user_paths,
-            builtin_paths=builtin_paths,
+            builtin_paths=system_paths,
         )
     except WorkflowSourceReloadError as exc:
         for source in sources:

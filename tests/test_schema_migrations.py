@@ -674,3 +674,5 @@ async def test_v14_relations_metadata_default_empty_jsonb(db: PostgresBackend) -
         (str(src.rows[0]["id"]), str(tgt.rows[0]["id"])),
     )
     assert _as_dict(rel.rows[0]["metadata"]) == {}
+
+

@@ -3,7 +3,7 @@ from __future__ import annotations
 import sqlite3
 from pathlib import Path
 
-CURRENT_SCHEMA_VERSION = 8
+CURRENT_SCHEMA_VERSION = 9
 DEFAULT_JOB_TIMEOUT_SECONDS = 3600
 
 
@@ -115,6 +115,11 @@ def migrate_metadata_db(conn: sqlite3.Connection) -> None:
             _migrate_v7_to_v8(conn)
             conn.execute(
                 "INSERT OR IGNORE INTO schema_migrations(version) VALUES (8)"
+            )
+        if max_version < 9:
+            _migrate_v8_to_v9(conn)
+            conn.execute(
+                "INSERT OR IGNORE INTO schema_migrations(version) VALUES (9)"
             )
 
         # Phase 10+ internal-only resumable state for paused runs.
@@ -486,6 +491,18 @@ def _migrate_v6_to_v7(conn: sqlite3.Connection) -> None:
 
 def _migrate_v7_to_v8(conn: sqlite3.Connection) -> None:
     _ensure_job_runs_execution_columns(conn)
+
+
+def _migrate_v8_to_v9(conn: sqlite3.Connection) -> None:
+    _ensure_workflow_sources_is_system_column(conn)
+
+
+def _ensure_workflow_sources_is_system_column(conn: sqlite3.Connection) -> None:
+    columns = _table_columns(conn, "workflow_sources")
+    if "is_system" not in columns:
+        conn.execute(
+            "ALTER TABLE workflow_sources ADD COLUMN is_system INTEGER NOT NULL DEFAULT 0"
+        )
 
 
 def _ensure_postgresql_settings_structured_columns(conn: sqlite3.Connection) -> None:

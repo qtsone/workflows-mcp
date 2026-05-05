@@ -27,11 +27,16 @@ class InvalidWorkflowSourcePathError(WorkflowSourceRepositoryError):
     """Raised when a source path does not resolve to an existing directory."""
 
 
+class SystemWorkflowSourceProtectedError(WorkflowSourceRepositoryError):
+    """Raised when attempting to delete a system (read-only) workflow source."""
+
+
 @dataclass(frozen=True)
 class WorkflowSourceCreate:
     project_id: str
     source_path: str
     checksum: str | None = None
+    is_system: bool = False
 
 
 @dataclass(frozen=True)
@@ -40,6 +45,7 @@ class WorkflowSourceRecord:
     project_id: str
     source_path: str
     checksum: str | None
+    is_system: bool
     discovered_at: str
     last_loaded_at: str | None
     status: str | None
@@ -77,10 +83,11 @@ class SQLiteWorkflowSourcesRepository:
                     source_id,
                     project_id,
                     source_path,
-                    checksum
-                ) VALUES (?, ?, ?, ?)
+                    checksum,
+                    is_system
+                ) VALUES (?, ?, ?, ?, ?)
                 """,
-                (source_id, data.project_id, normalized_path, data.checksum),
+                (source_id, data.project_id, normalized_path, data.checksum, int(data.is_system)),
             )
             record = self._get_for_update(source_id)
             self._conn.commit()
@@ -101,10 +108,58 @@ class SQLiteWorkflowSourcesRepository:
             )
         return record
 
+    def get_by_path(
+        self, source_path: str, project_id: str | None = None
+    ) -> WorkflowSourceRecord | None:
+        """Return the workflow source record for a normalized path, optionally filtered by project."""  # noqa: E501
+        normalized = _normalize_source_path(source_path)
+        if project_id is not None:
+            row = self._conn.execute(
+                """
+                SELECT ws.source_id, ws.project_id, ws.source_path, ws.checksum, ws.is_system,
+                       ws.discovered_at, wrs.last_loaded_at, wrs.status, wrs.error_message
+                FROM workflow_sources ws
+                LEFT JOIN workflow_reload_state wrs ON wrs.source_id = ws.source_id
+                WHERE ws.project_id = ? AND ws.source_path = ?
+                """,
+                (project_id, normalized),
+            ).fetchone()
+        else:
+            row = self._conn.execute(
+                """
+                SELECT ws.source_id, ws.project_id, ws.source_path, ws.checksum, ws.is_system,
+                       ws.discovered_at, wrs.last_loaded_at, wrs.status, wrs.error_message
+                FROM workflow_sources ws
+                LEFT JOIN workflow_reload_state wrs ON wrs.source_id = ws.source_id
+                WHERE ws.source_path = ?
+                """,
+                (normalized,),
+            ).fetchone()
+        if row is None:
+            return None
+        return self._row_to_record(row)
+
+    def get_or_create_system_source(self, data: WorkflowSourceCreate) -> WorkflowSourceRecord:
+        """Return the existing system workflow source for the path, or create it idempotently.
+
+        If a non-system source already exists at the same path, raises
+        DuplicateWorkflowSourceError instead of silently mutating it.
+        """
+        normalized = _normalize_source_path(data.source_path)
+        existing = self.get_by_path(normalized, project_id=data.project_id)
+        if existing is not None:
+            if not existing.is_system:
+                raise DuplicateWorkflowSourceError(
+                    f"A non-system workflow source already exists at path: {normalized}"
+                )
+            return existing
+        return self.create(data)
+
     def list(self, project_id: str | None = None) -> list[WorkflowSourceRecord]:
         params: tuple[object, ...] = ()
         query = (
-            "SELECT ws.source_id, ws.project_id, ws.source_path, ws.checksum, ws.discovered_at, "
+            "SELECT ws.source_id, ws.project_id, ws.source_path, ws.checksum, "
+            "ws.is_system, ws.discovered_at, "
             "wrs.last_loaded_at, wrs.status, wrs.error_message "
             "FROM workflow_sources ws "
             "LEFT JOIN workflow_reload_state wrs ON wrs.source_id = ws.source_id "
@@ -126,12 +181,20 @@ class SQLiteWorkflowSourcesRepository:
     def delete(self, source_id: str) -> None:
         self._conn.execute("BEGIN IMMEDIATE")
         try:
-            cursor = self._conn.execute(
+            row = self._conn.execute(
+                "SELECT is_system FROM workflow_sources WHERE source_id = ?",
+                (source_id,),
+            ).fetchone()
+            if row is None:
+                raise WorkflowSourceNotFoundError(f"workflow source not found: {source_id}")
+            if int(row[0]) != 0:
+                raise SystemWorkflowSourceProtectedError(
+                    f"cannot delete system workflow source: {source_id}"
+                )
+            self._conn.execute(
                 "DELETE FROM workflow_sources WHERE source_id = ?",
                 (source_id,),
             )
-            if cursor.rowcount == 0:
-                raise WorkflowSourceNotFoundError(f"workflow source not found: {source_id}")
             self._conn.commit()
         except Exception:
             self._conn.rollback()
@@ -198,8 +261,8 @@ class SQLiteWorkflowSourcesRepository:
     def _get_for_update(self, source_id: str) -> WorkflowSourceRecord | None:
         row = self._conn.execute(
             """
-            SELECT ws.source_id, ws.project_id, ws.source_path, ws.checksum, ws.discovered_at,
-                   wrs.last_loaded_at, wrs.status, wrs.error_message
+            SELECT ws.source_id, ws.project_id, ws.source_path, ws.checksum, ws.is_system,
+                   ws.discovered_at, wrs.last_loaded_at, wrs.status, wrs.error_message
             FROM workflow_sources ws
             LEFT JOIN workflow_reload_state wrs ON wrs.source_id = ws.source_id
             WHERE ws.source_id = ?
@@ -225,8 +288,9 @@ class SQLiteWorkflowSourcesRepository:
             project_id=str(row[1]),
             source_path=str(row[2]),
             checksum=str(row[3]) if row[3] is not None else None,
-            discovered_at=str(row[4]),
-            last_loaded_at=str(row[5]) if row[5] is not None else None,
-            status=str(row[6]) if row[6] is not None else None,
-            error_message=str(row[7]) if row[7] is not None else None,
+            is_system=bool(row[4]) if row[4] is not None else False,
+            discovered_at=str(row[5]),
+            last_loaded_at=str(row[6]) if row[6] is not None else None,
+            status=str(row[7]) if row[7] is not None else None,
+            error_message=str(row[8]) if row[8] is not None else None,
         )

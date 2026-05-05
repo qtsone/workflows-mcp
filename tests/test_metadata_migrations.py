@@ -50,7 +50,7 @@ def test_concurrent_metadata_migrations_apply_once(tmp_path: Path) -> None:
         versions = conn.execute(
             "SELECT version FROM schema_migrations ORDER BY version"
         ).fetchall()
-        assert [int(row[0]) for row in versions] == [1, 2, 3, 4, 5, 6, 7, 8]
+        assert [int(row[0]) for row in versions] == [1, 2, 3, 4, 5, 6, 7, 8, 9]
     finally:
         conn.close()
 
@@ -257,7 +257,7 @@ def test_project_defaults_are_nullable_after_v7_shape_repair(tmp_path: Path) -> 
         versions = conn.execute(
             "SELECT version FROM schema_migrations ORDER BY version"
         ).fetchall()
-        assert [int(row[0]) for row in versions] == [1, 7, 8]
+        assert [int(row[0]) for row in versions] == [1, 7, 8, 9]
     finally:
         conn.close()
 
@@ -327,7 +327,7 @@ def test_watcher_queue_v1_shape_is_upgraded_to_v2(tmp_path: Path) -> None:
         versions = conn.execute(
             "SELECT version FROM schema_migrations ORDER BY version"
         ).fetchall()
-        assert [int(row[0]) for row in versions] == [1, 2, 3, 4, 5, 6, 7, 8]
+        assert [int(row[0]) for row in versions] == [1, 2, 3, 4, 5, 6, 7, 8, 9]
 
         workflow_sources_indexes = {
             str(row[1])
@@ -354,7 +354,7 @@ def test_workflow_sources_unique_index_is_applied_idempotently_in_v3(tmp_path: P
         versions = conn.execute(
             "SELECT version FROM schema_migrations ORDER BY version"
         ).fetchall()
-        assert [int(row[0]) for row in versions] == [1, 2, 3, 4, 5, 6, 7, 8]
+        assert [int(row[0]) for row in versions] == [1, 2, 3, 4, 5, 6, 7, 8, 9]
     finally:
         conn.close()
 
@@ -554,7 +554,7 @@ def test_job_runs_v3_shape_is_upgraded_to_v4(tmp_path: Path) -> None:
         versions = conn.execute(
             "SELECT version FROM schema_migrations ORDER BY version"
         ).fetchall()
-        assert [int(row[0]) for row in versions] == [1, 3, 4, 5, 6, 7, 8]
+        assert [int(row[0]) for row in versions] == [1, 3, 4, 5, 6, 7, 8, 9]
     finally:
         conn.close()
 
@@ -680,7 +680,7 @@ def test_job_runs_v4_shape_is_upgraded_to_v5_with_safe_defaults(tmp_path: Path) 
         versions = conn.execute(
             "SELECT version FROM schema_migrations ORDER BY version"
         ).fetchall()
-        assert [int(row[0]) for row in versions] == [1, 4, 5, 6, 7, 8]
+        assert [int(row[0]) for row in versions] == [1, 4, 5, 6, 7, 8, 9]
     finally:
         conn.close()
 
@@ -816,6 +816,269 @@ def test_job_runs_v5_shape_is_upgraded_to_v6_with_created_started_contract(tmp_p
         versions = conn.execute(
             "SELECT version FROM schema_migrations ORDER BY version"
         ).fetchall()
-        assert [int(row[0]) for row in versions] == [1, 5, 6, 7, 8]
+        assert [int(row[0]) for row in versions] == [1, 5, 6, 7, 8, 9]
+    finally:
+        conn.close()
+
+
+# ---------------------------------------------------------------------------
+# v9: workflow_sources.is_system column
+# ---------------------------------------------------------------------------
+
+
+def _sqlite_column_names(conn: sqlite3.Connection, table: str) -> set[str]:
+    rows = conn.execute(f"PRAGMA table_info('{table}')").fetchall()
+    return {str(row[1]) for row in rows}
+
+
+def _make_metadata_db(db_path: Path) -> sqlite3.Connection:
+    """Open a new SQLite metadata DB with all migrations applied."""
+    conn = connect_metadata_db(db_path)
+    migrate_metadata_db(conn)
+    return conn
+
+
+def test_fresh_schema_has_is_system_column(tmp_path: Path) -> None:
+    """A freshly initialised metadata DB must have workflow_sources.is_system."""
+    conn = _make_metadata_db(tmp_path / "fresh.db")
+    try:
+        cols = _sqlite_column_names(conn, "workflow_sources")
+        assert "is_system" in cols, f"is_system missing from workflow_sources; columns: {cols}"
+    finally:
+        conn.close()
+
+
+def test_fresh_schema_is_system_defaults_to_zero(tmp_path: Path) -> None:
+    """New rows in workflow_sources must default is_system to 0 (false)."""
+    from workflows_mcp.metadata.repos.projects_repo import ProjectCreate, SQLiteProjectsRepository
+    from workflows_mcp.metadata.repos.workflow_sources_repo import (
+        SQLiteWorkflowSourcesRepository,
+        WorkflowSourceCreate,
+    )
+
+    conn = _make_metadata_db(tmp_path / "default.db")
+    try:
+        projects_repo = SQLiteProjectsRepository(conn)
+        project = projects_repo.create(
+            ProjectCreate(
+                name="Migration Test",
+                slug="migration-test",
+                palace="palace.migration",
+                default_wing="wing-a",
+                default_room="room-a",
+                fs_root="/tmp",
+                fs_allowlist=[],
+            )
+        )
+        source_dir = tmp_path / "wf-dir"
+        source_dir.mkdir()
+        sources_repo = SQLiteWorkflowSourcesRepository(conn)
+        record = sources_repo.create(
+            WorkflowSourceCreate(project_id=project.id, source_path=str(source_dir))
+        )
+        assert record.is_system is False
+
+        raw = conn.execute(
+            "SELECT is_system FROM workflow_sources WHERE source_id = ?",
+            (record.source_id,),
+        ).fetchone()
+        assert raw is not None
+        assert int(raw[0]) == 0
+    finally:
+        conn.close()
+
+
+def test_migration_schema_version_advances_to_nine(tmp_path: Path) -> None:
+    """After migration the schema_migrations table must contain version 9."""
+    from workflows_mcp.metadata.migrations import CURRENT_SCHEMA_VERSION
+
+    assert CURRENT_SCHEMA_VERSION == 9, (
+        f"Expected CURRENT_SCHEMA_VERSION == 9, got {CURRENT_SCHEMA_VERSION}"
+    )
+
+    conn = connect_metadata_db(tmp_path / "version.db")
+    try:
+        migrate_metadata_db(conn)
+        row = conn.execute(
+            "SELECT MAX(version) FROM schema_migrations"
+        ).fetchone()
+        assert row is not None
+        assert int(row[0]) >= 9
+    finally:
+        conn.close()
+
+
+def test_v8_to_v9_migration_adds_is_system_to_existing_workflow_sources(tmp_path: Path) -> None:
+    """True v8->v9 regression: ALTER TABLE branch adds is_system with default 0 for existing rows.
+
+    This test manually constructs a minimal pre-v9 SQLite metadata schema that
+    mirrors the state a real v8 DB would be in: workflow_sources exists without
+    the is_system column and schema_migrations contains version 8 as the max.
+    After calling migrate_metadata_db the column must exist and any pre-existing
+    row must carry the default value of 0 (false).
+    """
+    db_path = tmp_path / "pre_v9.db"
+
+    # Build a minimal v8 schema by hand — no is_system column on workflow_sources.
+    seed_conn = sqlite3.connect(db_path)
+    try:
+        seed_conn.executescript(
+            """
+            CREATE TABLE schema_migrations (
+                version INTEGER PRIMARY KEY,
+                applied_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+            );
+            CREATE TABLE projects (
+                id TEXT PRIMARY KEY,
+                name TEXT NOT NULL,
+                slug TEXT NOT NULL UNIQUE,
+                palace TEXT NOT NULL UNIQUE,
+                default_wing TEXT,
+                default_room TEXT,
+                fs_root TEXT NOT NULL,
+                fs_allowlist_json TEXT,
+                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+            );
+            CREATE TABLE mcp_tokens (id TEXT PRIMARY KEY);
+            CREATE TABLE project_token_bindings (
+                token_id TEXT NOT NULL,
+                project_id TEXT NOT NULL,
+                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                PRIMARY KEY (token_id, project_id),
+                FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE CASCADE,
+                FOREIGN KEY (token_id) REFERENCES mcp_tokens(id) ON DELETE CASCADE
+            );
+            CREATE TABLE workflow_sources (
+                source_id TEXT PRIMARY KEY,
+                project_id TEXT NOT NULL,
+                source_path TEXT NOT NULL,
+                checksum TEXT,
+                discovered_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE CASCADE
+            );
+            CREATE UNIQUE INDEX idx_workflow_sources_project_path_unique
+                ON workflow_sources(project_id, source_path);
+            CREATE TABLE watcher_queue (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                project_id TEXT NOT NULL,
+                path TEXT NOT NULL,
+                event_type TEXT NOT NULL,
+                reason TEXT NOT NULL,
+                enqueued_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                processed_at TEXT,
+                FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE CASCADE
+            );
+            CREATE UNIQUE INDEX idx_watcher_queue_active_dedupe
+                ON watcher_queue(project_id, path, event_type)
+                WHERE processed_at IS NULL;
+            CREATE TABLE encrypted_secret_metadata (
+                id TEXT PRIMARY KEY,
+                secret_name TEXT NOT NULL UNIQUE,
+                key_id TEXT,
+                encrypted_payload TEXT NOT NULL,
+                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+            );
+            CREATE TABLE server_settings (
+                id INTEGER PRIMARY KEY CHECK (id = 1),
+                setup_complete INTEGER NOT NULL DEFAULT 0,
+                updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+            );
+            CREATE TABLE postgresql_settings (
+                id INTEGER PRIMARY KEY CHECK (id = 1),
+                dsn_ref TEXT,
+                host TEXT NOT NULL DEFAULT '127.0.0.1',
+                port INTEGER NOT NULL DEFAULT 5432,
+                database TEXT NOT NULL DEFAULT 'workflows',
+                username TEXT NOT NULL DEFAULT 'workflows',
+                ssl_mode TEXT NOT NULL DEFAULT 'disable',
+                extra_params TEXT NOT NULL DEFAULT '',
+                container_name TEXT NOT NULL DEFAULT 'workflows-postgres',
+                container_image TEXT NOT NULL DEFAULT 'pgvector/pgvector:pg17',
+                container_host_port INTEGER NOT NULL DEFAULT 5432,
+                volume_name TEXT NOT NULL DEFAULT 'workflows-postgres-data',
+                legacy_dsn_upgrade_status TEXT NOT NULL DEFAULT 'not_started',
+                enabled INTEGER NOT NULL DEFAULT 0,
+                updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+            );
+            CREATE TABLE job_runs (
+                run_id TEXT PRIMARY KEY,
+                project_id TEXT,
+                token_id TEXT,
+                workflow_name TEXT NOT NULL,
+                status TEXT NOT NULL,
+                cancellable INTEGER NOT NULL DEFAULT 0,
+                result_summary TEXT,
+                error_summary TEXT,
+                timeout_seconds INTEGER NOT NULL DEFAULT 3600,
+                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                started_at TEXT,
+                updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                finished_at TEXT,
+                inputs_json TEXT,
+                execution_mode TEXT NOT NULL DEFAULT 'async',
+                execution_json TEXT,
+                execution_state_json TEXT,
+                FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE SET NULL,
+                FOREIGN KEY (token_id) REFERENCES mcp_tokens(id) ON DELETE SET NULL
+            );
+            CREATE INDEX idx_job_runs_started_at ON job_runs(started_at ASC, run_id ASC);
+            CREATE INDEX idx_job_runs_status ON job_runs(status ASC, started_at ASC, run_id ASC);
+            CREATE INDEX idx_job_runs_created_at ON job_runs(created_at ASC, run_id ASC);
+            CREATE INDEX idx_job_runs_workflow
+                ON job_runs(workflow_name ASC, created_at DESC, run_id ASC);
+            CREATE INDEX idx_job_runs_mode
+                ON job_runs(execution_mode ASC, created_at DESC, run_id ASC);
+            CREATE TABLE workflow_reload_state (
+                source_id TEXT PRIMARY KEY,
+                last_loaded_at TEXT,
+                status TEXT NOT NULL,
+                error_message TEXT,
+                FOREIGN KEY (source_id) REFERENCES workflow_sources(source_id) ON DELETE CASCADE
+            );
+            INSERT INTO schema_migrations(version) VALUES (1),(2),(3),(4),(5),(6),(7),(8);
+            """
+        )
+        # Insert a pre-existing workflow_sources row (no is_system column yet).
+        seed_conn.execute(
+            "INSERT INTO projects(id, name, slug, palace, fs_root) VALUES (?,?,?,?,?)",
+            ("proj-v8", "V8 Project", "v8-project", "palace.v8", "/tmp/v8"),
+        )
+        seed_conn.execute(
+            "INSERT INTO workflow_sources(source_id, project_id, source_path) VALUES (?,?,?)",
+            ("src-v8", "proj-v8", "/tmp/v8/workflows"),
+        )
+        seed_conn.commit()
+    finally:
+        seed_conn.close()
+
+    # Confirm is_system is absent before migration.
+    pre_cols = _sqlite_column_names(sqlite3.connect(db_path), "workflow_sources")
+    assert "is_system" not in pre_cols, "Pre-condition failed: is_system should not exist in v8 DB"
+
+    # Run migration via the official path.
+    conn = connect_metadata_db(db_path)
+    try:
+        migrate_metadata_db(conn)
+
+        # Column must now exist.
+        cols = _sqlite_column_names(conn, "workflow_sources")
+        assert "is_system" in cols, f"is_system missing after migration; columns: {cols}"
+
+        # Pre-existing row must have defaulted to 0.
+        row = conn.execute(
+            "SELECT is_system FROM workflow_sources WHERE source_id = ?",
+            ("src-v8",),
+        ).fetchone()
+        assert row is not None
+        assert int(row[0]) == 0, f"Expected is_system=0 for pre-existing row, got {row[0]}"
+
+        # Version 9 recorded.
+        versions = conn.execute(
+            "SELECT version FROM schema_migrations ORDER BY version"
+        ).fetchall()
+        assert 9 in [int(r[0]) for r in versions]
     finally:
         conn.close()

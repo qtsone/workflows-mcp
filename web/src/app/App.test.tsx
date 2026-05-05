@@ -1187,6 +1187,92 @@ describe("App", () => {
     });
   });
 
+  it("renders system source with a system badge and no delete button", async () => {
+    installApiMock({
+      workflowSources: [
+        {
+          source_id: "sys-src-1",
+          project_id: "system-project",
+          source_path: "/builtin/templates/memory",
+          checksum: null,
+          discovered_at: "2026-01-01T00:00:00Z",
+          last_loaded_at: "2026-01-01T00:00:00Z",
+          status: "loaded",
+          error_message: null,
+          is_system: true,
+        },
+        {
+          source_id: "src-1",
+          project_id: "p1",
+          source_path: "/workspace/workflows",
+          checksum: null,
+          discovered_at: "2026-04-30T00:00:00Z",
+          last_loaded_at: "2026-04-30T00:10:00Z",
+          status: "loaded",
+          error_message: null,
+          is_system: false,
+        },
+      ],
+    });
+    renderAtPath("/workflows");
+
+    const sourceTable = await screen.findByRole("table", { name: /workflow sources/i });
+
+    // System source row must show a system/read-only indicator
+    const systemRow = within(sourceTable).getByRole("row", {
+      name: /expand workflow source \/builtin\/templates\/memory/i,
+    });
+    expect(within(systemRow).getByText(/system/i)).toBeTruthy();
+
+    // System source row must NOT have an active delete button
+    expect(within(systemRow).queryByRole("button", { name: /^delete$/i })).toBeNull();
+
+    // User source row still has delete button
+    const userRow = within(sourceTable).getByRole("row", {
+      name: /expand workflow source \/workspace\/workflows/i,
+    });
+    expect(within(userRow).getByRole("button", { name: /^delete$/i })).toBeTruthy();
+  });
+
+  it("groups system1-scan workflow under the system source", async () => {
+    installApiMock({
+      workflows: [
+        {
+          name: "system1-scan",
+          description: "Built-in system scan workflow",
+          version: "1.0.0",
+          tags: ["system"],
+          source_path: "/builtin/templates/memory/system1-scan.yaml",
+        },
+      ],
+      workflowSources: [
+        {
+          source_id: "sys-src-1",
+          project_id: "system-project",
+          source_path: "/builtin/templates/memory",
+          checksum: null,
+          discovered_at: "2026-01-01T00:00:00Z",
+          last_loaded_at: "2026-01-01T00:00:00Z",
+          status: "loaded",
+          error_message: null,
+          is_system: true,
+        },
+      ],
+    });
+    renderAtPath("/workflows");
+
+    const sourceTable = await screen.findByRole("table", { name: /workflow sources/i });
+    const systemRow = within(sourceTable).getByRole("row", {
+      name: /expand workflow source \/builtin\/templates\/memory/i,
+    });
+    fireEvent.click(within(systemRow).getByRole("button", { name: /expand workflow source/i }));
+
+    const workflowsTable = await screen.findByRole("table", {
+      name: /workflows loaded from \/builtin\/templates\/memory/i,
+    });
+    expect(within(workflowsTable).getByRole("row", { name: /open workflow system1-scan details/i })).toBeTruthy();
+  });
+
   it("renders setup checklist with status cards and next-action links", async () => {
     installApiMock();
     renderAtPath("/setup");

@@ -322,6 +322,89 @@ def test_reload_callback_errors_are_mapped_to_structured_admin_errors(
     assert _error_code(response.json()) == expected_code
 
 
+@pytest.fixture()
+def app_client_with_lifespan(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> TestClient:
+    """Like app_client but runs ASGI lifespan so system source seeding occurs."""
+    base_dir = tmp_path / ".workflows"
+    monkeypatch.setenv("WORKFLOWS_BOOTSTRAP_TOKEN", _MCP_BOOTSTRAP_TOKEN)
+    bootstrap_if_needed(
+        config_dir=base_dir,
+        host="127.0.0.1",
+        port=8000,
+        admin_password=_ADMIN_PASSWORD,
+    )
+    with TestClient(build_app(base_dir=base_dir), raise_server_exceptions=False) as client:
+        yield client
+
+
+def test_source_list_includes_is_system_field(app_client_with_lifespan: TestClient) -> None:
+    """All source records in the list response include is_system (bool)."""
+    _login_and_csrf(app_client_with_lifespan)
+
+    list_sources = app_client_with_lifespan.get("/api/admin/v1/workflows/sources")
+    assert list_sources.status_code == 200
+    sources = list_sources.json()["sources"]
+    assert len(sources) >= 1, "Expected at least the seeded system source"
+    for source in sources:
+        assert "is_system" in source, f"is_system field missing from source: {source}"
+        assert isinstance(source["is_system"], bool), (
+            f"is_system must be bool, got {type(source['is_system'])}"
+        )
+
+
+def test_system_source_has_is_system_true(app_client_with_lifespan: TestClient) -> None:
+    """The seeded system source row has is_system=True."""
+    _login_and_csrf(app_client_with_lifespan)
+
+    list_sources = app_client_with_lifespan.get("/api/admin/v1/workflows/sources")
+    assert list_sources.status_code == 200
+    sources = list_sources.json()["sources"]
+    system_sources = [s for s in sources if s.get("is_system") is True]
+    assert len(system_sources) >= 1, "Expected at least one system source (is_system=True)"
+
+
+def test_user_source_has_is_system_false(app_client: TestClient, tmp_path: Path) -> None:
+    """A user-created source has is_system=False."""
+    csrf_token = _login_and_csrf(app_client)
+    project_id = _create_project(app_client, csrf_token)
+    workflow_dir = tmp_path / "wf-user-source"
+    workflow_dir.mkdir(parents=True)
+
+    create_source = app_client.post(
+        "/api/admin/v1/workflows/sources",
+        json={"project_id": project_id, "source_path": str(workflow_dir)},
+        headers={"X-CSRF-Token": csrf_token},
+    )
+    assert create_source.status_code == 201
+    source = create_source.json()
+    assert "is_system" in source, "is_system missing from create response"
+    assert source["is_system"] is False
+
+
+def test_delete_system_source_returns_403_with_structured_error(
+    app_client_with_lifespan: TestClient,
+) -> None:
+    """Deleting a system source returns HTTP 403 with code system_workflow_source_protected."""
+    csrf_token = _login_and_csrf(app_client_with_lifespan)
+
+    list_sources = app_client_with_lifespan.get("/api/admin/v1/workflows/sources")
+    assert list_sources.status_code == 200
+    sources = list_sources.json()["sources"]
+    system_source = next((s for s in sources if s.get("is_system") is True), None)
+    assert system_source is not None, "No system source found to test deletion protection"
+
+    response = app_client_with_lifespan.delete(
+        f"/api/admin/v1/workflows/sources/{system_source['source_id']}",
+        headers={"X-CSRF-Token": csrf_token},
+    )
+    assert response.status_code == 403, (
+        f"Expected 403 for system source delete, got {response.status_code}: {response.text}"
+    )
+    assert _error_code(response.json()) == "system_workflow_source_protected", (
+        f"Expected error code system_workflow_source_protected, got: {response.json()}"
+    )
+
+
 def test_workflow_detail_reports_missing_raw_yaml_without_failing(
     app_client: TestClient, tmp_path: Path
 ) -> None:

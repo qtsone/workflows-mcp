@@ -25,6 +25,7 @@ from workflows_mcp.metadata.repos.workflow_sources_repo import (
     DuplicateWorkflowSourceError,
     InvalidWorkflowSourcePathError,
     SQLiteWorkflowSourcesRepository,
+    SystemWorkflowSourceProtectedError,
     WorkflowSourceCreate,
     WorkflowSourceNotFoundError,
     WorkflowSourceProjectNotFoundError,
@@ -52,6 +53,7 @@ class WorkflowSourceResponse(BaseModel):
     last_loaded_at: str | None
     status: str | None
     error_message: str | None
+    is_system: bool
 
 
 class WorkflowSourcesListResponse(BaseModel):
@@ -188,6 +190,7 @@ def _to_source_response(source: WorkflowSourceRecord) -> WorkflowSourceResponse:
         last_loaded_at=source.last_loaded_at,
         status=source.status,
         error_message=source.error_message,
+        is_system=source.is_system,
     )
 
 
@@ -307,6 +310,12 @@ async def delete_workflow_source(
     try:
         try:
             repo.delete(source_id)
+        except SystemWorkflowSourceProtectedError as exc:
+            raise _error(
+                status.HTTP_403_FORBIDDEN,
+                "system_workflow_source_protected",
+                str(exc),
+            ) from exc
         except WorkflowSourceNotFoundError as exc:
             raise _error(status.HTTP_404_NOT_FOUND, "workflow_source_not_found", str(exc)) from exc
         return DeleteWorkflowSourceResponse(deleted=True)

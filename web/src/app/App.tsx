@@ -623,6 +623,7 @@ type WorkflowSourceModel = {
   discoveredAt: string;
   lastLoadedAt: string | null;
   errorMessage: string | null;
+  isSystem: boolean;
 };
 
 type RunRowModel = {
@@ -1282,6 +1283,7 @@ function toWorkflowSourceModel(payload: unknown): WorkflowSourceModel {
     discoveredAt: typeof obj.discovered_at === "string" ? obj.discovered_at : "",
     lastLoadedAt: typeof obj.last_loaded_at === "string" ? obj.last_loaded_at : null,
     errorMessage: typeof obj.error_message === "string" ? obj.error_message : null,
+    isSystem: obj.is_system === true,
   };
 }
 
@@ -5631,40 +5633,45 @@ export function App(): JSX.Element {
                                 className="workflow-source-row"
                                 aria-label={`Expand workflow source ${source.sourcePath} status ${sourceStatusLabel} workflows ${sourceWorkflows.length}`}
                               >
-                                <th scope="row">
-                                  <button
-                                    type="button"
-                                    className="workflow-source-toggle"
-                                    aria-expanded={sourceExpanded}
-                                    aria-controls={`workflow-source-${source.sourceId}-workflows`}
-                                    aria-label={`${sourceExpanded ? "Collapse" : "Expand"} workflow source ${source.sourcePath}`}
-                                    onClick={() => toggleWorkflowSource(source.sourceId)}
-                                  >
-                                    <span aria-hidden="true">{sourceExpanded ? "v" : ">"}</span>
-                                    <span className="workflow-source-toggle__text">
-                                      <span className="workflow-source-toggle__path">{source.sourcePath}</span>
-                                    </span>
-                                  </button>
-                                </th>
-                                <td>
-                                  <div className="workflow-source-state">
-                                    <StatusBadge tone={statusToneForValue(sourceStatus)}>{sourceStatusLabel}</StatusBadge>
-                                    <span>
-                                      {sourceWorkflows.length} workflow{sourceWorkflows.length === 1 ? "" : "s"}
-                                    </span>
-                                  </div>
-                                </td>
-                                <td className="workflow-source-last-loaded">{source.lastLoadedAt ?? "Never"}</td>
-                                <td className="workflow-source-actions-cell">
-                                  <button
-                                    type="button"
-                                    className="danger-button workflow-source-delete-button"
-                                    disabled={workflowActionPendingId !== null}
-                                    onClick={() => void onDeleteWorkflowSource(source.sourceId)}
-                                  >
-                                    Delete
-                                  </button>
-                                </td>
+                                 <th scope="row">
+                                   <button
+                                     type="button"
+                                     className="workflow-source-toggle"
+                                     aria-expanded={sourceExpanded}
+                                     aria-controls={`workflow-source-${source.sourceId}-workflows`}
+                                     aria-label={`${sourceExpanded ? "Collapse" : "Expand"} workflow source ${source.sourcePath}`}
+                                     onClick={() => toggleWorkflowSource(source.sourceId)}
+                                   >
+                                     <span aria-hidden="true">{sourceExpanded ? "v" : ">"}</span>
+                                     <span className="workflow-source-toggle__text">
+                                       <span className="workflow-source-toggle__path">{source.sourcePath}</span>
+                                       {source.isSystem ? (
+                                         <span className="workflow-source-system-badge">System</span>
+                                       ) : null}
+                                     </span>
+                                   </button>
+                                 </th>
+                                 <td>
+                                   <div className="workflow-source-state">
+                                     <StatusBadge tone={statusToneForValue(sourceStatus)}>{sourceStatusLabel}</StatusBadge>
+                                     <span>
+                                       {sourceWorkflows.length} workflow{sourceWorkflows.length === 1 ? "" : "s"}
+                                     </span>
+                                   </div>
+                                 </td>
+                                 <td className="workflow-source-last-loaded">{source.lastLoadedAt ?? "Never"}</td>
+                                 <td className="workflow-source-actions-cell">
+                                   {source.isSystem ? null : (
+                                     <button
+                                       type="button"
+                                       className="danger-button workflow-source-delete-button"
+                                       disabled={workflowActionPendingId !== null}
+                                       onClick={() => void onDeleteWorkflowSource(source.sourceId)}
+                                     >
+                                       Delete
+                                     </button>
+                                   )}
+                                 </td>
                               </tr>
                               {sourceExpanded ? (
                                 <tr className="workflow-source-detail-row">

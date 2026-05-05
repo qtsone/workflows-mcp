@@ -4,7 +4,7 @@ Phase 5 TDD — RED written before workflow implementation.
 
 Contract tested:
 - system1-scan.yaml is a valid built-in workflow (loaded from
-  src/workflows_mcp/builtin_workflows/).
+  src/workflows_mcp/templates/memory/).
 - It wires TreeSitter parse output to Memory entity + relation storage.
 - A first run stores File/Module/symbol entities and structural relations.
 - A second unchanged run inserts zero new rows in all three tables:
@@ -153,7 +153,8 @@ async def workflow_context() -> AsyncIterator[MagicMock]:
         Path(__file__).parent.parent
         / "src"
         / "workflows_mcp"
-        / "builtin_workflows"
+        / "templates"
+        / "memory"
     )
 
     # Ensure MemoryExecutor picks up the same DB credentials as the test fixture.

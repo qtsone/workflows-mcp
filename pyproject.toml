@@ -86,7 +86,13 @@ packages = ["src/workflows_mcp"]
 
 [tool.hatch.build.targets.sdist]
 include = [
-    "/src/workflows_mcp/static/admin/**",
+    "/src/**",
+    "/tests/**",
+    "/pyproject.toml",
+    "/README.md",
+    "/CHANGELOG.md",
+    "/LICENSE",
+    "/schema.json",
 ]
 
 [tool.ruff]

@@ -4,11 +4,13 @@ This document describes the ingestion path used by Track 4 structural extraction
 
 ## 9. Workflow Loading and Runtime Placement
 
-### 9.1 Built-in workflow directory
+### 9.1 Packaged workflow directory
 
-Packaged built-in workflows are loaded from `builtin_workflows/`.
+Packaged Track 4 ingestion workflows load from `src/workflows_mcp/templates/memory` at server runtime.
 
-Track 4 ingestion flows (including system1-scan) are referenced from that packaged directory at server runtime. The older `templates/builtin/` path is not used.
+`system1-scan.yaml` is packaged in that directory and executes through the same workflow registry and source resolution path as other registered workflow sources.
+
+The System workflow source for `templates/memory` is seeded and registered as `is_system=True`. System sources are read-only and protected from deletion.
 
 ## 10. Structural Graph Persistence
 

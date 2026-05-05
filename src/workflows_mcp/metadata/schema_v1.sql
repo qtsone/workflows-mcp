@@ -142,6 +142,7 @@ CREATE TABLE IF NOT EXISTS workflow_sources (
     project_id TEXT NOT NULL,
     source_path TEXT NOT NULL,
     checksum TEXT,
+    is_system INTEGER NOT NULL DEFAULT 0,
     discovered_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
     FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE CASCADE
 );

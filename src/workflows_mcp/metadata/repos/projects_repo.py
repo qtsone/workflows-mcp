@@ -156,6 +156,27 @@ class SQLiteProjectsRepository:
             )
         return self._row_to_record(row)
 
+    def get_by_slug(self, slug: str) -> ProjectRecord | None:
+        row = self._conn.execute(
+            """
+            SELECT id, name, slug, palace, default_wing, default_room, fs_root,
+                   fs_allowlist_json, created_at, updated_at
+            FROM projects
+            WHERE slug = ?
+            """,
+            (slug,),
+        ).fetchone()
+        if row is None:
+            return None
+        return self._row_to_record(row)
+
+    def get_or_create(self, data: ProjectCreate) -> ProjectRecord:
+        """Return the existing project matching slug, or create it idempotently."""
+        existing = self.get_by_slug(data.slug)
+        if existing is not None:
+            return existing
+        return self.create(data)
+
     def get_by_id(self, project_id: str) -> ProjectRecord | None:
         row = self._conn.execute(
             """
