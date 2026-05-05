@@ -642,6 +642,7 @@ def create_default_registry() -> ExecutorRegistry:
         ReadJSONStateExecutor,
         WriteJSONStateExecutor,
     )
+    from .executors_treesitter import TreeSitterExecutor
     from .executors_workflow import WorkflowExecutor
 
     registry = ExecutorRegistry()
@@ -675,6 +676,9 @@ def create_default_registry() -> ExecutorRegistry:
 
     # Register SQL executor
     registry.register(SqlExecutor())
+
+    # Register TreeSitter executor
+    registry.register(TreeSitterExecutor())
 
     # Note: MemoryExecutor is registered conditionally at server startup
     # only when a memory database is configured (MEMORY_DB_HOST)

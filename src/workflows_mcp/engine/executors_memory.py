@@ -32,6 +32,7 @@ class MemoryInput(BlockInput):
         "ensure_item",
         "store_entities",
         "store_relations",
+        "store_relations_by_qname",
         "store_memories",
         "store_entity_embeddings",
         "archive_memories",

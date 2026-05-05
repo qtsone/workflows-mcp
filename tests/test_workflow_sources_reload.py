@@ -245,6 +245,13 @@ def test_update_reload_state_upserts_and_cascade_delete(tmp_path: Path) -> None:
         conn.close()
 
 
+_BUILTIN_WORKFLOW_NAMES: frozenset[str] = frozenset({"system1-scan"})
+
+
+def _is_builtin(name: str) -> bool:
+    return name in _BUILTIN_WORKFLOW_NAMES
+
+
 def _write_workflow_yaml(directory: Path, *, filename: str, name: str) -> Path:
     target = directory / filename
     target.write_text(
@@ -391,8 +398,10 @@ async def test_server_load_workflows_ignores_env_and_uses_sqlite_sources(
 
         summary = server.load_workflows(resources)
 
-        assert summary.workflow_names == ["wf-sqlite"]
-        assert resources.workflow_registry.list_names() == ["wf-sqlite"]
+        configured_names = [n for n in summary.workflow_names if not _is_builtin(n)]
+        assert configured_names == ["wf-sqlite"]
+        registry_names = [n for n in resources.workflow_registry.list_names() if not _is_builtin(n)]
+        assert registry_names == ["wf-sqlite"]
         assert "wf-env" not in resources.workflow_registry.list_names()
         reloaded_sources = sources_repo.list()
         assert [(source.status, source.error_message) for source in reloaded_sources] == [
@@ -422,8 +431,11 @@ async def test_server_load_workflows_marks_all_configured_sources_failed_on_erro
         )
 
         initial = server.load_workflows(resources)
-        assert initial.workflow_names == ["wf-good"]
-        assert resources.workflow_registry.list_names() == ["wf-good"]
+        assert [n for n in initial.workflow_names if not _is_builtin(n)] == ["wf-good"]
+        initial_registry = [
+            n for n in resources.workflow_registry.list_names() if not _is_builtin(n)
+        ]
+        assert initial_registry == ["wf-good"]
 
         _write_invalid_workflow_yaml(bad_source, filename="broken.yaml")
         sources_repo.create(
@@ -434,7 +446,8 @@ async def test_server_load_workflows_marks_all_configured_sources_failed_on_erro
             server.load_workflows(resources)
 
         assert exc.value.code == "workflow_invalid_definition"
-        assert resources.workflow_registry.list_names() == ["wf-good"]
+        after_fail = [n for n in resources.workflow_registry.list_names() if not _is_builtin(n)]
+        assert after_fail == ["wf-good"]
         reloaded_sources = sources_repo.list()
         assert [source.status for source in reloaded_sources] == ["failed", "failed"]
         assert all(
@@ -461,14 +474,15 @@ async def test_server_load_workflows_empty_sources_clears_registry(tmp_path: Pat
         )
 
         initial = server.load_workflows(resources)
-        assert initial.workflow_names == ["wf-a"]
-        assert resources.workflow_registry.list_names() == ["wf-a"]
+        assert [n for n in initial.workflow_names if not _is_builtin(n)] == ["wf-a"]
+        initial_reg = [n for n in resources.workflow_registry.list_names() if not _is_builtin(n)]
+        assert initial_reg == ["wf-a"]
 
         sources_repo.delete(created.source_id)
         reloaded = server.load_workflows(resources)
 
-        assert reloaded.workflow_count == 0
-        assert resources.workflow_registry.list_names() == []
+        assert [n for n in reloaded.workflow_names if not _is_builtin(n)] == []
+        assert [n for n in resources.workflow_registry.list_names() if not _is_builtin(n)] == []
     finally:
         await stop_resources(resources)
 

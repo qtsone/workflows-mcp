@@ -42,6 +42,7 @@ from . import (  # noqa: F401
     executors_memory,  # Memory executor
     executors_sql,  # SQL database executor
     executors_state,  # JSON state executors
+    executors_treesitter,  # TreeSitter static analysis executor
     executors_workflow,  # Workflow executor (ADR-008)
 )
 from .block import BlockInput, BlockOutput
@@ -103,6 +104,11 @@ from .executors_state import (
     WriteJSONStateExecutor,
     WriteJSONStateInput,
     WriteJSONStateOutput,
+)
+from .executors_treesitter import (
+    TreeSitterExecutor,
+    TreeSitterInput,
+    TreeSitterOutput,
 )
 from .executors_workflow import (
     WorkflowExecutor,
@@ -180,4 +186,8 @@ __all__ = [
     "MemoryExecutor",
     "MemoryInput",
     "MemoryOutput",
+    # TreeSitter Executors
+    "TreeSitterExecutor",
+    "TreeSitterInput",
+    "TreeSitterOutput",
 ]

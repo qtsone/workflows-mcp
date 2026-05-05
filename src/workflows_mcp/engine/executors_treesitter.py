@@ -1,0 +1,397 @@
+"""TreeSitter block executor for static code analysis.
+
+Parses source files using tree-sitter grammars and emits a structured graph
+of entities (File, Module, Class, Function, Method) and relations (CONTAINS,
+IMPORTS, INHERITS_FROM, CALLS) suitable for memory graph ingestion.
+
+Architecture (ADR-006):
+- Returns TreeSitterOutput directly on success
+- Raises exceptions on failure
+- Stateless executor (singleton-safe)
+"""
+
+from __future__ import annotations
+
+import hashlib
+import logging
+from pathlib import Path
+from typing import Any, ClassVar, cast
+
+from pydantic import Field
+
+from .block import BlockInput, BlockOutput
+from .execution import Execution
+from .executor_base import (
+    BlockExecutor,
+    ExecutorCapabilities,
+    ExecutorSecurityLevel,
+)
+from .treesitter_extractors import (
+    extract_document,
+    extract_go,
+    extract_javascript,
+    extract_package_name,
+    extract_python,
+    extract_rust,
+    extract_typescript,
+)
+from .treesitter_languages import (
+    SupportedLanguage,
+    content_hash,
+    detect_language,
+    get_parser,
+)
+
+logger = logging.getLogger(__name__)
+
+
+# ---------------------------------------------------------------------------
+# Input / Output models
+# ---------------------------------------------------------------------------
+
+
+class TreeSitterInput(BlockInput):
+    """Input for the TreeSitter executor.
+
+    Security note: this is a TRUSTED executor that reads the provided path
+    directly with no boundary enforcement. The caller is responsible for
+    ensuring the path is within the intended scope before invoking this block.
+    """
+
+    path: str = Field(
+        description=(
+            "Path to the source file to parse. May be absolute or workspace-relative. "
+            "No path sandboxing is applied — the caller is responsible for scoping."
+        )
+    )
+    language: SupportedLanguage | None = Field(
+        default=None,
+        description=(
+            "Override language detection. If omitted, language is inferred from extension."
+        ),
+    )
+    repo_relative_path: str | None = Field(
+        default=None,
+        description="Path of the file relative to the repository root (used for qualified names).",
+    )
+    palace: str | None = Field(
+        default=None,
+        description="Memory palace name (used for stable ID generation).",
+    )
+    item_id: str | None = Field(
+        default=None,
+        description="Source item ID (used for stable ID generation).",
+    )
+
+
+class TreeSitterOutput(BlockOutput):
+    """Output for the TreeSitter executor."""
+
+    language: str = Field(description="Detected or overridden language.")
+    content_hash: str = Field(description="SHA-256 hex digest of the file content.")
+    size_bytes: int = Field(description="File size in bytes.")
+    mtime_ns: int = Field(description="File modification time in nanoseconds.")
+    module_qualified_name: str = Field(
+        description="Qualified name of the top-level module entity."
+    )
+    entities: list[dict[str, Any]] = Field(
+        default_factory=list,
+        description="Extracted graph entities (File, Module, …).",
+    )
+    relations: list[dict[str, Any]] = Field(
+        default_factory=list,
+        description="Extracted graph relations (CONTAINS, IMPORTS, …).",
+    )
+    unresolved_imports: list[str] = Field(
+        default_factory=list,
+        description="Import strings that could not be resolved to known entities.",
+    )
+
+
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
+
+
+def _stable_id(palace: str, item_id: str, qualified_name: str, entity_type: str) -> str:
+    """Compute a 32-character stable ID for an entity.
+
+    Formula: sha256(palace + ':' + item_id + ':' + qualified_name + ':' + entity_type)[:32]
+    Empty strings are used for missing palace / item_id components.
+    """
+    raw = f"{palace}:{item_id}:{qualified_name}:{entity_type}"
+    return hashlib.sha256(raw.encode("utf-8")).hexdigest()[:32]
+
+
+def _module_qname(path: str, repo_relative_path: str | None) -> str:
+    """Derive a module qualified name from the file path.
+
+    Uses repo_relative_path when available; falls back to the basename stem.
+    Converts path separators to dots and strips common source-root prefixes.
+
+    Special case: pkg/__init__.py -> pkg (not pkg.__init__).
+    Top-level __init__.py with no parent package falls back to the stem
+    "__init__" so the qualified name is never empty.
+    """
+    if repo_relative_path:
+        rel = repo_relative_path
+    else:
+        rel = Path(path).name
+
+    rel_path = Path(rel)
+
+    # __init__.py -> parent package name
+    if rel_path.name == "__init__.py":
+        parent = rel_path.parent
+        if str(parent) == ".":
+            # top-level __init__.py — use "__init__" to avoid an empty qname
+            qname = "__init__"
+        else:
+            qname = str(parent).replace("/", ".").replace("\\", ".")
+    else:
+        # Strip extension
+        stem = rel_path.with_suffix("")
+        # Convert separators to dots
+        qname = str(stem).replace("/", ".").replace("\\", ".")
+
+    # Strip leading src. prefix (common convention)
+    if qname.startswith("src."):
+        qname = qname[4:]
+    return qname
+
+
+# ---------------------------------------------------------------------------
+# Executor
+# ---------------------------------------------------------------------------
+
+
+class TreeSitterExecutor(BlockExecutor):
+    """Parse source files and emit a static-analysis entity graph.
+
+    Security note: this executor is classified TRUSTED and reads caller-supplied
+    paths without boundary enforcement. Path scoping is the caller's
+    responsibility — do not expose this block to untrusted input without
+    a prior path-validation step in the workflow.
+
+    Code languages (Python, TypeScript, TSX, JavaScript, Go, Rust) emit File
+    and Module entities plus language-specific symbols (Class, Function, Method)
+    and relations (CONTAINS, IMPORTS, INHERITS_FROM, CALLS).
+
+    Document languages (Markdown, YAML, JSON) are file-only: they emit exactly
+    one File entity and no Module, Class, Function, or Method entities, and no
+    relations. `module_qualified_name` on the output is non-empty for output
+    model compatibility but no Module entity is emitted.
+
+    Returns language="unsupported" with empty entities for unknown file types.
+    """
+
+    type_name: ClassVar[str] = "TreeSitter"
+    input_type: ClassVar[type[BlockInput]] = TreeSitterInput
+    output_type: ClassVar[type[BlockOutput]] = TreeSitterOutput
+
+    security_level: ClassVar[ExecutorSecurityLevel] = ExecutorSecurityLevel.TRUSTED
+    capabilities: ClassVar[ExecutorCapabilities] = ExecutorCapabilities(can_read_files=True)
+
+    async def execute(  # type: ignore[override]
+        self, inputs: TreeSitterInput, context: Execution
+    ) -> TreeSitterOutput:
+        """Parse a source file and return a graph of entities and relations.
+
+        Reads the file at inputs.path directly. No path boundary checks are
+        performed — the caller is responsible for path scoping before invoking
+        this executor.
+
+        For unsupported extensions, returns language="unsupported" with empty
+        entities and relations rather than raising an exception.
+
+        Raises:
+            FileNotFoundError: If the path does not exist (ADR-006: propagated as-is).
+            OSError: On other I/O failures (ADR-006: propagated as-is).
+        """
+        file_path = Path(inputs.path)
+        text = file_path.read_text(encoding="utf-8", errors="replace")
+        file_hash = content_hash(text)
+        stat = file_path.stat()
+        size_bytes = stat.st_size
+        mtime_ns = stat.st_mtime_ns
+
+        # Resolve language
+        language: str = inputs.language if inputs.language is not None else detect_language(
+            inputs.path
+        )
+
+        if language == "unsupported":
+            logger.info("TreeSitter: unsupported extension for %s", inputs.path)
+            return TreeSitterOutput(
+                language="unsupported",
+                content_hash=file_hash,
+                size_bytes=size_bytes,
+                mtime_ns=mtime_ns,
+                module_qualified_name="",
+                entities=[],
+                relations=[],
+                unresolved_imports=[],
+            )
+
+        # Parse the file — language is a supported non-"unsupported" value at this point
+        parser = get_parser(cast(SupportedLanguage, language))
+        tree = parser.parse(text.encode("utf-8", errors="replace"))
+
+        # Stable-ID components
+        palace = inputs.palace or ""
+        item_id = inputs.item_id or ""
+
+        def _sid(qname: str, entity_type: str) -> str:
+            return _stable_id(palace, item_id, qname, entity_type)
+
+        # Derive qualified names
+        file_qname = str(file_path)
+        module_qname = _module_qname(inputs.path, inputs.repo_relative_path)
+
+        # For Go, override module_qname with the package name from the source
+        if language == "go":
+            pkg_name = extract_package_name(tree.root_node)
+            if pkg_name:
+                module_qname = pkg_name
+
+        # Build File entity
+        file_entity: dict[str, Any] = {
+            "qualified_name": file_qname,
+            "stable_id": _stable_id(palace, item_id, file_qname, "File"),
+            "entity_type": "File",
+            "name": file_path.name,
+            "metadata": {
+                "path": str(file_path),
+                "language": language,
+                "syntax_errors": tree.root_node.has_error,
+            },
+            "confidence": 1.0,
+        }
+
+        logger.info(
+            "TreeSitter: parsed %s as %s (errors=%s)",
+            inputs.path,
+            language,
+            tree.root_node.has_error,
+        )
+
+        # Document languages (Markdown, YAML, JSON) are file-only: emit exactly
+        # one File entity, no Module/Class/Function/Method entities, and no
+        # relations. module_qualified_name is set for output model compatibility
+        # and traceability, but no Module entity is emitted.
+        if language in ("markdown", "yaml", "json"):
+            entities, relations = extract_document(file_entity=file_entity)
+            return TreeSitterOutput(
+                language=language,
+                content_hash=file_hash,
+                size_bytes=size_bytes,
+                mtime_ns=mtime_ns,
+                module_qualified_name=module_qname,
+                entities=entities,
+                relations=relations,
+                unresolved_imports=[],
+            )
+
+        # Code languages: build Module entity and File->Module CONTAINS relation,
+        # then delegate to language-specific extractor for symbols and relations.
+
+        # Build Module entity — name is the last dotted component of qname
+        module_name = module_qname.split(".")[-1] if module_qname else module_qname
+        module_entity: dict[str, Any] = {
+            "qualified_name": module_qname,
+            "stable_id": _stable_id(palace, item_id, module_qname, "Module"),
+            "entity_type": "Module",
+            "name": module_name,
+            "metadata": {
+                "source_path": str(file_path),
+                "language": language,
+            },
+            "confidence": 1.0,
+        }
+
+        # Build CONTAINS relation File -> Module
+        contains_relation: dict[str, Any] = {
+            "source_qname": file_qname,
+            "source_entity_type": "File",
+            "target_qname": module_qname,
+            "target_entity_type": "Module",
+            "relation_type": "CONTAINS",
+            "confidence": 1.0,
+            "metadata": {},
+        }
+
+        # Delegate to language-specific extractor for additional entities/relations
+        if language == "go":
+            entities, relations = extract_go(
+                root=tree.root_node,
+                file_qname=file_qname,
+                module_qname=module_qname,
+                file_entity=file_entity,
+                module_entity=module_entity,
+                contains_file_module=contains_relation,
+                stable_id_fn=_sid,
+            )
+        elif language == "python":
+            entities, relations = extract_python(
+                root=tree.root_node,
+                file_qname=file_qname,
+                module_qname=module_qname,
+                file_entity=file_entity,
+                module_entity=module_entity,
+                contains_file_module=contains_relation,
+                stable_id_fn=_sid,
+            )
+        elif language in ("typescript", "tsx"):
+            entities, relations = extract_typescript(
+                root=tree.root_node,
+                file_qname=file_qname,
+                module_qname=module_qname,
+                file_entity=file_entity,
+                module_entity=module_entity,
+                contains_file_module=contains_relation,
+                stable_id_fn=_sid,
+            )
+        elif language == "javascript":
+            entities, relations = extract_javascript(
+                root=tree.root_node,
+                file_qname=file_qname,
+                module_qname=module_qname,
+                file_entity=file_entity,
+                module_entity=module_entity,
+                contains_file_module=contains_relation,
+                stable_id_fn=_sid,
+            )
+        elif language == "rust":
+            entities, relations = extract_rust(
+                root=tree.root_node,
+                file_qname=file_qname,
+                module_qname=module_qname,
+                file_entity=file_entity,
+                module_entity=module_entity,
+                contains_file_module=contains_relation,
+                stable_id_fn=_sid,
+            )
+        else:
+            entities = [file_entity, module_entity]
+            relations = [contains_relation]
+
+        # Collect unresolved import targets (deduplicated, sorted)
+        unresolved_imports = sorted(
+            {
+                r["target_qname"]
+                for r in relations
+                if r["relation_type"] == "IMPORTS"
+                and r.get("metadata", {}).get("resolution") == "unresolved"
+            }
+        )
+
+        return TreeSitterOutput(
+            language=language,
+            content_hash=file_hash,
+            size_bytes=size_bytes,
+            mtime_ns=mtime_ns,
+            module_qualified_name=module_qname,
+            entities=entities,
+            relations=relations,
+            unresolved_imports=unresolved_imports,
+        )

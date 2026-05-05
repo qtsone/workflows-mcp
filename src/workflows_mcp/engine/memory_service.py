@@ -7,6 +7,7 @@ regardless of the caller.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
 import math
@@ -62,6 +63,7 @@ MemoryOperation = Literal[
     "ensure_item",
     "store_entities",
     "store_relations",
+    "store_relations_by_qname",
     "store_memories",
     "store_entity_embeddings",
     "archive_memories",
@@ -82,6 +84,7 @@ MEMORY_OPERATION_ENUM: tuple[MemoryOperation, ...] = (
     "ensure_item",
     "store_entities",
     "store_relations",
+    "store_relations_by_qname",
     "store_memories",
     "store_entity_embeddings",
     "archive_memories",
@@ -627,6 +630,7 @@ class ManageMemoryRequest(BaseModel):
         "ensure_item",
         "store_entities",
         "store_relations",
+        "store_relations_by_qname",
         "store_memories",
         "store_entity_embeddings",
         "archive_memories",
@@ -655,6 +659,17 @@ class ManageMemoryRequest(BaseModel):
     raw_relations: list[dict[str, Any]] | None = Field(
         default=None,
         description="Raw relation dicts for store_relations",
+    )
+    raw_qname_relations: list[dict[str, Any]] | None = Field(
+        default=None,
+        description="Qname-keyed relation dicts for store_relations_by_qname (ADR-012)",
+    )
+    external_fallback: str = Field(
+        default="module",
+        description=(
+            "Fallback for unresolved targets in store_relations_by_qname: "
+            "'module' creates an EXTERNAL Module entity; 'reject' marks as unresolved."
+        ),
     )
     raw_memories: list[dict[str, Any]] | None = Field(
         default=None,
@@ -801,9 +816,13 @@ class ManageMemoryResult(BaseModel):
         default_factory=list,
         description="IDs of stored or affected entities",
     )
-    relation_ids: list[str] = Field(
+    relation_ids: list[str | None] = Field(
         default_factory=list,
-        description="IDs of stored or affected relations",
+        description=(
+            "IDs of stored or affected relations. Entries are null for "
+            "unresolved/rejected items (store_relations_by_qname); non-null "
+            "for all entries from store_relations."
+        ),
     )
     entities_stored_count: int = Field(
         default=0,
@@ -856,6 +875,24 @@ class ManageMemoryResult(BaseModel):
     # New executor op outputs (Tasks 4-11)
     source_id: str | None = Field(default=None, description="Upserted knowledge_sources.id")
     item_id: str | None = Field(default=None, description="Upserted knowledge_items.id")
+
+    # store_relations_by_qname outputs (ADR-012)
+    created_count: int = Field(
+        default=0,
+        description="New relation rows inserted by store_relations_by_qname.",
+    )
+    existing_count: int = Field(
+        default=0,
+        description="Idempotent matches (relation already existed) for store_relations_by_qname.",
+    )
+    external_entities_created: list[dict[str, Any]] = Field(
+        default_factory=list,
+        description="EXTERNAL Module entities created during this call (ADR-012).",
+    )
+    unresolved_or_ambiguous: list[dict[str, Any]] = Field(
+        default_factory=list,
+        description="Per-relation unresolved/ambiguous entries (ADR-012).",
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -1012,6 +1049,18 @@ class MemoryGraphInput(BaseModel):
     evidence_memory_ids: list[str] | None = Field(default=None)
     curated: bool = Field(default=False)
     ids: list[str] | None = Field(default=None)
+    # store_relations_by_qname (ADR-012): qname-keyed relation list and fallback mode
+    relations: list[dict[str, Any]] | None = Field(
+        default=None,
+        description="Qname-keyed relation list for store_relations_by_qname.",
+    )
+    external_fallback: Literal["module", "reject"] = Field(
+        default="module",
+        description=(
+            "Fallback for unresolved targets: 'module' creates an EXTERNAL Module entity; "
+            "'reject' marks the relation as unresolved without creating any entity."
+        ),
+    )
 
     model_config = ConfigDict(extra="forbid", populate_by_name=True)
 
@@ -1571,6 +1620,7 @@ class MemoryService:
             "ensure_item",
             "store_entities",
             "store_relations",
+            "store_relations_by_qname",
             "store_memories",
             "store_entity_embeddings",
             "archive_memories",
@@ -1663,6 +1713,25 @@ class MemoryService:
                     palace=palace,
                     raw_relations=request.record.relations,
                     confidence=request.record.confidence,
+                )
+            )
+
+        if op == "store_relations_by_qname":
+            if request.graph is None or not request.graph.relations:
+                return ManageMemoryResult(
+                    operation="store_relations_by_qname",
+                    success=False,
+                    error=(
+                        "MEM_FIELD_REQUIRED: 'graph.relations' is required"
+                        " for store_relations_by_qname"
+                    ),
+                )
+            return await self._manage_store_relations_by_qname(
+                ManageMemoryRequest(
+                    operation="store_relations_by_qname",
+                    palace=palace,
+                    raw_qname_relations=request.graph.relations,
+                    external_fallback=request.graph.external_fallback,
                 )
             )
 
@@ -1975,7 +2044,7 @@ class MemoryService:
                 error="MEM_PALACE_REQUIRED: 'palace' is required for store_relations",
             )
 
-        relation_ids: list[str] = []
+        relation_ids: list[str | None] = []
         await self._backend.begin_transaction()
         try:
             for relation in request.raw_relations:
@@ -2200,6 +2269,297 @@ class MemoryService:
             memory_ids=memory_ids,
             stored_count=len(memory_ids),
         )
+
+    async def _manage_store_relations_by_qname(
+        self, request: ManageMemoryRequest
+    ) -> ManageMemoryResult:
+        """Resolve qname endpoints to UUIDs and idempotently insert STRUCTURAL relations.
+
+        ADR-012: store_relations_by_qname.
+        - Source must exist; never auto-created.
+        - Target: created as EXTERNAL Module on external_fallback='module', or rejected.
+        - Idempotent: SELECT-before-INSERT with metadata containment check.
+        - Palace-isolated: same endpoint palace check as _manage_store_relations.
+        - STRUCTURAL relation types only: CONTAINS, INHERITS_FROM, IMPORTS, CALLS.
+        """
+        structural_relation_types = frozenset({"CONTAINS", "INHERITS_FROM", "IMPORTS", "CALLS"})
+
+        if not request.raw_qname_relations:
+            return ManageMemoryResult(
+                operation="store_relations_by_qname",
+                success=False,
+                error=(
+                    "MEM_FIELD_REQUIRED: 'graph.relations' is required"
+                    " for store_relations_by_qname"
+                ),
+            )
+
+        palace = _normalize_scope_value(_get_palace(request))
+        if palace is None:
+            return ManageMemoryResult(
+                operation="store_relations_by_qname",
+                success=False,
+                error="MEM_PALACE_REQUIRED: 'palace' is required for store_relations_by_qname",
+            )
+
+        external_fallback = request.external_fallback  # "module" | "reject"
+
+        # Validate all relation_types up front before opening a transaction.
+        for rel in request.raw_qname_relations:
+            rel_type = rel.get("relation_type")
+            if rel_type not in structural_relation_types:
+                return ManageMemoryResult(
+                    operation="store_relations_by_qname",
+                    success=False,
+                    error=(
+                        f"MEM_INVALID_RELATION_TYPE: '{rel_type}' is not a"
+                        " STRUCTURAL relation type. "
+                        f"Allowed: {', '.join(sorted(structural_relation_types))}"
+                    ),
+                )
+
+        relation_ids: list[str | None] = []
+        created_count = 0
+        existing_count = 0
+        external_entities_created: list[dict[str, Any]] = []
+        unresolved_or_ambiguous: list[dict[str, Any]] = []
+
+        await self._backend.begin_transaction()
+        try:
+            # Track EXTERNAL entities created during this call to avoid double-reporting.
+            external_created_this_call: set[str] = set()
+
+            for idx, rel in enumerate(request.raw_qname_relations):
+                source_qname: str = rel["source_qname"]
+                source_entity_type: str = rel["source_entity_type"]
+                target_qname: str = rel["target_qname"]
+                target_entity_type: str = rel["target_entity_type"]
+                rel_type = rel["relation_type"]
+                confidence: float = rel.get("confidence", request.confidence)
+                relation_metadata: dict[str, Any] = rel.get("metadata") or {}
+                source_item_id: str | None = rel.get("source_item_id")
+                target_item_id: str | None = rel.get("target_item_id")
+
+                # --- Resolve source ---
+                src_resolve = await self._resolve_entity_by_qname(
+                    palace=palace,
+                    entity_type=source_entity_type,
+                    qualified_name=source_qname,
+                    source_item_id=source_item_id,
+                )
+                if isinstance(src_resolve, dict):
+                    # Ambiguous
+                    unresolved_or_ambiguous.append({
+                        "index": idx,
+                        "reason": "ambiguous",
+                        "qname": source_qname,
+                        "entity_type": source_entity_type,
+                        "candidates": src_resolve["candidates"],
+                    })
+                    relation_ids.append(None)
+                    continue
+
+                if src_resolve == "unresolved":
+                    unresolved_or_ambiguous.append({
+                        "index": idx,
+                        "reason": "unresolved_source",
+                        "qname": source_qname,
+                        "entity_type": source_entity_type,
+                    })
+                    relation_ids.append(None)
+                    continue
+
+                src_id: str = src_resolve  # valid UUID string
+
+                # --- Resolve target ---
+                tgt_resolve = await self._resolve_entity_by_qname(
+                    palace=palace,
+                    entity_type=target_entity_type,
+                    qualified_name=target_qname,
+                    source_item_id=target_item_id,
+                )
+
+                tgt_id: str | None = None
+
+                if isinstance(tgt_resolve, dict):
+                    # Ambiguous
+                    unresolved_or_ambiguous.append({
+                        "index": idx,
+                        "reason": "ambiguous",
+                        "qname": target_qname,
+                        "entity_type": target_entity_type,
+                        "candidates": tgt_resolve["candidates"],
+                    })
+                    relation_ids.append(None)
+                    continue
+                elif tgt_resolve == "unresolved":
+                    if external_fallback == "reject":
+                        unresolved_or_ambiguous.append({
+                            "index": idx,
+                            "reason": "unresolved_target",
+                            "qname": target_qname,
+                            "entity_type": target_entity_type,
+                        })
+                        relation_ids.append(None)
+                        continue
+                    else:
+                        # external_fallback == "module": create/reuse EXTERNAL Module entity.
+                        ext_stable_id = hashlib.sha256(
+                            f"{palace}:__external__:{target_qname}:Module".encode()
+                        ).hexdigest()
+                        ext_row = await self._backend.query(
+                            """
+                            INSERT INTO knowledge_entities
+                                (id, palace, namespace, room, corridor,
+                                 entity_type, name, source, authority,
+                                 stable_id, source_item_id, confidence, metadata,
+                                 qualified_name, parent_class_id)
+                            VALUES
+                                ($1::uuid, $2::text, 'code', 'default', 'default',
+                                 'Module', $3::text, 'STRUCTURAL', 'SYSTEM',
+                                 $4::text, NULL, 0.3, $5::jsonb,
+                                 $3::text, NULL)
+                            ON CONFLICT (palace, source, stable_id)
+                                WHERE stable_id IS NOT NULL
+                                DO UPDATE SET
+                                    updated_at = NOW()
+                            RETURNING id, (xmax::text = '0') AS was_inserted
+                            """,
+                            (
+                                str(uuid.uuid4()),
+                                palace,
+                                target_qname,
+                                ext_stable_id,
+                                json.dumps({"external": True}),
+                            ),
+                        )
+                        tgt_id = str(ext_row.rows[0]["id"])
+                        was_inserted: bool = ext_row.rows[0]["was_inserted"]
+                        # Report as created only if freshly inserted AND not yet reported
+                        # in this call (handles duplicate qnames within one call).
+                        if was_inserted and ext_stable_id not in external_created_this_call:
+                            external_created_this_call.add(ext_stable_id)
+                            external_entities_created.append({
+                                "qname": target_qname,
+                                "entity_id": tgt_id,
+                            })
+                else:
+                    tgt_id = tgt_resolve  # valid UUID string
+
+                assert tgt_id is not None
+
+                # --- Palace isolation check (same as _manage_store_relations) ---
+                check = await self._backend.query(
+                    "SELECT id, palace FROM knowledge_entities "
+                    "WHERE id IN ($1::uuid, $2::uuid)",
+                    (src_id, tgt_id),
+                )
+                endpoint_palaces = {str(row["id"]): row["palace"] for row in check.rows}
+                if (
+                    len(endpoint_palaces) != 2
+                    or endpoint_palaces.get(str(src_id)) != palace
+                    or endpoint_palaces.get(str(tgt_id)) != palace
+                ):
+                    raise MemoryContractError(
+                        code="MEM_PALACE_MISMATCH",
+                        message=(
+                            "MEM_PALACE_MISMATCH: store_relations_by_qname refuses to link "
+                            "entities outside the requesting palace"
+                        ),
+                        retryable=False,
+                    )
+
+                # --- Idempotency check: SELECT-before-INSERT with metadata containment ---
+                existing = await self._backend.query(
+                    """
+                    SELECT id FROM knowledge_relations
+                    WHERE source_entity_id = $1::uuid
+                      AND target_entity_id = $2::uuid
+                      AND relation_type = $3
+                      AND metadata @> $4::jsonb
+                    LIMIT 1
+                    """,
+                    (src_id, tgt_id, rel_type, json.dumps(relation_metadata)),
+                )
+                if existing.rows:
+                    relation_ids.append(str(existing.rows[0]["id"]))
+                    existing_count += 1
+                    continue
+
+                # --- Insert new relation ---
+                new_rel_id = str(uuid.uuid4())
+                await self._backend.query(
+                    """
+                    INSERT INTO knowledge_relations
+                        (id, source_entity_id, target_entity_id, relation_type,
+                         confidence, evidence_memory_ids, metadata)
+                    VALUES
+                        ($1::uuid, $2::uuid, $3::uuid, $4, $5, $6::uuid[], $7::jsonb)
+                    RETURNING id
+                    """,
+                    (
+                        new_rel_id,
+                        src_id,
+                        tgt_id,
+                        rel_type,
+                        confidence,
+                        [],
+                        json.dumps(relation_metadata),
+                    ),
+                )
+                relation_ids.append(new_rel_id)
+                created_count += 1
+
+            await self._backend.commit()
+        except Exception:
+            await self._backend.rollback()
+            raise
+
+        return ManageMemoryResult(
+            operation="store_relations_by_qname",
+            success=True,
+            relation_ids=relation_ids,
+            created_count=created_count,
+            existing_count=existing_count,
+            external_entities_created=external_entities_created,
+            unresolved_or_ambiguous=unresolved_or_ambiguous,
+        )
+
+    async def _resolve_entity_by_qname(
+        self,
+        palace: str,
+        entity_type: str,
+        qualified_name: str,
+        source_item_id: str | None,
+    ) -> str | dict[str, Any]:
+        """Resolve a qualified-name entity reference within a palace.
+
+        Returns:
+            str: UUID of the single matching entity.
+            "unresolved": no match found.
+            dict with "candidates": list[str] — multiple matches (ambiguous).
+        """
+        if source_item_id is not None:
+            rows = await self._backend.query(
+                "SELECT id FROM knowledge_entities "
+                "WHERE palace = $1 AND source = 'STRUCTURAL' "
+                "AND entity_type = $2 AND qualified_name = $3 AND source_item_id = $4::uuid",
+                (palace, entity_type, qualified_name, source_item_id),
+            )
+        else:
+            rows = await self._backend.query(
+                "SELECT id FROM knowledge_entities "
+                "WHERE palace = $1 AND source = 'STRUCTURAL' "
+                "AND entity_type = $2 AND qualified_name = $3",
+                (palace, entity_type, qualified_name),
+            )
+
+        if not rows.rows:
+            return "unresolved"
+        if len(rows.rows) == 1:
+            return str(rows.rows[0]["id"])
+        # Multiple matches — ambiguous
+        return {"candidates": [str(r["id"]) for r in rows.rows]}
 
     async def _manage_store_entity_embeddings(
         self, request: ManageMemoryRequest
@@ -3479,7 +3839,7 @@ class MemoryService:
             memory_ids: list[str] = []
             entity_ids_in_order: list[str] = []
             entity_ids_seen: set[str] = set()
-            relation_ids: list[str] = []
+            relation_ids: list[str | None] = []
             for memory in request.memories:
                 memory_id = str(uuid.uuid4())
                 memory_ids.append(memory_id)
