@@ -43,7 +43,6 @@ from .workflow_sources_repo import (
     SQLiteWorkflowSourcesRepository,
     WorkflowSourceCreate,
     WorkflowSourceNotFoundError,
-    WorkflowSourceProjectNotFoundError,
     WorkflowSourceRecord,
     WorkflowSourceRepositoryError,
 )
@@ -82,7 +81,6 @@ __all__ = [
     "DirtyQueueEntry",
     "SQLiteWatcherRepository",
     "WorkflowSourceRepositoryError",
-    "WorkflowSourceProjectNotFoundError",
     "DuplicateWorkflowSourceError",
     "WorkflowSourceNotFoundError",
     "InvalidWorkflowSourcePathError",

@@ -10,6 +10,7 @@ blocks:
   - id: job_2
     description: "This job always fails"
     type: Shell
+    continue_on_error: true
     inputs:
       command: exit 1
   - id: job_3

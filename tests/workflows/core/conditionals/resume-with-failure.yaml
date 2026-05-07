@@ -1,0 +1,24 @@
+name: core-resume-with-failure
+description: >
+  Fixture for resume-path terminal-status regression.
+  Pauses at a Prompt block, then after resume a Shell block intentionally fails
+  without continue_on_error. The workflow must be classified as failure, not success.
+tags: [test, core, resume, terminal-status]
+blocks:
+  - id: ask
+    type: Prompt
+    inputs:
+      prompt: "Continue?"
+
+  - id: fail_after_resume
+    type: Shell
+    inputs:
+      command: exit 1
+    depends_on:
+      - block: ask
+        required: true
+
+outputs:
+  response:
+    value: "{{blocks.ask.outputs.response}}"
+    type: str

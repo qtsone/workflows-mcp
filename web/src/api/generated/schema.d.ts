@@ -437,6 +437,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/admin/v1/sync/{project_id}/details": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Sync Details */
+        get: operations["get_sync_details_api_admin_v1_sync__project_id__details_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/admin/v1/sync/{project_id}/logs": {
         parameters: {
             query?: never;
@@ -886,13 +903,16 @@ export interface components {
             palace: string;
             /** Slug */
             slug: string;
+            /**
+             * System2 Enabled
+             * @default false
+             */
+            system2_enabled: boolean;
         };
         /** CreateWorkflowSourceRequest */
         CreateWorkflowSourceRequest: {
             /** Checksum */
             checksum?: string | null;
-            /** Project Id */
-            project_id: string;
             /** Source Path */
             source_path: string;
         };
@@ -921,8 +941,6 @@ export interface components {
             container_name: string;
             /** Database */
             database: string;
-            /** Enabled */
-            enabled: boolean;
             /** Extra Params */
             extra_params: string;
             /** Host */
@@ -1177,12 +1195,18 @@ export interface components {
             fs_root: string;
             /** Id */
             id: string;
+            /** Memory Mode */
+            memory_mode: string;
             /** Name */
             name: string;
             /** Palace */
             palace: string;
             /** Slug */
             slug: string;
+            /** System1 Enabled */
+            system1_enabled: boolean;
+            /** System2 Enabled */
+            system2_enabled: boolean;
             /** Updated At */
             updated_at: string;
         };
@@ -1420,11 +1444,6 @@ export interface components {
             /** Dsn Import */
             dsn_import?: string | null;
             /**
-             * Enabled
-             * @default true
-             */
-            enabled: boolean;
-            /**
              * Extra Params
              * @default
              */
@@ -1486,6 +1505,25 @@ export interface components {
             /** Message */
             message: string;
         };
+        /** SyncExtractionCounts */
+        SyncExtractionCounts: {
+            /** Compartments */
+            compartments: number;
+            /** Rooms */
+            rooms: number;
+            /** Semantic Claims */
+            semantic_claims: number;
+            /** Semantic Memories */
+            semantic_memories: number;
+            /** Source Items */
+            source_items: number;
+            /** Structural Evidence */
+            structural_evidence: number;
+            /** Verification Cycles */
+            verification_cycles: number;
+            /** Wings */
+            wings: number;
+        };
         /** SyncListResponse */
         SyncListResponse: {
             /** Projects */
@@ -1521,13 +1559,43 @@ export interface components {
         };
         /** SyncNowResponse */
         SyncNowResponse: {
+            /** Action */
+            action: string;
             /** Dirty Count */
             dirty_count: number;
             error?: components["schemas"]["SyncErrorDetail"] | null;
+            /** Job Id */
+            job_id?: string | null;
+            /** Memory Mode */
+            memory_mode: string;
             /** Project Id */
             project_id: string;
             /** Status */
             status: string;
+            /** Workflow */
+            workflow?: string | null;
+        };
+        /** SyncProjectDetailsResponse */
+        SyncProjectDetailsResponse: {
+            counts: components["schemas"]["SyncExtractionCounts"];
+            /** Embedding Profile */
+            embedding_profile: string;
+            /** Embedding Profile Required */
+            embedding_profile_required: boolean;
+            /** Memory Backend Ready */
+            memory_backend_ready: boolean;
+            /** Memory Mode */
+            memory_mode: string;
+            /** Project Id */
+            project_id: string;
+            /** System1 Enabled */
+            system1_enabled: boolean;
+            /** System1 State */
+            system1_state: string;
+            /** System2 Enabled */
+            system2_enabled: boolean;
+            /** System2 State */
+            system2_state: string;
         };
         /** SyncProjectSummary */
         SyncProjectSummary: {
@@ -1554,6 +1622,8 @@ export interface components {
             palace?: string | null;
             /** Slug */
             slug?: string | null;
+            /** System2 Enabled */
+            system2_enabled?: boolean | null;
         };
         /**
          * UpsertSecretRequest
@@ -1622,10 +1692,10 @@ export interface components {
             discovered_at: string;
             /** Error Message */
             error_message: string | null;
+            /** Is System */
+            is_system: boolean;
             /** Last Loaded At */
             last_loaded_at: string | null;
-            /** Project Id */
-            project_id: string;
             /** Source Id */
             source_id: string;
             /** Source Path */
@@ -2662,6 +2732,37 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["SyncListResponse"];
+                };
+            };
+        };
+    };
+    get_sync_details_api_admin_v1_sync__project_id__details_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                project_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SyncProjectDetailsResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
         };

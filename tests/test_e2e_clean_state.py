@@ -16,7 +16,6 @@ import pytest
 from fastapi.testclient import TestClient
 
 from workflows_mcp.bootstrap import bootstrap_if_needed
-from workflows_mcp.http.routes.admin_v1 import sync as sync_routes
 from workflows_mcp.metadata.db import connect_metadata_db
 from workflows_mcp.metadata.migrations import migrate_metadata_db
 from workflows_mcp.metadata.repos.run_history_repo import SQLiteRunHistoryRepository
@@ -86,17 +85,35 @@ def test_phase11_clean_state_http_flow(
     clean_state_client: TestClient,
 ) -> None:
     csrf_token = _login_and_csrf(clean_state_client)
-    persisted_projects: list[str] = []
+    resources = clean_state_client.app.state.resources
+    submitted_sync_jobs: list[dict[str, object]] = []
 
-    async def fake_persist_project_graph_from_scan(resources: Any, project: Any) -> dict[str, int]:
-        persisted_projects.append(str(project.id))
-        return {"nodes": 1, "corridors": 0}
+    class FakeMemoryBackend:
+        async def disconnect(self) -> None:
+            return
 
-    monkeypatch.setattr(
-        sync_routes,
-        "_persist_project_graph_from_scan",
-        fake_persist_project_graph_from_scan,
-    )
+    async def fake_submit_job(
+        workflow: str,
+        inputs: dict[str, Any] | None = None,
+        timeout: int | None = None,
+        *,
+        project_id: str | None = None,
+        token_id: str | None = None,
+    ) -> str:
+        job_id = f"job_phase11_{len(submitted_sync_jobs) + 1}"
+        submitted_sync_jobs.append(
+            {
+                "job_id": job_id,
+                "workflow": workflow,
+                "inputs": inputs or {},
+                "timeout": timeout,
+                "project_id": project_id,
+                "token_id": token_id,
+            }
+        )
+        return job_id
+
+    monkeypatch.setattr(resources.job_queue, "submit_job", fake_submit_job)
 
     setup_response = clean_state_client.get("/api/admin/v1/database/setup")
     assert setup_response.status_code == 200
@@ -107,19 +124,19 @@ def test_phase11_clean_state_http_flow(
     db_settings = clean_state_client.put(
         "/api/admin/v1/database/settings",
         json={
-            "enabled": True,
             "dsn_import": "postgresql://wf_admin:super-secret@127.0.0.1:1/workflows",
         },
         headers={"X-CSRF-Token": csrf_token},
     )
     assert db_settings.status_code == 200
     db_payload = db_settings.json()
-    assert db_payload["enabled"] is True
+    assert "enabled" not in db_payload
     assert db_payload["configured"] is True
     assert db_payload["password_configured"] is True
     assert "dsn" not in db_payload
     assert "postgresql://" not in str(db_payload).lower()
     assert "super-secret" not in str(db_payload).lower()
+    resources.app_context.memory_backend = FakeMemoryBackend()
 
     llm_put = clean_state_client.put(
         "/api/admin/v1/llm/config",
@@ -174,6 +191,7 @@ def test_phase11_clean_state_http_flow(
 
     project_root = tmp_path / "project-root"
     project_root.mkdir(parents=True, exist_ok=True)
+    resources.app_context.memory_backend = FakeMemoryBackend()
     created_project = clean_state_client.post(
         "/api/admin/v1/projects",
         json={
@@ -220,6 +238,7 @@ def test_phase11_clean_state_http_flow(
     assert mcp_call.status_code != 409
 
     (project_root / "workflow.yaml").write_text("name: phase11\n", encoding="utf-8")
+    resources.app_context.memory_backend = FakeMemoryBackend()
 
     reconcile = clean_state_client.post(
         f"/api/admin/v1/sync/{project_id}/reconcile",
@@ -229,6 +248,8 @@ def test_phase11_clean_state_http_flow(
     reconcile_payload = reconcile.json()
     assert "project_id" in reconcile_payload
     assert reconcile_payload["project_id"] == project_id
+    assert reconcile_payload["status"] == "queued"
+    assert reconcile_payload["job_id"] == "job_phase11_2"
 
     sync_now = clean_state_client.post(
         f"/api/admin/v1/sync/{project_id}/now",
@@ -238,7 +259,12 @@ def test_phase11_clean_state_http_flow(
     sync_payload = sync_now.json()
     assert sync_payload["project_id"] == project_id
     assert sync_payload["dirty_count"] == 0
-    assert persisted_projects == [project_id, project_id, project_id]
+    assert sync_payload["status"] == "idle"
+    assert [job["project_id"] for job in submitted_sync_jobs] == [project_id, project_id]
+    assert [job["inputs"]["sync_scope"] for job in submitted_sync_jobs] == [
+        "rebuild",
+        "reconcile",
+    ]
 
     _seed_run(
         clean_state_client,

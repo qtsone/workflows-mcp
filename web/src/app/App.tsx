@@ -11,7 +11,7 @@ import {
   WatcherStateItem,
 } from "../api/events";
 import { ServerPathPicker, type PathListing } from "./ServerPathPicker";
-import { ActionButton, CopyIcon, FolderIcon, PageHeader, Panel, ProjectMultiSelect, ProjectSelect, StatusBadge } from "./ui";
+import { ActionButton, CopyIcon, FolderIcon, PageHeader, Panel, ProjectMultiSelect, StatusBadge } from "./ui";
 
 type RouteDefinition = {
   path: string;
@@ -119,6 +119,8 @@ type SetupDashboardData = {
   systemStatus: string;
   databaseConfigured: boolean;
   llmConfigured: boolean;
+  chatProfileConfigured: boolean;
+  embeddingProfileConfigured: boolean;
   projectCount: number;
   mcpClientCount: number;
 };
@@ -130,7 +132,6 @@ type SetupDashboardState = {
 };
 
 type DatabaseSettingsModel = {
-  enabled: boolean;
   configured: boolean;
   updatedAt: string;
   host: string;
@@ -147,14 +148,12 @@ type DatabaseSettingsModel = {
 };
 
 type DatabaseProfileForm = {
-  enabled: boolean;
   host: string;
   port: string;
   database: string;
   username: string;
   password: string;
   passwordConfigured: boolean;
-  passwordClear: boolean;
   sslMode: DatabaseSslMode;
   extraParams: string;
   containerName: string;
@@ -230,6 +229,8 @@ type LlmProfileForm = {
   description: string;
 };
 
+type LlmProfileKind = "chat" | "embedding";
+
 type SecretModel = {
   name: string;
   keyId: string | null;
@@ -248,6 +249,7 @@ type ModalShellProps = {
   title: string;
   eyebrow: string;
   className?: string;
+  hideTitle?: boolean;
   children: ReactNode;
   onClose: () => void;
 };
@@ -282,6 +284,9 @@ type ProjectModel = {
   defaultRoom: string;
   fsRoot: string;
   fsAllowlist: string[];
+  system1Enabled: boolean;
+  system2Enabled: boolean;
+  memoryMode: string;
   watcherHint: string | null;
   defaultStateHint: string | null;
 };
@@ -355,6 +360,29 @@ type SyncLogEntryModel = {
   processedAt: string | null;
 };
 
+type SyncExtractionCounts = {
+  sourceItems: number;
+  structuralEvidence: number;
+  verificationCycles: number;
+  wings: number;
+  rooms: number;
+  compartments: number;
+  semanticClaims: number;
+  semanticMemories: number;
+};
+
+type SyncDetailsModel = {
+  projectId: string;
+  memoryMode: string;
+  system1Enabled: boolean;
+  system1State: string;
+  system2Enabled: boolean;
+  system2State: string;
+  embeddingProfile: string;
+  memoryBackendReady: boolean;
+  counts: SyncExtractionCounts;
+};
+
 function buildSyncDashboardRows(items: SyncStateItem[], projects: ProjectModel[]): SyncDashboardRow[] {
   const projectNameById = new Map(projects.map((project) => [project.id, project.name]));
   const syncItemByProjectId = new Map(items.map((item) => [item.project_id, item]));
@@ -419,6 +447,11 @@ function formatLogValue(value: string): string {
     .filter(Boolean)
     .map((part) => `${part.charAt(0).toUpperCase()}${part.slice(1)}`)
     .join(" ");
+}
+
+function isEmbeddingProfile(profileId: string, profile: ProfileConfig): boolean {
+  const haystack = `${profileId} ${profile.model} ${profile.description ?? ""}`.toLowerCase();
+  return haystack.includes("embedding") || haystack.includes("embed");
 }
 
 type YamlTokenSegment = {
@@ -617,7 +650,6 @@ type WorkflowDetailModel = WorkflowSummaryModel & {
 
 type WorkflowSourceModel = {
   sourceId: string;
-  projectId: string;
   sourcePath: string;
   status: string | null;
   discoveredAt: string;
@@ -680,14 +712,12 @@ const VALID_NAME_PATTERN = /^[a-zA-Z0-9][a-zA-Z0-9_.-]{0,127}$/;
 const SECRET_NAME_PATTERN = /^[A-Za-z_][A-Za-z0-9_]*$/;
 
 const DEFAULT_DATABASE_FORM: DatabaseProfileForm = {
-  enabled: false,
   host: "",
   port: "5432",
   database: "",
   username: "",
   password: "",
   passwordConfigured: false,
-  passwordClear: false,
   sslMode: "prefer",
   extraParams: "",
   containerName: "workflows-postgres",
@@ -727,6 +757,15 @@ const DEFAULT_LLM_PROFILE_FORM: LlmProfileForm = {
   description: "",
 };
 
+const DEFAULT_EMBEDDING_LLM_PROFILE_FORM: LlmProfileForm = {
+  id: "embedding",
+  provider: "",
+  model: "",
+  temperature: "",
+  maxTokens: "",
+  description: "Embedding model for semantic search and System 2 evidence retrieval",
+};
+
 const DEFAULT_SECRET_FORM: SecretForm = {
   name: "",
   value: "",
@@ -735,7 +774,7 @@ const DEFAULT_SECRET_FORM: SecretForm = {
 
 const TABLE_PAGE_SIZE = 10;
 
-function ModalShell({ titleId, title, eyebrow, className, children, onClose }: ModalShellProps) {
+function ModalShell({ titleId, title, eyebrow, className, hideTitle = false, children, onClose }: ModalShellProps) {
   const dialogRef = useRef<HTMLElement | null>(null);
   const openerRef = useRef<HTMLElement | null>(null);
 
@@ -796,7 +835,9 @@ function ModalShell({ titleId, title, eyebrow, className, children, onClose }: M
         <header className="llm-modal__header">
           <div>
             <p className="llm-modal__eyebrow">{eyebrow}</p>
-            <h2 id={titleId}>{title}</h2>
+            <h2 id={titleId} className={hideTitle ? "visually-hidden" : undefined}>
+              {title}
+            </h2>
           </div>
           <button type="button" className="llm-modal__close" aria-label="Close dialog" title="Close" onClick={onClose}>
             <svg aria-hidden="true" viewBox="0 0 24 24" focusable="false">
@@ -936,6 +977,24 @@ function syncActionFailureMessage(payload: unknown): string | null {
     return error.message;
   }
   return "Project sync failed.";
+}
+
+function syncActionSuccessMessage(action: "now" | "reconcile" | "rebuild", projectId: string, payload: unknown): string {
+  const obj = toObject(payload);
+  const status = typeof obj.status === "string" ? obj.status.toLowerCase() : "";
+  const jobId = typeof obj.job_id === "string" && obj.job_id.trim().length > 0 ? obj.job_id : null;
+  const labels = {
+    now: "Dirty file sync",
+    reconcile: "Project reconciliation",
+    rebuild: "Project rebuild",
+  };
+  if (status === "queued") {
+    return jobId ? `${labels[action]} queued for ${projectId}: ${jobId}.` : `${labels[action]} queued for ${projectId}.`;
+  }
+  if (status === "idle") {
+    return action === "now" ? `No dirty file sync work for ${projectId}.` : `${labels[action]} is idle for ${projectId}.`;
+  }
+  return `${labels[action]} requested for ${projectId}.`;
 }
 
 function toObject(value: unknown): Record<string, unknown> {
@@ -1083,7 +1142,6 @@ function toDatabaseSettingsModel(payload: unknown): DatabaseSettingsModel {
       ? sslModeRaw
       : "prefer";
   return {
-    enabled: obj.enabled === true,
     configured: obj.configured === true,
     updatedAt: typeof obj.updated_at === "string" ? obj.updated_at : "Unavailable",
     host: typeof obj.host === "string" ? obj.host : "",
@@ -1102,14 +1160,12 @@ function toDatabaseSettingsModel(payload: unknown): DatabaseSettingsModel {
 
 function toDatabaseForm(settings: DatabaseSettingsModel): DatabaseProfileForm {
   return {
-    enabled: settings.enabled,
     host: settings.host,
     port: String(settings.port),
     database: settings.database,
     username: settings.username,
     password: "",
     passwordConfigured: settings.passwordConfigured,
-    passwordClear: false,
     sslMode: settings.sslMode,
     extraParams: settings.extraParams,
     containerName: settings.containerName,
@@ -1178,8 +1234,46 @@ function toProjectModel(payload: unknown): ProjectModel {
     defaultRoom: typeof obj.default_room === "string" ? obj.default_room : "",
     fsRoot: typeof obj.fs_root === "string" ? obj.fs_root : "",
     fsAllowlist,
+    system1Enabled: obj.system1_enabled !== false,
+    system2Enabled: obj.system2_enabled === true,
+    memoryMode:
+      typeof obj.memory_mode === "string"
+        ? obj.memory_mode
+        : obj.system2_enabled === true
+          ? "advanced"
+          : "simple",
     watcherHint: typeof obj.watcher_hint === "string" ? obj.watcher_hint : null,
     defaultStateHint: typeof obj.default_state_hint === "string" ? obj.default_state_hint : null,
+  };
+}
+
+function toSyncDetailsModel(payload: unknown): SyncDetailsModel {
+  const obj = toObject(payload);
+  const countsObj = toObject(obj.counts);
+  return {
+    projectId: typeof obj.project_id === "string" ? obj.project_id : "",
+    memoryMode:
+      typeof obj.memory_mode === "string"
+        ? obj.memory_mode
+        : obj.system2_enabled === true
+          ? "advanced"
+          : "simple",
+    system1Enabled: obj.system1_enabled === true,
+    system1State: typeof obj.system1_state === "string" ? obj.system1_state : "unknown",
+    system2Enabled: obj.system2_enabled === true,
+    system2State: typeof obj.system2_state === "string" ? obj.system2_state : "unknown",
+    embeddingProfile: typeof obj.embedding_profile === "string" ? obj.embedding_profile : "embedding",
+    memoryBackendReady: obj.memory_backend_ready === true,
+    counts: {
+      sourceItems: toNullableNumber(countsObj.source_items) ?? 0,
+      structuralEvidence: toNullableNumber(countsObj.structural_evidence) ?? 0,
+      verificationCycles: toNullableNumber(countsObj.verification_cycles) ?? 0,
+      wings: toNullableNumber(countsObj.wings) ?? 0,
+      rooms: toNullableNumber(countsObj.rooms) ?? 0,
+      compartments: toNullableNumber(countsObj.compartments) ?? 0,
+      semanticClaims: toNullableNumber(countsObj.semantic_claims) ?? 0,
+      semanticMemories: toNullableNumber(countsObj.semantic_memories) ?? 0,
+    },
   };
 }
 
@@ -1277,7 +1371,6 @@ function toWorkflowSourceModel(payload: unknown): WorkflowSourceModel {
   const obj = toObject(payload);
   return {
     sourceId: typeof obj.source_id === "string" ? obj.source_id : "",
-    projectId: typeof obj.project_id === "string" ? obj.project_id : "",
     sourcePath: typeof obj.source_path === "string" ? obj.source_path : "",
     status: typeof obj.status === "string" ? obj.status : null,
     discoveredAt: typeof obj.discovered_at === "string" ? obj.discovered_at : "",
@@ -1473,6 +1566,7 @@ export function App(): JSX.Element {
   const [projectDefaultRoom, setProjectDefaultRoom] = useState("");
   const [projectFsRoot, setProjectFsRoot] = useState(DEFAULT_PROJECT_FS_ROOT);
   const [projectAllowlistInput, setProjectAllowlistInput] = useState("");
+  const [projectSystem2Enabled, setProjectSystem2Enabled] = useState(false);
   const [projectsTablePage, setProjectsTablePage] = useState(1);
   const projectFsRootRef = useRef<HTMLInputElement | null>(null);
   const projectAllowlistRef = useRef<HTMLTextAreaElement | null>(null);
@@ -1507,19 +1601,20 @@ export function App(): JSX.Element {
   const [syncTablePage, setSyncTablePage] = useState(1);
   const [selectedSyncProjectId, setSelectedSyncProjectId] = useState<string | null>(null);
   const [syncLogs, setSyncLogs] = useState<SyncLogEntryModel[]>([]);
+  const [syncDetails, setSyncDetails] = useState<SyncDetailsModel | null>(null);
   const [syncLogsLoading, setSyncLogsLoading] = useState(false);
+  const [syncDetailsLoading, setSyncDetailsLoading] = useState(false);
   const [syncLogsError, setSyncLogsError] = useState("");
+  const [syncDetailsError, setSyncDetailsError] = useState("");
   const [workflowsLoading, setWorkflowsLoading] = useState(false);
   const [workflowsError, setWorkflowsError] = useState("");
   const [workflowsMessage, setWorkflowsMessage] = useState("");
   const [workflowsList, setWorkflowsList] = useState<WorkflowSummaryModel[]>([]);
   const [workflowSources, setWorkflowSources] = useState<WorkflowSourceModel[]>([]);
-  const [workflowSourceProjectId, setWorkflowSourceProjectId] = useState("");
   const [workflowSourcePath, setWorkflowSourcePath] = useState("");
   const [workflowSourceChecksum, setWorkflowSourceChecksum] = useState("");
   const [workflowSourcePending, setWorkflowSourcePending] = useState(false);
   const [workflowActionPendingId, setWorkflowActionPendingId] = useState<string | null>(null);
-  const [workflowProjectsCount, setWorkflowProjectsCount] = useState(0);
   const [workflowSourcesTablePage, setWorkflowSourcesTablePage] = useState(1);
   const [workflowSourceModalOpen, setWorkflowSourceModalOpen] = useState(false);
   const [expandedWorkflowSourceIds, setExpandedWorkflowSourceIds] = useState<Set<string>>(new Set());
@@ -1555,6 +1650,7 @@ export function App(): JSX.Element {
   const [llmProfileForm, setLlmProfileForm] = useState<LlmProfileForm>(DEFAULT_LLM_PROFILE_FORM);
   const [llmProfileModalOpen, setLlmProfileModalOpen] = useState(false);
   const [llmProfileEditId, setLlmProfileEditId] = useState<string | null>(null);
+  const [llmProfileKind, setLlmProfileKind] = useState<LlmProfileKind>("chat");
   const [llmYamlImport, setLlmYamlImport] = useState("");
   const [llmYamlModalOpen, setLlmYamlModalOpen] = useState(false);
   const [llmPreview, setLlmPreview] = useState<LlmConfigModel | null>(null);
@@ -1619,9 +1715,6 @@ export function App(): JSX.Element {
       if (selectedSyncProjectId && !validProjectIds.has(selectedSyncProjectId)) {
         setSelectedSyncProjectId(null);
       }
-      if (workflowSourceProjectId && !validProjectIds.has(workflowSourceProjectId)) {
-        setWorkflowSourceProjectId("");
-      }
       return projectModels;
     } catch (error) {
       setProjectError(toUserError(error, "Unable to load projects. Confirm your admin session and retry."));
@@ -1655,14 +1748,7 @@ export function App(): JSX.Element {
     try {
       await api.getSession();
       await api.getCsrf();
-      const [projectsPayload, workflowsPayload, sourcesPayload] = await Promise.all([
-        api.listProjects(),
-        api.listWorkflows(),
-        api.listWorkflowSources(),
-      ]);
-      const projectModels = projectsPayload.projects.map(toProjectModel);
-      setProjects(projectModels);
-      setWorkflowProjectsCount(projectModels.length);
+      const [workflowsPayload, sourcesPayload] = await Promise.all([api.listWorkflows(), api.listWorkflowSources()]);
       setWorkflowsList(workflowsPayload.workflows.map(toWorkflowSummaryModel));
       setWorkflowSources(sourcesPayload.sources.map(toWorkflowSourceModel));
     } catch (error) {
@@ -1827,7 +1913,17 @@ export function App(): JSX.Element {
           const llmObj = toObject(llmConfig);
           const providers = toObject(llmObj.providers);
           const profiles = toObject(llmObj.profiles);
-          const llmConfigured = Object.keys(providers).length > 0 && Object.keys(profiles).length > 0;
+          const profileEntries = Object.entries(profiles).map(([profileId, profile]) => [
+            profileId,
+            toLlmProfileConfig(profile),
+          ] as const);
+          const chatProfileConfigured = profileEntries.some(
+            ([profileId, profile]) => !isEmbeddingProfile(profileId, profile),
+          );
+          const embeddingProfileConfigured = profileEntries.some(([profileId, profile]) =>
+            isEmbeddingProfile(profileId, profile),
+          );
+          const llmConfigured = Object.keys(providers).length > 0 && chatProfileConfigured && embeddingProfileConfigured;
           if (!cancelled) {
             setSetupDashboard({
               loading: false,
@@ -1837,6 +1933,8 @@ export function App(): JSX.Element {
                 systemStatus: typeof toObject(system).status === "string" ? String(toObject(system).status) : "unknown",
                 databaseConfigured: settings.configured,
                 llmConfigured,
+                chatProfileConfigured,
+                embeddingProfileConfigured,
                 projectCount: Array.isArray(toObject(projects).projects) ? (toObject(projects).projects as unknown[]).length : 0,
                 mcpClientCount: Array.isArray(toObject(mcpClients).mcp_clients)
                   ? (toObject(mcpClients).mcp_clients as unknown[]).length
@@ -1973,8 +2071,11 @@ export function App(): JSX.Element {
             setSyncError("");
             setSyncMessage("");
             setSyncLogs([]);
+            setSyncDetails(null);
             setSyncLogsError("");
+            setSyncDetailsError("");
             setSyncLogsLoading(false);
+            setSyncDetailsLoading(false);
             setSelectedSyncProjectId(null);
           }
           const projectsPayload = await api.listProjects();
@@ -2128,8 +2229,22 @@ export function App(): JSX.Element {
     }
   };
 
+  const loadSyncDetails = async (projectId: string): Promise<void> => {
+    setSyncDetailsLoading(true);
+    setSyncDetailsError("");
+    try {
+      const payload = await api.getSyncDetails(projectId);
+      setSyncDetails(toSyncDetailsModel(payload));
+    } catch (error) {
+      setSyncDetails(null);
+      setSyncDetailsError(toUserError(error, `Unable to load extraction details for ${projectId}.`));
+    } finally {
+      setSyncDetailsLoading(false);
+    }
+  };
+
   const refreshSyncDetails = async (projectId: string): Promise<void> => {
-    await Promise.all([refreshSyncState(), loadSyncLogs(projectId)]);
+    await Promise.all([refreshSyncState(), loadSyncLogs(projectId), loadSyncDetails(projectId)]);
   };
 
   const openWatcherStatusModal = (row: WatcherDashboardRow): void => {
@@ -2147,15 +2262,20 @@ export function App(): JSX.Element {
     setSyncError("");
     setSyncMessage("");
     setSyncLogs([]);
+    setSyncDetails(null);
     setSyncLogsError("");
-    void loadSyncLogs(row.projectId);
+    setSyncDetailsError("");
+    void Promise.all([loadSyncLogs(row.projectId), loadSyncDetails(row.projectId)]);
   };
 
   const closeSyncStatusModal = (): void => {
     setSelectedSyncProjectId(null);
     setSyncLogs([]);
+    setSyncDetails(null);
     setSyncLogsError("");
+    setSyncDetailsError("");
     setSyncLogsLoading(false);
+    setSyncDetailsLoading(false);
   };
 
   const onWatcherAction = async (projectId: string, action: "pause" | "resume" | "disable"): Promise<void> => {
@@ -2184,19 +2304,19 @@ export function App(): JSX.Element {
         const result = await api.syncNow(projectId);
         const failureMessage = syncActionFailureMessage(result);
         if (failureMessage) throw new Error(failureMessage);
-        setSyncMessage(`Sync requested for ${projectId}.`);
+        setSyncMessage(syncActionSuccessMessage(action, projectId, result));
       }
       if (action === "reconcile") {
         const result = await api.reconcileSync(projectId);
         const failureMessage = syncActionFailureMessage(result);
         if (failureMessage) throw new Error(failureMessage);
-        setSyncMessage(`Reconcile requested for ${projectId}.`);
+        setSyncMessage(syncActionSuccessMessage(action, projectId, result));
       }
       if (action === "rebuild") {
         const result = await api.rebuildSync(projectId);
         const failureMessage = syncActionFailureMessage(result);
         if (failureMessage) throw new Error(failureMessage);
-        setSyncMessage(`Rebuild requested for ${projectId}.`);
+        setSyncMessage(syncActionSuccessMessage(action, projectId, result));
       }
       await refreshSyncDetails(projectId);
     } catch (error) {
@@ -2237,13 +2357,11 @@ export function App(): JSX.Element {
 
   const onCreateWorkflowSource = async (event: FormEvent<HTMLFormElement>): Promise<void> => {
     event.preventDefault();
-    const projectId = workflowSourceProjectId.trim();
     setWorkflowSourcePending(true);
     setWorkflowsError("");
     setWorkflowsMessage("");
     try {
       await api.createWorkflowSource({
-        project_id: projectId,
         source_path: workflowSourcePath.trim(),
         checksum: workflowSourceChecksum.trim() || null,
       });
@@ -2251,7 +2369,7 @@ export function App(): JSX.Element {
       let nextError = "";
       try {
         const payload = await api.reloadWorkflows();
-        nextMessage = `Workflow source added for project ${projectId}. Workflow registry reloaded: ${payload.total} workflows from ${payload.source_count} source(s).`;
+        nextMessage = `Workflow source added. Workflow registry reloaded: ${payload.total} workflows from ${payload.source_count} source(s).`;
       } catch (reloadError) {
         nextError = `Workflow source added, but reload failed: ${toUserError(reloadError, "reload failed")}`;
       }
@@ -2343,7 +2461,6 @@ export function App(): JSX.Element {
         ...parsed,
         dsnImport: "",
         passwordConfigured: current.passwordConfigured || (parsed.password?.length ?? 0) > 0,
-        passwordClear: false,
       }));
       setDbFieldErrors((current) => ({ ...current, dsnImport: undefined }));
       setDbSaveMessage("DSN imported into structured profile fields.");
@@ -2357,28 +2474,26 @@ export function App(): JSX.Element {
     const errors: Partial<Record<keyof DatabaseProfileForm, string>> = {};
     const port = Number.parseInt(dbForm.port, 10);
     const hostPort = Number.parseInt(dbForm.containerHostPort, 10);
-    const savedPasswordForCopy = dbForm.passwordClear || dbForm.password.length === 0 ? null : dbForm.password;
+    const savedPasswordForCopy = dbForm.password.length === 0 ? null : dbForm.password;
 
-    if (dbForm.enabled) {
-      if (dbForm.host.trim().length === 0) errors.host = "Host is required.";
-      if (dbForm.database.trim().length === 0) errors.database = "Database is required.";
-      if (dbForm.username.trim().length === 0) errors.username = "Username is required.";
-      if (!Number.isInteger(port) || port < 1 || port > 65535) errors.port = "Port must be an integer between 1 and 65535.";
-      if (!Number.isInteger(hostPort) || hostPort < 1 || hostPort > 65535) {
-        errors.containerHostPort = "Host port must be an integer between 1 and 65535.";
-      }
-      if (!VALID_NAME_PATTERN.test(dbForm.containerName)) {
-        errors.containerName = "Container name must match ^[a-zA-Z0-9][a-zA-Z0-9_.-]{0,127}$.";
-      }
-      if (!VALID_NAME_PATTERN.test(dbForm.volumeName)) {
-        errors.volumeName = "Volume name must match ^[a-zA-Z0-9][a-zA-Z0-9_.-]{0,127}$.";
-      }
-      if (dbForm.containerImage.trim().length === 0) {
-        errors.containerImage = "Container image is required.";
-      }
-      if (!dbForm.passwordClear && dbForm.password.trim().length === 0 && !dbForm.passwordConfigured) {
-        errors.password = "Password is required unless you clear it or keep a configured password.";
-      }
+    if (dbForm.host.trim().length === 0) errors.host = "Host is required.";
+    if (dbForm.database.trim().length === 0) errors.database = "Database is required.";
+    if (dbForm.username.trim().length === 0) errors.username = "Username is required.";
+    if (!Number.isInteger(port) || port < 1 || port > 65535) errors.port = "Port must be an integer between 1 and 65535.";
+    if (!Number.isInteger(hostPort) || hostPort < 1 || hostPort > 65535) {
+      errors.containerHostPort = "Host port must be an integer between 1 and 65535.";
+    }
+    if (!VALID_NAME_PATTERN.test(dbForm.containerName)) {
+      errors.containerName = "Container name must match ^[a-zA-Z0-9][a-zA-Z0-9_.-]{0,127}$.";
+    }
+    if (!VALID_NAME_PATTERN.test(dbForm.volumeName)) {
+      errors.volumeName = "Volume name must match ^[a-zA-Z0-9][a-zA-Z0-9_.-]{0,127}$.";
+    }
+    if (dbForm.containerImage.trim().length === 0) {
+      errors.containerImage = "Container image is required.";
+    }
+    if (dbForm.password.trim().length === 0 && !dbForm.passwordConfigured) {
+      errors.password = "Password is required unless you keep a configured password.";
     }
 
     setDbFieldErrors(errors);
@@ -2391,13 +2506,12 @@ export function App(): JSX.Element {
     setDbSaveMessage("");
     try {
       const payload = await api.saveDatabaseSettings({
-        enabled: dbForm.enabled,
         host: dbForm.host.trim(),
         port,
         database: dbForm.database.trim(),
         username: dbForm.username.trim(),
         password: dbForm.password.length > 0 ? dbForm.password : null,
-        password_clear: dbForm.passwordClear,
+        password_clear: false,
         ssl_mode: dbForm.sslMode,
         extra_params: dbForm.extraParams.trim(),
         container_name: dbForm.containerName.trim(),
@@ -2455,6 +2569,7 @@ export function App(): JSX.Element {
     setProjectDefaultRoom("");
     setProjectFsRoot(DEFAULT_PROJECT_FS_ROOT);
     setProjectAllowlistInput("");
+    setProjectSystem2Enabled(false);
   };
 
   const setProjectFormFromProject = (project: ProjectModel): void => {
@@ -2467,6 +2582,7 @@ export function App(): JSX.Element {
     setProjectDefaultRoom(project.defaultRoom);
     setProjectFsRoot(project.fsRoot || DEFAULT_PROJECT_FS_ROOT);
     setProjectAllowlistInput(project.fsAllowlist.join("\n"));
+    setProjectSystem2Enabled(project.system2Enabled);
   };
 
   const onProjectNameChange = (value: string): void => {
@@ -2531,6 +2647,7 @@ export function App(): JSX.Element {
     default_room: projectDefaultRoom.trim() || null,
     fs_root: projectFsRoot.trim(),
     fs_allowlist: normalizePathList(projectAllowlistInput),
+    system2_enabled: projectSystem2Enabled,
   });
 
   const onSaveProject = async (event: FormEvent<HTMLFormElement>): Promise<void> => {
@@ -2907,16 +3024,18 @@ export function App(): JSX.Element {
     setLlmProviderModalOpen(false);
   };
 
-  const openNewLlmProfileModal = (): void => {
+  const openNewLlmProfileModal = (kind: LlmProfileKind = "chat"): void => {
     setLlmError("");
     setLlmMessage("");
     setLlmProfileEditId(null);
-    setLlmProfileForm(DEFAULT_LLM_PROFILE_FORM);
+    setLlmProfileKind(kind);
+    setLlmProfileForm(kind === "embedding" ? DEFAULT_EMBEDDING_LLM_PROFILE_FORM : DEFAULT_LLM_PROFILE_FORM);
     setLlmProfileModalOpen(true);
   };
 
   const closeLlmProfileModal = (): void => {
     setLlmProfileEditId(null);
+    setLlmProfileKind("chat");
     setLlmProfileForm(DEFAULT_LLM_PROFILE_FORM);
     setLlmProfileModalOpen(false);
   };
@@ -3015,8 +3134,8 @@ export function App(): JSX.Element {
       const profile: ProfileConfig = {
         provider: llmProfileForm.provider,
         model,
-        temperature: numberField(llmProfileForm.temperature, "Temperature"),
-        max_tokens: numberField(llmProfileForm.maxTokens, "Max tokens"),
+        temperature: llmProfileKind === "embedding" ? null : numberField(llmProfileForm.temperature, "Temperature"),
+        max_tokens: numberField(llmProfileForm.maxTokens, llmProfileKind === "embedding" ? "Dimensions" : "Max tokens"),
         description: toNullableString(llmProfileForm.description),
       };
       setLlmConfig((current) => normalizedLlmConfig({
@@ -3025,6 +3144,7 @@ export function App(): JSX.Element {
       }));
       setLlmProfileForm(DEFAULT_LLM_PROFILE_FORM);
       setLlmProfileEditId(null);
+      setLlmProfileKind("chat");
       setLlmProfileModalOpen(false);
       setLlmMessage(`Profile ${id} staged. Save LLM configuration to persist.`);
     } catch (error) {
@@ -3038,6 +3158,7 @@ export function App(): JSX.Element {
     setLlmError("");
     setLlmMessage("");
     setLlmProfileEditId(profileId);
+    setLlmProfileKind(isEmbeddingProfile(profileId, profile) ? "embedding" : "chat");
     setLlmProfileForm(toLlmProfileForm(profileId, profile));
     setLlmProfileModalOpen(true);
   };
@@ -3269,7 +3390,7 @@ export function App(): JSX.Element {
   const copyPassword =
     dbForm.password.length > 0
       ? dbForm.password
-      : !dbForm.passwordClear && dbSavedPasswordForCopy
+      : dbSavedPasswordForCopy
         ? dbSavedPasswordForCopy
         : previewPassword;
   const dockerCopyCommand = buildRuntimeCommand("docker", copyPassword);
@@ -3312,8 +3433,14 @@ export function App(): JSX.Element {
   const selectedWatcherLabel = selectedWatcher?.projectName ?? selectedWatcher?.projectId ?? "";
   const llmProviderEntries = Object.entries(llmConfig.providers);
   const llmProfileEntries = Object.entries(llmConfig.profiles);
+  const embeddingProfileEntries = llmProfileEntries.filter(([profileId, profile]) =>
+    isEmbeddingProfile(profileId, profile),
+  );
+  const chatProfileEntries = llmProfileEntries.filter(([profileId, profile]) =>
+    !isEmbeddingProfile(profileId, profile),
+  );
   const paginatedLlmProviderEntries = paginateItems(llmProviderEntries, llmProvidersTablePage);
-  const paginatedLlmProfileEntries = paginateItems(llmProfileEntries, llmProfilesTablePage);
+  const paginatedLlmProfileEntries = paginateItems(chatProfileEntries, llmProfilesTablePage);
   const llmDefaultProfileLabel = llmConfig.default_profile ?? "None";
   const llmModalOpen = llmProviderModalOpen || llmProfileModalOpen || llmYamlModalOpen;
   const selectedSecret = selectedSecretName
@@ -3505,6 +3632,16 @@ export function App(): JSX.Element {
                       <li>
                         <a href="/llm">Review LLM configuration</a>
                       </li>
+                      {!setupDashboard.data.chatProfileConfigured ? (
+                        <li>
+                          <a href="/llm">Create chat LLM profile</a>
+                        </li>
+                      ) : null}
+                      {!setupDashboard.data.embeddingProfileConfigured ? (
+                        <li>
+                          <a href="/llm">Create embedding profile</a>
+                        </li>
+                      ) : null}
                       {setupDashboard.data.projectCount === 0 ? (
                         <li>
                           <a href="/projects">Add first project</a>
@@ -3529,15 +3666,15 @@ export function App(): JSX.Element {
               <section className="database-status-panel" aria-label="Profile status">
                 <div className="database-status-panel__copy">
                   <p className="database-kicker">workflowsctl / database-profile / local</p>
-                  <h2>PostgreSQL metadata profile</h2>
-                  <p>Configure the durable store used by workflow metadata, sync queues, and run history.</p>
+                  <h2>PostgreSQL memory profile</h2>
+                  <p>Configure the durable store used by the knowledge graph and Memory Palace system.</p>
                 </div>
                 <dl className="database-status-grid" aria-label="Database profile status chips">
                   <div>
                     <dt>Backend</dt>
                     <dd>
-                      <StatusBadge tone={dbForm.enabled ? "success" : "warning"}>
-                        enabled: {dbForm.enabled ? "on" : "off"}
+                      <StatusBadge tone={dbSettings?.configured ? "success" : "warning"}>
+                        {dbSettings?.configured ? "connected profile" : "not connected"}
                       </StatusBadge>
                     </dd>
                   </div>
@@ -3583,18 +3720,6 @@ export function App(): JSX.Element {
                   </div>
 
                   <form className="admin-form database-profile-form" onSubmit={(event) => void onSaveDatabaseSettings(event)}>
-                    <label className="database-toggle">
-                      <input
-                        type="checkbox"
-                        checked={dbForm.enabled}
-                        onChange={(event) => setDbForm((current) => ({ ...current, enabled: event.target.checked }))}
-                      />
-                      <span>
-                        <strong>Enable PostgreSQL metadata backend</strong>
-                        <small>Use this profile for shared metadata persistence instead of local-only storage.</small>
-                      </span>
-                    </label>
-
                     <fieldset className="database-fieldset">
                       <legend>Connection profile</legend>
                       <p>Endpoint, credentials, and TLS behavior for the PostgreSQL database.</p>
@@ -3626,7 +3751,7 @@ export function App(): JSX.Element {
                             type="password"
                             autoComplete="off"
                             value={dbForm.password}
-                            onChange={(event) => setDbForm((current) => ({ ...current, password: event.target.value, passwordClear: false }))}
+                            onChange={(event) => setDbForm((current) => ({ ...current, password: event.target.value }))}
                           />
                           {dbFieldErrors.password ? <p role="alert">{dbFieldErrors.password}</p> : null}
                         </div>
@@ -3645,14 +3770,6 @@ export function App(): JSX.Element {
                           <input id="database-extra-params" value={dbForm.extraParams} onChange={(event) => setDbForm((current) => ({ ...current, extraParams: event.target.value }))} />
                         </div>
                       </div>
-                      <label className="database-inline-check">
-                        <input
-                          type="checkbox"
-                          checked={dbForm.passwordClear}
-                          onChange={(event) => setDbForm((current) => ({ ...current, passwordClear: event.target.checked }))}
-                        />
-                        Clear configured password
-                      </label>
                     </fieldset>
 
                     <fieldset className="database-fieldset">
@@ -4113,11 +4230,11 @@ export function App(): JSX.Element {
 
               <div className="llm-workbench__grid llm-workbench__grid--single">
                 <article className="admin-card" aria-labelledby="llm-profiles-title">
-                  <h2 id="llm-profiles-title">Profiles</h2>
+                  <h2 id="llm-profiles-title">Chat profiles</h2>
                   <p id="llm-profile-row-action-hint" className="visually-hidden">
                     Opens the profile edit dialog. Press Enter or Space to activate.
                   </p>
-                  {llmProfileEntries.length === 0 ? <p>No profiles configured.</p> : null}
+                  {chatProfileEntries.length === 0 ? <p>No chat profiles configured.</p> : null}
                   <div className="llm-table-wrap">
                     <table className="llm-configuration-table" aria-label="LLM profiles">
                       <thead>
@@ -4152,16 +4269,64 @@ export function App(): JSX.Element {
                     </table>
                   </div>
                   <div className="inline-actions llm-card-actions">
-                    <button type="button" onClick={openNewLlmProfileModal}>
+                    <button type="button" onClick={() => openNewLlmProfileModal("chat")}>
                       Add profile
                     </button>
                   </div>
                   <TablePagination
                     label="LLM profiles"
                     page={llmProfilesTablePage}
-                    totalItems={llmProfileEntries.length}
+                    totalItems={chatProfileEntries.length}
                     onPageChange={setLlmProfilesTablePage}
                   />
+                </article>
+              </div>
+
+              <div className="llm-workbench__grid llm-workbench__grid--single">
+                <article className="admin-card" aria-labelledby="llm-embedding-profiles-title">
+                  <h2 id="llm-embedding-profiles-title">Embedding profiles</h2>
+                  <p>
+                    Required by semantic search and System 2 evidence retrieval. The default profile id is embedding.
+                  </p>
+                  {embeddingProfileEntries.length === 0 ? <p>No embedding profile configured.</p> : null}
+                  {embeddingProfileEntries.length > 0 ? (
+                    <div className="llm-table-wrap">
+                      <table className="llm-configuration-table" aria-label="Embedding profiles">
+                        <thead>
+                          <tr>
+                            <th scope="col">Profile ID</th>
+                            <th scope="col">Provider</th>
+                            <th scope="col">Model</th>
+                            <th scope="col">Dimensions</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {embeddingProfileEntries.map(([profileId, profile]) => (
+                            <tr
+                              key={profileId}
+                              aria-describedby="llm-profile-row-action-hint"
+                              aria-haspopup="dialog"
+                              aria-keyshortcuts="Enter Space"
+                              aria-label={`Edit embedding profile ${profileId}`}
+                              tabIndex={0}
+                              onClick={() => onEditLlmProfile(profileId)}
+                              onKeyDown={(event) => onConfigurationTableRowKeyDown(event, () => onEditLlmProfile(profileId))}
+                            >
+                              <th scope="row">{profileId}</th>
+                              <td>{profile.provider || "Not set"}</td>
+                              <td>{profile.model || "Not set"}</td>
+                              <td>{profile.max_tokens ?? "default"}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  ) : null}
+                  <div className="inline-actions llm-card-actions">
+                    <button type="button" onClick={() => openNewLlmProfileModal("embedding")}>
+                      Add profile
+                    </button>
+                  </div>
                 </article>
               </div>
 
@@ -4341,8 +4506,17 @@ export function App(): JSX.Element {
               {llmProfileModalOpen ? (
                 <ModalShell
                   titleId="llm-profile-dialog-title"
-                  title={llmProfileForm.id.trim() ? `Edit profile ${llmProfileForm.id.trim()}` : "Add profile"}
-                  eyebrow="Profile"
+                  title={
+                    llmProfileKind === "embedding"
+                      ? llmProfileEditId
+                        ? `Edit embedding profile ${llmProfileEditId}`
+                        : "Add embedding profile"
+                      : llmProfileEditId
+                        ? `Edit profile ${llmProfileEditId}`
+                        : "Add profile"
+                  }
+                  eyebrow={llmProfileKind === "embedding" ? "Embedding profile" : "Profile"}
+                  hideTitle
                   onClose={closeLlmProfileModal}
                 >
                   <form className="admin-form llm-form" onSubmit={onSaveLlmProfile}>
@@ -4357,7 +4531,9 @@ export function App(): JSX.Element {
                       />
                     </div>
                     <div className="field-group">
-                      <label htmlFor="llm-profile-provider">Profile provider</label>
+                      <label htmlFor="llm-profile-provider">
+                        {llmProfileKind === "embedding" ? "Embedding provider" : "Profile provider"}
+                      </label>
                       <select
                         id="llm-profile-provider"
                         value={llmProfileForm.provider}
@@ -4373,34 +4549,54 @@ export function App(): JSX.Element {
                       </select>
                     </div>
                     <div className="field-group">
-                      <label htmlFor="llm-profile-model">Profile model</label>
+                      <label htmlFor="llm-profile-model">
+                        {llmProfileKind === "embedding" ? "Embedding model" : "Profile model"}
+                      </label>
                       <input
                         id="llm-profile-model"
                         value={llmProfileForm.model}
                         onChange={(event) => setLlmProfileForm((current) => ({ ...current, model: event.target.value }))}
-                        placeholder="gpt-4.1-mini"
+                        placeholder={llmProfileKind === "embedding" ? "text-embedding-3-small" : "gpt-4.1-mini"}
                       />
                     </div>
-                    <div className="llm-two-column">
+                    {llmProfileKind === "embedding" ? (
                       <div className="field-group">
-                        <label htmlFor="llm-profile-temperature">Temperature</label>
-                        <input
-                          id="llm-profile-temperature"
-                          value={llmProfileForm.temperature}
-                          onChange={(event) => setLlmProfileForm((current) => ({ ...current, temperature: event.target.value }))}
-                          inputMode="decimal"
-                        />
-                      </div>
-                      <div className="field-group">
-                        <label htmlFor="llm-profile-max-tokens">Max tokens</label>
+                        <label htmlFor="llm-profile-max-tokens">Dimensions</label>
                         <input
                           id="llm-profile-max-tokens"
                           value={llmProfileForm.maxTokens}
                           onChange={(event) => setLlmProfileForm((current) => ({ ...current, maxTokens: event.target.value }))}
                           inputMode="numeric"
+                          placeholder="Provider default"
                         />
+                        <p className="field-hint">Optional output vector size. Leave blank to use the provider default.</p>
                       </div>
-                    </div>
+                    ) : (
+                      <div className="llm-two-column">
+                        <div className="field-group">
+                          <label htmlFor="llm-profile-temperature">Temperature</label>
+                          <input
+                            id="llm-profile-temperature"
+                            value={llmProfileForm.temperature}
+                            onChange={(event) =>
+                              setLlmProfileForm((current) => ({ ...current, temperature: event.target.value }))
+                            }
+                            inputMode="decimal"
+                          />
+                        </div>
+                        <div className="field-group">
+                          <label htmlFor="llm-profile-max-tokens">Max tokens</label>
+                          <input
+                            id="llm-profile-max-tokens"
+                            value={llmProfileForm.maxTokens}
+                            onChange={(event) =>
+                              setLlmProfileForm((current) => ({ ...current, maxTokens: event.target.value }))
+                            }
+                            inputMode="numeric"
+                          />
+                        </div>
+                      </div>
+                    )}
                     <div className="field-group">
                       <label htmlFor="llm-profile-description">Description</label>
                       <input
@@ -4614,6 +4810,11 @@ export function App(): JSX.Element {
                             <strong>Filesystem</strong>
                             <small>Root and allowlist</small>
                           </li>
+                          <li>
+                            <span>04</span>
+                            <strong>Extraction</strong>
+                            <small>System 1 and System 2</small>
+                          </li>
                         </ol>
                       </section>
                     ) : null}
@@ -4738,6 +4939,31 @@ export function App(): JSX.Element {
                           </div>
                         </fieldset>
 
+                        <fieldset className="project-fieldset">
+                          <legend>Extraction systems</legend>
+                          <p>System 1 structural extraction runs for every project and does not use an LLM or embedding profile.</p>
+                          <div className="project-extraction-options">
+                            <div className="project-extraction-option">
+                              <div>
+                                <strong>System 1 structural extraction</strong>
+                                <p>Always on. Collects files, topology, entities, corridors, and verification cycles.</p>
+                              </div>
+                              <StatusBadge tone="success">Always on</StatusBadge>
+                            </div>
+                            <label className="project-extraction-option project-extraction-option--toggle">
+                              <input
+                                type="checkbox"
+                                checked={projectSystem2Enabled}
+                                onChange={(event) => setProjectSystem2Enabled(event.target.checked)}
+                              />
+                              <span>
+                                <strong>Enable System 2 semantic extraction</strong>
+                                <small>Uses the chat LLM profile and the embedding profile. Enable intentionally because it can add LLM costs.</small>
+                              </span>
+                            </label>
+                          </div>
+                        </fieldset>
+
                         {pathPickerOpen ? (
                           <ServerPathPicker
                             key={pathPickerTarget}
@@ -4820,6 +5046,14 @@ export function App(): JSX.Element {
                                 ? `${projectSummaryAllowlist.length} path${projectSummaryAllowlist.length === 1 ? "" : "s"}`
                                 : "No explicit allowlist"}
                             </dd>
+                          </div>
+                          <div>
+                            <dt>System 1</dt>
+                            <dd>Always on</dd>
+                          </div>
+                          <div>
+                            <dt>System 2</dt>
+                            <dd>{projectSystem2Enabled ? "Enabled" : "Disabled"}</dd>
                           </div>
                         </dl>
                       </aside>
@@ -5422,6 +5656,12 @@ export function App(): JSX.Element {
                         <dt>Dirty files</dt>
                         <dd>{selectedSyncRow.dirtyCount}</dd>
                       </div>
+                      {syncDetails ? (
+                        <div>
+                          <dt>Mode</dt>
+                          <dd>{formatStatusValue(syncDetails.memoryMode)}</dd>
+                        </div>
+                      ) : null}
                       <div>
                         <dt>Sync state</dt>
                         <dd>{formatStatusValue(selectedSyncRow.syncState)}</dd>
@@ -5447,6 +5687,66 @@ export function App(): JSX.Element {
                         <dd>{selectedSyncRow.lifecycleTelemetry}</dd>
                       </div>
                     </dl>
+                    <section className="sync-extraction-panel" aria-labelledby="sync-extraction-title">
+                      <div className="sync-activity-panel__header">
+                        <h3 id="sync-extraction-title">Extraction details</h3>
+                        {syncDetails ? (
+                          <span>{syncDetails.memoryBackendReady ? "Memory backend ready" : "Memory backend unavailable"}</span>
+                        ) : null}
+                      </div>
+                      {syncDetailsLoading ? <p role="status">Loading extraction details...</p> : null}
+                      {syncDetailsError ? <p role="alert">{syncDetailsError}</p> : null}
+                      {syncDetails ? (
+                        <>
+                          <div className="sync-system-grid">
+                            <article>
+                              <h4>System 1 structural extraction</h4>
+                              <StatusBadge tone={syncDetails.system1Enabled ? "success" : "warning"}>
+                                {formatStatusValue(syncDetails.system1State)}
+                              </StatusBadge>
+                              <p>Always on. Does not use an LLM or embedding profile.</p>
+                            </article>
+                            <article>
+                              <h4>System 2 semantic extraction</h4>
+                              <StatusBadge tone={syncDetails.system2Enabled ? "info" : "neutral"}>
+                                {formatStatusValue(syncDetails.system2State)}
+                              </StatusBadge>
+                              <p>
+                                {syncDetails.memoryMode === "advanced"
+                                  ? `Advanced mode. Embedding profile: ${syncDetails.embeddingProfile}`
+                                  : "Simple mode. System 2 is disabled for this project."}
+                              </p>
+                            </article>
+                          </div>
+                          <dl className="sync-count-grid" aria-label="Collected memory palace counts">
+                            <div>
+                              <dt>Wings</dt>
+                              <dd>{syncDetails.counts.wings}</dd>
+                            </div>
+                            <div>
+                              <dt>Rooms</dt>
+                              <dd>{syncDetails.counts.rooms}</dd>
+                            </div>
+                            <div>
+                              <dt>Compartments</dt>
+                              <dd>{syncDetails.counts.compartments}</dd>
+                            </div>
+                            <div>
+                              <dt>Memories</dt>
+                              <dd>{syncDetails.counts.semanticMemories}</dd>
+                            </div>
+                            <div>
+                              <dt>Structural evidence</dt>
+                              <dd>{syncDetails.counts.structuralEvidence}</dd>
+                            </div>
+                            <div>
+                              <dt>Semantic claims</dt>
+                              <dd>{syncDetails.counts.semanticClaims}</dd>
+                            </div>
+                          </dl>
+                        </>
+                      ) : null}
+                    </section>
                     <section className="sync-activity-panel" aria-labelledby="sync-activity-title">
                       <div className="sync-activity-panel__header">
                         <h3 id="sync-activity-title">Recent sync activity</h3>
@@ -5495,27 +5795,27 @@ export function App(): JSX.Element {
                       <div className="inline-actions">
                         <ActionButton
                           variant="secondary"
-                          aria-label={`Sync now ${selectedSyncRow.projectId}`}
+                          aria-label={`Sync dirty files ${selectedSyncRow.projectId}`}
                           disabled={syncPendingAction !== null}
                           onClick={() => void onSyncAction(selectedSyncRow.projectId, "now")}
                         >
-                          Sync now
+                          Sync dirty files
                         </ActionButton>
                         <ActionButton
                           variant="secondary"
-                          aria-label={`Reconcile ${selectedSyncRow.projectId}`}
+                          aria-label={`Reconcile project ${selectedSyncRow.projectId}`}
                           disabled={syncPendingAction !== null}
                           onClick={() => void onSyncAction(selectedSyncRow.projectId, "reconcile")}
                         >
-                          Reconcile
+                          Reconcile project
                         </ActionButton>
                         <ActionButton
                           variant="danger"
-                          aria-label={`Rebuild ${selectedSyncRow.projectId}`}
+                          aria-label={`Rebuild project ${selectedSyncRow.projectId}`}
                           disabled={syncPendingAction !== null}
                           onClick={() => void onSyncAction(selectedSyncRow.projectId, "rebuild")}
                         >
-                          Rebuild
+                          Rebuild project
                         </ActionButton>
                         <ActionButton
                           variant="secondary"
@@ -5601,14 +5901,8 @@ export function App(): JSX.Element {
                   {workflowSources.length === 0 ? (
                     <p>
                       No workflow sources configured.
-                      {workflowProjectsCount === 0 ? (
-                        <>
-                          {" "}
-                          <a href="/projects">Create a project first</a>. Once a project exists, use New to add a workflow source path.
-                        </>
-                      ) : (
-                        " Use New to add a workflow source path."
-                      )}
+                      {" "}
+                      Use New to add a workflow source path.
                     </p>
                   ) : null}
                   <div className="llm-table-wrap">
@@ -5752,19 +6046,6 @@ export function App(): JSX.Element {
                 >
                   <form className="admin-form workflow-source-form" onSubmit={(event) => void onCreateWorkflowSource(event)}>
                     <LlmFeedbackMessages className="llm-modal-feedback" message={workflowsMessage} error={workflowsError} />
-                    <ProjectSelect
-                      id="workflow-source-project-id"
-                      label="Project"
-                      projects={projects}
-                      value={workflowSourceProjectId}
-                      onChange={setWorkflowSourceProjectId}
-                      helperText={
-                        projects.length > 0
-                          ? "Workflow sources are attached to one registered project."
-                          : "Create a project before adding workflow sources."
-                      }
-                      required
-                    />
                     <div className="field-group">
                       <label htmlFor="workflow-source-path">Source path</label>
                       <div className="project-path-control">
@@ -5796,9 +6077,6 @@ export function App(): JSX.Element {
                         placeholder="sha256:..."
                       />
                     </div>
-                    {workflowProjectsCount === 0 ? (
-                      <p>Once a project exists, use New to add a workflow source path.</p>
-                    ) : null}
                     {workflowSourcePathPickerOpen ? (
                       <ServerPathPicker
                         title="Browse workflow source folders"
@@ -5813,11 +6091,7 @@ export function App(): JSX.Element {
                       <div className="inline-actions workflow-source-form__actions">
                         <button
                           type="submit"
-                          disabled={
-                            workflowSourcePending ||
-                            workflowProjectsCount === 0 ||
-                            workflowSourceProjectId.trim().length === 0
-                          }
+                          disabled={workflowSourcePending}
                         >
                           Add workflow source
                         </button>

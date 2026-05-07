@@ -869,6 +869,292 @@ CREATE INDEX IF NOT EXISTS idx_ki_palace_lifecycle_state
     ON knowledge_items(palace, lifecycle_state);
 """
 
+_V15_ADR013_SCHEMA_SQL = """
+-- ADR-013 System 1 / System 2 clean-slate tables.
+-- Fresh-install canonical; no backward-compatibility layer.
+--
+-- Topology follows Palace -> Wing -> Room -> Compartment.
+-- Corridor is represented only as directed typed edges (knowledge_relations),
+-- never as a topology level in storage.
+
+-- ---------------------------------------------------------------------------
+-- System 1: structural evidence records
+-- ---------------------------------------------------------------------------
+-- Keyed by (palace, wing, room, compartment, entity_stable_id, cycle_id) so
+-- that a single scan run can replace stale evidence for the same scope/entity
+-- without orphaning historical cycle rows.
+CREATE TABLE IF NOT EXISTS knowledge_structural_evidence (
+    id                  UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    palace              TEXT NOT NULL,
+    wing                TEXT NOT NULL,
+    room                TEXT NOT NULL,
+    compartment         TEXT NOT NULL DEFAULT '',
+    -- Stable identity for the entity this evidence describes.
+    entity_stable_id    TEXT NOT NULL,
+    entity_type         TEXT NOT NULL,
+    -- Which verification cycle produced this evidence row.
+    cycle_id            UUID,    -- FK added below after cycle table exists
+    -- Evidence payload.
+    evidence_category   TEXT NOT NULL,
+    evidence_payload    JSONB NOT NULL DEFAULT '{}'::jsonb,
+    -- Source traceability.
+    source_item_id      UUID REFERENCES knowledge_items(id) ON DELETE SET NULL,
+    -- Temporal.
+    scanned_at          TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    created_at          TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    CONSTRAINT ck_kse_evidence_category
+        CHECK (evidence_category IN (
+            'structural_class',
+            'structural_module',
+            'structural_function',
+            'structural_call_graph',
+            'structural_import',
+            'structural_test',
+            'structural_config',
+            'structural_doc'
+        )),
+    -- Idempotent upsert key: one evidence row per scope/entity/category.
+    CONSTRAINT uq_kse_scope_entity_category
+        UNIQUE (palace, wing, room, compartment, entity_stable_id, evidence_category)
+);
+
+-- ---------------------------------------------------------------------------
+-- System 1: verification cycles
+-- ---------------------------------------------------------------------------
+-- One row per System 1 scan run over a covered scope.  Lifecycle archival gates
+-- in System 2 count only rows where success = TRUE and their covered scope
+-- identity matches the semantic claim's scope (using scope_key, the stable
+-- normalized identifier produced by memory_scope_resolver).
+CREATE TABLE IF NOT EXISTS knowledge_verification_cycles (
+    id                  UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    palace              TEXT NOT NULL,
+    -- Normalized scope key from memory_scope_resolver.scope_key; stable identity
+    -- for palace/wing/room/compartment coverage comparison in lifecycle gates.
+    scope_key           TEXT NOT NULL,
+    -- Human-readable covered topology levels for audit/inspection.
+    covered_wing        TEXT,
+    covered_room        TEXT,
+    covered_compartment TEXT,
+    -- Outcome of this scan run.
+    success             BOOLEAN NOT NULL,
+    failure_reason      TEXT,
+    -- Counts of evidence records produced/removed by this cycle.
+    evidence_found      INTEGER NOT NULL DEFAULT 0,
+    evidence_absent     INTEGER NOT NULL DEFAULT 0,
+    started_at          TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    completed_at        TIMESTAMPTZ,
+    created_at          TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+-- Now that knowledge_verification_cycles exists, add the FK from structural evidence.
+DO $$
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1 FROM pg_constraint
+         WHERE conname = 'fk_kse_cycle_id'
+           AND conrelid = 'knowledge_structural_evidence'::regclass
+    ) THEN
+        ALTER TABLE knowledge_structural_evidence
+            ADD CONSTRAINT fk_kse_cycle_id
+                FOREIGN KEY (cycle_id)
+                REFERENCES knowledge_verification_cycles(id)
+                ON DELETE SET NULL;
+    END IF;
+END $$;
+
+-- ---------------------------------------------------------------------------
+-- System 2: semantic claims
+-- ---------------------------------------------------------------------------
+-- Claims are born in active_evidenced state only when backed by persisted
+-- evidence links.  Lifecycle transitions follow ADR-013:
+--   active_evidenced -> degraded (evidence weakens)
+--   degraded -> archived (two successful absent-evidence System 1 cycles)
+-- Direct active_evidenced -> archived is prohibited by constraint.
+CREATE TABLE IF NOT EXISTS knowledge_semantic_claims (
+    id                  UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    palace              TEXT NOT NULL,
+    wing                TEXT NOT NULL,
+    room                TEXT NOT NULL,
+    compartment         TEXT NOT NULL DEFAULT '',
+    -- Human-readable claim content.
+    claim_text          TEXT NOT NULL,
+    claim_type          TEXT NOT NULL DEFAULT 'room_intent',
+    -- Lifecycle state per ADR-013.
+    lifecycle_state     TEXT NOT NULL DEFAULT 'active_evidenced',
+    -- How many successful absent-evidence System 1 cycles have been observed
+    -- over this claim's scope.  Archive gate requires >= 2.
+    absent_cycle_count  INTEGER NOT NULL DEFAULT 0,
+    -- Scope key for lifecycle cycle applicability checks.
+    scope_key           TEXT NOT NULL,
+    -- Temporal.
+    created_at          TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at          TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    archived_at         TIMESTAMPTZ,
+    CONSTRAINT ck_ksc_lifecycle_state
+        CHECK (lifecycle_state IN ('active_evidenced', 'degraded', 'archived')),
+    CONSTRAINT ck_ksc_archive_requires_two_cycles
+        CHECK (
+            lifecycle_state <> 'archived'
+            OR archived_at IS NOT NULL
+        ),
+    CONSTRAINT ck_ksc_claim_type
+        CHECK (claim_type IN (
+            'wing_intent',
+            'room_intent',
+            'compartment_reasoning_unit',
+            'semantic_corridor',
+            'memory_claim'
+        ))
+);
+
+-- ---------------------------------------------------------------------------
+-- System 2: claim -> evidence join table
+-- ---------------------------------------------------------------------------
+-- Links a semantic claim to the concrete structural evidence rows that back it.
+-- Evidence category is denormalised here for fast category-count queries
+-- (e.g. proof-bundle gate: >= 2 distinct categories required for new wing).
+CREATE TABLE IF NOT EXISTS knowledge_claim_evidence_links (
+    claim_id            UUID NOT NULL REFERENCES knowledge_semantic_claims(id)
+                            ON DELETE CASCADE,
+    evidence_id         UUID NOT NULL REFERENCES knowledge_structural_evidence(id)
+                            ON DELETE CASCADE,
+    -- Denormalised category from knowledge_structural_evidence for fast counting.
+    evidence_category   TEXT NOT NULL,
+    linked_at           TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    PRIMARY KEY (claim_id, evidence_id),
+    CONSTRAINT ck_kcel_evidence_category
+        CHECK (evidence_category IN (
+            'structural_class',
+            'structural_module',
+            'structural_function',
+            'structural_call_graph',
+            'structural_import',
+            'structural_test',
+            'structural_config',
+            'structural_doc'
+        ))
+);
+
+-- ---------------------------------------------------------------------------
+-- System 2: wing proof bundles
+-- ---------------------------------------------------------------------------
+-- When a semantic claim introduces a new wing, a proof bundle must be created
+-- containing references to at least two distinct evidence categories.  This
+-- table records the bundle and its activation status so auditors can inspect
+-- the evidence gate for any wing activation decision.
+CREATE TABLE IF NOT EXISTS knowledge_wing_proof_bundles (
+    id                  UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    palace              TEXT NOT NULL,
+    wing                TEXT NOT NULL,
+    -- The semantic claim that triggered wing activation.
+    activating_claim_id UUID NOT NULL REFERENCES knowledge_semantic_claims(id) ON DELETE RESTRICT,
+    -- Snapshot of distinct evidence categories present at activation time.
+    -- Must contain >= 2 entries (enforced in service layer, inspectable here).
+    evidence_categories TEXT[] NOT NULL DEFAULT '{}',
+    -- Whether the bundle satisfied the >= 2 category gate.
+    gate_satisfied      BOOLEAN NOT NULL DEFAULT FALSE,
+    created_at          TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    CONSTRAINT ck_kwpb_gate_requires_two_categories
+        CHECK (
+            NOT gate_satisfied
+            OR cardinality(evidence_categories) >= 2
+        )
+);
+
+-- ---------------------------------------------------------------------------
+-- System 2: semantic overrides
+-- ---------------------------------------------------------------------------
+-- Overrides activate immediately with mandatory provenance fields.
+-- After each subsequent System 1 verification cycle the accountability status
+-- is updated: 'pending' -> 'supported' or 'unsupported' based on whether live
+-- structural evidence still exists for the overridden claim's scope.
+CREATE TABLE IF NOT EXISTS knowledge_semantic_overrides (
+    id                      UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    -- The semantic claim being overridden.
+    claim_id                UUID NOT NULL
+                                REFERENCES knowledge_semantic_claims(id)
+                                ON DELETE RESTRICT,
+    -- Who/what applied the override; non-empty required for accountability.
+    applied_by              TEXT NOT NULL,
+    override_reason         TEXT NOT NULL,
+    -- The new claim state asserted by this override.
+    override_lifecycle_state TEXT NOT NULL,
+    -- Accountability status evolves across subsequent System 1 cycles.
+    accountability_status   TEXT NOT NULL DEFAULT 'pending',
+    -- Deadline for the override to be resolved (optional; set by policy).
+    accountability_deadline TIMESTAMPTZ,
+    -- Temporal.
+    activated_at            TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    last_checked_at         TIMESTAMPTZ,
+    created_at              TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    CONSTRAINT ck_kso_override_lifecycle_state
+        CHECK (override_lifecycle_state IN ('active_evidenced', 'degraded', 'archived')),
+    CONSTRAINT ck_kso_accountability_status
+        CHECK (accountability_status IN ('pending', 'supported', 'unsupported')),
+    CONSTRAINT ck_kso_applied_by_nonempty
+        CHECK (BTRIM(applied_by) <> ''),
+    CONSTRAINT ck_kso_reason_nonempty
+        CHECK (BTRIM(override_reason) <> '')
+);
+
+-- ---------------------------------------------------------------------------
+-- ADR-013 indexes
+-- ---------------------------------------------------------------------------
+
+-- knowledge_structural_evidence: fast scope and cycle queries
+CREATE INDEX IF NOT EXISTS idx_kse_palace_scope
+    ON knowledge_structural_evidence(palace, wing, room, compartment);
+CREATE INDEX IF NOT EXISTS idx_kse_entity_stable_id
+    ON knowledge_structural_evidence(palace, entity_stable_id);
+CREATE INDEX IF NOT EXISTS idx_kse_cycle_id
+    ON knowledge_structural_evidence(cycle_id)
+    WHERE cycle_id IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_kse_evidence_category
+    ON knowledge_structural_evidence(evidence_category);
+CREATE INDEX IF NOT EXISTS idx_kse_source_item_id
+    ON knowledge_structural_evidence(source_item_id)
+    WHERE source_item_id IS NOT NULL;
+
+-- knowledge_verification_cycles: fast scope-key and success queries
+CREATE INDEX IF NOT EXISTS idx_kvc_palace_scope_key
+    ON knowledge_verification_cycles(palace, scope_key);
+CREATE INDEX IF NOT EXISTS idx_kvc_success
+    ON knowledge_verification_cycles(palace, scope_key, success);
+CREATE INDEX IF NOT EXISTS idx_kvc_completed_at
+    ON knowledge_verification_cycles(completed_at)
+    WHERE completed_at IS NOT NULL;
+
+-- knowledge_semantic_claims: fast scope, lifecycle, and cycle-gate queries
+CREATE INDEX IF NOT EXISTS idx_ksc_palace_scope
+    ON knowledge_semantic_claims(palace, wing, room, compartment);
+CREATE INDEX IF NOT EXISTS idx_ksc_scope_key
+    ON knowledge_semantic_claims(palace, scope_key);
+CREATE INDEX IF NOT EXISTS idx_ksc_lifecycle_state
+    ON knowledge_semantic_claims(palace, lifecycle_state);
+CREATE INDEX IF NOT EXISTS idx_ksc_claim_type
+    ON knowledge_semantic_claims(claim_type);
+
+-- knowledge_claim_evidence_links: fast claim and category count queries
+CREATE INDEX IF NOT EXISTS idx_kcel_evidence_id
+    ON knowledge_claim_evidence_links(evidence_id);
+CREATE INDEX IF NOT EXISTS idx_kcel_claim_category
+    ON knowledge_claim_evidence_links(claim_id, evidence_category);
+
+-- knowledge_wing_proof_bundles: fast wing and claim lookup
+CREATE INDEX IF NOT EXISTS idx_kwpb_palace_wing
+    ON knowledge_wing_proof_bundles(palace, wing);
+CREATE INDEX IF NOT EXISTS idx_kwpb_activating_claim_id
+    ON knowledge_wing_proof_bundles(activating_claim_id);
+
+-- knowledge_semantic_overrides: fast claim and accountability queries
+CREATE INDEX IF NOT EXISTS idx_kso_claim_id
+    ON knowledge_semantic_overrides(claim_id);
+CREATE INDEX IF NOT EXISTS idx_kso_accountability_status
+    ON knowledge_semantic_overrides(accountability_status);
+CREATE INDEX IF NOT EXISTS idx_kso_activated_at
+    ON knowledge_semantic_overrides(activated_at);
+"""
+
 _V14_TRACK4_PREREQS_SQL = """
 -- v14: Track 4 prerequisites — structural entity columns + relation metadata.
 -- See docs/architecture/knowledge-ingestion.md §4.3, §4.4.
@@ -901,6 +1187,159 @@ CREATE INDEX IF NOT EXISTS idx_knowledge_entities_parent_class
 -- existing rows valid and avoids null-handling at every read site.
 ALTER TABLE knowledge_relations
     ADD COLUMN IF NOT EXISTS metadata JSONB NOT NULL DEFAULT '{}'::jsonb;
+"""
+
+_V16_KSE_UNIQUE_CONSTRAINT_SQL = """
+-- ADR-013 Task 4: idempotent upsert key for structural evidence.
+-- Fresh installs have this inline in CREATE TABLE; this migration adds it
+-- to existing epoch-2 databases that were created before v16.
+DO $$
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1 FROM pg_constraint
+         WHERE conname = 'uq_kse_scope_entity_category'
+           AND conrelid = 'knowledge_structural_evidence'::regclass
+    ) THEN
+        ALTER TABLE knowledge_structural_evidence
+            ADD CONSTRAINT uq_kse_scope_entity_category
+                UNIQUE (palace, wing, room, compartment, entity_stable_id, evidence_category);
+    END IF;
+END $$;
+"""
+
+_V17_SEMANTIC_CORRIDORS_SQL = """
+-- ADR-013 Task 7: dedicated edge table for System 2 semantic corridor claims.
+--
+-- Each row in this table extends exactly one knowledge_semantic_claims row where
+-- claim_type = 'semantic_corridor'.  The 1:1 relationship is enforced by the
+-- UNIQUE constraint on claim_id.
+--
+-- corridor_type     : canonicalized form (UPPER, whitespace/hyphen -> _).
+-- corridor_type_raw : original caller-supplied value for audit/display.
+-- No self-loop constraint: from_claim_id <> to_claim_id.
+-- Unique directed edge: (from_claim_id, to_claim_id, corridor_type).
+
+CREATE TABLE IF NOT EXISTS knowledge_semantic_corridors (
+    claim_id        UUID NOT NULL PRIMARY KEY
+                        REFERENCES knowledge_semantic_claims(id) ON DELETE CASCADE,
+    from_claim_id   UUID NOT NULL
+                        REFERENCES knowledge_semantic_claims(id) ON DELETE CASCADE,
+    to_claim_id     UUID NOT NULL
+                        REFERENCES knowledge_semantic_claims(id) ON DELETE CASCADE,
+    corridor_type       TEXT NOT NULL,
+    corridor_type_raw   TEXT NOT NULL,
+    created_at          TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    CONSTRAINT ck_kscorr_no_self_loop
+        CHECK (from_claim_id <> to_claim_id),
+    CONSTRAINT uq_kscorr_directed_edge
+        UNIQUE (from_claim_id, to_claim_id, corridor_type)
+);
+
+CREATE INDEX IF NOT EXISTS idx_kscorr_from_claim_id
+    ON knowledge_semantic_corridors(from_claim_id);
+CREATE INDEX IF NOT EXISTS idx_kscorr_to_claim_id
+    ON knowledge_semantic_corridors(to_claim_id);
+CREATE INDEX IF NOT EXISTS idx_kscorr_corridor_type
+    ON knowledge_semantic_corridors(corridor_type);
+"""
+
+_V18_TOPOLOGY_PROVENANCE_SQL = """
+-- ADR-013 Task 2a: durable append-only topology provenance tables.
+--
+-- knowledge_topology_provenance records the derivation accountability for each
+-- accepted topology placement: who derived it, from what, and why (if override).
+-- Provenance is HISTORY: every accepted placement inserts a new row; no upsert key
+-- may overwrite prior rows.
+--
+-- knowledge_topology_provenance_evidence is a join table linking each provenance
+-- record to the structural evidence rows that backed the derivation.
+
+CREATE TABLE IF NOT EXISTS knowledge_topology_provenance (
+    id                          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    -- Link to the semantic claim this provenance records placement for.
+    claim_id                    UUID NOT NULL
+                                    REFERENCES knowledge_semantic_claims(id)
+                                    ON DELETE CASCADE,
+    -- Denormalized topology at time of derivation (append-only snapshot).
+    palace                      TEXT NOT NULL DEFAULT '',
+    wing                        TEXT NOT NULL DEFAULT '',
+    room                        TEXT NOT NULL DEFAULT '',
+    compartment                 TEXT NOT NULL DEFAULT '',
+    -- Normalized scope key at derivation time.
+    scope_key                   TEXT NOT NULL,
+    -- How topology was determined.
+    derivation_source           TEXT NOT NULL,
+    -- Algorithm version tag for reproducibility auditing.
+    derivation_algorithm_version TEXT NOT NULL DEFAULT 'system1.v1',
+    -- Override accountability fields (nullable; required when source = explicit_override).
+    override_reason             TEXT,
+    applied_by                  TEXT,
+    -- Link to the semantic override record that authorized this placement (if any).
+    override_id                 UUID
+                                    REFERENCES knowledge_semantic_overrides(id)
+                                    ON DELETE SET NULL,
+    -- Timestamps.
+    derived_at                  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    created_at                  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    -- Allowed derivation sources.
+    CONSTRAINT ck_ktp_derivation_source
+        CHECK (derivation_source IN ('explicit_override', 'system1_derived')),
+    -- When source is explicit_override both override_reason and applied_by must be non-empty.
+    CONSTRAINT ck_ktp_explicit_override_reason
+        CHECK (
+            derivation_source <> 'explicit_override'
+            OR (override_reason IS NOT NULL AND BTRIM(override_reason) <> '')
+        ),
+    CONSTRAINT ck_ktp_explicit_override_applied_by
+        CHECK (
+            derivation_source <> 'explicit_override'
+            OR (applied_by IS NOT NULL AND BTRIM(applied_by) <> '')
+        )
+);
+
+-- ---------------------------------------------------------------------------
+-- knowledge_topology_provenance_evidence: provenance <-> evidence join table
+-- ---------------------------------------------------------------------------
+-- Each accepted placement links the provenance record to the structural
+-- evidence rows that supported the derivation decision.
+
+CREATE TABLE IF NOT EXISTS knowledge_topology_provenance_evidence (
+    provenance_id   UUID NOT NULL
+                        REFERENCES knowledge_topology_provenance(id)
+                        ON DELETE CASCADE,
+    evidence_id     UUID NOT NULL
+                        REFERENCES knowledge_structural_evidence(id)
+                        ON DELETE RESTRICT,
+    PRIMARY KEY (provenance_id, evidence_id)
+);
+
+-- Reverse lookup: given an evidence row, which provenance records reference it?
+CREATE INDEX IF NOT EXISTS idx_ktpe_evidence_id
+    ON knowledge_topology_provenance_evidence(evidence_id);
+"""
+
+_V19_SYSTEM2_CLAIM_TYPES_SQL = """
+DO $$
+BEGIN
+    IF EXISTS (
+        SELECT 1 FROM pg_constraint
+         WHERE conname = 'ck_ksc_claim_type'
+           AND conrelid = 'knowledge_semantic_claims'::regclass
+    ) THEN
+        ALTER TABLE knowledge_semantic_claims
+            DROP CONSTRAINT ck_ksc_claim_type;
+    END IF;
+
+    ALTER TABLE knowledge_semantic_claims
+        ADD CONSTRAINT ck_ksc_claim_type
+        CHECK (claim_type IN (
+            'wing_intent',
+            'room_intent',
+            'compartment_reasoning_unit',
+            'semantic_corridor',
+            'memory_claim'
+        ));
+END $$;
 """
 
 _HAS_KNOWLEDGE_TABLES_SQL = """
@@ -1005,6 +1444,42 @@ MIGRATIONS: list[tuple[int, str, str]] = [
         14,
         "Add qualified_name + parent_class_id to entities, metadata to relations (Track 4 prereqs)",
         _V14_TRACK4_PREREQS_SQL,
+    ),
+    (
+        15,
+        (
+            "Add ADR-013 System 1/System 2 schema objects"
+            " (structural evidence, verification cycles,"
+            " semantic claims, claim-evidence links,"
+            " wing proof bundles, semantic overrides)"
+        ),
+        _V15_ADR013_SCHEMA_SQL,
+    ),
+    (
+        16,
+        (
+            "Add uq_kse_scope_entity_category unique constraint"
+            " for idempotent structural evidence upserts"
+        ),
+        _V16_KSE_UNIQUE_CONSTRAINT_SQL,
+    ),
+    (
+        17,
+        "Add knowledge_semantic_corridors edge table for System 2 corridor claims (ADR-013 Task 7)",
+        _V17_SEMANTIC_CORRIDORS_SQL,
+    ),
+    (
+        18,
+        (
+            "Add knowledge_topology_provenance and knowledge_topology_provenance_evidence"
+            " tables for durable append-only derivation accountability (ADR-013 Task 2a)"
+        ),
+        _V18_TOPOLOGY_PROVENANCE_SQL,
+    ),
+    (
+        19,
+        "Expand System 2 semantic claim types for ADR-013 advanced mode",
+        _V19_SYSTEM2_CLAIM_TYPES_SQL,
     ),
 ]
 

@@ -487,6 +487,11 @@ class WorkflowRunner:
             workflow, exec_context, completed_blocks, execution_waves, start_time
         )
 
+        # Terminal status classification: mirrors fresh execution path.
+        # If any block without continue_on_error has failed, raise so the caller
+        # wraps the result as failure rather than success.
+        self._raise_on_unhandled_block_failure(workflow, exec_context)
+
         return exec_context
 
     async def _execute_workflow_internal(
@@ -560,6 +565,10 @@ class WorkflowRunner:
         await self._finalize_execution_context(
             workflow, exec_context, completed_blocks, execution_waves, start_time
         )
+
+        # Terminal status classification: if any block without continue_on_error
+        # has failed metadata, the workflow outcome must be failure, not success.
+        self._raise_on_unhandled_block_failure(workflow, exec_context)
 
         return exec_context
 
@@ -1632,6 +1641,47 @@ class WorkflowRunner:
         if isinstance(block_output, Execution):
             return block_output.outputs or {}
         return cast(dict[str, Any], block_output.model_dump())
+
+    def _raise_on_unhandled_block_failure(
+        self,
+        workflow: WorkflowSchema,
+        exec_context: Execution,
+    ) -> None:
+        """Raise RuntimeError if any block failed without continue_on_error opt-out.
+
+        Skipped blocks are never treated as failure.  Blocks with
+        continue_on_error:true are explicitly tolerated and do not cause workflow
+        failure.  Every other block whose metadata.failed is True causes the
+        workflow terminal status to be failure.
+
+        Args:
+            workflow: Workflow schema (to look up block continue_on_error flags).
+            exec_context: Completed execution context with block results.
+
+        Raises:
+            RuntimeError: If one or more blocks failed without opt-out.
+        """
+        # Build a lookup from block_id → continue_on_error flag
+        continue_on_error_ids: set[str] = {
+            block.id for block in workflow.blocks if block.continue_on_error
+        }
+
+        failed_ids: list[str] = []
+        for block_id, block_exec in exec_context.blocks.items():
+            if not isinstance(block_exec, Execution):
+                continue
+            metadata = block_exec.metadata
+            if metadata is None:
+                continue
+            if metadata.skipped:
+                continue
+            if metadata.failed and block_id not in continue_on_error_ids:
+                failed_ids.append(block_id)
+
+        if failed_ids:
+            raise RuntimeError(
+                f"Workflow failed: block(s) {failed_ids} failed without continue_on_error"
+            )
 
 
 __all__ = ["WorkflowRunner"]

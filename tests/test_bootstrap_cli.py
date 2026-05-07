@@ -528,7 +528,7 @@ def test_cli_bootstrap_existing_state_prints_message_and_exits_without_reconfigu
 
     cli.main(["bootstrap", "--config-dir", str(config_dir)])
 
-    out = capsys.readouterr().out
+    out = capsys.readouterr().err
     assert "already initialized" in out.lower()
     assert "--reconfigure" in out
     assert called_getpass is False
@@ -568,7 +568,7 @@ def test_cli_bootstrap_reconfigure_existing_state_updates_password_with_flag(
         ]
     )
 
-    out = capsys.readouterr().out
+    out = capsys.readouterr().err
     assert "reconfigure" in out.lower()
     assert "admin password" in out.lower()
     assert "updated" in out.lower()

@@ -45,11 +45,11 @@ def _patch_memory_config(monkeypatch: pytest.MonkeyPatch) -> None:
         return
 
     monkeypatch.setattr(
-        "workflows_mcp.tools_memory._memory_connection_config_from_metadata",
+        "workflows_mcp.tools_memory.memory_connection_config_from_metadata",
         lambda _app_ctx: None,
     )
     monkeypatch.setattr(
-        "workflows_mcp.tools_memory._memory_connection_config_from_env",
+        "workflows_mcp.tools_memory.memory_connection_config_from_env",
         lambda: sentinel,
     )
     monkeypatch.setattr(

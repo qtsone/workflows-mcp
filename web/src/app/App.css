@@ -2131,6 +2131,46 @@ button:focus-visible,
   padding-top: 1rem;
 }
 
+.sync-extraction-panel {
+  display: grid;
+  gap: 0.85rem;
+  border-top: 1px solid var(--border);
+  padding-top: 1rem;
+}
+
+.sync-system-grid,
+.sync-count-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.75rem;
+}
+
+.sync-system-grid article,
+.sync-count-grid > div {
+  display: grid;
+  gap: 0.35rem;
+  min-width: 0;
+  border: 1px solid var(--border);
+  border-radius: var(--control-radius);
+  background: var(--surface-muted);
+  padding: 0.72rem;
+}
+
+.sync-system-grid h4,
+.sync-count-grid dt {
+  margin: 0;
+  color: var(--muted);
+  font-size: 0.75rem;
+  font-weight: 760;
+}
+
+.sync-system-grid p,
+.sync-count-grid dd {
+  margin: 0;
+  color: var(--ink);
+  font-weight: 730;
+}
+
 .sync-activity-panel__header {
   display: flex;
   align-items: baseline;
@@ -2270,7 +2310,7 @@ button:focus-visible,
 
 .project-onboarding-steps {
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-columns: repeat(4, minmax(0, 1fr));
   gap: 0.55rem;
   margin: 0;
   padding: 0;
@@ -2315,6 +2355,39 @@ button:focus-visible,
   color: var(--muted);
   font-size: 0.74rem;
   overflow-wrap: anywhere;
+}
+
+.project-extraction-options {
+  display: grid;
+  gap: 0.75rem;
+}
+
+.project-extraction-option {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 0.8rem;
+  border: 1px solid var(--border);
+  border-radius: var(--control-radius);
+  background: var(--surface-muted);
+  padding: 0.75rem;
+}
+
+.project-extraction-option p,
+.project-extraction-option small {
+  display: block;
+  margin: 0.2rem 0 0;
+  color: var(--muted);
+  line-height: 1.35;
+}
+
+.project-extraction-option--toggle {
+  cursor: pointer;
+  justify-content: flex-start;
+}
+
+.project-extraction-option--toggle input {
+  margin-top: 0.18rem;
 }
 
 .project-onboarding-layout {
@@ -2563,32 +2636,6 @@ button:focus-visible,
   width: 100%;
   gap: 1rem;
   margin-top: 0;
-}
-
-.database-toggle {
-  display: grid !important;
-  grid-template-columns: auto minmax(0, 1fr);
-  align-items: start !important;
-  width: 100% !important;
-  gap: 0.75rem !important;
-  border: 1px solid rgba(46, 111, 98, 0.22);
-  border-radius: var(--radius);
-  background: var(--accent-soft);
-  padding: 0.85rem;
-}
-
-.database-toggle strong {
-  display: block;
-  color: var(--accent-strong);
-}
-
-.database-toggle small {
-  display: block;
-  margin-top: 0.18rem;
-  color: var(--muted-strong);
-  font-size: 0.82rem;
-  font-weight: 500;
-  line-height: 1.45;
 }
 
 .database-fieldset {
@@ -3152,7 +3199,9 @@ button:focus-visible,
   .project-onboarding-steps,
   .project-identity-grid,
   .watcher-detail-grid,
-  .sync-detail-grid {
+  .sync-detail-grid,
+  .sync-system-grid,
+  .sync-count-grid {
     grid-template-columns: 1fr;
   }
 

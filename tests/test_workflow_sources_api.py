@@ -103,7 +103,6 @@ def test_admin_workflow_sources_and_registry_happy_path(
     app_client: TestClient, tmp_path: Path
 ) -> None:
     csrf_token = _login_and_csrf(app_client)
-    project_id = _create_project(app_client, csrf_token)
 
     workflow_dir = tmp_path / "wf-source"
     workflow_dir.mkdir(parents=True)
@@ -112,7 +111,6 @@ def test_admin_workflow_sources_and_registry_happy_path(
     create_source = app_client.post(
         "/api/admin/v1/workflows/sources",
         json={
-            "project_id": project_id,
             "source_path": str(workflow_dir),
             "checksum": None,
         },
@@ -121,12 +119,13 @@ def test_admin_workflow_sources_and_registry_happy_path(
     assert create_source.status_code == 201
     source = create_source.json()
     source_id = source["source_id"]
-    assert source["project_id"] == project_id
+    assert "project_id" not in source
 
     list_sources = app_client.get("/api/admin/v1/workflows/sources")
     assert list_sources.status_code == 200
     listed_sources = list_sources.json()["sources"]
-    assert [item["source_id"] for item in listed_sources] == [source_id]
+    user_listed = [s for s in listed_sources if not s.get("is_system")]
+    assert [item["source_id"] for item in user_listed] == [source_id]
 
     validate_source = app_client.post(
         f"/api/admin/v1/workflows/sources/{source_id}/validate",
@@ -145,16 +144,15 @@ def test_admin_workflow_sources_and_registry_happy_path(
     assert reload_response.status_code == 200
     reload_payload = reload_response.json()
     assert reload_payload["status"] == "ok"
-    assert reload_payload["total"] == 1
-    assert reload_payload["source_count"] == 1
-    assert reload_payload["workflow_names"] == ["wf-admin-good"]
+    assert reload_payload["total"] >= 1
+    assert "wf-admin-good" in reload_payload["workflow_names"]
 
     list_workflows = app_client.get("/api/admin/v1/workflows")
     assert list_workflows.status_code == 200
     workflows = list_workflows.json()["workflows"]
-    assert len(workflows) == 1
-    assert workflows[0]["name"] == "wf-admin-good"
-    assert workflows[0]["source_path"]
+    assert any(w["name"] == "wf-admin-good" for w in workflows)
+    wf_good = next(w for w in workflows if w["name"] == "wf-admin-good")
+    assert wf_good["source_path"]
 
     detail_response = app_client.get("/api/admin/v1/workflows/wf-admin-good")
     assert detail_response.status_code == 200
@@ -187,45 +185,46 @@ def test_admin_workflow_sources_and_registry_happy_path(
         headers={"X-CSRF-Token": csrf_token},
     )
     assert reload_empty.status_code == 200
-    assert reload_empty.json()["total"] == 0
+    # Only user workflow "wf-admin-good" is gone; builtins may still be present.
+    empty_names = reload_empty.json()["workflow_names"]
+    assert "wf-admin-good" not in empty_names
 
     list_empty = app_client.get("/api/admin/v1/workflows")
     assert list_empty.status_code == 200
-    assert list_empty.json()["workflows"] == []
+    listed_empty = list_empty.json()["workflows"]
+    assert not any(w["name"] == "wf-admin-good" for w in listed_empty)
 
 
 def test_workflow_sources_auth_and_csrf_boundaries(app_client: TestClient, tmp_path: Path) -> None:
     unauth_list = app_client.get("/api/admin/v1/workflows/sources")
     assert unauth_list.status_code == 401
 
-    csrf_token = _login_and_csrf(app_client)
-    project_id = _create_project(app_client, csrf_token)
+    _login_and_csrf(app_client)
     workflow_dir = tmp_path / "wf-source-auth"
     workflow_dir.mkdir(parents=True)
 
     missing_csrf = app_client.post(
         "/api/admin/v1/workflows/sources",
-        json={"project_id": project_id, "source_path": str(workflow_dir)},
+        json={"source_path": str(workflow_dir)},
     )
     assert missing_csrf.status_code == 403
 
 
 def test_workflow_sources_duplicate_conflict_code(app_client: TestClient, tmp_path: Path) -> None:
     csrf_token = _login_and_csrf(app_client)
-    project_id = _create_project(app_client, csrf_token)
     workflow_dir = tmp_path / "wf-source-duplicate"
     workflow_dir.mkdir(parents=True)
 
     first = app_client.post(
         "/api/admin/v1/workflows/sources",
-        json={"project_id": project_id, "source_path": str(workflow_dir)},
+        json={"source_path": str(workflow_dir)},
         headers={"X-CSRF-Token": csrf_token},
     )
     assert first.status_code == 201
 
     second = app_client.post(
         "/api/admin/v1/workflows/sources",
-        json={"project_id": project_id, "source_path": str(workflow_dir)},
+        json={"source_path": str(workflow_dir)},
         headers={"X-CSRF-Token": csrf_token},
     )
     assert second.status_code == 409
@@ -236,7 +235,6 @@ def test_reload_invalid_workflow_does_not_mutate_live_registry(
     app_client: TestClient, tmp_path: Path
 ) -> None:
     csrf_token = _login_and_csrf(app_client)
-    project_id = _create_project(app_client, csrf_token)
 
     good_source = tmp_path / "wf-source-good"
     good_source.mkdir(parents=True)
@@ -244,7 +242,7 @@ def test_reload_invalid_workflow_does_not_mutate_live_registry(
 
     create_good = app_client.post(
         "/api/admin/v1/workflows/sources",
-        json={"project_id": project_id, "source_path": str(good_source)},
+        json={"source_path": str(good_source)},
         headers={"X-CSRF-Token": csrf_token},
     )
     assert create_good.status_code == 201
@@ -254,14 +252,14 @@ def test_reload_invalid_workflow_does_not_mutate_live_registry(
         headers={"X-CSRF-Token": csrf_token},
     )
     assert first_reload.status_code == 200
-    assert first_reload.json()["workflow_names"] == ["wf-admin-good"]
+    assert "wf-admin-good" in first_reload.json()["workflow_names"]
 
     bad_source = tmp_path / "wf-source-bad"
     bad_source.mkdir(parents=True)
     _write_invalid_workflow_yaml(bad_source, filename="broken.yaml")
     create_bad = app_client.post(
         "/api/admin/v1/workflows/sources",
-        json={"project_id": project_id, "source_path": str(bad_source)},
+        json={"source_path": str(bad_source)},
         headers={"X-CSRF-Token": csrf_token},
     )
     assert create_bad.status_code == 201
@@ -276,7 +274,7 @@ def test_reload_invalid_workflow_does_not_mutate_live_registry(
     list_after_failure = app_client.get("/api/admin/v1/workflows")
     assert list_after_failure.status_code == 200
     listed = list_after_failure.json()["workflows"]
-    assert [item["name"] for item in listed] == ["wf-admin-good"]
+    assert any(item["name"] == "wf-admin-good" for item in listed)
 
 
 @pytest.mark.parametrize(
@@ -366,13 +364,12 @@ def test_system_source_has_is_system_true(app_client_with_lifespan: TestClient) 
 def test_user_source_has_is_system_false(app_client: TestClient, tmp_path: Path) -> None:
     """A user-created source has is_system=False."""
     csrf_token = _login_and_csrf(app_client)
-    project_id = _create_project(app_client, csrf_token)
     workflow_dir = tmp_path / "wf-user-source"
     workflow_dir.mkdir(parents=True)
 
     create_source = app_client.post(
         "/api/admin/v1/workflows/sources",
-        json={"project_id": project_id, "source_path": str(workflow_dir)},
+        json={"source_path": str(workflow_dir)},
         headers={"X-CSRF-Token": csrf_token},
     )
     assert create_source.status_code == 201
@@ -405,11 +402,49 @@ def test_delete_system_source_returns_403_with_structured_error(
     )
 
 
+def test_create_source_with_is_system_true_rejected_with_422(
+    app_client: TestClient, tmp_path: Path
+) -> None:
+    """POST /sources with is_system=true must be rejected 422 by extra=forbid schema."""
+    csrf_token = _login_and_csrf(app_client)
+    workflow_dir = tmp_path / "wf-system-attempt"
+    workflow_dir.mkdir(parents=True)
+
+    response = app_client.post(
+        "/api/admin/v1/workflows/sources",
+        json={
+            "source_path": str(workflow_dir),
+            "is_system": True,
+        },
+        headers={"X-CSRF-Token": csrf_token},
+    )
+    assert response.status_code == 422, (
+        f"Expected 422 for is_system=true (extra=forbid), got {response.status_code}: "
+        f"{response.text}"
+    )
+
+
+def test_validate_system_source_returns_protected_error(app_client: TestClient) -> None:
+    """POST /sources/__system__/validate must return exactly 403 with structured error."""
+    csrf_token = _login_and_csrf(app_client)
+
+    response = app_client.post(
+        "/api/admin/v1/workflows/sources/__system__/validate",
+        headers={"X-CSRF-Token": csrf_token},
+    )
+    assert response.status_code == 403, (
+        f"Expected 403 for __system__ validate, got {response.status_code}: {response.text}"
+    )
+    error_code = _error_code(response.json())
+    assert error_code == "system_workflow_source_protected", (
+        f"Expected error code system_workflow_source_protected, got: {response.json()}"
+    )
+
+
 def test_workflow_detail_reports_missing_raw_yaml_without_failing(
     app_client: TestClient, tmp_path: Path
 ) -> None:
     csrf_token = _login_and_csrf(app_client)
-    project_id = _create_project(app_client, csrf_token)
 
     workflow_dir = tmp_path / "wf-source-missing-yaml"
     workflow_dir.mkdir(parents=True)
@@ -417,7 +452,7 @@ def test_workflow_detail_reports_missing_raw_yaml_without_failing(
 
     create_source = app_client.post(
         "/api/admin/v1/workflows/sources",
-        json={"project_id": project_id, "source_path": str(workflow_dir)},
+        json={"source_path": str(workflow_dir)},
         headers={"X-CSRF-Token": csrf_token},
     )
     assert create_source.status_code == 201
@@ -439,3 +474,67 @@ def test_workflow_detail_reports_missing_raw_yaml_without_failing(
     assert detail_payload["yaml_path"] is None
     assert detail_payload["load_logs"]
     assert "not found" in detail_payload["load_logs"][0].lower()
+
+
+# ---------------------------------------------------------------------------
+# v10: API decoupling — project_id removed from create request and all responses
+# ---------------------------------------------------------------------------
+
+
+def test_create_source_without_project_id_succeeds(app_client: TestClient, tmp_path: Path) -> None:
+    """POST /sources without project_id must succeed after v10 decoupling."""
+    csrf_token = _login_and_csrf(app_client)
+    workflow_dir = tmp_path / "wf-no-project"
+    workflow_dir.mkdir(parents=True)
+
+    response = app_client.post(
+        "/api/admin/v1/workflows/sources",
+        json={"source_path": str(workflow_dir)},
+        headers={"X-CSRF-Token": csrf_token},
+    )
+    assert response.status_code == 201, (
+        f"Expected 201 for source creation without project_id, got {response.status_code}: "
+        f"{response.text}"
+    )
+    payload = response.json()
+    assert "source_id" in payload
+    assert "project_id" not in payload, "Response must not include project_id after v10"
+
+
+def test_create_source_with_project_id_rejected_with_422(
+    app_client: TestClient, tmp_path: Path
+) -> None:
+    """POST /sources with project_id must be rejected 422 by extra=forbid validation."""
+    csrf_token = _login_and_csrf(app_client)
+    workflow_dir = tmp_path / "wf-with-project"
+    workflow_dir.mkdir(parents=True)
+
+    response = app_client.post(
+        "/api/admin/v1/workflows/sources",
+        json={"project_id": "some-project", "source_path": str(workflow_dir)},
+        headers={"X-CSRF-Token": csrf_token},
+    )
+    assert response.status_code == 422, (
+        f"Expected 422 for project_id (extra=forbid), got {response.status_code}: {response.text}"
+    )
+
+
+def test_list_sources_response_has_no_project_id(app_client: TestClient, tmp_path: Path) -> None:
+    """GET /sources response must not include project_id in any source record."""
+    csrf_token = _login_and_csrf(app_client)
+    workflow_dir = tmp_path / "wf-list-no-project"
+    workflow_dir.mkdir(parents=True)
+
+    app_client.post(
+        "/api/admin/v1/workflows/sources",
+        json={"source_path": str(workflow_dir)},
+        headers={"X-CSRF-Token": csrf_token},
+    )
+
+    list_response = app_client.get("/api/admin/v1/workflows/sources")
+    assert list_response.status_code == 200
+    sources = list_response.json()["sources"]
+    for source in sources:
+        assert "project_id" not in source, (
+            f"project_id must not appear in list response; source: {source}"
+        )

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+from importlib.resources import files
 from pathlib import Path as FilePath
 from sqlite3 import Connection
 from typing import Annotated, Any
@@ -8,12 +9,7 @@ from typing import Annotated, Any
 from fastapi import APIRouter, Depends, HTTPException, Path, Query, status
 from pydantic import BaseModel, ValidationError
 
-from workflows_mcp.engine.execution import Execution
-from workflows_mcp.engine.memory_onboard_sync_orchestrator import (
-    ProgrammaticOnboardRequest,
-    classify_scan_files_for_programmatic_mode,
-    run_programmatic_onboard,
-)
+from workflows_mcp.engine.executors_memory import MemoryExecutor
 from workflows_mcp.engine.memory_service import MemoryContractError
 from workflows_mcp.http.dependencies import (
     CurrentAdminSession,
@@ -22,11 +18,14 @@ from workflows_mcp.http.dependencies import (
     require_current_admin_session,
 )
 from workflows_mcp.http.lifespan import AppResources
+from workflows_mcp.memory_runtime import refresh_memory_backend
 from workflows_mcp.metadata.db import connect_metadata_db
 from workflows_mcp.metadata.repos.projects_repo import ProjectRecord, SQLiteProjectsRepository
-from workflows_mcp.metadata.repos.watcher_repo import SQLiteWatcherRepository, UnknownProjectError
-from workflows_mcp.tools_memory import persist_graph_payload
-from workflows_mcp.watcher.scanner import scan_project_files
+from workflows_mcp.metadata.repos.watcher_repo import (
+    DirtyQueueEntry,
+    SQLiteWatcherRepository,
+    UnknownProjectError,
+)
 
 router = APIRouter(prefix="/sync")
 logger = logging.getLogger(__name__)
@@ -68,10 +67,38 @@ class SyncLogsResponse(BaseModel):
     entries: list[SyncLogEntry]
 
 
+class SyncExtractionCounts(BaseModel):
+    source_items: int
+    structural_evidence: int
+    verification_cycles: int
+    wings: int
+    rooms: int
+    compartments: int
+    semantic_claims: int
+    semantic_memories: int
+
+
+class SyncProjectDetailsResponse(BaseModel):
+    project_id: str
+    memory_mode: str
+    system1_enabled: bool
+    system1_state: str
+    system2_enabled: bool
+    system2_state: str
+    embedding_profile_required: bool
+    embedding_profile: str
+    memory_backend_ready: bool
+    counts: SyncExtractionCounts
+
+
 class SyncNowResponse(BaseModel):
     project_id: str
     status: str
     dirty_count: int
+    action: str
+    memory_mode: str
+    job_id: str | None = None
+    workflow: str | None = None
     error: SyncErrorDetail | None = None
 
 
@@ -97,44 +124,16 @@ def _scope_for_project(project: ProjectRecord) -> dict[str, str]:
     }
 
 
-def _scan_entries_for_project(project: ProjectRecord) -> list[dict[str, Any]]:
-    project_root = FilePath(project.fs_root)
-    entries: list[dict[str, Any]] = []
-    for relative_path in scan_project_files(project_root):
-        absolute_path = project_root / relative_path
-        try:
-            stat = absolute_path.stat()
-            size_bytes = stat.st_size
-        except OSError:
-            size_bytes = 0
-        entries.append(
-            {
-                "path": relative_path.as_posix(),
-                "content": "",
-                "size_bytes": size_bytes,
-            }
-        )
-    return entries
-
-
-def _admin_memory_execution(resources: AppResources) -> Execution:
-    execution = Execution()
-    execution.set_execution_context(
-        resources.app_context.create_execution_context(auth_method="ADMIN_SESSION")
-    )
-    return execution
-
-
 def _sync_error_detail(exc: Exception) -> SyncErrorDetail:
     if isinstance(exc, MemoryContractError):
-        return SyncErrorDetail(code="project_graph_sync_failed", message=exc.message)
+        return SyncErrorDetail(code="project_system1_sync_failed", message=exc.message)
     if isinstance(exc, ValidationError):
         contract_message = _contract_message_from_validation_error(exc)
         if contract_message:
-            return SyncErrorDetail(code="project_graph_sync_failed", message=contract_message)
+            return SyncErrorDetail(code="project_system1_sync_failed", message=contract_message)
     return SyncErrorDetail(
-        code="project_graph_sync_failed",
-        message="Project graph sync failed; check memory database readiness and server logs.",
+        code="project_system1_sync_failed",
+        message="Project System 1 sync failed; check memory database readiness and server logs.",
     )
 
 
@@ -154,45 +153,219 @@ def _contract_message_from_validation_error(exc: ValidationError) -> str | None:
     return None
 
 
-async def _persist_project_graph_from_scan(
+async def _count_query(
+    backend: Any,
+    sql: str,
+    palace: str,
+    column: str = "n",
+) -> int:
+    result = await backend.query(sql, (palace,))
+    if not result.rows:
+        return 0
+    value = result.rows[0].get(column, 0)
+    return int(value or 0)
+
+
+async def _memory_counts_for_project(
+    *,
+    resources: AppResources,
+    palace: str,
+) -> tuple[bool, SyncExtractionCounts]:
+    empty_counts = SyncExtractionCounts(
+        source_items=0,
+        structural_evidence=0,
+        verification_cycles=0,
+        wings=0,
+        rooms=0,
+        compartments=0,
+        semantic_claims=0,
+        semantic_memories=0,
+    )
+    backend = getattr(resources.app_context, "memory_backend", None)
+    if backend is None:
+        try:
+            await refresh_memory_backend(
+                app_ctx=resources.app_context,
+                executor_registry=resources.executor_registry,
+                prefer_metadata=True,
+            )
+        except Exception:
+            logger.warning("unable to refresh memory backend for sync details", exc_info=True)
+        backend = getattr(resources.app_context, "memory_backend", None)
+        if backend is None:
+            return False, empty_counts
+
+    try:
+        source_items = await _count_query(
+            backend,
+            "SELECT COUNT(*)::int AS n FROM knowledge_items WHERE palace = $1",
+            palace,
+        )
+        structural_evidence = await _count_query(
+            backend,
+            "SELECT COUNT(*)::int AS n FROM knowledge_structural_evidence WHERE palace = $1",
+            palace,
+        )
+        verification_cycles = await _count_query(
+            backend,
+            "SELECT COUNT(*)::int AS n FROM knowledge_verification_cycles WHERE palace = $1",
+            palace,
+        )
+        topology_result = await backend.query(
+            """
+            SELECT
+                COUNT(DISTINCT wing)::int AS wings,
+                COUNT(DISTINCT room)::int AS rooms,
+                COUNT(DISTINCT NULLIF(compartment, ''))::int AS compartments
+            FROM knowledge_structural_evidence
+            WHERE palace = $1
+            """,
+            (palace,),
+        )
+        topology = topology_result.rows[0] if topology_result.rows else {}
+        semantic_claims = await _count_query(
+            backend,
+            "SELECT COUNT(*)::int AS n FROM knowledge_semantic_claims WHERE palace = $1",
+            palace,
+        )
+        semantic_memories = await _count_query(
+            backend,
+            "SELECT COUNT(*)::int AS n FROM knowledge_memories WHERE palace = $1",
+            palace,
+        )
+    except Exception:
+        logger.exception("unable to collect memory sync details palace=%s", palace)
+        return False, empty_counts
+
+    return True, SyncExtractionCounts(
+        source_items=source_items,
+        structural_evidence=structural_evidence,
+        verification_cycles=verification_cycles,
+        wings=int(topology.get("wings", 0) or 0),
+        rooms=int(topology.get("rooms", 0) or 0),
+        compartments=int(topology.get("compartments", 0) or 0),
+        semantic_claims=semantic_claims,
+        semantic_memories=semantic_memories,
+    )
+
+
+def _system1_state(*, dirty_count: int, verification_cycles: int) -> str:
+    if dirty_count > 0:
+        return "queued"
+    if verification_cycles > 0:
+        return "completed"
+    return "not_run"
+
+
+def _system2_state(*, enabled: bool, semantic_claims: int, semantic_memories: int) -> str:
+    if not enabled:
+        return "disabled"
+    if semantic_claims > 0 or semantic_memories > 0:
+        return "completed"
+    return "not_run"
+
+
+def _memory_mode(project: ProjectRecord) -> str:
+    return "advanced" if project.system2_enabled else "simple"
+
+
+def _load_builtin_memory_workflows(resources: AppResources) -> None:
+    builtin_path = FilePath(
+        str(files("workflows_mcp").joinpath("templates").joinpath("memory"))
+    )
+    resources.workflow_registry.load_from_directory(builtin_path)
+
+
+def _ensure_workflow_loaded(resources: AppResources, workflow_name: str) -> None:
+    if resources.workflow_registry.exists(workflow_name):
+        return
+    if resources.app_context.reload_workflows is not None:
+        resources.app_context.reload_workflows()
+    else:
+        _load_builtin_memory_workflows(resources)
+    if not resources.workflow_registry.exists(workflow_name):
+        raise RuntimeError(f"Workflow '{workflow_name}' is not loaded")
+
+
+async def _ensure_memory_runtime(resources: AppResources) -> None:
+    if getattr(resources.app_context, "memory_backend", None) is None:
+        try:
+            await refresh_memory_backend(
+                app_ctx=resources.app_context,
+                executor_registry=resources.executor_registry,
+                prefer_metadata=True,
+            )
+        except Exception:
+            logger.warning("Unable to refresh memory backend before project sync", exc_info=True)
+    if getattr(resources.app_context, "memory_backend", None) is None:
+        raise MemoryContractError(
+            code="MEMORY_BACKEND_UNAVAILABLE",
+            message=(
+                "MEMORY_BACKEND_UNAVAILABLE: no memory PostgreSQL database is connected. "
+                "Save and test the PostgreSQL memory profile before running project sync."
+            ),
+            retryable=False,
+        )
+    if not resources.executor_registry.has("Memory"):
+        resources.executor_registry.register(MemoryExecutor())
+
+
+def _project_sync_inputs(
+    *,
+    project: ProjectRecord,
+    sync_scope: str,
+    candidate_paths: list[str],
+) -> dict[str, Any]:
+    scope = _scope_for_project(project)
+    return {
+        "project_root": project.fs_root,
+        "fs_allowlist": project.fs_allowlist,
+        "candidate_paths": candidate_paths,
+        "palace": project.palace,
+        "source_name": project.slug,
+        "default_wing": scope["wing"],
+        "default_room": scope["room"],
+        "default_compartment": scope["compartment"],
+        "sync_scope": sync_scope,
+        "memory_mode": _memory_mode(project),
+    }
+
+
+async def _queue_project_memory_sync(
     *,
     resources: AppResources,
     project: ProjectRecord,
-) -> dict[str, int]:
-    scanned_entries = _scan_entries_for_project(project)
-    if not scanned_entries:
-        return {"nodes": 0, "corridors": 0}
+    sync_scope: str,
+    candidate_paths: list[str],
+) -> tuple[str, str]:
+    workflow_name = "project-memory-sync"
+    _ensure_workflow_loaded(resources, workflow_name)
+    await _ensure_memory_runtime(resources)
+    if resources.job_queue is None:
+        raise RuntimeError("Job queue is not enabled")
+    if not getattr(resources.job_queue, "_running", False):
+        await resources.job_queue.start()
 
-    scope = _scope_for_project(project)
-    file_entries = classify_scan_files_for_programmatic_mode(
-        scanned_entries,
-        base_path=project.fs_root,
+    inputs = _project_sync_inputs(
+        project=project,
+        sync_scope=sync_scope,
+        candidate_paths=candidate_paths,
     )
-    result = run_programmatic_onboard(
-        ProgrammaticOnboardRequest(
-            scope=scope,
-            files=file_entries,
-            mode="programmatic",
-            provenance="admin_sync",
-            confidence=1.0,
-        )
+    job_id = await resources.job_queue.submit_job(
+        workflow_name,
+        inputs,
+        project_id=project.id,
+        token_id=None,
     )
-    if result.status != "completed" or result.graph is None:
-        message = "Project graph onboarding failed"
-        if result.error is not None:
-            error = result.error.get("error")
-            if isinstance(error, dict) and isinstance(error.get("message"), str):
-                message = str(error["message"])
-        raise RuntimeError(message)
+    return job_id, workflow_name
 
-    persisted = await persist_graph_payload(
-        app_ctx=resources.app_context,
-        execution=_admin_memory_execution(resources),
-        scope=result.scope,
-        graph=result.graph,
-        response=None,
-    )
-    return {"nodes": int(persisted["nodes"]), "corridors": int(persisted["corridors"])}
+
+def _sync_candidate_entries(entries: list[DirtyQueueEntry]) -> list[DirtyQueueEntry]:
+    return [
+        entry
+        for entry in entries
+        if entry.path != "." and entry.event_type in {"created", "modified"}
+    ]
 
 
 async def process_project_sync_now(
@@ -201,6 +374,7 @@ async def process_project_sync_now(
     resources: AppResources,
 ) -> SyncNowResponse:
     repo, conn = _repo(resources)
+    open_conn: Connection | None = conn
     try:
         _assert_project_exists(repo, project_id)
         projects_repo = SQLiteProjectsRepository(conn)
@@ -211,12 +385,36 @@ async def process_project_sync_now(
                 detail={"code": "project_not_found", "message": f"Project not found: {project_id}"},
             )
 
-        try:
-            await _persist_project_graph_from_scan(resources=resources, project=project)
-        except Exception as exc:
+        active_entries = repo.list_active_dirty(project_id=project_id)
+        candidate_entries = _sync_candidate_entries(active_entries)
+        if not candidate_entries:
             dirty_count = repo.count_active_dirty(project_id=project_id)
+            return SyncNowResponse(
+                project_id=project_id,
+                status="idle",
+                dirty_count=dirty_count,
+                action="sync",
+                memory_mode=_memory_mode(project),
+            )
+        assert open_conn is not None
+        open_conn.close()
+        open_conn = None
+        candidate_paths = [entry.path for entry in candidate_entries]
+        try:
+            job_id, workflow_name = await _queue_project_memory_sync(
+                resources=resources,
+                project=project,
+                sync_scope="dirty",
+                candidate_paths=candidate_paths,
+            )
+        except Exception as exc:
+            repo2, conn2 = _repo(resources)
+            try:
+                dirty_count = repo2.count_active_dirty(project_id=project_id)
+            finally:
+                conn2.close()
             logger.exception(
-                "project graph sync failed project_id=%s dirty_count=%s error_type=%s",
+                "project sync enqueue failed project_id=%s dirty_count=%s error_type=%s",
                 project_id,
                 dirty_count,
                 type(exc).__name__,
@@ -225,19 +423,49 @@ async def process_project_sync_now(
                 project_id=project_id,
                 status="failed",
                 dirty_count=dirty_count,
+                action="sync",
+                memory_mode=_memory_mode(project),
                 error=_sync_error_detail(exc),
             )
 
-        repo.mark_active_dirty_processed(project_id=project_id)
-
-        dirty_count = repo.count_active_dirty(project_id=project_id)
+        repo2, conn2 = _repo(resources)
+        try:
+            repo2.mark_dirty_entries_processed(
+                project_id=project_id,
+                entry_ids=[entry.id for entry in candidate_entries],
+            )
+            dirty_count = repo2.count_active_dirty(project_id=project_id)
+        finally:
+            conn2.close()
         return SyncNowResponse(
             project_id=project_id,
-            status="queued" if dirty_count > 0 else "idle",
+            status="queued",
             dirty_count=dirty_count,
+            action="sync",
+            memory_mode=_memory_mode(project),
+            job_id=job_id,
+            workflow=workflow_name,
         )
     finally:
-        conn.close()
+        if open_conn is not None:
+            open_conn.close()
+
+
+async def queue_project_rebuild(
+    *,
+    project_id: str,
+    resources: AppResources,
+    reason: str = "reconciliation_required:manual_rebuild",
+) -> SyncNowResponse:
+    """Queue a non-destructive full project rescan through the async workflow runner."""
+    return await _enqueue_project_reconciliation(
+        project_id=project_id,
+        action="rebuild",
+        sync_scope="rebuild",
+        event_type="rebuild",
+        reason=reason,
+        resources=resources,
+    )
 
 
 @router.get(
@@ -297,6 +525,53 @@ async def list_sync_logs(
         conn.close()
 
 
+@router.get(
+    "/{project_id}/details",
+    response_model=SyncProjectDetailsResponse,
+    openapi_extra={"security": [{"AdminSessionCookie": []}]},
+)
+async def get_sync_details(
+    project_id: ProjectId,
+    _current: CurrentAdminSession = Depends(require_current_admin_session),
+    resources: AppResources = Depends(get_resources),
+) -> SyncProjectDetailsResponse:
+    repo, conn = _repo(resources)
+    try:
+        _assert_project_exists(repo, project_id)
+        project = SQLiteProjectsRepository(conn).get_by_id(project_id)
+        if project is None:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail={"code": "project_not_found", "message": f"Project not found: {project_id}"},
+            )
+        memory_backend_ready, counts = await _memory_counts_for_project(
+            resources=resources,
+            palace=project.palace,
+        )
+        dirty_count = repo.count_active_dirty(project_id=project_id)
+        return SyncProjectDetailsResponse(
+            project_id=project_id,
+            memory_mode=_memory_mode(project),
+            system1_enabled=True,
+            system1_state=_system1_state(
+                dirty_count=dirty_count,
+                verification_cycles=counts.verification_cycles,
+            ),
+            system2_enabled=project.system2_enabled,
+            system2_state=_system2_state(
+                enabled=project.system2_enabled,
+                semantic_claims=counts.semantic_claims,
+                semantic_memories=counts.semantic_memories,
+            ),
+            embedding_profile_required=project.system2_enabled,
+            embedding_profile="embedding",
+            memory_backend_ready=memory_backend_ready,
+            counts=counts,
+        )
+    finally:
+        conn.close()
+
+
 @router.post(
     "/{project_id}/now",
     response_model=SyncNowResponse,
@@ -313,6 +588,8 @@ async def sync_now(
 async def _enqueue_project_reconciliation(
     *,
     project_id: str,
+    action: str,
+    sync_scope: str,
     event_type: str,
     reason: str,
     resources: AppResources,
@@ -332,9 +609,60 @@ async def _enqueue_project_reconciliation(
                 detail={"code": "project_not_found", "message": f"Project not found: {project_id}"},
             ) from None
 
+        projects_repo = SQLiteProjectsRepository(conn)
+        project = projects_repo.get_by_id(project_id)
+        if project is None:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail={"code": "project_not_found", "message": f"Project not found: {project_id}"},
+            )
     finally:
         conn.close()
-    return await process_project_sync_now(project_id=project_id, resources=resources)
+
+    try:
+        job_id, workflow_name = await _queue_project_memory_sync(
+            resources=resources,
+            project=project,
+            sync_scope=sync_scope,
+            candidate_paths=[],
+        )
+    except Exception as exc:
+        repo2, conn2 = _repo(resources)
+        try:
+            dirty_count = repo2.count_active_dirty(project_id=project_id)
+        finally:
+            conn2.close()
+        logger.exception(
+            "project %s enqueue failed project_id=%s dirty_count=%s error_type=%s",
+            action,
+            project_id,
+            dirty_count,
+            type(exc).__name__,
+        )
+        return SyncNowResponse(
+            project_id=project_id,
+            status="failed",
+            dirty_count=dirty_count,
+            action=action,
+            memory_mode=_memory_mode(project),
+            error=_sync_error_detail(exc),
+        )
+
+    repo3, conn3 = _repo(resources)
+    try:
+        repo3.mark_active_dirty_processed(project_id=project_id)
+        dirty_count = repo3.count_active_dirty(project_id=project_id)
+    finally:
+        conn3.close()
+    return SyncNowResponse(
+        project_id=project_id,
+        status="queued",
+        dirty_count=dirty_count,
+        action=action,
+        memory_mode=_memory_mode(project),
+        job_id=job_id,
+        workflow=workflow_name,
+    )
 
 
 @router.post(
@@ -349,6 +677,8 @@ async def sync_reconcile(
 ) -> SyncNowResponse:
     return await _enqueue_project_reconciliation(
         project_id=project_id,
+        action="reconcile",
+        sync_scope="reconcile",
         event_type="reconcile",
         reason="reconciliation_required:manual_reconcile",
         resources=resources,
@@ -365,9 +695,8 @@ async def sync_rebuild(
     _current: CurrentAdminSession = Depends(require_admin_csrf),
     resources: AppResources = Depends(get_resources),
 ) -> SyncNowResponse:
-    return await _enqueue_project_reconciliation(
+    return await queue_project_rebuild(
         project_id=project_id,
-        event_type="rebuild",
         reason="reconciliation_required:manual_rebuild",
         resources=resources,
     )

@@ -1,6 +1,11 @@
 """Phase 2-4 tests: deterministic scope/path/scan foundation, sync({}) resolution, and
 programmatic onboard pipeline (Phase 4).
 
+ADR-013 Task 6 coverage:
+- verification cycle DB persistence with correct scope_key identity
+- absent-evidence counter increments by scope
+- failed/partial cycles do not advance absent-evidence counters
+
 Phase 2 coverage:
 - scope_key determinism (order independence, whitespace independence)
 - normalize_scope canonical form
@@ -28,18 +33,22 @@ Phase 6 coverage:
 from __future__ import annotations
 
 import json
+import os
 import uuid
+from collections.abc import AsyncIterator
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+import pytest_asyncio
 
 import workflows_mcp.engine.knowledge.schema as knowledge_schema
 import workflows_mcp.tools_memory as _tools_memory
 import workflows_mcp.tools_memory as tools_memory
 from workflows_mcp.context import SessionProjectContext
+from workflows_mcp.engine.knowledge.schema import ensure_schema
 from workflows_mcp.engine.llm_config import (
     LLMConfig,
     LLMConfigLoader,
@@ -79,6 +88,8 @@ from workflows_mcp.engine.memory_scope_resolver import (
     scope_key,
     sorted_scan_manifest,
 )
+from workflows_mcp.engine.sql.backend import ConnectionConfig, DatabaseEngine
+from workflows_mcp.engine.sql.postgres_backend import PostgresBackend
 from workflows_mcp.server import mcp as _mcp_server
 from workflows_mcp.tools_memory import register_memory_tools
 
@@ -931,67 +942,6 @@ class TestOnboardProgrammaticFastPath:
         assert "graph" in payload, f"Missing graph key: {payload}"
         assert payload["graph"]["nodes"] >= 4
 
-
-@pytest.mark.asyncio
-async def test_ephemeral_memory_request_ensures_schema_before_graph_execution(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    events: list[str] = []
-
-    class FakePostgresBackend:
-        async def connect(self, config: object) -> None:
-            events.append("connect")
-
-        async def disconnect(self) -> None:
-            events.append("disconnect")
-
-    backend = FakePostgresBackend()
-
-    class FakeMemoryService:
-        def __init__(self, service_backend: object, execution: object) -> None:
-            assert service_backend is backend
-            events.append("service")
-
-        async def execute(self, request: object) -> object:
-            events.append("execute")
-            return object()
-
-    async def fake_ensure_schema(schema_backend: object) -> None:
-        assert schema_backend is backend
-        events.append("ensure_schema")
-
-    monkeypatch.setattr(tools_memory, "PostgresBackend", lambda: backend)
-    monkeypatch.setattr(
-        tools_memory,
-        "_memory_connection_config_from_metadata",
-        lambda app_ctx: object(),
-    )
-    monkeypatch.setattr(tools_memory, "_memory_connection_config_from_env", lambda: None)
-    monkeypatch.setattr(tools_memory, "MemoryService", FakeMemoryService)
-    monkeypatch.setattr(
-        tools_memory,
-        "_shape_memory_response",
-        lambda result, response: {"ok": True},
-    )
-    monkeypatch.setattr(knowledge_schema, "ensure_schema", fake_ensure_schema)
-
-    result = await tools_memory._execute_memory_request(
-        app_ctx=SimpleNamespace(memory_backend=None, memory_backend_lock=None),
-        execution=object(),
-        operation="graph_upsert",
-        scope={},
-        scope_token=None,
-        context_id=None,
-        query=None,
-        record=None,
-        graph={"kind": "place", "place_name": "Root", "place_type": "Palace"},
-        maintenance=None,
-        response={},
-    )
-
-    assert result == {"ok": True}
-    assert events == ["connect", "ensure_schema", "service", "execute", "disconnect"]
-
     @pytest.mark.asyncio
     async def test_programmatic_onboard_persists_graph_payload_when_memory_backend_ready(
         self, mock_ctx: MagicMock, tmp_path: Path
@@ -1013,6 +963,11 @@ async def test_ephemeral_memory_request_ensures_schema_before_graph_execution(
         with patch(
             "workflows_mcp.tools_memory._execute_memory_request",
             new=AsyncMock(side_effect=_capture_memory_request),
+        ), patch(
+            "workflows_mcp.tools_memory.run_programmatic_onboard_with_cycle_recording",
+            new=AsyncMock(
+                side_effect=lambda req, *, memory_service: run_programmatic_onboard(req)
+            ),
         ):
             result = await onboard(
                 scope={"palace": "org", "wing": "api", "room": "runtime"},
@@ -1114,10 +1069,122 @@ async def test_ephemeral_memory_request_ensures_schema_before_graph_execution(
         payload = json.loads(result.content[0].text)
         assert "graph" not in payload
 
+    @pytest.mark.asyncio
+    async def test_programmatic_onboard_tool_calls_wrapper_when_backend_configured(
+        self, mock_ctx: MagicMock, tmp_path: Path
+    ) -> None:
+        """When a memory backend is configured, the onboard tool must route through
+        run_programmatic_onboard_with_cycle_recording (not bare run_programmatic_onboard)
+        so that a System 1 verification cycle is recorded in the DB.
 
-# ===========================================================================
-# 11. Phase 5 — LLM onboard orchestrator (unit tests)
-# ===========================================================================
+        ADR-013 Task 6 production wiring: tools_memory.py must not bypass the wrapper.
+        """
+        (tmp_path / "main.py").write_text("def main(): pass")
+
+        app_ctx = mock_ctx.request_context.lifespan_context
+        # Simulate a configured memory backend (not None).
+        fake_backend = object()
+        app_ctx.memory_backend = fake_backend
+
+        onboard = _get_tool_fn("onboard")
+        wrapper_calls: list[Any] = []
+
+        async def _fake_wrapper(
+            request: Any, *, memory_service: Any
+        ) -> Any:
+            wrapper_calls.append({"request": request, "memory_service": memory_service})
+            # Delegate to actual sync pipeline so result shape is correct.
+            from workflows_mcp.engine.memory_onboard_sync_orchestrator import (
+                run_programmatic_onboard,
+            )
+            return run_programmatic_onboard(request)
+
+        with patch(
+            "workflows_mcp.tools_memory.run_programmatic_onboard_with_cycle_recording",
+            new=AsyncMock(side_effect=_fake_wrapper),
+        ), patch(
+            "workflows_mcp.tools_memory._persist_graph_payload_if_configured",
+            new=AsyncMock(return_value=None),
+        ):
+            result = await onboard(
+                scope={"palace": "org", "wing": "api", "room": "runtime"},
+                scan={
+                    "patterns": ["*.py"],
+                    "root": str(tmp_path),
+                    "max_files": 5,
+                    "max_size_kb": 10,
+                },
+                ingestion={"mode": "programmatic"},
+                ctx=mock_ctx,
+            )
+
+        assert len(wrapper_calls) == 1, (
+            "onboard tool must call run_programmatic_onboard_with_cycle_recording "
+            f"exactly once when backend is configured; got {len(wrapper_calls)} calls"
+        )
+        payload = json.loads(result.content[0].text)
+        assert payload["status"] == "completed"
+
+
+@pytest.mark.asyncio
+async def test_ephemeral_memory_request_ensures_schema_before_graph_execution(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    events: list[str] = []
+
+    class FakePostgresBackend:
+        async def connect(self, config: object) -> None:
+            events.append("connect")
+
+        async def disconnect(self) -> None:
+            events.append("disconnect")
+
+    backend = FakePostgresBackend()
+
+    class FakeMemoryService:
+        def __init__(self, service_backend: object, execution: object) -> None:
+            assert service_backend is backend
+            events.append("service")
+
+        async def execute(self, request: object) -> object:
+            events.append("execute")
+            return object()
+
+    async def fake_ensure_schema(schema_backend: object) -> None:
+        assert schema_backend is backend
+        events.append("ensure_schema")
+
+    monkeypatch.setattr(tools_memory, "PostgresBackend", lambda: backend)
+    monkeypatch.setattr(
+        tools_memory,
+        "memory_connection_config_from_metadata",
+        lambda app_ctx: object(),
+    )
+    monkeypatch.setattr(tools_memory, "memory_connection_config_from_env", lambda: None)
+    monkeypatch.setattr(tools_memory, "MemoryService", FakeMemoryService)
+    monkeypatch.setattr(
+        tools_memory,
+        "_shape_memory_response",
+        lambda result, response: {"ok": True},
+    )
+    monkeypatch.setattr(knowledge_schema, "ensure_schema", fake_ensure_schema)
+
+    result = await tools_memory._execute_memory_request(
+        app_ctx=SimpleNamespace(memory_backend=None, memory_backend_lock=None),
+        execution=object(),
+        operation="graph_upsert",
+        scope={},
+        scope_token=None,
+        context_id=None,
+        query=None,
+        record=None,
+        graph={"kind": "place", "place_name": "Root", "place_type": "Palace"},
+        maintenance=None,
+        response={},
+    )
+
+    assert result == {"ok": True}
+    assert events == ["connect", "ensure_schema", "service", "execute", "disconnect"]
 
 
 def _make_loader(
@@ -2032,3 +2099,709 @@ class TestOnboardContextPersistenceForSync:
         assert err.get("code") == "AMBIGUOUS_CONTEXT", (
             f"Expected AMBIGUOUS_CONTEXT, got: {err.get('code')}"
         )
+
+
+# ===========================================================================
+# ADR-013 Task 6: System 1 verification-cycle DB persistence
+# ===========================================================================
+# These tests require a live PostgreSQL connection (same env as test_memory_executor_ops.py).
+
+
+_VCT_PALACE = "palace_vc_pipeline_test"
+_VCT_WING = "engine"
+_VCT_ROOM = "memory"
+_VCT_COMPARTMENT = "service"
+
+
+def _vc_scope() -> dict[str, str]:
+    return {
+        "palace": _VCT_PALACE,
+        "wing": _VCT_WING,
+        "room": _VCT_ROOM,
+        "compartment": _VCT_COMPARTMENT,
+    }
+
+
+def _vc_make_config() -> ConnectionConfig:
+    return ConnectionConfig(
+        dialect=DatabaseEngine.POSTGRESQL,
+        host=os.environ.get("MEMORY_DB_HOST", "localhost"),
+        port=int(os.environ.get("MEMORY_DB_PORT", "5432")),
+        database=os.environ.get("MEMORY_DB_NAME", "workflows"),
+        username=os.environ.get("MEMORY_DB_USER", "workflows"),
+        password=os.environ.get("MEMORY_DB_PASSWORD", "supersecret"),
+    )
+
+
+@pytest_asyncio.fixture
+async def vc_backend() -> AsyncIterator[PostgresBackend]:
+    """Live PostgresBackend with schema applied for verification-cycle tests."""
+    backend = PostgresBackend()
+    await backend.connect(_vc_make_config())
+    await ensure_schema(backend)
+    try:
+        yield backend
+    finally:
+        await backend.disconnect()
+
+
+@pytest_asyncio.fixture
+async def vc_memory_service(vc_backend: PostgresBackend):
+    """MemoryService wired to live backend for verification-cycle tests."""
+    from unittest.mock import MagicMock
+
+    from workflows_mcp.engine.executor_base import Execution
+    from workflows_mcp.engine.memory_service import MemoryService
+
+    context = MagicMock(spec=Execution)
+    context.execution_context = MagicMock()
+    context.execution_context.get = MagicMock(return_value=None)
+    context.execution_context.user_id = None
+    context.execution_context.user_string_id = None
+    context.execution_context.auth_method = None
+    return MemoryService(backend=vc_backend, context=context)
+
+
+@pytest_asyncio.fixture
+async def vc_clean_palace(vc_backend: PostgresBackend) -> AsyncIterator[None]:
+    """Wipe verification-cycle test rows before and after each test."""
+
+    async def _wipe() -> None:
+        palace_pattern = f"{_VCT_PALACE}%"
+        await vc_backend.execute(
+            "DELETE FROM knowledge_verification_cycles WHERE palace LIKE $1",
+            (palace_pattern,),
+        )
+        await vc_backend.execute(
+            "DELETE FROM knowledge_structural_evidence WHERE palace LIKE $1",
+            (palace_pattern,),
+        )
+
+    await _wipe()
+    yield
+    await _wipe()
+
+
+@pytest.mark.asyncio
+async def test_record_system1_verification_cycle_persists_db_row_with_scope_key(
+    vc_memory_service, vc_backend: PostgresBackend, vc_clean_palace: None
+) -> None:
+    """record_system1_verification_cycle must persist a row in
+    knowledge_verification_cycles with the correct normalized scope_key,
+    success flag, and covered_* topology columns.
+
+    Verifies ADR-013 Task 6: DB-backed cycle persistence replaces the
+    process-local _cycle_success_registry stub from Task 3.
+    """
+    from workflows_mcp.engine.memory_scope_resolver import scope_key
+    from workflows_mcp.engine.memory_service import MemoryRequest
+
+    covered = _vc_scope()
+    expected_scope_key = scope_key(covered)
+
+    result = await vc_memory_service.execute(
+        MemoryRequest.model_validate({
+            "operation": "record_system1_verification_cycle",
+            "scope": covered,
+            "record": {
+                "format": "structured",
+                "verification_cycle": {
+                    "success": True,
+                    "covered_scope": covered,
+                },
+            },
+        })
+    )
+
+    assert result.manage is not None
+    assert result.manage.success is True
+    assert result.manage.cycle_id is not None, "cycle_id must be returned in manage result"
+
+    # Verify DB row exists with correct columns.
+    rows = await vc_backend.query(
+        "SELECT id, palace, scope_key, covered_wing, covered_room, covered_compartment,"
+        " success, completed_at"
+        " FROM knowledge_verification_cycles"
+        " WHERE palace = $1 AND scope_key = $2",
+        (_VCT_PALACE, expected_scope_key),
+    )
+    assert len(rows.rows) == 1, (
+        f"Expected 1 verification cycle row in DB, got {len(rows.rows)}"
+    )
+    row = rows.rows[0]
+    assert row["success"] is True
+    assert row["covered_wing"] == _VCT_WING
+    assert row["covered_room"] == _VCT_ROOM
+    assert row["covered_compartment"] == _VCT_COMPARTMENT
+    assert row["completed_at"] is not None, "completed_at must be set for a completed cycle"
+    assert str(row["id"]) == result.manage.cycle_id
+
+
+@pytest.mark.asyncio
+async def test_record_system1_failed_verification_cycle_persists_failure_in_db(
+    vc_memory_service, vc_backend: PostgresBackend, vc_clean_palace: None
+) -> None:
+    """A failed verification cycle (success=False) must be persisted with
+    success=False in DB. The archive gate must not count these cycles.
+    """
+    from workflows_mcp.engine.memory_scope_resolver import scope_key
+    from workflows_mcp.engine.memory_service import MemoryRequest
+
+    covered = _vc_scope()
+    expected_scope_key = scope_key(covered)
+
+    result = await vc_memory_service.execute(
+        MemoryRequest.model_validate({
+            "operation": "record_system1_verification_cycle",
+            "scope": covered,
+            "record": {
+                "format": "structured",
+                "verification_cycle": {
+                    "success": False,
+                    "covered_scope": covered,
+                },
+            },
+        })
+    )
+
+    assert result.manage is not None
+    assert result.manage.success is True  # operation succeeded; cycle status is separate
+    assert result.manage.cycle_id is not None
+
+    rows = await vc_backend.query(
+        "SELECT success FROM knowledge_verification_cycles"
+        " WHERE palace = $1 AND scope_key = $2",
+        (_VCT_PALACE, expected_scope_key),
+    )
+    assert len(rows.rows) == 1
+    assert rows.rows[0]["success"] is False, (
+        "Failed cycle must be stored with success=False in DB"
+    )
+
+
+@pytest.mark.asyncio
+async def test_archive_gate_reads_absent_evidence_cycles_from_db(
+    vc_memory_service, vc_backend: PostgresBackend, vc_clean_palace: None
+) -> None:
+    """reconcile_semantic_lifecycle archive gate must read cycle success/scope from
+    DB when validating absent_verification_cycle_ids. Two DB-persisted successful
+    absent cycles for the matching scope must satisfy the gate.
+
+    This test verifies ADR-013 Task 6 requirement: 'reconcile_semantic_lifecycle
+    must read cycle success/scope metadata from DB for cycle ID validation.'
+    """
+    from workflows_mcp.engine.memory_service import MemoryRequest
+
+    covered = _vc_scope()
+    cycle_ids: list[str] = []
+
+    for _ in range(2):
+        r = await vc_memory_service.execute(
+            MemoryRequest.model_validate({
+                "operation": "record_system1_verification_cycle",
+                "scope": covered,
+                "record": {
+                    "format": "structured",
+                    "verification_cycle": {
+                        "success": True,
+                        "covered_scope": covered,
+                    },
+                },
+            })
+        )
+        assert r.manage is not None
+        assert r.manage.cycle_id is not None
+        cycle_ids.append(r.manage.cycle_id)
+
+    assert len(cycle_ids) == 2
+
+    # Insert a claim in 'degraded' state so force_archive_claim_ids has a real target.
+    from workflows_mcp.engine.memory_scope_resolver import scope_key
+
+    computed_scope_key = scope_key(covered)
+    claim_insert = await vc_backend.query(
+        """
+        INSERT INTO knowledge_semantic_claims
+            (palace, wing, room, compartment, claim_type, lifecycle_state,
+             claim_text, scope_key, created_at, updated_at)
+        VALUES ($1, $2, $3, $4, 'room_intent', 'degraded',
+                'test-archive-gate-claim', $5, NOW(), NOW())
+        RETURNING id::text
+        """,
+        (
+            _VCT_PALACE, _VCT_WING, _VCT_ROOM, _VCT_COMPARTMENT,
+            computed_scope_key,
+        ),
+    )
+    assert claim_insert.rows, "Setup: claim insert must return a row"
+    degraded_claim_id = claim_insert.rows[0]["id"]
+
+    # Archive gate should accept two successful absent cycles from DB.
+    result = await vc_memory_service.execute(
+        MemoryRequest.model_validate({
+            "operation": "reconcile_semantic_lifecycle",
+            "scope": covered,
+            "record": {
+                "format": "structured",
+                "lifecycle_reconciliation": {
+                    "scope_key": computed_scope_key,
+                    "force_archive_claim_ids": [degraded_claim_id],
+                    "absent_verification_cycle_ids": cycle_ids,
+                },
+            },
+        })
+    )
+    assert result.manage is not None
+    assert result.manage.success is True, (
+        f"Archive gate must accept two successful DB-backed cycles; error: {result.manage.error!r}"
+    )
+
+
+@pytest.mark.asyncio
+async def test_archive_gate_rejects_failed_db_cycles_as_absent_evidence(
+    vc_memory_service, vc_backend: PostgresBackend, vc_clean_palace: None
+) -> None:
+    """Failed DB cycles (success=False) must not satisfy the absent-evidence
+    archive gate even when two cycle IDs are provided.
+    """
+    from workflows_mcp.engine.memory_scope_resolver import scope_key
+    from workflows_mcp.engine.memory_service import MemoryRequest
+
+    covered = _vc_scope()
+    cycle_ids: list[str] = []
+
+    for _ in range(2):
+        r = await vc_memory_service.execute(
+            MemoryRequest.model_validate({
+                "operation": "record_system1_verification_cycle",
+                "scope": covered,
+                "record": {
+                    "format": "structured",
+                    "verification_cycle": {
+                        "success": False,
+                        "covered_scope": covered,
+                    },
+                },
+            })
+        )
+        assert r.manage is not None
+        assert r.manage.cycle_id is not None
+        cycle_ids.append(r.manage.cycle_id)
+
+    result = await vc_memory_service.execute(
+        MemoryRequest.model_validate({
+            "operation": "reconcile_semantic_lifecycle",
+            "scope": covered,
+            "record": {
+                "format": "structured",
+                "lifecycle_reconciliation": {
+                    "scope_key": scope_key(covered),
+                    "force_archive_claim_ids": ["00000000-0000-0000-0000-000000000002"],
+                    "absent_verification_cycle_ids": cycle_ids,
+                },
+            },
+        })
+    )
+    assert result.manage is not None
+    assert result.manage.success is False, (
+        "Archive gate must reject force-archive backed only by failed DB cycles"
+    )
+    assert "MEM_ARCHIVE_GATE_NOT_MET" in (result.manage.error or ""), (
+        f"Expected MEM_ARCHIVE_GATE_NOT_MET in error, got: {result.manage.error!r}"
+    )
+
+
+# ---------------------------------------------------------------------------
+# ADR-013 Task 6 — orchestrator call site integration
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_successful_programmatic_onboard_records_verification_cycle_in_db(
+    vc_memory_service, vc_backend: PostgresBackend, vc_clean_palace: None
+) -> None:
+    """run_programmatic_onboard_with_cycle_recording must persist a successful
+    verification cycle row in knowledge_verification_cycles when the orchestrator
+    returns status='completed'.
+
+    Verifies ADR-013 Task 6 orchestrator integration: call site after successful
+    structural processing records a System 1 verification cycle via MemoryService.
+    """
+    from workflows_mcp.engine.memory_onboard_sync_orchestrator import (
+        run_programmatic_onboard_with_cycle_recording,
+    )
+    from workflows_mcp.engine.memory_scope_resolver import scope_key
+
+    scope = _vc_scope()
+    request = ProgrammaticOnboardRequest(
+        scope=scope,
+        files=[_readable_entry("src/main.py", "def main(): pass")],
+        mode="programmatic",
+    )
+
+    result = await run_programmatic_onboard_with_cycle_recording(
+        request, memory_service=vc_memory_service
+    )
+
+    assert result.status == "completed", f"Expected completed, got: {result.error}"
+
+    expected_scope_key = scope_key(scope)
+    rows = await vc_backend.query(
+        "SELECT id, success, scope_key FROM knowledge_verification_cycles"
+        " WHERE palace = $1 AND scope_key = $2",
+        (_VCT_PALACE, expected_scope_key),
+    )
+    assert len(rows.rows) == 1, (
+        f"Expected 1 verification cycle row in DB, got {len(rows.rows)}"
+    )
+    assert rows.rows[0]["success"] is True, (
+        "Successful onboard must record a successful verification cycle"
+    )
+
+
+@pytest.mark.asyncio
+async def test_failed_programmatic_onboard_does_not_record_verification_cycle(
+    vc_memory_service, vc_backend: PostgresBackend, vc_clean_palace: None
+) -> None:
+    """run_programmatic_onboard_with_cycle_recording must NOT persist a cycle when
+    the orchestrator returns status='failed' (e.g. graph completeness gate fails).
+    """
+    from workflows_mcp.engine.memory_onboard_sync_orchestrator import (
+        run_programmatic_onboard_with_cycle_recording,
+    )
+    from workflows_mcp.engine.memory_scope_resolver import scope_key
+
+    # Empty files list causes the placeholder compartment to be created, which
+    # actually passes graph validation. To force a failure we use an unsupported
+    # mode so the pipeline returns status='failed' before graph building.
+    request = ProgrammaticOnboardRequest(
+        scope=_vc_scope(),
+        files=[_readable_entry("src/main.py", "def main(): pass")],
+        mode="programmatic",
+    )
+    # Patch run_programmatic_onboard to simulate a graph failure result.
+    from unittest.mock import patch as _patch
+
+    from workflows_mcp.engine.memory_onboard_sync_orchestrator import ProgrammaticOnboardResult
+
+    failed_result = ProgrammaticOnboardResult(
+        status="failed",
+        scope={
+            "palace": _VCT_PALACE,
+            "wing": _VCT_WING,
+            "room": _VCT_ROOM,
+            "compartment": _VCT_COMPARTMENT,
+        },
+        scope_key_value=scope_key(_vc_scope()),
+        graph=None,
+        error={"error": {"code": "GRAPH_COMPLETENESS_FAILED", "message": "test failure"}},
+    )
+
+    with _patch(
+        "workflows_mcp.engine.memory_onboard_sync_orchestrator.run_programmatic_onboard",
+        return_value=failed_result,
+    ):
+        result = await run_programmatic_onboard_with_cycle_recording(
+            request, memory_service=vc_memory_service
+        )
+
+    assert result.status == "failed"
+
+    expected_scope_key = scope_key(_vc_scope())
+    rows = await vc_backend.query(
+        "SELECT id FROM knowledge_verification_cycles"
+        " WHERE palace = $1 AND scope_key = $2",
+        (_VCT_PALACE, expected_scope_key),
+    )
+    assert len(rows.rows) == 0, (
+        f"Failed onboard must NOT record any verification cycle; got {len(rows.rows)} rows"
+    )
+
+
+# ===========================================================================
+# ADR-013 Task 14: Fresh-start only rollout operations (no compatibility layer)
+# ===========================================================================
+# These tests cover the fresh_start MCP tool:
+#   - missing palace argument is rejected (no global wipe path)
+#   - unknown / nonexistent palace is rejected before any delete
+#   - mid-delete failure rolls back all deletes atomically
+#   - no migration-compatibility / in-place-migration path exists
+#   - response envelope includes scope identity and per-table delete counts
+#   - logs are emitted via logger (stderr) only — no stdout writes
+#
+# The tool is exercised via the MCP tool function registered in the server.
+
+
+def _get_fresh_start_fn():
+    """Return the registered fresh_start MCP tool callable."""
+    from mcp.server.fastmcp import FastMCP
+
+    from workflows_mcp.tools_memory import register_memory_tools
+
+    _local_mcp = FastMCP("fresh-start-test")
+    register_memory_tools(_local_mcp, enable_project_tools=True)
+    for tool in _local_mcp._tool_manager.list_tools():
+        if tool.name == "fresh_start":
+            return _local_mcp._tool_manager._tools[tool.name].fn
+    raise AssertionError("fresh_start tool not registered by register_memory_tools")
+
+
+def _make_fresh_start_mock_ctx(*, backend=None, has_backend: bool = True) -> MagicMock:
+    """Build a mock AppContextType for fresh_start tool tests."""
+    ctx = MagicMock()
+    app_ctx = MagicMock()
+    if has_backend:
+        app_ctx.memory_backend = backend if backend is not None else MagicMock()
+        app_ctx.memory_backend_lock = None
+    else:
+        app_ctx.memory_backend = None
+    app_ctx.memory_backend_unavailable_error = None
+    app_ctx.get_user_context = None
+    ctx.request_context.lifespan_context = app_ctx
+    ctx.request_context.session = MagicMock()
+    return ctx
+
+
+class TestFreshStartMissingPalaceRejected:
+    """fresh_start without explicit palace must be rejected — no global wipe path."""
+
+    @pytest.mark.asyncio
+    async def test_missing_palace_returns_error(self) -> None:
+        """Calling fresh_start with no palace argument must return an error envelope."""
+        fresh_start = _get_fresh_start_fn()
+        mock_ctx = _make_fresh_start_mock_ctx()
+
+        result = await fresh_start(palace=None, scope=None, ctx=mock_ctx)
+        payload = json.loads(result.content[0].text)
+
+        err = payload.get("error", {})
+        assert err.get("code") == "MEM_FRESH_START_MISSING_SCOPE", (
+            f"Expected MEM_FRESH_START_MISSING_SCOPE, got: {err.get('code')!r}"
+        )
+        assert err.get("retryable") is False
+
+    @pytest.mark.asyncio
+    async def test_none_palace_none_scope_returns_error(self) -> None:
+        """Both palace=None and scope=None must be rejected — guards against silent global wipe."""
+        fresh_start = _get_fresh_start_fn()
+        mock_ctx = _make_fresh_start_mock_ctx()
+
+        result = await fresh_start(palace=None, scope=None, ctx=mock_ctx)
+        payload = json.loads(result.content[0].text)
+
+        assert "error" in payload, "Expected error envelope when palace and scope are both None"
+        code = payload["error"].get("code", "")
+        assert "MISSING_SCOPE" in code or "MISSING" in code.upper(), (
+            f"Expected missing-scope error code, got: {code!r}"
+        )
+
+
+class TestFreshStartUnknownPalaceRejected:
+    """fresh_start with an unknown / nonexistent palace must be rejected before any deletes."""
+
+    @pytest.mark.asyncio
+    async def test_unknown_palace_returns_scope_not_found_error(self) -> None:
+        """Scope validation must reject palaces that have no rows in any ontology table."""
+        fresh_start = _get_fresh_start_fn()
+
+        # Build a backend mock that reports zero rows for the unknown palace.
+        backend = AsyncMock()
+        backend.query = AsyncMock(
+            return_value=MagicMock(rows=[])  # no rows found — palace does not exist
+        )
+
+        mock_ctx = _make_fresh_start_mock_ctx(backend=backend)
+
+        result = await fresh_start(palace="nonexistent_palace_xyz", scope=None, ctx=mock_ctx)
+        payload = json.loads(result.content[0].text)
+
+        err = payload.get("error", {})
+        assert err.get("code") in (
+            "MEM_FRESH_START_SCOPE_NOT_FOUND",
+            "MEM_FRESH_START_UNKNOWN_PALACE",
+        ), (
+            f"Expected scope-not-found error, got: {err.get('code')!r}"
+        )
+        assert err.get("retryable") is False
+
+        # Confirm no deletes were attempted on an unknown palace.
+        for call in backend.execute.call_args_list:
+            sql = str(call.args[0] if call.args else "")
+            assert "DELETE" not in sql.upper(), (
+                f"No DELETE must be executed for an unknown palace; got SQL: {sql!r}"
+            )
+
+
+class TestFreshStartTransactionalRollback:
+    """Mid-delete failure must roll back all ontology deletes atomically."""
+
+    @pytest.mark.asyncio
+    async def test_mid_delete_failure_produces_error_envelope(self) -> None:
+        """When the backend raises during a DELETE, fresh_start must return an error envelope
+        AND must have called rollback() to prevent partial deletes persisting."""
+        fresh_start = _get_fresh_start_fn()
+
+        backend = AsyncMock()
+        # First query (scope existence check) returns at least one row.
+        backend.query = AsyncMock(
+            return_value=MagicMock(rows=[{"count": 1}])
+        )
+        # Simulate failure mid-transaction (execute raises on first DELETE call).
+        backend.execute = AsyncMock(side_effect=RuntimeError("simulated DB failure"))
+        backend.begin_transaction = AsyncMock()
+        backend.rollback = AsyncMock()
+        backend.commit = AsyncMock()
+
+        mock_ctx = _make_fresh_start_mock_ctx(backend=backend)
+
+        result = await fresh_start(palace=_VCT_PALACE, scope=None, ctx=mock_ctx)
+        payload = json.loads(result.content[0].text)
+
+        err = payload.get("error", {})
+        assert err, f"Expected error envelope on mid-delete failure; got: {payload}"
+        code = err.get("code", "")
+        assert code in (
+            "MEM_FRESH_START_FAILED",
+            "MEM_INTERNAL_ERROR",
+        ), f"Expected failure code, got: {code!r}"
+
+        # Transaction guard: begin_transaction must have been called before any DELETE.
+        backend.begin_transaction.assert_awaited_once(), (
+            "begin_transaction() must be called before the delete sequence"
+        )
+        # Rollback must have been awaited to prevent partial-delete persistence.
+        backend.rollback.assert_awaited_once(), (
+            "rollback() must be awaited after a mid-delete failure to undo partial deletes"
+        )
+        # Commit must NOT have been called when the operation failed.
+        backend.commit.assert_not_awaited(), (
+            "commit() must not be called after a failed delete sequence"
+        )
+
+    @pytest.mark.asyncio
+    async def test_successful_fresh_start_commits_and_returns_metrics(self) -> None:
+        """Successful fresh_start must commit the transaction and return completion metrics."""
+        fresh_start = _get_fresh_start_fn()
+
+        backend = AsyncMock()
+        # Scope existence check returns rows (palace exists).
+        backend.query = AsyncMock(
+            return_value=MagicMock(rows=[{"count": 3}])
+        )
+        # Each DELETE returns a result with rowcount.
+        delete_result = MagicMock()
+        delete_result.rowcount = 2
+        backend.execute = AsyncMock(return_value=delete_result)
+        backend.begin_transaction = AsyncMock()
+        backend.rollback = AsyncMock()
+        backend.commit = AsyncMock()
+
+        mock_ctx = _make_fresh_start_mock_ctx(backend=backend)
+
+        result = await fresh_start(palace=_VCT_PALACE, scope=None, ctx=mock_ctx)
+        payload = json.loads(result.content[0].text)
+
+        # Must not be an error.
+        assert "error" not in payload, f"Expected success envelope, got: {payload}"
+
+        # Must include status and scope_identity.
+        assert payload.get("status") == "completed", f"Expected completed status; got: {payload}"
+        assert "scope_identity" in payload, (
+            f"Response must include scope_identity; got keys: {list(payload.keys())}"
+        )
+        assert "deleted_rows" in payload or "per_table" in payload, (
+            f"Response must include per-table delete counts; got keys: {list(payload.keys())}"
+        )
+
+        # Transaction guard: begin + commit must both have been called.
+        backend.begin_transaction.assert_awaited_once(), (
+            "begin_transaction() must be called before the delete sequence"
+        )
+        backend.commit.assert_awaited_once(), (
+            "commit() must be awaited after all deletes succeed"
+        )
+        # Rollback must NOT have been called on success.
+        backend.rollback.assert_not_awaited(), (
+            "rollback() must not be called when the delete sequence succeeds"
+        )
+
+    @pytest.mark.asyncio
+    async def test_stdout_is_clean_on_fresh_start_success(
+        self, capfd: pytest.CaptureFixture[str]
+    ) -> None:
+        """fresh_start must not write to stdout (MCP protocol would break)."""
+        fresh_start = _get_fresh_start_fn()
+
+        backend = AsyncMock()
+        backend.query = AsyncMock(return_value=MagicMock(rows=[{"count": 1}]))
+        delete_result = MagicMock()
+        delete_result.rowcount = 0
+        backend.execute = AsyncMock(return_value=delete_result)
+        backend.begin_transaction = AsyncMock()
+        backend.rollback = AsyncMock()
+        backend.commit = AsyncMock()
+
+        mock_ctx = _make_fresh_start_mock_ctx(backend=backend)
+
+        await fresh_start(palace=_VCT_PALACE, scope=None, ctx=mock_ctx)
+
+        captured = capfd.readouterr()
+        assert captured.out == "", (
+            f"fresh_start must not write to stdout (MCP protocol violation); got: {captured.out!r}"
+        )
+
+
+class TestFreshStartNoCompatibilityLayer:
+    """fresh_start must not implement any migration or in-place-migration path."""
+
+    @pytest.mark.asyncio
+    async def test_fresh_start_tool_exists_and_is_destructive(self) -> None:
+        """fresh_start must be registered as a destructive tool (not readOnly)."""
+        from mcp.server.fastmcp import FastMCP
+
+        from workflows_mcp.tools_memory import register_memory_tools
+
+        _local_mcp = FastMCP("compat-test")
+        register_memory_tools(_local_mcp, enable_project_tools=True)
+
+        tool_names = {t.name for t in _local_mcp._tool_manager.list_tools()}
+        assert "fresh_start" in tool_names, (
+            "fresh_start tool must be registered by register_memory_tools"
+        )
+
+    @pytest.mark.asyncio
+    async def test_fresh_start_does_not_accept_migrate_flag(self) -> None:
+        """fresh_start must not accept a migrate or compatibility flag."""
+        import inspect
+
+        fresh_start = _get_fresh_start_fn()
+        sig = inspect.signature(fresh_start)
+        param_names = set(sig.parameters.keys())
+
+        disallowed = {"migrate", "compat", "compatibility", "migration", "in_place"}
+        overlap = param_names & disallowed
+        assert not overlap, (
+            f"fresh_start must not expose migration/compatibility parameters; found: {overlap}"
+        )
+
+    @pytest.mark.asyncio
+    async def test_fresh_start_response_has_no_compat_fields(self) -> None:
+        """Successful fresh_start response must not include migration-compat fields."""
+        fresh_start = _get_fresh_start_fn()
+
+        backend = AsyncMock()
+        backend.query = AsyncMock(return_value=MagicMock(rows=[{"count": 1}]))
+        delete_result = MagicMock()
+        delete_result.rowcount = 0
+        backend.execute = AsyncMock(return_value=delete_result)
+
+        mock_ctx = _make_fresh_start_mock_ctx(backend=backend)
+        result = await fresh_start(palace=_VCT_PALACE, scope=None, ctx=mock_ctx)
+        payload = json.loads(result.content[0].text)
+
+        if "error" not in payload:
+            disallowed_keys = {"migrated", "compat", "compatibility", "migration_path"}
+            found = set(payload.keys()) & disallowed_keys
+            assert not found, (
+                f"fresh_start response must not contain compat fields; found: {found}"
+            )

@@ -994,5 +994,122 @@ class TestHTTPServerIntegration:
         assert client.get("/health").status_code == 200
 
 
+class TestBuiltinWorkflowDiscovery:
+    """Verify built-in template workflows are discoverable via the registry.
+
+    These tests load the real packaged templates/memory directory to confirm
+    that user-callable built-in workflows are present without requiring a
+    running MCP server (no MCP server restart needed for unit discovery).
+    """
+
+    def _make_builtin_registry(self) -> "WorkflowRegistry":
+        from workflows_mcp import server as server_mod
+
+        registry = WorkflowRegistry()
+        builtin_path = server_mod._builtin_workflow_path()
+        registry.load_from_directory(builtin_path)
+        return registry
+
+    def test_system2_derive_is_discoverable_as_builtin_workflow(self) -> None:
+        """system2-derive must be present in the built-in template registry."""
+        registry = self._make_builtin_registry()
+        assert registry.exists("system2-derive"), (
+            "system2-derive not found in built-in templates/memory registry. "
+            f"Found workflows: {sorted(registry.list_names())}"
+        )
+
+    def test_system2_derive_workflow_has_expected_tags(self) -> None:
+        """system2-derive workflow must carry the 'memory' and 'system2' tags."""
+        registry = self._make_builtin_registry()
+        workflow = registry.get("system2-derive")
+        assert workflow is not None
+        tags = set(workflow.tags or [])
+        assert "memory" in tags, f"Expected tag 'memory' in {tags}"
+        assert "system2" in tags, f"Expected tag 'system2' in {tags}"
+
+    def test_system2_derive_workflow_has_expected_inputs(self) -> None:
+        """system2-derive workflow must declare all Task 8 ADR-013 inputs."""
+        registry = self._make_builtin_registry()
+        workflow = registry.get("system2-derive")
+        assert workflow is not None
+        declared_inputs = set(workflow.inputs or {})
+        required = {
+            "palace",
+            "scope",
+            "evidence_entity_stable_ids",
+            "room_intent_label",
+            "compartment_reasoning_unit",
+            "is_new_wing",
+            "proof_bundle_evidence_categories",
+            "corridor_from_claim_id",
+            "corridor_to_claim_id",
+            "corridor_type",
+        }
+        missing = required - declared_inputs
+        assert not missing, (
+            f"system2-derive is missing expected inputs: {missing}. "
+            f"Declared: {declared_inputs}"
+        )
+
+
+    def test_system2_verify_lifecycle_is_discoverable_as_builtin_workflow(self) -> None:
+        """system2-verify-lifecycle must be present in the built-in template registry."""
+        registry = self._make_builtin_registry()
+        assert registry.exists("system2-verify-lifecycle"), (
+            "system2-verify-lifecycle not found in built-in templates/memory registry. "
+            f"Found workflows: {sorted(registry.list_names())}"
+        )
+
+    def test_system2_verify_lifecycle_workflow_has_expected_tags(self) -> None:
+        """system2-verify-lifecycle must carry the 'memory' and 'system2' tags."""
+        registry = self._make_builtin_registry()
+        workflow = registry.get("system2-verify-lifecycle")
+        assert workflow is not None
+        tags = set(workflow.tags or [])
+        assert "memory" in tags, f"Expected tag 'memory' in {tags}"
+        assert "system2" in tags, f"Expected tag 'system2' in {tags}"
+
+    def test_system2_verify_lifecycle_workflow_has_expected_inputs(self) -> None:
+        """system2-verify-lifecycle must declare all Task 13 ADR-013 inputs."""
+        registry = self._make_builtin_registry()
+        workflow = registry.get("system2-verify-lifecycle")
+        assert workflow is not None
+        declared_inputs = set(workflow.inputs or {})
+        required = {
+            "palace",
+            "scope",
+            "degrade_claim_ids",
+            "force_archive_claim_ids",
+            "absent_verification_cycle_ids",
+        }
+        missing = required - declared_inputs
+        assert not missing, (
+            f"system2-verify-lifecycle is missing expected inputs: {missing}. "
+            f"Declared: {declared_inputs}"
+        )
+
+    def test_system2_verify_lifecycle_workflow_invokes_reconcile_operation(self) -> None:
+        """system2-verify-lifecycle must invoke reconcile_semantic_lifecycle operation."""
+        registry = self._make_builtin_registry()
+        workflow = registry.get("system2-verify-lifecycle")
+        assert workflow is not None
+        blocks = workflow.blocks or []
+
+        def _block_operation(b: Any) -> str | None:
+            if isinstance(b, dict):
+                return b.get("inputs", {}).get("operation")
+            inputs = getattr(b, "inputs", None) or {}
+            return inputs.get("operation")
+
+        reconcile_blocks = [
+            b for b in blocks
+            if _block_operation(b) == "reconcile_semantic_lifecycle"
+        ]
+        assert reconcile_blocks, (
+            "system2-verify-lifecycle has no block invoking 'reconcile_semantic_lifecycle'. "
+            f"Block operations found: {[_block_operation(b) for b in blocks]}"
+        )
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v", "--tb=short"])

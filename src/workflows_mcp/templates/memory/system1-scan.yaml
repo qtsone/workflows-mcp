@@ -1,23 +1,32 @@
 name: system1-scan
 description: |
-  Per-file system-1 structural scan: parse a source file with TreeSitter and
-  store the resulting entity and relation graph in the memory palace.
+  ADR-013 System 1 topology derivation scan: parse a source file with
+  TreeSitter and derive complete topology (wing/room/compartment) via a
+  single Memory derive_system1_topology operation.
 
   Steps:
-    1. Parse the file with TreeSitter to extract entities, relations, and file
-       metadata (content_hash, size_bytes, mtime_ns).
-    2. Ensure the file exists as a knowledge_items row (ensure_item) using the
-       metadata from the parse step — idempotent upsert.
-    3. Store extracted entities (store_entities) — idempotent upsert.
-    4. Store extracted relations by qualified name (store_relations_by_qname) — idempotent.
+    1. Parse the file with TreeSitter to extract structural entities,
+       relations, and structural evidence candidates (entities, relations,
+       file metadata only — no topology fields).
+    2. Call one Memory derive_system1_topology operation with the parsed
+       structural evidence payload and optional explicit topology overrides.
+       The operation derives wing/room/compartment from structural evidence
+       (or applies the explicit override if provided), persists provenance,
+       and returns typed derivation result fields.
 
-  Idempotency: unchanged second run inserts zero new rows in all three tables
-  (knowledge_items, knowledge_entities, knowledge_relations).
+  Topology: Palace / Wing / Room / Compartment only.
+  Corridors are directed typed relations; they are never encoded as a
+  topology level in scope fields or evidence entity types.
 
-  Palace isolation is preserved through the scope envelope passed to every
-  Memory block. The `palace` input controls which palace receives the data.
+  Derivation precedence (service-side, not workflow-side):
+    1. Explicit topology_override (when caller provides full override payload).
+    2. System 1 structural derivation from parsed evidence.
+    3. Fail closed with MEM_INSUFFICIENT_EVIDENCE.
 
-tags: [builtin, treesitter, memory, system1]
+  Idempotency is managed by the Memory service (evidence upsert + append-only
+  provenance rows).
+
+tags: [builtin, treesitter, memory, system1, adr013]
 
 inputs:
   file_path:
@@ -30,89 +39,48 @@ inputs:
 
   palace:
     type: str
-    description: "Memory palace to store entities and relations in."
+    description: "Memory palace to store structural evidence in."
 
   source_name:
     type: str
     description: "Logical source name (e.g. repository name) used for the knowledge_sources row."
 
-  wing:
-    type: str
-    default: "code"
-    description: "Memory wing within the palace. Defaults to 'code'."
-
-  room:
-    type: str
-    default: "default"
-    description: "Memory room within the wing. Defaults to 'default'."
-
-  compartment:
-    type: str
-    default: "system1scan"
-    description: "Memory compartment within the room. Defaults to 'system1scan'."
+  topology_override:
+    type: dict
+    required: false
+    description: |
+      Optional explicit topology override. When provided, must be a complete
+      payload with wing, room, compartment, override_reason, and applied_by.
+      Passed through to the derive_system1_topology operation unchanged.
 
 blocks:
   - id: parse_file
-    description: "Parse the source file with TreeSitter and extract entities, relations, and file metadata."
+    description: "Parse the source file with TreeSitter; produces structural entities, relations, and evidence candidates (no topology fields)."
     type: TreeSitter
     inputs:
       path: "{{inputs.file_path}}"
       repo_relative_path: "{{inputs.repo_relative_path}}"
       palace: "{{inputs.palace}}"
 
-  - id: ensure_item
-    description: "Register the file as a knowledge_items row (upsert — idempotent)."
+  - id: derive_topology
+    description: "Derive System 1 topology from parsed structural evidence via one Memory operation. Fails closed if topology cannot be fully determined."
     type: Memory
     inputs:
-      operation: ensure_item
+      operation: derive_system1_topology
       scope:
         palace: "{{inputs.palace}}"
-        wing: "{{inputs.wing}}"
-        room: "{{inputs.room}}"
-        compartment: "{{inputs.compartment}}"
-      record:
-        format: raw
-        source: "{{inputs.source_name}}"
-        path: "{{inputs.repo_relative_path}}"
-        item:
+      derivation:
+        palace: "{{inputs.palace}}"
+        inline_candidates: "{{blocks.parse_file.outputs.structural_evidence_items}}"
+        parser_metadata:
           language: "{{blocks.parse_file.outputs.language}}"
+          path: "{{inputs.repo_relative_path}}"
+          source: "{{inputs.source_name}}"
           content_hash: "{{blocks.parse_file.outputs.content_hash}}"
           size_bytes: "{{blocks.parse_file.outputs.size_bytes}}"
           mtime_ns: "{{blocks.parse_file.outputs.mtime_ns}}"
+        topology_override: "{{inputs.topology_override}}"
     depends_on: [parse_file]
-
-  - id: store_entities
-    description: "Store extracted entities in the palace (idempotent upsert by stable_id)."
-    type: Memory
-    inputs:
-      operation: store_entities
-      scope:
-        palace: "{{inputs.palace}}"
-        wing: "{{inputs.wing}}"
-        room: "{{inputs.room}}"
-        compartment: "{{inputs.compartment}}"
-      record:
-        format: structured
-        source: STRUCTURAL
-        item:
-          id: "{{blocks.ensure_item.outputs.result.manage.item_id}}"
-        entities: "{{blocks.parse_file.outputs.entities}}"
-    depends_on: [ensure_item]
-
-  - id: store_relations
-    description: "Store extracted structural relations by qualified name (idempotent)."
-    type: Memory
-    inputs:
-      operation: store_relations_by_qname
-      scope:
-        palace: "{{inputs.palace}}"
-        wing: "{{inputs.wing}}"
-        room: "{{inputs.room}}"
-        compartment: "{{inputs.compartment}}"
-      graph:
-        relations: "{{blocks.parse_file.outputs.relations}}"
-        external_fallback: module
-    depends_on: [store_entities]
 
 outputs:
   language:
@@ -121,9 +89,24 @@ outputs:
   content_hash:
     value: "{{blocks.parse_file.outputs.content_hash}}"
     type: str
-  entities_stored:
-    value: "{{blocks.store_entities.succeeded}}"
-    type: bool
-  relations_stored:
-    value: "{{blocks.store_relations.succeeded}}"
+  derived_wing:
+    value: "{{blocks.derive_topology.outputs.result.manage.derived_wing}}"
+    type: str
+  derived_room:
+    value: "{{blocks.derive_topology.outputs.result.manage.derived_room}}"
+    type: str
+  derived_compartment:
+    value: "{{blocks.derive_topology.outputs.result.manage.derived_compartment}}"
+    type: str
+  derivation_source:
+    value: "{{blocks.derive_topology.outputs.result.manage.derivation_source}}"
+    type: str
+  provenance_id:
+    value: "{{blocks.derive_topology.outputs.result.manage.provenance_id}}"
+    type: str
+  claim_id:
+    value: "{{blocks.derive_topology.outputs.result.manage.claim_id}}"
+    type: str
+  evidence_stored:
+    value: "{{blocks.derive_topology.succeeded}}"
     type: bool

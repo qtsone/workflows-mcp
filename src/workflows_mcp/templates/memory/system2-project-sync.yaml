@@ -1,0 +1,98 @@
+name: system2-project-sync
+description: |
+  ADR-013 System 2 project semantic extraction wrapper. It plans semantic
+  derivations from persisted System 1 structural evidence, derives claims, and
+  runs lifecycle reconciliation for the covered project scope.
+
+tags: [builtin, memory, system2, adr013, sync]
+
+inputs:
+  palace:
+    type: str
+    description: "Memory palace to process."
+
+  default_wing:
+    type: str
+    default: "default-wing"
+    description: "Default project wing."
+
+  default_room:
+    type: str
+    default: "default-room"
+    description: "Default project room."
+
+  default_compartment:
+    type: str
+    default: ""
+    description: "Default project compartment."
+
+  verification_cycle_id:
+    type: str
+    default: ""
+    description: "System 1 verification cycle that completed immediately before System 2."
+
+  sync_scope:
+    type: str
+    default: "rebuild"
+    description: "Command scope: dirty, reconcile, or rebuild."
+
+blocks:
+  - id: plan_semantic_claims
+    description: "Plan ADR-013 semantic claims from persisted System 1 evidence."
+    type: System2Planner
+    inputs:
+      palace: "{{inputs.palace}}"
+      default_wing: "{{inputs.default_wing}}"
+      default_room: "{{inputs.default_room}}"
+      default_compartment: "{{inputs.default_compartment}}"
+      verification_cycle_id: "{{inputs.verification_cycle_id}}"
+      sync_scope: "{{inputs.sync_scope}}"
+
+  - id: derive_claims
+    description: "Derive evidence-backed System 2 claims."
+    type: Workflow
+    depends_on: [plan_semantic_claims]
+    for_each: "{{blocks.plan_semantic_claims.outputs.derivations}}"
+    for_each_mode: parallel
+    max_parallel: 5
+    inputs:
+      workflow: system2-derive
+      inputs:
+        palace: "{{each.value.palace}}"
+        wing: "{{each.value.wing}}"
+        room: "{{each.value.room}}"
+        compartment: "{{each.value.compartment}}"
+        evidence_entity_stable_ids: "{{each.value.evidence_entity_stable_ids}}"
+        wing_intent_label: "{{each.value.wing_intent_label}}"
+        room_intent_label: "{{each.value.room_intent_label}}"
+        compartment_reasoning_unit: "{{each.value.compartment_reasoning_unit}}"
+        memory_claim_text: "{{each.value.memory_claim_text}}"
+        is_new_wing: "{{each.value.is_new_wing}}"
+        proof_bundle_evidence_categories: "{{each.value.proof_bundle_evidence_categories}}"
+
+  - id: verify_lifecycle
+    description: "Run ADR-013 lifecycle reconciliation from planner output."
+    type: Workflow
+    depends_on: [derive_claims]
+    inputs:
+      workflow: system2-verify-lifecycle
+      inputs:
+        palace: "{{blocks.plan_semantic_claims.outputs.lifecycle.palace}}"
+        wing: "{{blocks.plan_semantic_claims.outputs.lifecycle.wing}}"
+        room: "{{blocks.plan_semantic_claims.outputs.lifecycle.room}}"
+        compartment: "{{blocks.plan_semantic_claims.outputs.lifecycle.compartment}}"
+        scope_key: "{{blocks.plan_semantic_claims.outputs.lifecycle.scope_key}}"
+        degrade_claim_ids: "{{blocks.plan_semantic_claims.outputs.lifecycle.degrade_claim_ids}}"
+        force_archive_claim_ids: "{{blocks.plan_semantic_claims.outputs.lifecycle.force_archive_claim_ids}}"
+        absent_verification_cycle_ids: "{{blocks.plan_semantic_claims.outputs.lifecycle.absent_verification_cycle_ids}}"
+
+outputs:
+  planned_derivations:
+    value: "{{blocks.plan_semantic_claims.outputs.derivation_count}}"
+    type: num
+  derived_claim_batches:
+    value: "{{blocks.derive_claims.metadata.count}}"
+    type: num
+  lifecycle_reconciled:
+    value: "{{blocks.verify_lifecycle.succeeded}}"
+    type: bool

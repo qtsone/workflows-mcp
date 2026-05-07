@@ -11,12 +11,8 @@ class WorkflowSourceRepositoryError(RuntimeError):
     """Base class for deterministic workflow source repository errors."""
 
 
-class WorkflowSourceProjectNotFoundError(WorkflowSourceRepositoryError):
-    """Raised when creating a workflow source for a missing project."""
-
-
 class DuplicateWorkflowSourceError(WorkflowSourceRepositoryError):
-    """Raised when a project already has the same normalized workflow source path."""
+    """Raised when a workflow source with the same normalized path already exists globally."""
 
 
 class WorkflowSourceNotFoundError(WorkflowSourceRepositoryError):
@@ -27,25 +23,17 @@ class InvalidWorkflowSourcePathError(WorkflowSourceRepositoryError):
     """Raised when a source path does not resolve to an existing directory."""
 
 
-class SystemWorkflowSourceProtectedError(WorkflowSourceRepositoryError):
-    """Raised when attempting to delete a system (read-only) workflow source."""
-
-
 @dataclass(frozen=True)
 class WorkflowSourceCreate:
-    project_id: str
     source_path: str
     checksum: str | None = None
-    is_system: bool = False
 
 
 @dataclass(frozen=True)
 class WorkflowSourceRecord:
     source_id: str
-    project_id: str
     source_path: str
     checksum: str | None
-    is_system: bool
     discovered_at: str
     last_loaded_at: str | None
     status: str | None
@@ -72,30 +60,24 @@ class SQLiteWorkflowSourcesRepository:
 
         self._conn.execute("BEGIN IMMEDIATE")
         try:
-            self._assert_project_exists(project_id=data.project_id)
-            self._assert_not_duplicate_path(
-                project_id=data.project_id,
-                normalized_source_path=normalized_path,
-            )
+            self._assert_not_duplicate_path(normalized_source_path=normalized_path)
             self._conn.execute(
                 """
                 INSERT INTO workflow_sources (
                     source_id,
-                    project_id,
                     source_path,
-                    checksum,
-                    is_system
-                ) VALUES (?, ?, ?, ?, ?)
+                    checksum
+                ) VALUES (?, ?, ?)
                 """,
-                (source_id, data.project_id, normalized_path, data.checksum, int(data.is_system)),
+                (source_id, normalized_path, data.checksum),
             )
             record = self._get_for_update(source_id)
             self._conn.commit()
         except sqlite3.IntegrityError as exc:
             self._conn.rollback()
-            if self._is_unique_project_source_path_violation(exc):
+            if self._is_unique_source_path_violation(exc):
                 raise DuplicateWorkflowSourceError(
-                    "workflow source path already exists for project"
+                    "workflow source path already exists"
                 ) from exc
             raise
         except Exception:
@@ -108,68 +90,33 @@ class SQLiteWorkflowSourcesRepository:
             )
         return record
 
-    def get_by_path(
-        self, source_path: str, project_id: str | None = None
-    ) -> WorkflowSourceRecord | None:
-        """Return the workflow source record for a normalized path, optionally filtered by project."""  # noqa: E501
+    def get_by_path(self, source_path: str) -> WorkflowSourceRecord | None:
+        """Return the workflow source record for a normalized path."""
         normalized = _normalize_source_path(source_path)
-        if project_id is not None:
-            row = self._conn.execute(
-                """
-                SELECT ws.source_id, ws.project_id, ws.source_path, ws.checksum, ws.is_system,
-                       ws.discovered_at, wrs.last_loaded_at, wrs.status, wrs.error_message
-                FROM workflow_sources ws
-                LEFT JOIN workflow_reload_state wrs ON wrs.source_id = ws.source_id
-                WHERE ws.project_id = ? AND ws.source_path = ?
-                """,
-                (project_id, normalized),
-            ).fetchone()
-        else:
-            row = self._conn.execute(
-                """
-                SELECT ws.source_id, ws.project_id, ws.source_path, ws.checksum, ws.is_system,
-                       ws.discovered_at, wrs.last_loaded_at, wrs.status, wrs.error_message
-                FROM workflow_sources ws
-                LEFT JOIN workflow_reload_state wrs ON wrs.source_id = ws.source_id
-                WHERE ws.source_path = ?
-                """,
-                (normalized,),
-            ).fetchone()
+        row = self._conn.execute(
+            """
+            SELECT ws.source_id, ws.source_path, ws.checksum,
+                   ws.discovered_at, wrs.last_loaded_at, wrs.status, wrs.error_message
+            FROM workflow_sources ws
+            LEFT JOIN workflow_reload_state wrs ON wrs.source_id = ws.source_id
+            WHERE ws.source_path = ?
+            """,
+            (normalized,),
+        ).fetchone()
         if row is None:
             return None
         return self._row_to_record(row)
 
-    def get_or_create_system_source(self, data: WorkflowSourceCreate) -> WorkflowSourceRecord:
-        """Return the existing system workflow source for the path, or create it idempotently.
-
-        If a non-system source already exists at the same path, raises
-        DuplicateWorkflowSourceError instead of silently mutating it.
-        """
-        normalized = _normalize_source_path(data.source_path)
-        existing = self.get_by_path(normalized, project_id=data.project_id)
-        if existing is not None:
-            if not existing.is_system:
-                raise DuplicateWorkflowSourceError(
-                    f"A non-system workflow source already exists at path: {normalized}"
-                )
-            return existing
-        return self.create(data)
-
-    def list(self, project_id: str | None = None) -> list[WorkflowSourceRecord]:
-        params: tuple[object, ...] = ()
-        query = (
-            "SELECT ws.source_id, ws.project_id, ws.source_path, ws.checksum, "
-            "ws.is_system, ws.discovered_at, "
-            "wrs.last_loaded_at, wrs.status, wrs.error_message "
-            "FROM workflow_sources ws "
-            "LEFT JOIN workflow_reload_state wrs ON wrs.source_id = ws.source_id "
-        )
-        if project_id is not None:
-            query += "WHERE ws.project_id = ? "
-            params = (project_id,)
-        query += "ORDER BY ws.discovered_at ASC, ws.source_id ASC"
-
-        rows = self._conn.execute(query, params).fetchall()
+    def list(self) -> list[WorkflowSourceRecord]:
+        rows = self._conn.execute(
+            """
+            SELECT ws.source_id, ws.source_path, ws.checksum,
+                   ws.discovered_at, wrs.last_loaded_at, wrs.status, wrs.error_message
+            FROM workflow_sources ws
+            LEFT JOIN workflow_reload_state wrs ON wrs.source_id = ws.source_id
+            ORDER BY ws.discovered_at ASC, ws.source_id ASC
+            """
+        ).fetchall()
         return [self._row_to_record(row) for row in rows]
 
     def get(self, source_id: str) -> WorkflowSourceRecord:
@@ -182,15 +129,11 @@ class SQLiteWorkflowSourcesRepository:
         self._conn.execute("BEGIN IMMEDIATE")
         try:
             row = self._conn.execute(
-                "SELECT is_system FROM workflow_sources WHERE source_id = ?",
+                "SELECT 1 FROM workflow_sources WHERE source_id = ?",
                 (source_id,),
             ).fetchone()
             if row is None:
                 raise WorkflowSourceNotFoundError(f"workflow source not found: {source_id}")
-            if int(row[0]) != 0:
-                raise SystemWorkflowSourceProtectedError(
-                    f"cannot delete system workflow source: {source_id}"
-                )
             self._conn.execute(
                 "DELETE FROM workflow_sources WHERE source_id = ?",
                 (source_id,),
@@ -235,11 +178,6 @@ class SQLiteWorkflowSourcesRepository:
             raise WorkflowSourceNotFoundError(f"workflow source not found: {source_id}")
         return record
 
-    def _assert_project_exists(self, *, project_id: str) -> None:
-        row = self._conn.execute("SELECT 1 FROM projects WHERE id = ?", (project_id,)).fetchone()
-        if row is None:
-            raise WorkflowSourceProjectNotFoundError(f"project not found: {project_id}")
-
     def _assert_source_exists(self, source_id: str) -> None:
         row = self._conn.execute(
             "SELECT 1 FROM workflow_sources WHERE source_id = ?",
@@ -248,20 +186,18 @@ class SQLiteWorkflowSourcesRepository:
         if row is None:
             raise WorkflowSourceNotFoundError(f"workflow source not found: {source_id}")
 
-    def _assert_not_duplicate_path(self, *, project_id: str, normalized_source_path: str) -> None:
+    def _assert_not_duplicate_path(self, *, normalized_source_path: str) -> None:
         row = self._conn.execute(
-            "SELECT 1 FROM workflow_sources WHERE project_id = ? AND source_path = ?",
-            (project_id, normalized_source_path),
+            "SELECT 1 FROM workflow_sources WHERE source_path = ?",
+            (normalized_source_path,),
         ).fetchone()
         if row is not None:
-            raise DuplicateWorkflowSourceError(
-                "workflow source path already exists for project"
-            )
+            raise DuplicateWorkflowSourceError("workflow source path already exists")
 
     def _get_for_update(self, source_id: str) -> WorkflowSourceRecord | None:
         row = self._conn.execute(
             """
-            SELECT ws.source_id, ws.project_id, ws.source_path, ws.checksum, ws.is_system,
+            SELECT ws.source_id, ws.source_path, ws.checksum,
                    ws.discovered_at, wrs.last_loaded_at, wrs.status, wrs.error_message
             FROM workflow_sources ws
             LEFT JOIN workflow_reload_state wrs ON wrs.source_id = ws.source_id
@@ -274,23 +210,18 @@ class SQLiteWorkflowSourcesRepository:
         return self._row_to_record(row)
 
     @staticmethod
-    def _is_unique_project_source_path_violation(exc: sqlite3.IntegrityError) -> bool:
+    def _is_unique_source_path_violation(exc: sqlite3.IntegrityError) -> bool:
         message = str(exc).lower()
-        return (
-            "workflow_sources.project_id" in message
-            and "workflow_sources.source_path" in message
-        ) or "idx_workflow_sources_project_path_unique" in message
+        return "workflow_sources.source_path" in message or "unique" in message
 
     @staticmethod
     def _row_to_record(row: tuple[object, ...]) -> WorkflowSourceRecord:
         return WorkflowSourceRecord(
             source_id=str(row[0]),
-            project_id=str(row[1]),
-            source_path=str(row[2]),
-            checksum=str(row[3]) if row[3] is not None else None,
-            is_system=bool(row[4]) if row[4] is not None else False,
-            discovered_at=str(row[5]),
-            last_loaded_at=str(row[6]) if row[6] is not None else None,
-            status=str(row[7]) if row[7] is not None else None,
-            error_message=str(row[8]) if row[8] is not None else None,
+            source_path=str(row[1]),
+            checksum=str(row[2]) if row[2] is not None else None,
+            discovered_at=str(row[3]),
+            last_loaded_at=str(row[4]) if row[4] is not None else None,
+            status=str(row[5]) if row[5] is not None else None,
+            error_message=str(row[6]) if row[6] is not None else None,
         )

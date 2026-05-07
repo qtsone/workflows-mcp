@@ -16,54 +16,34 @@ from workflows_mcp.engine.workflow_source_loader import (
 from workflows_mcp.http.lifespan import build_resources, stop_resources
 from workflows_mcp.metadata.db import connect_metadata_db
 from workflows_mcp.metadata.migrations import migrate_metadata_db
-from workflows_mcp.metadata.repos.projects_repo import ProjectCreate, SQLiteProjectsRepository
 from workflows_mcp.metadata.repos.workflow_sources_repo import (
     DuplicateWorkflowSourceError,
     InvalidWorkflowSourcePathError,
     SQLiteWorkflowSourcesRepository,
-    SystemWorkflowSourceProtectedError,
     WorkflowSourceCreate,
     WorkflowSourceNotFoundError,
-    WorkflowSourceProjectNotFoundError,
 )
 
 
 def _repos(
     tmp_path: Path,
-) -> tuple[object, SQLiteProjectsRepository, SQLiteWorkflowSourcesRepository]:
+) -> tuple[object, SQLiteWorkflowSourcesRepository]:
     conn = connect_metadata_db(tmp_path / "metadata.db")
     migrate_metadata_db(conn)
-    return conn, SQLiteProjectsRepository(conn), SQLiteWorkflowSourcesRepository(conn)
-
-
-def _create_project(projects_repo: SQLiteProjectsRepository, *, slug: str = "repo-test") -> str:
-    project = projects_repo.create(
-        ProjectCreate(
-            name="Repo Test",
-            slug=slug,
-            palace=f"palace.{slug}",
-            default_wing="wing-a",
-            default_room="room-a",
-            fs_root="/tmp",
-            fs_allowlist=[],
-        )
-    )
-    return project.id
+    return conn, SQLiteWorkflowSourcesRepository(conn)
 
 
 def test_create_get_list_and_delete_workflow_source(tmp_path: Path) -> None:
-    conn, projects_repo, sources_repo = _repos(tmp_path)
+    conn, sources_repo = _repos(tmp_path)
     try:
-        project_id = _create_project(projects_repo)
         source_dir = tmp_path / "sources" / "a"
         source_dir.mkdir(parents=True)
 
         created = sources_repo.create(
-            WorkflowSourceCreate(project_id=project_id, source_path=f"{source_dir}/..//a")
+            WorkflowSourceCreate(source_path=f"{source_dir}/..//a")
         )
         expected_path = str(source_dir.expanduser().resolve(strict=False))
 
-        assert created.project_id == project_id
         assert created.source_path == expected_path
         assert created.discovered_at
         assert created.last_loaded_at is None
@@ -73,14 +53,11 @@ def test_create_get_list_and_delete_workflow_source(tmp_path: Path) -> None:
         fetched = sources_repo.get(created.source_id)
         assert fetched == created
 
-        listed = sources_repo.list(project_id=project_id)
+        listed = sources_repo.list()
         assert [item.source_id for item in listed] == [created.source_id]
 
-        all_listed = sources_repo.list()
-        assert [item.source_id for item in all_listed] == [created.source_id]
-
         sources_repo.delete(created.source_id)
-        assert sources_repo.list(project_id=project_id) == []
+        assert sources_repo.list() == []
         with pytest.raises(WorkflowSourceNotFoundError):
             sources_repo.get(created.source_id)
     finally:
@@ -88,76 +65,50 @@ def test_create_get_list_and_delete_workflow_source(tmp_path: Path) -> None:
 
 
 def test_create_rejects_missing_or_non_directory_path(tmp_path: Path) -> None:
-    conn, projects_repo, sources_repo = _repos(tmp_path)
+    conn, sources_repo = _repos(tmp_path)
     try:
-        project_id = _create_project(projects_repo)
         missing = tmp_path / "does-not-exist"
         file_path = tmp_path / "not-a-dir.txt"
         file_path.write_text("x", encoding="utf-8")
 
         with pytest.raises(InvalidWorkflowSourcePathError):
-            sources_repo.create(
-                WorkflowSourceCreate(project_id=project_id, source_path=str(missing))
-            )
+            sources_repo.create(WorkflowSourceCreate(source_path=str(missing)))
 
         with pytest.raises(InvalidWorkflowSourcePathError):
-            sources_repo.create(
-                WorkflowSourceCreate(project_id=project_id, source_path=str(file_path))
-            )
+            sources_repo.create(WorkflowSourceCreate(source_path=str(file_path)))
     finally:
         conn.close()
 
 
-def test_create_rejects_missing_project(tmp_path: Path) -> None:
-    conn, _projects_repo, sources_repo = _repos(tmp_path)
+def test_create_rejects_duplicate_source_path(tmp_path: Path) -> None:
+    conn, sources_repo = _repos(tmp_path)
     try:
-        source_dir = tmp_path / "wf"
-        source_dir.mkdir()
-        with pytest.raises(WorkflowSourceProjectNotFoundError):
-            sources_repo.create(
-                WorkflowSourceCreate(project_id="missing-project", source_path=str(source_dir))
-            )
-    finally:
-        conn.close()
-
-
-def test_create_rejects_duplicate_source_path_for_same_project(tmp_path: Path) -> None:
-    conn, projects_repo, sources_repo = _repos(tmp_path)
-    try:
-        project_id = _create_project(projects_repo)
         source_dir = tmp_path / "wf" / "nested"
         source_dir.mkdir(parents=True)
 
-        sources_repo.create(
-            WorkflowSourceCreate(project_id=project_id, source_path=str(source_dir))
-        )
+        sources_repo.create(WorkflowSourceCreate(source_path=str(source_dir)))
         with pytest.raises(DuplicateWorkflowSourceError):
-            sources_repo.create(
-                WorkflowSourceCreate(project_id=project_id, source_path=f"{source_dir}/../nested")
-            )
+            sources_repo.create(WorkflowSourceCreate(source_path=f"{source_dir}/../nested"))
     finally:
         conn.close()
 
 
 def test_direct_sql_duplicate_insert_fails_with_integrity_error(tmp_path: Path) -> None:
-    conn, projects_repo, sources_repo = _repos(tmp_path)
+    conn, sources_repo = _repos(tmp_path)
     try:
-        project_id = _create_project(projects_repo)
         source_dir = tmp_path / "wf" / "direct"
         source_dir.mkdir(parents=True)
         normalized = str(source_dir.expanduser().resolve(strict=False))
 
-        sources_repo.create(
-            WorkflowSourceCreate(project_id=project_id, source_path=str(source_dir))
-        )
+        sources_repo.create(WorkflowSourceCreate(source_path=str(source_dir)))
 
         with pytest.raises(sqlite3.IntegrityError):
             conn.execute(
                 """
-                INSERT INTO workflow_sources (source_id, project_id, source_path, checksum)
-                VALUES (?, ?, ?, ?)
+                INSERT INTO workflow_sources (source_id, source_path, checksum)
+                VALUES (?, ?, ?)
                 """,
-                ("direct-duplicate", project_id, normalized, None),
+                ("direct-duplicate", normalized, None),
             )
     finally:
         conn.close()
@@ -167,32 +118,27 @@ def test_create_maps_db_unique_constraint_to_duplicate_workflow_source_error(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    conn, projects_repo, sources_repo = _repos(tmp_path)
+    conn, sources_repo = _repos(tmp_path)
     try:
-        project_id = _create_project(projects_repo)
         source_dir = tmp_path / "wf" / "race"
         source_dir.mkdir(parents=True)
 
-        sources_repo.create(
-            WorkflowSourceCreate(project_id=project_id, source_path=str(source_dir))
-        )
+        sources_repo.create(WorkflowSourceCreate(source_path=str(source_dir)))
 
         monkeypatch.setattr(
             sources_repo,
             "_assert_not_duplicate_path",
-            lambda *, project_id, normalized_source_path: None,
+            lambda *, normalized_source_path: None,
         )
 
         with pytest.raises(DuplicateWorkflowSourceError):
-            sources_repo.create(
-                WorkflowSourceCreate(project_id=project_id, source_path=str(source_dir))
-            )
+            sources_repo.create(WorkflowSourceCreate(source_path=str(source_dir)))
     finally:
         conn.close()
 
 
 def test_delete_missing_source_raises_not_found(tmp_path: Path) -> None:
-    conn, _projects_repo, sources_repo = _repos(tmp_path)
+    conn, sources_repo = _repos(tmp_path)
     try:
         with pytest.raises(WorkflowSourceNotFoundError):
             sources_repo.delete("missing-source")
@@ -201,15 +147,12 @@ def test_delete_missing_source_raises_not_found(tmp_path: Path) -> None:
 
 
 def test_update_reload_state_upserts_and_cascade_delete(tmp_path: Path) -> None:
-    conn, projects_repo, sources_repo = _repos(tmp_path)
+    conn, sources_repo = _repos(tmp_path)
     try:
-        project_id = _create_project(projects_repo)
         source_dir = tmp_path / "wf"
         source_dir.mkdir()
 
-        created = sources_repo.create(
-            WorkflowSourceCreate(project_id=project_id, source_path=str(source_dir))
-        )
+        created = sources_repo.create(WorkflowSourceCreate(source_path=str(source_dir)))
         updated = sources_repo.update_reload_state(
             created.source_id,
             status="loaded",
@@ -246,7 +189,16 @@ def test_update_reload_state_upserts_and_cascade_delete(tmp_path: Path) -> None:
         conn.close()
 
 
-_BUILTIN_WORKFLOW_NAMES: frozenset[str] = frozenset({"system1-scan"})
+_BUILTIN_WORKFLOW_NAMES: frozenset[str] = frozenset(
+    {
+        "project-memory-sync",
+        "system1-project-sync",
+        "system1-scan",
+        "system2-derive",
+        "system2-project-sync",
+        "system2-verify-lifecycle",
+    }
+)
 
 
 def _is_builtin(name: str) -> bool:
@@ -390,12 +342,8 @@ async def test_server_load_workflows_ignores_env_and_uses_sqlite_sources(
     monkeypatch.setenv("WORKFLOWS_TEMPLATE_PATHS", str(env_source))
     resources = build_resources(base_dir=tmp_path)
     try:
-        projects_repo = SQLiteProjectsRepository(resources.metadata_db_conn)
         sources_repo = SQLiteWorkflowSourcesRepository(resources.metadata_db_conn)
-        project_id = _create_project(projects_repo, slug="reload-sqlite")
-        sources_repo.create(
-            WorkflowSourceCreate(project_id=project_id, source_path=str(sqlite_source))
-        )
+        sources_repo.create(WorkflowSourceCreate(source_path=str(sqlite_source)))
 
         summary = server.load_workflows(resources)
 
@@ -404,7 +352,7 @@ async def test_server_load_workflows_ignores_env_and_uses_sqlite_sources(
         registry_names = [n for n in resources.workflow_registry.list_names() if not _is_builtin(n)]
         assert registry_names == ["wf-sqlite"]
         assert "wf-env" not in resources.workflow_registry.list_names()
-        reloaded_sources = [s for s in sources_repo.list() if not s.is_system]
+        reloaded_sources = sources_repo.list()
         assert [(source.status, source.error_message) for source in reloaded_sources] == [
             ("loaded", None)
         ]
@@ -424,12 +372,8 @@ async def test_server_load_workflows_marks_all_configured_sources_failed_on_erro
 
     resources = build_resources(base_dir=tmp_path)
     try:
-        projects_repo = SQLiteProjectsRepository(resources.metadata_db_conn)
         sources_repo = SQLiteWorkflowSourcesRepository(resources.metadata_db_conn)
-        project_id = _create_project(projects_repo, slug="reload-failure")
-        sources_repo.create(
-            WorkflowSourceCreate(project_id=project_id, source_path=str(good_source))
-        )
+        sources_repo.create(WorkflowSourceCreate(source_path=str(good_source)))
 
         initial = server.load_workflows(resources)
         assert [n for n in initial.workflow_names if not _is_builtin(n)] == ["wf-good"]
@@ -439,9 +383,7 @@ async def test_server_load_workflows_marks_all_configured_sources_failed_on_erro
         assert initial_registry == ["wf-good"]
 
         _write_invalid_workflow_yaml(bad_source, filename="broken.yaml")
-        sources_repo.create(
-            WorkflowSourceCreate(project_id=project_id, source_path=str(bad_source))
-        )
+        sources_repo.create(WorkflowSourceCreate(source_path=str(bad_source)))
 
         with pytest.raises(WorkflowSourceReloadError) as exc:
             server.load_workflows(resources)
@@ -449,7 +391,7 @@ async def test_server_load_workflows_marks_all_configured_sources_failed_on_erro
         assert exc.value.code == "workflow_invalid_definition"
         after_fail = [n for n in resources.workflow_registry.list_names() if not _is_builtin(n)]
         assert after_fail == ["wf-good"]
-        reloaded_sources = [s for s in sources_repo.list() if not s.is_system]
+        reloaded_sources = sources_repo.list()
         assert [source.status for source in reloaded_sources] == ["failed", "failed"]
         assert all(
             source.error_message is not None
@@ -467,12 +409,8 @@ async def test_server_load_workflows_empty_sources_clears_registry(tmp_path: Pat
     _write_workflow_yaml(source, filename="a.yaml", name="wf-a")
     resources = build_resources(base_dir=tmp_path)
     try:
-        projects_repo = SQLiteProjectsRepository(resources.metadata_db_conn)
         sources_repo = SQLiteWorkflowSourcesRepository(resources.metadata_db_conn)
-        project_id = _create_project(projects_repo, slug="reload-empty")
-        created = sources_repo.create(
-            WorkflowSourceCreate(project_id=project_id, source_path=str(source))
-        )
+        created = sources_repo.create(WorkflowSourceCreate(source_path=str(source)))
 
         initial = server.load_workflows(resources)
         assert [n for n in initial.workflow_names if not _is_builtin(n)] == ["wf-a"]
@@ -655,212 +593,14 @@ def test_builtin_workflow_path_resolves_to_templates_memory() -> None:
 
 
 # ---------------------------------------------------------------------------
-# Slice 2a: is_system support on workflow sources
+# Slice 2b: load_workflows does NOT seed a System project (v10 behavior)
 # ---------------------------------------------------------------------------
-
-
-def test_workflow_source_record_has_is_system_field(tmp_path: Path) -> None:
-    """WorkflowSourceRecord exposes is_system as a bool, defaulting to False."""
-    conn, projects_repo, sources_repo = _repos(tmp_path)
-    try:
-        project_id = _create_project(projects_repo, slug="is-system-default")
-        source_dir = tmp_path / "src-is-system"
-        source_dir.mkdir()
-
-        record = sources_repo.create(
-            WorkflowSourceCreate(project_id=project_id, source_path=str(source_dir))
-        )
-
-        assert hasattr(record, "is_system")
-        assert record.is_system is False
-    finally:
-        conn.close()
-
-
-def test_workflow_source_create_accepts_is_system_true(tmp_path: Path) -> None:
-    """WorkflowSourceCreate with is_system=True persists and reads back True."""
-    conn, projects_repo, sources_repo = _repos(tmp_path)
-    try:
-        project_id = _create_project(projects_repo, slug="is-system-true")
-        source_dir = tmp_path / "src-system"
-        source_dir.mkdir()
-
-        record = sources_repo.create(
-            WorkflowSourceCreate(
-                project_id=project_id,
-                source_path=str(source_dir),
-                is_system=True,
-            )
-        )
-
-        assert record.is_system is True
-
-        fetched = sources_repo.get(record.source_id)
-        assert fetched.is_system is True
-
-        listed = sources_repo.list(project_id=project_id)
-        assert len(listed) == 1
-        assert listed[0].is_system is True
-    finally:
-        conn.close()
-
-
-def test_delete_system_source_raises_protected_error(tmp_path: Path) -> None:
-    """Deleting a system workflow source raises SystemWorkflowSourceProtectedError."""
-    conn, projects_repo, sources_repo = _repos(tmp_path)
-    try:
-        project_id = _create_project(projects_repo, slug="del-system-src")
-        source_dir = tmp_path / "src-del-system"
-        source_dir.mkdir()
-
-        record = sources_repo.create(
-            WorkflowSourceCreate(
-                project_id=project_id,
-                source_path=str(source_dir),
-                is_system=True,
-            )
-        )
-
-        with pytest.raises(SystemWorkflowSourceProtectedError):
-            sources_repo.delete(record.source_id)
-
-        # Source must still exist after the rejected delete.
-        assert sources_repo.get(record.source_id).source_id == record.source_id
-    finally:
-        conn.close()
-
-
-def test_delete_non_system_source_still_works(tmp_path: Path) -> None:
-    """Non-system sources can still be deleted normally (regression guard)."""
-    conn, projects_repo, sources_repo = _repos(tmp_path)
-    try:
-        project_id = _create_project(projects_repo, slug="del-non-system")
-        source_dir = tmp_path / "src-non-system"
-        source_dir.mkdir()
-
-        record = sources_repo.create(
-            WorkflowSourceCreate(project_id=project_id, source_path=str(source_dir))
-        )
-
-        sources_repo.delete(record.source_id)
-
-        assert sources_repo.list(project_id=project_id) == []
-    finally:
-        conn.close()
-
-
-# ---------------------------------------------------------------------------
-# Slice 2b: seed System project and system workflow source at load_workflows()
-# ---------------------------------------------------------------------------
-
-
-@pytest.mark.asyncio
-async def test_load_workflows_seeds_system_project(tmp_path: Path) -> None:
-    """load_workflows must create a visible System project in the projects repository."""
-    from workflows_mcp.http.lifespan import build_resources, stop_resources
-    from workflows_mcp.metadata.repos.projects_repo import SQLiteProjectsRepository
-
-    resources = build_resources(base_dir=tmp_path)
-    try:
-        server.load_workflows(resources)
-
-        projects_repo = SQLiteProjectsRepository(resources.metadata_db_conn)
-        all_projects = projects_repo.list_all()
-        system_projects = [p for p in all_projects if p.name == "System"]
-        assert len(system_projects) == 1, (
-            f"Expected exactly one 'System' project, got: {[p.name for p in all_projects]}"
-        )
-        system_project = system_projects[0]
-        assert system_project.name == "System"
-        assert system_project.slug == "system"
-    finally:
-        await stop_resources(resources)
-
-
-@pytest.mark.asyncio
-async def test_load_workflows_seeds_system_workflow_source(tmp_path: Path) -> None:
-    """load_workflows must create a system workflow source pointing to templates/memory."""
-    from workflows_mcp.http.lifespan import build_resources, stop_resources
-    from workflows_mcp.metadata.repos.workflow_sources_repo import SQLiteWorkflowSourcesRepository
-
-    resources = build_resources(base_dir=tmp_path)
-    try:
-        server.load_workflows(resources)
-
-        sources_repo = SQLiteWorkflowSourcesRepository(resources.metadata_db_conn)
-        all_sources = sources_repo.list()
-        system_sources = [s for s in all_sources if s.is_system]
-        assert len(system_sources) >= 1, (
-            f"Expected at least one system workflow source, got: {all_sources}"
-        )
-
-        expected_path = str(server._builtin_workflow_path())
-        matching = [s for s in system_sources if s.source_path == expected_path]
-        assert len(matching) == 1, (
-            f"Expected system source with path {expected_path!r}, "
-            f"system sources: {[s.source_path for s in system_sources]}"
-        )
-        assert matching[0].is_system is True
-    finally:
-        await stop_resources(resources)
-
-
-@pytest.mark.asyncio
-async def test_load_workflows_system_seeding_is_idempotent(tmp_path: Path) -> None:
-    """Calling load_workflows multiple times must not create duplicate System projects or sources."""  # noqa: E501
-    from workflows_mcp.http.lifespan import build_resources, stop_resources
-    from workflows_mcp.metadata.repos.projects_repo import SQLiteProjectsRepository
-    from workflows_mcp.metadata.repos.workflow_sources_repo import SQLiteWorkflowSourcesRepository
-
-    resources = build_resources(base_dir=tmp_path)
-    try:
-        server.load_workflows(resources)
-        server.load_workflows(resources)
-        server.load_workflows(resources)
-
-        projects_repo = SQLiteProjectsRepository(resources.metadata_db_conn)
-        system_projects = [p for p in projects_repo.list_all() if p.name == "System"]
-        assert len(system_projects) == 1, (
-            f"Expected exactly 1 System project after 3 calls, got {len(system_projects)}"
-        )
-
-        sources_repo = SQLiteWorkflowSourcesRepository(resources.metadata_db_conn)
-        expected_path = str(server._builtin_workflow_path())
-        matching = [s for s in sources_repo.list() if s.source_path == expected_path]
-        assert len(matching) == 1, (
-            f"Expected exactly 1 system source for {expected_path!r} after 3 calls, "
-            f"got {len(matching)}"
-        )
-    finally:
-        await stop_resources(resources)
-
-
-@pytest.mark.asyncio
-async def test_load_workflows_system_project_visible_in_list(tmp_path: Path) -> None:
-    """System project must appear in project list_all() with expected fields."""
-    from workflows_mcp.http.lifespan import build_resources, stop_resources
-    from workflows_mcp.metadata.repos.projects_repo import SQLiteProjectsRepository
-
-    resources = build_resources(base_dir=tmp_path)
-    try:
-        server.load_workflows(resources)
-
-        projects_repo = SQLiteProjectsRepository(resources.metadata_db_conn)
-        all_projects = projects_repo.list_all()
-        system_project = next((p for p in all_projects if p.name == "System"), None)
-        assert system_project is not None, "System project not found in list_all()"
-        assert system_project.id  # non-empty stable id
-        assert system_project.slug == "system"
-        assert system_project.name == "System"
-    finally:
-        await stop_resources(resources)
 
 
 @pytest.mark.asyncio
 async def test_load_workflows_existing_user_sources_still_load(tmp_path: Path) -> None:
-    """Seeding system source must not break existing user workflow sources."""
+    """System project removal must not break existing user workflow sources."""
     from workflows_mcp.http.lifespan import build_resources, stop_resources
-    from workflows_mcp.metadata.repos.projects_repo import SQLiteProjectsRepository
     from workflows_mcp.metadata.repos.workflow_sources_repo import (
         SQLiteWorkflowSourcesRepository,
         WorkflowSourceCreate,
@@ -872,12 +612,8 @@ async def test_load_workflows_existing_user_sources_still_load(tmp_path: Path) -
 
     resources = build_resources(base_dir=tmp_path)
     try:
-        projects_repo = SQLiteProjectsRepository(resources.metadata_db_conn)
         sources_repo = SQLiteWorkflowSourcesRepository(resources.metadata_db_conn)
-        project_id = _create_project(projects_repo, slug="user-project-2b")
-        sources_repo.create(
-            WorkflowSourceCreate(project_id=project_id, source_path=str(user_source_dir))
-        )
+        sources_repo.create(WorkflowSourceCreate(source_path=str(user_source_dir)))
 
         server.load_workflows(resources)
 
@@ -890,35 +626,27 @@ async def test_load_workflows_existing_user_sources_still_load(tmp_path: Path) -
 
 
 # ---------------------------------------------------------------------------
-# Slice 3: unified source-record loading — system sources load through
-#           is_system source records, not a hidden builtin_paths injection.
+# Slice 3: runtime builtin path — system workflows come from _builtin_workflow_path().
 # ---------------------------------------------------------------------------
 
 
 @pytest.mark.asyncio
-async def test_load_workflows_system_source_record_path_loads_workflows(
+async def test_load_workflows_runtime_builtin_path_loads_system_workflows(
     tmp_path: Path,
 ) -> None:
-    """System workflow source registered in SQLite must be used to load system workflows.
+    """Builtin workflows in the package templates/memory directory load via runtime path.
 
-    After load_workflows(), all workflow names that live under the system
-    source record path must appear in the registry.  This verifies that
-    system sources are not bypassed by a hidden builtin_paths injection.
+    Under the new design, load_workflows() synthesizes the builtin path at
+    runtime from _builtin_workflow_path() rather than reading is_system=1 rows
+    from SQLite.  All YAML files found under that path must appear in the registry.
     """
     resources = build_resources(base_dir=tmp_path)
     try:
         server.load_workflows(resources)
 
-        sources_repo = SQLiteWorkflowSourcesRepository(resources.metadata_db_conn)
-        system_sources = [s for s in sources_repo.list() if s.is_system]
-        assert system_sources, "Expected at least one system source record after load_workflows()"
-
-        system_source = system_sources[0]
-        system_path = Path(system_source.source_path)
-
-        # Collect workflow names from the system source path directly.
-        yaml_files = sorted([*system_path.glob("**/*.yaml"), *system_path.glob("**/*.yml")])
-        expected_names = set()
+        builtin_path = server._builtin_workflow_path()
+        yaml_files = sorted([*builtin_path.glob("**/*.yaml"), *builtin_path.glob("**/*.yml")])
+        expected_names: set[str] = set()
         for yf in yaml_files:
             import yaml as _yaml  # noqa: PLC0415
             data = _yaml.safe_load(yf.read_text(encoding="utf-8"))
@@ -928,99 +656,38 @@ async def test_load_workflows_system_source_record_path_loads_workflows(
         registry_names = set(resources.workflow_registry.list_names())
         missing = expected_names - registry_names
         assert not missing, (
-            f"System workflows not loaded from source record path {system_source.source_path!r}: "
-            f"missing {missing}"
+            f"System workflows not loaded from runtime path {builtin_path!r}: missing {missing}"
         )
     finally:
         await stop_resources(resources)
 
 
 @pytest.mark.asyncio
-async def test_load_workflows_custom_system_source_record_loads_its_workflows(
+async def test_load_workflows_user_workflow_shadowing_builtin_is_rejected(
     tmp_path: Path,
 ) -> None:
-    """A user-registered system source record must cause its workflows to load as system workflows.
-
-    This is the key slice-3 contract: if ``is_system=True`` is set on a source
-    record, its workflows are treated as system (built-in) workflows — loaded
-    first and non-shadowable.  The loader must NOT rely on ``_builtin_workflow_path()``
-    being the sole source of system workflows.
-    """
-    custom_system_dir = tmp_path / "custom-system"
-    custom_system_dir.mkdir()
-    _write_workflow_yaml(custom_system_dir, filename="sys.yaml", name="custom-system-wf")
-
-    resources = build_resources(base_dir=tmp_path)
-    try:
-        # Seed the standard system project/source first so seeding doesn't fail.
-        server._seed_system_project_and_source(resources)
-
-        # Register a SECOND system source pointing to our custom directory.
-        sources_repo = SQLiteWorkflowSourcesRepository(resources.metadata_db_conn)
-        from workflows_mcp.metadata.repos.projects_repo import SQLiteProjectsRepository
-
-        projects_repo = SQLiteProjectsRepository(resources.metadata_db_conn)
-        system_project = next(
-            p for p in projects_repo.list_all() if p.slug == "system"
-        )
-        sources_repo.create(
-            WorkflowSourceCreate(
-                project_id=system_project.id,
-                source_path=str(custom_system_dir),
-                is_system=True,
-            )
-        )
-
-        server.load_workflows(resources)
-
-        assert resources.workflow_registry.exists("custom-system-wf"), (
-            "Workflow from custom system source record was not loaded into the registry"
-        )
-    finally:
-        await stop_resources(resources)
-
-
-@pytest.mark.asyncio
-async def test_load_workflows_user_workflow_shadowing_system_source_record_is_rejected(
-    tmp_path: Path,
-) -> None:
-    """User source may not shadow a workflow from a system source record.
-
-    When the system source record contains workflow 'sys-protected' and a
-    user source also defines 'sys-protected', load_workflows() must raise
-    WorkflowSourceReloadError with code 'user_workflow_shadows_builtin'.
-    """
-    custom_system_dir = tmp_path / "custom-system"
-    custom_system_dir.mkdir()
-    _write_workflow_yaml(custom_system_dir, filename="sys.yaml", name="sys-protected")
-
+    """User source may not shadow a workflow from the runtime builtin path."""
     user_dir = tmp_path / "user"
     user_dir.mkdir()
-    _write_workflow_yaml(user_dir, filename="u.yaml", name="sys-protected")
 
     resources = build_resources(base_dir=tmp_path)
     try:
-        # Seed standard system project and add custom system source.
-        server._seed_system_project_and_source(resources)
+        # Find a known builtin workflow name to attempt shadowing.
+        builtin_path = server._builtin_workflow_path()
+        yaml_files = [*builtin_path.glob("**/*.yaml"), *builtin_path.glob("**/*.yml")]
+        if not yaml_files:
+            pytest.skip("No builtin YAMLs present; cannot test shadowing")
 
-        sources_repo = SQLiteWorkflowSourcesRepository(resources.metadata_db_conn)
-        from workflows_mcp.metadata.repos.projects_repo import SQLiteProjectsRepository
+        import yaml as _yaml  # noqa: PLC0415
+        data = _yaml.safe_load(yaml_files[0].read_text(encoding="utf-8"))
+        builtin_name = data.get("name") if isinstance(data, dict) else None
+        if not builtin_name:
+            pytest.skip("Could not determine builtin workflow name")
 
-        projects_repo = SQLiteProjectsRepository(resources.metadata_db_conn)
-        system_project = next(p for p in projects_repo.list_all() if p.slug == "system")
+        _write_workflow_yaml(user_dir, filename="shadow.yaml", name=builtin_name)
 
-        sources_repo.create(
-            WorkflowSourceCreate(
-                project_id=system_project.id,
-                source_path=str(custom_system_dir),
-                is_system=True,
-            )
-        )
-
-        # Add user source with colliding name.
-        user_project_id = _create_project(projects_repo, slug="shadow-test")
-        sources_repo.create(
-            WorkflowSourceCreate(project_id=user_project_id, source_path=str(user_dir))
+        SQLiteWorkflowSourcesRepository(resources.metadata_db_conn).create(
+            WorkflowSourceCreate(source_path=str(user_dir))
         )
 
         with pytest.raises(WorkflowSourceReloadError) as exc:
@@ -1029,50 +696,194 @@ async def test_load_workflows_user_workflow_shadowing_system_source_record_is_re
         assert exc.value.code == "user_workflow_shadows_builtin", (
             f"Expected user_workflow_shadows_builtin, got {exc.value.code!r}"
         )
-        assert "sys-protected" in exc.value.message
+        assert builtin_name in exc.value.message
     finally:
         await stop_resources(resources)
+
+
+# ---------------------------------------------------------------------------
+# System 2 built-in non-shadowing regression (Task 15)
+# ---------------------------------------------------------------------------
+
+
+def test_user_workflow_shadowing_system2_derive_is_rejected(tmp_path: Path) -> None:
+    """User workflow named system2-derive must be rejected as it shadows a built-in."""
+    registry = WorkflowRegistry()
+    builtin_dir = tmp_path / "builtins"
+    user_dir = tmp_path / "user"
+    builtin_dir.mkdir()
+    user_dir.mkdir()
+    _write_workflow_yaml(builtin_dir, filename="s2d.yaml", name="system2-derive")
+    user_yaml = _write_workflow_yaml(user_dir, filename="u.yaml", name="system2-derive")
+
+    with pytest.raises(WorkflowSourceReloadError) as exc:
+        reload_registry_from_source_paths(
+            registry, [user_dir], builtin_paths=[builtin_dir]
+        )
+
+    assert exc.value.code == "user_workflow_shadows_builtin"
+    assert "system2-derive" in exc.value.message
+    assert str(user_yaml) in exc.value.message
+    assert registry.list_names() == []
+
+
+def test_user_workflow_shadowing_system2_verify_lifecycle_is_rejected(tmp_path: Path) -> None:
+    """User workflow named system2-verify-lifecycle must be rejected as it shadows a built-in."""
+    registry = WorkflowRegistry()
+    builtin_dir = tmp_path / "builtins"
+    user_dir = tmp_path / "user"
+    builtin_dir.mkdir()
+    user_dir.mkdir()
+    _write_workflow_yaml(builtin_dir, filename="s2vl.yaml", name="system2-verify-lifecycle")
+    user_yaml = _write_workflow_yaml(user_dir, filename="u.yaml", name="system2-verify-lifecycle")
+
+    with pytest.raises(WorkflowSourceReloadError) as exc:
+        reload_registry_from_source_paths(
+            registry, [user_dir], builtin_paths=[builtin_dir]
+        )
+
+    assert exc.value.code == "user_workflow_shadows_builtin"
+    assert "system2-verify-lifecycle" in exc.value.message
+    assert str(user_yaml) in exc.value.message
+    assert registry.list_names() == []
+
+
+def test_system2_derive_and_verify_lifecycle_load_alongside_user_workflows(
+    tmp_path: Path,
+) -> None:
+    """system2-derive and system2-verify-lifecycle coexist with non-conflicting user workflows."""
+    registry = WorkflowRegistry()
+    builtin_dir = tmp_path / "builtins"
+    user_dir = tmp_path / "user"
+    builtin_dir.mkdir()
+    user_dir.mkdir()
+    _write_workflow_yaml(builtin_dir, filename="s2d.yaml", name="system2-derive")
+    _write_workflow_yaml(builtin_dir, filename="s2vl.yaml", name="system2-verify-lifecycle")
+    _write_workflow_yaml(user_dir, filename="u.yaml", name="my-custom-pipeline")
+
+    summary = reload_registry_from_source_paths(
+        registry, [user_dir], builtin_paths=[builtin_dir]
+    )
+
+    assert summary.builtin_workflow_count == 2
+    assert summary.workflow_count == 3
+    assert sorted(summary.workflow_names) == [
+        "my-custom-pipeline",
+        "system2-derive",
+        "system2-verify-lifecycle",
+    ]
+    assert registry.exists("system2-derive")
+    assert registry.exists("system2-verify-lifecycle")
+    assert registry.exists("my-custom-pipeline")
+
+
+# ---------------------------------------------------------------------------
+# ---------------------------------------------------------------------------
+# Runtime builtin path loads without any DB row
+# ---------------------------------------------------------------------------
 
 
 @pytest.mark.asyncio
-async def test_load_workflows_does_not_inject_builtin_path_outside_source_records(
+async def test_load_workflows_loads_builtins_from_runtime_path_without_system_row(
     tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Runtime load_workflows must obtain all paths from source records.
-
-    If the system source record is absent (e.g., seeding is skipped),
-    no builtin workflows should appear in the registry.  This confirms the
-    loader does not silently inject _builtin_workflow_path() outside the
-    source-record mechanism.
-    """
+    """Builtin workflows load from _builtin_workflow_path() without any DB row."""
     resources = build_resources(base_dir=tmp_path)
     try:
-        # Call reload directly without seeding — no system source record exists.
-        repo = SQLiteWorkflowSourcesRepository(resources.metadata_db_conn)
-        sources = repo.list()
-        assert not sources, "Expected empty source list before seeding"
+        server.load_workflows(resources)
 
-        # Patch _builtin_workflow_path to a no-op dir to catch hidden injection.
-        empty_dir = tmp_path / "empty-builtin"
-        empty_dir.mkdir()
-        monkeypatch.setattr(server, "_builtin_workflow_path", lambda: empty_dir)
+        builtin_path = server._builtin_workflow_path()
+        yaml_files = [*builtin_path.glob("**/*.yaml"), *builtin_path.glob("**/*.yml")]
 
-        from workflows_mcp.engine.workflow_source_loader import reload_registry_from_source_paths
-
-        # Simulate what load_workflows should do: split sources by is_system.
-        system_paths = [s.source_path for s in sources if s.is_system]
-        user_paths = [s.source_path for s in sources if not s.is_system]
-
-        summary = reload_registry_from_source_paths(
-            resources.workflow_registry,
-            user_paths,
-            builtin_paths=system_paths,
-        )
-
-        assert summary.workflow_count == 0, (
-            "Expected zero workflows when no source records exist; "
-            f"got {summary.workflow_count}: {summary.workflow_names}"
-        )
+        if yaml_files:
+            loaded_names = set(resources.workflow_registry.list_names())
+            assert len(loaded_names) > 0, (
+                "Expected builtin workflows in registry; runtime path has YAMLs but registry empty"
+            )
+        else:
+            sources_repo = SQLiteWorkflowSourcesRepository(resources.metadata_db_conn)
+            user_sources = sources_repo.list()
+            if not user_sources:
+                assert resources.workflow_registry.list_names() == []
     finally:
         await stop_resources(resources)
+
+
+# ---------------------------------------------------------------------------
+# v10: Repository operates without project_id
+# ---------------------------------------------------------------------------
+
+
+def test_repo_create_does_not_require_project_id(tmp_path: Path) -> None:
+    """WorkflowSourceCreate must work without project_id after v10."""
+    conn, sources_repo = _repos(tmp_path)
+    source_dir = tmp_path / "wf"
+    source_dir.mkdir()
+    try:
+        record = sources_repo.create(WorkflowSourceCreate(source_path=str(source_dir)))
+        assert record.source_id
+        assert record.source_path == str(source_dir.resolve())
+    finally:
+        conn.close()
+
+
+def test_repo_create_enforces_global_unique_source_path(tmp_path: Path) -> None:
+    """Creating a second source with the same path raises DuplicateWorkflowSourceError."""
+    conn, sources_repo = _repos(tmp_path)
+    source_dir = tmp_path / "wf"
+    source_dir.mkdir()
+    try:
+        sources_repo.create(WorkflowSourceCreate(source_path=str(source_dir)))
+        with pytest.raises(DuplicateWorkflowSourceError):
+            sources_repo.create(WorkflowSourceCreate(source_path=str(source_dir)))
+    finally:
+        conn.close()
+
+
+def test_repo_list_returns_no_project_id_field(tmp_path: Path) -> None:
+    """Listed WorkflowSourceRecord must not carry a project_id attribute after v10."""
+    conn, sources_repo = _repos(tmp_path)
+    source_dir = tmp_path / "wf"
+    source_dir.mkdir()
+    try:
+        sources_repo.create(WorkflowSourceCreate(source_path=str(source_dir)))
+        records = sources_repo.list()
+        assert len(records) == 1
+        assert not hasattr(records[0], "project_id"), (
+            "WorkflowSourceRecord must not have project_id after v10"
+        )
+    finally:
+        conn.close()
+
+
+def test_repo_get_by_path_works_globally_without_project_id(tmp_path: Path) -> None:
+    """get_by_path with no project_id arg finds the source globally."""
+    conn, sources_repo = _repos(tmp_path)
+    source_dir = tmp_path / "wf"
+    source_dir.mkdir()
+    try:
+        created = sources_repo.create(WorkflowSourceCreate(source_path=str(source_dir)))
+        found = sources_repo.get_by_path(str(source_dir))
+        assert found is not None
+        assert found.source_id == created.source_id
+    finally:
+        conn.close()
+
+
+def test_load_workflows_does_not_seed_system_project(tmp_path: Path) -> None:
+    """load_workflows must not create a project with slug=system and palace=__system__."""
+    import asyncio
+
+    from workflows_mcp import server
+    from workflows_mcp.http.lifespan import build_resources, stop_resources
+
+    resources = build_resources(base_dir=tmp_path)
+    try:
+        server.load_workflows(resources)
+        row = resources.metadata_db_conn.execute(
+            "SELECT 1 FROM projects WHERE slug = ? AND palace = ?",
+            ("system", "__system__"),
+        ).fetchone()
+        assert row is None, "load_workflows must not seed a System project row"
+    finally:
+        asyncio.run(stop_resources(resources))

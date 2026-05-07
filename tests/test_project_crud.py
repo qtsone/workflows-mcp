@@ -52,6 +52,7 @@ def _project_create_payload(
         "fs_allowlist": fs_allowlist
         if fs_allowlist is not None
         else ["/workspace/workflows", "/workspace/shared"],
+        "system2_enabled": False,
     }
 
 
@@ -82,6 +83,9 @@ def test_admin_project_crud_happy_path(app_client: TestClient) -> None:
     project_id = created["id"]
     assert created["slug"] == "wf-service"
     assert created["palace"] == "wf-palace"
+    assert created["system1_enabled"] is True
+    assert created["system2_enabled"] is False
+    assert created["memory_mode"] == "simple"
 
     list_response = app_client.get("/api/admin/v1/projects")
     assert list_response.status_code == 200
@@ -101,6 +105,7 @@ def test_admin_project_crud_happy_path(app_client: TestClient) -> None:
             "default_room": "control-plane",
             "fs_root": "/workspace/workflows-v2",
             "fs_allowlist": ["/workspace/workflows-v2"],
+            "system2_enabled": True,
         },
         headers={"X-CSRF-Token": csrf_token},
     )
@@ -112,6 +117,9 @@ def test_admin_project_crud_happy_path(app_client: TestClient) -> None:
     assert updated["slug"] == "wf-service-v2"
     assert updated["default_wing"] == "ops"
     assert updated["default_room"] == "control-plane"
+    assert updated["system1_enabled"] is True
+    assert updated["system2_enabled"] is True
+    assert updated["memory_mode"] == "advanced"
 
     delete_response = app_client.delete(
         f"/api/admin/v1/projects/{project_id}",
@@ -237,13 +245,17 @@ def test_admin_project_create_enqueues_initial_graph_rebuild_status(
     project_root.mkdir()
     (project_root / "workflow.yaml").write_text("steps: []\n")
 
-    persisted: list[str] = []
+    sync_attempts: list[str] = []
 
-    async def _persist_graph_from_scan(**kwargs: Any) -> dict[str, int]:
-        persisted.append(kwargs["project"].id)
-        return {"nodes": 4, "corridors": 3}
+    async def _process_project_sync_now(**kwargs: Any) -> sync_routes.SyncNowResponse:
+        sync_attempts.append(str(kwargs["project_id"]))
+        return sync_routes.SyncNowResponse(
+            project_id=str(kwargs["project_id"]),
+            status="queued",
+            dirty_count=1,
+        )
 
-    monkeypatch.setattr(sync_routes, "_persist_project_graph_from_scan", _persist_graph_from_scan)
+    monkeypatch.setattr(sync_routes, "process_project_sync_now", _process_project_sync_now)
 
     created_response = app_client.post(
         "/api/admin/v1/projects",
@@ -261,16 +273,17 @@ def test_admin_project_create_enqueues_initial_graph_rebuild_status(
     watcher_status_response = app_client.get(f"/api/admin/v1/watchers/{project_id}")
     assert watcher_status_response.status_code == 200
     watcher_status = watcher_status_response.json()
-    assert watcher_status["dirty_count"] == 0
-    assert watcher_status["requires_reconciliation"] is False
+    assert watcher_status["dirty_count"] == 1
+    assert watcher_status["requires_reconciliation"] is True
     assert watcher_status["last_event_at"] is not None
-    assert persisted == [project_id]
+    assert sync_attempts == []
 
     sync_response = app_client.get("/api/admin/v1/sync")
     assert sync_response.status_code == 200
     summaries = sync_response.json()["projects"]
     by_project = {item["project_id"]: item for item in summaries}
-    assert project_id not in by_project
+    assert by_project[project_id]["dirty_count"] == 1
+    assert by_project[project_id]["requires_reconciliation"] is True
 
     logs_response = app_client.get(f"/api/admin/v1/sync/{project_id}/logs")
     assert logs_response.status_code == 200
@@ -278,7 +291,65 @@ def test_admin_project_create_enqueues_initial_graph_rebuild_status(
     assert entries[0]["path"] == "."
     assert entries[0]["event_type"] == "rebuild"
     assert entries[0]["reason"] == "reconciliation_required:project_created"
-    assert entries[0]["status"] == "processed"
+    assert entries[0]["status"] == "queued"
+
+
+def test_admin_sync_details_report_system_states_and_collected_counts(
+    app_client: TestClient,
+) -> None:
+    csrf_token = _login_and_csrf(app_client)
+    created_response = app_client.post(
+        "/api/admin/v1/projects",
+        json={
+            **_project_create_payload(slug="semantic-sync", palace="semantic-palace"),
+            "system2_enabled": True,
+        },
+        headers={"X-CSRF-Token": csrf_token},
+    )
+    assert created_response.status_code == 201
+    project_id = str(created_response.json()["id"])
+
+    class FakeBackend:
+        async def query(self, sql: str, params: tuple[object, ...]) -> object:
+            assert params == ("semantic-palace",)
+            if "knowledge_items" in sql:
+                return type("Result", (), {"rows": [{"n": 7}]})()
+            if "knowledge_structural_evidence" in sql and "COUNT(DISTINCT wing)" in sql:
+                return type("Result", (), {"rows": [{"wings": 2, "rooms": 3, "compartments": 5}]})()
+            if "knowledge_structural_evidence" in sql:
+                return type("Result", (), {"rows": [{"n": 12}]})()
+            if "knowledge_verification_cycles" in sql:
+                return type("Result", (), {"rows": [{"n": 1}]})()
+            if "knowledge_semantic_claims" in sql:
+                return type("Result", (), {"rows": [{"n": 4}]})()
+            if "knowledge_memories" in sql:
+                return type("Result", (), {"rows": [{"n": 2}]})()
+            raise AssertionError(f"unexpected query: {sql}")
+
+    app_client.app.state.resources.app_context.memory_backend = FakeBackend()
+
+    response = app_client.get(f"/api/admin/v1/sync/{project_id}/details")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["project_id"] == project_id
+    assert payload["system1_enabled"] is True
+    assert payload["system1_state"] == "queued"
+    assert payload["system2_enabled"] is True
+    assert payload["system2_state"] == "completed"
+    assert payload["embedding_profile_required"] is True
+    assert payload["embedding_profile"] == "embedding"
+    assert payload["memory_backend_ready"] is True
+    assert payload["counts"] == {
+        "source_items": 7,
+        "structural_evidence": 12,
+        "verification_cycles": 1,
+        "wings": 2,
+        "rooms": 3,
+        "compartments": 5,
+        "semantic_claims": 4,
+        "semantic_memories": 2,
+    }
 
 
 def test_admin_project_create_watcher_init_failure_rolls_back_project_persistence(

@@ -146,6 +146,7 @@ const installApiMock = (
     watchers: customWatchers,
     syncProjects: customSyncProjects,
     syncLogs: customSyncLogs,
+    syncDetails: customSyncDetails,
     syncActionResponses: customSyncActionResponses,
     workflows: customWorkflows,
     workflowSources: customWorkflowSources,
@@ -175,6 +176,7 @@ const installApiMock = (
     watchers?: Array<Record<string, unknown>>;
     syncProjects?: Array<Record<string, unknown>>;
     syncLogs?: Record<string, Array<Record<string, unknown>>>;
+    syncDetails?: Record<string, Record<string, unknown>>;
     syncActionResponses?: Record<string, Record<string, unknown>>;
     workflows?: Array<Record<string, unknown>>;
     workflowSources?: Array<Record<string, unknown>>;
@@ -219,6 +221,9 @@ const installApiMock = (
     customSyncProjects ?? [{ project_id: "p1", dirty_count: 2, requires_reconciliation: true }];
   const syncLogsByProjectId: Record<string, Array<Record<string, unknown>>> = customSyncLogs
     ? { ...customSyncLogs }
+    : {};
+  const syncDetailsByProjectId: Record<string, Record<string, unknown>> = customSyncDetails
+    ? { ...customSyncDetails }
     : {};
   const syncActionResponses = customSyncActionResponses ?? {};
   const workflows: Array<Record<string, unknown>> =
@@ -400,7 +405,6 @@ const installApiMock = (
   const pathEntriesListingByPath: Record<string, Record<string, unknown>> = filesystemListingByPath ?? {};
   const pathEntriesErrorByPath = filesystemErrorByPath ?? {};
   let databaseSettings: Record<string, unknown> = {
-    enabled: false,
     configured: false,
     updated_at: "2026-04-29T00:00:00Z",
     host: "",
@@ -471,7 +475,7 @@ const installApiMock = (
             : typeof payload.password === "string"
               ? payload.password.trim().length > 0
               : (databaseSettings.password_configured as boolean),
-        configured: payload.enabled === true,
+        configured: payload.password_clear !== true,
         updated_at: "2026-04-30T00:00:00Z",
       };
       return jsonResponse(databaseSettings);
@@ -575,6 +579,8 @@ const installApiMock = (
         default_room: String(payload.default_room ?? ""),
         fs_root: String(payload.fs_root ?? ""),
         fs_allowlist: Array.isArray(payload.fs_allowlist) ? payload.fs_allowlist : [],
+        system1_enabled: true,
+        system2_enabled: payload.system2_enabled === true,
         created_at: "2026-04-30T00:00:00Z",
         updated_at: "2026-04-30T00:00:00Z",
       };
@@ -597,6 +603,8 @@ const installApiMock = (
         default_room: typeof payload.default_room === "string" ? payload.default_room : projects[index].default_room,
         fs_root: typeof payload.fs_root === "string" ? payload.fs_root : projects[index].fs_root,
         fs_allowlist: Array.isArray(payload.fs_allowlist) ? payload.fs_allowlist : projects[index].fs_allowlist,
+        system1_enabled: true,
+        system2_enabled: typeof payload.system2_enabled === "boolean" ? payload.system2_enabled : projects[index].system2_enabled,
         updated_at: "2026-04-30T00:00:01Z",
       };
       projects[index] = updated;
@@ -648,6 +656,31 @@ const installApiMock = (
       const projectId = url.split("?")[0].split("/").at(-2) ?? "";
       return jsonResponse({ project_id: projectId, entries: syncLogsByProjectId[projectId] ?? [] });
     }
+    if (/\/api\/admin\/v1\/sync\/[^/]+\/details$/.test(url) && method === "GET") {
+      const projectId = url.split("/").at(-2) ?? "";
+      return jsonResponse(
+        syncDetailsByProjectId[projectId] ?? {
+          project_id: projectId,
+          system1_enabled: true,
+          system1_state: "queued",
+          system2_enabled: false,
+          system2_state: "disabled",
+          embedding_profile_required: false,
+          embedding_profile: "embedding",
+          memory_backend_ready: false,
+          counts: {
+            source_items: 0,
+            structural_evidence: 0,
+            verification_cycles: 0,
+            wings: 0,
+            rooms: 0,
+            compartments: 0,
+            semantic_claims: 0,
+            semantic_memories: 0,
+          },
+        },
+      );
+    }
     if (/\/api\/admin\/v1\/sync\/[^/]+\/now$/.test(url) && method === "POST") {
       const projectId = url.split("/").at(-2) ?? "";
       const configuredResponse = syncActionResponses[`${projectId}:now`];
@@ -668,7 +701,15 @@ const installApiMock = (
         processed_at: null,
       });
       syncLogsByProjectId[projectId] = logs;
-      return jsonResponse({ project_id: projectId, status: "queued", dirty_count: target.dirty_count });
+      return jsonResponse({
+        project_id: projectId,
+        status: "queued",
+        dirty_count: target.dirty_count,
+        action: "sync",
+        memory_mode: "simple",
+        job_id: "job-sync-now",
+        workflow: "project-memory-sync",
+      });
     }
     if (/\/api\/admin\/v1\/sync\/[^/]+\/reconcile$/.test(url) && method === "POST") {
       const projectId = url.split("/").at(-2) ?? "";
@@ -690,7 +731,15 @@ const installApiMock = (
         processed_at: null,
       });
       syncLogsByProjectId[projectId] = logs;
-      return jsonResponse({ project_id: projectId, dirty_count: target.dirty_count, requires_reconciliation: true });
+      return jsonResponse({
+        project_id: projectId,
+        status: "queued",
+        dirty_count: target.dirty_count,
+        action: "reconcile",
+        memory_mode: "simple",
+        job_id: "job-reconcile",
+        workflow: "project-memory-sync",
+      });
     }
     if (/\/api\/admin\/v1\/sync\/[^/]+\/rebuild$/.test(url) && method === "POST") {
       const projectId = url.split("/").at(-2) ?? "";
@@ -712,7 +761,15 @@ const installApiMock = (
         processed_at: null,
       });
       syncLogsByProjectId[projectId] = logs;
-      return jsonResponse({ project_id: projectId, dirty_count: target.dirty_count, requires_reconciliation: true });
+      return jsonResponse({
+        project_id: projectId,
+        status: "queued",
+        dirty_count: target.dirty_count,
+        action: "rebuild",
+        memory_mode: "simple",
+        job_id: "job-rebuild",
+        workflow: "project-memory-sync",
+      });
     }
     if (url.endsWith("/api/events/v1/sync/state") && method === "GET") {
       return jsonResponse({ version: 1, items: syncProjects });
@@ -987,14 +1044,13 @@ describe("App", () => {
 
     fireEvent.click(screen.getByRole("button", { name: /^new$/i }));
     const sourceDialog = await screen.findByRole("dialog", { name: /new workflow source/i });
-    fireEvent.change(within(sourceDialog).getByLabelText(/^project$/i, { selector: "select" }), { target: { value: "p1" } });
     fireEvent.change(within(sourceDialog).getByLabelText(/^source path$/i, { selector: "input" }), {
       target: { value: "/workspace/more-workflows" },
     });
     fireEvent.click(within(sourceDialog).getByRole("button", { name: /add workflow source/i }));
 
     await waitFor(() => {
-      expect(screen.getByText(/workflow source added for project p1/i)).toBeTruthy();
+      expect(screen.getByText(/workflow source added\./i)).toBeTruthy();
       expect(screen.getByRole("row", { name: /expand workflow source \/workspace\/more-workflows/i })).toBeTruthy();
       expect(screen.queryByRole("dialog", { name: /new workflow source/i })).toBeNull();
     });
@@ -1120,7 +1176,7 @@ describe("App", () => {
     expect(within(logRegion).getByText(/loaded from \/workspace\/workflows\/python-ci.yaml/i)).toBeTruthy();
   });
 
-  it("uses registered projects when adding workflow sources", async () => {
+  it("adds workflow sources without project selection", async () => {
     const fetchMock = installApiMock({
       projects: [
         { id: "p1", name: "Main Project", slug: "main", palace: "x", default_wing: "w", default_room: "r", fs_root: "/tmp/main", fs_allowlist: [] },
@@ -1135,7 +1191,7 @@ describe("App", () => {
 
     fireEvent.click(screen.getByRole("button", { name: /^new$/i }));
     const sourceDialog = await screen.findByRole("dialog", { name: /new workflow source/i });
-    fireEvent.change(within(sourceDialog).getByLabelText(/^project$/i, { selector: "select" }), { target: { value: "p2" } });
+    expect(within(sourceDialog).queryByLabelText(/^project$/i)).toBeNull();
     fireEvent.change(within(sourceDialog).getByLabelText(/^source path$/i, { selector: "input" }), {
       target: { value: "/workspace/docs-workflows" },
     });
@@ -1150,7 +1206,7 @@ describe("App", () => {
       expect(createCallIndex).toBeGreaterThanOrEqual(0);
       const createCall = fetchMock.mock.calls[createCallIndex];
       const body = JSON.parse(String((createCall?.[1] as RequestInit | undefined)?.body ?? "{}")) as Record<string, unknown>;
-      expect(body.project_id).toBe("p2");
+      expect(body).toEqual({ source_path: "/workspace/docs-workflows", checksum: null });
       const reloadCallIndex = fetchMock.mock.calls.findIndex((call, index) => {
         const url = String(call[0]);
         const init = call[1] as RequestInit | undefined;
@@ -1160,7 +1216,7 @@ describe("App", () => {
     });
   });
 
-  it("shows actionable workflows empty state when projects and sources are missing", async () => {
+  it("shows actionable workflows empty state when no sources are configured", async () => {
     installApiMock({ projectCount: 0, workflows: [], workflowSources: [] });
     renderAtPath("/workflows");
 
@@ -1168,8 +1224,8 @@ describe("App", () => {
       expect(screen.getByText(/no workflow sources configured/i)).toBeTruthy();
     });
 
-    expect(screen.getByRole("link", { name: /create a project first/i }).getAttribute("href")).toBe("/projects");
-    expect(screen.getByText(/once a project exists, use new to add a workflow source path/i)).toBeTruthy();
+    expect(screen.getByText(/use new to add a workflow source path/i)).toBeTruthy();
+    expect(screen.queryByRole("link", { name: /create a project first/i })).toBeNull();
   });
 
   it("shows readable errors for reload failures", async () => {
@@ -1296,6 +1352,12 @@ describe("App", () => {
       "/database",
     );
     expect(screen.getByRole("link", { name: /review llm configuration/i }).getAttribute("href")).toBe(
+      "/llm",
+    );
+    expect(screen.getByRole("link", { name: /create chat llm profile/i }).getAttribute("href")).toBe(
+      "/llm",
+    );
+    expect(screen.getByRole("link", { name: /create embedding profile/i }).getAttribute("href")).toBe(
       "/llm",
     );
     expect(screen.queryByRole("link", { name: /add first project/i })).toBeNull();
@@ -1576,10 +1638,121 @@ describe("App", () => {
     expect(within(profileTable).queryByRole("button", { name: /delete profile default/i })).toBeNull();
     expect(screen.queryByLabelText(/llm profile descriptions/i)).toBeNull();
     expect(screen.queryByText(/primary runtime profile/i)).toBeNull();
-    const profilesCard = screen.getByRole("heading", { name: /^profiles$/i }).closest("article");
+    const profilesCard = screen.getByRole("heading", { name: /^chat profiles$/i }).closest("article");
     expect(profilesCard).toBeTruthy();
     const addProfileButton = within(profilesCard as HTMLElement).getByRole("button", { name: /add profile/i });
     expect(profileTable.compareDocumentPosition(addProfileButton) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  });
+
+  it("renders embedding profiles in their own section", async () => {
+    installApiMock({
+      llmConfig: {
+        version: "1.0",
+        providers: {
+          openai: {
+            type: "openai",
+            api_url: "https://api.openai.com/v1",
+            api_key_secret: "OPENAI_API_KEY",
+            model: "gpt-5-mini",
+            timeout: 30,
+            max_retries: 2,
+            retry_delay: 1,
+            extra_headers: {},
+          },
+        },
+        profiles: {
+          chat: {
+            provider: "openai",
+            model: "gpt-5-mini",
+            temperature: 0.2,
+            max_tokens: 4096,
+            description: "Chat profile",
+          },
+          embedding: {
+            provider: "openai",
+            model: "text-embedding-3-small",
+            temperature: null,
+            max_tokens: null,
+            description: "Required by semantic search and System 2 evidence retrieval",
+          },
+        },
+        default_profile: "chat",
+      },
+    });
+
+    renderAtPath("/llm");
+
+    await screen.findByRole("heading", { name: /llm configuration/i });
+    expect(screen.getByRole("heading", { name: /^chat profiles$/i })).toBeTruthy();
+    expect(screen.getByRole("heading", { name: /^embedding profiles$/i })).toBeTruthy();
+    expect(screen.getByText(/required by semantic search and system 2 evidence retrieval/i)).toBeTruthy();
+
+    const chatTable = screen.getByRole("table", { name: /llm profiles/i });
+    expect(within(chatTable).getByRole("row", { name: /edit profile chat/i })).toBeTruthy();
+    expect(within(chatTable).queryByRole("row", { name: /edit profile embedding/i })).toBeNull();
+
+    const embeddingTable = screen.getByRole("table", { name: /embedding profiles/i });
+    expect(within(embeddingTable).getByRole("row", { name: /edit embedding profile embedding/i })).toBeTruthy();
+    const embeddingCard = screen.getByRole("heading", { name: /^embedding profiles$/i }).closest("article");
+    expect(embeddingCard).toBeTruthy();
+    expect(within(embeddingCard as HTMLElement).getByRole("button", { name: /^add profile$/i })).toBeTruthy();
+    expect(within(embeddingCard as HTMLElement).queryByRole("button", { name: /add embedding profile/i })).toBeNull();
+  });
+
+  it("uses embedding-specific fields when adding or editing embedding profiles", async () => {
+    installApiMock({
+      llmConfig: {
+        version: "1.0",
+        providers: {
+          openai: {
+            type: "openai",
+            api_url: "https://api.openai.com/v1",
+            api_key_secret: "OPENAI_API_KEY",
+            model: "gpt-5-mini",
+          },
+        },
+        profiles: {
+          embedding: {
+            provider: "openai",
+            model: "text-embedding-3-small",
+            temperature: null,
+            max_tokens: 1536,
+            description: "Embedding profile",
+          },
+        },
+        default_profile: null,
+      },
+    });
+
+    renderAtPath("/llm");
+
+    await screen.findByRole("heading", { name: /llm configuration/i });
+    const embeddingTable = screen.getByRole("table", { name: /embedding profiles/i });
+    fireEvent.click(within(embeddingTable).getByRole("row", { name: /edit embedding profile embedding/i }));
+
+    const editDialog = await screen.findByRole("dialog", { name: /edit embedding profile embedding/i });
+    expect(editDialog.querySelector("#llm-profile-dialog-title")?.classList.contains("visually-hidden")).toBe(true);
+    expect((within(editDialog).getByLabelText(/^profile id$/i) as HTMLInputElement).value).toBe("embedding");
+    expect((within(editDialog).getByLabelText(/^embedding provider$/i) as HTMLSelectElement).value).toBe("openai");
+    expect((within(editDialog).getByLabelText(/^embedding model$/i) as HTMLInputElement).value).toBe(
+      "text-embedding-3-small",
+    );
+    expect((within(editDialog).getByLabelText(/^dimensions$/i) as HTMLInputElement).value).toBe("1536");
+    expect(within(editDialog).queryByLabelText(/temperature/i)).toBeNull();
+    expect(within(editDialog).queryByLabelText(/max tokens/i)).toBeNull();
+    fireEvent.click(within(editDialog).getByRole("button", { name: /cancel/i }));
+
+    const embeddingCard = screen.getByRole("heading", { name: /^embedding profiles$/i }).closest("article");
+    expect(embeddingCard).toBeTruthy();
+    fireEvent.click(within(embeddingCard as HTMLElement).getByRole("button", { name: /^add profile$/i }));
+
+    const addDialog = await screen.findByRole("dialog", { name: /add embedding profile/i });
+    expect((within(addDialog).getByLabelText(/^profile id$/i) as HTMLInputElement).value).toBe("embedding");
+    expect(within(addDialog).getByLabelText(/^embedding provider$/i)).toBeTruthy();
+    expect(within(addDialog).getByLabelText(/^embedding model$/i)).toBeTruthy();
+    expect(within(addDialog).getByLabelText(/^dimensions$/i)).toBeTruthy();
+    expect(within(addDialog).queryByLabelText(/temperature/i)).toBeNull();
+    expect(within(addDialog).queryByLabelText(/max tokens/i)).toBeNull();
   });
 
   it("paginates LLM provider and profile tables independently at ten rows per page", async () => {
@@ -1628,7 +1801,9 @@ describe("App", () => {
     fireEvent.change(within(providerDialog).getByLabelText(/api url/i), { target: { value: "https://api.openai.com/v1" } });
     fireEvent.click(within(providerDialog).getByRole("button", { name: /^save$/i }));
 
-    fireEvent.click(screen.getByRole("button", { name: /add profile/i }));
+    const profilesCard = screen.getByRole("heading", { name: /^chat profiles$/i }).closest("article");
+    expect(profilesCard).toBeTruthy();
+    fireEvent.click(within(profilesCard as HTMLElement).getByRole("button", { name: /^add profile$/i }));
     const profileDialog = await screen.findByRole("dialog", { name: /profile/i });
     fireEvent.change(within(profileDialog).getByLabelText(/^profile id$/i), { target: { value: "default" } });
     fireEvent.change(within(profileDialog).getByLabelText(/^profile provider$/i), { target: { value: "openai" } });
@@ -1923,7 +2098,9 @@ describe("App", () => {
     fireEvent.change(within(providerDialog).getByLabelText(/^provider model$/i), { target: { value: "gpt-4.1-mini" } });
     fireEvent.click(within(providerDialog).getByRole("button", { name: /^save$/i }));
 
-    fireEvent.click(screen.getByRole("button", { name: /add profile/i }));
+    const profilesCard = screen.getByRole("heading", { name: /^chat profiles$/i }).closest("article");
+    expect(profilesCard).toBeTruthy();
+    fireEvent.click(within(profilesCard as HTMLElement).getByRole("button", { name: /^add profile$/i }));
     const profileDialog = await screen.findByRole("dialog", { name: /profile/i });
     expect(within(profileDialog).queryByRole("button", { name: /^delete$/i })).toBeNull();
     fireEvent.change(within(profileDialog).getByLabelText(/^profile id$/i), { target: { value: "default" } });
@@ -2056,12 +2233,11 @@ describe("App", () => {
     expect(screen.getByText(/container command/i)).toBeTruthy();
     expect(screen.getByText(/connection test/i)).toBeTruthy();
     expect(screen.getByText(/persist settings/i)).toBeTruthy();
-    expect(screen.getByText(/enabled: off/i)).toBeTruthy();
+    expect(screen.queryByRole("checkbox", { name: /enable postgresql/i })).toBeNull();
     expect(screen.getAllByText(/configured: no/i).length).toBeGreaterThan(0);
     expect(screen.getByText(/password: pending/i)).toBeTruthy();
     expect(screen.getByText(/legacy re-entry: clean/i)).toBeTruthy();
 
-    fireEvent.click(screen.getByRole("checkbox", { name: /enable postgresql metadata backend/i }));
     fireEvent.change(screen.getByLabelText(/^host$/i), { target: { value: "127.0.0.1" } });
     fireEvent.change(screen.getByLabelText(/^port$/i), { target: { value: "5432" } });
     fireEvent.change(screen.getByLabelText(/^database$/i), { target: { value: "workflows" } });
@@ -2078,7 +2254,7 @@ describe("App", () => {
     });
     expect(saveCall).toBeTruthy();
     const payload = JSON.parse(String((saveCall?.[1] as RequestInit | undefined)?.body ?? "{}")) as Record<string, unknown>;
-    expect(payload.enabled).toBe(true);
+    expect(Object.hasOwn(payload, "enabled")).toBe(false);
     expect(payload.host).toBe("127.0.0.1");
     expect(payload.port).toBe(5432);
     expect(payload.database).toBe("workflows");
@@ -2091,12 +2267,11 @@ describe("App", () => {
     expect(Object.hasOwn(payload, "dsn")).toBe(false);
   });
 
-  it("blocks enabled save when required structured fields or password are missing", async () => {
+  it("blocks save when required structured fields or password are missing", async () => {
     const fetchMock = installApiMock();
     renderAtPath("/database");
 
     await screen.findByRole("heading", { name: /database settings/i });
-    fireEvent.click(screen.getByRole("checkbox", { name: /enable postgresql metadata backend/i }));
     fireEvent.change(screen.getByLabelText(/^host$/i), { target: { value: "127.0.0.1" } });
     fireEvent.change(screen.getByLabelText(/^port$/i), { target: { value: "5432" } });
     fireEvent.change(screen.getByLabelText(/^database$/i), { target: { value: "workflows" } });
@@ -2104,7 +2279,7 @@ describe("App", () => {
     fireEvent.change(screen.getByLabelText(/^password$/i), { target: { value: "" } });
     fireEvent.click(screen.getByRole("button", { name: /save settings/i }));
 
-    await screen.findByText(/password is required unless you clear it/i);
+    await screen.findByText(/password is required unless you keep a configured password/i);
     expect((screen.getByLabelText(/^host$/i) as HTMLInputElement).value).toBe("127.0.0.1");
 
     const saveCalls = fetchMock.mock.calls.filter((call) => {
@@ -2120,7 +2295,6 @@ describe("App", () => {
     renderAtPath("/database");
 
     await screen.findByRole("heading", { name: /database settings/i });
-    fireEvent.click(screen.getByRole("checkbox", { name: /enable postgresql metadata backend/i }));
     fireEvent.change(screen.getByLabelText(/^host$/i), { target: { value: "127.0.0.1" } });
     fireEvent.change(screen.getByLabelText(/^port$/i), { target: { value: "5432" } });
     fireEvent.change(screen.getByLabelText(/^database$/i), { target: { value: "workflows" } });
@@ -2157,7 +2331,6 @@ describe("App", () => {
     expect((screen.getByLabelText(/ssl mode/i) as HTMLSelectElement).value).toBe("require");
     expect((screen.getByLabelText(/extra parameters/i) as HTMLInputElement).value).toBe("application_name=cli");
 
-    fireEvent.click(screen.getByRole("checkbox", { name: /enable postgresql metadata backend/i }));
     fireEvent.click(screen.getByRole("button", { name: /save settings/i }));
     await screen.findByText("Database settings saved.");
 
@@ -2193,7 +2366,6 @@ describe("App", () => {
     cleanup();
     installApiMock({
       initialDatabaseSettings: {
-        enabled: true,
         configured: true,
         host: "db.internal",
         port: 5433,
@@ -2219,7 +2391,6 @@ describe("App", () => {
     renderAtPath("/database");
 
     await screen.findByRole("heading", { name: /database settings/i });
-    fireEvent.click(screen.getByRole("checkbox", { name: /enable postgresql metadata backend/i }));
     fireEvent.click(screen.getByRole("button", { name: /save settings/i }));
 
     await screen.findAllByRole("alert");
@@ -2272,7 +2443,6 @@ describe("App", () => {
     renderAtPath("/database");
     await screen.findByRole("heading", { name: /database settings/i });
 
-    fireEvent.click(screen.getByRole("checkbox", { name: /enable postgresql metadata backend/i }));
     fireEvent.change(screen.getByLabelText(/^host$/i), { target: { value: "127.0.0.1" } });
     fireEvent.change(screen.getByLabelText(/^database$/i), { target: { value: "workflows" } });
     fireEvent.change(screen.getByLabelText(/^username$/i), { target: { value: "workflows" } });
@@ -2465,16 +2635,61 @@ describe("App", () => {
     expect(within(dialog).getByText("p1")).toBeTruthy();
     expect(within(dialog).getByText("Dirty files")).toBeTruthy();
 
-    fireEvent.click(within(dialog).getByRole("button", { name: /sync now p1/i }));
+    fireEvent.click(within(dialog).getByRole("button", { name: /sync dirty files p1/i }));
 
     await waitFor(() => {
-      expect(screen.getByText(/sync requested for p1/i)).toBeTruthy();
+      expect(screen.getByText(/dirty file sync queued for p1: job-sync-now/i)).toBeTruthy();
     });
 
     await waitFor(() => {
       const syncStateCalls = fetchMock.mock.calls.filter((call) => String(call[0]).includes("/api/events/v1/sync/state"));
       expect(syncStateCalls.length).toBeGreaterThan(1);
     });
+  });
+
+  it("shows system extraction details in the sync detail dialog", async () => {
+    installApiMock({
+      projects: [{ id: "p1", name: "Main Project", slug: "main", palace: "x", default_wing: "w", default_room: "r", fs_root: "/tmp", fs_allowlist: [], system2_enabled: true }],
+      syncDetails: {
+        p1: {
+          project_id: "p1",
+          system1_enabled: true,
+          system1_state: "completed",
+          system2_enabled: true,
+          system2_state: "completed",
+          embedding_profile_required: true,
+          embedding_profile: "embedding",
+          memory_backend_ready: true,
+          counts: {
+            source_items: 7,
+            structural_evidence: 12,
+            verification_cycles: 1,
+            wings: 2,
+            rooms: 3,
+            compartments: 5,
+            semantic_claims: 4,
+            semantic_memories: 2,
+          },
+        },
+      },
+    });
+    renderAtPath("/sync");
+
+    const syncTable = await screen.findByRole("table", { name: /registered sync projects/i });
+    fireEvent.click(within(syncTable).getByRole("row", { name: /open sync main project status needs reconcile/i }));
+
+    const dialog = await screen.findByRole("dialog", { name: /sync main project/i });
+    expect(await within(dialog).findByText(/system 1 structural extraction/i)).toBeTruthy();
+    expect(within(dialog).getByText(/system 2 semantic extraction/i)).toBeTruthy();
+    expect(within(dialog).getByText(/embedding profile: embedding/i)).toBeTruthy();
+    const counts = within(dialog).getByLabelText(/collected memory palace counts/i);
+    expect(within(counts).getByText("Wings")).toBeTruthy();
+    expect(within(counts).getAllByText("2").length).toBeGreaterThan(0);
+    expect(within(counts).getByText("Rooms")).toBeTruthy();
+    expect(within(counts).getByText("3")).toBeTruthy();
+    expect(within(counts).getByText("Compartments")).toBeTruthy();
+    expect(within(counts).getByText("5")).toBeTruthy();
+    expect(within(counts).getByText("Memories")).toBeTruthy();
   });
 
   it("shows sync action failure details returned by the API", async () => {
@@ -2486,7 +2701,7 @@ describe("App", () => {
           status: "failed",
           dirty_count: 2,
           error: {
-            code: "project_graph_sync_failed",
+            code: "project_system1_sync_failed",
             message: "MEMORY_BACKEND_UNAVAILABLE: no memory PostgreSQL backend is configured.",
           },
         },
@@ -2501,12 +2716,12 @@ describe("App", () => {
     fireEvent.click(syncRow);
 
     const dialog = await screen.findByRole("dialog", { name: /sync main project/i });
-    fireEvent.click(within(dialog).getByRole("button", { name: /sync now p1/i }));
+    fireEvent.click(within(dialog).getByRole("button", { name: /sync dirty files p1/i }));
 
     await waitFor(() => {
       expect(screen.getByText(/memory_backend_unavailable: no memory postgresql backend is configured/i)).toBeTruthy();
     });
-    expect(screen.queryByText(/sync requested for p1/i)).toBeNull();
+    expect(screen.queryByText(/dirty file sync queued for p1/i)).toBeNull();
   });
 
   it("renders recent sync activity in the sync detail dialog", async () => {
@@ -2581,7 +2796,7 @@ describe("App", () => {
 
     fireEvent.click(docsRow);
     const dialog = await screen.findByRole("dialog", { name: /sync docs project/i });
-    fireEvent.click(within(dialog).getByRole("button", { name: /sync now p2/i }));
+    fireEvent.click(within(dialog).getByRole("button", { name: /sync dirty files p2/i }));
 
     await waitFor(() => {
       const syncCall = fetchMock.mock.calls.find((call) => {
@@ -2610,13 +2825,15 @@ describe("App", () => {
 
     fireEvent.click(syncRow);
     const dialog = await screen.findByRole("dialog", { name: /sync main project/i });
-    expect(within(dialog).getByText(/^0$/i)).toBeTruthy();
-    expect(within(dialog).getByText(/idle/i)).toBeTruthy();
-    expect(within(dialog).getByText(/clear/i)).toBeTruthy();
-    expect(within(dialog).getByText(/available as manual action/i)).toBeTruthy();
-    expect(within(dialog).getByRole("button", { name: /sync now p1/i })).toBeTruthy();
-    expect(within(dialog).getByRole("button", { name: /reconcile p1/i })).toBeTruthy();
-    expect(within(dialog).getByRole("button", { name: /rebuild p1/i })).toBeTruthy();
+    const syncDetails = dialog.querySelector('dl[aria-label="Sync details"]');
+    expect(syncDetails).toBeTruthy();
+    expect(within(syncDetails as HTMLElement).getByText(/^0$/i)).toBeTruthy();
+    expect(within(syncDetails as HTMLElement).getByText(/idle/i)).toBeTruthy();
+    expect(within(syncDetails as HTMLElement).getByText(/clear/i)).toBeTruthy();
+    expect(within(syncDetails as HTMLElement).getByText(/available as manual action/i)).toBeTruthy();
+    expect(within(dialog).getByRole("button", { name: /sync dirty files p1/i })).toBeTruthy();
+    expect(within(dialog).getByRole("button", { name: /reconcile project p1/i })).toBeTruthy();
+    expect(within(dialog).getByRole("button", { name: /rebuild project p1/i })).toBeTruthy();
 
     expect(screen.queryByText(/no sync queue entries/i)).toBeNull();
 
@@ -2703,11 +2920,13 @@ describe("App", () => {
     });
     fireEvent.click(syncRow);
     const dialog = await screen.findByRole("dialog", { name: /sync main project/i });
+    const syncDetails = dialog.querySelector('dl[aria-label="Sync details"]');
+    expect(syncDetails).toBeTruthy();
 
-    expect(within(dialog).getByText(/queued/i)).toBeTruthy();
-    expect(within(dialog).getByText(/required/i)).toBeTruthy();
-    expect(within(dialog).getByText(/available as manual action/i)).toBeTruthy();
-    expect(within(dialog).getByText(/not reported by the current sync endpoint/i)).toBeTruthy();
+    expect(within(syncDetails as HTMLElement).getByText(/queued/i)).toBeTruthy();
+    expect(within(syncDetails as HTMLElement).getByText(/required/i)).toBeTruthy();
+    expect(within(syncDetails as HTMLElement).getByText(/available as manual action/i)).toBeTruthy();
+    expect(within(syncDetails as HTMLElement).getByText(/not reported by the current sync endpoint/i)).toBeTruthy();
   });
 
   it("renders registered projects as selectable table rows that open configuration modals", async () => {
@@ -2802,6 +3021,7 @@ describe("App", () => {
       default_room: "orchestration",
       fs_root: "/workspace/workflows",
       fs_allowlist: ["/workspace/workflows", "/workspace/shared"],
+      system2_enabled: false,
     });
   });
 
@@ -2850,6 +3070,37 @@ describe("App", () => {
     expect((screen.getByLabelText(/^palace$/i) as HTMLInputElement).value).toBe("manual-palace");
   });
 
+  it("shows system extraction settings during project onboarding", async () => {
+    const fetchMock = installApiMock();
+    renderAtPath("/projects");
+    await openNewProjectModal();
+
+    expect(screen.getAllByText(/system 1 structural extraction/i).length).toBeGreaterThan(0);
+    expect(screen.getAllByText(/always on/i).length).toBeGreaterThan(0);
+    expect(screen.getByText(/does not use an llm or embedding profile/i)).toBeTruthy();
+
+    const system2Toggle = screen.getByRole("checkbox", { name: /enable system 2 semantic extraction/i }) as HTMLInputElement;
+    expect(system2Toggle.checked).toBe(false);
+    expect(screen.getByText(/uses the chat llm profile and the embedding profile/i)).toBeTruthy();
+
+    fireEvent.change(screen.getByLabelText(/^name$/i), { target: { value: "Semantic Registry" } });
+    fireEvent.change(screen.getByLabelText(/^fs root$/i, { selector: "input" }), { target: { value: "/workspace/semantic" } });
+    fireEvent.click(system2Toggle);
+    fireEvent.click(screen.getByRole("button", { name: /register project/i }));
+
+    await screen.findByText(/project registered successfully/i);
+
+    const createCall = fetchMock.mock.calls.find((call) => {
+      const url = String(call[0]);
+      const init = call[1] as RequestInit | undefined;
+      return url.includes("/api/admin/v1/projects") && init?.method === "POST";
+    });
+    const createBody = JSON.parse(String((createCall?.[1] as RequestInit | undefined)?.body ?? "{}")) as {
+      system2_enabled?: boolean;
+    };
+    expect(createBody.system2_enabled).toBe(true);
+  });
+
   it("creates a palace-level project without default wing or room", async () => {
     const fetchMock = installApiMock();
     renderAtPath("/projects");
@@ -2884,6 +3135,7 @@ describe("App", () => {
       default_room: null,
       fs_root: "/workspace/palace",
       fs_allowlist: [],
+      system2_enabled: false,
     });
   });
 
@@ -3015,6 +3267,7 @@ describe("App", () => {
       default_room: "runtime",
       fs_root: "/srv/workflows/alpha",
       fs_allowlist: ["/srv/workflows/shared", "/srv/workflows/manual"],
+      system2_enabled: false,
     });
   });
 

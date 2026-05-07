@@ -62,6 +62,8 @@ class ExecutionContext:
         user_id: uuid.UUID | None = None,
         auth_method: str | None = None,
         user_string_id: str | None = None,
+        memory_backend: Any | None = None,
+        memory_backend_lock: Any | None = None,
     ):
         """
         Initialize execution context with shared resources.
@@ -93,6 +95,8 @@ class ExecutionContext:
         self.user_id = user_id
         self.auth_method = auth_method
         self.user_string_id = user_string_id
+        self.memory_backend = memory_backend
+        self.memory_backend_lock = memory_backend_lock
         self.memory_snapshot: dict[str, str] = {}
         self.on_log: Callable[[str, str | None, int], Awaitable[None]] | None = None
         self.on_block_transition: Callable[[dict[str, Any]], Awaitable[None]] | None = None
@@ -149,6 +153,8 @@ class ExecutionContext:
             user_id=self.user_id,
             auth_method=self.auth_method,
             user_string_id=self.user_string_id,
+            memory_backend=self.memory_backend,
+            memory_backend_lock=self.memory_backend_lock,
         )
         child.memory_snapshot = self.memory_snapshot
         child.on_log = self.on_log

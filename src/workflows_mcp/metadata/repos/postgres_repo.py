@@ -34,7 +34,6 @@ _DEFAULT_VOLUME_NAME = "workflows-postgres-data"
 
 @dataclass(frozen=True)
 class PostgresProfileInput:
-    enabled: bool
     host: str
     port: int
     database: str
@@ -53,7 +52,6 @@ class PostgresProfileInput:
 
 @dataclass(frozen=True)
 class PostgresSettingsMetadata:
-    enabled: bool
     configured: bool
     password_configured: bool
     legacy_profile_reentry_required: bool
@@ -80,7 +78,6 @@ class SQLitePostgresSettingsRepository:
         row = self._conn.execute(
             """
             SELECT
-                enabled,
                 dsn_ref,
                 host,
                 port,
@@ -100,7 +97,6 @@ class SQLitePostgresSettingsRepository:
         ).fetchone()
         if row is None:
             return PostgresSettingsMetadata(
-                enabled=False,
                 configured=False,
                 password_configured=False,
                 legacy_profile_reentry_required=False,
@@ -119,33 +115,32 @@ class SQLitePostgresSettingsRepository:
 
         password_configured = self._secret_exists(_POSTGRES_PASSWORD_SECRET_NAME)
         has_structured_required = self._has_structured_required_values(
-            host=str(row[2]),
-            port=int(str(row[3])),
-            database=str(row[4]),
-            username=str(row[5]),
+            host=str(row[1]),
+            port=int(str(row[2])),
+            database=str(row[3]),
+            username=str(row[4]),
         )
         configured = has_structured_required and password_configured
-        dsn_ref = str(row[1]) if row[1] is not None else ""
-        legacy_upgrade_status = str(row[12]) if row[12] is not None else _UPGRADE_NOT_STARTED
+        dsn_ref = str(row[0]) if row[0] is not None else ""
+        legacy_upgrade_status = str(row[11]) if row[11] is not None else _UPGRADE_NOT_STARTED
         legacy_reentry = (
             legacy_upgrade_status == _UPGRADE_FAILED and dsn_ref == _POSTGRES_DSN_SECRET_NAME
         )
         return PostgresSettingsMetadata(
-            enabled=bool(int(row[0])),
             configured=configured,
             password_configured=password_configured,
             legacy_profile_reentry_required=legacy_reentry,
-            host=str(row[2]),
-            port=int(str(row[3])),
-            database=str(row[4]),
-            username=str(row[5]),
-            ssl_mode=str(row[6]),
-            extra_params=str(row[7]),
-            container_name=str(row[8]),
-            container_image=str(row[9]),
-            container_host_port=int(row[10]),
-            volume_name=str(row[11]),
-            updated_at=str(row[13]),
+            host=str(row[1]),
+            port=int(str(row[2])),
+            database=str(row[3]),
+            username=str(row[4]),
+            ssl_mode=str(row[5]),
+            extra_params=str(row[6]),
+            container_name=str(row[7]),
+            container_image=str(row[8]),
+            container_host_port=int(row[9]),
+            volume_name=str(row[10]),
+            updated_at=str(row[12]),
         )
 
     def save_settings(self, profile: PostgresProfileInput) -> PostgresSettingsMetadata:
@@ -156,8 +151,10 @@ class SQLitePostgresSettingsRepository:
                 profile=profile,
                 has_existing_password=has_existing_password,
             )
-            if profile.enabled and not password_configured:
-                raise ValueError("enabled PostgreSQL settings require a configured password")
+            if not password_configured:
+                raise ValueError(
+                    "PostgreSQL memory database settings require a configured password"
+                )
 
             self._conn.execute(
                 """
@@ -195,7 +192,7 @@ class SQLitePostgresSettingsRepository:
                     updated_at = CURRENT_TIMESTAMP
                 """,
                 (
-                    1 if profile.enabled else 0,
+                    1,
                     profile.host,
                     profile.port,
                     profile.database,
@@ -219,21 +216,20 @@ class SQLitePostgresSettingsRepository:
         self._maybe_upgrade_legacy_dsn()
         settings = self._conn.execute(
             """
-            SELECT enabled, host, port, database, username, ssl_mode, extra_params
+            SELECT host, port, database, username, ssl_mode, extra_params
             FROM postgresql_settings
             WHERE id = 1
             """
         ).fetchone()
         if settings is None:
             return None
-        enabled = bool(int(settings[0]))
-        host = str(settings[1])
-        port = int(settings[2])
-        database = str(settings[3])
-        username = str(settings[4])
-        ssl_mode = str(settings[5])
-        extra_params = str(settings[6])
-        if not enabled or not self._has_structured_required_values(
+        host = str(settings[0])
+        port = int(settings[1])
+        database = str(settings[2])
+        username = str(settings[3])
+        ssl_mode = str(settings[4])
+        extra_params = str(settings[5])
+        if not self._has_structured_required_values(
             host=host,
             port=port,
             database=database,
@@ -279,8 +275,7 @@ class SQLitePostgresSettingsRepository:
                 database,
                 username,
                 ssl_mode,
-                extra_params,
-                enabled
+                extra_params
             FROM postgresql_settings
             WHERE id = 1
             """
@@ -298,7 +293,6 @@ class SQLitePostgresSettingsRepository:
             username=str(row[5]),
             ssl_mode=str(row[6]),
             extra_params=str(row[7]),
-            enabled=bool(int(row[8])),
         ):
             return
 
@@ -394,7 +388,6 @@ class SQLitePostgresSettingsRepository:
         username: str,
         ssl_mode: str,
         extra_params: str,
-        enabled: bool,
     ) -> bool:
         return (
             host == _DEFAULT_HOST
@@ -403,7 +396,6 @@ class SQLitePostgresSettingsRepository:
             and username == _DEFAULT_USERNAME
             and ssl_mode == _DEFAULT_SSL_MODE
             and extra_params == _DEFAULT_EXTRA_PARAMS
-            and enabled
             and not self._secret_exists(_POSTGRES_PASSWORD_SECRET_NAME)
         )
 

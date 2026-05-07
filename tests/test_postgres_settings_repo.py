@@ -35,7 +35,6 @@ def test_save_and_load_structured_settings_encrypts_password_without_returning_p
     repo, key_path = _repo(tmp_path)
     metadata = repo.save_settings(
         PostgresProfileInput(
-            enabled=True,
             host="db.internal",
             port=5433,
             database="wfdb",
@@ -51,7 +50,6 @@ def test_save_and_load_structured_settings_encrypts_password_without_returning_p
             volume_name="wf-pg-data",
         )
     )
-    assert metadata.enabled is True
     assert metadata.configured is True
     assert metadata.password_configured is True
     assert metadata.legacy_profile_reentry_required is False
@@ -75,13 +73,12 @@ def test_save_and_load_structured_settings_encrypts_password_without_returning_p
     assert decrypt_secret_value(ciphertext, load_secret_key(key_path)) == "super-secret"
 
 
-def test_password_omitted_or_null_keeps_existing_secret_and_password_clear_removes_it(
+def test_password_omitted_or_null_keeps_existing_secret_and_password_clear_requires_replacement(
     tmp_path: Path,
 ) -> None:
     repo, key_path = _repo(tmp_path)
     repo.save_settings(
         PostgresProfileInput(
-            enabled=True,
             host="127.0.0.1",
             port=5432,
             database="workflows",
@@ -106,7 +103,6 @@ def test_password_omitted_or_null_keeps_existing_secret_and_password_clear_remov
 
     repo.save_settings(
         PostgresProfileInput(
-            enabled=True,
             host="127.0.0.1",
             port=5432,
             database="workflows",
@@ -130,34 +126,33 @@ def test_password_omitted_or_null_keeps_existing_secret_and_password_clear_remov
     )
     assert after_omit_cipher == original_cipher
 
-    repo.save_settings(
-        PostgresProfileInput(
-            enabled=False,
-            host="127.0.0.1",
-            port=5432,
-            database="workflows",
-            username="workflows",
-            password="",
-            password_was_provided=True,
-            password_clear=True,
-            ssl_mode="disable",
-            extra_params="",
-            container_name="workflows-postgres",
-            container_image="pgvector/pgvector:pg17",
-            container_host_port=5432,
-            volume_name="workflows-postgres-data",
+    with pytest.raises(ValueError):
+        repo.save_settings(
+            PostgresProfileInput(
+                host="127.0.0.1",
+                port=5432,
+                database="workflows",
+                username="workflows",
+                password="",
+                password_was_provided=True,
+                password_clear=True,
+                ssl_mode="disable",
+                extra_params="",
+                container_name="workflows-postgres",
+                container_image="pgvector/pgvector:pg17",
+                container_host_port=5432,
+                volume_name="workflows-postgres-data",
+            )
         )
-    )
-    cleared = repo._conn.execute(
+    retained = repo._conn.execute(
         "SELECT encrypted_payload FROM encrypted_secret_metadata WHERE secret_name = ?",
         ("postgresql.password",),
     ).fetchone()
-    assert cleared is None
+    assert retained is not None
 
     with pytest.raises(ValueError):
         repo.save_settings(
             PostgresProfileInput(
-                enabled=True,
                 host="127.0.0.1",
                 port=5432,
                 database="workflows",
@@ -181,7 +176,6 @@ def test_load_dsn_builds_runtime_dsn_from_structured_fields_and_secret(tmp_path:
     repo, _ = _repo(tmp_path)
     repo.save_settings(
         PostgresProfileInput(
-            enabled=True,
             host="127.0.0.1",
             port=5432,
             database="db/name",

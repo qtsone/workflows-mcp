@@ -9,7 +9,6 @@ import os
 import uuid
 from pathlib import Path
 from typing import Annotated, Any, Literal
-from urllib.parse import parse_qsl, unquote, urlparse
 
 from mcp.server.fastmcp import FastMCP
 from mcp.types import CallToolResult, TextContent, ToolAnnotations
@@ -38,6 +37,7 @@ from .engine.memory_onboard_sync_orchestrator import (
     compute_sync_delta,
     run_llm_onboard,
     run_programmatic_onboard,
+    run_programmatic_onboard_with_cycle_recording,
 )
 from .engine.memory_scope_resolver import (
     SyncContextCandidate,
@@ -55,6 +55,10 @@ from .engine.memory_service import (
 )
 from .engine.sql.postgres_backend import PostgresBackend
 from .http_models import OnboardRequest, SyncRequest
+from .memory_runtime import (
+    memory_connection_config_from_env,
+    memory_connection_config_from_metadata,
+)
 from .security.filesystem_boundaries import (
     normalize_project_roots,
     validate_path_within_effective_boundary,
@@ -981,89 +985,12 @@ def _get_standalone_user_context() -> tuple[uuid.UUID | None, str | None, str]:
         return (SYSTEM_USER_UUID, "system", "SYSTEM")
 
 
-def _memory_connection_config_from_dsn(dsn: str) -> Any:
-    from .engine.sql import ConnectionConfig, DatabaseEngine
-
-    parsed = urlparse(dsn)
-    if parsed.scheme not in {"postgres", "postgresql"}:
-        raise MemoryContractError(
-            code="MEMORY_BACKEND_UNAVAILABLE",
-            message="MEMORY_BACKEND_UNAVAILABLE: configured PostgreSQL DSN is invalid",
-            retryable=False,
-        )
-    if parsed.hostname is None or not parsed.path.strip("/"):
-        raise MemoryContractError(
-            code="MEMORY_BACKEND_UNAVAILABLE",
-            message="MEMORY_BACKEND_UNAVAILABLE: configured PostgreSQL DSN is incomplete",
-            retryable=False,
-        )
-    query = dict(parse_qsl(parsed.query, keep_blank_values=True))
-    ssl_mode = query.get("sslmode", "disable")
-    return ConnectionConfig(
-        dialect=DatabaseEngine.POSTGRESQL,
-        host=parsed.hostname,
-        port=parsed.port or 5432,
-        database=unquote(parsed.path.strip("/")),
-        username=unquote(parsed.username) if parsed.username else None,
-        password=unquote(parsed.password) if parsed.password else None,
-        ssl=False if ssl_mode == "disable" else ssl_mode,
-    )
-
-
-def _memory_connection_config_from_metadata(app_ctx: Any) -> Any | None:
-    metadata_db_path = getattr(app_ctx, "metadata_db_path", None)
-    metadata_base_dir = getattr(app_ctx, "metadata_base_dir", None)
-    if not isinstance(metadata_db_path, (str, Path)) or not isinstance(
-        metadata_base_dir, (str, Path)
-    ):
-        return None
-    if metadata_db_path is None or metadata_base_dir is None:
-        return None
-    from .metadata.db import connect_metadata_db
-    from .metadata.repos.postgres_repo import SQLitePostgresSettingsRepository
-
-    try:
-        conn = connect_metadata_db(Path(metadata_db_path))
-    except Exception:  # noqa: BLE001
-        return None
-    try:
-        repo = SQLitePostgresSettingsRepository(
-            conn=conn,
-            key_path=Path(metadata_base_dir) / "secrets.key",
-        )
-        try:
-            dsn = repo.load_dsn()
-        except Exception:  # noqa: BLE001
-            dsn = None
-    finally:
-        conn.close()
-    if not dsn:
-        return None
-    return _memory_connection_config_from_dsn(dsn)
-
-
-def _memory_connection_config_from_env() -> Any | None:
-    raw_host = os.environ.get("MEMORY_DB_HOST")
-    if not raw_host:
-        return None
-    from .engine.sql import ConnectionConfig, DatabaseEngine
-
-    return ConnectionConfig(
-        dialect=DatabaseEngine.POSTGRESQL,
-        host=raw_host,
-        port=int(os.environ.get("MEMORY_DB_PORT", "5432")),
-        database=os.environ.get("MEMORY_DB_NAME", "memory_db"),
-        username=os.environ.get("MEMORY_DB_USER"),
-        password=os.environ.get("MEMORY_DB_PASSWORD"),
-    )
-
-
 def _has_configured_memory_connection(app_ctx: Any) -> bool:
     if getattr(app_ctx, "memory_backend", None) is not None:
         return True
-    if _memory_connection_config_from_env() is not None:
+    if memory_connection_config_from_env() is not None:
         return True
-    return _memory_connection_config_from_metadata(app_ctx) is not None
+    return memory_connection_config_from_metadata(app_ctx) is not None
 
 
 def _create_memory_execution(ctx: AppContextType) -> Any:
@@ -1106,8 +1033,8 @@ async def _execute_memory_request(
     try:
         if uses_ephemeral_backend:
             config = (
-                _memory_connection_config_from_metadata(app_ctx)
-                or _memory_connection_config_from_env()
+                memory_connection_config_from_metadata(app_ctx)
+                or memory_connection_config_from_env()
             )
             if config is None:
                 raise MemoryContractError(
@@ -2080,7 +2007,13 @@ def register_memory_tools(
                     provenance="onboard",
                     confidence=1.0,
                 )
-                result = run_programmatic_onboard(request)
+                if app_ctx.memory_backend is not None:
+                    result = await run_programmatic_onboard_with_cycle_recording(
+                        request,
+                        memory_service=MemoryService(app_ctx.memory_backend, execution),
+                    )
+                else:
+                    result = run_programmatic_onboard(request)
                 if result.status == "completed":
                     persistence = await _persist_graph_payload_if_configured(
                         app_ctx=app_ctx,
@@ -3214,6 +3147,274 @@ def register_memory_tools(
                 }
             }
         )
+
+    @mcp_server.tool(
+        description=(
+            "Clear all ADR-013 ontology rows for an explicit palace scope and prepare "
+            "for a fresh re-onboard. Requires an explicit 'palace' argument. "
+            "Validates the target palace exists before any delete. "
+            "All deletes execute in a single atomic transaction. "
+            "No migration or compatibility layer is provided — this is a clean slate only."
+        ),
+        annotations=ToolAnnotations(
+            title="Fresh Start",
+            readOnlyHint=False,
+            destructiveHint=True,
+            idempotentHint=False,
+            openWorldHint=False,
+        ),
+    )
+    async def fresh_start(
+        palace: Annotated[
+            str | None,
+            Field(
+                default=None,
+                description=(
+                    "Required. The palace name whose ADR-013 ontology rows will be cleared. "
+                    "No global wipe path exists — this argument must be explicitly provided."
+                ),
+            ),
+        ] = None,
+        scope: Annotated[
+            dict[str, Any] | None,
+            Field(
+                default=None,
+                description=(
+                    "Optional sub-scope within the palace "
+                    "(wing/room/compartment). Reserved for future narrowed clears; "
+                    "currently only palace-level clearing is supported."
+                ),
+            ),
+        ] = None,
+        *,
+        ctx: AppContextType,
+    ) -> CallToolResult:
+        """Clear all ADR-013 ontology rows for the given palace, atomically."""
+        # --- guard: palace is required ---
+        if not palace:
+            return _json_response(
+                {
+                    "error": {
+                        "code": "MEM_FRESH_START_MISSING_SCOPE",
+                        "message": (
+                            "MEM_FRESH_START_MISSING_SCOPE: 'palace' is required and must be "
+                            "a non-empty string. No global wipe path exists."
+                        ),
+                        "retryable": False,
+                        "actionable_fix": (
+                            "Provide an explicit palace name: "
+                            "fresh_start(palace='<your-palace-name>')."
+                        ),
+                    }
+                }
+            )
+
+        app_ctx = ctx.request_context.lifespan_context
+        unavailable = _memory_backend_unavailable_envelope(app_ctx)
+        if unavailable is not None:
+            return _json_response(unavailable)
+
+        scope_identity: dict[str, Any] = {"palace": palace}
+        if scope:
+            scope_identity.update({k: v for k, v in scope.items() if v is not None})
+
+        logger.info(
+            "fresh_start: requested scope palace=%r scope_detail=%r",
+            palace,
+            scope,
+        )
+
+        backend: Any = getattr(app_ctx, "memory_backend", None)
+        uses_ephemeral = backend is None
+        if uses_ephemeral:
+            config = (
+                memory_connection_config_from_metadata(app_ctx)
+                or memory_connection_config_from_env()
+            )
+            if config is None:
+                return _json_response(
+                    {
+                        "error": {
+                            "code": "MEMORY_BACKEND_UNAVAILABLE",
+                            "message": (
+                                "MEMORY_BACKEND_UNAVAILABLE: no memory PostgreSQL backend "
+                                "is configured. Save database settings or set MEMORY_DB_HOST."
+                            ),
+                            "retryable": False,
+                        }
+                    }
+                )
+            backend = PostgresBackend()
+            try:
+                await backend.connect(config)
+                from .engine.knowledge.schema import ensure_schema
+
+                await ensure_schema(backend)
+            except Exception as conn_err:
+                return _json_response(_tool_error_payload("fresh_start", conn_err))
+
+        try:
+            # --- scope existence validation: reject unknown palace before any delete ---
+            existence_rows = await backend.query(
+                "SELECT COUNT(*) AS count FROM knowledge_verification_cycles WHERE palace = $1"
+                " UNION ALL "
+                "SELECT COUNT(*) FROM knowledge_structural_evidence WHERE palace = $1"
+                " UNION ALL "
+                "SELECT COUNT(*) FROM knowledge_semantic_claims WHERE palace = $1",
+                (palace, palace, palace),
+            )
+            total_existing = sum(
+                int(row.get("count", 0)) for row in existence_rows.rows
+            )
+            if total_existing == 0:
+                logger.warning(
+                    "fresh_start: palace=%r not found in any ontology table; rejecting",
+                    palace,
+                )
+                return _json_response(
+                    {
+                        "error": {
+                            "code": "MEM_FRESH_START_SCOPE_NOT_FOUND",
+                            "message": (
+                                f"MEM_FRESH_START_SCOPE_NOT_FOUND: palace {palace!r} has no "
+                                "rows in any ADR-013 ontology table. "
+                                "Run onboard first, or check the palace name."
+                            ),
+                            "retryable": False,
+                            "actionable_fix": (
+                                "Verify the palace name matches an onboarded palace, "
+                                "or run onboard() to initialise it first."
+                            ),
+                        }
+                    }
+                )
+
+            # --- FK-safe deletion order (respects ON DELETE RESTRICT constraints) ---
+            # 1. knowledge_wing_proof_bundles  → references semantic_claims RESTRICT
+            # 2. knowledge_semantic_overrides   → references semantic_claims RESTRICT
+            # 3. knowledge_claim_evidence_links → CASCADE from semantic_claims (delete explicitly)
+            # 4. knowledge_semantic_claims
+            # 5. knowledge_structural_evidence
+            # 6. knowledge_verification_cycles
+            #
+            # All six deletes run inside a single explicit transaction.
+            # On any failure, rollback() is called before returning the error envelope
+            # so no partial-delete state can persist.
+
+            per_table: dict[str, int] = {}
+
+            await backend.begin_transaction()
+            try:
+                # knowledge_wing_proof_bundles
+                r = await backend.execute(
+                    "DELETE FROM knowledge_wing_proof_bundles WHERE palace = $1",
+                    (palace,),
+                )
+                per_table["knowledge_wing_proof_bundles"] = getattr(r, "rowcount", 0) or 0
+                logger.info(
+                    "fresh_start: deleted %d rows from knowledge_wing_proof_bundles palace=%r",
+                    per_table["knowledge_wing_proof_bundles"],
+                    palace,
+                )
+
+                # knowledge_semantic_overrides: palace column may not exist directly;
+                # join via knowledge_semantic_claims.
+                r = await backend.execute(
+                    "DELETE FROM knowledge_semantic_overrides"
+                    " WHERE claim_id IN ("
+                    "   SELECT id FROM knowledge_semantic_claims WHERE palace = $1"
+                    " )",
+                    (palace,),
+                )
+                per_table["knowledge_semantic_overrides"] = getattr(r, "rowcount", 0) or 0
+                logger.info(
+                    "fresh_start: deleted %d rows from knowledge_semantic_overrides palace=%r",
+                    per_table["knowledge_semantic_overrides"],
+                    palace,
+                )
+
+                # knowledge_claim_evidence_links: join via semantic_claims palace
+                r = await backend.execute(
+                    "DELETE FROM knowledge_claim_evidence_links"
+                    " WHERE claim_id IN ("
+                    "   SELECT id FROM knowledge_semantic_claims WHERE palace = $1"
+                    " )",
+                    (palace,),
+                )
+                per_table["knowledge_claim_evidence_links"] = getattr(r, "rowcount", 0) or 0
+                logger.info(
+                    "fresh_start: deleted %d rows from knowledge_claim_evidence_links palace=%r",
+                    per_table["knowledge_claim_evidence_links"],
+                    palace,
+                )
+
+                # knowledge_semantic_claims
+                r = await backend.execute(
+                    "DELETE FROM knowledge_semantic_claims WHERE palace = $1",
+                    (palace,),
+                )
+                per_table["knowledge_semantic_claims"] = getattr(r, "rowcount", 0) or 0
+                logger.info(
+                    "fresh_start: deleted %d rows from knowledge_semantic_claims palace=%r",
+                    per_table["knowledge_semantic_claims"],
+                    palace,
+                )
+
+                # knowledge_structural_evidence
+                r = await backend.execute(
+                    "DELETE FROM knowledge_structural_evidence WHERE palace = $1",
+                    (palace,),
+                )
+                per_table["knowledge_structural_evidence"] = getattr(r, "rowcount", 0) or 0
+                logger.info(
+                    "fresh_start: deleted %d rows from knowledge_structural_evidence palace=%r",
+                    per_table["knowledge_structural_evidence"],
+                    palace,
+                )
+
+                # knowledge_verification_cycles (last — no remaining dependents)
+                r = await backend.execute(
+                    "DELETE FROM knowledge_verification_cycles WHERE palace = $1",
+                    (palace,),
+                )
+                per_table["knowledge_verification_cycles"] = getattr(r, "rowcount", 0) or 0
+                logger.info(
+                    "fresh_start: deleted %d rows from knowledge_verification_cycles palace=%r",
+                    per_table["knowledge_verification_cycles"],
+                    palace,
+                )
+
+                await backend.commit()
+
+            except Exception as del_err:
+                await backend.rollback()
+                logger.error(
+                    "fresh_start: delete failed for palace=%r error=%s; transaction rolled back",
+                    palace,
+                    del_err,
+                    exc_info=True,
+                )
+                return _json_response(_tool_error_payload("fresh_start", del_err))
+
+            total_deleted = sum(per_table.values())
+            logger.info(
+                "fresh_start: completed palace=%r total_deleted=%d scope_identity=%r",
+                palace,
+                total_deleted,
+                scope_identity,
+            )
+
+            return _json_response(
+                {
+                    "status": "completed",
+                    "scope_identity": scope_identity,
+                    "total_deleted": total_deleted,
+                    "deleted_rows": per_table,
+                }
+            )
+        finally:
+            if uses_ephemeral:
+                await backend.disconnect()
 
 
 # ---------------------------------------------------------------------------

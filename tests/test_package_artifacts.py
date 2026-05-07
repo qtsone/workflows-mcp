@@ -80,6 +80,54 @@ def test_sdist_contains_python_source(built_artifacts: Path) -> None:
 
 
 @pytest.mark.slow
+def test_wheel_contains_memory_system2_derive_yaml(built_artifacts: Path) -> None:
+    """Wheel must include workflows_mcp/templates/memory/system2-derive.yaml."""
+    wheel = _find_artifact(built_artifacts, "*.whl")
+    members = _wheel_members(wheel)
+    target = "workflows_mcp/templates/memory/system2-derive.yaml"
+    assert any(m == target or m.endswith("/" + target) for m in members), (
+        f"Wheel missing {target!r}. Members with 'templates':\n"
+        + "\n".join(m for m in members if "templates" in m or "memory" in m)
+    )
+
+
+@pytest.mark.slow
+def test_sdist_contains_memory_system2_derive_yaml(built_artifacts: Path) -> None:
+    """Sdist must include src/workflows_mcp/templates/memory/system2-derive.yaml."""
+    sdist = _find_artifact(built_artifacts, "*.tar.gz")
+    members = _sdist_members(sdist)
+    target = "src/workflows_mcp/templates/memory/system2-derive.yaml"
+    assert any(_member_endswith(m, target) for m in members), (
+        f"Sdist missing {target!r}. Members with 'templates':\n"
+        + "\n".join(m for m in members if "templates" in m or "memory" in m)
+    )
+
+
+@pytest.mark.slow
+def test_wheel_contains_memory_system2_verify_lifecycle_yaml(built_artifacts: Path) -> None:
+    """Wheel must include workflows_mcp/templates/memory/system2-verify-lifecycle.yaml."""
+    wheel = _find_artifact(built_artifacts, "*.whl")
+    members = _wheel_members(wheel)
+    target = "workflows_mcp/templates/memory/system2-verify-lifecycle.yaml"
+    assert any(m == target or m.endswith("/" + target) for m in members), (
+        f"Wheel missing {target!r}. Members with 'templates':\n"
+        + "\n".join(m for m in members if "templates" in m or "memory" in m)
+    )
+
+
+@pytest.mark.slow
+def test_sdist_contains_memory_system2_verify_lifecycle_yaml(built_artifacts: Path) -> None:
+    """Sdist must include src/workflows_mcp/templates/memory/system2-verify-lifecycle.yaml."""
+    sdist = _find_artifact(built_artifacts, "*.tar.gz")
+    members = _sdist_members(sdist)
+    target = "src/workflows_mcp/templates/memory/system2-verify-lifecycle.yaml"
+    assert any(_member_endswith(m, target) for m in members), (
+        f"Sdist missing {target!r}. Members with 'templates':\n"
+        + "\n".join(m for m in members if "templates" in m or "memory" in m)
+    )
+
+
+@pytest.mark.slow
 def test_wheel_does_not_contain_builtin_workflows(built_artifacts: Path) -> None:
     """Wheel must not contain any builtin_workflows/system1-scan.yaml path."""
     wheel = _find_artifact(built_artifacts, "*.whl")

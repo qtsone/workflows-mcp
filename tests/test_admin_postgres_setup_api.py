@@ -45,7 +45,6 @@ def _login_and_csrf(client: TestClient) -> str:
 
 def _structured_body(**overrides: object) -> dict[str, object]:
     body: dict[str, object] = {
-        "enabled": True,
         "host": "127.0.0.1",
         "port": 5432,
         "database": "workflows",
@@ -77,7 +76,7 @@ def test_admin_can_save_structured_postgres_settings_and_response_is_safe_metada
     )
     assert saved.status_code == 200
     payload = saved.json()
-    assert payload["enabled"] is True
+    assert "enabled" not in payload
     assert payload["configured"] is True
     assert payload["password_configured"] is True
     assert payload["legacy_profile_reentry_required"] is False
@@ -173,11 +172,10 @@ def test_password_semantics_omitted_null_empty_and_clear_are_enforced(
 
     clear_password = client.put(
         "/api/admin/v1/database/settings",
-        json=_structured_body(enabled=False, password="", password_clear=True),
+        json=_structured_body(password="", password_clear=True),
         headers={"X-CSRF-Token": csrf_token},
     )
-    assert clear_password.status_code == 200
-    assert clear_password.json()["password_configured"] is False
+    assert clear_password.status_code == 422
 
 
 def test_dsn_import_parses_to_structured_fields_without_persisting_raw_dsn(

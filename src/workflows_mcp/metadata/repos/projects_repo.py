@@ -41,6 +41,7 @@ class ProjectCreate:
     default_room: str | None
     fs_root: str
     fs_allowlist: list[str] | None = None
+    system2_enabled: bool = False
 
 
 @dataclass(frozen=True)
@@ -52,6 +53,7 @@ class ProjectUpdate:
     default_room: str | None = None
     fs_root: str | None = None
     fs_allowlist: list[str] | None = None
+    system2_enabled: bool | None = None
 
 
 @dataclass(frozen=True)
@@ -64,6 +66,7 @@ class ProjectRecord:
     default_room: str | None
     fs_root: str
     fs_allowlist: list[str]
+    system2_enabled: bool
     created_at: str
     updated_at: str
 
@@ -98,6 +101,16 @@ def _optional_text(value: object) -> str | None:
     return str(value)
 
 
+def _db_bool(value: object) -> bool:
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, int):
+        return value != 0
+    if isinstance(value, str):
+        return value.strip().lower() in {"1", "true"}
+    return False
+
+
 class SQLiteProjectsRepository:
     def __init__(self, conn: Connection) -> None:
         self._conn = conn
@@ -119,8 +132,9 @@ class SQLiteProjectsRepository:
                     default_wing,
                     default_room,
                     fs_root,
-                    fs_allowlist_json
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                    fs_allowlist_json,
+                    system2_enabled
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     project_id,
@@ -131,12 +145,13 @@ class SQLiteProjectsRepository:
                     data.default_room,
                     fs_root,
                     allowlist_json,
+                    1 if data.system2_enabled else 0,
                 ),
             )
             row = self._conn.execute(
                 """
                 SELECT id, name, slug, palace, default_wing, default_room, fs_root,
-                       fs_allowlist_json, created_at, updated_at
+                       fs_allowlist_json, system2_enabled, created_at, updated_at
                 FROM projects
                 WHERE id = ?
                 """,
@@ -160,7 +175,7 @@ class SQLiteProjectsRepository:
         row = self._conn.execute(
             """
             SELECT id, name, slug, palace, default_wing, default_room, fs_root,
-                   fs_allowlist_json, created_at, updated_at
+                   fs_allowlist_json, system2_enabled, created_at, updated_at
             FROM projects
             WHERE slug = ?
             """,
@@ -181,7 +196,7 @@ class SQLiteProjectsRepository:
         row = self._conn.execute(
             """
             SELECT id, name, slug, palace, default_wing, default_room, fs_root,
-                   fs_allowlist_json, created_at, updated_at
+                   fs_allowlist_json, system2_enabled, created_at, updated_at
             FROM projects
             WHERE id = ?
             """,
@@ -195,7 +210,7 @@ class SQLiteProjectsRepository:
         rows = self._conn.execute(
             """
             SELECT id, name, slug, palace, default_wing, default_room, fs_root,
-                   fs_allowlist_json, created_at, updated_at
+                   fs_allowlist_json, system2_enabled, created_at, updated_at
             FROM projects
             ORDER BY created_at ASC, id ASC
             """
@@ -225,6 +240,11 @@ class SQLiteProjectsRepository:
             if data.fs_allowlist is not None
             else json.dumps(current.fs_allowlist)
         )
+        system2_enabled = (
+            data.system2_enabled
+            if data.system2_enabled is not None
+            else current.system2_enabled
+        )
 
         self._conn.execute("BEGIN IMMEDIATE")
         try:
@@ -237,15 +257,25 @@ class SQLiteProjectsRepository:
                     default_room = ?,
                     fs_root = ?,
                     fs_allowlist_json = ?,
+                    system2_enabled = ?,
                     updated_at = CURRENT_TIMESTAMP
                 WHERE id = ?
                 """,
-                (name, slug, default_wing, default_room, fs_root, fs_allowlist_json, project_id),
+                (
+                    name,
+                    slug,
+                    default_wing,
+                    default_room,
+                    fs_root,
+                    fs_allowlist_json,
+                    1 if system2_enabled else 0,
+                    project_id,
+                ),
             )
             row = self._conn.execute(
                 """
                 SELECT id, name, slug, palace, default_wing, default_room, fs_root,
-                       fs_allowlist_json, created_at, updated_at
+                       fs_allowlist_json, system2_enabled, created_at, updated_at
                 FROM projects
                 WHERE id = ?
                 """,
@@ -281,8 +311,9 @@ class SQLiteProjectsRepository:
             default_room=_optional_text(row[5]),
             fs_root=str(row[6]),
             fs_allowlist=_decode_allowlist(str(row[7]) if row[7] is not None else None),
-            created_at=str(row[8]),
-            updated_at=str(row[9]),
+            system2_enabled=_db_bool(row[8]),
+            created_at=str(row[9]),
+            updated_at=str(row[10]),
         )
 
     @staticmethod

@@ -2,8 +2,9 @@
 
 Document languages are file-only: they emit exactly one File entity and no
 Module/Class/Function/Method entities. Relations and unresolved_imports are
-also empty. `module_qualified_name` is non-empty (repo-relative path) for
-output model compatibility but no Module entity is emitted.
+also empty. The File entity is still emitted as structural evidence for
+System 1 derivation. `module_qualified_name` is non-empty (repo-relative path)
+for output model compatibility but no Module entity is emitted.
 
 Tests are written BEFORE the production code (strict TDD).
 """
@@ -368,6 +369,32 @@ class TestMarkdownExtraction:
         assert "stable_id" in fe
         assert "metadata" in fe
         assert "confidence" in fe
+
+    @pytest.mark.asyncio
+    async def test_md_executor_emits_file_structural_evidence(
+        self, md_file: Path, mock_execution: MagicMock
+    ) -> None:
+        from workflows_mcp.engine.executors_treesitter import (
+            TreeSitterExecutor,
+            TreeSitterInput,
+        )
+
+        result = await TreeSitterExecutor().execute(
+            TreeSitterInput(path=str(md_file), palace="forge", item_id="readme"),
+            mock_execution,
+        )
+
+        assert result.structural_evidence_items == [
+            {
+                "entity_stable_id": result.entities[0]["stable_id"],
+                "entity_type": "file",
+                "evidence_category": "structural_module",
+                "evidence_data": {
+                    "qualified_name": result.entities[0]["qualified_name"],
+                    "name": "readme.md",
+                },
+            }
+        ]
 
     @pytest.mark.asyncio
     async def test_markdown_ext_is_supported(

@@ -39,46 +39,6 @@ from .metadata.repos.workflow_sources_repo import SQLiteWorkflowSourcesRepositor
 
 logger = logging.getLogger(__name__)
 
-_SYSTEM_PROJECT_SLUG = "system"
-_SYSTEM_PROJECT_PALACE = "__system__"
-
-
-def _seed_system_project_and_source(resources: "AppResources") -> None:
-    """Idempotently create the System project and its packaged workflow source row.
-
-    This seeds a visible System project (name='System', slug='system') and a
-    system/read-only workflow source pointing to the packaged templates/memory
-    directory.  Safe to call on every load; duplicate rows are never created.
-    """
-    from .metadata.repos.projects_repo import ProjectCreate, SQLiteProjectsRepository
-    from .metadata.repos.workflow_sources_repo import (
-        WorkflowSourceCreate,
-    )
-
-    builtin_path = _builtin_workflow_path()
-
-    projects_repo = SQLiteProjectsRepository(resources.metadata_db_conn)
-    system_project = projects_repo.get_or_create(
-        ProjectCreate(
-            name="System",
-            slug=_SYSTEM_PROJECT_SLUG,
-            palace=_SYSTEM_PROJECT_PALACE,
-            default_wing=None,
-            default_room=None,
-            fs_root=str(builtin_path),
-        )
-    )
-
-    sources_repo = SQLiteWorkflowSourcesRepository(resources.metadata_db_conn)
-    sources_repo.get_or_create_system_source(
-        WorkflowSourceCreate(
-            project_id=system_project.id,
-            source_path=str(builtin_path),
-            is_system=True,
-        )
-    )
-
-
 def _has_registered_memory_tools(mcp_server: FastMCP) -> bool:
     """Return True when memory MCP tools are already registered."""
     tools = mcp_server._tool_manager._tools
@@ -308,18 +268,23 @@ def _builtin_workflow_path() -> Path:
 
 
 def load_workflows(resources: AppResources) -> WorkflowSourceReloadSummary:
-    """Load workflows from packaged built-ins and SQLite-managed user sources."""
-    _seed_system_project_and_source(resources)
+    """Load workflows from packaged built-ins and SQLite-managed user sources.
+
+    Built-in/system workflows are loaded from the package-derived path returned
+    by ``_builtin_workflow_path()`` at runtime.  No rows are written to SQLite
+    for the built-in source.
+    """
     repo = SQLiteWorkflowSourcesRepository(resources.metadata_db_conn)
     sources = repo.list()
-    # System sources are loaded first (as built-ins, non-shadowable); user sources second.
-    system_paths = [source.source_path for source in sources if source.is_system]
-    user_paths = [source.source_path for source in sources if not source.is_system]
+    source_paths = [source.source_path for source in sources]
+
+    builtin_path = _builtin_workflow_path()
+
     try:
         summary = reload_registry_from_source_paths(
             resources.workflow_registry,
-            user_paths,
-            builtin_paths=system_paths,
+            source_paths,
+            builtin_paths=[builtin_path],
         )
     except WorkflowSourceReloadError as exc:
         for source in sources:
@@ -378,9 +343,6 @@ async def app_lifespan(_server: FastMCP) -> AsyncIterator[AppContext]:
     resources = build_resources(base_dir=_resolve_base_dir())
     app_context = resources.app_context
     executor_registry = resources.executor_registry
-    io_queue = resources.io_queue
-    job_queue = resources.job_queue
-    num_workers = resources.metadata.job_queue_workers
     try:
         await start_resources(resources)
 
@@ -421,19 +383,6 @@ async def app_lifespan(_server: FastMCP) -> AsyncIterator[AppContext]:
         # Load workflows into registry
         load_workflows(resources)
 
-        # Start queues if enabled
-        if io_queue:
-            await io_queue.start()
-            logger.info("IO queue started")
-        else:
-            logger.info("IO queue disabled")
-
-        if job_queue:
-            await job_queue.start()
-            logger.info(f"Job queue started with {num_workers} workers")
-        else:
-            logger.info("Job queue disabled")
-
         from .tools_memory import register_memory_tools
 
         oss_mode_enabled = _is_enabled_env_flag("WORKFLOWS_OSS_MODE", default=True)
@@ -462,7 +411,9 @@ async def app_lifespan(_server: FastMCP) -> AsyncIterator[AppContext]:
             ),
         )
 
-        # Initialize memory features if memory DB is configured
+        # Initialize memory features if memory DB is configured.
+        from .memory_runtime import refresh_memory_backend
+
         memory_db_host = os.getenv("MEMORY_DB_HOST")
         if memory_db_host:
             try:
@@ -473,7 +424,8 @@ async def app_lifespan(_server: FastMCP) -> AsyncIterator[AppContext]:
                 # Schema OK — register memory block executor.
                 from .engine.executors_memory import MemoryExecutor
 
-                executor_registry.register(MemoryExecutor())
+                if not executor_registry.has("Memory"):
+                    executor_registry.register(MemoryExecutor())
                 from .engine.memory_service import AUDIT_FAIL_CLOSED
 
                 logger.info(
@@ -530,33 +482,37 @@ async def app_lifespan(_server: FastMCP) -> AsyncIterator[AppContext]:
                         exc_info=True,
                     )
         else:
-            app_context.memory_backend_unavailable_error = MemoryBackendUnavailableError(
-                code="MEMORY_BACKEND_UNAVAILABLE",
-                message="Memory backend is unavailable because MEMORY_DB_HOST is not configured.",
-                retryable=False,
-                actionable_fix=(
-                    "Configure PostgreSQL/pgvector via /api/admin/v1/database/settings and "
-                    "/api/admin/v1/database/connection-test, then verify /ready reports "
-                    "healthy before retrying."
-                ),
-            )
-            logger.info("Memory features disabled (MEMORY_DB_HOST not set)")
+            try:
+                await refresh_memory_backend(
+                    app_ctx=app_context,
+                    executor_registry=executor_registry,
+                    prefer_metadata=True,
+                )
+                if app_context.memory_backend is not None:
+                    logger.info("Memory features enabled from PostgreSQL profile")
+                else:
+                    logger.info("Memory features disabled (PostgreSQL profile not configured)")
+            except Exception:
+                app_context.memory_backend_unavailable_error = MemoryBackendUnavailableError(
+                    code="MEMORY_BACKEND_UNAVAILABLE",
+                    message="Memory backend is unavailable.",
+                    retryable=False,
+                    actionable_fix=(
+                        "Configure PostgreSQL/pgvector via /api/admin/v1/database/settings and "
+                        "/api/admin/v1/database/connection-test, then verify /ready reports "
+                        "healthy before retrying."
+                    ),
+                )
+                logger.warning(
+                    "Memory features disabled (PostgreSQL profile unreachable)",
+                    exc_info=True,
+                )
 
         # Make resources available to tools via AppContext
         yield app_context
     finally:
         # Shutdown: cleanup resources (reverse order)
         logger.info("Shutting down MCP server...")
-
-        # Stop job queue if enabled (don't wait for completion on shutdown)
-        if job_queue:
-            await job_queue.stop(wait_for_completion=False)
-            logger.info("Job queue stopped")
-
-        # Stop IO queue if enabled
-        if io_queue:
-            await io_queue.stop()
-            logger.info("IO queue stopped")
 
         await stop_resources(resources)
 

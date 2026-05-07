@@ -25,6 +25,7 @@ CREATE TABLE IF NOT EXISTS projects (
     default_room TEXT,
     fs_root TEXT NOT NULL,
     fs_allowlist_json TEXT,
+    system2_enabled INTEGER NOT NULL DEFAULT 0,
     created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
@@ -139,16 +140,10 @@ CREATE TABLE IF NOT EXISTS watcher_status (
 -- Reserved for future phase: workflow source/reload metadata.
 CREATE TABLE IF NOT EXISTS workflow_sources (
     source_id TEXT PRIMARY KEY,
-    project_id TEXT NOT NULL,
-    source_path TEXT NOT NULL,
+    source_path TEXT NOT NULL UNIQUE,
     checksum TEXT,
-    is_system INTEGER NOT NULL DEFAULT 0,
-    discovered_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE CASCADE
+    discovered_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
-
-CREATE UNIQUE INDEX IF NOT EXISTS idx_workflow_sources_project_path_unique
-ON workflow_sources(project_id, source_path);
 
 CREATE TABLE IF NOT EXISTS workflow_reload_state (
     source_id TEXT PRIMARY KEY,

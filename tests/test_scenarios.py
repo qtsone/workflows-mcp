@@ -410,5 +410,140 @@ class TestBehaviorBasedValidation:
         assert_workflow_behavior(response, expected)
 
 
+class TestContinueOnErrorOpt:
+    """Regression tests: blocks with continue_on_error:true must not cause workflow failure."""
+
+    @pytest.mark.asyncio
+    async def test_continue_on_error_block_does_not_fail_workflow(
+        self, full_context: MagicMock
+    ) -> None:
+        """A failed block marked continue_on_error:true must not propagate as workflow failure.
+
+        core-conditionals-test has `failure_block` (exit 1) with continue_on_error:true.
+        The workflow must still return status='success' because the failure is tolerated.
+        """
+        result = await execute_workflow(
+            workflow="core-conditionals-test",
+            inputs={},
+            debug=False,
+            mode="sync",
+            timeout=None,
+            ctx=full_context,
+        )
+
+        response: dict[str, Any] = result.structuredContent
+        assert_workflow_succeeded(response)
+        # failure_block ran and failed, but was tolerated
+        assert response["outputs"]["failure_block_failed"] is True
+
+    @pytest.mark.asyncio
+    async def test_dag_optional_deps_continue_on_error_succeeds(
+        self, full_context: MagicMock
+    ) -> None:
+        """dag-execution-optional-deps: job_2 fails with continue_on_error:true.
+
+        Workflow must return status='success' and downstream optional-dep blocks
+        (job_4, job_5, job_6) must have run despite job_2 failing.
+        """
+        result = await execute_workflow(
+            workflow="dag-execution-optional-deps",
+            inputs={},
+            debug=False,
+            mode="sync",
+            timeout=None,
+            ctx=full_context,
+        )
+
+        response: dict[str, Any] = result.structuredContent
+        assert_workflow_succeeded(response)
+        assert response["outputs"]["job_1_succeeded"] is True
+        assert response["outputs"]["job_2_failed"] is True
+        assert response["outputs"]["job_3_succeeded"] is True
+        assert response["outputs"]["job_4_succeeded"] is True
+        assert response["outputs"]["job_5_succeeded"] is True
+        assert response["outputs"]["job_6_succeeded"] is True
+
+
+class TestTerminalStatusPropagation:
+    """Terminal-status propagation: failed blocks without continue_on_error must
+    cause workflow-level failure, both on fresh execution and resume paths."""
+
+    @pytest.mark.asyncio
+    async def test_fresh_execution_failed_block_no_opt_out_returns_failure(
+        self, full_context: MagicMock
+    ) -> None:
+        """A block that fails without continue_on_error must make the workflow fail.
+
+        Uses core-resume-with-failure directly via WorkflowRunner so we can verify
+        the fresh-execution terminal-status classification without the resume path.
+        fail_after_resume depends on `ask` (Prompt), but we feed a pre-resolved
+        Execution that skips the pause so only the shell block runs.
+
+        Simpler: register a tiny inline workflow in the registry and execute it
+        via the AppContext so ExecutionContext is properly constructed.
+        """
+        import yaml as _yaml
+
+        from workflows_mcp.engine.schema import WorkflowSchema
+        from workflows_mcp.engine.workflow_runner import WorkflowRunner
+
+        failing_yaml = """
+name: test-fail-no-continue
+description: Inline test workflow with unguarded failing block
+blocks:
+  - id: fail_block
+    type: Shell
+    inputs:
+      command: exit 1
+"""
+        workflow = WorkflowSchema.model_validate(_yaml.safe_load(failing_yaml))
+        app_ctx = full_context.request_context.lifespan_context
+        exec_ctx = app_ctx.create_execution_context()
+        runner = WorkflowRunner()
+        result = await runner.execute(workflow, {}, exec_ctx)
+        assert result.status == "failure", (
+            f"Expected failure but got {result.status}: {result.error}"
+        )
+
+    @pytest.mark.asyncio
+    async def test_resume_path_failed_block_no_opt_out_returns_failure(
+        self, full_context: MagicMock
+    ) -> None:
+        """Resume path: a block failing after resume without continue_on_error must fail.
+
+        Fixture: core-resume-with-failure
+        - Pauses at Prompt block
+        - After resume, fail_after_resume (exit 1, no continue_on_error) runs
+        - Expect workflow-level failure, not success
+        """
+        # Step 1: Start — must pause at Prompt
+        exec_result = await execute_workflow(
+            workflow="core-resume-with-failure",
+            inputs={},
+            debug=False,
+            mode="sync",
+            timeout=None,
+            ctx=full_context,
+        )
+
+        exec_response: dict[str, Any] = exec_result.structuredContent
+        assert_workflow_paused(exec_response, prompt_pattern="Continue")
+        job_id = exec_response["job_id"]
+
+        # Step 2: Resume — fail_after_resume must make workflow fail
+        resume_result = await resume_workflow(
+            job_id=job_id,
+            response="yes",
+            debug=False,
+            ctx=full_context,
+        )
+
+        resume_response: dict[str, Any] = resume_result.structuredContent
+        assert_workflow_failed(
+            resume_response,
+            error_pattern="failed without continue_on_error",
+        )
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])

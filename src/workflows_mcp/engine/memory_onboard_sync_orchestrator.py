@@ -36,7 +36,7 @@ import hashlib
 import logging
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Literal
+from typing import TYPE_CHECKING, Any, Literal
 
 from .llm_config import LLMConfigLoader, ResolvedLLMConfig
 from .memory_graph_builder import (
@@ -52,6 +52,9 @@ from .memory_graph_validator import (
     validate_graph_payload,
 )
 from .memory_scope_resolver import normalize_scope, scope_key
+
+if TYPE_CHECKING:
+    from .memory_service import MemoryService
 
 logger = logging.getLogger(__name__)
 
@@ -1241,3 +1244,145 @@ def build_llm_onboard_response(
     - diagnostics block with full graph payload and per-compartment detail
     """
     return result.to_response_dict(debug=debug)
+
+
+# ---------------------------------------------------------------------------
+# ADR-013 Task 12 — System 1 structural evidence extraction from file topology
+# ---------------------------------------------------------------------------
+
+
+def _extract_structural_evidence_from_files(
+    files: list[ScannedFileEntry],
+) -> list[dict[str, Any]]:
+    """Extract module-level structural evidence from scanned file topology.
+
+    Produces one ``structural_module`` evidence item per readable file.  Each
+    item uses the file path as the stable anchor ID so evidence rows can be
+    correlated with scan-derived compartment nodes.
+
+    This is the seam available to the watcher/sync path without invoking the
+    TreeSitter executor.  Class- and function-level evidence is produced by the
+    TreeSitter executor in the ``system1-scan`` workflow and falls outside the
+    scope of this orchestrator.
+
+    Args:
+        files: Scanned file entries from the onboard request.
+
+    Returns:
+        List of evidence item dicts compatible with ``StructuralEvidenceItem``.
+        Empty when all files are binary or have no readable content.
+    """
+    items: list[dict[str, Any]] = []
+    for entry in files:
+        if not entry.has_readable_content:
+            continue
+        path = entry.path
+        items.append({
+            "entity_stable_id": path,
+            "entity_type": "module",
+            "evidence_category": "structural_module",
+            "evidence_data": {
+                "path": path,
+                "size_bytes": entry.size_bytes,
+                "content_hash": entry.content_hash,
+            },
+        })
+    return items
+
+
+# ---------------------------------------------------------------------------
+# ADR-013 Task 6 — async wrappers with System 1 cycle recording
+# ---------------------------------------------------------------------------
+
+
+async def run_programmatic_onboard_with_cycle_recording(
+    request: ProgrammaticOnboardRequest,
+    *,
+    memory_service: MemoryService,
+) -> ProgrammaticOnboardResult:
+    """Execute programmatic onboard and record a System 1 verification cycle on success.
+
+    Wraps ``run_programmatic_onboard`` (synchronous) and, when the result has
+    ``status='completed'``, records a successful verification cycle in
+    ``knowledge_verification_cycles`` via ``MemoryService``.
+
+    Fail-closed: if the cycle recording operation itself fails, the exception
+    propagates to the caller rather than silently proceeding.  A failed onboard
+    (``status='failed'``) does not record any cycle.
+
+    Args:
+        request: Fully-populated programmatic onboard request.
+        memory_service: Injected ``MemoryService`` instance for cycle persistence.
+
+    Returns:
+        ``ProgrammaticOnboardResult`` — unchanged from ``run_programmatic_onboard``.
+
+    Raises:
+        Exception: Re-raised from ``MemoryService.execute`` if cycle recording fails.
+    """
+    from .memory_service import MemoryRequest
+
+    result = run_programmatic_onboard(request)
+    if result.status != "completed":
+        return result
+
+    covered_scope = dict(result.scope)
+
+    # --- ADR-013 Task 12: write System 1 structural evidence before cycle record ---
+    # Extract module-level structural evidence from scanned file topology.
+    # This is the seam available to the sync/watcher path without TreeSitter:
+    # each readable file contributes one structural_module evidence item keyed
+    # by its stable path ID.  TreeSitter-level class/function evidence is
+    # produced by the TreeSitter executor block in the system1-scan workflow
+    # and is outside the scope of this orchestrator.
+    evidence_items = _extract_structural_evidence_from_files(request.files)
+    if evidence_items:
+        evidence_request = MemoryRequest.model_validate({
+            "operation": "store_system1_structural_evidence",
+            "scope": covered_scope,
+            "record": {
+                "format": "structured",
+                "structural_evidence": evidence_items,
+            },
+        })
+        evidence_result = await memory_service.execute(evidence_request)
+        if evidence_result.manage is None or not evidence_result.manage.success:
+            error_detail = (
+                evidence_result.manage.error
+                if evidence_result.manage is not None
+                else "no manage result"
+            )
+            raise RuntimeError(
+                f"store_system1_structural_evidence failed during watcher sync: {error_detail}"
+            )
+        logger.info(
+            "programmatic_onboard: stored %d structural evidence items scope_key=%r",
+            evidence_result.manage.stored_count,
+            result.scope_key_value,
+        )
+
+    record_request = MemoryRequest.model_validate({
+        "operation": "record_system1_verification_cycle",
+        "scope": covered_scope,
+        "record": {
+            "format": "structured",
+            "verification_cycle": {
+                "success": True,
+                "covered_scope": covered_scope,
+            },
+        },
+    })
+    cycle_result = await memory_service.execute(record_request)
+    if cycle_result.manage is None or not cycle_result.manage.success:
+        error_detail = (
+            cycle_result.manage.error if cycle_result.manage is not None else "no manage result"
+        )
+        raise RuntimeError(
+            f"record_system1_verification_cycle failed after successful onboard: {error_detail}"
+        )
+    logger.info(
+        "programmatic_onboard: recorded verification cycle cycle_id=%r scope_key=%r",
+        cycle_result.manage.cycle_id,
+        result.scope_key_value,
+    )
+    return result

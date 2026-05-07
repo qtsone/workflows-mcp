@@ -158,6 +158,7 @@ def _create_project(
     palace: str,
     fs_root: str = "/workspace/workflows",
     fs_allowlist: list[str] | None = None,
+    system2_enabled: bool = False,
 ) -> str:
     response = client.post(
         "/api/admin/v1/projects",
@@ -169,11 +170,173 @@ def _create_project(
             "default_room": "runtime",
             "fs_root": fs_root,
             "fs_allowlist": fs_allowlist or [fs_root],
+            "system2_enabled": system2_enabled,
         },
         headers={"X-CSRF-Token": csrf_token},
     )
     assert response.status_code == 201
     return str(response.json()["id"])
+
+
+def _capture_sync_submissions(
+    app_client: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> list[dict[str, object]]:
+    resources = app_client.app.state.resources
+    resources.app_context.memory_backend = object()
+    submitted: list[dict[str, object]] = []
+
+    async def _submit_job(
+        workflow: str,
+        inputs: dict[str, Any] | None = None,
+        timeout: int | None = None,
+        *,
+        project_id: str | None = None,
+        token_id: str | None = None,
+    ) -> str:
+        job_id = f"job_sync_{len(submitted) + 1}"
+        submitted.append(
+            {
+                "job_id": job_id,
+                "workflow": workflow,
+                "inputs": inputs or {},
+                "timeout": timeout,
+                "project_id": project_id,
+                "token_id": token_id,
+            }
+        )
+        return job_id
+
+    monkeypatch.setattr(resources.job_queue, "submit_job", _submit_job)
+    return submitted
+
+
+def test_sync_now_without_dirty_work_is_idle_and_does_not_enqueue_job(
+    app_client: TestClient,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    csrf_token = _login_and_csrf(app_client)
+    project_root = tmp_path / "sync-idle-project"
+    project_root.mkdir()
+    project_id = _create_project(
+        app_client,
+        csrf_token,
+        slug="sync-idle",
+        palace="sync-idle-palace",
+        fs_root=str(project_root),
+        fs_allowlist=[str(project_root)],
+    )
+    SQLiteWatcherRepository(app_client.app.state.resources.metadata_db_conn).mark_active_dirty_processed(
+        project_id=project_id
+    )
+    submitted: list[dict[str, object]] = []
+
+    async def _submit_job(*args: object, **kwargs: object) -> str:
+        submitted.append({"args": args, "kwargs": kwargs})
+        return "job_should_not_exist"
+
+    monkeypatch.setattr(app_client.app.state.resources.job_queue, "submit_job", _submit_job)
+
+    response = app_client.post(
+        f"/api/admin/v1/sync/{project_id}/now",
+        headers={"X-CSRF-Token": csrf_token},
+    )
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "project_id": project_id,
+        "status": "idle",
+        "dirty_count": 0,
+        "action": "sync",
+        "memory_mode": "simple",
+        "job_id": None,
+        "workflow": None,
+        "error": None,
+    }
+    assert submitted == []
+
+
+def test_sync_rebuild_enqueues_project_memory_sync_without_running_inline(
+    app_client: TestClient,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    csrf_token = _login_and_csrf(app_client)
+    resources = app_client.app.state.resources
+    resources.app_context.memory_backend = object()
+    project_root = tmp_path / "sync-async-project"
+    _write(project_root / "src" / "app.py", "def main():\n    return 1\n")
+    submitted: list[dict[str, object]] = []
+
+    async def _submit_job(
+        workflow: str,
+        inputs: dict[str, Any] | None = None,
+        timeout: int | None = None,
+        *,
+        project_id: str | None = None,
+        token_id: str | None = None,
+    ) -> str:
+        submitted.append(
+            {
+                "workflow": workflow,
+                "inputs": inputs or {},
+                "timeout": timeout,
+                "project_id": project_id,
+                "token_id": token_id,
+            }
+        )
+        return "job_async_rebuild"
+
+    monkeypatch.setattr(resources.job_queue, "submit_job", _submit_job)
+
+    project_id = _create_project(
+        app_client,
+        csrf_token,
+        slug="sync-async",
+        palace="sync-async-palace",
+        fs_root=str(project_root),
+        fs_allowlist=[str(project_root)],
+        system2_enabled=True,
+    )
+    assert submitted[-1]["inputs"]["sync_scope"] == "rebuild"
+    assert submitted[-1]["inputs"]["memory_mode"] == "advanced"
+    submitted.clear()
+
+    response = app_client.post(
+        f"/api/admin/v1/sync/{project_id}/rebuild",
+        headers={"X-CSRF-Token": csrf_token},
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["project_id"] == project_id
+    assert payload["status"] == "queued"
+    assert payload["action"] == "rebuild"
+    assert payload["memory_mode"] == "advanced"
+    assert payload["job_id"] == "job_async_rebuild"
+    assert payload["workflow"] == "project-memory-sync"
+    assert payload["dirty_count"] == 0
+    assert submitted == [
+        {
+            "workflow": "project-memory-sync",
+            "inputs": {
+                "project_root": str(project_root),
+                "fs_allowlist": [str(project_root)],
+                "candidate_paths": [],
+                "palace": "sync-async-palace",
+                "source_name": "sync-async",
+                "default_wing": "platform",
+                "default_room": "runtime",
+                "default_compartment": "sync-async",
+                "sync_scope": "rebuild",
+                "memory_mode": "advanced",
+            },
+            "timeout": None,
+            "project_id": project_id,
+            "token_id": None,
+        }
+    ]
 
 
 def _seed_project_record(conn: sqlite3.Connection, *, slug: str, palace: str) -> str:
@@ -255,6 +418,7 @@ def test_sync_scope_maps_project_slug_to_required_memory_compartment() -> None:
         default_room="runtime",
         fs_root="/tmp/project",
         fs_allowlist=["/tmp/project"],
+        system2_enabled=False,
         created_at="2026-05-03T00:00:00Z",
         updated_at="2026-05-03T00:00:00Z",
     )
@@ -431,13 +595,7 @@ def test_sync_now_scans_project_root_and_clears_processed_queue(
     project_root = tmp_path / "sync-now-project"
     _write(project_root / "workflow-a.yaml", "steps: []\n")
     _write(project_root / "nested" / "workflow-b.yaml", "steps: []\n")
-    persisted: list[str] = []
-
-    async def _persist_graph_from_scan(**kwargs: Any) -> dict[str, int]:
-        persisted.append(kwargs["project"].id)
-        return {"nodes": 5, "corridors": 4}
-
-    monkeypatch.setattr(sync_routes, "_persist_project_graph_from_scan", _persist_graph_from_scan)
+    submitted = _capture_sync_submissions(app_client, monkeypatch)
     project_id = _create_project(
         app_client,
         csrf_token,
@@ -446,6 +604,8 @@ def test_sync_now_scans_project_root_and_clears_processed_queue(
         fs_root=str(project_root),
         fs_allowlist=[str(project_root)],
     )
+    assert submitted[-1]["inputs"]["sync_scope"] == "rebuild"
+    submitted.clear()
 
     idle_now = app_client.post(
         f"/api/admin/v1/sync/{project_id}/now",
@@ -456,7 +616,8 @@ def test_sync_now_scans_project_root_and_clears_processed_queue(
     assert idle_payload["project_id"] == project_id
     assert idle_payload["status"] == "idle"
     assert idle_payload["dirty_count"] == 0
-    assert persisted == [project_id, project_id]
+    assert idle_payload["action"] == "sync"
+    assert submitted == []
 
     reconcile = app_client.post(
         f"/api/admin/v1/sync/{project_id}/reconcile",
@@ -465,9 +626,12 @@ def test_sync_now_scans_project_root_and_clears_processed_queue(
     assert reconcile.status_code == 200
     reconcile_payload = reconcile.json()
     assert reconcile_payload["project_id"] == project_id
-    assert reconcile_payload["status"] == "idle"
+    assert reconcile_payload["status"] == "queued"
     assert reconcile_payload["dirty_count"] == 0
-    assert persisted == [project_id, project_id, project_id]
+    assert reconcile_payload["job_id"] == "job_sync_1"
+    assert submitted[-1]["workflow"] == "project-memory-sync"
+    assert submitted[-1]["inputs"]["sync_scope"] == "reconcile"
+    assert submitted[-1]["inputs"]["candidate_paths"] == []
 
     queued_now = app_client.post(
         f"/api/admin/v1/sync/{project_id}/now",
@@ -478,7 +642,7 @@ def test_sync_now_scans_project_root_and_clears_processed_queue(
     assert queued_payload["project_id"] == project_id
     assert queued_payload["status"] == "idle"
     assert queued_payload["dirty_count"] == 0
-    assert persisted == [project_id, project_id, project_id, project_id]
+    assert len(submitted) == 1
 
     rebuild = app_client.post(
         f"/api/admin/v1/sync/{project_id}/rebuild",
@@ -487,9 +651,11 @@ def test_sync_now_scans_project_root_and_clears_processed_queue(
     assert rebuild.status_code == 200
     rebuild_payload = rebuild.json()
     assert rebuild_payload["project_id"] == project_id
-    assert rebuild_payload["status"] == "idle"
+    assert rebuild_payload["status"] == "queued"
     assert rebuild_payload["dirty_count"] == 0
-    assert persisted == [project_id, project_id, project_id, project_id, project_id]
+    assert rebuild_payload["job_id"] == "job_sync_2"
+    assert submitted[-1]["workflow"] == "project-memory-sync"
+    assert submitted[-1]["inputs"]["sync_scope"] == "rebuild"
 
     sync_list = app_client.get("/api/admin/v1/sync")
     assert sync_list.status_code == 200
@@ -506,13 +672,7 @@ def test_sync_reconcile_runs_project_sync_and_clears_processed_queue(
     csrf_token = _login_and_csrf(app_client)
     project_root = tmp_path / "sync-reconcile-project"
     _write(project_root / "workflow.yaml", "steps: []\n")
-    persisted: list[str] = []
-
-    async def _persist_graph_from_scan(**kwargs: Any) -> dict[str, int]:
-        persisted.append(kwargs["project"].id)
-        return {"nodes": 4, "corridors": 3}
-
-    monkeypatch.setattr(sync_routes, "_persist_project_graph_from_scan", _persist_graph_from_scan)
+    submitted = _capture_sync_submissions(app_client, monkeypatch)
     project_id = _create_project(
         app_client,
         csrf_token,
@@ -521,6 +681,7 @@ def test_sync_reconcile_runs_project_sync_and_clears_processed_queue(
         fs_root=str(project_root),
         fs_allowlist=[str(project_root)],
     )
+    submitted.clear()
 
     reconcile = app_client.post(
         f"/api/admin/v1/sync/{project_id}/reconcile",
@@ -529,9 +690,11 @@ def test_sync_reconcile_runs_project_sync_and_clears_processed_queue(
     assert reconcile.status_code == 200
     reconcile_payload = reconcile.json()
     assert reconcile_payload["project_id"] == project_id
-    assert reconcile_payload["status"] == "idle"
+    assert reconcile_payload["status"] == "queued"
     assert reconcile_payload["dirty_count"] == 0
-    assert persisted == [project_id, project_id]
+    assert reconcile_payload["job_id"] == "job_sync_1"
+    assert submitted[-1]["workflow"] == "project-memory-sync"
+    assert submitted[-1]["inputs"]["sync_scope"] == "reconcile"
 
     listed = app_client.get("/api/admin/v1/sync")
     assert listed.status_code == 200
@@ -548,13 +711,7 @@ def test_sync_rebuild_runs_project_sync_and_clears_processed_queue(
     csrf_token = _login_and_csrf(app_client)
     project_root = tmp_path / "sync-rebuild-project"
     _write(project_root / "workflow.yaml", "steps: []\n")
-    persisted: list[str] = []
-
-    async def _persist_graph_from_scan(**kwargs: Any) -> dict[str, int]:
-        persisted.append(kwargs["project"].id)
-        return {"nodes": 4, "corridors": 3}
-
-    monkeypatch.setattr(sync_routes, "_persist_project_graph_from_scan", _persist_graph_from_scan)
+    submitted = _capture_sync_submissions(app_client, monkeypatch)
     project_id = _create_project(
         app_client,
         csrf_token,
@@ -563,6 +720,7 @@ def test_sync_rebuild_runs_project_sync_and_clears_processed_queue(
         fs_root=str(project_root),
         fs_allowlist=[str(project_root)],
     )
+    submitted.clear()
 
     rebuild = app_client.post(
         f"/api/admin/v1/sync/{project_id}/rebuild",
@@ -571,9 +729,11 @@ def test_sync_rebuild_runs_project_sync_and_clears_processed_queue(
     assert rebuild.status_code == 200
     rebuild_payload = rebuild.json()
     assert rebuild_payload["project_id"] == project_id
-    assert rebuild_payload["status"] == "idle"
+    assert rebuild_payload["status"] == "queued"
     assert rebuild_payload["dirty_count"] == 0
-    assert persisted == [project_id, project_id]
+    assert rebuild_payload["job_id"] == "job_sync_1"
+    assert submitted[-1]["workflow"] == "project-memory-sync"
+    assert submitted[-1]["inputs"]["sync_scope"] == "rebuild"
 
     listed = app_client.get("/api/admin/v1/sync")
     assert listed.status_code == 200
@@ -590,13 +750,7 @@ def test_sync_rebuild_derives_default_topology_when_project_defaults_are_blank(
     csrf_token = _login_and_csrf(app_client)
     project_root = tmp_path / "sync-derived-defaults-project"
     _write(project_root / "workflow.yaml", "steps: []\n")
-    captured_scopes: list[dict[str, Any] | None] = []
-
-    async def _persist_graph_payload(**kwargs: Any) -> dict[str, object]:
-        captured_scopes.append(kwargs["scope"])
-        return {"nodes": 4, "corridors": 3, "entity_ids": [], "relation_ids": []}
-
-    monkeypatch.setattr(sync_routes, "persist_graph_payload", _persist_graph_payload)
+    submitted = _capture_sync_submissions(app_client, monkeypatch)
 
     project_response = app_client.post(
         "/api/admin/v1/projects",
@@ -621,18 +775,11 @@ def test_sync_rebuild_derives_default_topology_when_project_defaults_are_blank(
     assert rebuild.status_code == 200
     rebuild_payload = rebuild.json()
     assert rebuild_payload["project_id"] == project_id
-    assert rebuild_payload["status"] == "idle"
+    assert rebuild_payload["status"] == "queued"
     assert rebuild_payload["dirty_count"] == 0
-    assert captured_scopes
-    assert all(
-        scope == {
-            "palace": "sync-derived-defaults-palace",
-            "wing": "default-wing",
-            "room": "default-room",
-            "compartment": "sync-derived-defaults",
-        }
-        for scope in captured_scopes
-    )
+    assert submitted[-1]["inputs"]["default_wing"] == "default-wing"
+    assert submitted[-1]["inputs"]["default_room"] == "default-room"
+    assert submitted[-1]["inputs"]["default_compartment"] == "sync-derived-defaults"
 
 
 def test_sync_error_detail_surfaces_wrapped_memory_contract_validation_error() -> None:
@@ -654,11 +801,11 @@ def test_sync_error_detail_surfaces_wrapped_memory_contract_validation_error() -
 
     detail = sync_routes._sync_error_detail(exc_info.value)
 
-    assert detail.code == "project_graph_sync_failed"
+    assert detail.code == "project_system1_sync_failed"
     assert "MEM_SCOPE_HIERARCHY_VIOLATION" in detail.message
 
 
-def test_sync_now_reports_graph_persistence_failure_details(
+def test_sync_now_reports_system1_workflow_failure_details(
     app_client: TestClient,
     tmp_path: Path,
 ) -> None:
@@ -674,6 +821,12 @@ def test_sync_now_reports_graph_persistence_failure_details(
         fs_root=str(project_root),
         fs_allowlist=[str(project_root)],
     )
+    SQLiteWatcherRepository(app_client.app.state.resources.metadata_db_conn).enqueue_dirty(
+        project_id=project_id,
+        path="workflow.yaml",
+        event_type="modified",
+        reason="file_event",
+    )
 
     response = app_client.post(
         f"/api/admin/v1/sync/{project_id}/now",
@@ -684,8 +837,53 @@ def test_sync_now_reports_graph_persistence_failure_details(
     assert payload["project_id"] == project_id
     assert payload["status"] == "failed"
     assert payload["dirty_count"] > 0
-    assert payload["error"]["code"] == "project_graph_sync_failed"
-    assert "memory PostgreSQL backend" in payload["error"]["message"]
+    assert payload["error"]["code"] == "project_system1_sync_failed"
+    assert "PostgreSQL memory" in payload["error"]["message"]
+
+
+def test_system1_project_sync_records_workflow_run_history(
+    app_client: TestClient,
+    tmp_path: Path,
+) -> None:
+    csrf_token = _login_and_csrf(app_client)
+    resources = app_client.app.state.resources
+    resources.app_context.memory_backend = object()
+    server_module.load_workflows(resources)
+
+    project_root = tmp_path / "sync-run-history-project"
+    _write(project_root / "src" / "app.py", "def main():\n    return 1\n")
+    project_id = _create_project(
+        app_client,
+        csrf_token,
+        slug="sync-run-history",
+        palace="sync-run-history-palace",
+        fs_root=str(project_root),
+        fs_allowlist=[str(project_root)],
+    )
+
+    response = app_client.post(
+        f"/api/admin/v1/sync/{project_id}/rebuild",
+        headers={"X-CSRF-Token": csrf_token},
+    )
+    assert response.status_code == 200
+    assert response.json()["status"] == "queued"
+
+    rows = resources.metadata_db_conn.execute(
+        """
+        SELECT workflow_name, status, execution_mode, inputs_json, project_id
+          FROM job_runs
+         WHERE project_id = ?
+         ORDER BY created_at ASC
+        """,
+        (project_id,),
+    ).fetchall()
+    assert rows
+    latest = rows[-1]
+    assert latest["workflow_name"] == "project-memory-sync"
+    assert latest["status"] in {"queued", "running", "completed", "failed"}
+    assert latest["execution_mode"] == "async"
+    assert latest["project_id"] == project_id
+    assert '"sync_scope":"rebuild"' in str(latest["inputs_json"])
 
 
 def test_sync_now_empty_project_root_is_deterministic_noop(
@@ -696,13 +894,7 @@ def test_sync_now_empty_project_root_is_deterministic_noop(
     csrf_token = _login_and_csrf(app_client)
     project_root = tmp_path / "sync-now-empty"
     project_root.mkdir(parents=True, exist_ok=True)
-    persisted: list[str] = []
-
-    async def _persist_graph_from_scan(**kwargs: Any) -> dict[str, int]:
-        persisted.append(kwargs["project"].id)
-        return {"nodes": 3, "corridors": 2}
-
-    monkeypatch.setattr(sync_routes, "_persist_project_graph_from_scan", _persist_graph_from_scan)
+    submitted = _capture_sync_submissions(app_client, monkeypatch)
 
     project_id = _create_project(
         app_client,
@@ -712,6 +904,7 @@ def test_sync_now_empty_project_root_is_deterministic_noop(
         fs_root=str(project_root),
         fs_allowlist=[str(project_root)],
     )
+    submitted.clear()
 
     response = app_client.post(
         f"/api/admin/v1/sync/{project_id}/now",
@@ -722,7 +915,7 @@ def test_sync_now_empty_project_root_is_deterministic_noop(
     assert payload["project_id"] == project_id
     assert payload["status"] == "idle"
     assert payload["dirty_count"] == 0
-    assert persisted == [project_id, project_id]
+    assert submitted == []
 
 
 def test_sync_now_clears_existing_dirty_queue_after_successful_scan(
@@ -733,13 +926,7 @@ def test_sync_now_clears_existing_dirty_queue_after_successful_scan(
     csrf_token = _login_and_csrf(app_client)
     project_root = tmp_path / "sync-now-clears"
     _write(project_root / "workflow.yaml", "steps: []\n")
-    persisted: list[str] = []
-
-    async def _persist_graph_from_scan(**kwargs: Any) -> dict[str, int]:
-        persisted.append(kwargs["project"].id)
-        return {"nodes": 4, "corridors": 3}
-
-    monkeypatch.setattr(sync_routes, "_persist_project_graph_from_scan", _persist_graph_from_scan)
+    submitted = _capture_sync_submissions(app_client, monkeypatch)
     project_id = _create_project(
         app_client,
         csrf_token,
@@ -748,6 +935,7 @@ def test_sync_now_clears_existing_dirty_queue_after_successful_scan(
         fs_root=str(project_root),
         fs_allowlist=[str(project_root)],
     )
+    submitted.clear()
 
     SQLiteWatcherRepository(app_client.app.state.resources.metadata_db_conn).enqueue_dirty(
         project_id=project_id,
@@ -763,9 +951,11 @@ def test_sync_now_clears_existing_dirty_queue_after_successful_scan(
     assert synced.status_code == 200
     synced_payload = synced.json()
     assert synced_payload["project_id"] == project_id
-    assert synced_payload["status"] == "idle"
+    assert synced_payload["status"] == "queued"
     assert synced_payload["dirty_count"] == 0
-    assert persisted == [project_id, project_id]
+    assert synced_payload["job_id"] == "job_sync_1"
+    assert submitted[-1]["inputs"]["sync_scope"] == "dirty"
+    assert submitted[-1]["inputs"]["candidate_paths"] == ["workflow.yaml"]
 
     listed = app_client.get("/api/admin/v1/sync")
     assert listed.status_code == 200
@@ -846,13 +1036,7 @@ def test_sync_project_logs_include_queued_and_processed_activity(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     csrf_token = _login_and_csrf(app_client)
-    persisted: list[str] = []
-
-    async def _persist_graph_from_scan(**kwargs: Any) -> dict[str, int]:
-        persisted.append(kwargs["project"].id)
-        return {"nodes": 4, "corridors": 3}
-
-    monkeypatch.setattr(sync_routes, "_persist_project_graph_from_scan", _persist_graph_from_scan)
+    submitted = _capture_sync_submissions(app_client, monkeypatch)
     project_id = _create_project(
         app_client,
         csrf_token,
@@ -898,7 +1082,11 @@ def test_sync_project_logs_include_queued_and_processed_activity(
     assert entries[1]["processed_at"] is not None
     assert entries[2]["status"] == "processed"
     assert entries[2]["processed_at"] is not None
-    assert persisted == [project_id, project_id, project_id, project_id]
+    assert [entry["inputs"]["sync_scope"] for entry in submitted] == [
+        "rebuild",
+        "reconcile",
+        "rebuild",
+    ]
 
 
 def test_events_watchers_and_sync_require_ui_session_not_bearer(app_client: TestClient) -> None:
@@ -978,6 +1166,248 @@ def test_http_startup_restores_enabled_watchers_into_runtime_state(
         assert resources.watcher_manager.active_project_ids == (project_id,)
 
     assert resources.watcher_manager.active_project_ids == ()
+
+
+# ---------------------------------------------------------------------------
+# Task 12 — watcher-driven System 1 structural evidence + verification cycles
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_watcher_sync_writes_structural_evidence_before_verification_cycle() -> None:
+    """Watcher-triggered sync must write System 1 structural evidence rows
+    before recording a verification cycle.
+
+    Verifies ADR-013 Task 12: run_programmatic_onboard_with_cycle_recording
+    issues store_system1_structural_evidence BEFORE record_system1_verification_cycle
+    so that the cycle record is causally downstream of evidence writes.
+    """
+    from workflows_mcp.engine.memory_onboard_sync_orchestrator import (
+        ProgrammaticOnboardRequest,
+        ScannedFileEntry,
+        run_programmatic_onboard_with_cycle_recording,
+    )
+    from workflows_mcp.engine.memory_service import ManageMemoryResult, MemoryResult
+
+    operations_called: list[str] = []
+
+    class _FakeMemoryService:
+        async def execute(self, request: MemoryRequest) -> MemoryResult:
+            op = request.operation
+            operations_called.append(op)
+            if op == "store_system1_structural_evidence":
+                return MemoryResult(
+                    operation=op,
+                    manage=ManageMemoryResult(
+                        operation=op,
+                        success=True,
+                        stored_count=1,
+                        stored_evidence_ids=["fake-evidence-id"],
+                    )
+                )
+            if op == "record_system1_verification_cycle":
+                return MemoryResult(
+                    operation=op,
+                    manage=ManageMemoryResult(
+                        operation=op,
+                        success=True,
+                        cycle_id="fake-cycle-id",
+                    )
+                )
+            raise AssertionError(f"Unexpected operation: {op!r}")
+
+    scope = {
+        "palace": "watcher-test-palace",
+        "wing": "platform",
+        "room": "runtime",
+        "compartment": "watcher-project",
+    }
+    request = ProgrammaticOnboardRequest(
+        scope=scope,
+        files=[
+            ScannedFileEntry(
+                path="src/main.py",
+                content="def main(): pass\n",
+                size_bytes=20,
+            )
+        ],
+        mode="programmatic",
+    )
+
+    result = await run_programmatic_onboard_with_cycle_recording(
+        request, memory_service=_FakeMemoryService()  # type: ignore[arg-type]
+    )
+
+    assert result.status == "completed", f"Expected completed, got: {result.error}"
+    assert "store_system1_structural_evidence" in operations_called, (
+        "store_system1_structural_evidence must be called during watcher-triggered sync"
+    )
+    assert "record_system1_verification_cycle" in operations_called, (
+        "record_system1_verification_cycle must be called during watcher-triggered sync"
+    )
+    evidence_index = operations_called.index("store_system1_structural_evidence")
+    cycle_index = operations_called.index("record_system1_verification_cycle")
+    assert evidence_index < cycle_index, (
+        "store_system1_structural_evidence must be called BEFORE record_system1_verification_cycle"
+    )
+
+
+@pytest.mark.asyncio
+async def test_watcher_sync_structural_evidence_write_failure_blocks_cycle_recording() -> None:
+    """When structural evidence write fails, the verification cycle must NOT be recorded.
+
+    Verifies ADR-013 Task 12 fail-closed behavior: a RuntimeError must propagate
+    from run_programmatic_onboard_with_cycle_recording so that the caller sees
+    failure and cannot incorrectly record a cycle without prior evidence.
+    """
+    from workflows_mcp.engine.memory_onboard_sync_orchestrator import (
+        ProgrammaticOnboardRequest,
+        ScannedFileEntry,
+        run_programmatic_onboard_with_cycle_recording,
+    )
+    from workflows_mcp.engine.memory_service import ManageMemoryResult, MemoryResult
+
+    cycle_recording_attempted = False
+
+    class _FailingEvidenceMemoryService:
+        async def execute(self, request: MemoryRequest) -> MemoryResult:
+            op = request.operation
+            if op == "store_system1_structural_evidence":
+                return MemoryResult(
+                    operation=op,
+                    manage=ManageMemoryResult(
+                        operation=op,
+                        success=False,
+                        error="simulated structural evidence write failure",
+                    )
+                )
+            if op == "record_system1_verification_cycle":
+                nonlocal cycle_recording_attempted
+                cycle_recording_attempted = True
+                return MemoryResult(
+                    operation=op,
+                    manage=ManageMemoryResult(
+                        operation=op,
+                        success=True,
+                        cycle_id="should-not-be-recorded",
+                    )
+                )
+            raise AssertionError(f"Unexpected operation: {op!r}")
+
+    scope = {
+        "palace": "watcher-fail-palace",
+        "wing": "platform",
+        "room": "runtime",
+        "compartment": "watcher-fail-project",
+    }
+    request = ProgrammaticOnboardRequest(
+        scope=scope,
+        files=[
+            ScannedFileEntry(
+                path="src/service.py",
+                content="class Service: pass\n",
+                size_bytes=22,
+            )
+        ],
+        mode="programmatic",
+    )
+
+    with pytest.raises(RuntimeError, match="store_system1_structural_evidence"):
+        await run_programmatic_onboard_with_cycle_recording(
+            request, memory_service=_FailingEvidenceMemoryService()  # type: ignore[arg-type]
+        )
+
+    assert not cycle_recording_attempted, (
+        "record_system1_verification_cycle must NOT be attempted"
+        " when structural evidence write fails"
+    )
+
+
+@pytest.mark.asyncio
+async def test_watcher_sync_derives_structural_module_evidence_from_file_paths() -> None:
+    """Watcher-triggered sync must extract at least one structural_module evidence item
+    per readable scanned file and submit them to store_system1_structural_evidence.
+
+    Verifies ADR-013 Task 12: the sync path produces System 1-owned structural
+    evidence from file topology (not TreeSitter), preserving System 1 ownership
+    without deriving System 2 semantics.
+    """
+    from workflows_mcp.engine.memory_onboard_sync_orchestrator import (
+        ProgrammaticOnboardRequest,
+        ScannedFileEntry,
+        run_programmatic_onboard_with_cycle_recording,
+    )
+    from workflows_mcp.engine.memory_service import ManageMemoryResult, MemoryResult
+
+    captured_evidence: list[dict[str, Any]] = []
+
+    class _CapturingMemoryService:
+        async def execute(self, request: MemoryRequest) -> MemoryResult:
+            op = request.operation
+            if op == "store_system1_structural_evidence":
+                if request.record and request.record.structural_evidence:
+                    for item in request.record.structural_evidence:
+                        captured_evidence.append(item.model_dump())
+                return MemoryResult(
+                    operation=op,
+                    manage=ManageMemoryResult(
+                        operation=op,
+                        success=True,
+                        stored_count=len(captured_evidence),
+                        stored_evidence_ids=["eid-1"],
+                    )
+                )
+            if op == "record_system1_verification_cycle":
+                return MemoryResult(
+                    operation=op,
+                    manage=ManageMemoryResult(
+                        operation=op,
+                        success=True,
+                        cycle_id="cap-cycle-id",
+                    )
+                )
+            raise AssertionError(f"Unexpected operation: {op!r}")
+
+    scope = {
+        "palace": "watcher-evidence-palace",
+        "wing": "backend",
+        "room": "api",
+        "compartment": "evidence-project",
+    }
+    request = ProgrammaticOnboardRequest(
+        scope=scope,
+        files=[
+            ScannedFileEntry(
+                path="src/api.py",
+                content="class Api: pass\n",
+                size_bytes=18,
+            ),
+            ScannedFileEntry(
+                path="src/models.py",
+                content="class Model: pass\n",
+                size_bytes=20,
+            ),
+        ],
+        mode="programmatic",
+    )
+
+    result = await run_programmatic_onboard_with_cycle_recording(
+        request, memory_service=_CapturingMemoryService()  # type: ignore[arg-type]
+    )
+
+    assert result.status == "completed", f"Expected completed, got: {result.error}"
+    assert len(captured_evidence) >= 2, (
+        f"Expected at least 2 structural evidence items (one per readable file), "
+        f"got {len(captured_evidence)}: {captured_evidence}"
+    )
+    categories = {item["evidence_category"] for item in captured_evidence}
+    assert "structural_module" in categories, (
+        f"Expected structural_module evidence category; got categories: {categories}"
+    )
+    stable_ids = {item["entity_stable_id"] for item in captured_evidence}
+    assert "src/api.py" in stable_ids or any("api" in sid for sid in stable_ids), (
+        f"Expected evidence item with stable_id referencing src/api.py; got: {stable_ids}"
+    )
 
 
 def test_build_app_uses_lifespan_not_on_event_hooks(

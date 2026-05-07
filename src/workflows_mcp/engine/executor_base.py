@@ -636,12 +636,14 @@ def create_default_registry() -> ExecutorRegistry:
     from .executors_image import ImageGenExecutor
     from .executors_interactive import PromptExecutor
     from .executors_llm import EmbeddingExecutor, LLMCallExecutor
+    from .executors_project_files import ProjectFilesExecutor
     from .executors_sql import SqlExecutor
     from .executors_state import (
         MergeJSONStateExecutor,
         ReadJSONStateExecutor,
         WriteJSONStateExecutor,
     )
+    from .executors_system2_planner import System2PlannerExecutor
     from .executors_treesitter import TreeSitterExecutor
     from .executors_workflow import WorkflowExecutor
 
@@ -679,6 +681,12 @@ def create_default_registry() -> ExecutorRegistry:
 
     # Register TreeSitter executor
     registry.register(TreeSitterExecutor())
+
+    # Register project file discovery executor
+    registry.register(ProjectFilesExecutor())
+
+    # Register System 2 semantic planner executor
+    registry.register(System2PlannerExecutor())
 
     # Note: MemoryExecutor is registered conditionally at server startup
     # only when a memory database is configured (MEMORY_DB_HOST)

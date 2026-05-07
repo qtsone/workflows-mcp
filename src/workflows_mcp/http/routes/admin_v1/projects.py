@@ -3,7 +3,7 @@ from __future__ import annotations
 from sqlite3 import Connection
 from typing import Annotated, NoReturn
 
-from fastapi import APIRouter, Depends, HTTPException, Path, status
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Path, status
 from pydantic import BaseModel, ConfigDict, StringConstraints, field_validator
 
 from workflows_mcp.http.dependencies import (
@@ -26,7 +26,7 @@ from workflows_mcp.metadata.repos.projects_repo import (
 )
 from workflows_mcp.metadata.repos.watcher_repo import SQLiteWatcherRepository
 
-from .sync import process_project_sync_now
+from .sync import queue_project_rebuild
 
 router = APIRouter(prefix="/projects")
 
@@ -49,6 +49,9 @@ class ProjectResponse(BaseModel):
     default_room: str | None
     fs_root: str
     fs_allowlist: list[str]
+    system1_enabled: bool
+    system2_enabled: bool
+    memory_mode: str
     created_at: str
     updated_at: str
 
@@ -81,6 +84,7 @@ class CreateProjectRequest(BaseModel):
     default_room: DefaultTopologyString = None
     fs_root: NonEmptyString
     fs_allowlist: list[NonEmptyString] | None = None
+    system2_enabled: bool = False
 
     @field_validator("default_wing", "default_room", mode="before")
     @classmethod
@@ -96,6 +100,7 @@ class UpdateProjectRequest(BaseModel):
     default_room: DefaultTopologyString = None
     fs_root: NonEmptyString | None = None
     fs_allowlist: list[NonEmptyString] | None = None
+    system2_enabled: bool | None = None
 
     @field_validator("default_wing", "default_room", mode="before")
     @classmethod
@@ -128,6 +133,9 @@ def _to_response(project: ProjectRecord) -> ProjectResponse:
         default_room=project.default_room,
         fs_root=project.fs_root,
         fs_allowlist=project.fs_allowlist,
+        system1_enabled=True,
+        system2_enabled=project.system2_enabled,
+        memory_mode="advanced" if project.system2_enabled else "simple",
         created_at=project.created_at,
         updated_at=project.updated_at,
     )
@@ -140,6 +148,26 @@ def _enqueue_initial_graph_rebuild(conn: Connection, project_id: str) -> None:
         event_type="rebuild",
         reason="reconciliation_required:project_created",
     )
+
+
+async def _process_initial_project_sync_background(
+    *,
+    project_id: str,
+    resources: AppResources,
+) -> None:
+    try:
+        await queue_project_rebuild(
+            project_id=project_id,
+            resources=resources,
+            reason="reconciliation_required:project_created",
+        )
+    except Exception:
+        import logging
+
+        logging.getLogger(__name__).exception(
+            "initial project graph sync failed project_id=%s",
+            project_id,
+        )
 
 
 def _raise_conflict(code: str, message: str) -> NoReturn:
@@ -184,6 +212,7 @@ async def list_projects(
 )
 async def create_project(
     body: CreateProjectRequest,
+    background_tasks: BackgroundTasks,
     _current: CurrentAdminSession = Depends(require_admin_csrf),
     resources: AppResources = Depends(get_resources),
 ) -> ProjectResponse:
@@ -199,6 +228,7 @@ async def create_project(
                     default_room=body.default_room,
                     fs_root=body.fs_root,
                     fs_allowlist=list(body.fs_allowlist) if body.fs_allowlist is not None else None,
+                    system2_enabled=body.system2_enabled,
                 )
             )
         except DuplicateProjectSlugError:
@@ -209,12 +239,16 @@ async def create_project(
         try:
             resources.watcher_manager.enable_project_by_default(created.id)
             _enqueue_initial_graph_rebuild(conn, created.id)
-            await process_project_sync_now(project_id=created.id, resources=resources)
         except Exception:
             resources.watcher_manager.stop_project_watcher(created.id)
             repo.delete(created.id)
             raise
 
+        background_tasks.add_task(
+            _process_initial_project_sync_background,
+            project_id=created.id,
+            resources=resources,
+        )
         return _to_response(created)
     finally:
         conn.close()
@@ -270,6 +304,7 @@ async def patch_project(
                     default_room=body.default_room,
                     fs_root=body.fs_root,
                     fs_allowlist=list(body.fs_allowlist) if body.fs_allowlist is not None else None,
+                    system2_enabled=body.system2_enabled,
                 ),
             )
         except ProjectNotFoundError:

@@ -1,0 +1,100 @@
+name: project-memory-sync
+description: |
+  ADR-013 project memory sync orchestration. Runs System 1 for the requested
+  project scope and, when memory_mode is advanced, runs System 2 after System 1
+  completes successfully.
+
+tags: [builtin, memory, system1, system2, adr013, sync]
+
+inputs:
+  project_root:
+    type: str
+    description: "Absolute project root to scan."
+
+  fs_allowlist:
+    type: list
+    default: []
+    description: "Allowed absolute filesystem roots for the project."
+
+  candidate_paths:
+    type: list
+    default: []
+    description: "Optional project-relative dirty paths to scan. Empty means full project discovery."
+
+  palace:
+    type: str
+    description: "Memory palace covered by this project sync."
+
+  source_name:
+    type: str
+    description: "Logical source name used by child System 1 scans."
+
+  default_wing:
+    type: str
+    default: "default-wing"
+    description: "Default project wing used for explicit System 1 topology override."
+
+  default_room:
+    type: str
+    default: "default-room"
+    description: "Default project room used for explicit System 1 topology override."
+
+  default_compartment:
+    type: str
+    description: "Default project compartment used for explicit System 1 topology override."
+
+  sync_scope:
+    type: str
+    default: "rebuild"
+    description: "Command scope: dirty, reconcile, or rebuild."
+
+  memory_mode:
+    type: str
+    default: "simple"
+    description: "simple runs System 1 only; advanced runs System 2 after System 1."
+
+blocks:
+  - id: system1
+    description: "Run ADR-013 System 1 project structural extraction."
+    type: Workflow
+    inputs:
+      workflow: system1-project-sync
+      inputs:
+        project_root: "{{inputs.project_root}}"
+        fs_allowlist: "{{inputs.fs_allowlist}}"
+        candidate_paths: "{{inputs.candidate_paths}}"
+        palace: "{{inputs.palace}}"
+        source_name: "{{inputs.source_name}}"
+        default_wing: "{{inputs.default_wing}}"
+        default_room: "{{inputs.default_room}}"
+        default_compartment: "{{inputs.default_compartment}}"
+        sync_scope: "{{inputs.sync_scope}}"
+
+  - id: system2
+    description: "Run ADR-013 System 2 semantic extraction and lifecycle reconciliation."
+    type: Workflow
+    depends_on: [system1]
+    condition: "{{inputs.memory_mode == 'advanced' and blocks.system1.succeeded}}"
+    inputs:
+      workflow: system2-project-sync
+      inputs:
+        palace: "{{inputs.palace}}"
+        default_wing: "{{inputs.default_wing}}"
+        default_room: "{{inputs.default_room}}"
+        default_compartment: "{{inputs.default_compartment}}"
+        verification_cycle_id: "{{blocks.system1.outputs.verification_cycle_id}}"
+        sync_scope: "{{inputs.sync_scope}}"
+
+outputs:
+  memory_mode:
+    value: "{{inputs.memory_mode}}"
+    type: str
+  system1_completed:
+    value: "{{blocks.system1.succeeded}}"
+    type: bool
+  system2_completed:
+    value: "{{blocks.system2.succeeded}}"
+    type: bool
+  system1_verification_cycle_id:
+    value: "{{blocks.system1.outputs.verification_cycle_id}}"
+    type: str

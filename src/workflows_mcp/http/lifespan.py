@@ -128,11 +128,19 @@ def build_resources(*, base_dir: Path) -> AppResources:
 
 
 async def start_resources(resources: AppResources) -> None:
+    if resources.io_queue is not None:
+        await resources.io_queue.start()
+    if resources.job_queue is not None:
+        await resources.job_queue.start()
     resources.watcher_manager.start()
 
 
 async def stop_resources(resources: AppResources) -> None:
     resources.watcher_manager.stop()
+    if resources.job_queue is not None:
+        await resources.job_queue.stop(wait_for_completion=False)
+    if resources.io_queue is not None:
+        await resources.io_queue.stop()
     resources.metadata_db_conn.close()
 
 

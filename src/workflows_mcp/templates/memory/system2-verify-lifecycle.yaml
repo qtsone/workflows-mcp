@@ -1,0 +1,131 @@
+name: system2-verify-lifecycle
+description: |
+  ADR-013 System 2 lifecycle reconciliation workflow: evaluate semantic claims
+  against System 1 verification-cycle evidence and transition eligible claims
+  through degrade / archive lifecycle states via the
+  reconcile_semantic_lifecycle operation.
+
+  This workflow exposes the reconcile_semantic_lifecycle operation as a
+  user-callable, first-class workflow.  It does not introduce new lifecycle
+  behaviour beyond the Task 10 implementation; it is workflow surface only.
+
+  Lifecycle state machine (ADR-013):
+    active/evidenced  -> degraded          (absent from one verification cycle)
+    degraded          -> archived          (absent from two consecutive cycles)
+    any state         -> archived          (force_archive_claim_ids override)
+    active/evidenced  -> degraded          (degrade_claim_ids override)
+
+  Override provenance is recorded with every transition and transitions are
+  accountable against subsequent System 1 evidence cycles.
+
+  Scope resolution: supply palace + scope (dot-separated scope key) OR pass
+  an explicit scope_key directly.  The resolver expands scope to wing / room /
+  compartment components automatically.  All four topology level inputs are
+  optional; omitting them reconciles at the full-palace level.
+
+  Idempotency: absent claim IDs that are already archived produce no
+  additional state change.
+
+tags: [builtin, memory, system2, adr013]
+
+inputs:
+  palace:
+    type: str
+    description: "Memory palace to reconcile semantic lifecycle claims within."
+
+  scope:
+    type: dict
+    default:
+      scope_key: ""
+      wing: ""
+      room: ""
+      compartment: ""
+    description: >
+      Optional ADR-013 topology scope. Direct callers may provide scope_key,
+      wing, room, and compartment here instead of the individual inputs.
+
+  scope_key:
+    type: str
+    default: ""
+    description: >
+      Normalized scope identity key for lifecycle cycle applicability checks.
+
+  wing:
+    type: str
+    default: ""
+    description: >
+      Wing name to narrow reconciliation scope.  Used when a granular topology
+      component is preferred over a dot-separated scope key.
+
+  room:
+    type: str
+    default: ""
+    description: >
+      Room name to narrow reconciliation scope within the specified wing.
+
+  compartment:
+    type: str
+    default: ""
+    description: >
+      Compartment name to narrow reconciliation scope within the specified room.
+
+  degrade_claim_ids:
+    type: list
+    default: []
+    description: >
+      List of semantic claim IDs to immediately transition to the 'degraded'
+      state.  Provenance is recorded with the caller context.  Ignored when
+      empty.
+
+  force_archive_claim_ids:
+    type: list
+    default: []
+    description: >
+      List of semantic claim IDs to immediately transition to the 'archived'
+      state regardless of current lifecycle state.  Provenance is recorded.
+      Ignored when empty.
+
+  absent_verification_cycle_ids:
+    type: list
+    default: []
+    description: >
+      List of verification cycle IDs (produced by
+      record_system1_verification_cycle) during which the affected claims were
+      absent from System 1 structural evidence.  The reconciler uses these to
+      determine eligibility for degrade-to-archive promotion (two consecutive
+      absent cycles required).  Ignored when empty.
+
+blocks:
+  - id: reconcile_lifecycle
+    description: >
+      Invoke reconcile_semantic_lifecycle to evaluate semantic claims against
+      System 1 verification-cycle evidence and apply ADR-013 lifecycle
+      transitions (degrade / archive) with provenance recording.
+    type: Memory
+    inputs:
+      operation: reconcile_semantic_lifecycle
+      scope:
+        palace: "{{inputs.palace}}"
+        wing: "{{inputs.wing or inputs.scope.wing}}"
+        room: "{{inputs.room or inputs.scope.room}}"
+        compartment: "{{inputs.compartment or inputs.scope.compartment}}"
+      record:
+        lifecycle_reconciliation:
+          scope_key: "{{inputs.scope_key or inputs.scope.scope_key}}"
+          degrade_claim_ids: "{{inputs.degrade_claim_ids}}"
+          force_archive_claim_ids: "{{inputs.force_archive_claim_ids}}"
+          absent_verification_cycle_ids: "{{inputs.absent_verification_cycle_ids}}"
+
+outputs:
+  lifecycle_reconciled:
+    value: "{{blocks.reconcile_lifecycle.succeeded}}"
+    type: bool
+  degraded_count:
+    value: "{{blocks.reconcile_lifecycle.outputs.result.manage.reconciled_count}}"
+    type: num
+  archived_count:
+    value: "{{blocks.reconcile_lifecycle.outputs.result.manage.reconciled_count}}"
+    type: num
+  reconciled_claim_ids:
+    value: "{{blocks.reconcile_lifecycle.outputs.result.manage.claim_ids}}"
+    type: list

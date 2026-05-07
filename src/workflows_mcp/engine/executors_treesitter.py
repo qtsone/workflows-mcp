@@ -106,6 +106,14 @@ class TreeSitterOutput(BlockOutput):
         default_factory=list,
         description="Import strings that could not be resolved to known entities.",
     )
+    structural_evidence_items: list[dict[str, Any]] = Field(
+        default_factory=list,
+        description=(
+            "ADR-013: entities pre-mapped to StructuralEvidenceItem shape "
+            "(entity_stable_id, entity_type, evidence_category, evidence_data) "
+            "ready for store_system1_structural_evidence."
+        ),
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -158,6 +166,101 @@ def _module_qname(path: str, repo_relative_path: str | None) -> str:
     if qname.startswith("src."):
         qname = qname[4:]
     return qname
+
+
+# ---------------------------------------------------------------------------
+# ADR-013: map TreeSitter entities to StructuralEvidenceItem shape
+# ---------------------------------------------------------------------------
+
+_ENTITY_TYPE_TO_EVIDENCE_CATEGORY: dict[str, str] = {
+    "file": "structural_module",
+    "module": "structural_module",
+    "class": "structural_class",
+    "function": "structural_function",
+    "method": "structural_function",
+}
+
+
+def _build_structural_evidence_items(
+    entities: list[dict[str, Any]],
+    relations: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """Map parsed entities to StructuralEvidenceItem-compatible dicts.
+
+    Each item has: entity_stable_id, entity_type, evidence_category, evidence_data.
+    Corridor is never emitted as a topology level (it is represented only as
+    directed typed edges — relations — not as a structural evidence entity type).
+
+    Import relations are emitted as separate structural_import evidence items
+    so that the evidence category set reflects actual import topology.
+    Relations carry source_qname (not source_stable_id), so the qname→entity
+    map is built first to resolve stable IDs reliably.
+    """
+    items: list[dict[str, Any]] = []
+    seen: set[tuple[str, str]] = set()
+
+    # Build qname → entity map for reliable stable-ID resolution from relations.
+    qname_to_entity: dict[str, dict[str, Any]] = {}
+    for entity in entities:
+        qname: str = entity.get("qualified_name", "")
+        if qname:
+            qname_to_entity[qname] = entity
+
+    for entity in entities:
+        stable_id: str = entity.get("stable_id", "")
+        raw_type: str = entity.get("entity_type", "unknown")
+        category = _ENTITY_TYPE_TO_EVIDENCE_CATEGORY.get(
+            raw_type.lower(), "structural_module"
+        )
+        key = (stable_id, category)
+        if key in seen or not stable_id:
+            continue
+        seen.add(key)
+        items.append({
+            "entity_stable_id": stable_id,
+            "entity_type": raw_type.lower(),
+            "evidence_category": category,
+            "evidence_data": {
+                "qualified_name": entity.get("qualified_name", ""),
+                "name": entity.get("name", ""),
+            },
+        })
+
+    # Emit structural_import evidence for each unique import-relation source entity.
+    # Relations use source_qname (not source_stable_id); resolve via qname_to_entity.
+    import_source_qnames: set[str] = set()
+    for rel in relations:
+        if rel.get("relation_type") != "IMPORTS":
+            continue
+        src_qname: str = rel.get("source_qname", "")
+        if not src_qname or src_qname in import_source_qnames:
+            continue
+        src_entity = qname_to_entity.get(src_qname)
+        if src_entity is None:
+            continue
+        src_id: str = src_entity.get("stable_id", "")
+        if not src_id:
+            continue
+        import_source_qnames.add(src_qname)
+        key = (src_id, "structural_import")
+        if key in seen:
+            continue
+        seen.add(key)
+        import_count = sum(
+            1 for r in relations
+            if r.get("relation_type") == "IMPORTS"
+            and r.get("source_qname") == src_qname
+        )
+        items.append({
+            "entity_stable_id": src_id,
+            "entity_type": src_entity.get("entity_type", "module").lower(),
+            "evidence_category": "structural_import",
+            "evidence_data": {
+                "import_count": import_count,
+            },
+        })
+
+    return items
 
 
 # ---------------------------------------------------------------------------
@@ -290,6 +393,9 @@ class TreeSitterExecutor(BlockExecutor):
                 entities=entities,
                 relations=relations,
                 unresolved_imports=[],
+                structural_evidence_items=_build_structural_evidence_items(
+                    entities, relations
+                ),
             )
 
         # Code languages: build Module entity and File->Module CONTAINS relation,
@@ -394,4 +500,5 @@ class TreeSitterExecutor(BlockExecutor):
             entities=entities,
             relations=relations,
             unresolved_imports=unresolved_imports,
+            structural_evidence_items=_build_structural_evidence_items(entities, relations),
         )

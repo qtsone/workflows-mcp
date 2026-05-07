@@ -88,7 +88,6 @@ def _write_valid_sqlite_postgres_profile(base_dir: Path) -> None:
             key_path=base_dir / "secrets.key",
         ).save_settings(
             PostgresProfileInput(
-                enabled=True,
                 host="db.internal",
                 port=5544,
                 database="workflows",

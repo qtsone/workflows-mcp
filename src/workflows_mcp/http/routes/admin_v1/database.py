@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 import shlex
 from sqlite3 import Connection
 from typing import Annotated, Literal
@@ -22,6 +23,7 @@ from workflows_mcp.http.dependencies import (
     require_current_admin_session,
 )
 from workflows_mcp.http.lifespan import AppResources
+from workflows_mcp.memory_runtime import refresh_memory_backend
 from workflows_mcp.metadata.db import connect_metadata_db
 from workflows_mcp.metadata.repos.postgres_repo import (
     PostgresProfileInput,
@@ -32,6 +34,7 @@ from workflows_mcp.postgres_probe import PostgresProbe
 from workflows_mcp.security.crypto import SecretCryptoError, SecretKeyError
 
 router = APIRouter(prefix="/database")
+logger = logging.getLogger(__name__)
 
 _PGVECTOR_IMAGE = "pgvector/pgvector:pg17"
 _NAME_PATTERN = r"^[a-zA-Z0-9][a-zA-Z0-9_.-]{0,127}$"
@@ -47,7 +50,6 @@ class DatabaseSetupResponse(BaseModel):
 class SavePostgresSettingsRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    enabled: bool = True
     host: Annotated[str, StringConstraints(min_length=1, max_length=253)] = "127.0.0.1"
     port: int = Field(default=5432, ge=1, le=65535)
     database: Annotated[str, StringConstraints(min_length=1, max_length=63)] = "workflows"
@@ -94,15 +96,15 @@ class SavePostgresSettingsRequest(BaseModel):
         return value
 
     @model_validator(mode="after")
-    def _validate_enabled_fields(self) -> SavePostgresSettingsRequest:
-        if self.enabled:
-            if not self.host.strip() or not self.database.strip() or not self.username.strip():
-                raise ValueError("enabled settings require host, database, and username")
+    def _validate_required_fields(self) -> SavePostgresSettingsRequest:
+        if not self.host.strip() or not self.database.strip() or not self.username.strip():
+            raise ValueError(
+                "PostgreSQL memory database settings require host, database, and username"
+            )
         return self
 
 
 class DatabaseSettingsResponse(BaseModel):
-    enabled: bool
     configured: bool
     password_configured: bool
     legacy_profile_reentry_required: bool
@@ -140,7 +142,6 @@ def _repo(resources: AppResources) -> tuple[SQLitePostgresSettingsRepository, Co
 
 def _settings_response(metadata: PostgresSettingsMetadata) -> DatabaseSettingsResponse:
     return DatabaseSettingsResponse(
-        enabled=metadata.enabled,
         configured=metadata.configured,
         password_configured=metadata.password_configured,
         legacy_profile_reentry_required=metadata.legacy_profile_reentry_required,
@@ -334,7 +335,6 @@ async def put_postgres_settings(
     try:
         saved = repo.save_settings(
             PostgresProfileInput(
-                enabled=body.enabled,
                 host=input_host,
                 port=input_port,
                 database=input_database,
@@ -351,6 +351,17 @@ async def put_postgres_settings(
                 dsn_import=body.dsn_import,
             )
         )
+        try:
+            await refresh_memory_backend(
+                app_ctx=resources.app_context,
+                executor_registry=resources.executor_registry,
+                prefer_metadata=True,
+            )
+        except Exception:
+            logger.warning(
+                "PostgreSQL memory backend refresh failed after settings save",
+                exc_info=True,
+            )
         return _settings_response(saved)
     except ValueError as exc:
         raise HTTPException(

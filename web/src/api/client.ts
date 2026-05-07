@@ -22,7 +22,6 @@ export interface ApiErrorPayload {
 export type DatabaseSslMode = "disable" | "prefer" | "require" | "verify-ca" | "verify-full";
 
 export interface SaveDatabaseSettingsPayload {
-  enabled: boolean;
   host: string;
   port: number;
   database: string;
@@ -255,6 +254,7 @@ export function createApiClient(options: CreateApiFetchOptions = {}) {
   type SyncResponse = Record<string, unknown>;
   type SyncListResponse = { projects: Array<Record<string, unknown>> };
   type SyncLogsResponse = { project_id: string; entries: Array<Record<string, unknown>> };
+  type SyncDetailsResponse = Record<string, unknown>;
   type MCPClientPayload = Record<string, unknown>;
   type MCPClientsListResponse = { mcp_clients: Array<Record<string, unknown>> };
   type WorkflowSourcePayload = Record<string, unknown>;
@@ -496,6 +496,11 @@ export function createApiClient(options: CreateApiFetchOptions = {}) {
       const params = new URLSearchParams({ limit: String(limit) });
       return json<SyncLogsResponse>(
         await fetcher(`/api/admin/v1/sync/${encodeURIComponent(projectId)}/logs?${params.toString()}`),
+      );
+    },
+    async getSyncDetails(projectId: string): Promise<SyncDetailsResponse> {
+      return json<SyncDetailsResponse>(
+        await fetcher(`/api/admin/v1/sync/${encodeURIComponent(projectId)}/details`),
       );
     },
     async syncNow(projectId: string): Promise<SyncResponse> {

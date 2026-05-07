@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import getpass
+import sys
 from collections.abc import Sequence
 from pathlib import Path
 
@@ -94,7 +95,8 @@ def main(argv: Sequence[str] | None = None) -> None:
         if has_existing_state and not args.reconfigure:
             print(
                 "Bootstrap already initialized at "
-                f"{config_dir}. Use --reconfigure to change existing state."
+                f"{config_dir}. Use --reconfigure to change existing state.",
+                file=sys.stderr,
             )
             return
 
@@ -142,12 +144,13 @@ def main(argv: Sequence[str] | None = None) -> None:
             if admin_password is not None:
                 print(
                     "Bootstrap reconfiguration completed for "
-                    f"{config_dir}; admin password updated."
+                    f"{config_dir}; admin password updated.",
+                    file=sys.stderr,
                 )
             else:
-                print(f"Bootstrap reconfiguration enabled for {config_dir}.")
+                print(f"Bootstrap reconfiguration enabled for {config_dir}.", file=sys.stderr)
         elif result.created:
-            print(f"Bootstrap initialized at {config_dir}.")
+            print(f"Bootstrap initialized at {config_dir}.", file=sys.stderr)
         return
 
     server.main()

@@ -80,6 +80,11 @@
             "minLength": 1,
             "title": "Slug",
             "type": "string"
+          },
+          "system2_enabled": {
+            "default": false,
+            "title": "System2 Enabled",
+            "type": "boolean"
           }
         },
         "required": [
@@ -105,12 +110,6 @@
             ],
             "title": "Checksum"
           },
-          "project_id": {
-            "maxLength": 1024,
-            "minLength": 1,
-            "title": "Project Id",
-            "type": "string"
-          },
           "source_path": {
             "maxLength": 1024,
             "minLength": 1,
@@ -119,7 +118,6 @@
           }
         },
         "required": [
-          "project_id",
           "source_path"
         ],
         "title": "CreateWorkflowSourceRequest",
@@ -186,10 +184,6 @@
             "title": "Database",
             "type": "string"
           },
-          "enabled": {
-            "title": "Enabled",
-            "type": "boolean"
-          },
           "extra_params": {
             "title": "Extra Params",
             "type": "string"
@@ -228,7 +222,6 @@
           }
         },
         "required": [
-          "enabled",
           "configured",
           "password_configured",
           "legacy_profile_reentry_required",
@@ -806,6 +799,10 @@
             "title": "Id",
             "type": "string"
           },
+          "memory_mode": {
+            "title": "Memory Mode",
+            "type": "string"
+          },
           "name": {
             "title": "Name",
             "type": "string"
@@ -817,6 +814,14 @@
           "slug": {
             "title": "Slug",
             "type": "string"
+          },
+          "system1_enabled": {
+            "title": "System1 Enabled",
+            "type": "boolean"
+          },
+          "system2_enabled": {
+            "title": "System2 Enabled",
+            "type": "boolean"
           },
           "updated_at": {
             "title": "Updated At",
@@ -832,6 +837,9 @@
           "default_room",
           "fs_root",
           "fs_allowlist",
+          "system1_enabled",
+          "system2_enabled",
+          "memory_mode",
           "created_at",
           "updated_at"
         ],
@@ -1451,11 +1459,6 @@
             ],
             "title": "Dsn Import"
           },
-          "enabled": {
-            "default": true,
-            "title": "Enabled",
-            "type": "boolean"
-          },
           "extra_params": {
             "default": "",
             "maxLength": 2048,
@@ -1591,6 +1594,54 @@
         "title": "SyncErrorDetail",
         "type": "object"
       },
+      "SyncExtractionCounts": {
+        "properties": {
+          "compartments": {
+            "title": "Compartments",
+            "type": "integer"
+          },
+          "rooms": {
+            "title": "Rooms",
+            "type": "integer"
+          },
+          "semantic_claims": {
+            "title": "Semantic Claims",
+            "type": "integer"
+          },
+          "semantic_memories": {
+            "title": "Semantic Memories",
+            "type": "integer"
+          },
+          "source_items": {
+            "title": "Source Items",
+            "type": "integer"
+          },
+          "structural_evidence": {
+            "title": "Structural Evidence",
+            "type": "integer"
+          },
+          "verification_cycles": {
+            "title": "Verification Cycles",
+            "type": "integer"
+          },
+          "wings": {
+            "title": "Wings",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "source_items",
+          "structural_evidence",
+          "verification_cycles",
+          "wings",
+          "rooms",
+          "compartments",
+          "semantic_claims",
+          "semantic_memories"
+        ],
+        "title": "SyncExtractionCounts",
+        "type": "object"
+      },
       "SyncListResponse": {
         "properties": {
           "projects": {
@@ -1690,6 +1741,10 @@
       },
       "SyncNowResponse": {
         "properties": {
+          "action": {
+            "title": "Action",
+            "type": "string"
+          },
           "dirty_count": {
             "title": "Dirty Count",
             "type": "integer"
@@ -1704,6 +1759,21 @@
               }
             ]
           },
+          "job_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Job Id"
+          },
+          "memory_mode": {
+            "title": "Memory Mode",
+            "type": "string"
+          },
           "project_id": {
             "title": "Project Id",
             "type": "string"
@@ -1711,14 +1781,84 @@
           "status": {
             "title": "Status",
             "type": "string"
+          },
+          "workflow": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Workflow"
           }
         },
         "required": [
           "project_id",
           "status",
-          "dirty_count"
+          "dirty_count",
+          "action",
+          "memory_mode"
         ],
         "title": "SyncNowResponse",
+        "type": "object"
+      },
+      "SyncProjectDetailsResponse": {
+        "properties": {
+          "counts": {
+            "$ref": "#/components/schemas/SyncExtractionCounts"
+          },
+          "embedding_profile": {
+            "title": "Embedding Profile",
+            "type": "string"
+          },
+          "embedding_profile_required": {
+            "title": "Embedding Profile Required",
+            "type": "boolean"
+          },
+          "memory_backend_ready": {
+            "title": "Memory Backend Ready",
+            "type": "boolean"
+          },
+          "memory_mode": {
+            "title": "Memory Mode",
+            "type": "string"
+          },
+          "project_id": {
+            "title": "Project Id",
+            "type": "string"
+          },
+          "system1_enabled": {
+            "title": "System1 Enabled",
+            "type": "boolean"
+          },
+          "system1_state": {
+            "title": "System1 State",
+            "type": "string"
+          },
+          "system2_enabled": {
+            "title": "System2 Enabled",
+            "type": "boolean"
+          },
+          "system2_state": {
+            "title": "System2 State",
+            "type": "string"
+          }
+        },
+        "required": [
+          "project_id",
+          "memory_mode",
+          "system1_enabled",
+          "system1_state",
+          "system2_enabled",
+          "system2_state",
+          "embedding_profile_required",
+          "embedding_profile",
+          "memory_backend_ready",
+          "counts"
+        ],
+        "title": "SyncProjectDetailsResponse",
         "type": "object"
       },
       "SyncProjectSummary": {
@@ -1837,6 +1977,17 @@
               }
             ],
             "title": "Slug"
+          },
+          "system2_enabled": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "System2 Enabled"
           }
         },
         "title": "UpdateProjectRequest",
@@ -2043,6 +2194,10 @@
             ],
             "title": "Error Message"
           },
+          "is_system": {
+            "title": "Is System",
+            "type": "boolean"
+          },
           "last_loaded_at": {
             "anyOf": [
               {
@@ -2053,10 +2208,6 @@
               }
             ],
             "title": "Last Loaded At"
-          },
-          "project_id": {
-            "title": "Project Id",
-            "type": "string"
           },
           "source_id": {
             "title": "Source Id",
@@ -2080,13 +2231,13 @@
         },
         "required": [
           "source_id",
-          "project_id",
           "source_path",
           "checksum",
           "discovered_at",
           "last_loaded_at",
           "status",
-          "error_message"
+          "error_message",
+          "is_system"
         ],
         "title": "WorkflowSourceResponse",
         "type": "object"
@@ -4026,6 +4177,55 @@
           }
         ],
         "summary": "List Sync Queue",
+        "tags": [
+          "admin-v1"
+        ]
+      }
+    },
+    "/api/admin/v1/sync/{project_id}/details": {
+      "get": {
+        "operationId": "get_sync_details_api_admin_v1_sync__project_id__details_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "project_id",
+            "required": true,
+            "schema": {
+              "maxLength": 128,
+              "minLength": 1,
+              "title": "Project Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SyncProjectDetailsResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "AdminSessionCookie": []
+          }
+        ],
+        "summary": "Get Sync Details",
         "tags": [
           "admin-v1"
         ]

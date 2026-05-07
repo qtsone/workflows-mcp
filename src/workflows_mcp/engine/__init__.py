@@ -40,8 +40,10 @@ from . import (  # noqa: F401
     executors_interactive,  # Interactive executors
     executors_llm,  # LLM call executor
     executors_memory,  # Memory executor
+    executors_project_files,  # Project file discovery executor
     executors_sql,  # SQL database executor
     executors_state,  # JSON state executors
+    executors_system2_planner,  # System 2 semantic planning executor
     executors_treesitter,  # TreeSitter static analysis executor
     executors_workflow,  # Workflow executor (ADR-008)
 )
@@ -89,6 +91,11 @@ from .executors_memory import (
     MemoryInput,
     MemoryOutput,
 )
+from .executors_project_files import (
+    ProjectFilesExecutor,
+    ProjectFilesInput,
+    ProjectFilesOutput,
+)
 from .executors_sql import (
     SqlExecutor,
     SqlInput,
@@ -104,6 +111,11 @@ from .executors_state import (
     WriteJSONStateExecutor,
     WriteJSONStateInput,
     WriteJSONStateOutput,
+)
+from .executors_system2_planner import (
+    System2PlannerExecutor,
+    System2PlannerInput,
+    System2PlannerOutput,
 )
 from .executors_treesitter import (
     TreeSitterExecutor,
@@ -178,6 +190,10 @@ __all__ = [
     "MergeJSONStateExecutor",
     "MergeJSONStateInput",
     "MergeJSONStateOutput",
+    # System 2 planner
+    "System2PlannerExecutor",
+    "System2PlannerInput",
+    "System2PlannerOutput",
     # SQL Executors
     "SqlExecutor",
     "SqlInput",
@@ -186,6 +202,10 @@ __all__ = [
     "MemoryExecutor",
     "MemoryInput",
     "MemoryOutput",
+    # Project file executors
+    "ProjectFilesExecutor",
+    "ProjectFilesInput",
+    "ProjectFilesOutput",
     # TreeSitter Executors
     "TreeSitterExecutor",
     "TreeSitterInput",

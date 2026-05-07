@@ -37,6 +37,13 @@ class MemoryInput(BlockInput):
         "store_entity_embeddings",
         "archive_memories",
         "mark_item_dirty",
+        # ADR-013: System 1 / System 2 operations
+        "store_system1_structural_evidence",
+        "record_system1_verification_cycle",
+        "derive_system1_topology",
+        "derive_system2_semantic_claims",
+        "apply_semantic_override",
+        "reconcile_semantic_lifecycle",
     ] = Field(description="Memory operation")
 
     host: str = Field(
@@ -94,6 +101,13 @@ class MemoryInput(BlockInput):
             "Response shaping controls (include sections, verbosity, and formatting flags)."
         ),
     )
+    derivation: dict[str, Any] | None = Field(
+        default=None,
+        description=(
+            "Derivation payload for derive_system1_topology. System 2 derivation payloads "
+            "belong under record.derivation."
+        ),
+    )
 
 
 class MemoryOutput(BlockOutput):
@@ -119,6 +133,39 @@ class MemoryExecutor(BlockExecutor):
     capabilities: ClassVar[ExecutorCapabilities] = ExecutorCapabilities(can_network=True)
 
     async def execute(self, inputs: MemoryInput, context: Execution) -> MemoryOutput:  # type: ignore[override]
+        request_payload = {
+            "operation": inputs.operation,
+            "scope": inputs.scope or {},
+            "scope_token": inputs.scope_token,
+            "context_id": inputs.context_id,
+            "query": inputs.query,
+            "record": inputs.record,
+            "graph": inputs.graph,
+            "maintenance": inputs.maintenance,
+            "response": inputs.response or {},
+            "derivation": inputs.derivation,
+        }
+        execution_context = getattr(context, "execution_context", None)
+        shared_backend = getattr(execution_context, "memory_backend", None)
+        shared_backend_lock = getattr(execution_context, "memory_backend_lock", None)
+        if shared_backend is not None:
+            try:
+                service = MemoryService(shared_backend, context)
+                request = MemoryRequest.model_validate(request_payload)
+                if shared_backend_lock is not None:
+                    async with shared_backend_lock:
+                        result = await service.execute(request)
+                else:
+                    result = await service.execute(request)
+                return MemoryOutput(
+                    success=True,
+                    operation=inputs.operation,
+                    result=result.model_dump(by_alias=True),
+                )
+            except Exception as e:
+                logger.error("Memory operation '%s' failed: %s", inputs.operation, e)
+                return MemoryOutput(success=False, error=str(e), operation=inputs.operation)
+
         try:
             backend = self._create_backend()
             config = self._create_config(inputs)
@@ -128,19 +175,7 @@ class MemoryExecutor(BlockExecutor):
         try:
             await backend.connect(config)
             service = MemoryService(backend, context)
-            request = MemoryRequest.model_validate(
-                {
-                    "operation": inputs.operation,
-                    "scope": inputs.scope or {},
-                    "scope_token": inputs.scope_token,
-                    "context_id": inputs.context_id,
-                    "query": inputs.query,
-                    "record": inputs.record,
-                    "graph": inputs.graph,
-                    "maintenance": inputs.maintenance,
-                    "response": inputs.response or {},
-                }
-            )
+            request = MemoryRequest.model_validate(request_payload)
             result = await service.execute(request)
             return MemoryOutput(
                 success=True,

@@ -6,6 +6,8 @@ modules without importing the large memory_service module and creating cycles.
 
 from __future__ import annotations
 
+from typing import NoReturn
+
 
 class MemoryContractError(ValueError):
     """Deterministic contract error with machine-readable code."""
@@ -31,7 +33,7 @@ def _raise_contract_error(
     message: str,
     retryable: bool = False,
     actionable_fix: str | None = None,
-) -> None:
+) -> NoReturn:
     raise MemoryContractError(
         code=code,
         message=f"{code}: {message}",

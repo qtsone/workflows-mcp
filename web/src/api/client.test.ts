@@ -453,6 +453,53 @@ describe("createApiClient admin helpers", () => {
     expect(deleteHeaders.get("X-CSRF-Token")).toBe("csrf-bootstrap");
   });
 
+  it("creates workflow sources without project_id", async () => {
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
+      const method = (init?.method ?? "GET").toUpperCase();
+      const url = typeof input === "string" ? input : input.toString();
+
+      if (url.endsWith("/api/admin/v1/auth/csrf") && method === "GET") {
+        return new Response(JSON.stringify({ csrf_token: "csrf-bootstrap" }), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        });
+      }
+      if (url.endsWith("/api/admin/v1/workflows/sources") && method === "POST") {
+        return new Response(JSON.stringify({ source_id: "src-2", source_path: "/workspace/workflows" }), {
+          status: 201,
+          headers: { "content-type": "application/json" },
+        });
+      }
+
+      return new Response(JSON.stringify({ message: `unexpected ${method} ${url}` }), {
+        status: 404,
+        headers: { "content-type": "application/json" },
+      });
+    });
+
+    const client = createApiClient({
+      baseUrl: "https://admin.example.test",
+      fetchImpl: fetchMock,
+    });
+
+    await client.createWorkflowSource({ source_path: "/workspace/workflows", checksum: null });
+
+    const createCallIndex = fetchMock.mock.calls.findIndex((call) => {
+      const init = call[1] as RequestInit | undefined;
+      return String(call[0]).includes("/api/admin/v1/workflows/sources") && init?.method === "POST";
+    });
+
+    expect(createCallIndex).toBeGreaterThanOrEqual(0);
+    const createInit = fetchMock.mock.calls[createCallIndex]?.[1] as RequestInit | undefined;
+    const createHeaders = new Headers(createInit?.headers);
+    expect(createHeaders.get("X-CSRF-Token")).toBe("csrf-bootstrap");
+    expect(JSON.parse(String(createInit?.body ?? "{}"))).toEqual({
+      source_path: "/workspace/workflows",
+      checksum: null,
+    });
+    expect(JSON.parse(String(createInit?.body ?? "{}"))).not.toHaveProperty("project_id");
+  });
+
   it("lists server path entries without requiring csrf for default request", async () => {
     const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
       const method = (init?.method ?? "GET").toUpperCase();
@@ -689,13 +736,13 @@ describe("createApiClient admin helpers", () => {
         });
       }
       if (url.endsWith("/api/admin/v1/database/settings") && method === "GET") {
-        return new Response(JSON.stringify({ enabled: true, configured: true, updated_at: "t" }), {
+        return new Response(JSON.stringify({ configured: true, updated_at: "t" }), {
           status: 200,
           headers: { "content-type": "application/json" },
         });
       }
       if (url.endsWith("/api/admin/v1/database/settings") && method === "PUT") {
-        return new Response(JSON.stringify({ enabled: true, configured: true, updated_at: "t2" }), {
+        return new Response(JSON.stringify({ configured: true, updated_at: "t2" }), {
           status: 200,
           headers: { "content-type": "application/json" },
         });
@@ -770,7 +817,6 @@ describe("createApiClient admin helpers", () => {
     await client.getSystemStatus();
     await client.getDatabaseSettings();
     await client.saveDatabaseSettings({
-      enabled: true,
       host: "127.0.0.1",
       port: 5432,
       database: "workflows",
@@ -807,7 +853,6 @@ describe("createApiClient admin helpers", () => {
       String((settingsSaveCall?.[1] as RequestInit | undefined)?.body ?? "{}"),
     ) as Record<string, unknown>;
     expect(settingsSaveBody).toEqual({
-      enabled: true,
       host: "127.0.0.1",
       port: 5432,
       database: "workflows",
@@ -871,7 +916,7 @@ describe("createApiClient admin helpers", () => {
         });
       }
       if (url.endsWith("/api/admin/v1/database/settings") && method === "PUT") {
-        return new Response(JSON.stringify({ enabled: true, configured: true, updated_at: "t2" }), {
+        return new Response(JSON.stringify({ configured: true, updated_at: "t2" }), {
           status: 200,
           headers: { "content-type": "application/json" },
         });
@@ -889,7 +934,6 @@ describe("createApiClient admin helpers", () => {
     });
 
     await client.saveDatabaseSettings({
-      enabled: true,
       host: "127.0.0.1",
       port: 5432,
       database: "workflows",

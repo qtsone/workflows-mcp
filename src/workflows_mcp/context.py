@@ -238,6 +238,8 @@ class AppContext:
             secret_provider=self.secret_provider,
             user_id=user_id,
             auth_method=auth_method,
+            memory_backend=self.memory_backend,
+            memory_backend_lock=self.memory_backend_lock,
         )
 
 

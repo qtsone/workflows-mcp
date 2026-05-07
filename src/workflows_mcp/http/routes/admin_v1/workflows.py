@@ -25,10 +25,8 @@ from workflows_mcp.metadata.repos.workflow_sources_repo import (
     DuplicateWorkflowSourceError,
     InvalidWorkflowSourcePathError,
     SQLiteWorkflowSourcesRepository,
-    SystemWorkflowSourceProtectedError,
     WorkflowSourceCreate,
     WorkflowSourceNotFoundError,
-    WorkflowSourceProjectNotFoundError,
     WorkflowSourceRecord,
 )
 
@@ -46,7 +44,6 @@ class ErrorDetail(BaseModel):
 
 class WorkflowSourceResponse(BaseModel):
     source_id: str
-    project_id: str
     source_path: str
     checksum: str | None
     discovered_at: str
@@ -63,7 +60,6 @@ class WorkflowSourcesListResponse(BaseModel):
 class CreateWorkflowSourceRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    project_id: NonEmptyString
     source_path: NonEmptyString
     checksum: str | None = None
 
@@ -180,17 +176,18 @@ def _error(status_code: int, code: str, message: str) -> HTTPException:
     )
 
 
-def _to_source_response(source: WorkflowSourceRecord) -> WorkflowSourceResponse:
+def _to_source_response(
+    source: WorkflowSourceRecord, *, is_system: bool = False
+) -> WorkflowSourceResponse:
     return WorkflowSourceResponse(
         source_id=source.source_id,
-        project_id=source.project_id,
         source_path=source.source_path,
         checksum=source.checksum,
         discovered_at=source.discovered_at,
         last_loaded_at=source.last_loaded_at,
         status=source.status,
         error_message=source.error_message,
-        is_system=source.is_system,
+        is_system=is_system,
     )
 
 
@@ -217,10 +214,16 @@ def _reload_from_sqlite_sources(resources: AppResources) -> WorkflowReloadRespon
 
     repo, conn = _repo(resources)
     try:
+        from workflows_mcp.server import _builtin_workflow_path
+
         sources = repo.list()
         source_paths = [source.source_path for source in sources]
         try:
-            summary = reload_registry_from_source_paths(resources.workflow_registry, source_paths)
+            summary = reload_registry_from_source_paths(
+                resources.workflow_registry,
+                source_paths,
+                builtin_paths=[_builtin_workflow_path()],
+            )
         except WorkflowSourceReloadError as exc:
             for source in sources:
                 repo.update_reload_state(
@@ -252,12 +255,27 @@ async def list_workflow_sources(
     _current: CurrentAdminSession = Depends(require_current_admin_session),
     resources: AppResources = Depends(get_resources),
 ) -> WorkflowSourcesListResponse:
+    from workflows_mcp.server import _builtin_workflow_path
+
     repo, conn = _repo(resources)
     try:
-        sources = [_to_source_response(item) for item in repo.list()]
-        return WorkflowSourcesListResponse(sources=sources)
+        user_sources = [_to_source_response(item) for item in repo.list()]
     finally:
         conn.close()
+
+    # Synthesize a read-only runtime descriptor for the packaged builtin path.
+    builtin_path = _builtin_workflow_path()
+    runtime_system_source = WorkflowSourceResponse(
+        source_id="__system__",
+        source_path=str(builtin_path),
+        checksum=None,
+        discovered_at="",
+        last_loaded_at=None,
+        status="loaded",
+        error_message=None,
+        is_system=True,
+    )
+    return WorkflowSourcesListResponse(sources=[runtime_system_source, *user_sources])
 
 
 @router.post(
@@ -276,13 +294,10 @@ async def create_workflow_source(
         try:
             source = repo.create(
                 WorkflowSourceCreate(
-                    project_id=body.project_id,
                     source_path=body.source_path,
                     checksum=body.checksum,
                 )
             )
-        except WorkflowSourceProjectNotFoundError as exc:
-            raise _error(status.HTTP_404_NOT_FOUND, "project_not_found", str(exc)) from exc
         except DuplicateWorkflowSourceError as exc:
             raise _error(status.HTTP_409_CONFLICT, "workflow_source_conflict", str(exc)) from exc
         except InvalidWorkflowSourcePathError as exc:
@@ -306,16 +321,16 @@ async def delete_workflow_source(
     _current: CurrentAdminSession = Depends(require_admin_csrf),
     resources: AppResources = Depends(get_resources),
 ) -> DeleteWorkflowSourceResponse:
+    if source_id == "__system__":
+        raise _error(
+            status.HTTP_403_FORBIDDEN,
+            "system_workflow_source_protected",
+            "The runtime system workflow source cannot be deleted.",
+        )
     repo, conn = _repo(resources)
     try:
         try:
             repo.delete(source_id)
-        except SystemWorkflowSourceProtectedError as exc:
-            raise _error(
-                status.HTTP_403_FORBIDDEN,
-                "system_workflow_source_protected",
-                str(exc),
-            ) from exc
         except WorkflowSourceNotFoundError as exc:
             raise _error(status.HTTP_404_NOT_FOUND, "workflow_source_not_found", str(exc)) from exc
         return DeleteWorkflowSourceResponse(deleted=True)
@@ -406,6 +421,12 @@ async def validate_workflow_source(
     _current: CurrentAdminSession = Depends(require_admin_csrf),
     resources: AppResources = Depends(get_resources),
 ) -> WorkflowValidateResponse:
+    if source_id == "__system__":
+        raise _error(
+            status.HTTP_403_FORBIDDEN,
+            "system_workflow_source_protected",
+            "The runtime system workflow source cannot be validated through this endpoint.",
+        )
     repo, conn = _repo(resources)
     try:
         try:

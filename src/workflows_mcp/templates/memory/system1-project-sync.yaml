@@ -1,0 +1,109 @@
+name: system1-project-sync
+description: |
+  ADR-013 System 1 project sync wrapper. The workflow discovers eligible
+  project files from the project root, runs system1-scan once per file, and
+  records a successful System 1 verification cycle for the palace.
+
+tags: [builtin, memory, system1, adr013, sync]
+
+inputs:
+  project_root:
+    type: str
+    description: "Absolute project root to scan."
+
+  fs_allowlist:
+    type: list
+    default: []
+    description: "Allowed absolute filesystem roots for the project."
+
+  candidate_paths:
+    type: list
+    default: []
+    description: "Optional project-relative dirty paths to scan. Empty means full project discovery."
+
+  palace:
+    type: str
+    description: "Memory palace covered by this project sync."
+
+  source_name:
+    type: str
+    description: "Logical source name used by child System 1 scans."
+
+  default_wing:
+    type: str
+    default: "default-wing"
+    description: "Default project wing used for explicit System 1 topology override."
+
+  default_room:
+    type: str
+    default: "default-room"
+    description: "Default project room used for explicit System 1 topology override."
+
+  default_compartment:
+    type: str
+    description: "Default project compartment used for explicit System 1 topology override."
+
+  sync_scope:
+    type: str
+    default: "rebuild"
+    description: "Command scope: dirty, reconcile, or rebuild."
+
+blocks:
+  - id: discover_files
+    description: "Discover supported project files using watcher ignore policy and project allowlist."
+    type: ProjectFiles
+    inputs:
+      project_root: "{{inputs.project_root}}"
+      fs_allowlist: "{{inputs.fs_allowlist}}"
+      candidate_paths: "{{inputs.candidate_paths}}"
+      scope: "{{inputs.sync_scope}}"
+      default_wing: "{{inputs.default_wing}}"
+      default_room: "{{inputs.default_room}}"
+      default_compartment: "{{inputs.default_compartment}}"
+
+  - id: scan_files
+    description: "Run system1-scan for each discovered project file."
+    type: Workflow
+    depends_on: [discover_files]
+    for_each: "{{blocks.discover_files.outputs.files}}"
+    for_each_mode: parallel
+    max_parallel: 5
+    inputs:
+      workflow: system1-scan
+      inputs:
+        file_path: "{{each.value.file_path}}"
+        repo_relative_path: "{{each.value.repo_relative_path}}"
+        palace: "{{inputs.palace}}"
+        source_name: "{{inputs.source_name}}"
+        topology_override: "{{each.value.topology_override}}"
+
+  - id: record_verification_cycle
+    description: "Record a completed System 1 verification cycle for this palace."
+    type: Memory
+    depends_on: [scan_files]
+    inputs:
+      operation: record_system1_verification_cycle
+      scope:
+        palace: "{{inputs.palace}}"
+      record:
+        verification_cycle:
+          success: true
+          covered_scope:
+            palace: "{{inputs.palace}}"
+            wing: "{{inputs.default_wing}}"
+            room: "{{inputs.default_room}}"
+            compartment: "{{inputs.default_compartment}}"
+
+outputs:
+  discovered_files:
+    value: "{{blocks.discover_files.outputs.count}}"
+    type: num
+  scanned_files:
+    value: "{{blocks.scan_files.metadata.count}}"
+    type: num
+  failed_files:
+    value: "{{blocks.scan_files.metadata.count_failed}}"
+    type: num
+  verification_cycle_id:
+    value: "{{blocks.record_verification_cycle.outputs.result.manage.cycle_id}}"
+    type: str

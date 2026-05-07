@@ -1,0 +1,162 @@
+name: system2-derive
+description: |
+  ADR-013 System 2 semantic derivation workflow: consume System 1 structural
+  evidence records and write semantic claims via the
+  derive_system2_semantic_claims operation.
+
+  System 2 is derived from System 1.  It MUST be backed by structural evidence
+  entity stable IDs produced by a prior system1-scan run.  No LLM-prose-only
+  claims are accepted; every claim requires at least one
+  evidence_entity_stable_id.
+
+  Topology: Palace / Wing / Room / Compartment only.
+  Corridor is represented as directed typed edges via the optional
+  corridor_from_claim_id / corridor_to_claim_id / corridor_type fields.
+  All three corridor fields must be supplied together or not at all.
+
+  Idempotency: the derivation operation upserts claims by evidence entity ID
+  within the given scope; unchanged re-runs produce no extra rows.
+
+  Lifecycle: derived claims start in the active/evidenced state.  Degradation
+  and archival are handled separately by the system2-verify-lifecycle workflow
+  (Task 10 / Task 13 scope — not part of this workflow).
+
+tags: [builtin, memory, system2, adr013]
+
+inputs:
+  palace:
+    type: str
+    description: "Memory palace to write semantic claims into."
+
+  scope:
+    type: dict
+    default:
+      wing: ""
+      room: ""
+      compartment: ""
+    description: >
+      Optional ADR-013 topology scope. Direct callers may provide wing, room,
+      and compartment here instead of the individual topology inputs.
+
+  wing:
+    type: str
+    default: ""
+    description: "Wing to write semantic claims into."
+
+  room:
+    type: str
+    default: ""
+    description: "Room to write semantic claims into."
+
+  compartment:
+    type: str
+    default: ""
+    description: "Compartment to write semantic claims into."
+
+  evidence_entity_stable_ids:
+    type: list
+    description: >
+      Stable entity IDs (produced by system1-scan / store_system1_structural_evidence)
+      that back the semantic claims being derived.  At least one entry is required;
+      the operation rejects derivations with an empty list.
+
+  wing_intent_label:
+    type: str
+    default: ""
+    description: "Human-readable label expressing the wing's semantic area."
+
+  room_intent_label:
+    type: str
+    default: ""
+    description: >
+      Human-readable label expressing the intent or purpose of the room being
+      addressed (e.g. 'authentication', 'data-access').  Stored on the derived
+      claim for System 2 semantic richness.
+
+  compartment_reasoning_unit:
+    type: str
+    default: ""
+    description: >
+      Label identifying the reasoning unit associated with the compartment
+      (e.g. a class name or module boundary).  Used for grouping and audit.
+
+  memory_claim_text:
+    type: str
+    default: ""
+    description: "Evidence-backed semantic memory claim text."
+
+  is_new_wing:
+    type: bool
+    default: false
+    description: >
+      Set to true when the derivation introduces a wing that does not yet exist
+      in the palace.  The operation enforces the proof-bundle gate (>=2 evidence
+      categories) before permitting claims that would create a new wing.
+
+  proof_bundle_evidence_categories:
+    type: list
+    default: []
+    description: >
+      List of evidence category strings comprising the proof bundle required
+      when is_new_wing=true (e.g. ['class_definition', 'import_relation']).
+      Ignored when is_new_wing=false.
+
+  corridor_from_claim_id:
+    type: str
+    default: ""
+    description: >
+      Source claim ID for an optional semantic corridor edge.  Must be supplied
+      together with corridor_to_claim_id and corridor_type, or left empty.
+
+  corridor_to_claim_id:
+    type: str
+    default: ""
+    description: >
+      Target claim ID for an optional semantic corridor edge.  Must be supplied
+      together with corridor_from_claim_id and corridor_type, or left empty.
+
+  corridor_type:
+    type: str
+    default: ""
+    description: >
+      Typed label for the semantic corridor edge (e.g. 'depends_on',
+      'refines').  Must be supplied together with corridor_from_claim_id and
+      corridor_to_claim_id, or left empty.
+
+blocks:
+  - id: derive_claims
+    description: >
+      Invoke derive_system2_semantic_claims to upsert semantic claims backed by
+      System 1 structural evidence entities.
+    type: Memory
+    inputs:
+      operation: derive_system2_semantic_claims
+      scope:
+        palace: "{{inputs.palace}}"
+        wing: "{{inputs.wing or inputs.scope.wing}}"
+        room: "{{inputs.room or inputs.scope.room}}"
+        compartment: "{{inputs.compartment or inputs.scope.compartment}}"
+      record:
+        derivation:
+          wing_intent_label: "{{inputs.wing_intent_label}}"
+          evidence_entity_stable_ids: "{{inputs.evidence_entity_stable_ids}}"
+          room_intent_label: "{{inputs.room_intent_label}}"
+          compartment_reasoning_unit: "{{inputs.compartment_reasoning_unit}}"
+          memory_claim_text: "{{inputs.memory_claim_text}}"
+          is_new_wing: "{{inputs.is_new_wing}}"
+          proof_bundle:
+            evidence_categories: "{{inputs.proof_bundle_evidence_categories}}"
+          corridor_from_claim_id: "{{inputs.corridor_from_claim_id}}"
+          corridor_to_claim_id: "{{inputs.corridor_to_claim_id}}"
+          corridor_type: "{{inputs.corridor_type}}"
+
+outputs:
+  claims_derived:
+    value: "{{blocks.derive_claims.succeeded}}"
+    type: bool
+  derived_claim_ids:
+    value: "{{blocks.derive_claims.outputs.result.manage.claim_ids}}"
+    type: list
+  derived_count:
+    value: "{{blocks.derive_claims.outputs.result.manage.claim_ids | length}}"
+    type: num

@@ -12,8 +12,9 @@ import json
 import logging
 import math
 import os
+import re
 import uuid
-from collections import defaultdict
+from collections import Counter, defaultdict
 from datetime import UTC, datetime
 from typing import Any, Literal, cast
 
@@ -40,6 +41,7 @@ from .knowledge.search import room_scoped_search
 from .memory_errors import MemoryContractError as MemoryContractError
 from .memory_errors import _raise_contract_error
 from .memory_locality import CONTRACT_SCOPE_FIELDS, LocalityRequest, resolve_memory_locality
+from .memory_scope_resolver import scope_key as _scope_key_fn
 
 logger = logging.getLogger(__name__)
 
@@ -68,6 +70,13 @@ MemoryOperation = Literal[
     "store_entity_embeddings",
     "archive_memories",
     "mark_item_dirty",
+    # ADR-013: System 1 / System 2 operations
+    "store_system1_structural_evidence",
+    "record_system1_verification_cycle",
+    "derive_system1_topology",
+    "derive_system2_semantic_claims",
+    "apply_semantic_override",
+    "reconcile_semantic_lifecycle",
 ]
 
 
@@ -89,6 +98,13 @@ MEMORY_OPERATION_ENUM: tuple[MemoryOperation, ...] = (
     "store_entity_embeddings",
     "archive_memories",
     "mark_item_dirty",
+    # ADR-013: System 1 / System 2 operations
+    "store_system1_structural_evidence",
+    "record_system1_verification_cycle",
+    "derive_system1_topology",
+    "derive_system2_semantic_claims",
+    "apply_semantic_override",
+    "reconcile_semantic_lifecycle",
 )
 
 MEMORY_SECTION_REQUIRED_BY_OPERATION: dict[MemoryOperation, str] = {
@@ -99,6 +115,7 @@ MEMORY_SECTION_REQUIRED_BY_OPERATION: dict[MemoryOperation, str] = {
     "archive": "record",
     "graph_upsert": "graph",
     "graph_delete": "graph",
+    "derive_system1_topology": "derivation",
 }
 
 
@@ -181,6 +198,22 @@ def _normalize_category_name(value: str) -> str:
     if not normalized:
         raise ValueError("Category names must not be empty")
     return normalized
+
+
+def _canonical_corridor_type(raw: str) -> str:
+    """Canonicalize a corridor type string.
+
+    Trims surrounding whitespace, collapses internal whitespace and hyphen runs
+    to a single underscore, then upper-cases the result.
+
+    Examples:
+        'calls-into'  -> 'CALLS_INTO'
+        'depends_on'  -> 'DEPENDS_ON'
+        'calls into'  -> 'CALLS_INTO'
+    """
+    stripped = raw.strip()
+    canonical = re.sub(r"[\s\-]+", "_", stripped)
+    return canonical.upper()
 
 
 def _is_corridor_relation(relation_type: str | None) -> bool:
@@ -894,6 +927,62 @@ class ManageMemoryResult(BaseModel):
         description="Per-relation unresolved/ambiguous entries (ADR-012).",
     )
 
+    # ADR-013: System 1 / System 2 result envelope fields
+    stored_evidence_ids: list[str] = Field(
+        default_factory=list,
+        description=(
+            "Stable IDs for each persisted structural evidence row"
+            " (store_system1_structural_evidence)."
+        ),
+    )
+    cycle_id: str | None = Field(
+        default=None,
+        description="ID of the persisted verification cycle (record_system1_verification_cycle).",
+    )
+    claim_ids: list[str] = Field(
+        default_factory=list,
+        description="IDs of derived semantic claims (derive_system2_semantic_claims).",
+    )
+    override_id: str | None = Field(
+        default=None,
+        description="ID of the applied override record (apply_semantic_override).",
+    )
+    reconciled_count: int = Field(
+        default=0,
+        description="Number of lifecycle state transitions applied (reconcile_semantic_lifecycle).",
+    )
+
+    # ADR-013 Task 2a: topology derivation typed result fields
+    derived_wing: str | None = Field(
+        default=None,
+        description="Wing level resolved by derive_system1_topology.",
+    )
+    derived_room: str | None = Field(
+        default=None,
+        description="Room level resolved by derive_system1_topology.",
+    )
+    derived_compartment: str | None = Field(
+        default=None,
+        description="Compartment level resolved by derive_system1_topology.",
+    )
+    derivation_source: str | None = Field(
+        default=None,
+        description=(
+            "How topology was determined: 'explicit_override' or 'system1_derived'."
+        ),
+    )
+    provenance_id: str | None = Field(
+        default=None,
+        description="ID of the persisted knowledge_topology_provenance row.",
+    )
+    claim_id: str | None = Field(
+        default=None,
+        description=(
+            "ID of the semantic claim this topology derivation produced or updated "
+            "(singular; distinct from claim_ids list used by derive_system2_semantic_claims)."
+        ),
+    )
+
 
 # ---------------------------------------------------------------------------
 # Unified Memory Contract Models
@@ -995,6 +1084,277 @@ class MemoryEntityEmbeddingInput(BaseModel):
     embedding: list[float] = Field(description="Vector; length must match model output")
 
 
+# ---------------------------------------------------------------------------
+# ADR-013 payload models (Task 3 interface seams — no full persistence yet)
+# ---------------------------------------------------------------------------
+
+
+class StructuralEvidenceItem(BaseModel):
+    """One structural evidence record for store_system1_structural_evidence."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    entity_stable_id: str = Field(
+        description="Stable source anchor ID (e.g. 'src/mod.py::MyClass')"
+    )
+    entity_type: str = Field(
+        default="unknown",
+        description="Entity type (e.g. 'class', 'function', 'module')",
+    )
+    evidence_category: Literal[
+        "structural_class",
+        "structural_module",
+        "structural_function",
+        "structural_call_graph",
+        "structural_import",
+        "structural_test",
+        "structural_config",
+        "structural_doc",
+    ] = Field(description="Evidence category matching schema CHECK constraint")
+    evidence_data: dict[str, Any] = Field(
+        default_factory=dict, description="Arbitrary structural metadata"
+    )
+
+
+class VerificationCycleInput(BaseModel):
+    """Verification-cycle metadata for record_system1_verification_cycle."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    success: bool = Field(
+        description="True when the cycle confirms evidence absence; False when evidence was found"
+    )
+    covered_scope: dict[str, str] = Field(
+        default_factory=dict, description="Scope identity covered by this cycle"
+    )
+
+
+class ProofBundleInput(BaseModel):
+    """Proof bundle for new-wing creation gate."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    evidence_categories: list[str] = Field(default_factory=list)
+
+
+class TopologyOverrideInput(BaseModel):
+    """Explicit caller override for topology derivation (ADR-013 Task 2a).
+
+    All five fields are required when an override is supplied. Whitespace-only
+    override_reason or applied_by is rejected to prevent accountability gaps.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    wing: str = Field(description="Explicit wing placement for this override.")
+    room: str = Field(description="Explicit room placement for this override.")
+    compartment: str = Field(description="Explicit compartment placement for this override.")
+    override_reason: str = Field(
+        description="Non-empty human-readable reason for the explicit override."
+    )
+    applied_by: str = Field(
+        description="Non-empty identifier of the person or system applying this override."
+    )
+
+    @model_validator(mode="after")
+    def _reject_whitespace_fields(self) -> TopologyOverrideInput:
+        if not self.wing.strip():
+            raise ValueError(
+                "MEM_WHITESPACE_WING: wing must not be empty or whitespace-only"
+            )
+        if not self.room.strip():
+            raise ValueError(
+                "MEM_WHITESPACE_ROOM: room must not be empty or whitespace-only"
+            )
+        if not self.compartment.strip():
+            raise ValueError(
+                "MEM_WHITESPACE_COMPARTMENT: compartment must not be empty or whitespace-only"
+            )
+        if not self.override_reason.strip():
+            raise ValueError(
+                "MEM_WHITESPACE_OVERRIDE_REASON: override_reason must not be whitespace-only"
+            )
+        if not self.applied_by.strip():
+            raise ValueError(
+                "MEM_WHITESPACE_APPLIED_BY: applied_by must not be whitespace-only"
+            )
+        return self
+
+
+class DeriveSystem1TopologyInput(BaseModel):
+    """Derivation payload for derive_system1_topology (ADR-013 Task 2a, Task 5b).
+
+    Caller supplies the palace and either a non-empty list of evidence IDs (previously
+    persisted rows) or a non-empty list of inline_candidates (parsed structural evidence
+    items to be stored atomically during derivation). When inline_candidates are provided,
+    evidence_ids becomes optional.
+
+    An optional topology_override provides a complete explicit placement when the caller
+    has authoritative knowledge that supersedes structural derivation.
+
+    parser_metadata carries parser diagnostic context (e.g. language, file path) as
+    evidence metadata only. It must never be used as direct topology truth: wing must not
+    default to language and room must not default to folder/package path.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    palace: str = Field(description="Palace identifier for which topology is being derived.")
+    evidence_ids: list[str] = Field(
+        default_factory=list,
+        description=(
+            "List of structural evidence row IDs to use for derivation. "
+            "Optional when inline_candidates are supplied; required otherwise."
+        ),
+    )
+    inline_candidates: list[StructuralEvidenceItem] = Field(
+        default_factory=list,
+        description=(
+            "Inline structural evidence candidates emitted by the parser (e.g. TreeSitter). "
+            "When non-empty, candidates are stored as knowledge_structural_evidence rows "
+            "atomically within the same derive transaction. Optional when evidence_ids are given."
+        ),
+    )
+    parser_metadata: dict[str, Any] = Field(
+        default_factory=dict,
+        description=(
+            "Parser diagnostic context (e.g. language, file_path, package). "
+            "Stored as evidence metadata only. Must never be used as topology truth: "
+            "wing must not default to language and room must not default to path."
+        ),
+    )
+    topology_override: TopologyOverrideInput | None = Field(
+        default=None,
+        description=(
+            "Optional complete explicit topology override. When supplied, all five fields "
+            "(wing, room, compartment, override_reason, applied_by) are required. "
+            "Absent means pure structural derivation from evidence."
+        ),
+    )
+    is_new_wing: bool = Field(
+        default=False,
+        description=(
+            "When True, the proof-bundle gate is enforced: evidence_ids must reference "
+            ">=2 distinct persisted rows across >=2 distinct evidence categories."
+        ),
+    )
+    proof_bundle: ProofBundleInput | None = Field(
+        default=None,
+        description=(
+            "Required when is_new_wing=True. Declares the expected evidence categories; "
+            "each must be backed by at least one distinct persisted evidence row."
+        ),
+    )
+
+    @model_validator(mode="after")
+    def _require_at_least_one_evidence_source(self) -> DeriveSystem1TopologyInput:
+        if not self.evidence_ids and not self.inline_candidates:
+            raise ValueError(
+                "at least one evidence source is required: "
+                "supply non-empty 'evidence_ids' or 'inline_candidates'"
+            )
+        return self
+
+    @model_validator(mode="after")
+    def _require_proof_bundle_for_new_wing(self) -> DeriveSystem1TopologyInput:
+        if self.is_new_wing and self.topology_override is None and self.proof_bundle is None:
+            raise ValueError(
+                "proof_bundle is required when is_new_wing=True"
+            )
+        return self
+
+
+class DerivationInput(BaseModel):
+    """Derivation payload for derive_system2_semantic_claims."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    wing_intent_label: str | None = Field(default=None)
+    room_intent_label: str | None = Field(default=None)
+    compartment_reasoning_unit: str | None = Field(default=None)
+    memory_claim_text: str | None = Field(default=None)
+    evidence_entity_stable_ids: list[str] = Field(default_factory=list)
+    is_new_wing: bool = Field(default=False)
+    proof_bundle: ProofBundleInput | None = Field(default=None)
+
+    # Corridor fields — all three must be supplied together or not at all.
+    corridor_from_claim_id: str | None = Field(default=None)
+    corridor_to_claim_id: str | None = Field(default=None)
+    corridor_type: str | None = Field(default=None)
+
+    @model_validator(mode="before")
+    @classmethod
+    def _normalize_blank_optional_strings(cls, data: Any) -> Any:
+        if not isinstance(data, dict):
+            return data
+        normalized = dict(data)
+        for key in (
+            "wing_intent_label",
+            "room_intent_label",
+            "compartment_reasoning_unit",
+            "memory_claim_text",
+            "corridor_from_claim_id",
+            "corridor_to_claim_id",
+            "corridor_type",
+        ):
+            value = normalized.get(key)
+            if isinstance(value, str) and not value.strip():
+                normalized[key] = None
+        return normalized
+
+    @model_validator(mode="after")
+    def _validate_corridor_fields(self) -> DerivationInput:
+        corridor_fields = (
+            self.corridor_from_claim_id,
+            self.corridor_to_claim_id,
+            self.corridor_type,
+        )
+        present = sum(1 for f in corridor_fields if f is not None)
+        if 0 < present < 3:
+            raise ValueError(
+                "corridor_from_claim_id, corridor_to_claim_id, and corridor_type"
+                " must all be supplied together or not at all"
+            )
+        if present == 3:
+            if self.corridor_from_claim_id == self.corridor_to_claim_id:
+                raise ValueError(
+                    "corridor_from_claim_id and corridor_to_claim_id must differ"
+                    " (self-loop corridors are not permitted)"
+                )
+        return self
+
+
+class OverrideInput(BaseModel):
+    """Override payload for apply_semantic_override."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    claim_id: str = Field(description="ID of the claim being overridden")
+    override_reason: str = Field(
+        min_length=1,
+        description="Mandatory provenance reason for the override; must be non-empty.",
+    )
+    overridden_by: str = Field(
+        min_length=1,
+        description="Identity of the actor applying the override; must be non-empty.",
+    )
+    new_lifecycle_state: str = Field(description="Target lifecycle state to force")
+
+
+class LifecycleReconciliationInput(BaseModel):
+    """Lifecycle reconciliation payload for reconcile_semantic_lifecycle."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    scope_key: str = Field(description="Normalized scope identity key")
+    degrade_claim_ids: list[str] = Field(
+        default_factory=list,
+        description="Claim IDs to transition from active_evidenced -> degraded.",
+    )
+    force_archive_claim_ids: list[str] = Field(default_factory=list)
+    absent_verification_cycle_ids: list[str] = Field(default_factory=list)
+
+
 class MemoryRecordInput(BaseModel):
     """Write/lifecycle payload."""
 
@@ -1028,6 +1388,28 @@ class MemoryRecordInput(BaseModel):
     entity_embeddings: list[MemoryEntityEmbeddingInput] | None = Field(
         default=None,
         description="Entity embeddings for store_entity_embeddings.",
+    )
+
+    # ADR-013: System 1 / System 2 typed payload fields
+    structural_evidence: list[StructuralEvidenceItem] | None = Field(
+        default=None,
+        description="Structural evidence items for store_system1_structural_evidence.",
+    )
+    verification_cycle: VerificationCycleInput | None = Field(
+        default=None,
+        description="Verification cycle metadata for record_system1_verification_cycle.",
+    )
+    derivation: DerivationInput | None = Field(
+        default=None,
+        description="Derivation payload for derive_system2_semantic_claims.",
+    )
+    override: OverrideInput | None = Field(
+        default=None,
+        description="Override payload for apply_semantic_override.",
+    )
+    lifecycle_reconciliation: LifecycleReconciliationInput | None = Field(
+        default=None,
+        description="Lifecycle reconciliation payload for reconcile_semantic_lifecycle.",
     )
 
     @model_validator(mode="after")
@@ -1108,6 +1490,10 @@ class MemoryRequest(BaseModel):
     graph: MemoryGraphInput | None = Field(default=None)
     maintenance: MemoryMaintenanceInput | None = Field(default=None)
     response: MemoryResponseInput = Field(default_factory=MemoryResponseInput)
+    derivation: DeriveSystem1TopologyInput | None = Field(
+        default=None,
+        description="Topology derivation payload for derive_system1_topology (ADR-013).",
+    )
 
     @model_validator(mode="before")
     @classmethod
@@ -1627,6 +2013,22 @@ class MemoryService:
             "mark_item_dirty",
         }:
             manage_result = await self._dispatch_new_op(op, request, resolved_scope)
+            return MemoryResult(
+                operation=op,
+                manage=manage_result,
+                resolved_scope=resolved_scope,
+                scope_source=scope_source,
+            )
+
+        if op in {
+            "store_system1_structural_evidence",
+            "record_system1_verification_cycle",
+            "derive_system1_topology",
+            "derive_system2_semantic_claims",
+            "apply_semantic_override",
+            "reconcile_semantic_lifecycle",
+        }:
+            manage_result = await self._dispatch_adr013_op(op, request, resolved_scope)
             return MemoryResult(
                 operation=op,
                 manage=manage_result,
@@ -2733,6 +3135,1311 @@ class MemoryService:
             operation="mark_item_dirty",
             success=True,
             item_id=str(result.rows[0]["id"]),
+        )
+
+    # ------------------------------------------------------------------
+    # ADR-013: System 1 / System 2 operation dispatch (Task 3 interface seams)
+    # Full persistence is implemented in Tasks 4, 6, 7, 10, 11, 12.
+    # At this layer: validate payload invariants and return explicit error codes.
+    # ------------------------------------------------------------------
+
+    async def _dispatch_adr013_op(
+        self,
+        op: str,
+        request: MemoryRequest,
+        resolved_scope: MemoryScope,
+    ) -> ManageMemoryResult:
+        """Route ADR-013 System 1/System 2 operations with explicit invariant checks."""
+
+        if op == "store_system1_structural_evidence":
+            if request.record is None or not request.record.structural_evidence:
+                _raise_contract_error(
+                    code="MEM_MISSING_REQUIRED_FIELD",
+                    message=(
+                        "'record.structural_evidence' is required"
+                        " for operation='store_system1_structural_evidence'"
+                    ),
+                )
+            record = request.record
+            if record.structural_evidence is None:
+                _raise_contract_error(
+                    code="MEM_MISSING_REQUIRED_FIELD",
+                    message=(
+                        "'record.structural_evidence' is required"
+                        " for operation='store_system1_structural_evidence'"
+                    ),
+                )
+            evidence_items = record.structural_evidence
+            stored_ids: list[str] = []
+            await self._backend.begin_transaction()
+            try:
+                for item in evidence_items:
+                    row = await self._backend.query(
+                        """
+                        INSERT INTO knowledge_structural_evidence
+                            (id, palace, wing, room, compartment,
+                             entity_stable_id, entity_type,
+                             evidence_category, evidence_payload,
+                             scanned_at)
+                        VALUES
+                            ($1::uuid, $2, $3, $4, $5,
+                             $6, $7,
+                             $8, $9::jsonb,
+                             NOW())
+                        ON CONFLICT (palace, wing, room, compartment,
+                                     entity_stable_id, evidence_category)
+                            DO UPDATE SET
+                                entity_type      = EXCLUDED.entity_type,
+                                evidence_payload = EXCLUDED.evidence_payload,
+                                scanned_at       = EXCLUDED.scanned_at
+                        RETURNING id
+                        """,
+                        (
+                            str(uuid.uuid4()),
+                            resolved_scope.palace or "",
+                            resolved_scope.wing or "",
+                            resolved_scope.room or "",
+                            resolved_scope.compartment or "",
+                            item.entity_stable_id,
+                            item.entity_type,
+                            item.evidence_category,
+                            json.dumps(item.evidence_data),
+                        ),
+                    )
+                    stored_ids.append(str(row.rows[0]["id"]))
+                await self._backend.commit()
+            except Exception:
+                await self._backend.rollback()
+                raise
+            return ManageMemoryResult(
+                operation=op,
+                success=True,
+                # stored_count = number of submitted items processed (insert or
+                # upsert).  It is NOT a count of newly inserted rows; callers
+                # use it to confirm every submitted item reached the DB.
+                stored_count=len(stored_ids),
+                stored_evidence_ids=stored_ids,
+            )
+
+        if op == "record_system1_verification_cycle":
+            if request.record is None or request.record.verification_cycle is None:
+                _raise_contract_error(
+                    code="MEM_MISSING_REQUIRED_FIELD",
+                    message=(
+                        "'record.verification_cycle' is required"
+                        " for operation='record_system1_verification_cycle'"
+                    ),
+                )
+            record = request.record
+            if record.verification_cycle is None:
+                _raise_contract_error(
+                    code="MEM_MISSING_REQUIRED_FIELD",
+                    message=(
+                        "'record.verification_cycle' is required"
+                        " for operation='record_system1_verification_cycle'"
+                    ),
+                )
+            cycle = record.verification_cycle
+
+            # Derive normalized scope_key from covered_scope using memory_scope_resolver semantics.
+            covered = cycle.covered_scope
+            normalized_scope_key = _scope_key_fn(covered)
+            covered_wing = (covered.get("wing") or "").strip() or None
+            covered_room = (covered.get("room") or "").strip() or None
+            covered_compartment = (covered.get("compartment") or "").strip() or None
+            palace = resolved_scope.palace or ""
+
+            cycle_uuid = uuid.uuid4()
+            await self._backend.execute(
+                """
+                INSERT INTO knowledge_verification_cycles
+                    (id, palace, scope_key,
+                     covered_wing, covered_room, covered_compartment,
+                     success, failure_reason,
+                     evidence_found, evidence_absent,
+                     completed_at)
+                VALUES
+                    ($1::uuid, $2, $3,
+                     $4, $5, $6,
+                     $7, $8,
+                     0, 0,
+                     NOW())
+                """,
+                (
+                    str(cycle_uuid),
+                    palace,
+                    normalized_scope_key,
+                    covered_wing,
+                    covered_room,
+                    covered_compartment,
+                    cycle.success,
+                    None,
+                ),
+            )
+
+            # Wire override accountability: after persisting a successful cycle for a
+            # covered scope, update active/pending/supported/unsupported override rows
+            # in that scope based on live System 1 evidence link presence.
+            #
+            # Deterministic v1 semantics (evidence-based, fail-closed):
+            #   - cycle.success == False → failed cycle → do NOT change accountability.
+            #   - cycle.success == True  → successful cycle → derive supported/unsupported
+            #     from live knowledge_claim_evidence_links rows pointing to existing
+            #     knowledge_structural_evidence rows in the covered palace/scope.
+            #     Overrides whose claim has ≥1 live link → 'supported'.
+            #     Overrides whose claim has 0 live links → 'unsupported'.
+            #
+            # Failure of the DB update propagates — we must not silently claim cycle
+            # success when the accountability update did not happen.
+            if not cycle.success:
+                # Failed cycle: accountability is unchanged per ADR-013.
+                logger.info(
+                    "verification_cycle_skipped_accountability_update_failed_cycle"
+                    " cycle_id=%s scope_key=%s",
+                    str(cycle_uuid),
+                    normalized_scope_key,
+                )
+                accountability_updated_count = 0
+                accountability_status_applied: str | None = None
+            else:
+                # Successful cycle: derive supported/unsupported from live evidence links.
+                accountability_update_result = await self._backend.query(
+                    """
+                    UPDATE knowledge_semantic_overrides AS o
+                       SET accountability_status = CASE
+                               WHEN EXISTS (
+                                   SELECT 1
+                                     FROM knowledge_claim_evidence_links kcel
+                                     JOIN knowledge_structural_evidence kse
+                                       ON kse.id = kcel.evidence_id
+                                    WHERE kcel.claim_id = o.claim_id
+                                      AND kse.palace = $1
+                               ) THEN 'supported'
+                               ELSE 'unsupported'
+                           END,
+                           last_checked_at = NOW()
+                      FROM knowledge_semantic_claims AS c
+                     WHERE o.claim_id = c.id
+                       AND c.palace = $1
+                       AND c.scope_key = $2
+                       AND o.accountability_status IN ('pending', 'supported', 'unsupported')
+                    RETURNING o.id AS override_id, o.accountability_status AS new_status
+                    """,
+                    (palace, normalized_scope_key),
+                )
+                accountability_updated_count = len(accountability_update_result.rows)
+                accountability_status_applied = "evidence_based"
+                logger.info(
+                    "verification_cycle_accountability_updated"
+                    " cycle_id=%s scope_key=%s updated_count=%d",
+                    str(cycle_uuid),
+                    normalized_scope_key,
+                    accountability_updated_count,
+                )
+
+            return ManageMemoryResult(
+                operation=op,
+                success=True,
+                cycle_id=str(cycle_uuid),
+                diagnostics={
+                    "success": cycle.success,
+                    "covered_scope": covered,
+                    "scope_key": normalized_scope_key,
+                    "accountability_updated_count": accountability_updated_count,
+                    "accountability_status_applied": accountability_status_applied,
+                },
+            )
+
+        if op == "derive_system1_topology":
+            # Contract: derivation section required — enforced by validate_contract_envelope.
+            if request.derivation is None:
+                _raise_contract_error(
+                    code="MEM_MISSING_REQUIRED_FIELD",
+                    message=(
+                        "'derivation' is required"
+                        " for operation='derive_system1_topology'"
+                    ),
+                )
+            derivation_input = request.derivation
+            topology_override = derivation_input.topology_override
+            if topology_override is not None:
+                # Task 2b: explicit override path.
+                # All five override fields are required (enforced by TopologyOverrideInput).
+                # evidence_ids must reference persisted rows — FK checked inside transaction.
+                return await self._derive_system1_topology_explicit_override(
+                    derivation_input
+                )
+            # Non-override path: Task 3 structural heuristic.
+            # Task 4: enforce proof-bundle gate for new-wing derivation before structural work.
+            if derivation_input.is_new_wing:
+                gate_result = await self._enforce_system1_proof_bundle_gate(
+                    derivation_input, op
+                )
+                if gate_result is not None:
+                    return gate_result
+            return await self._derive_system1_topology_structural(derivation_input)
+
+        if op == "derive_system2_semantic_claims":
+            if request.record is None:
+                _raise_contract_error(
+                    code="MEM_MISSING_REQUIRED_FIELD",
+                    message=(
+                        "'record.derivation' is required"
+                        " for operation='derive_system2_semantic_claims'"
+                    ),
+                )
+            record = request.record
+            if record.derivation is None:
+                _raise_contract_error(
+                    code="MEM_MISSING_REQUIRED_FIELD",
+                    message=(
+                        "'record.derivation' is required"
+                        " for operation='derive_system2_semantic_claims'"
+                    ),
+                )
+            derivation = record.derivation
+            # Enforce proof bundle gate: new wing requires >= 2 evidence categories.
+            if derivation.is_new_wing:
+                bundle = derivation.proof_bundle
+                distinct_categories = (
+                    set(bundle.evidence_categories) if bundle is not None else set()
+                )
+                if len(distinct_categories) < 2:
+                    return ManageMemoryResult(
+                        operation=op,
+                        success=False,
+                        error=(
+                            "MEM_INSUFFICIENT_EVIDENCE_BUNDLE: new wing derivation"
+                            " requires at least two distinct evidence categories in proof_bundle"
+                        ),
+                    )
+            return await self._derive_system2_claims(derivation, resolved_scope)
+
+        if op == "apply_semantic_override":
+            if request.record is None:
+                _raise_contract_error(
+                    code="MEM_MISSING_REQUIRED_FIELD",
+                    message="'record.override' is required for operation='apply_semantic_override'",
+                )
+            record = request.record
+            if record.override is None:
+                _raise_contract_error(
+                    code="MEM_MISSING_REQUIRED_FIELD",
+                    message="'record.override' is required for operation='apply_semantic_override'",
+                )
+            override = record.override
+            return await self._apply_semantic_override(override)
+
+        if op == "reconcile_semantic_lifecycle":
+            if request.record is None:
+                _raise_contract_error(
+                    code="MEM_MISSING_REQUIRED_FIELD",
+                    message=(
+                        "'record.lifecycle_reconciliation' is required"
+                        " for operation='reconcile_semantic_lifecycle'"
+                    ),
+                )
+            record = request.record
+            if record.lifecycle_reconciliation is None:
+                _raise_contract_error(
+                    code="MEM_MISSING_REQUIRED_FIELD",
+                    message=(
+                        "'record.lifecycle_reconciliation' is required"
+                        " for operation='reconcile_semantic_lifecycle'"
+                    ),
+                )
+            reconciliation = record.lifecycle_reconciliation
+            scope_key = reconciliation.scope_key
+            reconciled_count = 0
+
+            # Both phases execute inside a single transaction so that a gate
+            # failure in Phase 2 rolls back any Phase 1 degradations applied
+            # in the same request.  This prevents partial state mutations when
+            # a combined degrade + force-archive call is rejected mid-way.
+            try:
+                await self._backend.begin_transaction()
+
+                # ------------------------------------------------------------------
+                # Phase 1: active_evidenced -> degraded transitions.
+                # ------------------------------------------------------------------
+                if reconciliation.degrade_claim_ids:
+                    degrade_placeholders = ", ".join(
+                        f"${i + 1}::uuid" for i in range(len(reconciliation.degrade_claim_ids))
+                    )
+                    degrade_result = await self._backend.query(
+                        f"""
+                        UPDATE knowledge_semantic_claims
+                           SET lifecycle_state = 'degraded', updated_at = NOW()
+                         WHERE id IN ({degrade_placeholders})
+                           AND lifecycle_state = 'active_evidenced'
+                        RETURNING id
+                        """,
+                        tuple(reconciliation.degrade_claim_ids),
+                    )
+                    reconciled_count += len(degrade_result.rows)
+
+                # ------------------------------------------------------------------
+                # Phase 2: degraded -> archived transitions (archive gate enforced).
+                # ------------------------------------------------------------------
+                if reconciliation.force_archive_claim_ids:
+                    cycle_ids = reconciliation.absent_verification_cycle_ids
+
+                    # Gate: require >= 2 successful absent cycles covering the same
+                    # scope_key (exact normalized identity, not prefix/contains).
+                    if cycle_ids:
+                        placeholders = ", ".join(
+                            f"${i + 1}::uuid" for i in range(len(cycle_ids))
+                        )
+                        count_result = await self._backend.query(
+                            f"SELECT COUNT(*)::int AS n FROM knowledge_verification_cycles"
+                            f" WHERE id IN ({placeholders})"
+                            f"   AND success = TRUE"
+                            f"   AND scope_key = ${len(cycle_ids) + 1}",
+                            tuple(cycle_ids) + (scope_key,),
+                        )
+                        successful_absent = count_result.rows[0]["n"] if count_result.rows else 0
+                    else:
+                        successful_absent = 0
+
+                    if successful_absent < 2:
+                        await self._backend.rollback()
+                        return ManageMemoryResult(
+                            operation=op,
+                            success=False,
+                            error=(
+                                "MEM_ARCHIVE_GATE_NOT_MET: force_archive_claim_ids requires"
+                                " at least two successful absent_verification_cycle_ids"
+                                " covering the target scope_key"
+                            ),
+                        )
+
+                    # Gate passed: archive only claims currently in 'degraded' state.
+                    # Direct active_evidenced -> archived is rejected by the WHERE clause.
+                    # absent_cycle_count records the proven cycle count.
+                    # archived_at satisfies the ck_ksc_archive_requires_two_cycles constraint.
+                    # RETURNING gives an exact count of rows actually transitioned.
+                    archive_placeholders = ", ".join(
+                        f"${i + 1}::uuid"
+                        for i in range(len(reconciliation.force_archive_claim_ids))
+                    )
+                    n = len(reconciliation.force_archive_claim_ids)
+                    archive_result = await self._backend.query(
+                        f"""
+                        UPDATE knowledge_semantic_claims
+                           SET lifecycle_state = 'archived',
+                               absent_cycle_count = ${n + 1},
+                               archived_at = NOW(),
+                               updated_at = NOW()
+                         WHERE id IN ({archive_placeholders})
+                           AND lifecycle_state = 'degraded'
+                        RETURNING id
+                        """,
+                        tuple(reconciliation.force_archive_claim_ids) + (successful_absent,),
+                    )
+                    archived_count = len(archive_result.rows)
+
+                    # If none were updated, the supplied claims are not in 'degraded'
+                    # state — roll back Phase 1 degradations and reject.
+                    if archived_count == 0:
+                        await self._backend.rollback()
+                        return ManageMemoryResult(
+                            operation=op,
+                            success=False,
+                            error=(
+                                "MEM_ARCHIVE_GATE_NOT_MET: none of the supplied"
+                                " force_archive_claim_ids are in 'degraded' state;"
+                                " claims must be degraded before archival"
+                            ),
+                        )
+
+                    reconciled_count += archived_count
+
+                await self._backend.commit()
+            except Exception:
+                await self._backend.rollback()
+                raise
+
+            return ManageMemoryResult(
+                operation=op,
+                success=True,
+                reconciled_count=reconciled_count,
+            )
+
+        raise ValueError(f"Unhandled ADR-013 operation: {op}")
+
+    async def _enforce_system1_proof_bundle_gate(
+        self,
+        derivation: DeriveSystem1TopologyInput,
+        op: str,
+    ) -> ManageMemoryResult | None:
+        """Enforce proof-bundle gate for new-wing System 1 derivation (ADR-013 Task 4).
+
+        Gate rules:
+        - Each declared category in proof_bundle.evidence_categories must be backed
+          by at least one distinct persisted knowledge_structural_evidence row whose
+          id is in derivation.evidence_ids.
+        - One evidence row counts for at most one category (one-to-one).
+        - Total distinct categories with backing rows must be >= 2.
+
+        Returns a failure ManageMemoryResult if the gate fails, None if it passes.
+        """
+        bundle = derivation.proof_bundle
+        declared_categories = list(bundle.evidence_categories) if bundle is not None else []
+
+        if len(set(declared_categories)) < 2:
+            return ManageMemoryResult(
+                operation=op,
+                success=False,
+                error=(
+                    "MEM_INSUFFICIENT_EVIDENCE_BUNDLE: new wing derivation requires"
+                    " at least two distinct evidence categories in proof_bundle"
+                ),
+            )
+
+        # Query persisted rows for the supplied evidence IDs and collect their categories.
+        evidence_ids = derivation.evidence_ids
+        if not evidence_ids:
+            return ManageMemoryResult(
+                operation=op,
+                success=False,
+                error=(
+                    "MEM_INSUFFICIENT_EVIDENCE_BUNDLE: no evidence_ids supplied"
+                    " for new wing derivation"
+                ),
+            )
+
+        # Build a parameterized query using UUID-typed placeholders (index-friendly).
+        placeholders = ", ".join(f"${i + 1}::uuid" for i in range(len(evidence_ids)))
+        rows_result = await self._backend.query(
+            f"""
+            SELECT id, evidence_category
+              FROM knowledge_structural_evidence
+             WHERE id IN ({placeholders})
+               AND palace = ${len(evidence_ids) + 1}
+            """,
+            tuple(evidence_ids) + (derivation.palace,),
+        )
+
+        # Map each persisted row to at most one declared category (one-to-one).
+        # Iterate declared_categories in order; assign the first unmatched row per category.
+        category_to_row: dict[str, str] = {}  # category -> evidence id
+        used_row_ids: set[str] = set()
+        row_category_map: dict[str, str] = {
+            str(r["id"]): r["evidence_category"] for r in rows_result.rows
+        }
+
+        for category in set(declared_categories):
+            for row_id, row_cat in row_category_map.items():
+                if row_id in used_row_ids:
+                    continue
+                if row_cat == category:
+                    category_to_row[category] = row_id
+                    used_row_ids.add(row_id)
+                    break
+
+        covered_categories = set(category_to_row.keys())
+        if len(covered_categories) < 2:
+            return ManageMemoryResult(
+                operation=op,
+                success=False,
+                error=(
+                    "MEM_INSUFFICIENT_EVIDENCE_BUNDLE: new wing derivation requires"
+                    " at least two distinct evidence categories each backed by a"
+                    " distinct persisted knowledge_structural_evidence row;"
+                    f" covered={sorted(covered_categories)!r},"
+                    f" declared={sorted(set(declared_categories))!r}"
+                ),
+            )
+
+        return None
+
+    async def _store_inline_candidates_in_txn(
+        self,
+        derivation: DeriveSystem1TopologyInput,
+        topology: TopologyOverrideInput | None = None,
+    ) -> list[str]:
+        """Store inline_candidates as knowledge_structural_evidence rows within an open transaction.
+
+        Inserts each StructuralEvidenceItem as a new structural evidence row linked to the
+        derivation palace. When explicit topology is supplied, candidates inherit that
+        complete topology. Otherwise wing/room/compartment columns are left empty because
+        those values must be derived by the structural heuristic from persisted signals.
+
+        parser_metadata is stored in evidence_data under the key 'parser_metadata' so it is
+        carried as diagnostic context only, never as direct topology truth.
+
+        Returns the list of new evidence row UUIDs, which are merged into evidence_ids for
+        the derivation step.
+
+        Must be called inside an open transaction (after begin_transaction, before commit/rollback).
+        """
+        palace = derivation.palace
+        wing = topology.wing if topology is not None else ""
+        room = topology.room if topology is not None else ""
+        compartment = topology.compartment if topology is not None else ""
+        stored_ids: list[str] = []
+
+        for candidate in derivation.inline_candidates:
+            ev_uuid = str(uuid.uuid4())
+            # Merge parser_metadata into evidence_data under a namespaced key to prevent
+            # language/path values from being mistaken for topology labels.
+            evidence_data: dict[str, Any] = dict(candidate.evidence_data)
+            if derivation.parser_metadata:
+                evidence_data["parser_metadata"] = derivation.parser_metadata
+
+            result = await self._backend.query(
+                """
+                INSERT INTO knowledge_structural_evidence
+                    (id, palace, entity_stable_id, entity_type,
+                     evidence_category, evidence_payload,
+                     wing, room, compartment,
+                     scanned_at)
+                VALUES ($1::uuid, $2, $3, $4, $5, $6::jsonb,
+                        $7, $8, $9,
+                        NOW())
+                ON CONFLICT (palace, wing, room, compartment, entity_stable_id, evidence_category)
+                DO UPDATE SET
+                    evidence_payload = EXCLUDED.evidence_payload,
+                    scanned_at = EXCLUDED.scanned_at
+                RETURNING id
+                """,
+                (
+                    ev_uuid,
+                    palace,
+                    candidate.entity_stable_id,
+                    candidate.entity_type,
+                    candidate.evidence_category,
+                    json.dumps(evidence_data),
+                    wing,
+                    room,
+                    compartment,
+                ),
+            )
+            persisted_id = str(result.rows[0]["id"])
+            stored_ids.append(persisted_id)
+
+        return stored_ids
+
+    async def _derive_system1_topology_structural(
+        self,
+        derivation: DeriveSystem1TopologyInput,
+    ) -> ManageMemoryResult:
+        """Derive wing/room/compartment from structural evidence using the v1 heuristic.
+
+        Algorithm (System 1 structural-only, no semantic intent labels):
+        1. If inline_candidates are present, persist them as knowledge_structural_evidence rows
+           atomically first and merge their IDs into evidence_ids.
+        2. Load evidence rows for all evidence_ids from this palace.
+        3. Select compartment anchor: class/module entity_type first, then others;
+           deterministic tie-break by entity_stable_id (lexicographic ascending).
+        4. compartment = anchor row's compartment column.
+        5. room = modal room value across all loaded evidence rows.
+        6. wing = modal wing value across all loaded evidence rows.
+        7. If any level is empty/indeterminate → MEM_INSUFFICIENT_EVIDENCE (fail closed).
+        8. Persist: semantic claim upsert + topology provenance (append-only, system1_derived)
+           + evidence links — all in one transaction.
+
+        No fallback to resolved_scope.* or literals. Structural signals only.
+        """
+        palace = derivation.palace
+        evidence_ids = list(derivation.evidence_ids)
+
+        claim_uuid = str(uuid.uuid4())
+        provenance_uuid = str(uuid.uuid4())
+
+        try:
+            await self._backend.begin_transaction()
+
+            # Task 5b: if inline candidates are provided, persist them atomically first
+            # and merge their IDs into evidence_ids for the heuristic below.
+            if derivation.inline_candidates:
+                inline_ids = await self._store_inline_candidates_in_txn(derivation)
+                evidence_ids = evidence_ids + inline_ids
+
+            # Load evidence rows for the combined IDs within this palace.
+            if not evidence_ids:
+                await self._backend.rollback()
+                _raise_contract_error(
+                    code="MEM_INSUFFICIENT_EVIDENCE",
+                    message=(
+                        "No evidence sources provided (evidence_ids and inline_candidates "
+                        f"are both empty) for palace {palace!r}. Cannot determine topology."
+                    ),
+                )
+
+            placeholders = ", ".join(f"${i + 2}::uuid" for i in range(len(evidence_ids)))
+            ev_rows_result = await self._backend.query(
+                f"""
+                SELECT id, palace, wing, room, compartment, entity_stable_id, entity_type
+                  FROM knowledge_structural_evidence
+                 WHERE palace = $1
+                   AND id IN ({placeholders})
+                ORDER BY entity_stable_id ASC
+                """,
+                (palace, *evidence_ids),
+            )
+
+            if not ev_rows_result.rows:
+                await self._backend.rollback()
+                _raise_contract_error(
+                    code="MEM_INSUFFICIENT_EVIDENCE",
+                    message=(
+                        "No persisted structural evidence rows found for the provided evidence_ids "
+                        f"in palace {palace!r}. Cannot determine topology."
+                    ),
+                )
+
+            # Anchor priority: class > module > others. Within same priority bucket,
+            # deterministic tie-break by entity_stable_id (already ORDER BY above).
+            _anchor_priority: dict[str, int] = {
+                "class": 0,
+                "module": 1,
+            }
+
+            def _anchor_key(row: dict[str, object]) -> tuple[int, str]:
+                entity_type = str(row["entity_type"])
+                priority = _anchor_priority.get(entity_type, 2)
+                return (priority, str(row["entity_stable_id"]))
+
+            anchor = min(ev_rows_result.rows, key=_anchor_key)
+
+            # Derive topology levels from structural signals only.
+            derived_compartment: str = str(anchor["compartment"])
+
+            # Modal room and wing across all evidence rows.
+            # Tie-break among equal-count values is lexicographic (ascending) for determinism.
+            room_counter: Counter[str] = Counter(
+                str(r["room"]) for r in ev_rows_result.rows if r["room"]
+            )
+            wing_counter: Counter[str] = Counter(
+                str(r["wing"]) for r in ev_rows_result.rows if r["wing"]
+            )
+
+            def _modal_lexicographic(counter: Counter[str]) -> str:
+                if not counter:
+                    return ""
+                max_count = counter.most_common(1)[0][1]
+                return min(v for v, c in counter.items() if c == max_count)
+
+            derived_room: str = _modal_lexicographic(room_counter)
+            derived_wing: str = _modal_lexicographic(wing_counter)
+
+            # Completeness gate: all three levels must be deterministic.
+            missing = [
+                level
+                for level, val in [
+                    ("wing", derived_wing),
+                    ("room", derived_room),
+                    ("compartment", derived_compartment),
+                ]
+                if not val
+            ]
+            if missing:
+                await self._backend.rollback()
+                _raise_contract_error(
+                    code="MEM_INSUFFICIENT_EVIDENCE",
+                    message=(
+                        f"Structural evidence is insufficient to determine topology: "
+                        f"missing levels {missing!r}. "
+                        "All three levels (wing, room, compartment) must be provable from "
+                        "structural evidence. No fallback is permitted."
+                    ),
+                )
+
+            scope_key = _scope_key_fn(
+                {
+                    "palace": palace,
+                    "wing": derived_wing,
+                    "room": derived_room,
+                    "compartment": derived_compartment,
+                }
+            )
+
+            # Upsert semantic claim (deduplicated per scope, type, palace).
+            claim_text = f"topology_placement:{scope_key}"
+            existing_claim = await self._backend.query(
+                """
+                SELECT id FROM knowledge_semantic_claims
+                 WHERE palace = $1
+                   AND scope_key = $2
+                   AND claim_type = 'room_intent'
+                 LIMIT 1
+                """,
+                (palace, scope_key),
+            )
+            if existing_claim.rows:
+                claim_uuid = str(existing_claim.rows[0]["id"])
+            else:
+                await self._backend.query(
+                    """
+                    INSERT INTO knowledge_semantic_claims
+                        (id, palace, wing, room, compartment, claim_type, lifecycle_state,
+                         claim_text, scope_key, created_at, updated_at)
+                    VALUES ($1::uuid, $2, $3, $4, $5, 'room_intent',
+                            'active_evidenced', $6, $7, NOW(), NOW())
+                    """,
+                    (
+                        claim_uuid, palace, derived_wing, derived_room, derived_compartment,
+                        claim_text, scope_key,
+                    ),
+                )
+
+            # Append-only provenance row (system1_derived).
+            await self._backend.query(
+                """
+                INSERT INTO knowledge_topology_provenance
+                    (id, claim_id, palace, wing, room, compartment, scope_key,
+                     derivation_source, derivation_algorithm_version,
+                     derived_at, created_at)
+                VALUES ($1::uuid, $2::uuid, $3, $4, $5, $6, $7,
+                        'system1_derived', 'system1.v1',
+                        NOW(), NOW())
+                """,
+                (
+                    provenance_uuid, claim_uuid, palace,
+                    derived_wing, derived_room, derived_compartment, scope_key,
+                ),
+            )
+
+            # Evidence links for each evidence ID (pre-existing + inline).
+            for ev_id in evidence_ids:
+                await self._backend.query(
+                    """
+                    INSERT INTO knowledge_topology_provenance_evidence
+                        (provenance_id, evidence_id)
+                    VALUES ($1::uuid, $2::uuid)
+                    ON CONFLICT DO NOTHING
+                    """,
+                    (provenance_uuid, ev_id),
+                )
+
+            await self._backend.commit()
+
+        except MemoryContractError:
+            raise
+        except Exception as exc:
+            await self._backend.rollback()
+            logger.exception(
+                "derive_system1_topology_structural: transaction rolled back"
+            )
+            _raise_contract_error(
+                code="MEM_DB_ERROR",
+                message=f"transaction rolled back — {exc}",
+            )
+
+        logger.info(
+            "derive_system1_topology_structural: "
+            "palace=%s wing=%s room=%s compartment=%s provenance_id=%s claim_id=%s",
+            palace, derived_wing, derived_room, derived_compartment,
+            provenance_uuid, claim_uuid,
+        )
+
+        return ManageMemoryResult(
+            operation="derive_system1_topology",
+            success=True,
+            derived_wing=derived_wing,
+            derived_room=derived_room,
+            derived_compartment=derived_compartment,
+            derivation_source="system1_derived",
+            provenance_id=provenance_uuid,
+            claim_id=claim_uuid,
+            diagnostics={
+                "palace": palace,
+                "evidence_ids": evidence_ids,
+                "anchor_entity_stable_id": str(anchor["entity_stable_id"]),
+                "anchor_entity_type": str(anchor["entity_type"]),
+            },
+        )
+
+    async def _derive_system1_topology_explicit_override(
+        self,
+        derivation: DeriveSystem1TopologyInput,
+    ) -> ManageMemoryResult:
+        """Persist explicit topology override with full provenance and evidence links.
+
+        All writes are atomic in one transaction:
+        1. Verify all evidence_ids reference persisted knowledge_structural_evidence rows.
+        2. Insert/upsert a topology_placement semantic claim.
+        3. Insert a knowledge_semantic_overrides accountability row.
+        4. Insert a knowledge_topology_provenance row (append-only — always INSERT).
+        5. Insert knowledge_topology_provenance_evidence rows for each evidence ID.
+
+        On any failure the transaction is rolled back, leaving no orphaned rows.
+        Returns typed fields: derived_wing/room/compartment, derivation_source,
+        provenance_id, claim_id.
+        """
+        override = derivation.topology_override
+        assert override is not None  # caller guarantees this
+
+        palace = derivation.palace
+        wing = override.wing
+        room = override.room
+        compartment = override.compartment
+        override_reason = override.override_reason
+        applied_by = override.applied_by
+
+        scope_key = _scope_key_fn(
+            {"palace": palace, "wing": wing, "room": room, "compartment": compartment}
+        )
+
+        claim_uuid = str(uuid.uuid4())
+        override_uuid = str(uuid.uuid4())
+        provenance_uuid = str(uuid.uuid4())
+        evidence_ids: list[str] = list(derivation.evidence_ids)
+
+        try:
+            await self._backend.begin_transaction()
+
+            # Task 5b: if inline candidates are provided, persist them atomically first
+            # and merge their IDs into evidence_ids.
+            if derivation.inline_candidates:
+                inline_ids = await self._store_inline_candidates_in_txn(
+                    derivation,
+                    topology=override,
+                )
+                evidence_ids = evidence_ids + inline_ids
+
+            # Step 1: verify all evidence IDs are persisted rows in this palace.
+            for ev_id in evidence_ids:
+                ev_check = await self._backend.query(
+                    """
+                    SELECT id FROM knowledge_structural_evidence
+                     WHERE id = $1::uuid AND palace = $2
+                    """,
+                    (ev_id, palace),
+                )
+                if not ev_check.rows:
+                    await self._backend.rollback()
+                    _raise_contract_error(
+                        code="MEM_EVIDENCE_NOT_FOUND",
+                        message=(
+                            f"evidence_id {ev_id!r} does not reference a persisted "
+                            f"knowledge_structural_evidence row in palace {palace!r}. "
+                            "All evidence IDs must be persisted before an explicit override "
+                            "can be accepted."
+                        ),
+                    )
+
+            # Step 2: idempotent upsert of topology_placement semantic claim.
+            # claim_text encodes the wing/room/compartment scope so it is
+            # human-readable and distinct per topology placement.
+            # SELECT-then-INSERT within the transaction: if a claim already
+            # exists for this (palace, scope_key, claim_type='room_intent'),
+            # reuse its id to keep claim rows deduplicated across repeated
+            # accepted overrides.  Provenance remains append-only (Step 4).
+            claim_text = f"topology_placement:{scope_key}"
+            existing_claim = await self._backend.query(
+                """
+                SELECT id FROM knowledge_semantic_claims
+                 WHERE palace = $1
+                   AND scope_key = $2
+                   AND claim_type = 'room_intent'
+                 LIMIT 1
+                """,
+                (palace, scope_key),
+            )
+            if existing_claim.rows:
+                claim_uuid = str(existing_claim.rows[0]["id"])
+            else:
+                await self._backend.query(
+                    """
+                    INSERT INTO knowledge_semantic_claims
+                        (id, palace, wing, room, compartment, claim_type, lifecycle_state,
+                         claim_text, scope_key, created_at, updated_at)
+                    VALUES ($1::uuid, $2, $3, $4, $5, 'room_intent',
+                            'active_evidenced', $6, $7, NOW(), NOW())
+                    """,
+                    (claim_uuid, palace, wing, room, compartment, claim_text, scope_key),
+                )
+
+            # Step 3: insert semantic override accountability row.
+            await self._backend.query(
+                """
+                INSERT INTO knowledge_semantic_overrides
+                    (id, claim_id, applied_by, override_reason,
+                     override_lifecycle_state, accountability_status,
+                     activated_at, created_at)
+                VALUES ($1::uuid, $2::uuid, $3, $4, 'active_evidenced', 'pending',
+                        NOW(), NOW())
+                """,
+                (override_uuid, claim_uuid, applied_by, override_reason),
+            )
+
+            # Step 4: insert topology provenance row (append-only).
+            await self._backend.query(
+                """
+                INSERT INTO knowledge_topology_provenance
+                    (id, claim_id, palace, wing, room, compartment, scope_key,
+                     derivation_source, derivation_algorithm_version,
+                     override_reason, applied_by, override_id,
+                     derived_at, created_at)
+                VALUES ($1::uuid, $2::uuid, $3, $4, $5, $6, $7,
+                        'explicit_override', 'explicit_override_v1',
+                        $8, $9, $10::uuid,
+                        NOW(), NOW())
+                """,
+                (
+                    provenance_uuid, claim_uuid, palace, wing, room, compartment, scope_key,
+                    override_reason, applied_by, override_uuid,
+                ),
+            )
+
+            # Step 5: insert provenance evidence link rows for each evidence ID.
+            for ev_id in evidence_ids:
+                await self._backend.query(
+                    """
+                    INSERT INTO knowledge_topology_provenance_evidence
+                        (provenance_id, evidence_id)
+                    VALUES ($1::uuid, $2::uuid)
+                    """,
+                    (provenance_uuid, ev_id),
+                )
+
+            await self._backend.commit()
+
+        except MemoryContractError:
+            # Already raised after rollback above; re-raise without swallowing.
+            raise
+        except Exception as exc:
+            await self._backend.rollback()
+            logger.exception(
+                "derive_system1_topology_explicit_override: transaction rolled back"
+            )
+            _raise_contract_error(
+                code="MEM_DB_ERROR",
+                message=f"transaction rolled back — {exc}",
+            )
+
+        logger.info(
+            "derive_system1_topology_explicit_override: "
+            "palace=%s wing=%s room=%s compartment=%s provenance_id=%s claim_id=%s",
+            palace, wing, room, compartment, provenance_uuid, claim_uuid,
+        )
+
+        return ManageMemoryResult(
+            operation="derive_system1_topology",
+            success=True,
+            derived_wing=wing,
+            derived_room=room,
+            derived_compartment=compartment,
+            derivation_source="explicit_override",
+            provenance_id=provenance_uuid,
+            claim_id=claim_uuid,
+            diagnostics={
+                "palace": palace,
+                "override_reason": override_reason,
+                "applied_by": applied_by,
+                "evidence_ids": evidence_ids,
+            },
+        )
+
+
+    async def _apply_semantic_override(
+        self,
+        override: OverrideInput,
+    ) -> ManageMemoryResult:
+        """Persist an override record in knowledge_semantic_overrides.
+
+        The override activates immediately (accountability_status='pending').
+        A real DB UUID is returned as override_id so callers can later trigger
+        accountability updates via update_override_accountability.
+
+        Subsequent System 1 verification cycles call update_override_accountability
+        to transition the row to 'supported' or 'unsupported' based on live evidence
+        presence — status does NOT latch on first verdict.
+        """
+        override_uuid = str(uuid.uuid4())
+        try:
+            row = await self._backend.query(
+                """
+                INSERT INTO knowledge_semantic_overrides
+                    (id, claim_id, applied_by, override_reason,
+                     override_lifecycle_state, accountability_status,
+                     activated_at, created_at)
+                VALUES
+                    ($1::uuid, $2::uuid, $3, $4,
+                     $5, 'pending',
+                     NOW(), NOW())
+                RETURNING id, activated_at, accountability_status
+                """,
+                (
+                    override_uuid,
+                    override.claim_id,
+                    override.overridden_by,
+                    override.override_reason,
+                    override.new_lifecycle_state,
+                ),
+            )
+            persisted_id = str(row.rows[0]["id"])
+            persisted_at = str(row.rows[0]["activated_at"])
+            accountability_status = str(row.rows[0]["accountability_status"])
+        except Exception:
+            logger.exception("apply_semantic_override: DB insert failed")
+            raise
+
+        return ManageMemoryResult(
+            operation="apply_semantic_override",
+            success=True,
+            override_id=persisted_id,
+            diagnostics={
+                "claim_id": override.claim_id,
+                "override_reason": override.override_reason,
+                "applied_by": override.overridden_by,
+                "new_lifecycle_state": override.new_lifecycle_state,
+                "activated_at": persisted_at,
+                "accountability_status": accountability_status,
+            },
+        )
+
+    async def update_override_accountability(
+        self,
+        override_id: str,
+        evidence_present: bool,
+    ) -> str:
+        """Update override accountability_status based on live System 1 evidence.
+
+        Called by verification cycles after store_system1_structural_evidence completes.
+        The status transitions to 'supported' if evidence_present, else 'unsupported'.
+        Status is NOT latched — it can change on every cycle.
+
+        Returns the new accountability_status string.
+        """
+        new_status = "supported" if evidence_present else "unsupported"
+        await self._backend.query(
+            """
+            UPDATE knowledge_semantic_overrides
+               SET accountability_status = $1,
+                   last_checked_at = NOW()
+             WHERE id = $2::uuid
+            """,
+            (new_status, override_id),
+        )
+        logger.info(
+            "override_accountability_updated override_id=%s status=%s",
+            override_id,
+            new_status,
+        )
+        return new_status
+
+    async def _derive_system2_claims(
+        self,
+        derivation: DerivationInput,
+        scope: MemoryScope,
+    ) -> ManageMemoryResult:
+        """Persist System 2 semantic claims and return real DB UUIDs.
+
+        Claim types handled:
+        - wing_intent: one claim per wing_intent_label supplied.
+        - room_intent: one claim per room_intent_label supplied.
+        - compartment_reasoning_unit: one claim per compartment_reasoning_unit supplied.
+        - memory_claim: one claim per memory_claim_text supplied.
+        - semantic_corridor: one claim + one edge row when all three corridor fields
+          are present.
+
+        All claim types require at least one resolvable structural evidence row in
+        the same normalized scope.  If none resolve, the operation fails with an
+        explicit error rather than silently creating evidence-less claims.
+        """
+        palace = scope.palace or ""
+        wing = scope.wing or ""
+        room = scope.room or ""
+        compartment = _normalize_scope_value(scope.compartment)
+
+        # ------------------------------------------------------------------
+        # Step 1: resolve evidence entity stable IDs to structural evidence rows.
+        # ------------------------------------------------------------------
+        stable_ids = derivation.evidence_entity_stable_ids
+        if not stable_ids:
+            return ManageMemoryResult(
+                operation="derive_system2_semantic_claims",
+                success=False,
+                error=(
+                    "MEM_MISSING_EVIDENCE: evidence_entity_stable_ids must contain"
+                    " at least one stable ID"
+                ),
+            )
+
+        placeholders = ", ".join(f"${i + 1}" for i in range(len(stable_ids)))
+        # Positional: stable_ids first, then scope columns.
+        evidence_rows = await self._backend.query(
+            f"""
+            SELECT id, entity_stable_id, evidence_category
+              FROM knowledge_structural_evidence
+             WHERE entity_stable_id IN ({placeholders})
+               AND palace = ${len(stable_ids) + 1}
+               AND wing   = ${len(stable_ids) + 2}
+               AND room   = ${len(stable_ids) + 3}
+               AND compartment = ${len(stable_ids) + 4}
+            """,
+            tuple(stable_ids) + (palace, wing, room, compartment),
+        )
+        if not evidence_rows.rows:
+            return ManageMemoryResult(
+                operation="derive_system2_semantic_claims",
+                success=False,
+                error=(
+                    "MEM_UNRESOLVABLE_EVIDENCE: none of the supplied"
+                    " evidence_entity_stable_ids resolved to structural evidence rows"
+                    f" in scope {palace}/{wing}/{room}/{compartment}"
+                ),
+            )
+        resolved_evidence: list[tuple[str, str]] = [
+            (str(row["id"]), str(row["evidence_category"])) for row in evidence_rows.rows
+        ]
+
+        # ------------------------------------------------------------------
+        # Step 2: determine claim type and persist.
+        # ------------------------------------------------------------------
+        is_corridor = (
+            derivation.corridor_from_claim_id is not None
+            and derivation.corridor_to_claim_id is not None
+            and derivation.corridor_type is not None
+        )
+
+        if is_corridor:
+            claim_type = "semantic_corridor"
+        elif derivation.wing_intent_label is not None:
+            claim_type = "wing_intent"
+        elif derivation.room_intent_label is not None:
+            claim_type = "room_intent"
+        elif derivation.compartment_reasoning_unit is not None:
+            claim_type = "compartment_reasoning_unit"
+        elif derivation.memory_claim_text is not None:
+            claim_type = "memory_claim"
+        else:
+            return ManageMemoryResult(
+                operation="derive_system2_semantic_claims",
+                success=False,
+                error=(
+                    "MEM_MISSING_REQUIRED_FIELD: derivation must supply one of"
+                    " wing_intent_label, room_intent_label,"
+                    " compartment_reasoning_unit, memory_claim_text, or all three"
+                    " corridor fields"
+                ),
+            )
+
+        scope_key = _scope_key_fn(
+            {"palace": palace, "wing": wing, "room": room, "compartment": compartment}
+        )
+
+        # ------------------------------------------------------------------
+        # Step 3: persist claim + evidence links (+ corridor edge) atomically.
+        #
+        # All writes happen inside a single DB transaction.  If any write fails
+        # (e.g. FK violation on corridor endpoints, unique-constraint on the
+        # directed edge) the transaction is rolled back so no orphaned claim or
+        # half-linked evidence row can remain.
+        # ------------------------------------------------------------------
+        try:
+            await self._backend.begin_transaction()
+
+            # Insert claim row.
+            # claim_text: human-readable summary derived from payload fields.
+            if claim_type == "wing_intent":
+                claim_text = f"wing_intent:{derivation.wing_intent_label}"
+            elif claim_type == "room_intent":
+                claim_text = f"room_intent:{derivation.room_intent_label}"
+            elif claim_type == "compartment_reasoning_unit":
+                claim_text = (
+                    f"compartment_reasoning_unit:{derivation.compartment_reasoning_unit}"
+                )
+            elif claim_type == "memory_claim":
+                claim_text = f"memory_claim:{derivation.memory_claim_text}"
+            else:
+                canonical_type_for_text = _canonical_corridor_type(derivation.corridor_type)  # type: ignore[arg-type]
+                claim_text = (
+                    f"semantic_corridor:{derivation.corridor_from_claim_id}"
+                    f"->{derivation.corridor_to_claim_id}:{canonical_type_for_text}"
+                )
+
+            claim_result = await self._backend.query(
+                """
+                INSERT INTO knowledge_semantic_claims
+                    (palace, wing, room, compartment, claim_type, lifecycle_state,
+                     claim_text, scope_key, created_at, updated_at)
+                VALUES ($1, $2, $3, $4, $5, 'active_evidenced', $6, $7, NOW(), NOW())
+                RETURNING id::text
+                """,
+                (
+                    palace, wing, room, compartment,
+                    claim_type,
+                    claim_text,
+                    scope_key,
+                ),
+            )
+            if not claim_result.rows:
+                await self._backend.rollback()
+                return ManageMemoryResult(
+                    operation="derive_system2_semantic_claims",
+                    success=False,
+                    error="MEM_DB_ERROR: claim insert returned no rows",
+                )
+            claim_id = str(claim_result.rows[0]["id"])
+
+            # Persist proof bundle row when this claim introduces a new wing.
+            if derivation.is_new_wing and derivation.proof_bundle is not None:
+                distinct_cats = sorted(set(derivation.proof_bundle.evidence_categories))
+                await self._backend.query(
+                    """
+                    INSERT INTO knowledge_wing_proof_bundles
+                        (palace, wing, activating_claim_id,
+                         evidence_categories, gate_satisfied, created_at)
+                    VALUES ($1, $2, $3::uuid, $4, $5, NOW())
+                    """,
+                    (
+                        palace,
+                        wing,
+                        claim_id,
+                        distinct_cats,
+                        True,
+                    ),
+                )
+
+            # Insert evidence links.
+            for evidence_id, evidence_category in resolved_evidence:
+                await self._backend.query(
+                    """
+                    INSERT INTO knowledge_claim_evidence_links
+                        (claim_id, evidence_id, evidence_category, linked_at)
+                    VALUES ($1::uuid, $2::uuid, $3, NOW())
+                    ON CONFLICT DO NOTHING
+                    """,
+                    (claim_id, evidence_id, evidence_category),
+                )
+
+            # For corridor claims, also insert the directed edge row.
+            if claim_type == "semantic_corridor":
+                canonical_type = _canonical_corridor_type(derivation.corridor_type)  # type: ignore[arg-type]
+                await self._backend.query(
+                    """
+                    INSERT INTO knowledge_semantic_corridors
+                        (claim_id, from_claim_id, to_claim_id,
+                         corridor_type, corridor_type_raw, created_at)
+                    VALUES ($1::uuid, $2::uuid, $3::uuid, $4, $5, NOW())
+                    """,
+                    (
+                        claim_id,
+                        derivation.corridor_from_claim_id,
+                        derivation.corridor_to_claim_id,
+                        canonical_type,
+                        derivation.corridor_type,
+                    ),
+                )
+
+            await self._backend.commit()
+
+        except Exception as exc:
+            await self._backend.rollback()
+            return ManageMemoryResult(
+                operation="derive_system2_semantic_claims",
+                success=False,
+                error=f"MEM_DB_ERROR: transaction rolled back — {exc}",
+            )
+
+        return ManageMemoryResult(
+            operation="derive_system2_semantic_claims",
+            success=True,
+            claim_ids=[claim_id],
         )
 
     # ------------------------------------------------------------------

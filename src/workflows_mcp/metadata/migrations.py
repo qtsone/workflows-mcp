@@ -3,7 +3,7 @@ from __future__ import annotations
 import sqlite3
 from pathlib import Path
 
-CURRENT_SCHEMA_VERSION = 9
+CURRENT_SCHEMA_VERSION = 10
 DEFAULT_JOB_TIMEOUT_SECONDS = 3600
 
 
@@ -48,10 +48,12 @@ def migrate_metadata_db(conn: sqlite3.Connection) -> None:
     project_defaults_rebuild_may_be_needed = (
         _project_default_locations_rebuild_may_be_needed(conn)
     )
+    v9_to_v10_rebuild_may_be_needed = _v9_to_v10_rebuild_may_be_needed(conn)
     foreign_keys_row = conn.execute("PRAGMA foreign_keys").fetchone()
     foreign_keys_were_enabled = int(foreign_keys_row[0]) if foreign_keys_row else 0
     foreign_keys_disabled = False
-    if project_defaults_rebuild_may_be_needed and foreign_keys_were_enabled:
+    needs_rebuild = project_defaults_rebuild_may_be_needed or v9_to_v10_rebuild_may_be_needed
+    if needs_rebuild and foreign_keys_were_enabled:
         conn.execute("PRAGMA foreign_keys = OFF")
         foreign_keys_disabled = True
 
@@ -121,12 +123,18 @@ def migrate_metadata_db(conn: sqlite3.Connection) -> None:
             conn.execute(
                 "INSERT OR IGNORE INTO schema_migrations(version) VALUES (9)"
             )
+        if max_version < 10:
+            _migrate_v9_to_v10(conn)
+            conn.execute(
+                "INSERT OR IGNORE INTO schema_migrations(version) VALUES (10)"
+            )
 
         # Phase 10+ internal-only resumable state for paused runs.
         # Keep schema version stable while ensuring additive column exists.
         _ensure_job_runs_execution_state_column(conn)
         _ensure_job_runs_execution_columns(conn)
         _ensure_project_default_locations_nullable(conn)
+        _ensure_project_extraction_settings(conn)
         conn.commit()
     except Exception:
         if transaction_started:
@@ -166,6 +174,10 @@ def _migrate_v1_to_v2(conn: sqlite3.Connection) -> None:
 
 
 def _migrate_v2_to_v3(conn: sqlite3.Connection) -> None:
+    ws_cols = _table_columns(conn, "workflow_sources")
+    if "project_id" not in ws_cols:
+        # Fresh v10 schema already has global UNIQUE on source_path; skip legacy index creation.
+        return
     if not _index_exists(conn, "idx_workflow_sources_project_path_unique"):
         conn.execute(
             """
@@ -497,6 +509,102 @@ def _migrate_v8_to_v9(conn: sqlite3.Connection) -> None:
     _ensure_workflow_sources_is_system_column(conn)
 
 
+def _migrate_v9_to_v10(conn: sqlite3.Connection) -> None:
+    """Decouple workflow_sources from projects.
+
+    Steps:
+    1. Fail closed if duplicate non-system source_path values exist (cannot safely pick one).
+    2. Delete legacy is_system=1 source rows (and their reload state via CASCADE).
+    3. Delete the exact legacy System project row (slug='system', palace='__system__').
+    4. Rebuild workflow_sources without project_id/is_system columns; add global UNIQUE on
+       source_path.
+    5. Drop the old per-project unique index.
+    """
+    # Check whether workflow_sources has the old columns at all.
+    ws_cols = _table_columns(conn, "workflow_sources")
+    has_project_id = "project_id" in ws_cols
+    has_is_system = "is_system" in ws_cols
+
+    if not has_project_id and not has_is_system:
+        # Already migrated (fresh schema or idempotent re-run).
+        return
+
+    # Step 1: Fail closed on duplicate non-system source paths.
+    if has_is_system:
+        dup_check = conn.execute(
+            """
+            SELECT source_path, COUNT(*) AS cnt
+            FROM workflow_sources
+            WHERE is_system = 0
+            GROUP BY source_path
+            HAVING cnt > 1
+            """
+        ).fetchall()
+    else:
+        dup_check = conn.execute(
+            """
+            SELECT source_path, COUNT(*) AS cnt
+            FROM workflow_sources
+            GROUP BY source_path
+            HAVING cnt > 1
+            """
+        ).fetchall()
+
+    if dup_check:
+        dup_paths = [str(row[0]) for row in dup_check]
+        raise RuntimeError(
+            "Cannot migrate workflow_sources to v10: duplicate source_path values found "
+            "among non-system sources. Resolve duplicates manually before upgrading. "
+            f"Duplicate source_path(s): {', '.join(dup_paths)}"
+        )
+
+    # Step 2: Delete legacy is_system=1 source rows.
+    # workflow_reload_state rows cascade-delete via FK.
+    if has_is_system:
+        conn.execute("DELETE FROM workflow_sources WHERE is_system = 1")
+
+    # Step 3: Delete exact legacy System project row.
+    if has_project_id:
+        conn.execute(
+            "DELETE FROM projects WHERE slug = 'system' AND palace = '__system__'"
+        )
+
+    # Step 4: Rebuild workflow_sources without project_id and is_system.
+    # SQLite does not support DROP COLUMN for old schema; use rename-create-copy-drop pattern.
+    # FK enforcement is disabled at the top of migrate_metadata_db before the transaction starts,
+    # so dropping workflow_sources_legacy_v9 will not cascade-delete workflow_reload_state rows.
+    #
+    # IMPORTANT: Use PRAGMA legacy_alter_table = ON so that SQLite does NOT update FK references
+    # in other tables (e.g. workflow_reload_state) when we rename workflow_sources. Without this,
+    # SQLite would rewrite the FK in workflow_reload_state to reference workflow_sources_legacy_v9,
+    # which is then dropped, leaving a dangling FK reference.
+    legacy_alter = conn.execute("PRAGMA legacy_alter_table").fetchone()
+    legacy_alter_was = int(legacy_alter[0]) if legacy_alter else 0
+    conn.execute("PRAGMA legacy_alter_table = ON")
+    try:
+        conn.execute("ALTER TABLE workflow_sources RENAME TO workflow_sources_legacy_v9")
+    finally:
+        conn.execute(f"PRAGMA legacy_alter_table = {legacy_alter_was}")
+    conn.execute(
+        """
+        CREATE TABLE workflow_sources (
+            source_id TEXT PRIMARY KEY,
+            source_path TEXT NOT NULL UNIQUE,
+            checksum TEXT,
+            discovered_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+        )
+        """
+    )
+    conn.execute(
+        """
+        INSERT INTO workflow_sources (source_id, source_path, checksum, discovered_at)
+        SELECT source_id, source_path, checksum, discovered_at
+        FROM workflow_sources_legacy_v9
+        """
+    )
+    conn.execute("DROP TABLE workflow_sources_legacy_v9")
+
+
 def _ensure_workflow_sources_is_system_column(conn: sqlite3.Connection) -> None:
     columns = _table_columns(conn, "workflow_sources")
     if "is_system" not in columns:
@@ -585,6 +693,14 @@ def _ensure_job_runs_execution_columns(conn: sqlite3.Connection) -> None:
         )
 
 
+def _ensure_project_extraction_settings(conn: sqlite3.Connection) -> None:
+    columns = _table_columns(conn, "projects")
+    if "system2_enabled" not in columns:
+        conn.execute(
+            "ALTER TABLE projects ADD COLUMN system2_enabled INTEGER NOT NULL DEFAULT 0"
+        )
+
+
 def _project_default_locations_rebuild_may_be_needed(conn: sqlite3.Connection) -> bool:
     projects_table_exists = conn.execute(
         "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'projects'"
@@ -594,6 +710,17 @@ def _project_default_locations_rebuild_may_be_needed(conn: sqlite3.Connection) -
 
     columns = conn.execute("PRAGMA table_info('projects')").fetchall()
     return _projects_default_locations_need_rebuild(columns)
+
+
+def _v9_to_v10_rebuild_may_be_needed(conn: sqlite3.Connection) -> bool:
+    """Return True if workflow_sources still has project_id or is_system (v9 or earlier shape)."""
+    ws_table_exists = conn.execute(
+        "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'workflow_sources'"
+    ).fetchone()
+    if ws_table_exists is None:
+        return False
+    cols = _table_columns(conn, "workflow_sources")
+    return "project_id" in cols or "is_system" in cols
 
 
 def _ensure_project_default_locations_nullable(conn: sqlite3.Connection) -> None:
@@ -644,6 +771,8 @@ def _projects_default_locations_need_rebuild(
 
 
 def _rebuild_projects_with_nullable_default_locations(conn: sqlite3.Connection) -> None:
+    legacy_columns = _table_columns(conn, "projects")
+    system2_enabled_expr = "system2_enabled" if "system2_enabled" in legacy_columns else "0"
     conn.execute("ALTER TABLE projects RENAME TO projects_legacy_default_locations")
     conn.execute(
         """
@@ -656,13 +785,14 @@ def _rebuild_projects_with_nullable_default_locations(conn: sqlite3.Connection) 
             default_room TEXT,
             fs_root TEXT NOT NULL,
             fs_allowlist_json TEXT,
+            system2_enabled INTEGER NOT NULL DEFAULT 0,
             created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
             updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
         )
         """
     )
     conn.execute(
-        """
+        f"""
         INSERT INTO projects (
             id,
             name,
@@ -672,6 +802,7 @@ def _rebuild_projects_with_nullable_default_locations(conn: sqlite3.Connection) 
             default_room,
             fs_root,
             fs_allowlist_json,
+            system2_enabled,
             created_at,
             updated_at
         )
@@ -684,6 +815,7 @@ def _rebuild_projects_with_nullable_default_locations(conn: sqlite3.Connection) 
             default_room,
             fs_root,
             fs_allowlist_json,
+            {system2_enabled_expr},
             created_at,
             updated_at
         FROM projects_legacy_default_locations
