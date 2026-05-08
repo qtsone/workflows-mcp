@@ -790,8 +790,8 @@ def test_sync_rebuild_derives_default_topology_when_project_defaults_are_blank(
     assert rebuild_payload["project_id"] == project_id
     assert rebuild_payload["status"] == "queued"
     assert rebuild_payload["dirty_count"] == 0
-    assert submitted[-1]["inputs"]["default_wing"] == "default-wing"
-    assert submitted[-1]["inputs"]["default_room"] == "default-room"
+    assert submitted[-1]["inputs"]["default_wing"] is None
+    assert submitted[-1]["inputs"]["default_room"] is None
     assert submitted[-1]["inputs"]["default_compartment"] == "sync-derived-defaults"
 
 

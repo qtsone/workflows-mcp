@@ -78,3 +78,26 @@ async def test_project_files_candidate_paths_limit_dirty_sync_scope(tmp_path: Pa
 
     assert [file["repo_relative_path"] for file in output.files] == ["src/changed.py"]
     assert output.count == 1
+
+
+@pytest.mark.asyncio
+async def test_project_files_blank_defaults_do_not_emit_synthesized_topology_override(
+    tmp_path: Path,
+) -> None:
+    project_root = tmp_path / "repo"
+    _write(project_root / "src" / "app.py", "def main():\n    return 1\n")
+
+    output = await ProjectFilesExecutor().execute(
+        ProjectFilesInput(
+            project_root=str(project_root),
+            fs_allowlist=[str(project_root)],
+            default_wing="",
+            default_room="",
+            default_compartment="forge",
+        ),
+        Execution(),
+    )
+
+    assert output.count == 1
+    assert output.files[0]["repo_relative_path"] == "src/app.py"
+    assert output.files[0]["topology_override"] is None

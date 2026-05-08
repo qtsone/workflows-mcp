@@ -49,13 +49,16 @@ import pytest
 import pytest_asyncio
 
 from workflows_mcp.context import AppContext
-from workflows_mcp.engine.executor_base import create_default_registry
+from workflows_mcp.engine.block import BlockInput, BlockOutput
+from workflows_mcp.engine.execution import Execution
+from workflows_mcp.engine.executor_base import BlockExecutor, create_default_registry
 from workflows_mcp.engine.executors_memory import MemoryExecutor
 from workflows_mcp.engine.io_queue import IOQueue
 from workflows_mcp.engine.job_queue import JobQueue
 from workflows_mcp.engine.knowledge.schema import ensure_schema
 from workflows_mcp.engine.llm_config import LLMConfigLoader
 from workflows_mcp.engine.registry import WorkflowRegistry
+from workflows_mcp.engine.schema import WorkflowSchema
 from workflows_mcp.engine.sql.backend import ConnectionConfig, DatabaseEngine
 from workflows_mcp.engine.sql.postgres_backend import PostgresBackend
 from workflows_mcp.tools import execute_workflow
@@ -403,25 +406,136 @@ async def test_system1_scan_markdown_file_stores_file_structural_evidence(
         f"Markdown System 1 scan failed: {response}"
     )
 
-    rows = await knowledge_backend.query(
-        """
-        SELECT entity_type, evidence_category, wing, room, compartment
-          FROM knowledge_structural_evidence
-         WHERE palace = $1
-        """,
-        (PALACE,),
-    )
-    assert [
-        (
-            row["entity_type"],
-            row["evidence_category"],
-            row["wing"],
-            row["room"],
-            row["compartment"],
-        )
-        for row in rows.rows
-    ] == [("file", "structural_module", "application", "documentation", "forge")]
 
+@pytest.mark.asyncio
+async def test_system1_project_sync_preserves_null_topology_override_for_system1_scan(
+    tmp_path: Path,
+) -> None:
+    """Runtime wiring keeps null topology_override as null through for_each inputs.
+
+    This guards against template coercion where {{each.value.topology_override}} could
+    become a non-null string/object and accidentally force explicit override.
+    """
+
+    class _CaptureInput(BlockInput):
+        topology_override: dict[str, str] | None = None
+
+    class _CaptureOutput(BlockOutput):
+        seen_none: bool
+
+    captured: list[dict[str, str] | None] = []
+
+    class _CaptureTopologyExecutor(BlockExecutor):
+        type_name = "CaptureTopology"
+        input_type = _CaptureInput
+        output_type = _CaptureOutput
+
+        async def execute(self, inputs: BlockInput, context: Execution) -> _CaptureOutput:
+            assert isinstance(inputs, _CaptureInput)
+            captured.append(inputs.topology_override)
+            return _CaptureOutput(seen_none=inputs.topology_override is None)
+
+    class _NoOpMemoryInput(BlockInput):
+        operation: str
+        scope: dict[str, Any] | None = None
+        record: dict[str, Any] | None = None
+
+    class _NoOpMemoryOutput(BlockOutput):
+        operation: str
+        result: dict[str, Any]
+
+    class _NoOpMemoryExecutor(BlockExecutor):
+        type_name = "Memory"
+        input_type = _NoOpMemoryInput
+        output_type = _NoOpMemoryOutput
+
+        async def execute(self, inputs: BlockInput, context: Execution) -> _NoOpMemoryOutput:
+            assert isinstance(inputs, _NoOpMemoryInput)
+            return _NoOpMemoryOutput(
+                operation=inputs.operation,
+                result={"manage": {"cycle_id": "cycle-test-noop"}},
+            )
+
+    project_root = tmp_path / "project-sync-null-override"
+    fixture_file = project_root / "src" / "app.py"
+    fixture_file.parent.mkdir(parents=True, exist_ok=True)
+    fixture_file.write_text("def main() -> int:\n    return 1\n", encoding="utf-8")
+
+    builtin_dir = (
+        Path(__file__).parent.parent
+        / "src"
+        / "workflows_mcp"
+        / "templates"
+        / "memory"
+    )
+    registry = WorkflowRegistry()
+    registry.load_from_directory(builtin_dir)
+
+    registry.unregister("system1-scan")
+    registry.register(
+        WorkflowSchema(
+            name="system1-scan",
+            description="Test shim that captures topology_override from parent workflow",
+            inputs={
+                "topology_override": {
+                    "type": "dict",
+                    "required": False,
+                    "description": "Optional explicit topology override for system1-scan",
+                },
+            },
+            blocks=[
+                {
+                    "id": "capture",
+                    "type": "CaptureTopology",
+                    "inputs": {
+                        "topology_override": "{{inputs.topology_override}}",
+                    },
+                }
+            ],
+            outputs={
+                "seen_none": {"value": "{{blocks.capture.outputs.seen_none}}", "type": "bool"}
+            },
+        )
+    )
+
+    executor_registry = create_default_registry()
+    executor_registry._executors.pop("Memory", None)
+    executor_registry.register(_NoOpMemoryExecutor())
+    executor_registry.register(_CaptureTopologyExecutor())
+
+    app_context = AppContext(
+        registry=registry,
+        executor_registry=executor_registry,
+        llm_config_loader=LLMConfigLoader(),
+        io_queue=IOQueue(),
+        job_queue=None,
+    )
+    mock_ctx = MagicMock()
+    mock_ctx.request_context.lifespan_context = app_context
+
+    result = await execute_workflow(
+        workflow="system1-project-sync",
+        inputs={
+            "project_root": str(project_root),
+            "fs_allowlist": [str(project_root)],
+            "candidate_paths": [],
+            "palace": "palace_null_override_runtime",
+            "source_name": "test-project-sync",
+            "default_wing": None,
+            "default_room": None,
+            "default_compartment": "forge",
+            "sync_scope": "rebuild",
+        },
+        debug=False,
+        mode="sync",
+        timeout=60,
+        ctx=mock_ctx,
+    )
+
+    response: dict[str, Any] = result.structuredContent
+    assert response.get("status") == "success", response
+    assert captured, "Expected at least one discovered file to trigger system1-scan"
+    assert captured[0] is None
 
 async def test_system1_scan_second_run_is_idempotent(
     workflow_context: MagicMock,

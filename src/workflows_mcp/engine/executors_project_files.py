@@ -15,8 +15,10 @@ from .execution import Execution
 from .executor_base import BlockExecutor, ExecutorCapabilities, ExecutorSecurityLevel
 from .treesitter_languages import detect_language
 
-DEFAULT_PROJECT_WING = "default-wing"
-DEFAULT_PROJECT_ROOM = "default-room"
+
+def _normalized_optional(value: str | None) -> str | None:
+    normalized = (value or "").strip()
+    return normalized or None
 
 
 class ProjectFilesInput(BlockInput):
@@ -105,13 +107,17 @@ class ProjectFilesExecutor(BlockExecutor):
         root = Path(inputs.project_root).expanduser().resolve(strict=True)
         policy = WatcherIgnorePolicy.from_project_root(root)
         allowed_roots = _allowed_roots(inputs.fs_allowlist)
-        topology_override = {
-            "wing": (inputs.default_wing or "").strip() or DEFAULT_PROJECT_WING,
-            "room": (inputs.default_room or "").strip() or DEFAULT_PROJECT_ROOM,
-            "compartment": inputs.default_compartment,
-            "override_reason": "Project default topology for System 1 project sync",
-            "applied_by": "admin_sync",
-        }
+        normalized_wing = _normalized_optional(inputs.default_wing)
+        normalized_room = _normalized_optional(inputs.default_room)
+        topology_override: dict[str, str] | None = None
+        if normalized_wing is not None and normalized_room is not None:
+            topology_override = {
+                "wing": normalized_wing,
+                "room": normalized_room,
+                "compartment": inputs.default_compartment,
+                "override_reason": "Project default topology for System 1 project sync",
+                "applied_by": "admin_sync",
+            }
 
         if inputs.candidate_paths:
             relative_paths = _candidate_relative_paths(root, inputs.candidate_paths)

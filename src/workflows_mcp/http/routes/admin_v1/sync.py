@@ -31,8 +31,9 @@ router = APIRouter(prefix="/sync")
 logger = logging.getLogger(__name__)
 
 ProjectId = Annotated[str, Path(min_length=1, max_length=128)]
-DEFAULT_PROJECT_WING = "default-wing"
-DEFAULT_PROJECT_ROOM = "default-room"
+def _normalized_optional(value: str | None) -> str | None:
+    normalized = (value or "").strip()
+    return normalized or None
 
 
 class SyncProjectSummary(BaseModel):
@@ -118,8 +119,8 @@ def _assert_project_exists(repo: SQLiteWatcherRepository, project_id: str) -> No
 def _scope_for_project(project: ProjectRecord) -> dict[str, str]:
     return {
         "palace": project.palace,
-        "wing": project.default_wing or DEFAULT_PROJECT_WING,
-        "room": project.default_room or DEFAULT_PROJECT_ROOM,
+        "wing": _normalized_optional(project.default_wing) or "default-wing",
+        "room": _normalized_optional(project.default_room) or "default-room",
         "compartment": project.slug,
     }
 
@@ -316,16 +317,15 @@ def _project_sync_inputs(
     sync_scope: str,
     candidate_paths: list[str],
 ) -> dict[str, Any]:
-    scope = _scope_for_project(project)
     return {
         "project_root": project.fs_root,
         "fs_allowlist": project.fs_allowlist,
         "candidate_paths": candidate_paths,
         "palace": project.palace,
         "source_name": project.slug,
-        "default_wing": scope["wing"],
-        "default_room": scope["room"],
-        "default_compartment": scope["compartment"],
+        "default_wing": _normalized_optional(project.default_wing),
+        "default_room": _normalized_optional(project.default_room),
+        "default_compartment": project.slug,
         "sync_scope": sync_scope,
         "memory_mode": _memory_mode(project),
     }
