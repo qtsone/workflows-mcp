@@ -1471,7 +1471,6 @@ class MemoryResponseInput(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    mode: Literal["compact", "evidence", "graph"] = Field(default="compact")
     debug: bool = Field(default=False)
     include_candidates: bool = Field(default=False)
 

@@ -581,6 +581,16 @@ def build_app(*, base_dir: Path | None = None) -> "FastAPI":
         await start_resources(resources)
         resources.app_context.reload_workflows = lambda: load_workflows(resources)
         load_workflows(resources)
+        from .memory_runtime import refresh_memory_backend
+
+        try:
+            await refresh_memory_backend(
+                app_ctx=resources.app_context,
+                executor_registry=resources.executor_registry,
+                prefer_metadata=True,
+            )
+        except Exception:
+            logger.warning("HTTP startup memory backend refresh failed", exc_info=True)
         transport_mount = getattr(_app.state, "mcp_transport_mount", None)
         transport_started = False
         try:

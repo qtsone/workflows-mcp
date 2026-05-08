@@ -61,6 +61,37 @@ def test_scope_rejects_legacy_hall_taxonomy_key() -> None:
     assert "MEM_INVALID_TAXONOMY_KEY" in str(exc.value)
 
 
+def test_response_rejects_mode_and_profile_fields() -> None:
+    with pytest.raises(ValidationError) as exc_mode:
+        MemoryRequest(
+            operation="query",
+            query={"text": "incident", "mode": "search"},
+            response={"mode": "graph"},
+        )
+    assert "response.mode" in str(exc_mode.value)
+    assert "extra_forbidden" in str(exc_mode.value)
+
+    with pytest.raises(ValidationError) as exc_profile:
+        MemoryRequest(
+            operation="query",
+            query={"text": "incident", "mode": "search"},
+            response={"profile": "full"},
+        )
+    assert "response.profile" in str(exc_profile.value)
+    assert "extra_forbidden" in str(exc_profile.value)
+
+
+def test_response_allows_only_debug_and_include_candidates() -> None:
+    request = MemoryRequest(
+        operation="query",
+        query={"text": "incident", "mode": "search"},
+        response={"debug": True, "include_candidates": True},
+    )
+
+    assert request.response.debug is True
+    assert request.response.include_candidates is True
+
+
 @pytest.mark.asyncio
 async def test_ingest_direct_requires_compartment() -> None:
     request = MemoryRequest(

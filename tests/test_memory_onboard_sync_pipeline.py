@@ -116,6 +116,15 @@ def _make_candidate(
     )
 
 
+def _disable_memory_backend_config(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(tools_memory, "memory_connection_config_from_env", lambda: None)
+    monkeypatch.setattr(
+        tools_memory,
+        "memory_connection_config_from_metadata",
+        lambda _app_ctx: None,
+    )
+
+
 # ===========================================================================
 # 1. scope_key determinism
 # ===========================================================================
@@ -838,15 +847,16 @@ class TestOnboardProgrammaticFastPath:
 
     @pytest.mark.asyncio
     async def test_scan_no_checkpoint_returns_completed(
-        self, mock_ctx: MagicMock, tmp_path: Path
+        self, mock_ctx: MagicMock, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         """onboard with ingestion.mode=programmatic returns completed status."""
         test_file = tmp_path / "main.py"
         test_file.write_text("print('hello')")
 
         onboard = _get_tool_fn("onboard")
+        _disable_memory_backend_config(monkeypatch)
         result = await onboard(
-            scope={"palace": "test-org", "wing": "svc"},
+            scope={"palace": "test-org", "wing": "svc", "room": "runtime", "compartment": "main"},
             scan={
                 "patterns": ["*.py"],
                 "root": str(tmp_path),
@@ -861,7 +871,7 @@ class TestOnboardProgrammaticFastPath:
 
     @pytest.mark.asyncio
     async def test_programmatic_completed_enables_watcher_for_active_project(
-        self, mock_ctx: MagicMock, tmp_path: Path
+        self, mock_ctx: MagicMock, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         (tmp_path / "main.py").write_text("print('hello')")
 
@@ -878,8 +888,9 @@ class TestOnboardProgrammaticFastPath:
         app_ctx.watcher_manager = MagicMock()
 
         onboard = _get_tool_fn("onboard")
+        _disable_memory_backend_config(monkeypatch)
         result = await onboard(
-            scope={"palace": "test-org", "wing": "svc"},
+            scope={"palace": "test-org", "wing": "svc", "room": "runtime", "compartment": "main"},
             scan={
                 "patterns": ["*.py"],
                 "root": str(tmp_path),
@@ -895,7 +906,7 @@ class TestOnboardProgrammaticFastPath:
 
     @pytest.mark.asyncio
     async def test_programmatic_completed_no_active_project_is_noop_for_watcher(
-        self, mock_ctx: MagicMock, tmp_path: Path
+        self, mock_ctx: MagicMock, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         (tmp_path / "main.py").write_text("print('hello')")
 
@@ -904,8 +915,9 @@ class TestOnboardProgrammaticFastPath:
         app_ctx.watcher_manager = MagicMock()
 
         onboard = _get_tool_fn("onboard")
+        _disable_memory_backend_config(monkeypatch)
         result = await onboard(
-            scope={"palace": "test-org", "wing": "svc"},
+            scope={"palace": "test-org", "wing": "svc", "room": "runtime", "compartment": "main"},
             scan={
                 "patterns": ["*.py"],
                 "root": str(tmp_path),
@@ -921,14 +933,15 @@ class TestOnboardProgrammaticFastPath:
 
     @pytest.mark.asyncio
     async def test_scan_no_checkpoint_response_has_graph_summary(
-        self, mock_ctx: MagicMock, tmp_path: Path
+        self, mock_ctx: MagicMock, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         test_file = tmp_path / "service.py"
         test_file.write_text("def main(): pass")
 
         onboard = _get_tool_fn("onboard")
+        _disable_memory_backend_config(monkeypatch)
         result = await onboard(
-            scope={"palace": "org", "wing": "api"},
+            scope={"palace": "org", "wing": "api", "room": "runtime", "compartment": "service"},
             scan={
                 "patterns": ["*.py"],
                 "root": str(tmp_path),
@@ -970,7 +983,7 @@ class TestOnboardProgrammaticFastPath:
             ),
         ):
             result = await onboard(
-                scope={"palace": "org", "wing": "api", "room": "runtime"},
+                scope={"palace": "org", "wing": "api", "room": "runtime", "compartment": "service"},
                 scan={
                     "patterns": ["*.py"],
                     "root": str(tmp_path),
@@ -1025,13 +1038,14 @@ class TestOnboardProgrammaticFastPath:
 
     @pytest.mark.asyncio
     async def test_scan_no_checkpoint_debug_includes_diagnostics(
-        self, mock_ctx: MagicMock, tmp_path: Path
+        self, mock_ctx: MagicMock, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         (tmp_path / "b.py").write_text("y = 2")
 
         onboard = _get_tool_fn("onboard")
+        _disable_memory_backend_config(monkeypatch)
         result = await onboard(
-            scope={"palace": "org"},
+            scope={"palace": "org", "wing": "svc", "room": "runtime", "compartment": "main"},
             scan={
                 "patterns": ["*.py"],
                 "root": str(tmp_path),
@@ -1107,7 +1121,7 @@ class TestOnboardProgrammaticFastPath:
             new=AsyncMock(return_value=None),
         ):
             result = await onboard(
-                scope={"palace": "org", "wing": "api", "room": "runtime"},
+                scope={"palace": "org", "wing": "api", "room": "runtime", "compartment": "service"},
                 scan={
                     "patterns": ["*.py"],
                     "root": str(tmp_path),
@@ -1582,15 +1596,16 @@ class TestOnboardLLMModeToolFastPath:
 
     @pytest.mark.asyncio
     async def test_llm_mode_valid_profile_strict_completes(
-        self, tmp_path: Path
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         loader = _make_loader(temperature=0.0)
         ctx = self._make_ctx_with_loader(loader)
         (tmp_path / "main.py").write_text("print('hello')")
 
         onboard = _get_tool_fn("onboard")
+        _disable_memory_backend_config(monkeypatch)
         result = await onboard(
-            scope={"palace": "org", "wing": "svc"},
+            scope={"palace": "org", "wing": "svc", "room": "runtime", "compartment": "main"},
             scan={
                 "patterns": ["*.py"],
                 "root": str(tmp_path),
@@ -1632,15 +1647,16 @@ class TestOnboardLLMModeToolFastPath:
 
     @pytest.mark.asyncio
     async def test_llm_mode_relaxed_nonzero_temperature_completes(
-        self, tmp_path: Path
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         loader = _make_loader(temperature=0.7)
         ctx = self._make_ctx_with_loader(loader)
         (tmp_path / "svc.py").write_text("def run(): pass")
 
         onboard = _get_tool_fn("onboard")
+        _disable_memory_backend_config(monkeypatch)
         result = await onboard(
-            scope={"palace": "org"},
+            scope={"palace": "org", "wing": "svc", "room": "runtime", "compartment": "main"},
             scan={
                 "patterns": ["*.py"],
                 "root": str(tmp_path),
@@ -1655,15 +1671,16 @@ class TestOnboardLLMModeToolFastPath:
 
     @pytest.mark.asyncio
     async def test_llm_mode_debug_response_has_llm_provenance(
-        self, tmp_path: Path
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         loader = _make_loader(temperature=0.0)
         ctx = self._make_ctx_with_loader(loader)
         (tmp_path / "b.py").write_text("y = 2")
 
         onboard = _get_tool_fn("onboard")
+        _disable_memory_backend_config(monkeypatch)
         result = await onboard(
-            scope={"palace": "org"},
+            scope={"palace": "org", "wing": "svc", "room": "runtime", "compartment": "main"},
             scan={
                 "patterns": ["*.py"],
                 "root": str(tmp_path),
@@ -1703,15 +1720,16 @@ class TestOnboardLLMModeToolFastPath:
 
     @pytest.mark.asyncio
     async def test_llm_mode_has_graph_summary(
-        self, tmp_path: Path
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         loader = _make_loader(temperature=0.0)
         ctx = self._make_ctx_with_loader(loader)
         (tmp_path / "d.py").write_text("class A: pass")
 
         onboard = _get_tool_fn("onboard")
+        _disable_memory_backend_config(monkeypatch)
         result = await onboard(
-            scope={"palace": "org", "wing": "api"},
+            scope={"palace": "org", "wing": "api", "room": "runtime", "compartment": "service"},
             scan={
                 "patterns": ["*.py"],
                 "root": str(tmp_path),
@@ -2023,25 +2041,23 @@ class TestOnboardContextPersistenceForSync:
 
     @pytest.mark.asyncio
     async def test_programmatic_onboard_then_sync_no_args_returns_unchanged(
-        self, mock_ctx: MagicMock
+        self, mock_ctx: MagicMock, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         """sync({}) after programmatic onboard returns UNCHANGED (not NO_CONTEXT)."""
         onboard = _get_tool_fn("onboard")
         sync = _get_tool_fn("sync")
         scope = {"palace": "test-palace", "wing": "test-wing"}
+        _disable_memory_backend_config(monkeypatch)
 
-        with (
-            patch("workflows_mcp.tools_memory.PostgresBackend"),
-            patch(
+        with patch(
                 "workflows_mcp.tools_memory._run_scan",
                 return_value=(
                     [{"path": "main.py", "content": "print('hello')", "size_bytes": 16}],
                     MagicMock(entries=[], scan_config=MagicMock()),
                 ),
-            ),
-        ):
+            ):
             _onboard_result = await onboard(
-                scope=scope,
+                scope={**scope, "room": "runtime", "compartment": "main"},
                 ingestion={"mode": "programmatic"},
                 scan={"path": "main.py", "root": "."},
                 ctx=mock_ctx,

@@ -852,7 +852,10 @@ def _shape_memory_response(result: MemoryResult, response: MemoryResponseInput) 
 
     if result.query is not None:
         q = result.query
-        if response.mode == "graph":
+        diagnostics = q.diagnostics if isinstance(q.diagnostics, dict) else {}
+        strategy = diagnostics.get("strategy")
+
+        if strategy == "graph":
             out: dict[str, Any] = {"paths": q.paths, "diagnostics": q.diagnostics}
             if q.evidence:
                 first = q.evidence[0]
@@ -869,7 +872,7 @@ def _shape_memory_response(result: MemoryResult, response: MemoryResponseInput) 
             payload["memories"] = [_lean_memory_item(item) for item in q.memories]
         if q.communities:
             payload["communities"] = [{"content": c.get("content", "")} for c in q.communities]
-        if response.mode == "evidence":
+        if strategy in {"topology", "evidence"}:
             payload["diagnostics"] = q.diagnostics
             payload["evidence"] = q.evidence
         if result.merge is not None:
@@ -1948,27 +1951,6 @@ def register_memory_tools(
         if unavailable is not None:
             return _json_response(unavailable)
 
-        # Guard: reject legacy response.mode contract (spec §2: no backward compatibility).
-        if isinstance(response, dict) and response.get("mode") in ("programmatic", "llm"):
-            return _json_response(
-                {
-                    "error": {
-                        "code": "LEGACY_CONTRACT_REJECTED",
-                        "message": (
-                            "The 'response.mode' field ('programmatic'|'llm') is no longer "
-                            "accepted. Use the 'ingestion' parameter instead: "
-                            "ingestion={'mode': 'programmatic'} or "
-                            "ingestion={'mode': 'llm', 'llm_profile': '<profile>'}."
-                        ),
-                        "retryable": False,
-                        "stage": "contract_validation",
-                        "actionable_fix": (
-                            "Replace response={'mode': ...} with "
-                            "ingestion={'mode': ..., 'llm_profile': ...}."
-                        ),
-                    }
-                }
-            )
         # Merge root-level debug flag into response shaping dict.
         if debug and response is None:
             response = {"debug": True}
@@ -1976,6 +1958,7 @@ def register_memory_tools(
             response = {**response, "debug": True}
         execution = _create_memory_execution(ctx)
         try:
+            MemoryResponseInput.model_validate(response or {})
             # Resolve ingestion contract fields (spec §4.1).
             _ingestion = ingestion or {}
             _pipeline_mode: str | None = _ingestion.get("mode") if _ingestion else None
@@ -2421,27 +2404,6 @@ def register_memory_tools(
         if unavailable is not None:
             return _json_response(unavailable)
 
-        # Guard: reject legacy response.mode contract (spec §2: no backward compatibility).
-        if isinstance(response, dict) and response.get("mode") in ("programmatic", "llm"):
-            return _json_response(
-                {
-                    "error": {
-                        "code": "LEGACY_CONTRACT_REJECTED",
-                        "message": (
-                            "The 'response.mode' field ('programmatic'|'llm') is no longer "
-                            "accepted. Use the 'ingestion' parameter instead: "
-                            "ingestion={'mode': 'programmatic'} or "
-                            "ingestion={'mode': 'llm', 'llm_profile': '<profile>'}."
-                        ),
-                        "retryable": False,
-                        "stage": "contract_validation",
-                        "actionable_fix": (
-                            "Replace response={'mode': ...} with "
-                            "ingestion={'mode': ..., 'llm_profile': ...}."
-                        ),
-                    }
-                }
-            )
         # Merge root-level debug flag into response shaping dict.
         if debug and response is None:
             response = {"debug": True}
@@ -2449,6 +2411,7 @@ def register_memory_tools(
             response = {**response, "debug": True}
         execution = _create_memory_execution(ctx)
         try:
+            MemoryResponseInput.model_validate(response or {})
             # Fast-path: if the checkpoint is already completed (next_index == len(plan)),
             # validate it first and then return a stable completed response without
             # replaying any operations.  Validation runs before the early return so that
@@ -3422,7 +3385,7 @@ def register_memory_tools(
 #
 # onboard_http and sync_http are async callables that:
 #   1. Parse the raw dict payload through the strict Pydantic contract model
-#      (raises pydantic.ValidationError on unknown fields / legacy response.mode).
+#      (raises pydantic.ValidationError on unknown fields).
 #   2. Delegate to the underlying onboard() / sync() MCP tool orchestration.
 #   3. Return the JSON-decoded result dict.
 #

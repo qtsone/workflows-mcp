@@ -5,7 +5,7 @@ Verifies:
 - New tool names (onboard, sync) are present and include a root-level ``debug`` parameter.
 - Both tools expose the stable error envelope shape: code, stage, message, actionable_fix.
 - vNext spec: `ingestion` parameter present on both tools.
-- vNext spec: legacy `response.mode` field is rejected with LEGACY_CONTRACT_REJECTED.
+- vNext spec: unknown `response.*` fields are rejected via schema validation.
 - vNext spec: `ingestion.mode='llm'` without `llm_profile` → INVALID_LLM_PROFILE.
 - vNext spec: minimal scope (palace only) must not produce SCOPE_UNRESOLVED.
 - vNext spec: `sync({})` returns MEM_NO_ACTIVE_CONTEXT (not MEM_PROJECT_FLOW_EMPTY).
@@ -247,19 +247,18 @@ class TestIngestionParameterSurface:
 
 
 # ---------------------------------------------------------------------------
-# vNext spec: legacy response.mode field must be rejected
+# vNext spec: unknown response fields must be schema-rejected
 # ---------------------------------------------------------------------------
 
 
-class TestLegacyContractRejection:
-    """Passing `response={'mode': 'programmatic'}` or `response={'mode': 'llm'}` must be
-    rejected with a LEGACY_CONTRACT_REJECTED error (spec §2: no backward compatibility)."""
+class TestResponseUnknownFieldSchemaRejection:
+    """Unknown `response` fields must be rejected via strict schema validation."""
 
     @pytest.mark.asyncio
-    async def test_onboard_response_mode_programmatic_rejected(
+    async def test_onboard_response_mode_programmatic_rejected_by_schema(
         self, mock_ctx: MagicMock
     ) -> None:
-        """response={'mode': 'programmatic'} is legacy and must be rejected."""
+        """response={'mode': 'programmatic'} must fail strict response schema."""
         onboard = _get_tool_fn("onboard")
         with patch("workflows_mcp.tools_memory.PostgresBackend"):
             result = await onboard(
@@ -269,13 +268,15 @@ class TestLegacyContractRejection:
             )
         payload = json.loads(result.content[0].text)
         err = payload.get("error", {})
-        assert err.get("code") == "LEGACY_CONTRACT_REJECTED", (
-            f"Expected LEGACY_CONTRACT_REJECTED, got: {err.get('code')} — payload: {payload}"
+        assert err.get("code") == "MEM_SCHEMA_VALIDATION_FAILED", (
+            f"Expected MEM_SCHEMA_VALIDATION_FAILED, got: {err.get('code')} — payload: {payload}"
         )
 
     @pytest.mark.asyncio
-    async def test_onboard_response_mode_llm_rejected(self, mock_ctx: MagicMock) -> None:
-        """response={'mode': 'llm'} is legacy and must be rejected."""
+    async def test_onboard_response_mode_llm_rejected_by_schema(
+        self, mock_ctx: MagicMock
+    ) -> None:
+        """response={'mode': 'llm'} must fail strict response schema."""
         onboard = _get_tool_fn("onboard")
         with patch("workflows_mcp.tools_memory.PostgresBackend"):
             result = await onboard(
@@ -285,15 +286,15 @@ class TestLegacyContractRejection:
             )
         payload = json.loads(result.content[0].text)
         err = payload.get("error", {})
-        assert err.get("code") == "LEGACY_CONTRACT_REJECTED", (
-            f"Expected LEGACY_CONTRACT_REJECTED, got: {err.get('code')} — payload: {payload}"
+        assert err.get("code") == "MEM_SCHEMA_VALIDATION_FAILED", (
+            f"Expected MEM_SCHEMA_VALIDATION_FAILED, got: {err.get('code')} — payload: {payload}"
         )
 
     @pytest.mark.asyncio
-    async def test_sync_response_mode_programmatic_rejected(
+    async def test_sync_response_mode_programmatic_rejected_by_schema(
         self, mock_ctx: MagicMock
     ) -> None:
-        """sync with response={'mode': 'programmatic'} is legacy and must be rejected."""
+        """sync response={'mode': 'programmatic'} must fail strict response schema."""
         sync = _get_tool_fn("sync")
         with patch("workflows_mcp.tools_memory.PostgresBackend"):
             result = await sync(
@@ -303,8 +304,26 @@ class TestLegacyContractRejection:
             )
         payload = json.loads(result.content[0].text)
         err = payload.get("error", {})
-        assert err.get("code") == "LEGACY_CONTRACT_REJECTED", (
-            f"Expected LEGACY_CONTRACT_REJECTED, got: {err.get('code')} — payload: {payload}"
+        assert err.get("code") == "MEM_SCHEMA_VALIDATION_FAILED", (
+            f"Expected MEM_SCHEMA_VALIDATION_FAILED, got: {err.get('code')} — payload: {payload}"
+        )
+
+    @pytest.mark.asyncio
+    async def test_sync_response_profile_rejected_by_schema(
+        self, mock_ctx: MagicMock
+    ) -> None:
+        """sync response={'profile': ...} must fail strict response schema."""
+        sync = _get_tool_fn("sync")
+        with patch("workflows_mcp.tools_memory.PostgresBackend"):
+            result = await sync(
+                scope={"palace": "org"},
+                response={"profile": "standard"},
+                ctx=mock_ctx,
+            )
+        payload = json.loads(result.content[0].text)
+        err = payload.get("error", {})
+        assert err.get("code") == "MEM_SCHEMA_VALIDATION_FAILED", (
+            f"Expected MEM_SCHEMA_VALIDATION_FAILED, got: {err.get('code')} — payload: {payload}"
         )
 
 
@@ -923,7 +942,7 @@ class TestStrictHttpAdapters:
     before delegating to the underlying orchestration logic.
 
     onboard_http and sync_http:
-    - raise pydantic.ValidationError for unknown fields and legacy response.mode
+    - raise pydantic.ValidationError for unknown fields
     - are async and accept ctx: AppContextType
     - delegate to the underlying onboard()/sync() orchestration on valid input
     """

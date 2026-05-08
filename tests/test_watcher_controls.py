@@ -12,6 +12,7 @@ import pytest
 from fastapi.testclient import TestClient
 from pydantic import ValidationError
 
+import workflows_mcp.http.routes.admin_v1.projects as projects_routes
 import workflows_mcp.http.routes.admin_v1.sync as sync_routes
 import workflows_mcp.server as server_module
 from workflows_mcp.bootstrap import bootstrap_if_needed
@@ -508,7 +509,19 @@ def test_admin_sync_routes_require_session_and_csrf_for_mutations(app_client: Te
     assert rebuild_without_csrf.status_code == 403
 
 
-def test_watcher_state_controls_persist_and_status_exposes_metadata(app_client: TestClient) -> None:
+def test_watcher_state_controls_persist_and_status_exposes_metadata(
+    app_client: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    async def _queue_project_rebuild_noop(**kwargs: Any) -> sync_routes.SyncNowResponse:
+        return sync_routes.SyncNowResponse(
+            project_id=str(kwargs["project_id"]),
+            status="queued",
+            dirty_count=1,
+        )
+
+    monkeypatch.setattr(projects_routes, "queue_project_rebuild", _queue_project_rebuild_noop)
+
     csrf_token = _login_and_csrf(app_client)
     resources = app_client.app.state.resources
     watcher_manager = resources.watcher_manager
@@ -808,7 +821,17 @@ def test_sync_error_detail_surfaces_wrapped_memory_contract_validation_error() -
 def test_sync_now_reports_system1_workflow_failure_details(
     app_client: TestClient,
     tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    for key in (
+        "MEMORY_DB_HOST",
+        "MEMORY_DB_PORT",
+        "MEMORY_DB_NAME",
+        "MEMORY_DB_USER",
+        "MEMORY_DB_PASSWORD",
+    ):
+        monkeypatch.delenv(key, raising=False)
+
     csrf_token = _login_and_csrf(app_client)
     project_root = tmp_path / "sync-failure-project"
     _write(project_root / "workflow.yaml", "steps: []\n")

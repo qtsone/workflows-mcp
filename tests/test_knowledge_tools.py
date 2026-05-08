@@ -191,7 +191,7 @@ class TestMemoryTool:
                 supersede={"ids": ["m-legacy"], "superseded_by": "m-1"},
                 archive={"ids": ["m-old"]},
                 maintain={"mode": "community_refresh"},
-                response={"mode": "compact", "debug": False},
+                response={"debug": False},
                 max_operations=1,
                 ctx=mock_ctx,
             )
@@ -204,7 +204,7 @@ class TestMemoryTool:
 
             sync_result = await sync(
                 checkpoint=onboard_payload["checkpoint"],
-                response={"mode": "compact", "debug": False},
+                response={"debug": False},
                 max_operations=3,
                 ctx=mock_ctx,
             )
@@ -226,7 +226,7 @@ class TestMemoryTool:
         with patch("workflows_mcp.tools_memory.PostgresBackend", return_value=backend_mock):
             result = await sync(
                 checkpoint={"version": "invalid"},
-                response={"mode": "compact", "debug": False},
+                response={"debug": False},
                 max_operations=1,
                 ctx=mock_ctx,
             )
@@ -248,7 +248,7 @@ class TestMemoryTool:
                     "next_index": 0,
                     "completed": [],
                 },
-                response={"mode": "compact", "debug": False},
+                response={"debug": False},
                 max_operations=1,
                 ctx=mock_ctx,
             )
@@ -270,7 +270,7 @@ class TestMemoryTool:
                     "next_index": 1,
                     "completed": [{"operation": "archive", "result": {}}],
                 },
-                response={"mode": "compact", "debug": False},
+                response={"debug": False},
                 max_operations=1,
                 ctx=mock_ctx,
             )
@@ -292,7 +292,7 @@ class TestMemoryTool:
                     "next_index": 0,
                     "completed": [{"operation": "ingest", "result": {}}],
                 },
-                response={"mode": "compact", "debug": False},
+                response={"debug": False},
                 max_operations=1,
                 ctx=mock_ctx,
             )
@@ -314,7 +314,7 @@ class TestMemoryTool:
                     "next_index": 1,
                     "completed": [],
                 },
-                response={"mode": "compact", "debug": False},
+                response={"debug": False},
                 max_operations=1,
                 ctx=mock_ctx,
             )
@@ -354,14 +354,14 @@ class TestMemoryTool:
                 operation="query",
                 query={"text": "find this"},
                 scope={"palace": "test"},
-                response={"mode": "compact", "debug": False},
+                response={"debug": False},
                 ctx=mock_ctx,
             )
             await memory(
                 operation="query",
                 query={"text": "find this too"},
                 scope={"palace": "test"},
-                response={"mode": "compact", "debug": False},
+                response={"debug": False},
                 ctx=mock_ctx,
             )
 
@@ -409,14 +409,14 @@ class TestMemoryTool:
                     operation="query",
                     query={"text": "find this"},
                     scope={"palace": "test"},
-                    response={"mode": "compact", "debug": False},
+                    response={"debug": False},
                     ctx=mock_ctx,
                 ),
                 memory(
                     operation="query",
                     query={"text": "find this too"},
                     scope={"palace": "test"},
-                    response={"mode": "compact", "debug": False},
+                    response={"debug": False},
                     ctx=mock_ctx,
                 ),
             )
@@ -442,7 +442,7 @@ class TestMemoryTool:
                         communities=[],
                         paths=[],
                         evidence=[],
-                        diagnostics={},
+                        diagnostics={"strategy": "graph"},
                     ),
                 )
             )
@@ -451,7 +451,7 @@ class TestMemoryTool:
                 operation="query",
                 query={"text": "find this"},
                 scope={"palace": "test"},
-                response={"mode": "compact", "debug": False},
+                response={"debug": False},
                 ctx=mock_ctx,
             )
 
@@ -480,7 +480,7 @@ class TestMemoryTool:
                     "format": "structured",
                     "memories": [{"content": "fails before writes"}],
                 },
-                response={"mode": "compact", "debug": True},
+                response={"debug": True},
                 ctx=mock_ctx,
             )
 
@@ -517,7 +517,7 @@ class TestMemoryTool:
                 operation="query",
                 scope={"wing": "svc", "room": "component", "compartment": "topic"},
                 query={"text": "find this", "mode": "search", "radius": 1, "precision": 0.5},
-                response={"mode": "compact", "debug": False},
+                response={"debug": False},
                 ctx=mock_ctx,
             )
 
@@ -557,7 +557,7 @@ class TestMemoryTool:
                     "compartment": "topic",
                 },
                 query={"text": "find this", "mode": "communities"},
-                response={"mode": "compact", "debug": False},
+                response={"debug": False},
                 ctx=mock_ctx,
             )
 
@@ -594,7 +594,7 @@ class TestMemoryTool:
                     "compartment": "topic",
                 },
                 record={"format": "raw", "content": "test", "memory_tier": "direct"},
-                response={"mode": "compact", "debug": False},
+                response={"debug": False},
                 ctx=mock_ctx,
             )
 
@@ -649,7 +649,7 @@ class TestMemoryTool:
                 },
                 ingest={"format": "raw", "content": "initial", "memory_tier": "direct"},
                 supersede={"ids": ["m-legacy"], "superseded_by": "m-1"},
-                response={"mode": "compact", "debug": False},
+                response={"debug": False},
                 max_operations=5,
                 ctx=mock_ctx,
             )
@@ -697,7 +697,7 @@ class TestMemoryTool:
                     "next_index": 1,
                     "completed": [{"operation": "ingest", "result": {"stored": 1}}],
                 },
-                response={"mode": "compact", "debug": False},
+                response={"debug": False},
                 max_operations=3,
                 ctx=mock_ctx,
             )
@@ -733,7 +733,7 @@ class TestMemoryTool:
                 },
                 ingest={"format": "raw", "content": "initial", "memory_tier": "direct"},
                 supersede={"ids": ["m-legacy"], "superseded_by": "m-1"},
-                response={"mode": "compact", "debug": False},
+                response={"debug": False},
                 max_operations=5,
                 ctx=mock_ctx,
             )
@@ -773,7 +773,7 @@ class TestMemoryTool:
                     "next_index": 0,
                     "completed": [],
                 },
-                response={"mode": "compact", "debug": False},
+                response={"debug": False},
                 max_operations=3,
                 ctx=mock_ctx,
             )
@@ -798,7 +798,7 @@ class TestMemoryTool:
                 operation="query",
                 scope={"palace": "acme", "wing": "svc", "room": "comp", "hall": "legacy"},
                 query={"text": "find this", "mode": "search"},
-                response={"mode": "compact", "debug": False},
+                response={"debug": False},
                 ctx=mock_ctx,
             )
 
@@ -842,7 +842,7 @@ class TestMemoryTool:
                     "memory_tier": "direct",
                     "categories": ["unknown-cat"],
                 },
-                response={"mode": "compact", "debug": False},
+                response={"debug": False},
                 ctx=mock_ctx,
             )
 
@@ -868,7 +868,7 @@ class TestMemoryTool:
                         communities=[],
                         paths=[{"nodes": ["a", "b"]}],
                         evidence=[{"nodes": [{"id": "a"}], "edges": []}],
-                        diagnostics={},
+                        diagnostics={"strategy": "graph"},
                     ),
                 )
             )
@@ -881,7 +881,7 @@ class TestMemoryTool:
                     "graph": {"op": "path", "start": "a", "end": "b"},
                 },
                 scope={"palace": "test"},
-                response={"mode": "graph"},
+                response={},
                 ctx=mock_ctx,
             )
 
@@ -914,7 +914,7 @@ class TestMemoryTool:
                 operation="maintain",
                 maintenance={"mode": "community_refresh"},
                 scope={"palace": "test"},
-                response={"mode": "compact", "debug": False},
+                response={"debug": False},
                 ctx=mock_ctx,
             )
 
@@ -1170,7 +1170,7 @@ class TestProjectOnboardWithScan:
             result = await onboard(
                 scope={"palace": "proj"},
                 scan={"patterns": ["*.py"], "root": str(workspace_tmp)},
-                response={"mode": "compact", "debug": False},
+                response={"debug": False},
                 max_operations=5,
                 ctx=mock_ctx,
             )
@@ -1698,7 +1698,7 @@ class TestScanStructuredIngestEmbeddingFailure:
                     "format": "structured",
                     "memories": [{"content": "def foo(): pass"}],
                 },
-                response={"mode": "compact", "debug": False},
+                response={"debug": False},
                 ctx=mock_ctx,
             )
 

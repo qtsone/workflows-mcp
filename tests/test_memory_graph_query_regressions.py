@@ -280,16 +280,26 @@ def test_graph_response_shape_includes_diagnostics_for_all_graph_ops() -> None:
         query=QueryMemoryResult(
             paths=[{"hop_count": 1}],
             evidence=[{"nodes": [{"id": "a"}], "edges": [{"id": "e"}]}],
-            diagnostics={"expanded_nodes": 1, "pruned_edges": 0, "latency_ms": 1.0},
+            diagnostics={
+                "strategy": "graph",
+                "expanded_nodes": 1,
+                "pruned_edges": 0,
+                "latency_ms": 1.0,
+            },
         ),
     )
 
-    payload = _shape_memory_response(result, MemoryResponseInput(mode="graph"))
+    payload = _shape_memory_response(result, MemoryResponseInput())
 
     assert payload["paths"] == [{"hop_count": 1}]
     assert payload["nodes"] == [{"id": "a"}]
     assert payload["edges"] == [{"id": "e"}]
-    assert payload["diagnostics"] == {"expanded_nodes": 1, "pruned_edges": 0, "latency_ms": 1.0}
+    assert payload["diagnostics"] == {
+        "strategy": "graph",
+        "expanded_nodes": 1,
+        "pruned_edges": 0,
+        "latency_ms": 1.0,
+    }
 
 
 @pytest.mark.asyncio

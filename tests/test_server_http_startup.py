@@ -82,6 +82,59 @@ def test_http_server_exposes_openapi(tmp_path: Path) -> None:
     assert client.get("/openapi.json").status_code == 200
 
 
+def test_http_lifespan_refreshes_memory_backend_with_prefer_metadata(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """HTTP startup should initialize memory schema via metadata-backed refresh."""
+    from workflows_mcp import memory_runtime
+
+    calls: list[tuple[object, object, bool]] = []
+
+    async def _fake_refresh_memory_backend(
+        *,
+        app_ctx: object,
+        executor_registry: object,
+        prefer_metadata: bool,
+    ) -> None:
+        calls.append((app_ctx, executor_registry, prefer_metadata))
+
+    monkeypatch.delenv("MEMORY_DB_HOST", raising=False)
+    monkeypatch.setattr(memory_runtime, "refresh_memory_backend", _fake_refresh_memory_backend)
+
+    with TestClient(build_app(base_dir=tmp_path)) as client:
+        response = client.get("/health")
+
+    assert response.status_code == 200
+    assert len(calls) == 1
+    assert calls[0][2] is True
+
+
+def test_http_lifespan_logs_refresh_failure_but_starts_app(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """HTTP startup must be fail-open if memory refresh errors."""
+    from workflows_mcp import memory_runtime
+
+    async def _failing_refresh_memory_backend(
+        *, app_ctx: object, executor_registry: object, prefer_metadata: bool
+    ) -> None:
+        del app_ctx, executor_registry, prefer_metadata
+        raise RuntimeError("simulated refresh failure")
+
+    monkeypatch.delenv("MEMORY_DB_HOST", raising=False)
+    monkeypatch.setattr(memory_runtime, "refresh_memory_backend", _failing_refresh_memory_backend)
+
+    with caplog.at_level(logging.WARNING):
+        with TestClient(build_app(base_dir=tmp_path)) as client:
+            response = client.get("/health")
+
+    assert response.status_code == 200
+    assert "HTTP startup memory backend refresh failed" in caplog.text
+
+
 # ---------------------------------------------------------------------------
 # build_app() return type
 # ---------------------------------------------------------------------------

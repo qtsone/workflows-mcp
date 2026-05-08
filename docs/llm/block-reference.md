@@ -25,6 +25,8 @@ Field names are **exact** - use them precisely in your workflows.
 | MergeJSONState | path, updates |
 | Sql | engine |
 | TreeSitter | path |
+| ProjectFiles | project_root, default_compartment |
+| System2Planner | palace, default_wing, default_room |
 | Memory | operation |
 
 ### Common Field Name Mistakes
@@ -704,6 +706,61 @@ Without this, execution fails with configuration error.
 - **`entities`** (array): Extracted graph entities (File, Module, …).
 - **`relations`** (array): Extracted graph relations (CONTAINS, IMPORTS, …).
 - **`unresolved_imports`** (array): Import strings that could not be resolved to known entities.
+- **`structural_evidence_items`** (array): ADR-013: entities pre-mapped to StructuralEvidenceItem shape (entity_stable_id, entity_type, evidence_category, evidence_data) ready for store_system1_structural_evidence.
+
+---
+
+## ProjectFiles
+
+**Description**: Discover project files using watcher ignore and allowlist policy.
+
+### Required Inputs
+
+- **`project_root`** (string): Absolute project root to scan.
+- **`default_compartment`** (string): Default project compartment.
+
+### Optional Inputs
+
+- **`fs_allowlist`** (array): Allowed absolute filesystem roots for this project.
+- **`candidate_paths`** (array): Optional project-relative paths limiting dirty-file sync scope.
+- **`scope`** (string) *(default: `rebuild`)*: Sync scope for diagnostics; discovery policy is selected by candidate_paths.
+- **`include_supported_only`** (boolean) *(default: `True`)*: When true, unsupported TreeSitter languages are skipped.
+- **`default_wing`** (string): Default Wing
+- **`default_room`** (string): Default Room
+
+### Outputs
+
+- **`meta`** (object): Executor-specific metadata fields (exit_code, tokens_used, etc.)
+- **`files`** (array): Files
+- **`count`** (integer): Count
+- **`skipped_unsupported`** (integer): Skipped Unsupported
+- **`skipped_disallowed`** (integer): Skipped Disallowed
+- **`skipped_missing`** (integer): Skipped Missing
+
+---
+
+## System2Planner
+
+**Description**: Build deterministic evidence-backed System 2 derivation requests.
+
+### Required Inputs
+
+- **`palace`** (string): Palace
+- **`default_wing`** (string): Default Wing
+- **`default_room`** (string): Default Room
+
+### Optional Inputs
+
+- **`default_compartment`** (string) *(default: ``)*: Default Compartment
+- **`verification_cycle_id`** (string): Verification Cycle Id
+- **`sync_scope`** (string) *(default: `rebuild`)*: Sync Scope
+
+### Outputs
+
+- **`meta`** (object): Executor-specific metadata fields (exit_code, tokens_used, etc.)
+- **`derivations`** (array): Derivations
+- **`lifecycle`** (object): Lifecycle
+- **`derivation_count`** (integer): Derivation Count
 
 ---
 
@@ -730,6 +787,7 @@ Without this, execution fails with configuration error.
 - **`graph`** (object): Graph mutation payload (entities/relations for upsert or delete).
 - **`maintenance`** (object): Maintenance payload for validate/supersede/archive/maintain operations.
 - **`response`** (object): Response shaping controls (include sections, verbosity, and formatting flags).
+- **`derivation`** (object): Derivation payload for derive_system1_topology. System 2 derivation payloads belong under record.derivation.
 
 ### Outputs
 

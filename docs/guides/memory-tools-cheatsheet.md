@@ -27,7 +27,7 @@ Legacy tool names are not part of the active public contract.
   "record": {},
   "graph": {},
   "maintenance": {},
-  "response": {"mode": "compact|evidence|graph", "debug": false, "include_candidates": false}
+  "response": {"debug": false, "include_candidates": false}
 }
 ```
 
@@ -178,7 +178,7 @@ Validation note (2026-04-21): this category behavior was live-validated via prod
 {
   "operation": "maintain",
   "maintenance": {"mode": "community_refresh"},
-  "response": {"mode": "compact", "debug": false}
+  "response": {"debug": false}
 }
 ```
 

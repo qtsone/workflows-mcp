@@ -28,7 +28,7 @@ class ScopeModel(StrictModel):
 class ResponseOptions(StrictModel):
     """Response shaping options.
 
-    Note: the legacy ``response.mode`` field is no longer accepted.
+    Note: ``response.mode`` is unsupported and rejected by schema.
     Extra fields (including ``mode``) are rejected by the strict model config.
     Use ``ingestion.mode`` for ingestion-mode selection.
     """

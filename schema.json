@@ -118,6 +118,8 @@
               "MergeJSONState",
               "Sql",
               "TreeSitter",
+              "ProjectFiles",
+              "System2Planner",
               "Memory"
             ],
             "description": "Block type"
@@ -2016,6 +2018,158 @@
             "if": {
               "properties": {
                 "type": {
+                  "const": "ProjectFiles"
+                }
+              }
+            },
+            "then": {
+              "properties": {
+                "inputs": {
+                  "additionalProperties": false,
+                  "description": "Inputs for ProjectFiles block",
+                  "properties": {
+                    "project_root": {
+                      "description": "Absolute project root to scan.",
+                      "title": "Project Root",
+                      "type": "string"
+                    },
+                    "fs_allowlist": {
+                      "description": "Allowed absolute filesystem roots for this project.",
+                      "items": {
+                        "type": "string"
+                      },
+                      "title": "Fs Allowlist",
+                      "type": "array"
+                    },
+                    "candidate_paths": {
+                      "description": "Optional project-relative paths limiting dirty-file sync scope.",
+                      "items": {
+                        "type": "string"
+                      },
+                      "title": "Candidate Paths",
+                      "type": "array"
+                    },
+                    "scope": {
+                      "default": "rebuild",
+                      "description": "Sync scope for diagnostics; discovery policy is selected by candidate_paths.",
+                      "enum": [
+                        "dirty",
+                        "reconcile",
+                        "rebuild"
+                      ],
+                      "title": "Scope",
+                      "type": "string"
+                    },
+                    "include_supported_only": {
+                      "default": true,
+                      "description": "When true, unsupported TreeSitter languages are skipped.",
+                      "title": "Include Supported Only",
+                      "type": "boolean"
+                    },
+                    "default_wing": {
+                      "anyOf": [
+                        {
+                          "type": "string"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ],
+                      "default": null,
+                      "title": "Default Wing"
+                    },
+                    "default_room": {
+                      "anyOf": [
+                        {
+                          "type": "string"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ],
+                      "default": null,
+                      "title": "Default Room"
+                    },
+                    "default_compartment": {
+                      "description": "Default project compartment.",
+                      "title": "Default Compartment",
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "project_root",
+                    "default_compartment"
+                  ],
+                  "title": "ProjectFilesInput",
+                  "type": "object"
+                }
+              }
+            }
+          },
+          {
+            "if": {
+              "properties": {
+                "type": {
+                  "const": "System2Planner"
+                }
+              }
+            },
+            "then": {
+              "properties": {
+                "inputs": {
+                  "additionalProperties": false,
+                  "description": "Inputs for System2Planner block",
+                  "properties": {
+                    "palace": {
+                      "title": "Palace",
+                      "type": "string"
+                    },
+                    "default_wing": {
+                      "title": "Default Wing",
+                      "type": "string"
+                    },
+                    "default_room": {
+                      "title": "Default Room",
+                      "type": "string"
+                    },
+                    "default_compartment": {
+                      "default": "",
+                      "title": "Default Compartment",
+                      "type": "string"
+                    },
+                    "verification_cycle_id": {
+                      "anyOf": [
+                        {
+                          "type": "string"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ],
+                      "default": null,
+                      "title": "Verification Cycle Id"
+                    },
+                    "sync_scope": {
+                      "default": "rebuild",
+                      "title": "Sync Scope",
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "palace",
+                    "default_wing",
+                    "default_room"
+                  ],
+                  "title": "System2PlannerInput",
+                  "type": "object"
+                }
+              }
+            }
+          },
+          {
+            "if": {
+              "properties": {
+                "type": {
                   "const": "Memory"
                 }
               }
@@ -2045,7 +2199,13 @@
                         "store_memories",
                         "store_entity_embeddings",
                         "archive_memories",
-                        "mark_item_dirty"
+                        "mark_item_dirty",
+                        "store_system1_structural_evidence",
+                        "record_system1_verification_cycle",
+                        "derive_system1_topology",
+                        "derive_system2_semantic_claims",
+                        "apply_semantic_override",
+                        "reconcile_semantic_lifecycle"
                       ],
                       "title": "Operation",
                       "type": "string"
@@ -2198,6 +2358,20 @@
                       "default": null,
                       "description": "Response shaping controls (include sections, verbosity, and formatting flags).",
                       "title": "Response"
+                    },
+                    "derivation": {
+                      "anyOf": [
+                        {
+                          "additionalProperties": true,
+                          "type": "object"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ],
+                      "default": null,
+                      "description": "Derivation payload for derive_system1_topology. System 2 derivation payloads belong under record.derivation.",
+                      "title": "Derivation"
                     }
                   },
                   "required": [
@@ -4019,6 +4193,132 @@
       "title": "TreeSitterInput",
       "type": "object"
     },
+    "ProjectFilesInput": {
+      "additionalProperties": false,
+      "description": "Discover files eligible for System 1 project sync.",
+      "properties": {
+        "project_root": {
+          "description": "Absolute project root to scan.",
+          "title": "Project Root",
+          "type": "string"
+        },
+        "fs_allowlist": {
+          "description": "Allowed absolute filesystem roots for this project.",
+          "items": {
+            "type": "string"
+          },
+          "title": "Fs Allowlist",
+          "type": "array"
+        },
+        "candidate_paths": {
+          "description": "Optional project-relative paths limiting dirty-file sync scope.",
+          "items": {
+            "type": "string"
+          },
+          "title": "Candidate Paths",
+          "type": "array"
+        },
+        "scope": {
+          "default": "rebuild",
+          "description": "Sync scope for diagnostics; discovery policy is selected by candidate_paths.",
+          "enum": [
+            "dirty",
+            "reconcile",
+            "rebuild"
+          ],
+          "title": "Scope",
+          "type": "string"
+        },
+        "include_supported_only": {
+          "default": true,
+          "description": "When true, unsupported TreeSitter languages are skipped.",
+          "title": "Include Supported Only",
+          "type": "boolean"
+        },
+        "default_wing": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Default Wing"
+        },
+        "default_room": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Default Room"
+        },
+        "default_compartment": {
+          "description": "Default project compartment.",
+          "title": "Default Compartment",
+          "type": "string"
+        }
+      },
+      "required": [
+        "project_root",
+        "default_compartment"
+      ],
+      "title": "ProjectFilesInput",
+      "type": "object"
+    },
+    "System2PlannerInput": {
+      "additionalProperties": false,
+      "description": "Inputs for evidence-backed System 2 project planning.",
+      "properties": {
+        "palace": {
+          "title": "Palace",
+          "type": "string"
+        },
+        "default_wing": {
+          "title": "Default Wing",
+          "type": "string"
+        },
+        "default_room": {
+          "title": "Default Room",
+          "type": "string"
+        },
+        "default_compartment": {
+          "default": "",
+          "title": "Default Compartment",
+          "type": "string"
+        },
+        "verification_cycle_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Verification Cycle Id"
+        },
+        "sync_scope": {
+          "default": "rebuild",
+          "title": "Sync Scope",
+          "type": "string"
+        }
+      },
+      "required": [
+        "palace",
+        "default_wing",
+        "default_room"
+      ],
+      "title": "System2PlannerInput",
+      "type": "object"
+    },
     "MemoryInput": {
       "additionalProperties": false,
       "description": "Unified memory block input.",
@@ -4042,7 +4342,13 @@
             "store_memories",
             "store_entity_embeddings",
             "archive_memories",
-            "mark_item_dirty"
+            "mark_item_dirty",
+            "store_system1_structural_evidence",
+            "record_system1_verification_cycle",
+            "derive_system1_topology",
+            "derive_system2_semantic_claims",
+            "apply_semantic_override",
+            "reconcile_semantic_lifecycle"
           ],
           "title": "Operation",
           "type": "string"
@@ -4195,6 +4501,20 @@
           "default": null,
           "description": "Response shaping controls (include sections, verbosity, and formatting flags).",
           "title": "Response"
+        },
+        "derivation": {
+          "anyOf": [
+            {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Derivation payload for derive_system1_topology. System 2 derivation payloads belong under record.derivation.",
+          "title": "Derivation"
         }
       },
       "required": [

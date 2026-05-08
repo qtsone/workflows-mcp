@@ -6,6 +6,7 @@ from typing import Any
 import pytest
 from fastapi.testclient import TestClient
 
+import workflows_mcp.http.routes.admin_v1.projects as projects_routes
 import workflows_mcp.http.routes.admin_v1.sync as sync_routes
 from workflows_mcp.bootstrap import bootstrap_if_needed
 from workflows_mcp.server import build_app
@@ -257,6 +258,15 @@ def test_admin_project_create_enqueues_initial_graph_rebuild_status(
 
     monkeypatch.setattr(sync_routes, "process_project_sync_now", _process_project_sync_now)
 
+    async def _queue_project_rebuild_noop(**kwargs: Any) -> sync_routes.SyncNowResponse:
+        return sync_routes.SyncNowResponse(
+            project_id=str(kwargs["project_id"]),
+            status="queued",
+            dirty_count=1,
+        )
+
+    monkeypatch.setattr(projects_routes, "queue_project_rebuild", _queue_project_rebuild_noop)
+
     created_response = app_client.post(
         "/api/admin/v1/projects",
         json=_project_create_payload(
@@ -296,7 +306,17 @@ def test_admin_project_create_enqueues_initial_graph_rebuild_status(
 
 def test_admin_sync_details_report_system_states_and_collected_counts(
     app_client: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    for key in (
+        "MEMORY_DB_HOST",
+        "MEMORY_DB_PORT",
+        "MEMORY_DB_NAME",
+        "MEMORY_DB_USER",
+        "MEMORY_DB_PASSWORD",
+    ):
+        monkeypatch.delenv(key, raising=False)
+
     csrf_token = _login_and_csrf(app_client)
     created_response = app_client.post(
         "/api/admin/v1/projects",
