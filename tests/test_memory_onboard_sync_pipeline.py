@@ -45,6 +45,7 @@ import pytest
 import pytest_asyncio
 
 import workflows_mcp.engine.knowledge.schema as knowledge_schema
+import workflows_mcp.engine.memory_onboard_sync_orchestrator as onboard_sync_orchestrator
 import workflows_mcp.tools_memory as _tools_memory
 import workflows_mcp.tools_memory as tools_memory
 from workflows_mcp.context import SessionProjectContext
@@ -801,6 +802,34 @@ class TestProgrammaticOnboardValidationFailure:
         assert result.error is not None
         err = result.error.get("error", {})
         assert err.get("code") == "UNSUPPORTED_MODE"
+
+
+class TestBuildGraphFromFilesTopologyPlaceholders:
+    """Lower-topology placeholders are suppressed, not synthesized."""
+
+    def test_placeholder_wing_room_do_not_emit_default_literals(self) -> None:
+        payload, _, _ = onboard_sync_orchestrator._build_graph_from_files(
+            [_readable_entry("src/main.py")],
+            scope={
+                "palace": "test-palace",
+                "wing": "default-wing",
+                "room": "default-room",
+            },
+        )
+        labels = {node.node_type: node.label for node in payload.nodes}
+        assert labels[NodeType.WING] == ""
+        assert labels[NodeType.ROOM] == ""
+        assert "default-wing" not in labels.values()
+        assert "default-room" not in labels.values()
+
+    def test_explicit_wing_room_are_preserved(self) -> None:
+        payload, _, _ = onboard_sync_orchestrator._build_graph_from_files(
+            [_readable_entry("src/main.py")],
+            scope={"palace": "test-palace", "wing": "platform", "room": "runtime"},
+        )
+        labels = {node.node_type: node.label for node in payload.nodes}
+        assert labels[NodeType.WING] == "platform"
+        assert labels[NodeType.ROOM] == "runtime"
 
 
 class TestClassifyScanFilesForProgrammaticMode:

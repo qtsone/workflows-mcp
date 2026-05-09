@@ -45,6 +45,9 @@ from .memory_scope_resolver import scope_key as _scope_key_fn
 
 logger = logging.getLogger(__name__)
 
+_PROJECT_DEFAULT_TOPOLOGY_OVERRIDE_REASON = "Project default topology for System 1 project sync"
+_PROJECT_DEFAULT_TOPOLOGY_APPLIED_BY = "admin_sync"
+
 # SECURITY: System user UUID for audit trail when no user context is available
 SYSTEM_USER_UUID = uuid.UUID("00000000-0000-0000-0000-000000000001")
 
@@ -72,7 +75,9 @@ MemoryOperation = Literal[
     "mark_item_dirty",
     # ADR-013: System 1 / System 2 operations
     "store_system1_structural_evidence",
+    "store_system1_structural_graph",
     "record_system1_verification_cycle",
+    "derive_system1_project_topology",
     "derive_system1_topology",
     "derive_system2_semantic_claims",
     "apply_semantic_override",
@@ -100,7 +105,9 @@ MEMORY_OPERATION_ENUM: tuple[MemoryOperation, ...] = (
     "mark_item_dirty",
     # ADR-013: System 1 / System 2 operations
     "store_system1_structural_evidence",
+    "store_system1_structural_graph",
     "record_system1_verification_cycle",
+    "derive_system1_project_topology",
     "derive_system1_topology",
     "derive_system2_semantic_claims",
     "apply_semantic_override",
@@ -250,13 +257,22 @@ async def _resolve_entity_id_manage(
     normalized_room = _normalize_scope_value(room)
     normalized_corridor = _normalize_scope_value(corridor)
 
-    clauses = [
-        "name = $1",
-        "namespace = $2",
-        "room = $3",
-        "corridor = $4",
-    ]
-    params: list[Any] = [entity_ref, normalized_namespace, normalized_room, normalized_corridor]
+    has_explicit_topology_scope = any(
+        value is not None and str(value).strip() != ""
+        for value in (namespace, room, corridor)
+    )
+
+    clauses = ["name = $1"]
+    params: list[Any] = [entity_ref]
+    if has_explicit_topology_scope:
+        clauses.extend(
+            [
+                "namespace = $2",
+                "room = $3",
+                "corridor = $4",
+            ]
+        )
+        params.extend([normalized_namespace, normalized_room, normalized_corridor])
     if palace is not None:
         clauses.append(f"palace = ${len(params) + 1}")
         params.append(palace)
@@ -507,6 +523,81 @@ def _connected_components(
 
     components.sort(key=lambda component: tuple(component))
     return components
+
+
+def _derive_project_wrc_from_entity_metadata(
+    metadata: dict[str, Any],
+) -> tuple[str, str, str] | None:
+    """Derive project wing/room/compartment from persisted path metadata."""
+    forbidden_exact = {"default-wing", "default-room", "default", "code"}
+    forbidden_prefixes = ("graph-component-", "cluster-", "reasoning-unit-")
+
+    def _normalize_path_label(raw: str) -> str | None:
+        candidate = raw.strip()
+        if not candidate:
+            return None
+        lowered = candidate.casefold()
+        if lowered in forbidden_exact or any(
+            lowered.startswith(prefix) for prefix in forbidden_prefixes
+        ):
+            candidate = f"path-{candidate}"
+        return candidate if candidate.strip() else None
+
+    raw_path = metadata.get("repo_relative_path") or metadata.get("source_file")
+    if not isinstance(raw_path, str):
+        return None
+
+    normalized = raw_path.replace("\\", "/").strip()
+    while normalized.startswith("./"):
+        normalized = normalized[2:]
+
+    segments = [segment for segment in normalized.split("/") if segment]
+    if not segments:
+        return None
+
+    wing = segments[0] if len(segments) > 1 else "root"
+    room = segments[1] if len(segments) > 1 else wing
+    final_segment = segments[-1]
+    stem, dot, _suffix = final_segment.rpartition(".")
+    compartment = stem if dot and stem else final_segment
+    normalized_wing = _normalize_path_label(wing)
+    normalized_room = _normalize_path_label(room)
+    normalized_compartment = _normalize_path_label(compartment)
+    if normalized_wing is None or normalized_room is None or normalized_compartment is None:
+        return None
+    return normalized_wing, normalized_room, normalized_compartment
+
+
+def _derive_structural_entity_scope(
+    *,
+    metadata: dict[str, Any],
+    qualified_name: str | None,
+    stable_id: str | None,
+    fallback_name: str,
+) -> tuple[str, str, str]:
+    """Derive deterministic scope tuple for structural entity identity partitioning."""
+    derived = _derive_project_wrc_from_entity_metadata(metadata)
+    if derived is None:
+        namespace = ""
+        room = ""
+    else:
+        namespace, room, _ = derived
+
+    corridor = (qualified_name or "").strip() or (stable_id or "").strip() or fallback_name
+    return namespace, room, corridor
+
+
+def _normalize_json_metadata(value: Any) -> dict[str, Any]:
+    """Normalize DB metadata payload to a dictionary."""
+    if isinstance(value, dict):
+        return value
+    if isinstance(value, str):
+        try:
+            parsed = json.loads(value)
+        except json.JSONDecodeError:
+            return {}
+        return parsed if isinstance(parsed, dict) else {}
+    return {}
 
 
 # ---------------------------------------------------------------------------
@@ -1129,6 +1220,21 @@ class VerificationCycleInput(BaseModel):
     )
 
 
+class System1StructuralGraphInput(BaseModel):
+    """Raw System1 structural graph contract payload (validation-only in Task 3)."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    palace: str | None = Field(default=None)
+    source_name: str | None = Field(default=None)
+    repo_relative_path: str | None = Field(default=None)
+    parser_metadata: dict[str, Any]
+    entities: list[Any]
+    relations: list[Any]
+    unresolved_imports: list[str] = Field(default_factory=list)
+    structural_evidence: list[StructuralEvidenceItem] = Field(default_factory=list)
+
+
 class ProofBundleInput(BaseModel):
     """Proof bundle for new-wing creation gate."""
 
@@ -1398,6 +1504,10 @@ class MemoryRecordInput(BaseModel):
     verification_cycle: VerificationCycleInput | None = Field(
         default=None,
         description="Verification cycle metadata for record_system1_verification_cycle.",
+    )
+    system1_graph: System1StructuralGraphInput | None = Field(
+        default=None,
+        description="Raw System1 structural graph payload for store_system1_structural_graph.",
     )
     derivation: DerivationInput | None = Field(
         default=None,
@@ -2021,7 +2131,9 @@ class MemoryService:
 
         if op in {
             "store_system1_structural_evidence",
+            "store_system1_structural_graph",
             "record_system1_verification_cycle",
+            "derive_system1_project_topology",
             "derive_system1_topology",
             "derive_system2_semantic_claims",
             "apply_semantic_override",
@@ -2932,7 +3044,7 @@ class MemoryService:
         entity_type: str,
         qualified_name: str,
         source_item_id: str | None,
-    ) -> str | dict[str, Any]:
+    ) -> str | Literal["unresolved"] | dict[str, Any]:
         """Resolve a qualified-name entity reference within a palace.
 
         Returns:
@@ -3150,6 +3262,666 @@ class MemoryService:
     ) -> ManageMemoryResult:
         """Route ADR-013 System 1/System 2 operations with explicit invariant checks."""
 
+        if op == "store_system1_structural_graph":
+            if request.record is None or request.record.system1_graph is None:
+                _raise_contract_error(
+                    code="MEM_MISSING_REQUIRED_FIELD",
+                    message=(
+                        "'record.system1_graph' is required"
+                        " for operation='store_system1_structural_graph'"
+                    ),
+                )
+
+            graph = request.record.system1_graph
+            palace = (graph.palace or resolved_scope.palace or "").strip()
+            if not palace:
+                return ManageMemoryResult(
+                    operation=op,
+                    success=False,
+                    error=(
+                        "MEM_PALACE_REQUIRED: 'palace' is required "
+                        "for store_system1_structural_graph"
+                    ),
+                )
+
+            structural_relation_types = frozenset({"CONTAINS", "INHERITS_FROM", "IMPORTS", "CALLS"})
+            supported_code_languages = frozenset(
+                {
+                    "python",
+                    "javascript",
+                    "typescript",
+                    "tsx",
+                    "jsx",
+                    "java",
+                    "go",
+                    "rust",
+                    "c",
+                    "cpp",
+                    "csharp",
+                    "ruby",
+                    "php",
+                    "kotlin",
+                    "swift",
+                }
+            )
+
+            language = str(graph.parser_metadata.get("language") or "").strip().lower()
+            if language in supported_code_languages and not graph.entities:
+                return ManageMemoryResult(
+                    operation=op,
+                    success=False,
+                    error=(
+                        "MEM_EMPTY_SYSTEM1_ENTITIES: 'entities' must be non-empty "
+                        f"for supported code language '{language}'"
+                    ),
+                )
+
+            for index, entity in enumerate(graph.entities):
+                if not isinstance(entity, dict):
+                    return ManageMemoryResult(
+                        operation=op,
+                        success=False,
+                        error=(
+                            "MEM_INVALID_SYSTEM1_GRAPH_PAYLOAD: "
+                            f"entities[{index}] must be an object"
+                        ),
+                    )
+                stable_id_raw = entity.get("stable_id")
+                stable_id_check = str(stable_id_raw or "").strip()
+                if not stable_id_check:
+                    return ManageMemoryResult(
+                        operation=op,
+                        success=False,
+                        error=(
+                            "MEM_ENTITY_STABLE_ID_REQUIRED: "
+                            f"entities[{index}].stable_id is required for "
+                            "System1 structural graph persistence"
+                        ),
+                    )
+
+                entity_metadata = entity.get("metadata")
+                final_metadata: dict[str, Any] = (
+                    dict(entity_metadata) if isinstance(entity_metadata, dict) else {}
+                )
+                if (
+                    "source_file" not in final_metadata
+                    and graph.parser_metadata.get("source_file")
+                ):
+                    final_metadata["source_file"] = graph.parser_metadata.get("source_file")
+                if (
+                    "source_range" not in final_metadata
+                    and graph.parser_metadata.get("source_range")
+                ):
+                    final_metadata["source_range"] = graph.parser_metadata.get("source_range")
+                if (
+                    "content_hash" not in final_metadata
+                    and graph.parser_metadata.get("content_hash")
+                ):
+                    final_metadata["content_hash"] = graph.parser_metadata.get("content_hash")
+
+                missing_required_metadata = [
+                    field
+                    for field in ("source_file", "source_range", "content_hash")
+                    if field not in final_metadata
+                ]
+                if missing_required_metadata:
+                    return ManageMemoryResult(
+                        operation=op,
+                        success=False,
+                        error=(
+                            "MEM_ENTITY_METADATA_REQUIRED: "
+                            f"entities[{index}] missing required metadata fields: "
+                            f"{', '.join(missing_required_metadata)}"
+                        ),
+                    )
+
+            relation_type_counter: Counter[str] = Counter()
+            required_final_relation_metadata_fields = (
+                "source_file",
+                "source_range",
+                "content_hash",
+                "provenance",
+                "source_qname",
+                "target_qname",
+                "resolution",
+            )
+            required_relation_fields = {
+                "source_qname",
+                "source_entity_type",
+                "target_qname",
+                "target_entity_type",
+                "relation_type",
+                "metadata",
+            }
+
+            for index, relation in enumerate(graph.relations):
+                if not isinstance(relation, dict):
+                    return ManageMemoryResult(
+                        operation=op,
+                        success=False,
+                        error=(
+                            "MEM_INVALID_SYSTEM1_GRAPH_PAYLOAD: "
+                            f"relations[{index}] must be an object"
+                        ),
+                    )
+
+                missing_fields = sorted(required_relation_fields - set(relation.keys()))
+                if missing_fields:
+                    return ManageMemoryResult(
+                        operation=op,
+                        success=False,
+                        error=(
+                            "MEM_INVALID_SYSTEM1_GRAPH_PAYLOAD: "
+                            f"relations[{index}] missing required fields: "
+                            f"{', '.join(missing_fields)}"
+                        ),
+                    )
+
+                rel_type_raw = relation.get("relation_type")
+                rel_type = str(rel_type_raw or "").strip().upper()
+                if rel_type not in structural_relation_types:
+                    return ManageMemoryResult(
+                        operation=op,
+                        success=False,
+                        error=(
+                            f"MEM_INVALID_RELATION_TYPE: '{rel_type_raw}' is not a STRUCTURAL "
+                            "relation type. Allowed: "
+                            f"{', '.join(sorted(structural_relation_types))}"
+                        ),
+                    )
+
+                metadata = relation.get("metadata")
+                if not isinstance(metadata, dict) or "provenance" not in metadata:
+                    return ManageMemoryResult(
+                        operation=op,
+                        success=False,
+                        error=(
+                            "MEM_RELATION_PROVENANCE_REQUIRED: relation metadata must include "
+                            "'provenance'"
+                        ),
+                    )
+
+                final_relation_metadata: dict[str, Any] = dict(metadata)
+                if (
+                    "source_file" not in final_relation_metadata
+                    and graph.parser_metadata.get("source_file")
+                ):
+                    final_relation_metadata["source_file"] = graph.parser_metadata.get(
+                        "source_file"
+                    )
+                if (
+                    "source_range" not in final_relation_metadata
+                    and graph.parser_metadata.get("source_range")
+                ):
+                    final_relation_metadata["source_range"] = graph.parser_metadata.get(
+                        "source_range"
+                    )
+                if (
+                    "content_hash" not in final_relation_metadata
+                    and graph.parser_metadata.get("content_hash")
+                ):
+                    final_relation_metadata["content_hash"] = graph.parser_metadata.get(
+                        "content_hash"
+                    )
+                final_relation_metadata["source_qname"] = relation.get("source_qname")
+                final_relation_metadata["target_qname"] = relation.get("target_qname")
+                final_relation_metadata["resolution"] = "exact"
+
+                missing_final_fields = [
+                    field
+                    for field in required_final_relation_metadata_fields
+                    if field not in final_relation_metadata
+                ]
+                if missing_final_fields:
+                    return ManageMemoryResult(
+                        operation=op,
+                        success=False,
+                        error=(
+                            "MEM_RELATION_METADATA_REQUIRED: "
+                            f"relations[{index}] missing required metadata fields: "
+                            f"{', '.join(missing_final_fields)}"
+                        ),
+                    )
+
+                relation_type_counter[rel_type] += 1
+
+            submitted_entity_identifiers: list[str] = []
+            for entity in graph.entities:
+                qualified_name = str(entity.get("qualified_name") or "").strip()
+                stable_id = str(entity.get("stable_id") or "").strip()
+                identifier = qualified_name or stable_id
+                if identifier:
+                    submitted_entity_identifiers.append(identifier)
+
+            entity_degree: Counter[str] = Counter()
+            entity_ids: list[str] = []
+            stored_evidence_ids: list[str] = []
+            await self._backend.begin_transaction()
+            try:
+                for entity in graph.entities:
+                    entity_type = str(entity.get("entity_type") or "").strip() or "unknown"
+                    name = str(entity.get("name") or "").strip() or "unknown"
+                    stable_id_raw = entity.get("stable_id")
+                    stable_id_value = (
+                        str(stable_id_raw).strip() if stable_id_raw is not None else None
+                    ) or None
+                    qualified_name_raw = entity.get("qualified_name")
+                    qualified_name_value = (
+                        str(qualified_name_raw).strip()
+                        if qualified_name_raw is not None
+                        else None
+                    ) or None
+                    confidence = entity.get("confidence")
+
+                    source_item_id_raw = entity.get("source_item_id")
+                    source_item_id: str | None = None
+                    if source_item_id_raw is not None:
+                        try:
+                            source_item_id = str(uuid.UUID(str(source_item_id_raw)))
+                        except (ValueError, TypeError, AttributeError):
+                            source_item_id = None
+
+                    entity_metadata = entity.get("metadata")
+                    merged_metadata: dict[str, Any] = (
+                        dict(entity_metadata) if isinstance(entity_metadata, dict) else {}
+                    )
+                    if (
+                        "source_file" not in merged_metadata
+                        and graph.parser_metadata.get("source_file")
+                    ):
+                        merged_metadata["source_file"] = graph.parser_metadata.get("source_file")
+                    if (
+                        "source_range" not in merged_metadata
+                        and graph.parser_metadata.get("source_range")
+                    ):
+                        merged_metadata["source_range"] = graph.parser_metadata.get("source_range")
+                    if (
+                        "content_hash" not in merged_metadata
+                        and graph.parser_metadata.get("content_hash")
+                    ):
+                        merged_metadata["content_hash"] = graph.parser_metadata.get("content_hash")
+
+                    (
+                        entity_namespace,
+                        entity_room,
+                        entity_corridor,
+                    ) = _derive_structural_entity_scope(
+                        metadata=merged_metadata,
+                        qualified_name=qualified_name_value,
+                        stable_id=stable_id_value,
+                        fallback_name=name,
+                    )
+
+                    stable_match = await self._backend.query(
+                        """
+                        UPDATE knowledge_entities
+                           SET namespace = $3,
+                               room = $4,
+                               corridor = $5,
+                               entity_type = $6,
+                               name = $7,
+                               source_item_id = $8::uuid,
+                               confidence = $9,
+                               metadata = $10::jsonb,
+                               qualified_name = $11,
+                               updated_at = NOW()
+                         WHERE palace = $1
+                           AND source = 'STRUCTURAL'
+                           AND stable_id = $2
+                        RETURNING id
+                        """,
+                        (
+                            palace,
+                            stable_id_value,
+                            entity_namespace,
+                            entity_room,
+                            entity_corridor,
+                            entity_type,
+                            name,
+                            source_item_id,
+                            confidence,
+                            json.dumps(merged_metadata),
+                            qualified_name_value,
+                        ),
+                    )
+
+                    if stable_match.rows:
+                        row = stable_match
+                    else:
+                        row = await self._backend.query(
+                            """
+                            INSERT INTO knowledge_entities
+                                (id, palace, namespace, room, corridor,
+                                 entity_type, name, source, authority,
+                                 stable_id, source_item_id, confidence, metadata,
+                                 qualified_name)
+                            VALUES
+                                ($1::uuid, $2, $3, $4, $5,
+                                 $6, $7, $8, $9,
+                                 $10, $11::uuid, $12, $13::jsonb,
+                                 $14)
+                            ON CONFLICT (palace, namespace, room, corridor, entity_type, name)
+                                DO UPDATE SET
+                                    source_item_id = EXCLUDED.source_item_id,
+                                    stable_id = EXCLUDED.stable_id,
+                                    confidence = EXCLUDED.confidence,
+                                    metadata = EXCLUDED.metadata,
+                                    qualified_name = EXCLUDED.qualified_name,
+                                    updated_at = NOW()
+                            RETURNING id
+                            """,
+                            (
+                                str(uuid.uuid4()),
+                                palace,
+                                entity_namespace,
+                                entity_room,
+                                entity_corridor,
+                                entity_type,
+                                name,
+                                "STRUCTURAL",
+                                "SYSTEM",
+                                stable_id_value,
+                                source_item_id,
+                                confidence,
+                                json.dumps(merged_metadata),
+                                qualified_name_value,
+                            ),
+                        )
+                    if row.rows:
+                        entity_ids.append(str(row.rows[0]["id"]))
+
+                relation_ids: list[str | None] = []
+                relation_created_count = 0
+                relation_existing_count = 0
+                cross_scope_edges_rejected = 0
+                unresolved_relations: list[dict[str, Any]] = []
+                unresolved_import_set: set[str] = {
+                    str(item).strip() for item in graph.unresolved_imports if str(item).strip()
+                }
+
+                for relation in graph.relations:
+                    source_qname = str(relation.get("source_qname") or "").strip()
+                    source_entity_type = str(relation.get("source_entity_type") or "").strip()
+                    target_qname = str(relation.get("target_qname") or "").strip()
+                    target_entity_type = str(relation.get("target_entity_type") or "").strip()
+                    rel_type = str(relation.get("relation_type") or "").strip().upper()
+                    relation_confidence = relation.get("confidence")
+                    if relation_confidence is None:
+                        relation_confidence = 1.0
+
+                    relation_metadata = relation.get("metadata")
+                    metadata_dict: dict[str, Any] = (
+                        dict(relation_metadata) if isinstance(relation_metadata, dict) else {}
+                    )
+                    declared_palaces = [
+                        metadata_dict.get("palace"),
+                        metadata_dict.get("source_palace"),
+                        metadata_dict.get("target_palace"),
+                    ]
+                    if any(
+                        isinstance(raw, str) and raw.strip() and raw.strip() != palace
+                        for raw in declared_palaces
+                    ):
+                        cross_scope_edges_rejected += 1
+                        unresolved_relations.append(
+                            {
+                                "relation_type": rel_type,
+                                "source_qname": source_qname,
+                                "target_qname": target_qname,
+                                "reason": "cross_scope_rejected",
+                            }
+                        )
+                        relation_ids.append(None)
+                        continue
+
+                    relation_source_item_id_raw = relation.get("source_item_id")
+                    relation_source_item_id: str | None = None
+                    if relation_source_item_id_raw is not None:
+                        try:
+                            relation_source_item_id = str(
+                                uuid.UUID(str(relation_source_item_id_raw))
+                            )
+                        except (ValueError, TypeError, AttributeError):
+                            relation_source_item_id = None
+
+                    relation_target_item_id_raw = relation.get("target_item_id")
+                    relation_target_item_id: str | None = None
+                    if relation_target_item_id_raw is not None:
+                        try:
+                            relation_target_item_id = str(
+                                uuid.UUID(str(relation_target_item_id_raw))
+                            )
+                        except (ValueError, TypeError, AttributeError):
+                            relation_target_item_id = None
+
+                    source_resolution = await self._resolve_entity_by_qname(
+                        palace=palace,
+                        entity_type=source_entity_type,
+                        qualified_name=source_qname,
+                        source_item_id=relation_source_item_id,
+                    )
+                    if isinstance(source_resolution, dict):
+                        unresolved_relations.append(
+                            {
+                                "relation_type": rel_type,
+                                "source_qname": source_qname,
+                                "target_qname": target_qname,
+                                "reason": "ambiguous_source",
+                                "candidates": source_resolution["candidates"],
+                            }
+                        )
+                        relation_ids.append(None)
+                        continue
+                    if source_resolution == "unresolved":
+                        unresolved_relations.append(
+                            {
+                                "relation_type": rel_type,
+                                "source_qname": source_qname,
+                                "target_qname": target_qname,
+                                "reason": "unresolved_source",
+                            }
+                        )
+                        relation_ids.append(None)
+                        continue
+
+                    target_resolution = await self._resolve_entity_by_qname(
+                        palace=palace,
+                        entity_type=target_entity_type,
+                        qualified_name=target_qname,
+                        source_item_id=relation_target_item_id,
+                    )
+                    if isinstance(target_resolution, dict):
+                        unresolved_relations.append(
+                            {
+                                "relation_type": rel_type,
+                                "source_qname": source_qname,
+                                "target_qname": target_qname,
+                                "reason": "ambiguous_target",
+                                "candidates": target_resolution["candidates"],
+                            }
+                        )
+                        relation_ids.append(None)
+                        if rel_type in {"IMPORTS", "CALLS"}:
+                            unresolved_import_set.add(target_qname)
+                        continue
+                    if target_resolution == "unresolved":
+                        unresolved_relations.append(
+                            {
+                                "relation_type": rel_type,
+                                "source_qname": source_qname,
+                                "target_qname": target_qname,
+                                "reason": "unresolved_target",
+                            }
+                        )
+                        relation_ids.append(None)
+                        if rel_type in {"IMPORTS", "CALLS"}:
+                            unresolved_import_set.add(target_qname)
+                        continue
+
+                    normalized_metadata: dict[str, Any] = (
+                        dict(relation_metadata) if isinstance(relation_metadata, dict) else {}
+                    )
+                    if "source_file" not in normalized_metadata and graph.parser_metadata.get(
+                        "source_file"
+                    ):
+                        normalized_metadata["source_file"] = graph.parser_metadata.get(
+                            "source_file"
+                        )
+                    if "source_range" not in normalized_metadata and graph.parser_metadata.get(
+                        "source_range"
+                    ):
+                        normalized_metadata["source_range"] = graph.parser_metadata.get(
+                            "source_range"
+                        )
+                    if "content_hash" not in normalized_metadata and graph.parser_metadata.get(
+                        "content_hash"
+                    ):
+                        normalized_metadata["content_hash"] = graph.parser_metadata.get(
+                            "content_hash"
+                        )
+                    normalized_metadata["source_qname"] = source_qname
+                    normalized_metadata["target_qname"] = target_qname
+                    normalized_metadata["resolution"] = "exact"
+
+                    existing_relation = await self._backend.query(
+                        """
+                        SELECT id
+                        FROM knowledge_relations
+                        WHERE source_entity_id = $1::uuid
+                          AND target_entity_id = $2::uuid
+                          AND relation_type = $3
+                        LIMIT 1
+                        """,
+                        (
+                            source_resolution,
+                            target_resolution,
+                            rel_type,
+                        ),
+                    )
+                    if existing_relation.rows:
+                        existing_id = str(existing_relation.rows[0]["id"])
+                        await self._backend.execute(
+                            """
+                            UPDATE knowledge_relations
+                               SET confidence = $2,
+                                   metadata = $3::jsonb
+                             WHERE id = $1::uuid
+                            """,
+                            (existing_id, relation_confidence, json.dumps(normalized_metadata)),
+                        )
+                        relation_existing_count += 1
+                        relation_ids.append(existing_id)
+                        entity_degree[source_qname] += 1
+                        entity_degree[target_qname] += 1
+                        continue
+
+                    relation_row = await self._backend.query(
+                        """
+                        INSERT INTO knowledge_relations
+                            (id, source_entity_id, target_entity_id, relation_type,
+                             confidence, evidence_memory_ids, metadata)
+                        VALUES
+                            ($1::uuid, $2::uuid, $3::uuid, $4,
+                             $5, $6::uuid[], $7::jsonb)
+                        RETURNING id
+                        """,
+                        (
+                            str(uuid.uuid4()),
+                            source_resolution,
+                            target_resolution,
+                            rel_type,
+                            relation_confidence,
+                            [],
+                            json.dumps(normalized_metadata),
+                        ),
+                    )
+                    relation_created_count += 1
+                    relation_ids.append(str(relation_row.rows[0]["id"]))
+                    entity_degree[source_qname] += 1
+                    entity_degree[target_qname] += 1
+
+                for item in graph.structural_evidence:
+                    row = await self._backend.query(
+                        """
+                        INSERT INTO knowledge_structural_evidence
+                            (id, palace, wing, room, compartment,
+                             entity_stable_id, entity_type,
+                             evidence_category, evidence_payload,
+                             scanned_at)
+                        VALUES
+                            ($1::uuid, $2, $3, $4, $5,
+                             $6, $7,
+                             $8, $9::jsonb,
+                             NOW())
+                        ON CONFLICT (palace, wing, room, compartment,
+                                     entity_stable_id, evidence_category)
+                            DO UPDATE SET
+                                entity_type      = EXCLUDED.entity_type,
+                                evidence_payload = EXCLUDED.evidence_payload,
+                                scanned_at       = EXCLUDED.scanned_at
+                        RETURNING id
+                        """,
+                        (
+                            str(uuid.uuid4()),
+                            palace,
+                            "",
+                            "",
+                            "",
+                            item.entity_stable_id,
+                            item.entity_type,
+                            item.evidence_category,
+                            json.dumps(item.evidence_data),
+                        ),
+                    )
+                    if row.rows:
+                        stored_evidence_ids.append(str(row.rows[0]["id"]))
+
+                await self._backend.commit()
+            except Exception:
+                await self._backend.rollback()
+                raise
+
+            relations_by_type = dict(sorted(relation_type_counter.items()))
+            isolate_identifiers = sorted(
+                identifier
+                for identifier in submitted_entity_identifiers
+                if entity_degree.get(identifier, 0) == 0
+            )
+            hubs = [
+                {"qname": identifier, "degree": degree}
+                for identifier, degree in sorted(
+                    entity_degree.items(), key=lambda item: (-item[1], item[0])
+                )[:10]
+            ]
+
+            return ManageMemoryResult(
+                operation=op,
+                success=True,
+                entities_stored_count=len(entity_ids),
+                entity_ids=entity_ids,
+                relation_ids=relation_ids,
+                relations_stored_count=relation_created_count + relation_existing_count,
+                created_count=relation_created_count,
+                existing_count=relation_existing_count,
+                stored_count=len(stored_evidence_ids),
+                stored_evidence_ids=stored_evidence_ids,
+                diagnostics={
+                    "entities_submitted": len(graph.entities),
+                    "entities_upserted": len(entity_ids),
+                    "relations_submitted": len(graph.relations),
+                    "relations_created": relation_created_count,
+                    "relations_existing": relation_existing_count,
+                    "relations_unresolved": len(unresolved_relations),
+                    "unresolved_import_count": len(sorted(unresolved_import_set)),
+                    "unresolved_imports": sorted(unresolved_import_set),
+                    "isolates": isolate_identifiers,
+                    "hubs": hubs,
+                    "cross_scope_edges_rejected": cross_scope_edges_rejected,
+                    "unresolved_relations": unresolved_relations,
+                    "relations_by_type": relations_by_type,
+                },
+            )
+
         if op == "store_system1_structural_evidence":
             if request.record is None or not request.record.structural_evidence:
                 _raise_contract_error(
@@ -3348,6 +4120,9 @@ class MemoryService:
                     "accountability_status_applied": accountability_status_applied,
                 },
             )
+
+        if op == "derive_system1_project_topology":
+            return await self._derive_system1_project_topology_structural(resolved_scope)
 
         if op == "derive_system1_topology":
             # Contract: derivation section required — enforced by validate_contract_envelope.
@@ -3565,6 +4340,361 @@ class MemoryService:
             )
 
         raise ValueError(f"Unhandled ADR-013 operation: {op}")
+
+    async def _derive_system1_project_topology_structural(
+        self,
+        resolved_scope: MemoryScope,
+    ) -> ManageMemoryResult:
+        """Derive project-level structural topology from persisted entity path metadata."""
+        palace = (resolved_scope.palace or "").strip()
+        if not palace:
+            _raise_contract_error(
+                code="MEM_PALACE_REQUIRED",
+                message=(
+                    "'scope.palace' is required for "
+                    "operation='derive_system1_project_topology'"
+                ),
+            )
+
+        orphan_empty_cleanup = await self._backend.query(
+            """
+            WITH orphan_rows AS (
+                SELECT kse.id
+                  FROM knowledge_structural_evidence kse
+                 WHERE kse.palace = $1
+                   AND COALESCE(kse.wing, '') = ''
+                   AND COALESCE(kse.room, '') = ''
+                   AND COALESCE(kse.compartment, '') = ''
+                   AND NOT EXISTS (
+                       SELECT 1
+                         FROM knowledge_entities ke
+                        WHERE ke.palace = kse.palace
+                          AND ke.source = 'STRUCTURAL'
+                          AND ke.stable_id = kse.entity_stable_id
+                   )
+                   AND NOT EXISTS (
+                       SELECT 1
+                         FROM knowledge_topology_provenance_evidence ktpe
+                        WHERE ktpe.evidence_id = kse.id
+                   )
+            ),
+            deleted AS (
+                DELETE FROM knowledge_structural_evidence kse
+                 USING orphan_rows o
+                 WHERE kse.id = o.id
+                 RETURNING 1
+            )
+            SELECT COUNT(*)::int AS pruned_count
+              FROM deleted
+            """,
+            (palace,),
+        )
+        orphan_empty_evidence_pruned = int(orphan_empty_cleanup.rows[0]["pruned_count"])
+
+        legacy_default_cleanup = await self._backend.query(
+            """
+            WITH legacy_candidates AS (
+                SELECT kse.id
+                  FROM knowledge_structural_evidence kse
+                 WHERE kse.palace = $1
+                   AND kse.wing = 'default-wing'
+                   AND kse.room = 'default-room'
+                   AND NOT EXISTS (
+                       SELECT 1
+                         FROM knowledge_entities ke
+                        WHERE ke.palace = kse.palace
+                          AND ke.source = 'STRUCTURAL'
+                          AND ke.stable_id = kse.entity_stable_id
+                   )
+                   AND EXISTS (
+                       SELECT 1
+                         FROM knowledge_topology_provenance_evidence ktpe
+                        WHERE ktpe.evidence_id = kse.id
+                   )
+                   AND NOT EXISTS (
+                       SELECT 1
+                         FROM knowledge_topology_provenance_evidence ktpe
+                         JOIN knowledge_topology_provenance ktp
+                           ON ktp.id = ktpe.provenance_id
+                        WHERE ktpe.evidence_id = kse.id
+                          AND (
+                              COALESCE(BTRIM(ktp.override_reason), '') <> $2
+                           OR COALESCE(BTRIM(ktp.applied_by), '') <> $3
+                          )
+                   )
+            ),
+            deleted_links AS (
+                DELETE FROM knowledge_topology_provenance_evidence ktpe
+                 USING legacy_candidates c
+                 WHERE ktpe.evidence_id = c.id
+                 RETURNING 1
+            ),
+            deleted_evidence AS (
+                DELETE FROM knowledge_structural_evidence kse
+                 USING legacy_candidates c
+                 WHERE kse.id = c.id
+                 RETURNING 1
+            )
+            SELECT
+                (SELECT COUNT(*)::int FROM deleted_links) AS link_pruned_count,
+                (SELECT COUNT(*)::int FROM deleted_evidence) AS evidence_pruned_count
+            """,
+            (
+                palace,
+                _PROJECT_DEFAULT_TOPOLOGY_OVERRIDE_REASON,
+                _PROJECT_DEFAULT_TOPOLOGY_APPLIED_BY,
+            ),
+        )
+        legacy_default_evidence_pruned = int(
+            legacy_default_cleanup.rows[0]["evidence_pruned_count"]
+        )
+        legacy_default_links_pruned = int(legacy_default_cleanup.rows[0]["link_pruned_count"])
+
+        entity_rows_result = await self._backend.query(
+            """
+            SELECT id, stable_id, entity_type, metadata
+              FROM knowledge_entities
+             WHERE palace = $1
+               AND source = 'STRUCTURAL'
+               AND stable_id IS NOT NULL
+            """,
+            (palace,),
+        )
+        if not entity_rows_result.rows:
+            return ManageMemoryResult(
+                operation="derive_system1_project_topology",
+                success=True,
+                diagnostics={
+                    "assignment_strategy": "path_metadata",
+                    "path_deferred_entities": [],
+                    "path_deferred_count": 0,
+                    "selected_entities": 0,
+                    "selected_relations": 0,
+                    "component_count": 0,
+                    "isolate_count": 0,
+                    "non_isolate_entities": 0,
+                    "guard_blocked_entities": 0,
+                    "eligible_entities": 0,
+                    "updated_rows": 0,
+                    "coalesced_evidence_rows": 0,
+                    "orphan_empty_evidence_pruned": orphan_empty_evidence_pruned,
+                    "legacy_default_evidence_pruned": legacy_default_evidence_pruned,
+                    "legacy_default_links_pruned": legacy_default_links_pruned,
+                    "applied_topology_by_entity": {},
+                    "deferred_isolates": [],
+                },
+            )
+
+        stable_id_to_entity_id: dict[str, str] = {}
+        for row in entity_rows_result.rows:
+            stable_id = str(row["stable_id"])
+            stable_id_to_entity_id[stable_id] = str(row["id"])
+            metadata = _normalize_json_metadata(row["metadata"])
+            normalized_entity_type = str(row["entity_type"]).strip().lower()
+            category_by_type = {
+                "module": "structural_module",
+                "class": "structural_class",
+                "function": "structural_function",
+            }
+            evidence_category = category_by_type.get(
+                normalized_entity_type,
+                "structural_module",
+            )
+            await self._backend.execute(
+                """
+                INSERT INTO knowledge_structural_evidence
+                    (id, palace, wing, room, compartment,
+                     entity_stable_id, entity_type, evidence_category,
+                     evidence_payload, scanned_at)
+                SELECT
+                    $1::uuid, $2, '', '', '',
+                    $3, $4, $5,
+                    $6::jsonb, NOW()
+                WHERE NOT EXISTS (
+                    SELECT 1
+                      FROM knowledge_structural_evidence
+                     WHERE palace = $2
+                       AND entity_stable_id = $3
+                       AND evidence_category = $5
+                )
+                """,
+                (
+                    str(uuid.uuid4()),
+                    palace,
+                    stable_id,
+                    str(row["entity_type"]),
+                    evidence_category,
+                    json.dumps(metadata),
+                ),
+            )
+
+        evidence_stable_ids = sorted(stable_id_to_entity_id.keys())
+
+        graph_entity_ids = [
+            stable_id_to_entity_id[stable_id]
+            for stable_id in evidence_stable_ids
+            if stable_id in stable_id_to_entity_id
+        ]
+        structural_relation_types = ("CONTAINS", "INHERITS_FROM", "IMPORTS", "CALLS")
+        relation_rows_result = await self._backend.query(
+            """
+            SELECT source_entity_id, target_entity_id
+              FROM knowledge_relations
+             WHERE source_entity_id = ANY($1::uuid[])
+               AND target_entity_id = ANY($1::uuid[])
+               AND relation_type = ANY($2::text[])
+            """,
+            (graph_entity_ids, list(structural_relation_types)),
+        )
+
+        applied_topology_by_entity: dict[str, tuple[str, str, str]] = {}
+        deferred_entities: list[str] = []
+        guard_blocked_entities = 0
+        updated_rows = 0
+        coalesced_evidence_rows = 0
+
+        stable_id_to_metadata: dict[str, dict[str, Any]] = {}
+        for row in entity_rows_result.rows:
+            stable_id = str(row["stable_id"])
+            metadata = _normalize_json_metadata(row["metadata"])
+            stable_id_to_metadata[stable_id] = metadata
+
+        for stable_id in evidence_stable_ids:
+            metadata = stable_id_to_metadata.get(stable_id, {})
+            derived_topology = _derive_project_wrc_from_entity_metadata(metadata)
+            if derived_topology is None:
+                deferred_entities.append(stable_id)
+                continue
+
+            wing, room, compartment = derived_topology
+            guard_result = await self._backend.query(
+                """
+                SELECT 1
+                  FROM knowledge_structural_evidence kse
+                  JOIN knowledge_topology_provenance_evidence ktpe
+                    ON ktpe.evidence_id = kse.id
+                  JOIN knowledge_topology_provenance ktp
+                    ON ktp.id = ktpe.provenance_id
+                 WHERE kse.palace = $1
+                   AND kse.entity_stable_id = $2
+                   AND ktp.palace = $1
+                   AND ktp.derivation_source = 'explicit_override'
+                   AND NOT (
+                        COALESCE(BTRIM(ktp.override_reason), '') = $3
+                    AND COALESCE(BTRIM(ktp.applied_by), '') = $4
+                   )
+                 LIMIT 1
+                """,
+                (
+                    palace,
+                    stable_id,
+                    _PROJECT_DEFAULT_TOPOLOGY_OVERRIDE_REASON,
+                    _PROJECT_DEFAULT_TOPOLOGY_APPLIED_BY,
+                ),
+            )
+            if guard_result.rows:
+                guard_blocked_entities += 1
+                continue
+
+            coalesce_result = await self._backend.query(
+                """
+                WITH candidates AS (
+                    SELECT kse.id,
+                           kse.evidence_category,
+                           kse.scanned_at,
+                           EXISTS (
+                               SELECT 1
+                                 FROM knowledge_topology_provenance_evidence ktpe
+                                WHERE ktpe.evidence_id = kse.id
+                           ) AS is_referenced
+                      FROM knowledge_structural_evidence kse
+                     WHERE kse.palace = $1
+                       AND kse.entity_stable_id = $2
+                ),
+                ranked AS (
+                    SELECT id,
+                           is_referenced,
+                           BOOL_OR(is_referenced) OVER (
+                               PARTITION BY evidence_category
+                           ) AS has_referenced,
+                           ROW_NUMBER() OVER (
+                                PARTITION BY evidence_category
+                                ORDER BY scanned_at DESC NULLS LAST, id DESC
+                            ) AS rn
+                      FROM candidates
+                ),
+                deleted AS (
+                    DELETE FROM knowledge_structural_evidence kse
+                     USING ranked
+                     WHERE kse.id = ranked.id
+                       AND ranked.is_referenced = FALSE
+                       AND (
+                           ranked.has_referenced = TRUE
+                           OR ranked.rn > 1
+                       )
+                     RETURNING 1
+                )
+                SELECT COUNT(*)::int AS coalesced_count
+                  FROM deleted
+                """,
+                (palace, stable_id),
+            )
+            coalesced_evidence_rows += int(coalesce_result.rows[0]["coalesced_count"])
+
+            update_result = await self._backend.query(
+                """
+                UPDATE knowledge_structural_evidence
+                   SET wing = $1,
+                       room = $2,
+                       compartment = $3,
+                       scanned_at = NOW()
+                 WHERE palace = $4
+                   AND entity_stable_id = $5
+                RETURNING entity_stable_id
+                """,
+                (
+                    wing,
+                    room,
+                    compartment,
+                    palace,
+                    stable_id,
+                ),
+            )
+            if update_result.rows:
+                applied_topology_by_entity[stable_id] = (wing, room, compartment)
+                updated_rows += 1
+
+        deferred_sorted = sorted(deferred_entities)
+        selected_entities = len(graph_entity_ids)
+        selected_relations = len(relation_rows_result.rows)
+        component_count = 0
+        isolate_count = len(deferred_sorted)
+        non_isolate_entities = selected_entities - isolate_count
+        eligible_entities = max(selected_entities - isolate_count - guard_blocked_entities, 0)
+        return ManageMemoryResult(
+            operation="derive_system1_project_topology",
+            success=True,
+            diagnostics={
+                "assignment_strategy": "path_metadata",
+                "path_deferred_entities": deferred_sorted,
+                "path_deferred_count": len(deferred_sorted),
+                "selected_entities": selected_entities,
+                "selected_relations": selected_relations,
+                "component_count": component_count,
+                "isolate_count": isolate_count,
+                "non_isolate_entities": non_isolate_entities,
+                "guard_blocked_entities": guard_blocked_entities,
+                "eligible_entities": eligible_entities,
+                "updated_rows": updated_rows,
+                "coalesced_evidence_rows": coalesced_evidence_rows,
+                "orphan_empty_evidence_pruned": orphan_empty_evidence_pruned,
+                "legacy_default_evidence_pruned": legacy_default_evidence_pruned,
+                "legacy_default_links_pruned": legacy_default_links_pruned,
+                "applied_topology_by_entity": applied_topology_by_entity,
+                "deferred_isolates": deferred_sorted,
+                "deferred_entities": deferred_sorted,
+            },
+        )
 
     async def _enforce_system1_proof_bundle_gate(
         self,
@@ -3976,6 +5106,18 @@ class MemoryService:
         compartment = override.compartment
         override_reason = override.override_reason
         applied_by = override.applied_by
+        is_system_default_topology_override = (
+            override_reason == _PROJECT_DEFAULT_TOPOLOGY_OVERRIDE_REASON
+            and applied_by == _PROJECT_DEFAULT_TOPOLOGY_APPLIED_BY
+        )
+        derivation_source = (
+            "system1_derived" if is_system_default_topology_override else "explicit_override"
+        )
+        derivation_algorithm_version = (
+            "system1_project_default_v1"
+            if is_system_default_topology_override
+            else "explicit_override_v1"
+        )
 
         scope_key = _scope_key_fn(
             {"palace": palace, "wing": wing, "room": room, "compartment": compartment}
@@ -4073,13 +5215,17 @@ class MemoryService:
                      override_reason, applied_by, override_id,
                      derived_at, created_at)
                 VALUES ($1::uuid, $2::uuid, $3, $4, $5, $6, $7,
-                        'explicit_override', 'explicit_override_v1',
-                        $8, $9, $10::uuid,
+                        $8, $9,
+                        $10, $11, $12::uuid,
                         NOW(), NOW())
                 """,
                 (
                     provenance_uuid, claim_uuid, palace, wing, room, compartment, scope_key,
-                    override_reason, applied_by, override_uuid,
+                    derivation_source,
+                    derivation_algorithm_version,
+                    override_reason,
+                    applied_by,
+                    override_uuid,
                 ),
             )
 
@@ -4121,7 +5267,7 @@ class MemoryService:
             derived_wing=wing,
             derived_room=room,
             derived_compartment=compartment,
-            derivation_source="explicit_override",
+            derivation_source=derivation_source,
             provenance_id=provenance_uuid,
             claim_id=claim_uuid,
             diagnostics={
@@ -4968,6 +6114,10 @@ class MemoryService:
             )
         scope_applied = bool(namespace or room or corridor or palace)
         scope_mode = "graph_scoped" if scope_applied else "graph_global"
+        has_explicit_topology_scope = any(
+            value is not None and str(value).strip() != ""
+            for value in (namespace, room, corridor)
+        )
 
         async def _resolve_scoped_graph_entity(
             entity_ref: str,
@@ -4985,17 +6135,25 @@ class MemoryService:
                 entity_uuid = None
 
             if entity_uuid is not None:
+                scoped_uuid_clauses = ["id = $1::uuid"]
+                scoped_uuid_params: list[Any] = [entity_uuid]
+                if palace is not None:
+                    scoped_uuid_clauses.append(f"palace = ${len(scoped_uuid_params) + 1}")
+                    scoped_uuid_params.append(palace)
+                if has_explicit_topology_scope:
+                    scoped_uuid_clauses.extend(
+                        [
+                            f"namespace = ${len(scoped_uuid_params) + 1}",
+                            f"room = ${len(scoped_uuid_params) + 2}",
+                            f"corridor = ${len(scoped_uuid_params) + 3}",
+                        ]
+                    )
+                    scoped_uuid_params.extend(
+                        [normalized_namespace, normalized_room, normalized_corridor]
+                    )
                 scoped_uuid_result = await self._backend.query(
-                    "SELECT id FROM knowledge_entities "
-                    "WHERE id = $1::uuid AND palace = $2 "
-                    "AND namespace = $3 AND room = $4 AND corridor = $5",
-                    (
-                        entity_uuid,
-                        palace,
-                        normalized_namespace,
-                        normalized_room,
-                        normalized_corridor,
-                    ),
+                    "SELECT id FROM knowledge_entities WHERE " + " AND ".join(scoped_uuid_clauses),
+                    tuple(scoped_uuid_params),
                 )
                 if not scoped_uuid_result.rows:
                     return None
@@ -5027,18 +6185,19 @@ class MemoryService:
             normalized_namespace = _normalize_scope_value(namespace)
             normalized_room = _normalize_scope_value(room)
             normalized_corridor = _normalize_scope_value(corridor)
-            clauses = [
-                "id = ANY($1::uuid[])",
-                "namespace = $2",
-                "room = $3",
-                "corridor = $4",
-            ]
-            filter_params: list[Any] = [
-                raw_node_ids,
-                normalized_namespace,
-                normalized_room,
-                normalized_corridor,
-            ]
+            clauses = ["id = ANY($1::uuid[])"]
+            filter_params: list[Any] = [raw_node_ids]
+            if has_explicit_topology_scope:
+                clauses.extend(
+                    [
+                        f"namespace = ${len(filter_params) + 1}",
+                        f"room = ${len(filter_params) + 2}",
+                        f"corridor = ${len(filter_params) + 3}",
+                    ]
+                )
+                filter_params.extend(
+                    [normalized_namespace, normalized_room, normalized_corridor]
+                )
             if palace is not None:
                 clauses.append(f"palace = ${len(filter_params) + 1}")
                 filter_params.append(palace)
@@ -5098,13 +6257,17 @@ class MemoryService:
             normalized_room = _normalize_scope_value(room)
             normalized_corridor = _normalize_scope_value(corridor)
 
-            scoped_clauses = ["palace = $1", "namespace = $2", "room = $3", "corridor = $4"]
-            stats_params: list[Any] = [
-                palace,
-                normalized_namespace,
-                normalized_room,
-                normalized_corridor,
-            ]
+            scoped_clauses = ["palace = $1"]
+            stats_params: list[Any] = [palace]
+            if has_explicit_topology_scope:
+                scoped_clauses.extend(
+                    [
+                        f"namespace = ${len(stats_params) + 1}",
+                        f"room = ${len(stats_params) + 2}",
+                        f"corridor = ${len(stats_params) + 3}",
+                    ]
+                )
+                stats_params.extend([normalized_namespace, normalized_room, normalized_corridor])
 
             temporal_clause = ""
             if as_of is not None:

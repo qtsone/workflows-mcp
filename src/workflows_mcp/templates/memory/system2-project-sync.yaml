@@ -13,12 +13,12 @@ inputs:
 
   default_wing:
     type: str
-    default: "default-wing"
+    default: ""
     description: "Default project wing."
 
   default_room:
     type: str
-    default: "default-room"
+    default: ""
     description: "Default project room."
 
   default_compartment:

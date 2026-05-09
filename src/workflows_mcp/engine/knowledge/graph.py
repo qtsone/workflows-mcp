@@ -27,6 +27,7 @@ that would exceed either limit is pruned, with the counts tracked in
 
 from __future__ import annotations
 
+import json
 import logging
 import time
 from collections import deque
@@ -63,6 +64,7 @@ class GraphEdge(TypedDict):
     curated: bool
     valid_from: str | None
     valid_to: str | None
+    metadata: dict[str, Any]
 
 
 class GraphPath(TypedDict):
@@ -126,7 +128,8 @@ _NEIGHBORS_SQL_TEMPLATE = """
         kr.evidence_memory_ids,
         kr.curated,
         kr.valid_from,
-        kr.valid_to
+        kr.valid_to,
+        kr.metadata
     FROM knowledge_relations kr
     JOIN knowledge_entities src ON src.id = kr.source_entity_id
     JOIN knowledge_entities dst ON dst.id = kr.target_entity_id
@@ -245,6 +248,18 @@ async def _resolve_entity_id(entity_ref: str, backend: Any) -> str | None:
 def _row_to_edge(row: dict[str, Any]) -> GraphEdge:
     vf = row.get("valid_from")
     vt = row.get("valid_to")
+    raw_metadata = row.get("metadata")
+    metadata: dict[str, Any] = {}
+    if isinstance(raw_metadata, dict):
+        metadata = dict(raw_metadata)
+    elif isinstance(raw_metadata, str) and raw_metadata:
+        try:
+            decoded = json.loads(raw_metadata)
+            if isinstance(decoded, dict):
+                metadata = decoded
+        except json.JSONDecodeError:
+            metadata = {}
+
     return GraphEdge(
         id=str(row["id"]),
         source_entity_id=str(row["source_entity_id"]),
@@ -268,6 +283,7 @@ def _row_to_edge(row: dict[str, Any]) -> GraphEdge:
             if vt is not None and hasattr(vt, "isoformat")
             else (str(vt) if vt else None)
         ),
+        metadata=metadata,
     )
 
 

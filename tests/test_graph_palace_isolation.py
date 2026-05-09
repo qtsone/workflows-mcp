@@ -7,6 +7,7 @@ palace B rows. Before the fix, they do — these tests fail loudly.
 
 from __future__ import annotations
 
+import json
 import os
 from collections.abc import AsyncIterator
 from typing import Any
@@ -404,3 +405,106 @@ async def test_community_refresh_without_palace_is_rejected(memory_service: Any)
     manage = result.manage
     assert manage is not None
     assert not manage.success or "MEM_PALACE_REQUIRED" in (manage.error or "")
+
+
+async def test_store_system1_structural_graph_rejects_cross_palace_relation_and_reports_diagnostic(
+    memory_service: Any,
+    knowledge_backend: PostgresBackend,
+) -> None:
+    """Relation endpoint resolution is palace-scoped and must not cross-link palaces."""
+    from workflows_mcp.engine.execution import Execution
+    from workflows_mcp.engine.memory_service import MemoryRequest, MemoryService
+
+    service = MemoryService(backend=knowledge_backend, context=Execution())
+
+    # Seed target only in palace_b
+    await knowledge_backend.query(
+        """
+        INSERT INTO knowledge_entities
+            (id, palace, namespace, room, corridor, entity_type, name, source, authority,
+             stable_id, source_item_id, confidence, metadata, qualified_name)
+        VALUES
+            (gen_random_uuid(), 'palace_b', '', '', '', 'Module', 'target', 'STRUCTURAL', 'SYSTEM',
+             'stable-target-b', NULL, 0.9, $1::jsonb, 'shared.target')
+        ON CONFLICT (palace, source, stable_id)
+            WHERE stable_id IS NOT NULL
+            DO UPDATE SET updated_at = NOW()
+        RETURNING id
+        """,
+        (
+            json.dumps(
+                {
+                    "source_file": "src/b.py",
+                    "source_range": {"start": {"line": 1, "column": 0}},
+                    "content_hash": "h-b",
+                }
+            ),
+        ),
+    )
+
+    request = MemoryRequest.model_validate(
+        {
+            "operation": "store_system1_structural_graph",
+            "scope": {"palace": "palace_a"},
+            "record": {
+                "system1_graph": {
+                    "palace": "palace_a",
+                    "parser_metadata": {
+                        "language": "python",
+                        "source_file": "src/a.py",
+                        "source_range": {"start": {"line": 1, "column": 0}},
+                        "content_hash": "h-a",
+                    },
+                    "entities": [
+                        {
+                            "qualified_name": "source.a",
+                            "stable_id": "stable-source-a",
+                            "entity_type": "Module",
+                            "name": "a",
+                            "metadata": {
+                                "source_file": "src/a.py",
+                                "source_range": {"start": {"line": 1, "column": 0}},
+                                "content_hash": "h-a",
+                            },
+                            "confidence": 0.95,
+                        }
+                    ],
+                    "relations": [
+                        {
+                            "source_qname": "source.a",
+                            "source_entity_type": "Module",
+                            "target_qname": "shared.target",
+                            "target_entity_type": "Module",
+                            "relation_type": "IMPORTS",
+                            "confidence": 0.8,
+                            "metadata": {
+                                "source_file": "src/a.py",
+                                "source_range": {"start": {"line": 4, "column": 0}},
+                                "content_hash": "h-a",
+                                "provenance": {"kind": "treesitter", "line": 4, "column": 0},
+                            },
+                        }
+                    ],
+                    "unresolved_imports": ["shared.target"],
+                }
+            },
+        }
+    )
+
+    result = await service.execute(request)
+    assert result.manage is not None
+    assert result.manage.success is True
+    diagnostics = result.manage.diagnostics
+    unresolved = diagnostics.get("unresolved_relations", [])
+    assert any(item.get("target_qname") == "shared.target" for item in unresolved)
+
+    rel_count = await knowledge_backend.query(
+        """
+        SELECT COUNT(*)::int AS n
+        FROM knowledge_relations kr
+        JOIN knowledge_entities src ON src.id = kr.source_entity_id
+        WHERE src.palace = 'palace_a' AND kr.relation_type = 'IMPORTS'
+        """,
+        (),
+    )
+    assert rel_count.rows[0]["n"] == 0

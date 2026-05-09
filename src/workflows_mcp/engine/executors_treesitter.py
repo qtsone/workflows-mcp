@@ -15,7 +15,7 @@ from __future__ import annotations
 import hashlib
 import logging
 from pathlib import Path
-from typing import Any, ClassVar, cast
+from typing import Any, ClassVar, TypedDict, cast
 
 from pydantic import Field
 
@@ -180,6 +180,130 @@ _ENTITY_TYPE_TO_EVIDENCE_CATEGORY: dict[str, str] = {
     "method": "structural_function",
 }
 
+SYSTEM1_REQUIRED_ENTITY_KEYS: frozenset[str] = frozenset({
+    "qualified_name",
+    "stable_id",
+    "entity_type",
+    "name",
+    "metadata",
+    "confidence",
+})
+
+SYSTEM1_REQUIRED_RELATION_KEYS: frozenset[str] = frozenset({
+    "source_qname",
+    "source_entity_type",
+    "target_qname",
+    "target_entity_type",
+    "relation_type",
+    "confidence",
+    "metadata",
+})
+
+SYSTEM1_ALLOWED_RELATION_TYPES: frozenset[str] = frozenset({
+    "CONTAINS",
+    "IMPORTS",
+    "CALLS",
+    "INHERITS_FROM",
+})
+
+SYSTEM1_ERROR_MESSAGE_MAX_ITEMS: int = 10
+
+
+class System1ExtractionDiagnostics(TypedDict):
+    """Validation diagnostics for System1 extraction payloads."""
+
+    valid: bool
+    errors: list[str]
+    entity_count: int
+    relation_count: int
+    relation_types: list[str]
+
+
+def validate_system1_extraction_payload(
+    entities: list[dict[str, Any]],
+    relations: list[dict[str, Any]],
+) -> System1ExtractionDiagnostics:
+    """Validate TreeSitter extraction payload contract for System1 structural graph.
+
+    Empty payloads are valid to support unsupported/no-op extraction paths.
+    """
+    errors: list[str] = []
+    relation_types: set[str] = set()
+
+    if not entities and not relations:
+        return {
+            "valid": True,
+            "errors": [],
+            "entity_count": 0,
+            "relation_count": 0,
+            "relation_types": [],
+        }
+
+    for index, entity in enumerate(entities):
+        missing = SYSTEM1_REQUIRED_ENTITY_KEYS.difference(entity.keys())
+        if missing:
+            errors.append(
+                f"entity[{index}] missing required keys: {sorted(missing)}"
+            )
+
+    for index, relation in enumerate(relations):
+        missing = SYSTEM1_REQUIRED_RELATION_KEYS.difference(relation.keys())
+        if missing:
+            errors.append(
+                f"relation[{index}] missing required keys: {sorted(missing)}"
+            )
+        relation_type_raw = relation.get("relation_type")
+        if isinstance(relation_type_raw, str):
+            relation_types.add(relation_type_raw)
+            if relation_type_raw not in SYSTEM1_ALLOWED_RELATION_TYPES:
+                errors.append(
+                    "relation["
+                    f"{index}] invalid relation_type={relation_type_raw!r}; "
+                    f"allowed={sorted(SYSTEM1_ALLOWED_RELATION_TYPES)}"
+                )
+        else:
+            relation_type_name = type(relation_type_raw).__name__
+            errors.append(
+                "relation["
+                f"{index}] relation_type must be str, "
+                f"got {relation_type_name}"
+            )
+
+    return {
+        "valid": len(errors) == 0,
+        "errors": errors,
+        "entity_count": len(entities),
+        "relation_count": len(relations),
+        "relation_types": sorted(relation_types),
+    }
+
+
+def _raise_if_invalid_system1_extraction_payload(
+    entities: list[dict[str, Any]], relations: list[dict[str, Any]]
+) -> System1ExtractionDiagnostics:
+    diagnostics = validate_system1_extraction_payload(entities, relations)
+    if diagnostics["valid"]:
+        return diagnostics
+    errors = diagnostics["errors"]
+    total_error_count = len(errors)
+    shown = errors[:SYSTEM1_ERROR_MESSAGE_MAX_ITEMS]
+    remaining = total_error_count - len(shown)
+    relation_types = diagnostics["relation_types"]
+    relation_types_summary = relation_types if relation_types else ["none"]
+
+    summary = (
+        f"SYSTEM1_EXTRACTION_SCHEMA_INVALID: {total_error_count} validation errors "
+        f"(showing first {len(shown)}); entity_count={diagnostics['entity_count']}; "
+        f"relation_count={diagnostics['relation_count']}; "
+        f"relation_types={relation_types_summary}."
+    )
+
+    details = "; ".join(shown)
+    tail = f"; and {remaining} more" if remaining > 0 else ""
+    raise ValueError(
+        f"{summary} Details: {details}{tail}"
+    )
+
 
 def _build_structural_evidence_items(
     entities: list[dict[str, Any]],
@@ -251,12 +375,37 @@ def _build_structural_evidence_items(
             if r.get("relation_type") == "IMPORTS"
             and r.get("source_qname") == src_qname
         )
+        import_relations = [
+            r
+            for r in relations
+            if r.get("relation_type") == "IMPORTS"
+            and r.get("source_qname") == src_qname
+        ]
+        imports_payload: list[dict[str, Any]] = []
+        for import_relation in import_relations:
+            relation_metadata = import_relation.get("metadata", {})
+            if not isinstance(relation_metadata, dict):
+                relation_metadata = {}
+            resolution = relation_metadata.get("resolution")
+            normalized_resolution = (
+                "resolved" if resolution == "resolved" else "unresolved"
+            )
+            imports_payload.append({
+                "target_qname": str(import_relation.get("target_qname", "")),
+                "target_entity_type": str(
+                    import_relation.get("target_entity_type", "Unknown")
+                ),
+                "resolution": normalized_resolution,
+                "confidence": float(import_relation.get("confidence", 1.0)),
+                "source_range": relation_metadata.get("source_range", {}),
+            })
         items.append({
             "entity_stable_id": src_id,
             "entity_type": src_entity.get("entity_type", "module").lower(),
             "evidence_category": "structural_import",
             "evidence_data": {
                 "import_count": import_count,
+                "imports": imports_payload,
             },
         })
 
@@ -378,12 +527,62 @@ class TreeSitterExecutor(BlockExecutor):
             tree.root_node.has_error,
         )
 
+        source_range_end_line = text.count("\n") + 1
+
+        def _new_source_range_default() -> dict[str, int]:
+            return {
+                "start_line": 1,
+                "start_column": 0,
+                "end_line": source_range_end_line,
+                "end_column": 0,
+            }
+        base_metadata: dict[str, Any] = {
+            "source_file": str(file_path),
+            "repo_relative_path": inputs.repo_relative_path,
+            "content_hash": file_hash,
+            "language": language,
+        }
+
+        def _enrich_entities_and_relations(
+            entities_in: list[dict[str, Any]], relations_in: list[dict[str, Any]]
+        ) -> None:
+            for entity in entities_in:
+                metadata = entity.get("metadata", {})
+                if not isinstance(metadata, dict):
+                    metadata = {}
+                source_range = metadata.get("source_range")
+                if source_range is None:
+                    source_range = _new_source_range_default()
+                entity["metadata"] = {
+                    **metadata,
+                    **base_metadata,
+                    "source_range": source_range,
+                }
+
+            for relation in relations_in:
+                metadata = relation.get("metadata", {})
+                if not isinstance(metadata, dict):
+                    metadata = {}
+                source_range = metadata.get("source_range")
+                if source_range is None:
+                    source_range = _new_source_range_default()
+                relation["metadata"] = {
+                    **metadata,
+                    "source_file": str(file_path),
+                    "repo_relative_path": inputs.repo_relative_path,
+                    "content_hash": file_hash,
+                    "provenance": "treesitter",
+                    "source_range": source_range,
+                }
+
         # Document languages (Markdown, YAML, JSON) are file-only: emit exactly
         # one File entity, no Module/Class/Function/Method entities, and no
         # relations. module_qualified_name is set for output model compatibility
         # and traceability, but no Module entity is emitted.
         if language in ("markdown", "yaml", "json"):
             entities, relations = extract_document(file_entity=file_entity)
+            _enrich_entities_and_relations(entities, relations)
+            _raise_if_invalid_system1_extraction_payload(entities, relations)
             return TreeSitterOutput(
                 language=language,
                 content_hash=file_hash,
@@ -481,7 +680,10 @@ class TreeSitterExecutor(BlockExecutor):
             entities = [file_entity, module_entity]
             relations = [contains_relation]
 
+        _enrich_entities_and_relations(entities, relations)
+
         # Collect unresolved import targets (deduplicated, sorted)
+        _raise_if_invalid_system1_extraction_payload(entities, relations)
         unresolved_imports = sorted(
             {
                 r["target_qname"]

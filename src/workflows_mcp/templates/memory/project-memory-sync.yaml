@@ -1,8 +1,9 @@
 name: project-memory-sync
 description: |
   ADR-013 project memory sync orchestration. Runs System 1 for the requested
-  project scope and, when memory_mode is advanced, runs System 2 after System 1
-  completes successfully.
+  project scope where each System 1 scan persists raw structural graph before
+  topology derivation and, when memory_mode is advanced, runs System 2 after
+  System 1 completes successfully.
 
 tags: [builtin, memory, system1, system2, adr013, sync]
 
@@ -31,12 +32,12 @@ inputs:
 
   default_wing:
     type: str
-    default: "default-wing"
+    default: ""
     description: "Default project wing used for explicit System 1 topology override."
 
   default_room:
     type: str
-    default: "default-room"
+    default: ""
     description: "Default project room used for explicit System 1 topology override."
 
   default_compartment:

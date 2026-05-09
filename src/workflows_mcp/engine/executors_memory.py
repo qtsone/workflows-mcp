@@ -39,7 +39,9 @@ class MemoryInput(BlockInput):
         "mark_item_dirty",
         # ADR-013: System 1 / System 2 operations
         "store_system1_structural_evidence",
+        "store_system1_structural_graph",
         "record_system1_verification_cycle",
+        "derive_system1_project_topology",
         "derive_system1_topology",
         "derive_system2_semantic_claims",
         "apply_semantic_override",

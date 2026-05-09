@@ -1,18 +1,20 @@
 name: system1-scan
 description: |
   ADR-013 System 1 topology derivation scan: parse a source file with
-  TreeSitter and derive complete topology (wing/room/compartment) via a
-  single Memory derive_system1_topology operation.
+  TreeSitter, persist the raw structural graph, and then derive complete
+  topology (wing/room/compartment) via Memory operations.
 
   Steps:
     1. Parse the file with TreeSitter to extract structural entities,
-       relations, and structural evidence candidates (entities, relations,
-       file metadata only — no topology fields).
-    2. Call one Memory derive_system1_topology operation with the parsed
-       structural evidence payload and optional explicit topology overrides.
-       The operation derives wing/room/compartment from structural evidence
-       (or applies the explicit override if provided), persists provenance,
-       and returns typed derivation result fields.
+        relations, and structural evidence candidates (entities, relations,
+        file metadata only — no topology fields).
+    2. Persist the parsed System 1 structural graph via
+       store_system1_structural_graph using raw entities/relations,
+       unresolved imports, structural evidence items, and parser metadata.
+    3. Call derive_system1_topology with the parsed structural evidence
+       payload and optional explicit topology overrides. The operation derives
+       wing/room/compartment from persisted evidence (or applies explicit
+       override), persists provenance, and returns typed derivation fields.
 
   Topology: Palace / Wing / Room / Compartment only.
   Corridors are directed typed relations; they are never encoded as a
@@ -62,8 +64,33 @@ blocks:
       repo_relative_path: "{{inputs.repo_relative_path}}"
       palace: "{{inputs.palace}}"
 
+  - id: persist_structural_graph
+    description: "Persist raw System 1 structural graph before topology derivation."
+    type: Memory
+    inputs:
+      operation: store_system1_structural_graph
+      scope:
+        palace: "{{inputs.palace}}"
+      record:
+        system1_graph:
+          palace: "{{inputs.palace}}"
+          source_name: "{{inputs.source_name}}"
+          repo_relative_path: "{{inputs.repo_relative_path}}"
+          parser_metadata:
+            language: "{{blocks.parse_file.outputs.language}}"
+            path: "{{inputs.repo_relative_path}}"
+            source: "{{inputs.source_name}}"
+            content_hash: "{{blocks.parse_file.outputs.content_hash}}"
+            size_bytes: "{{blocks.parse_file.outputs.size_bytes}}"
+            mtime_ns: "{{blocks.parse_file.outputs.mtime_ns}}"
+          entities: "{{blocks.parse_file.outputs.entities}}"
+          relations: "{{blocks.parse_file.outputs.relations}}"
+          unresolved_imports: "{{blocks.parse_file.outputs.unresolved_imports}}"
+          structural_evidence: "{{blocks.parse_file.outputs.structural_evidence_items}}"
+    depends_on: [parse_file]
+
   - id: derive_topology
-    description: "Derive System 1 topology from parsed structural evidence via one Memory operation. Fails closed if topology cannot be fully determined."
+    description: "Derive System 1 topology from parsed structural evidence via one Memory operation. Derivation remains fail-closed, but does not block successful structural graph persistence."
     type: Memory
     inputs:
       operation: derive_system1_topology
@@ -80,7 +107,9 @@ blocks:
           size_bytes: "{{blocks.parse_file.outputs.size_bytes}}"
           mtime_ns: "{{blocks.parse_file.outputs.mtime_ns}}"
         topology_override: "{{inputs.topology_override}}"
-    depends_on: [parse_file]
+    depends_on: [persist_structural_graph]
+    condition: "{{inputs.topology_override is defined and inputs.topology_override is not none}}"
+    continue_on_error: true
 
 outputs:
   language:
@@ -90,23 +119,26 @@ outputs:
     value: "{{blocks.parse_file.outputs.content_hash}}"
     type: str
   derived_wing:
-    value: "{{blocks.derive_topology.outputs.result.manage.derived_wing}}"
+    value: "{{blocks.derive_topology.outputs.result.manage.derived_wing if blocks.derive_topology.succeeded else ''}}"
     type: str
   derived_room:
-    value: "{{blocks.derive_topology.outputs.result.manage.derived_room}}"
+    value: "{{blocks.derive_topology.outputs.result.manage.derived_room if blocks.derive_topology.succeeded else ''}}"
     type: str
   derived_compartment:
-    value: "{{blocks.derive_topology.outputs.result.manage.derived_compartment}}"
+    value: "{{blocks.derive_topology.outputs.result.manage.derived_compartment if blocks.derive_topology.succeeded else ''}}"
     type: str
   derivation_source:
-    value: "{{blocks.derive_topology.outputs.result.manage.derivation_source}}"
+    value: "{{blocks.derive_topology.outputs.result.manage.derivation_source if blocks.derive_topology.succeeded else ''}}"
     type: str
   provenance_id:
-    value: "{{blocks.derive_topology.outputs.result.manage.provenance_id}}"
+    value: "{{blocks.derive_topology.outputs.result.manage.provenance_id if blocks.derive_topology.succeeded else ''}}"
     type: str
   claim_id:
-    value: "{{blocks.derive_topology.outputs.result.manage.claim_id}}"
+    value: "{{blocks.derive_topology.outputs.result.manage.claim_id if blocks.derive_topology.succeeded else ''}}"
     type: str
   evidence_stored:
     value: "{{blocks.derive_topology.succeeded}}"
     type: bool
+  graph_diagnostics:
+    value: "{{blocks.persist_structural_graph.outputs.result.manage.diagnostics}}"
+    type: dict

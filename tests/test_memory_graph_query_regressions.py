@@ -6,7 +6,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from workflows_mcp.engine.knowledge.graph import graph_stats
+from workflows_mcp.engine.knowledge.graph import graph_neighbors, graph_stats
 from workflows_mcp.engine.memory_service import (
     ManageMemoryRequest,
     ManageMemoryResult,
@@ -160,6 +160,60 @@ async def test_query_graph_traverse_includes_evidence_when_neighbors_exist() -> 
 
 
 @pytest.mark.asyncio
+async def test_query_graph_edges_include_system1_provenance_metadata() -> None:
+    service = _make_service()
+    service._backend.query = AsyncMock(
+        side_effect=[
+            MagicMock(rows=[{"id": "a-id"}]),
+            MagicMock(rows=[{"id": "a-id"}, {"id": "b-id"}]),
+        ]
+    )
+
+    traverse_result = {
+        "nodes": [
+            {"id": "a-id", "entity_type": "SERVICE", "name": "a", "confidence": 1.0},
+            {"id": "b-id", "entity_type": "SERVICE", "name": "b", "confidence": 1.0},
+        ],
+        "edges": [
+            {
+                "id": "e-1",
+                "source_entity_id": "a-id",
+                "target_entity_id": "b-id",
+                "relation_type": "depends_on",
+                "confidence": 1.0,
+                "valid_from": None,
+                "valid_to": None,
+                "metadata": {
+                    "source_file": "src/a.py",
+                    "content_hash": "hash-a",
+                    "provenance": "treesitter",
+                },
+            }
+        ],
+        "paths": [],
+        "traversal_count": 2,
+        "diagnostics": {"expanded_nodes": 1, "pruned_edges": 0, "latency_ms": 1.0},
+    }
+
+    with patch(
+        "workflows_mcp.engine.memory_service.graph_traverse",
+        new=AsyncMock(return_value=traverse_result),
+    ):
+        result = await service._query_graph(
+            QueryMemoryRequest(
+                query="neighbors",
+                strategy="graph",
+                graph_op="traverse",
+                start_entity="a",
+                palace="test-palace",
+            )
+        )
+
+    assert result.evidence[0]["edges"][0]["metadata"]["source_file"] == "src/a.py"
+    assert result.evidence[0]["edges"][0]["metadata"]["provenance"] == "treesitter"
+
+
+@pytest.mark.asyncio
 async def test_query_graph_stats_without_start_entity_does_not_error() -> None:
     service = _make_service()
     service._backend.query = AsyncMock(
@@ -179,8 +233,127 @@ async def test_query_graph_stats_without_start_entity_does_not_error() -> None:
     )
 
     assert "error" not in result.diagnostics
+    assert result.paths == []
+    assert result.evidence[0]["nodes"] == []
+    assert result.evidence[0]["edges"] == []
     assert result.diagnostics["fusion_version"] == "graph-only.v1"
     assert result.diagnostics["algorithm_versions"]["graph"] == "degree-stats.v1"
+
+
+@pytest.mark.asyncio
+async def test_query_graph_neighbors_exposes_nodes_edges_paths_and_diagnostics() -> None:
+    service = _make_service()
+    service._backend.query = AsyncMock(
+        side_effect=[
+            MagicMock(rows=[{"id": "a-id"}]),
+            MagicMock(rows=[{"id": "a-id"}, {"id": "b-id"}]),
+        ]
+    )
+
+    neighbors_result = {
+        "nodes": [
+            {"id": "a-id", "entity_type": "SERVICE", "name": "a", "confidence": 1.0},
+            {"id": "b-id", "entity_type": "SERVICE", "name": "b", "confidence": 1.0},
+        ],
+        "edges": [
+            {
+                "id": "e-1",
+                "source_entity_id": "a-id",
+                "target_entity_id": "b-id",
+                "relation_type": "depends_on",
+                "confidence": 1.0,
+                "valid_from": None,
+                "valid_to": None,
+            }
+        ],
+        "paths": [],
+        "traversal_count": 1,
+        "diagnostics": {"expanded_nodes": 1, "pruned_edges": 0, "latency_ms": 1.0},
+    }
+
+    with patch(
+        "workflows_mcp.engine.memory_service.graph_neighbors",
+        new=AsyncMock(return_value=neighbors_result),
+    ):
+        result = await service._query_graph(
+            QueryMemoryRequest(
+                query="neighbors",
+                strategy="graph",
+                graph_op="neighbors",
+                start_entity="a",
+                palace="test-palace",
+            )
+        )
+
+    assert result.paths == []
+    assert result.evidence[0]["nodes"] == neighbors_result["nodes"]
+    assert result.evidence[0]["edges"][0]["id"] == "e-1"
+    assert result.diagnostics["fusion_version"] == "graph-only.v1"
+
+
+@pytest.mark.asyncio
+async def test_graph_neighbors_includes_relation_metadata_from_storage() -> None:
+    backend = MagicMock()
+    backend.query = AsyncMock(
+        side_effect=[
+            MagicMock(
+                rows=[
+                    {
+                        "id": "a-id",
+                        "entity_type": "SERVICE",
+                        "name": "a",
+                        "confidence": 1.0,
+                    }
+                ]
+            ),
+            MagicMock(
+                rows=[
+                    {
+                        "id": "a-id",
+                        "entity_type": "SERVICE",
+                        "name": "a",
+                        "confidence": 1.0,
+                    }
+                ]
+            ),
+            MagicMock(
+                rows=[
+                    {
+                        "id": "e-1",
+                        "source_entity_id": "a-id",
+                        "target_entity_id": "b-id",
+                        "relation_type": "depends_on",
+                        "confidence": 1.0,
+                        "evidence_memory_id": None,
+                        "evidence_memory_ids": [],
+                        "curated": False,
+                        "valid_from": None,
+                        "valid_to": None,
+                        "metadata": {
+                            "source_file": "src/a.py",
+                            "content_hash": "hash-a",
+                            "provenance": "treesitter",
+                        },
+                    }
+                ]
+            ),
+            MagicMock(
+                rows=[
+                    {
+                        "id": "b-id",
+                        "entity_type": "SERVICE",
+                        "name": "b",
+                        "confidence": 1.0,
+                    }
+                ]
+            ),
+        ]
+    )
+
+    result = await graph_neighbors("a-id", backend, palace="test-palace")
+
+    assert result["edges"][0]["metadata"]["source_file"] == "src/a.py"
+    assert result["edges"][0]["metadata"]["provenance"] == "treesitter"
 
 
 @pytest.mark.asyncio

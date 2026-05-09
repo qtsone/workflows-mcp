@@ -348,6 +348,22 @@ def _build_content_compartment(
     return node, corridor
 
 
+_TOPOLOGY_PLACEHOLDER_VALUES: frozenset[str] = frozenset(
+    {"default-wing", "default-room", "default", "code"}
+)
+
+
+def _normalize_optional_topology_label(value: str | None) -> str:
+    if value is None:
+        return ""
+    stripped = value.strip()
+    if not stripped:
+        return ""
+    if stripped.lower() in _TOPOLOGY_PLACEHOLDER_VALUES:
+        return ""
+    return stripped
+
+
 def _build_graph_from_files(
     files: list[ScannedFileEntry],
     *,
@@ -366,8 +382,8 @@ def _build_graph_from_files(
     normalized = normalize_scope(scope)
 
     palace_label = normalized.get("palace") or "default-palace"
-    wing_label = normalized.get("wing") or "default-wing"
-    room_label = normalized.get("room") or "default-room"
+    wing_label = _normalize_optional_topology_label(normalized.get("wing"))
+    room_label = _normalize_optional_topology_label(normalized.get("room"))
 
     palace_id = _stable_node_id("palace", palace_label)
     wing_id = _stable_node_id("wing", wing_label)

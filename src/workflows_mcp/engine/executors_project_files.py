@@ -16,11 +16,6 @@ from .executor_base import BlockExecutor, ExecutorCapabilities, ExecutorSecurity
 from .treesitter_languages import detect_language
 
 
-def _normalized_optional(value: str | None) -> str | None:
-    normalized = (value or "").strip()
-    return normalized or None
-
-
 class ProjectFilesInput(BlockInput):
     """Discover files eligible for System 1 project sync."""
 
@@ -107,17 +102,6 @@ class ProjectFilesExecutor(BlockExecutor):
         root = Path(inputs.project_root).expanduser().resolve(strict=True)
         policy = WatcherIgnorePolicy.from_project_root(root)
         allowed_roots = _allowed_roots(inputs.fs_allowlist)
-        normalized_wing = _normalized_optional(inputs.default_wing)
-        normalized_room = _normalized_optional(inputs.default_room)
-        topology_override: dict[str, str] | None = None
-        if normalized_wing is not None and normalized_room is not None:
-            topology_override = {
-                "wing": normalized_wing,
-                "room": normalized_room,
-                "compartment": inputs.default_compartment,
-                "override_reason": "Project default topology for System 1 project sync",
-                "applied_by": "admin_sync",
-            }
 
         if inputs.candidate_paths:
             relative_paths = _candidate_relative_paths(root, inputs.candidate_paths)
@@ -155,7 +139,7 @@ class ProjectFilesExecutor(BlockExecutor):
                     "file_path": str(absolute_path),
                     "repo_relative_path": relative_path.as_posix(),
                     "language": language,
-                    "topology_override": topology_override,
+                    "topology_override": None,
                 }
             )
 

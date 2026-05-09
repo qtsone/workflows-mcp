@@ -432,6 +432,29 @@ def test_sync_scope_maps_project_slug_to_required_memory_compartment() -> None:
     }
 
 
+def test_sync_scope_suppresses_blank_and_placeholder_wing_room() -> None:
+    project = ProjectRecord(
+        id="project-id",
+        name="Project",
+        slug="project-slug",
+        palace="project-palace",
+        default_wing=" default-wing ",
+        default_room="code",
+        fs_root="/tmp/project",
+        fs_allowlist=["/tmp/project"],
+        system2_enabled=False,
+        created_at="2026-05-03T00:00:00Z",
+        updated_at="2026-05-03T00:00:00Z",
+    )
+
+    assert sync_routes._scope_for_project(project) == {
+        "palace": "project-palace",
+        "wing": "",
+        "room": "",
+        "compartment": "project-slug",
+    }
+
+
 @pytest.mark.asyncio
 async def test_live_status_event_stream_can_emit_repeated_snapshots() -> None:
     from workflows_mcp.http.routes.events_v1 import _live_status_event_stream

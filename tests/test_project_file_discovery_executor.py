@@ -45,13 +45,7 @@ async def test_project_files_discovers_supported_files_with_ignore_and_allowlist
             "file_path": str(allowed_root / "app.py"),
             "repo_relative_path": "src/app.py",
             "language": "python",
-            "topology_override": {
-                "wing": "platform",
-                "room": "runtime",
-                "compartment": "forge",
-                "override_reason": "Project default topology for System 1 project sync",
-                "applied_by": "admin_sync",
-            },
+            "topology_override": None,
         }
     ]
     assert output.skipped_unsupported == 1
@@ -100,4 +94,37 @@ async def test_project_files_blank_defaults_do_not_emit_synthesized_topology_ove
 
     assert output.count == 1
     assert output.files[0]["repo_relative_path"] == "src/app.py"
+    assert output.files[0]["topology_override"] is None
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("wing", "room"),
+    [
+        ("default-wing", "runtime"),
+        ("platform", "default-room"),
+        ("default", "runtime"),
+        ("code", "default"),
+    ],
+)
+async def test_project_files_placeholder_defaults_do_not_emit_topology_override(
+    tmp_path: Path,
+    wing: str,
+    room: str,
+) -> None:
+    project_root = tmp_path / "repo"
+    _write(project_root / "src" / "app.py", "def main():\n    return 1\n")
+
+    output = await ProjectFilesExecutor().execute(
+        ProjectFilesInput(
+            project_root=str(project_root),
+            fs_allowlist=[str(project_root)],
+            default_wing=wing,
+            default_room=room,
+            default_compartment="forge",
+        ),
+        Execution(),
+    )
+
+    assert output.count == 1
     assert output.files[0]["topology_override"] is None

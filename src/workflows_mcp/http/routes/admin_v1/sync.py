@@ -31,9 +31,25 @@ router = APIRouter(prefix="/sync")
 logger = logging.getLogger(__name__)
 
 ProjectId = Annotated[str, Path(min_length=1, max_length=128)]
+
+
 def _normalized_optional(value: str | None) -> str | None:
     normalized = (value or "").strip()
     return normalized or None
+
+
+_TOPOLOGY_PLACEHOLDER_VALUES: frozenset[str] = frozenset(
+    {"default-wing", "default-room", "default", "code"}
+)
+
+
+def _normalized_topology_optional(value: str | None) -> str:
+    normalized = _normalized_optional(value)
+    if normalized is None:
+        return ""
+    if normalized.lower() in _TOPOLOGY_PLACEHOLDER_VALUES:
+        return ""
+    return normalized
 
 
 class SyncProjectSummary(BaseModel):
@@ -119,8 +135,8 @@ def _assert_project_exists(repo: SQLiteWatcherRepository, project_id: str) -> No
 def _scope_for_project(project: ProjectRecord) -> dict[str, str]:
     return {
         "palace": project.palace,
-        "wing": _normalized_optional(project.default_wing) or "default-wing",
-        "room": _normalized_optional(project.default_room) or "default-room",
+        "wing": _normalized_topology_optional(project.default_wing),
+        "room": _normalized_topology_optional(project.default_room),
         "compartment": project.slug,
     }
 
@@ -196,18 +212,18 @@ async def _memory_counts_for_project(
         if backend is None:
             return False, empty_counts
 
-    try:
-        source_items = await _count_query(
+    async def _collect_counts() -> tuple[int, int, int, dict[str, Any], int, int]:
+        source_items_local = await _count_query(
             backend,
             "SELECT COUNT(*)::int AS n FROM knowledge_items WHERE palace = $1",
             palace,
         )
-        structural_evidence = await _count_query(
+        structural_evidence_local = await _count_query(
             backend,
             "SELECT COUNT(*)::int AS n FROM knowledge_structural_evidence WHERE palace = $1",
             palace,
         )
-        verification_cycles = await _count_query(
+        verification_cycles_local = await _count_query(
             backend,
             "SELECT COUNT(*)::int AS n FROM knowledge_verification_cycles WHERE palace = $1",
             palace,
@@ -215,25 +231,55 @@ async def _memory_counts_for_project(
         topology_result = await backend.query(
             """
             SELECT
-                COUNT(DISTINCT wing)::int AS wings,
-                COUNT(DISTINCT room)::int AS rooms,
+                COUNT(DISTINCT NULLIF(wing, ''))::int AS wings,
+                COUNT(DISTINCT NULLIF(room, ''))::int AS rooms,
                 COUNT(DISTINCT NULLIF(compartment, ''))::int AS compartments
             FROM knowledge_structural_evidence
             WHERE palace = $1
             """,
             (palace,),
         )
-        topology = topology_result.rows[0] if topology_result.rows else {}
-        semantic_claims = await _count_query(
+        topology_local = topology_result.rows[0] if topology_result.rows else {}
+        semantic_claims_local = await _count_query(
             backend,
             "SELECT COUNT(*)::int AS n FROM knowledge_semantic_claims WHERE palace = $1",
             palace,
         )
-        semantic_memories = await _count_query(
+        semantic_memories_local = await _count_query(
             backend,
             "SELECT COUNT(*)::int AS n FROM knowledge_memories WHERE palace = $1",
             palace,
         )
+        return (
+            source_items_local,
+            structural_evidence_local,
+            verification_cycles_local,
+            topology_local,
+            semantic_claims_local,
+            semantic_memories_local,
+        )
+
+    try:
+        backend_lock = getattr(resources.app_context, "memory_backend_lock", None)
+        if backend_lock is not None:
+            async with backend_lock:
+                (
+                    source_items,
+                    structural_evidence,
+                    verification_cycles,
+                    topology,
+                    semantic_claims,
+                    semantic_memories,
+                ) = await _collect_counts()
+        else:
+            (
+                source_items,
+                structural_evidence,
+                verification_cycles,
+                topology,
+                semantic_claims,
+                semantic_memories,
+            ) = await _collect_counts()
     except Exception:
         logger.exception("unable to collect memory sync details palace=%s", palace)
         return False, empty_counts

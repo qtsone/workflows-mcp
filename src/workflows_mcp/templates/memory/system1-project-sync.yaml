@@ -1,7 +1,8 @@
 name: system1-project-sync
 description: |
   ADR-013 System 1 project sync wrapper. The workflow discovers eligible
-  project files from the project root, runs system1-scan once per file, and
+  project files from the project root, runs system1-scan once per file,
+  persists each file's raw structural graph before topology derivation, and
   records a successful System 1 verification cycle for the palace.
 
 tags: [builtin, memory, system1, adr013, sync]
@@ -77,10 +78,19 @@ blocks:
         source_name: "{{inputs.source_name}}"
         topology_override: "{{each.value.topology_override}}"
 
+  - id: derive_project_topology
+    description: "Derive project-level topology from persisted structural graph evidence."
+    type: Memory
+    depends_on: [scan_files]
+    inputs:
+      operation: derive_system1_project_topology
+      scope:
+        palace: "{{inputs.palace}}"
+
   - id: record_verification_cycle
     description: "Record a completed System 1 verification cycle for this palace."
     type: Memory
-    depends_on: [scan_files]
+    depends_on: [derive_project_topology]
     inputs:
       operation: record_system1_verification_cycle
       scope:
@@ -105,5 +115,5 @@ outputs:
     value: "{{blocks.scan_files.metadata.count_failed}}"
     type: num
   verification_cycle_id:
-    value: "{{blocks.record_verification_cycle.outputs.result.manage.cycle_id}}"
+    value: "{{blocks.record_verification_cycle.outputs.result.manage.cycle_id if blocks.record_verification_cycle.succeeded else ''}}"
     type: str

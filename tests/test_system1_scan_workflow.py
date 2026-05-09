@@ -57,6 +57,7 @@ from workflows_mcp.engine.io_queue import IOQueue
 from workflows_mcp.engine.job_queue import JobQueue
 from workflows_mcp.engine.knowledge.schema import ensure_schema
 from workflows_mcp.engine.llm_config import LLMConfigLoader
+from workflows_mcp.engine.memory_service import MemoryService, QueryMemoryRequest
 from workflows_mcp.engine.registry import WorkflowRegistry
 from workflows_mcp.engine.schema import WorkflowSchema
 from workflows_mcp.engine.sql.backend import ConnectionConfig, DatabaseEngine
@@ -254,6 +255,25 @@ async def _count_structural_evidence(backend: PostgresBackend) -> int:
     return int(rows.rows[0]["n"])
 
 
+async def _count_structural_entities(backend: PostgresBackend) -> int:
+    rows = await backend.query(
+        "SELECT COUNT(*)::int AS n FROM knowledge_entities"
+        " WHERE palace = $1 AND source = 'STRUCTURAL'",
+        (PALACE,),
+    )
+    return int(rows.rows[0]["n"])
+
+
+async def _count_structural_relations(backend: PostgresBackend) -> int:
+    rows = await backend.query(
+        "SELECT COUNT(*)::int AS n FROM knowledge_relations kr"
+        " INNER JOIN knowledge_entities ke ON ke.id = kr.source_entity_id"
+        " WHERE ke.palace = $1 AND ke.source = 'STRUCTURAL'",
+        (PALACE,),
+    )
+    return int(rows.rows[0]["n"])
+
+
 async def _fetch_evidence_categories(backend: PostgresBackend) -> set[str]:
     rows = await backend.query(
         "SELECT DISTINCT evidence_category FROM knowledge_structural_evidence"
@@ -340,6 +360,20 @@ async def test_system1_scan_first_run_stores_structural_evidence(
     assert "evidence_stored" in outputs, (
         f"Workflow outputs missing 'evidence_stored'; got: {list(outputs.keys())}"
     )
+    assert "graph_diagnostics" in outputs, (
+        f"Workflow outputs missing 'graph_diagnostics'; got: {list(outputs.keys())}"
+    )
+    graph_diagnostics = outputs["graph_diagnostics"]
+    assert isinstance(graph_diagnostics, dict)
+    for key in (
+        "entities_submitted",
+        "relations_submitted",
+        "relations_by_type",
+        "unresolved_imports",
+    ):
+        assert key in graph_diagnostics, (
+            f"Expected graph_diagnostics to include '{key}'; got: {graph_diagnostics}"
+        )
 
     # Structural evidence rows must exist in DB after successful derivation
     evidence_count = await _count_structural_evidence(knowledge_backend)
@@ -355,10 +389,19 @@ async def test_system1_scan_first_run_stores_structural_evidence(
         (PALACE,),
     )
     assert topology_rows.rows, "Expected structural evidence rows to carry topology"
-    assert {
+    observed_topologies = {
         (str(row["wing"]), str(row["room"]), str(row["compartment"]))
         for row in topology_rows.rows
-    } == {("application", "greeting", "core")}
+    }
+    non_empty_topologies = {topology for topology in observed_topologies if any(topology)}
+    assert non_empty_topologies == {("application", "greeting", "core")}, (
+        "Expected only the explicit override topology among non-empty topology rows; "
+        f"got observed={observed_topologies}, non_empty={non_empty_topologies}"
+    )
+    assert all(
+        "default-wing" not in topology and "default-room" not in topology
+        for topology in observed_topologies
+    ), f"Placeholder topology leaked into structural evidence rows: {observed_topologies}"
 
     # Corridor must not appear as an entity type (topology rule)
     entity_types = await _fetch_evidence_entity_types(knowledge_backend)
@@ -405,6 +448,51 @@ async def test_system1_scan_markdown_file_stores_file_structural_evidence(
     assert response.get("status") == "success", (
         f"Markdown System 1 scan failed: {response}"
     )
+
+
+async def test_system1_scan_without_override_persists_graph_without_placeholder_topology(
+    workflow_context: MagicMock,
+    knowledge_backend: PostgresBackend,
+    clean_palace: None,
+    tmp_path: Path,
+) -> None:
+    """No explicit topology_override persists graph data without placeholder topology values."""
+    fixture_file = tmp_path / "derived_topology.py"
+    fixture_file.write_text(FIXTURE_PY_SRC, encoding="utf-8")
+
+    result = await execute_workflow(
+        workflow="system1-scan",
+        inputs={
+            "file_path": str(fixture_file),
+            "repo_relative_path": "derived_topology.py",
+            "palace": PALACE,
+            "source_name": "test-repo",
+        },
+        debug=False,
+        mode="sync",
+        timeout=60,
+        ctx=workflow_context,
+    )
+
+    response: dict[str, Any] = result.structuredContent
+    assert response.get("status") == "success", response
+
+    evidence_count = await _count_structural_evidence(knowledge_backend)
+    assert evidence_count > 0, "Expected structural evidence rows for no-override scan"
+
+    placeholder_entities = await knowledge_backend.query(
+        "SELECT COUNT(*)::int AS n FROM knowledge_entities "
+        "WHERE palace = $1 AND (namespace = 'default-wing' OR room = 'default-room')",
+        (PALACE,),
+    )
+    assert int(placeholder_entities.rows[0]["n"]) == 0
+
+    placeholder_evidence = await knowledge_backend.query(
+        "SELECT COUNT(*)::int AS n FROM knowledge_structural_evidence "
+        "WHERE palace = $1 AND (wing = 'default-wing' OR room = 'default-room')",
+        (PALACE,),
+    )
+    assert int(placeholder_evidence.rows[0]["n"]) == 0
 
 
 @pytest.mark.asyncio
@@ -581,6 +669,8 @@ async def test_system1_scan_second_run_is_idempotent(
     )
 
     evidence_after_1 = await _count_structural_evidence(knowledge_backend)
+    entities_after_1 = await _count_structural_entities(knowledge_backend)
+    relations_after_1 = await _count_structural_relations(knowledge_backend)
 
     # Second run (same file, same content)
     r2 = await execute_workflow(
@@ -596,10 +686,135 @@ async def test_system1_scan_second_run_is_idempotent(
     )
 
     evidence_after_2 = await _count_structural_evidence(knowledge_backend)
+    entities_after_2 = await _count_structural_entities(knowledge_backend)
+    relations_after_2 = await _count_structural_relations(knowledge_backend)
 
     assert evidence_after_2 == evidence_after_1, (
         "knowledge_structural_evidence grew on second run (not idempotent): "
         f"{evidence_after_1} -> {evidence_after_2}"
+    )
+    assert entities_after_2 == entities_after_1, (
+        "knowledge_entities (source=STRUCTURAL) grew on second run (not idempotent): "
+        f"{entities_after_1} -> {entities_after_2}"
+    )
+    assert relations_after_2 == relations_after_1, (
+        "knowledge_relations (source=STRUCTURAL) grew on second run (not idempotent): "
+        f"{relations_after_1} -> {relations_after_2}"
+    )
+
+
+async def test_system1_scan_persists_graph_and_neighbors_metadata_e2e(
+    workflow_context: MagicMock,
+    knowledge_backend: PostgresBackend,
+    clean_palace: None,
+    tmp_path: Path,
+) -> None:
+    """E2E: scan persists structural graph rows and neighbors exposes provenance metadata."""
+    callee = tmp_path / "callee.py"
+    callee.write_text("def greet() -> str:\n    return 'hello'\n", encoding="utf-8")
+
+    caller = tmp_path / "caller.py"
+    caller.write_text(
+        "from callee import greet\n\n"
+        "def run() -> str:\n"
+        "    return greet()\n",
+        encoding="utf-8",
+    )
+
+    explicit_topology = {
+        "wing": "application",
+        "room": "integration",
+        "compartment": "core",
+        "override_reason": "Task10 final integration verification",
+        "applied_by": "test_system1_scan_workflow",
+    }
+
+    for file_name in ("callee.py", "caller.py"):
+        result = await execute_workflow(
+            workflow="system1-scan",
+            inputs={
+                "file_path": str(tmp_path / file_name),
+                "repo_relative_path": file_name,
+                "palace": PALACE,
+                "source_name": "test-repo",
+                "topology_override": explicit_topology,
+            },
+            debug=False,
+            mode="sync",
+            timeout=60,
+            ctx=workflow_context,
+        )
+
+        response: dict[str, Any] = result.structuredContent
+        assert response.get("status") == "success", response
+        outputs = response.get("outputs", {})
+        assert isinstance(outputs.get("graph_diagnostics"), dict), outputs
+        assert outputs["graph_diagnostics"].get("entities_submitted", 0) > 0, outputs
+        for field in ("derived_wing", "derived_room", "derived_compartment", "derivation_source"):
+            assert field in outputs, (
+                f"Expected topology derivation output '{field}' in scan outputs: {outputs}"
+            )
+
+    structural_entities = await _count_structural_entities(knowledge_backend)
+    assert structural_entities >= 2, (
+        "Expected at least two STRUCTURAL entities after two-file scan, got "
+        f"{structural_entities}"
+    )
+
+    relation_rows = await knowledge_backend.query(
+        "SELECT relation_type FROM knowledge_relations kr"
+        " INNER JOIN knowledge_entities ke ON ke.id = kr.source_entity_id"
+        " WHERE ke.palace = $1 AND ke.source = 'STRUCTURAL'",
+        (PALACE,),
+    )
+    relation_types = {str(row["relation_type"]) for row in relation_rows.rows}
+    allowed_relation_types = {"CONTAINS", "IMPORTS", "CALLS", "INHERITS_FROM"}
+    assert relation_types & allowed_relation_types, (
+        "Expected at least one structural relation type among "
+        f"{sorted(allowed_relation_types)}; got {sorted(relation_types)}"
+    )
+
+    non_empty_topology_rows = await knowledge_backend.query(
+        "SELECT wing, room FROM knowledge_structural_evidence"
+        " WHERE palace = $1 AND (wing IS NOT NULL OR room IS NOT NULL)",
+        (PALACE,),
+    )
+    assert all(
+        row["wing"] != "default-wing" and row["room"] != "default-room"
+        for row in non_empty_topology_rows.rows
+    ), "default-wing/default-room must never be written as topology"
+
+    start_entity_rows = await knowledge_backend.query(
+        "SELECT id, name FROM knowledge_entities"
+        " WHERE palace = $1 AND source = 'STRUCTURAL'"
+        " ORDER BY id LIMIT 1",
+        (PALACE,),
+    )
+    assert start_entity_rows.rows, "Expected at least one STRUCTURAL entity for neighbors query"
+    start_name = str(start_entity_rows.rows[0]["name"])
+
+    graph_result = await MemoryService(backend=knowledge_backend, context=Execution())._query_graph(
+        QueryMemoryRequest(
+            query="neighbors",
+            strategy="graph",
+            graph_op="neighbors",
+            start_entity=start_name,
+            palace=PALACE,
+        )
+    )
+
+    edges = graph_result.evidence[0].get("edges", []) if graph_result.evidence else []
+    matching_edges = [
+        edge
+        for edge in edges
+        if edge.get("relation_type") in allowed_relation_types
+        and isinstance(edge.get("metadata"), dict)
+        and edge["metadata"].get("source_file")
+        and edge["metadata"].get("content_hash")
+    ]
+    assert matching_edges, (
+        "Expected neighbors graph query to return at least one System1 edge "
+        "with provenance metadata source_file and content_hash"
     )
 
 
@@ -672,11 +887,42 @@ _WORKFLOW_YAML_PATH = (
     / "system1-scan.yaml"
 )
 
+_SYSTEM2_PROJECT_SYNC_YAML_PATH = (
+    Path(__file__).parent.parent
+    / "src"
+    / "workflows_mcp"
+    / "templates"
+    / "memory"
+    / "system2-project-sync.yaml"
+)
+
 
 def _load_workflow_yaml() -> dict:
     import yaml  # noqa: PLC0415
 
     return yaml.safe_load(_WORKFLOW_YAML_PATH.read_text(encoding="utf-8"))
+
+
+def _load_system2_project_sync_yaml() -> dict:
+    import yaml  # noqa: PLC0415
+
+    return yaml.safe_load(_SYSTEM2_PROJECT_SYNC_YAML_PATH.read_text(encoding="utf-8"))
+
+
+def test_system2_project_sync_template_suppresses_placeholder_topology_defaults() -> None:
+    """system2-project-sync.yaml must not ship default-wing/default-room placeholders.
+
+    Final QA blocker guard: default_wing/default_room must use suppressed semantics
+    (empty string) and never static placeholder literals.
+    """
+
+    wf = _load_system2_project_sync_yaml()
+    inputs: dict[str, dict[str, Any]] = wf.get("inputs", {})
+
+    assert inputs["default_wing"]["default"] == ""
+    assert inputs["default_room"]["default"] == ""
+    assert inputs["default_wing"]["default"] != "default-wing"
+    assert inputs["default_room"]["default"] != "default-room"
 
 
 # ---- 1. TreeSitter block must not include topology fields ------------------
@@ -713,34 +959,36 @@ def test_treesitter_block_output_schema_has_no_topology_fields() -> None:
             )
 
 
-# ---- 2. Flow is parse -> one Memory store/derive operation -> outputs -------
+# ---- 2. Flow is parse -> persist graph -> derive topology -> outputs --------
 
 
-def test_workflow_sequence_is_parse_then_one_memory_operation() -> None:
-    """system1-scan.yaml must follow: parse -> one Memory operation -> outputs.
+def test_workflow_sequence_persists_graph_before_topology_derivation() -> None:
+    """system1-scan.yaml must persist graph before topology derivation.
 
-    ADR-013: workflow is thin orchestration; no fan-out, no multi-Memory chain.
-    The single Memory block must use the derive_system1_topology operation.
+    ADR-013 Task 6 contract:
+    - parse_file runs first,
+    - first Memory op persists raw structural graph,
+    - derive_system1_topology remains present as downstream consumer.
     """
     wf = _load_workflow_yaml()
     blocks: list[dict] = wf.get("blocks", [])
+    assert [b.get("type") for b in blocks[:2]] == ["TreeSitter", "Memory"]
 
-    ts_blocks = [b for b in blocks if b.get("type") == "TreeSitter"]
     memory_blocks = [b for b in blocks if b.get("type") == "Memory"]
+    operations = [b.get("inputs", {}).get("operation") for b in memory_blocks]
+    assert operations[0] == "store_system1_structural_graph"
+    assert "derive_system1_topology" in operations
 
-    assert len(ts_blocks) == 1, (
-        f"Expected exactly 1 TreeSitter block; got {len(ts_blocks)}"
+    persist = memory_blocks[0].get("inputs", {}).get("record", {}).get("system1_graph", {})
+    assert persist["entities"] == "{{blocks.parse_file.outputs.entities}}"
+    assert persist["relations"] == "{{blocks.parse_file.outputs.relations}}"
+    assert (
+        persist["unresolved_imports"]
+        == "{{blocks.parse_file.outputs.unresolved_imports}}"
     )
-    assert len(memory_blocks) == 1, (
-        f"Expected exactly 1 Memory block (derive_system1_topology); "
-        f"got {len(memory_blocks)}: "
-        f"{[b.get('id') for b in memory_blocks]}"
-    )
-
-    memory_block = memory_blocks[0]
-    operation = memory_block.get("inputs", {}).get("operation", "")
-    assert operation == "derive_system1_topology", (
-        f"Expected Memory block operation='derive_system1_topology'; got '{operation}'"
+    assert (
+        persist["structural_evidence"]
+        == "{{blocks.parse_file.outputs.structural_evidence_items}}"
     )
 
 
@@ -873,7 +1121,11 @@ def test_workflow_memory_block_uses_topology_override_not_wing_hint() -> None:
     memory_blocks = [b for b in blocks if b.get("type") == "Memory"]
     assert memory_blocks, "Expected at least one Memory block"
 
-    memory_block = memory_blocks[0]
+    memory_block = next(
+        b
+        for b in memory_blocks
+        if b.get("inputs", {}).get("operation") == "derive_system1_topology"
+    )
     block_inputs = memory_block.get("inputs", {})
 
     # topology_override must NOT be at the top level of block inputs (extra=forbid in MemoryInput)
@@ -905,31 +1157,29 @@ def test_workflow_memory_block_uses_topology_override_not_wing_hint() -> None:
 # ---- 5b. Fail-closed: absent topology_override with insufficient evidence --
 
 
-async def test_system1_scan_fails_closed_without_topology_override(
+async def test_system1_scan_skips_per_file_derivation_without_topology_override(
     workflow_context: MagicMock,
     knowledge_backend: PostgresBackend,
     clean_palace: None,
     tmp_path: Path,
     caplog: pytest.LogCaptureFixture,
 ) -> None:
-    """Absent topology_override with single-file evidence must fail closed.
+    """Absent topology_override skips per-file topology derivation without failing workflow.
 
-    ADR-013 §derivation-precedence step 3: when no topology_override is
-    supplied and structural evidence from a single trivial file is
-    insufficient for deterministic derivation, the Memory service raises
-    MEM_INSUFFICIENT_EVIDENCE.
+    No-override scans still persist System 1 structural graph evidence, but
+    per-file derive_system1_topology is intentionally skipped. Project-level
+    topology derivation remains authoritative in system1-project-sync.
 
-    Observable behaviour (no production-code changes):
-    - The Memory executor logs MEM_INSUFFICIENT_EVIDENCE at ERROR level.
-    - The block result omits the expected .manage subkey, so workflow output
-      evaluation fails: the outputs dict contains '_error' instead of
-      derived topology fields.
-    - No valid derived_wing / derived_room / derived_compartment is returned.
+    Observable behaviour:
+    - Structural graph persistence succeeds and workflow status is success.
+    - Per-file derive is skipped, so no MEM_INSUFFICIENT_EVIDENCE ERROR log is emitted.
+    - Derivation outcome remains non-success (`evidence_stored` is false).
 
     Assertions:
-    1. Primary: no valid derived topology is present in response outputs.
-    2. Secondary: MEM_INSUFFICIENT_EVIDENCE error code appears in captured
-       logs — a stable constant, not a display message.
+    1. Primary: workflow remains successful because persist_structural_graph is
+       the blocking step.
+    2. Derivation result is non-success (`evidence_stored` is false).
+    3. Secondary: MEM_INSUFFICIENT_EVIDENCE is absent from captured ERROR logs.
     """
     import logging  # noqa: PLC0415
 
@@ -955,26 +1205,245 @@ async def test_system1_scan_fails_closed_without_topology_override(
 
     response: dict[str, Any] = result.structuredContent
 
-    # Primary: workflow must not succeed when topology_override is absent and
-    # evidence is insufficient. MEM_INSUFFICIENT_EVIDENCE causes the block to
-    # fail, which must propagate as a non-success workflow status.
+    # Primary: persist_structural_graph is the blocking unit. Derivation can
+    # fail closed without failing the overall workflow.
     status = response.get("status")
-    assert status != "success", (
-        "Expected fail-closed behaviour when topology_override is absent and "
-        "evidence is insufficient — workflow must not return status='success'. "
+    assert status == "success", (
+        "Expected workflow success when topology_override is absent and evidence "
+        "is insufficient for derivation because graph persistence is primary. "
         f"Got status={status!r}. Full response: {response}"
     )
 
-    # Secondary: MEM_INSUFFICIENT_EVIDENCE error code must appear in logs.
-    # This is a stable constant in executors_memory.py, not a display message.
-    assert "MEM_INSUFFICIENT_EVIDENCE" in caplog.text, (
-        "Expected MEM_INSUFFICIENT_EVIDENCE error code in executor logs for "
-        "fail-closed derivation without topology_override. "
+    outputs = response.get("outputs", {})
+    assert outputs.get("evidence_stored") is False, (
+        "Expected derive_topology fail-closed outcome when insufficient evidence "
+        f"is present; outputs={outputs}"
+    )
+
+    # Secondary: per-file derive is skipped, so no insufficient-evidence error log.
+    assert "MEM_INSUFFICIENT_EVIDENCE" not in caplog.text, (
+        "Did not expect MEM_INSUFFICIENT_EVIDENCE in executor logs when "
+        "topology_override is absent and per-file derivation is skipped. "
         f"Captured log: {caplog.text!r}"
     )
 
 
 # ---- 6. Outputs expose derived topology/provenance -------------------------
+
+
+@pytest.mark.asyncio
+async def test_treesitter_output_relations_are_schema_valid(tmp_path: Path) -> None:
+    """TreeSitter extraction emits schema-valid System1 entities/relations."""
+    from workflows_mcp.engine.executors_treesitter import (  # noqa: PLC0415
+        TreeSitterExecutor,
+        TreeSitterInput,
+        validate_system1_extraction_payload,
+    )
+
+    source = tmp_path / "service.py"
+    source.write_text(
+        "import os\n\nclass Service:\n    def run(self):\n        return os.getcwd()\n",
+        encoding="utf-8",
+    )
+
+    output = await TreeSitterExecutor().execute(
+        TreeSitterInput(
+            path=str(source),
+            repo_relative_path="src/service.py",
+            palace=PALACE,
+            item_id="item-service",
+        ),
+        Execution(),
+    )
+
+    diagnostics = validate_system1_extraction_payload(output.entities, output.relations)
+    assert diagnostics["valid"] is True
+    assert diagnostics["entity_count"] >= 2
+    assert diagnostics["relation_count"] >= 1
+    assert set(diagnostics["relation_types"]).issubset(
+        {"CONTAINS", "IMPORTS", "CALLS", "INHERITS_FROM"}
+    )
+
+
+@pytest.mark.asyncio
+async def test_treesitter_entities_and_relations_include_source_provenance(
+    tmp_path: Path,
+) -> None:
+    from workflows_mcp.engine.executors_treesitter import (  # noqa: PLC0415
+        TreeSitterExecutor,
+        TreeSitterInput,
+    )
+
+    source = tmp_path / "svc.py"
+    source.write_text(
+        "import os\n\ndef run():\n    return os.getcwd()\n", encoding="utf-8"
+    )
+
+    output = await TreeSitterExecutor().execute(
+        TreeSitterInput(
+            path=str(source),
+            repo_relative_path="src/svc.py",
+            palace=PALACE,
+            item_id="item-svc",
+        ),
+        Execution(),
+    )
+
+    assert output.entities
+    for entity in output.entities:
+        metadata = entity["metadata"]
+        assert metadata["source_file"] == str(source)
+        assert metadata["repo_relative_path"] == "src/svc.py"
+        assert metadata["content_hash"] == output.content_hash
+        assert "source_range" in metadata
+        assert metadata["language"] == "python"
+
+    assert output.relations
+    for relation in output.relations:
+        metadata = relation["metadata"]
+        assert metadata["source_file"] == str(source)
+        assert metadata["repo_relative_path"] == "src/svc.py"
+        assert metadata["content_hash"] == output.content_hash
+        assert metadata["provenance"] == "treesitter"
+        assert "source_range" in metadata
+
+
+@pytest.mark.asyncio
+async def test_structural_import_evidence_lists_targets_and_resolution(
+    tmp_path: Path,
+) -> None:
+    from workflows_mcp.engine.executors_treesitter import (  # noqa: PLC0415
+        TreeSitterExecutor,
+        TreeSitterInput,
+    )
+
+    source = tmp_path / "svc.py"
+    source.write_text("import os\nimport missing_pkg\n", encoding="utf-8")
+
+    output = await TreeSitterExecutor().execute(
+        TreeSitterInput(path=str(source), repo_relative_path="src/svc.py", palace=PALACE),
+        Execution(),
+    )
+
+    import_items = [
+        item
+        for item in output.structural_evidence_items
+        if item["evidence_category"] == "structural_import"
+    ]
+    assert import_items
+    payload = import_items[0]["evidence_data"]
+    assert payload["import_count"] >= 2
+    assert {entry["target_qname"] for entry in payload["imports"]} >= {
+        "os",
+        "missing_pkg",
+    }
+    assert all("resolution" in entry for entry in payload["imports"])
+
+
+@pytest.mark.asyncio
+async def test_treesitter_source_range_defaults_are_not_shared(tmp_path: Path) -> None:
+    from workflows_mcp.engine.executors_treesitter import (  # noqa: PLC0415
+        TreeSitterExecutor,
+        TreeSitterInput,
+    )
+
+    source = tmp_path / "svc.py"
+    source.write_text(
+        "import os\n\ndef run():\n    return os.getcwd()\n", encoding="utf-8"
+    )
+
+    output = await TreeSitterExecutor().execute(
+        TreeSitterInput(
+            path=str(source),
+            repo_relative_path="src/svc.py",
+            palace=PALACE,
+            item_id="item-svc",
+        ),
+        Execution(),
+    )
+
+    entity_ranges = [entity["metadata"]["source_range"] for entity in output.entities]
+    assert len(entity_ranges) >= 2
+    assert len({id(source_range) for source_range in entity_ranges}) == len(entity_ranges)
+
+    if output.relations:
+        relation_ranges = [
+            relation["metadata"]["source_range"] for relation in output.relations
+        ]
+        assert len({id(source_range) for source_range in relation_ranges}) == len(
+            relation_ranges
+        )
+
+
+@pytest.mark.asyncio
+async def test_treesitter_execute_raises_for_invalid_schema_payload(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Invalid extraction payload fails at the extraction boundary."""
+    from workflows_mcp.engine.executors_treesitter import (  # noqa: PLC0415
+        TreeSitterExecutor,
+        TreeSitterInput,
+    )
+
+    source = tmp_path / "broken.py"
+    source.write_text("def run() -> None:\n    return None\n", encoding="utf-8")
+
+    def _invalid_extract_python(
+        *args: object, **kwargs: object
+    ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+        del args, kwargs
+        return ([{"qualified_name": "mod.X"}], [])
+
+    monkeypatch.setattr(
+        "workflows_mcp.engine.executors_treesitter.extract_python",
+        _invalid_extract_python,
+    )
+
+    with pytest.raises(ValueError, match="SYSTEM1_EXTRACTION_SCHEMA_INVALID"):
+        await TreeSitterExecutor().execute(
+            TreeSitterInput(
+                path=str(source),
+                repo_relative_path="src/broken.py",
+                palace=PALACE,
+                item_id="item-broken",
+            ),
+            Execution(),
+        )
+
+
+def test_validate_system1_extraction_payload_allows_empty_payload() -> None:
+    """Unsupported/no-op extraction paths may produce empty payloads without error."""
+    from workflows_mcp.engine.executors_treesitter import (  # noqa: PLC0415
+        validate_system1_extraction_payload,
+    )
+
+    diagnostics = validate_system1_extraction_payload([], [])
+    assert diagnostics["valid"] is True
+    assert diagnostics["errors"] == []
+    assert diagnostics["entity_count"] == 0
+    assert diagnostics["relation_count"] == 0
+
+
+def test_treesitter_schema_error_message_is_bounded() -> None:
+    """Schema invalid exceptions are summarized and size-bounded."""
+    from workflows_mcp.engine.executors_treesitter import (  # noqa: PLC0415
+        _raise_if_invalid_system1_extraction_payload,
+    )
+
+    invalid_entities = [{"qualified_name": f"mod.Entity{i}"} for i in range(5000)]
+    invalid_relations = [{"source_qname": "src.only"} for _ in range(200)]
+
+    with pytest.raises(ValueError) as exc:
+        _raise_if_invalid_system1_extraction_payload(invalid_entities, invalid_relations)
+
+    message = str(exc.value)
+    assert "SYSTEM1_EXTRACTION_SCHEMA_INVALID" in message
+    assert "validation errors" in message
+    assert "showing first" in message
+    assert "and" in message and "more" in message
+    assert "entity_count=" in message
+    assert "relation_count=" in message
+    assert len(message) < 5000
 
 
 def test_workflow_outputs_expose_derived_topology_fields() -> None:
@@ -991,6 +1460,7 @@ def test_workflow_outputs_expose_derived_topology_fields() -> None:
         "derived_room",
         "derived_compartment",
         "derivation_source",
+        "graph_diagnostics",
     }
 
     missing = required_derived_outputs - set(outputs.keys())

@@ -334,7 +334,7 @@ def test_admin_sync_details_report_system_states_and_collected_counts(
             assert params == ("semantic-palace",)
             if "knowledge_items" in sql:
                 return type("Result", (), {"rows": [{"n": 7}]})()
-            if "knowledge_structural_evidence" in sql and "COUNT(DISTINCT wing)" in sql:
+            if "knowledge_structural_evidence" in sql and "COUNT(DISTINCT" in sql:
                 return type("Result", (), {"rows": [{"wings": 2, "rooms": 3, "compartments": 5}]})()
             if "knowledge_structural_evidence" in sql:
                 return type("Result", (), {"rows": [{"n": 12}]})()
@@ -370,6 +370,146 @@ def test_admin_sync_details_report_system_states_and_collected_counts(
         "semantic_claims": 4,
         "semantic_memories": 2,
     }
+
+
+def test_admin_sync_details_topology_counts_ignore_empty_wing_room_labels(
+    app_client: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    for key in (
+        "MEMORY_DB_HOST",
+        "MEMORY_DB_PORT",
+        "MEMORY_DB_NAME",
+        "MEMORY_DB_USER",
+        "MEMORY_DB_PASSWORD",
+    ):
+        monkeypatch.delenv(key, raising=False)
+
+    csrf_token = _login_and_csrf(app_client)
+    created_response = app_client.post(
+        "/api/admin/v1/projects",
+        json={
+            **_project_create_payload(
+                slug="counts-empty-labels",
+                palace="counts-empty-labels-palace",
+            ),
+            "system2_enabled": False,
+        },
+        headers={"X-CSRF-Token": csrf_token},
+    )
+    assert created_response.status_code == 201
+    project_id = str(created_response.json()["id"])
+
+    class FakeBackend:
+        async def query(self, sql: str, params: tuple[object, ...]) -> object:
+            assert params == ("counts-empty-labels-palace",)
+            if "knowledge_items" in sql:
+                return type("Result", (), {"rows": [{"n": 0}]})()
+            if "knowledge_structural_evidence" in sql and "COUNT(DISTINCT" in sql:
+                uses_empty_label_filter = (
+                    "NULLIF(wing, '')" in sql and "NULLIF(room, '')" in sql
+                )
+                if uses_empty_label_filter:
+                    return type(
+                        "Result",
+                        (),
+                        {"rows": [{"wings": 1, "rooms": 1, "compartments": 1}]},
+                    )()
+                return type("Result", (), {"rows": [{"wings": 2, "rooms": 2, "compartments": 1}]})()
+            if "knowledge_structural_evidence" in sql:
+                return type("Result", (), {"rows": [{"n": 2}]})()
+            if "knowledge_verification_cycles" in sql:
+                return type("Result", (), {"rows": [{"n": 0}]})()
+            if "knowledge_semantic_claims" in sql:
+                return type("Result", (), {"rows": [{"n": 0}]})()
+            if "knowledge_memories" in sql:
+                return type("Result", (), {"rows": [{"n": 0}]})()
+            raise AssertionError(f"unexpected query: {sql}")
+
+    app_client.app.state.resources.app_context.memory_backend = FakeBackend()
+
+    response = app_client.get(f"/api/admin/v1/sync/{project_id}/details")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["counts"]["wings"] == 1
+    assert payload["counts"]["rooms"] == 1
+    assert payload["counts"]["compartments"] == 1
+
+
+def test_admin_sync_details_memory_counts_use_shared_backend_lock(
+    app_client: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    for key in (
+        "MEMORY_DB_HOST",
+        "MEMORY_DB_PORT",
+        "MEMORY_DB_NAME",
+        "MEMORY_DB_USER",
+        "MEMORY_DB_PASSWORD",
+    ):
+        monkeypatch.delenv(key, raising=False)
+
+    csrf_token = _login_and_csrf(app_client)
+    created_response = app_client.post(
+        "/api/admin/v1/projects",
+        json={
+            **_project_create_payload(
+                slug="counts-lock",
+                palace="counts-lock-palace",
+            ),
+            "system2_enabled": False,
+        },
+        headers={"X-CSRF-Token": csrf_token},
+    )
+    assert created_response.status_code == 201
+    project_id = str(created_response.json()["id"])
+
+    class RecordingLock:
+        def __init__(self) -> None:
+            self.depth = 0
+            self.entries = 0
+
+        async def __aenter__(self) -> None:
+            self.depth += 1
+            self.entries += 1
+
+        async def __aexit__(self, *_args: object) -> None:
+            self.depth -= 1
+
+    class FakeBackend:
+        def __init__(self, lock: RecordingLock) -> None:
+            self._lock = lock
+
+        async def query(self, sql: str, params: tuple[object, ...]) -> object:
+            assert self._lock.depth > 0
+            assert params == ("counts-lock-palace",)
+            if "knowledge_items" in sql:
+                return type("Result", (), {"rows": [{"n": 1}]})()
+            if "knowledge_structural_evidence" in sql and "COUNT(DISTINCT" in sql:
+                return type(
+                    "Result",
+                    (),
+                    {"rows": [{"wings": 1, "rooms": 1, "compartments": 1}]},
+                )()
+            if "knowledge_structural_evidence" in sql:
+                return type("Result", (), {"rows": [{"n": 1}]})()
+            if "knowledge_verification_cycles" in sql:
+                return type("Result", (), {"rows": [{"n": 0}]})()
+            if "knowledge_semantic_claims" in sql:
+                return type("Result", (), {"rows": [{"n": 0}]})()
+            if "knowledge_memories" in sql:
+                return type("Result", (), {"rows": [{"n": 0}]})()
+            raise AssertionError(f"unexpected query: {sql}")
+
+    shared_lock = RecordingLock()
+    app_client.app.state.resources.app_context.memory_backend_lock = shared_lock
+    app_client.app.state.resources.app_context.memory_backend = FakeBackend(shared_lock)
+
+    response = app_client.get(f"/api/admin/v1/sync/{project_id}/details")
+
+    assert response.status_code == 200
+    assert shared_lock.entries == 1
 
 
 def test_admin_project_create_watcher_init_failure_rolls_back_project_persistence(
