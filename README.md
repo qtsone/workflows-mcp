@@ -94,6 +94,55 @@ WORKFLOWS_BOOTSTRAP_TOKEN="replace-with-a-secure-32-byte-or-longer-token" workfl
 No-arg `workflows-mcp` starts the HTTP service. By default it binds to
 `http://127.0.0.1:8000`; override with `WORKFLOWS_BIND_HOST` and `WORKFLOWS_PORT`.
 
+If you are running from a source checkout/worktree, plain `uv run workflows-mcp`
+does not auto-build web UI assets. Build UI assets explicitly for static/server mode,
+or run the frontend separately in Vite dev mode.
+
+#### Source checkout UI startup modes
+
+- **Static/server mode (production-style):** build UI assets before or during server startup.
+
+```bash
+# from repository root
+cd web
+npm install
+
+# back at repository root
+uv run workflows-mcp --build-ui
+```
+
+`npm install` is a one-time dependency setup per checkout/worktree (repeat only after dependency changes).
+
+or:
+
+```bash
+# from repository root
+cd web
+npm install
+npm run build
+
+# back at repository root
+uv run workflows-mcp
+```
+
+Production/static mode requires built UI assets.
+
+- **Dev/Vite mode (frontend development):** run backend and frontend in separate terminals.
+
+```bash
+# terminal 1, from repository root
+uv run workflows-mcp
+```
+
+```bash
+# terminal 2, from repository root
+cd web
+npm install
+WORKFLOWS_ADMIN_API_ORIGIN="http://127.0.0.1:8000" npm run dev
+```
+
+Open the Vite URL printed by `npm run dev`.
+
 ### 4) Open the UI and create an MCP token
 
 1. Open `http://127.0.0.1:8000/` and sign in at `/login` with the admin password set during bootstrap.

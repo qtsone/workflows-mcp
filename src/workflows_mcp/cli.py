@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import getpass
+import subprocess
 import sys
 from collections.abc import Sequence
 from pathlib import Path
@@ -71,6 +72,11 @@ def _resolve_password(
 
 def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="workflows-mcp")
+    parser.add_argument(
+        "--build-ui",
+        action="store_true",
+        help="Build frontend assets from web/ before starting the server.",
+    )
     subparsers = parser.add_subparsers(dest="subcommand")
 
     bootstrap_parser = subparsers.add_parser("bootstrap")
@@ -83,10 +89,57 @@ def _build_parser() -> argparse.ArgumentParser:
     return parser
 
 
+def _repo_root_dir() -> Path:
+    return Path(__file__).resolve().parents[2]
+
+
+def _build_ui_assets_or_exit(parser: argparse.ArgumentParser) -> None:
+    repo_root = _repo_root_dir()
+    web_dir = repo_root / "web"
+    package_json = web_dir / "package.json"
+    install_command = "cd web && npm install"
+    retry_build_ui_command = "uv run workflows-mcp --build-ui"
+    direct_build_command = "cd web && npm run build"
+
+    if not package_json.is_file():
+        parser.exit(
+            2,
+            "Cannot use --build-ui from this location: web/package.json was not found. "
+            "Run workflows-mcp from the repository root/source checkout.\n",
+        )
+
+    try:
+        build = subprocess.run(
+            ["npm", "run", "build"],
+            cwd=web_dir,
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+    except FileNotFoundError as exc:
+        parser.exit(
+            2,
+            "Failed to run frontend build because npm is unavailable. "
+            f"Install frontend dependencies first with `{install_command}`, then retry "
+            f"`{retry_build_ui_command}` or run `{direct_build_command}`. ({exc})\n",
+        )
+
+    if build.returncode != 0:
+        parser.exit(
+            2,
+            "Frontend build failed before server startup. "
+            f"Install frontend dependencies first with `{install_command}`, then retry "
+            f"`{retry_build_ui_command}` or run `{direct_build_command}`.\n",
+        )
+
+
 def main(argv: Sequence[str] | None = None) -> None:
     """Route CLI invocation to server startup or bootstrap."""
     parser = _build_parser()
     args = parser.parse_args(argv)
+
+    if args.subcommand is None and args.build_ui:
+        _build_ui_assets_or_exit(parser)
 
     if args.subcommand == "bootstrap":
         config_dir = server._resolve_base_dir(args.config_dir)

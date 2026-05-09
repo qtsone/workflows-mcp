@@ -5,8 +5,11 @@ import importlib
 import json
 import sqlite3
 import stat
+import subprocess
 from pathlib import Path
 from types import SimpleNamespace
+
+import pytest
 
 from workflows_mcp.bootstrap import bootstrap_if_needed
 from workflows_mcp.metadata.migrations import CURRENT_SCHEMA_VERSION
@@ -1016,6 +1019,122 @@ def test_cli_no_args_delegates_to_server_main(monkeypatch) -> None:
     cli.main([])
 
     assert called is True
+
+
+def test_cli_no_args_does_not_invoke_ui_build(monkeypatch) -> None:
+    cli = importlib.import_module("workflows_mcp.cli")
+
+    called_server = False
+    called_build = False
+
+    def _fake_server_main() -> None:
+        nonlocal called_server
+        called_server = True
+
+    def _fake_run(*args: object, **kwargs: object) -> subprocess.CompletedProcess[str]:
+        nonlocal called_build
+        called_build = True
+        msg = f"build command should not run without --build-ui: args={args} kwargs={kwargs}"
+        raise AssertionError(msg)
+
+    monkeypatch.setattr(cli.server, "main", _fake_server_main)
+    monkeypatch.setattr(cli.subprocess, "run", _fake_run)
+
+    cli.main([])
+
+    assert called_server is True
+    assert called_build is False
+
+
+def test_cli_build_ui_invokes_npm_build_in_web_dir(monkeypatch) -> None:
+    cli = importlib.import_module("workflows_mcp.cli")
+
+    seen: dict[str, object] = {}
+
+    def _fake_server_main() -> None:
+        seen["server_called"] = True
+
+    def _fake_run(*args: object, **kwargs: object) -> subprocess.CompletedProcess[str]:
+        seen["args"] = args
+        seen["kwargs"] = kwargs
+        return subprocess.CompletedProcess(["npm", "run", "build"], returncode=0)
+
+    monkeypatch.setattr(cli.server, "main", _fake_server_main)
+    monkeypatch.setattr(cli.subprocess, "run", _fake_run)
+
+    cli.main(["--build-ui"])
+
+    assert seen["server_called"] is True
+    assert seen["args"] == (["npm", "run", "build"],)
+    kwargs = seen["kwargs"]
+    assert isinstance(kwargs, dict)
+    assert kwargs["cwd"] == cli._repo_root_dir() / "web"
+    assert kwargs["check"] is False
+
+
+def test_cli_build_ui_fails_when_web_package_json_missing(monkeypatch, tmp_path: Path, capsys) -> None:
+    cli = importlib.import_module("workflows_mcp.cli")
+
+    monkeypatch.setattr(cli, "_repo_root_dir", lambda: tmp_path)
+
+    with pytest.raises(SystemExit) as exc_info:
+        cli.main(["--build-ui"])
+
+    captured = capsys.readouterr()
+    assert exc_info.value.code == 2
+    assert "web/package.json was not found" in captured.err
+
+
+def test_cli_build_ui_fails_with_actionable_message_when_npm_missing(
+    monkeypatch, capsys
+) -> None:
+    cli = importlib.import_module("workflows_mcp.cli")
+
+    web_dir = cli._repo_root_dir() / "web"
+    package_json = web_dir / "package.json"
+    if not package_json.exists():
+        pytest.skip("web/package.json missing in checkout")
+
+    def _fake_run(*args: object, **kwargs: object) -> subprocess.CompletedProcess[str]:
+        del args, kwargs
+        raise FileNotFoundError("npm not found")
+
+    monkeypatch.setattr(cli.subprocess, "run", _fake_run)
+
+    with pytest.raises(SystemExit) as exc_info:
+        cli.main(["--build-ui"])
+
+    captured = capsys.readouterr()
+    assert exc_info.value.code == 2
+    assert "cd web && npm install" in captured.err
+    assert "uv run workflows-mcp --build-ui" in captured.err
+    assert "npm run build" in captured.err
+
+
+def test_cli_build_ui_fails_with_actionable_message_when_build_fails(monkeypatch, capsys) -> None:
+    cli = importlib.import_module("workflows_mcp.cli")
+
+    web_dir = cli._repo_root_dir() / "web"
+    package_json = web_dir / "package.json"
+    if not package_json.exists():
+        pytest.skip("web/package.json missing in checkout")
+
+    def _fake_run(*args: object, **kwargs: object) -> subprocess.CompletedProcess[str]:
+        del args
+        del kwargs
+        return subprocess.CompletedProcess(["npm", "run", "build"], returncode=7, stderr="boom")
+
+    monkeypatch.setattr(cli.subprocess, "run", _fake_run)
+
+    with pytest.raises(SystemExit) as exc_info:
+        cli.main(["--build-ui"])
+
+    captured = capsys.readouterr()
+    assert exc_info.value.code == 2
+    assert "cd web && npm install" in captured.err
+    assert "uv run workflows-mcp --build-ui" in captured.err
+    assert "npm run build" in captured.err
+    assert "stderr=boom" not in captured.err
 
 
 def test_build_app_uses_workflows_config_dir_when_base_dir_not_explicit(

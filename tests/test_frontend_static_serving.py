@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import re
 import shutil
+import logging
 import subprocess
 import tarfile
 import tempfile
@@ -134,10 +135,6 @@ def test_build_app_production_mode_requires_frontend_assets(
         "workflows_mcp.http.static.packaged_admin_static_dir",
         lambda: missing_static_dir,
     )
-    monkeypatch.setattr(
-        "workflows_mcp.http.static.source_admin_static_dir",
-        lambda: tmp_path / "missing-web-dist",
-    )
 
     with pytest.raises(FrontendAssetsMissingError) as exc_info:
         build_app(base_dir=tmp_path)
@@ -145,10 +142,9 @@ def test_build_app_production_mode_requires_frontend_assets(
     message = str(exc_info.value)
     assert "Frontend admin assets are required" in message
     assert str(missing_static_dir / "index.html") in message
-    assert "missing-web-dist" in message
 
 
-def test_build_app_production_mode_prefers_packaged_assets_over_source_fallback(
+def test_build_app_production_mode_serves_packaged_assets_when_present(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     store = TokenStore(tmp_path / "auth.json")
@@ -161,16 +157,11 @@ def test_build_app_production_mode_prefers_packaged_assets_over_source_fallback(
         encoding="utf-8",
     )
 
-    source_dist = tmp_path / "web-dist"
-    source_dist.mkdir()
-    (source_dist / "index.html").write_text("<html><body>source-ui</body></html>", encoding="utf-8")
-
     monkeypatch.setenv("WORKFLOWS_FRONTEND_MODE", "production")
     monkeypatch.setattr(
         "workflows_mcp.http.static.packaged_admin_static_dir",
         lambda: packaged_static,
     )
-    monkeypatch.setattr("workflows_mcp.http.static.source_admin_static_dir", lambda: source_dist)
 
     app = build_app(base_dir=tmp_path)
     client = TestClient(app)
@@ -180,7 +171,7 @@ def test_build_app_production_mode_prefers_packaged_assets_over_source_fallback(
     assert "package-ui" in response.text
 
 
-def test_build_app_production_mode_falls_back_to_source_dist_when_package_incomplete(
+def test_build_app_production_mode_raises_when_packaged_assets_are_incomplete(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     store = TokenStore(tmp_path / "auth.json")
@@ -189,23 +180,18 @@ def test_build_app_production_mode_falls_back_to_source_dist_when_package_incomp
     packaged_static = tmp_path / "package-static"
     packaged_static.mkdir()
 
-    source_dist = tmp_path / "web-dist"
-    source_dist.mkdir()
-    (source_dist / "index.html").write_text("<html><body>source-ui</body></html>", encoding="utf-8")
-
     monkeypatch.setenv("WORKFLOWS_FRONTEND_MODE", "production")
     monkeypatch.setattr(
         "workflows_mcp.http.static.packaged_admin_static_dir",
         lambda: packaged_static,
     )
-    monkeypatch.setattr("workflows_mcp.http.static.source_admin_static_dir", lambda: source_dist)
 
-    app = build_app(base_dir=tmp_path)
-    client = TestClient(app)
+    with pytest.raises(FrontendAssetsMissingError) as exc_info:
+        build_app(base_dir=tmp_path)
 
-    response = client.get("/admin/projects/xyz")
-    assert response.status_code == 200
-    assert "source-ui" in response.text
+    message = str(exc_info.value)
+    assert "Frontend admin assets are required" in message
+    assert str(packaged_static / "index.html") in message
 
 
 def test_build_app_default_mode_allows_missing_frontend_assets_and_health_works(
@@ -224,6 +210,32 @@ def test_build_app_default_mode_allows_missing_frontend_assets_and_health_works(
     app = build_app(base_dir=tmp_path)
     client = TestClient(app)
     assert client.get("/health").status_code == 200
+    assert client.get("/login").status_code == 404
+
+
+def test_build_app_default_mode_logs_actionable_warning_when_frontend_assets_missing(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    store = TokenStore(tmp_path / "auth.json")
+    store.write_token("f" * 40)
+
+    missing_static_dir = tmp_path / "missing-static"
+    monkeypatch.delenv("WORKFLOWS_FRONTEND_MODE", raising=False)
+    monkeypatch.setattr(
+        "workflows_mcp.http.static.packaged_admin_static_dir",
+        lambda: missing_static_dir,
+    )
+
+    with caplog.at_level(logging.WARNING):
+        app = build_app(base_dir=tmp_path)
+
+    client = TestClient(app)
+    assert client.get("/health").status_code == 200
+    assert client.get("/login").status_code == 404
+    assert "uv run workflows-mcp --build-ui" in caplog.text
+    assert "cd web && npm install && npm run build" in caplog.text
 
 
 @contextmanager

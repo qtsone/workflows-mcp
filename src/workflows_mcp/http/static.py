@@ -1,10 +1,14 @@
 from __future__ import annotations
 
+import logging
 from pathlib import Path
 
 from fastapi import FastAPI
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
+
+
+logger = logging.getLogger(__name__)
 
 
 class FrontendAssetsMissingError(RuntimeError):
@@ -38,37 +42,21 @@ def packaged_admin_static_dir() -> Path:
     return Path(__file__).resolve().parents[1] / "static" / "admin"
 
 
-def source_admin_static_dir() -> Path:
-    """Return source-checkout frontend build output path (web/dist)."""
-    return Path(__file__).resolve().parents[3] / "web" / "dist"
-
-
 def resolve_admin_static_dir(*, static_dir: Path | None = None) -> Path:
-    """Resolve effective static directory with package-first precedence."""
+    """Resolve effective static directory with packaged-asset precedence."""
     if static_dir is not None:
         return static_dir
 
-    packaged_dir = packaged_admin_static_dir()
-    if (packaged_dir / "index.html").is_file():
-        return packaged_dir
-
-    source_dir = source_admin_static_dir()
-    if (source_dir / "index.html").is_file():
-        return source_dir
-
-    return packaged_dir
+    return packaged_admin_static_dir()
 
 
-def validate_admin_static_assets(static_dir: Path, *, fallback_dir: Path | None = None) -> Path:
+def validate_admin_static_assets(static_dir: Path) -> Path:
     """Validate admin SPA assets and return resolved ``index.html`` path."""
     index_path = static_dir / "index.html"
     if not index_path.is_file():
-        checked_paths = [str(index_path)]
-        if fallback_dir is not None:
-            checked_paths.append(str(fallback_dir / "index.html"))
         raise FrontendAssetsMissingError(
             "Frontend admin assets are required but index.html is missing at "
-            f"{', '.join(checked_paths)}. Build and package frontend assets before starting "
+            f"{index_path}. Build and package frontend assets before starting "
             "production HTTP server."
         )
     return index_path
@@ -81,21 +69,25 @@ def install_admin_static(
     require_assets: bool = False,
 ) -> None:
     """Install guarded SPA fallback route when frontend assets are available."""
-    explicit_static_dir = static_dir is not None
-    source_dir = source_admin_static_dir()
     resolved_static_dir = resolve_admin_static_dir(static_dir=static_dir)
+    guidance = (
+        "Frontend admin assets are missing; UI routes are disabled in default mode. "
+        "Run `uv run workflows-mcp --build-ui` or `cd web && npm install && npm run build`."
+    )
 
     if not resolved_static_dir.exists():
         if require_assets:
-            fallback_dir = None if explicit_static_dir else source_dir
-            validate_admin_static_assets(resolved_static_dir, fallback_dir=fallback_dir)
+            validate_admin_static_assets(resolved_static_dir)
+        else:
+            logger.warning(guidance)
         return
 
     index_path = resolved_static_dir / "index.html"
     if not index_path.is_file():
         if require_assets:
-            fallback_dir = None if explicit_static_dir else source_dir
-            validate_admin_static_assets(resolved_static_dir, fallback_dir=fallback_dir)
+            validate_admin_static_assets(resolved_static_dir)
+        else:
+            logger.warning(guidance)
         return
 
     index_path = validate_admin_static_assets(resolved_static_dir)
