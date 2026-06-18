@@ -8,8 +8,6 @@ priority order to transform expressions before evaluation.
 Rule Types:
     - SYNTAX: Expression syntax transformations (e.g., bracket notation)
     - SECURITY: Security validations and restrictions
-    - NAMESPACE: Namespace enhancements and shortcuts
-    - SHORTCUT: Attribute shortcuts (e.g., blocks.id.succeeded)
 
 Example:
     class MyRule(TransformRule):
@@ -39,8 +37,6 @@ class RuleType(Enum):
 
     SYNTAX = "syntax"  # Expression syntax transformations
     SECURITY = "security"  # Security validations
-    NAMESPACE = "namespace"  # Namespace enhancements
-    SHORTCUT = "shortcut"  # Attribute shortcuts
 
 
 @dataclass
@@ -69,8 +65,7 @@ class TransformRule(ABC):
     2. Transform the expression
     3. Add metadata for downstream processing
 
-    Security rules run first (priority 1-9), followed by syntax rules (10-49),
-    then namespace/shortcut rules (50+).
+    Security rules run first (priority 1-9), followed by syntax rules (10-49).
     """
 
     rule_type: RuleType

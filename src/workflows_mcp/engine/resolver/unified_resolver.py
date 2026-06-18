@@ -67,11 +67,6 @@ class UnifiedVariableResolver:
 
     Example:
         resolver = UnifiedVariableResolver(context)
-
-        # Synchronous (no secrets)
-        result = resolver.resolve("{{blocks.foo.exit_code}}")
-
-        # Asynchronous (with secrets)
         result = await resolver.resolve_async("{{secrets.API_KEY}}")
     """
 
@@ -732,41 +727,3 @@ class UnifiedVariableResolver:
 
         # Replace proxy with materialized dict for Jinja2 rendering
         self.jinja_context["secrets"] = secret_values
-
-    def resolve(self, value: Any) -> Any:
-        """
-        Synchronous resolution (no secret support).
-
-        For backwards compatibility and non-async contexts.
-
-        Args:
-            value: Value to resolve
-
-        Returns:
-            Resolved value
-
-        Raises:
-            ValueError: If expression contains secrets (use resolve_async)
-        """
-        # Check if value contains secrets
-        if isinstance(value, str) and "secrets." in value:
-            raise ValueError(
-                "Secret resolution requires async context. Use resolve_async() instead of resolve()"
-            )
-
-        # Create event loop if needed
-        try:
-            loop = asyncio.get_event_loop()
-        except RuntimeError:
-            loop = asyncio.new_event_loop()
-            asyncio.set_event_loop(loop)
-
-        # Remove secret provider for sync version
-        original_provider = self.secret_provider
-        self.secret_provider = None
-
-        try:
-            # Run async version
-            return loop.run_until_complete(self.resolve_async(value))
-        finally:
-            self.secret_provider = original_provider
