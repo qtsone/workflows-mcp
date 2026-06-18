@@ -4,7 +4,7 @@ from pathlib import Path
 
 import pytest
 
-from workflows_mcp.engine.file_outline import (
+from workflows_mcp.code_intelligence.file_outline import (
     annotate_section_tokens,
     extract_markdown_code_blocks,
     extract_markdown_frontmatter,

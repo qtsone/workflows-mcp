@@ -13,8 +13,8 @@ from typing import Any
 import pytest_asyncio
 from _ops_helpers import PALACE, _make_config
 
-from workflows_mcp.engine.knowledge.schema import ensure_schema
 from workflows_mcp.engine.sql.postgres_backend import PostgresBackend
+from workflows_mcp.memory.knowledge.schema import ensure_schema
 
 
 @pytest_asyncio.fixture
@@ -35,7 +35,7 @@ async def memory_service(knowledge_backend: PostgresBackend) -> Any:
     from unittest.mock import MagicMock
 
     from workflows_mcp.engine.executor_base import Execution
-    from workflows_mcp.engine.memory_service import MemoryService
+    from workflows_mcp.memory.memory_service import MemoryService
 
     context = MagicMock(spec=Execution)
     context.execution_context = MagicMock()

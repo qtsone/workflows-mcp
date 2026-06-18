@@ -14,22 +14,22 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 from pydantic import ValidationError
 
-from workflows_mcp.engine.executors_memory import (
+from workflows_mcp.memory.executors_memory import (
     MemoryExecutor,
     MemoryInput,
     MemoryOutput,
 )
-from workflows_mcp.engine.knowledge.constants import (
+from workflows_mcp.memory.knowledge.constants import (
     Authority,
     LifecycleState,
 )
-from workflows_mcp.engine.knowledge.context import (
+from workflows_mcp.memory.knowledge.context import (
     _cosine_similarity,
     _mmr_rerank,
     assemble_context,
     estimate_tokens,
 )
-from workflows_mcp.engine.knowledge.schema import (
+from workflows_mcp.memory.knowledge.schema import (
     _CREATE_EXTENSION,
     _CREATE_INDEXES,
     _CREATE_KNOWLEDGE_COMMUNITIES,
@@ -45,7 +45,7 @@ from workflows_mcp.engine.knowledge.schema import (
     SCHEMA_VERSION,
     ensure_schema,
 )
-from workflows_mcp.engine.knowledge.search import (
+from workflows_mcp.memory.knowledge.search import (
     build_fts_search_query,
     build_vector_search_query,
     rrf_fusion,
@@ -918,7 +918,7 @@ class TestRoomScopedSearch:
     @pytest.mark.asyncio
     async def test_no_room_runs_global_only(self) -> None:
         """When namespace and room are both None, only the global lane runs (2 backend calls)."""
-        from workflows_mcp.engine.knowledge.search import room_scoped_search
+        from workflows_mcp.memory.knowledge.search import room_scoped_search
 
         backend = MagicMock()
         empty_result = MagicMock()
@@ -939,7 +939,7 @@ class TestRoomScopedSearch:
     @pytest.mark.asyncio
     async def test_with_room_runs_four_queries(self) -> None:
         """When namespace+room provided, room and global lanes each run vector+FTS (4 total)."""
-        from workflows_mcp.engine.knowledge.search import room_scoped_search
+        from workflows_mcp.memory.knowledge.search import room_scoped_search
 
         backend = MagicMock()
         empty_result = MagicMock()
@@ -960,7 +960,7 @@ class TestRoomScopedSearch:
     @pytest.mark.asyncio
     async def test_with_scope_and_strict_mode_runs_room_lane_only(self) -> None:
         """Strict mode should disable companion global lane and keep scoped hybrid search."""
-        from workflows_mcp.engine.knowledge.search import room_scoped_search
+        from workflows_mcp.memory.knowledge.search import room_scoped_search
 
         backend = MagicMock()
         empty_result = MagicMock()
@@ -986,7 +986,7 @@ class TestRoomScopedSearch:
     @pytest.mark.asyncio
     async def test_room_lane_includes_room_filter_in_sql(self) -> None:
         """The room-scoped lane must pass namespace and room as WHERE conditions."""
-        from workflows_mcp.engine.knowledge.search import build_vector_search_query
+        from workflows_mcp.memory.knowledge.search import build_vector_search_query
 
         sql, params = build_vector_search_query(
             [0.1, 0.2],
@@ -1001,7 +1001,7 @@ class TestRoomScopedSearch:
     @pytest.mark.asyncio
     async def test_global_lane_no_room_filter(self) -> None:
         """The global companion lane must NOT include namespace/room WHERE conditions."""
-        from workflows_mcp.engine.knowledge.search import build_vector_search_query
+        from workflows_mcp.memory.knowledge.search import build_vector_search_query
 
         sql, params = build_vector_search_query([0.1, 0.2])
         # kp.namespace appears in the SELECT list but must not appear in a WHERE predicate
@@ -1011,7 +1011,7 @@ class TestRoomScopedSearch:
     @pytest.mark.asyncio
     async def test_room_scoped_returns_fused_results(self) -> None:
         """Results from both lanes are fused and deduplicated by RRF."""
-        from workflows_mcp.engine.knowledge.search import room_scoped_search
+        from workflows_mcp.memory.knowledge.search import room_scoped_search
 
         row_a = {
             "id": "aaaa-0001",
@@ -1078,11 +1078,11 @@ class TestMemoryService:
 
     def test_memory_service_importable(self) -> None:
         """MemoryService must be importable from memory_service module."""
-        from workflows_mcp.engine.memory_schema import (
+        from workflows_mcp.memory.memory_schema import (
             ManageMemoryRequest,
             QueryMemoryRequest,
         )
-        from workflows_mcp.engine.memory_service import MemoryService
+        from workflows_mcp.memory.memory_service import MemoryService
 
         assert MemoryService is not None
         assert QueryMemoryRequest is not None
@@ -1093,8 +1093,8 @@ class TestMemoryService:
         """MemoryService.query returns structured facts/memories without summary."""
         from unittest.mock import AsyncMock, MagicMock, patch
 
-        from workflows_mcp.engine.memory_schema import QueryMemoryRequest
-        from workflows_mcp.engine.memory_service import MemoryService
+        from workflows_mcp.memory.memory_schema import QueryMemoryRequest
+        from workflows_mcp.memory.memory_service import MemoryService
 
         backend = MagicMock()
         backend.query = AsyncMock(
@@ -1116,9 +1116,9 @@ class TestMemoryService:
         context = MagicMock()
         context.execution_context = None
 
-        with patch("workflows_mcp.engine.memory_service.compute_embedding") as mock_embed:
+        with patch("workflows_mcp.memory.memory_service.compute_embedding") as mock_embed:
             mock_embed.return_value = ([0.1, 0.2, 0.3], "text-embedding-3-small", 3, None)
-            with patch("workflows_mcp.engine.memory_service.room_scoped_search") as mock_search:
+            with patch("workflows_mcp.memory.memory_service.room_scoped_search") as mock_search:
                 mock_search.return_value = [
                     {
                         "id": "abc",
@@ -1141,8 +1141,8 @@ class TestMemoryService:
         """MemoryService.manage returns a result with operation field."""
         from unittest.mock import AsyncMock, MagicMock, patch
 
-        from workflows_mcp.engine.memory_schema import ManageMemoryRequest
-        from workflows_mcp.engine.memory_service import MemoryService
+        from workflows_mcp.memory.memory_schema import ManageMemoryRequest
+        from workflows_mcp.memory.memory_service import MemoryService
 
         backend = MagicMock()
         backend.query = AsyncMock(return_value=MagicMock(rows=[]))
@@ -1151,7 +1151,7 @@ class TestMemoryService:
         context = MagicMock()
         context.execution_context = None
 
-        with patch("workflows_mcp.engine.memory_service.compute_embedding") as mock_embed:
+        with patch("workflows_mcp.memory.memory_service.compute_embedding") as mock_embed:
             mock_embed.return_value = ([0.1, 0.2, 0.3], "text-embedding-3-small", 3, None)
             service = MemoryService(backend=backend, context=context)
             result = await service.manage(
@@ -1167,11 +1167,11 @@ class TestMemoryService:
     @pytest.mark.asyncio
     async def test_execute_ingest_raw_forwards_validity_window_to_store(self) -> None:
         """Unified ingest must forward valid_from/valid_to from record to store request."""
-        from workflows_mcp.engine.memory_schema import (
+        from workflows_mcp.memory.memory_schema import (
             ManageMemoryResult,
             MemoryRequest,
         )
-        from workflows_mcp.engine.memory_service import MemoryService
+        from workflows_mcp.memory.memory_service import MemoryService
 
         backend = MagicMock()
         context = MagicMock()
@@ -1207,17 +1207,17 @@ class TestMemoryService:
     @pytest.mark.asyncio
     async def test_query_with_as_of_passes_temporal_filter_to_search_layer(self) -> None:
         """Query as_of should be converted and forwarded to search SQL builder layer."""
-        from workflows_mcp.engine.memory_schema import QueryMemoryRequest
-        from workflows_mcp.engine.memory_service import MemoryService
+        from workflows_mcp.memory.memory_schema import QueryMemoryRequest
+        from workflows_mcp.memory.memory_service import MemoryService
 
         backend = MagicMock()
         backend.execute = AsyncMock()
         context = MagicMock()
         context.execution_context = None
 
-        with patch("workflows_mcp.engine.memory_service.compute_embedding") as mock_embed:
+        with patch("workflows_mcp.memory.memory_service.compute_embedding") as mock_embed:
             mock_embed.return_value = ([0.1, 0.2, 0.3], "text-embedding-3-small", 3, None)
-            with patch("workflows_mcp.engine.memory_service.room_scoped_search") as mock_search:
+            with patch("workflows_mcp.memory.memory_service.room_scoped_search") as mock_search:
                 mock_search.return_value = []
                 service = MemoryService(backend=backend, context=context)
                 await service.query(
@@ -1234,17 +1234,17 @@ class TestMemoryService:
     @pytest.mark.asyncio
     async def test_query_with_interval_passes_temporal_range_to_search_layer(self) -> None:
         """Query from/to should be converted and forwarded to search SQL builder layer."""
-        from workflows_mcp.engine.memory_schema import QueryMemoryRequest
-        from workflows_mcp.engine.memory_service import MemoryService
+        from workflows_mcp.memory.memory_schema import QueryMemoryRequest
+        from workflows_mcp.memory.memory_service import MemoryService
 
         backend = MagicMock()
         backend.execute = AsyncMock()
         context = MagicMock()
         context.execution_context = None
 
-        with patch("workflows_mcp.engine.memory_service.compute_embedding") as mock_embed:
+        with patch("workflows_mcp.memory.memory_service.compute_embedding") as mock_embed:
             mock_embed.return_value = ([0.1, 0.2, 0.3], "text-embedding-3-small", 3, None)
-            with patch("workflows_mcp.engine.memory_service.room_scoped_search") as mock_search:
+            with patch("workflows_mcp.memory.memory_service.room_scoped_search") as mock_search:
                 mock_search.return_value = []
                 service = MemoryService(backend=backend, context=context)
                 await service.query(
@@ -1265,11 +1265,11 @@ class TestMemoryService:
     @pytest.mark.asyncio
     async def test_manage_context_preserves_filter_fields(self) -> None:
         """Context management must forward all scoping/filter fields to QueryMemoryRequest."""
-        from workflows_mcp.engine.memory_schema import (
+        from workflows_mcp.memory.memory_schema import (
             ManageMemoryRequest,
             QueryMemoryResult,
         )
-        from workflows_mcp.engine.memory_service import MemoryService
+        from workflows_mcp.memory.memory_service import MemoryService
 
         backend = MagicMock()
         backend.query = AsyncMock(return_value=MagicMock(rows=[]))
@@ -1327,8 +1327,8 @@ class TestMemoryService:
     @pytest.mark.parametrize("strategy", ["auto", "communities", "palace"])
     async def test_query_retrieval_updates_last_retrieved_timestamp(self, strategy: str) -> None:
         """Retrieval update SQL must increment count and stamp last_retrieved_at."""
-        from workflows_mcp.engine.memory_schema import QueryMemoryRequest
-        from workflows_mcp.engine.memory_service import MemoryService
+        from workflows_mcp.memory.memory_schema import QueryMemoryRequest
+        from workflows_mcp.memory.memory_service import MemoryService
 
         backend = MagicMock()
         backend.execute = AsyncMock()
@@ -1337,9 +1337,9 @@ class TestMemoryService:
         context = MagicMock()
         context.execution_context = None
 
-        with patch("workflows_mcp.engine.memory_service.compute_embedding") as mock_embed:
+        with patch("workflows_mcp.memory.memory_service.compute_embedding") as mock_embed:
             mock_embed.return_value = ([0.1, 0.2, 0.3], "text-embedding-3-small", 3, None)
-            with patch("workflows_mcp.engine.memory_service.room_scoped_search") as mock_search:
+            with patch("workflows_mcp.memory.memory_service.room_scoped_search") as mock_search:
                 mock_search.return_value = [
                     {
                         "id": "11111111-1111-1111-1111-111111111111",
@@ -1401,7 +1401,7 @@ class TestMemoryExecutorManageWiring:
 
         async def capture_execute(request: Any) -> Any:
             captured_requests.append(request)
-            from workflows_mcp.engine.memory_schema import ManageMemoryResult, MemoryResult
+            from workflows_mcp.memory.memory_schema import ManageMemoryResult, MemoryResult
 
             return MemoryResult(
                 operation="ingest",
@@ -1422,7 +1422,7 @@ class TestMemoryExecutorManageWiring:
 
         with (
             patch.object(MemoryExecutor, "_create_backend", return_value=backend),
-            patch("workflows_mcp.engine.executors_memory.MemoryService") as mock_service_cls,
+            patch("workflows_mcp.memory.executors_memory.MemoryService") as mock_service_cls,
         ):
             mock_service_cls.return_value.execute = capture_execute
 

@@ -42,20 +42,22 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 import pytest_asyncio
 
-import workflows_mcp.engine.knowledge.schema as knowledge_schema
-import workflows_mcp.engine.memory_onboard_sync_orchestrator as onboard_sync_orchestrator
+import workflows_mcp.memory.knowledge.schema as knowledge_schema
+import workflows_mcp.memory.memory_onboard_sync_orchestrator as onboard_sync_orchestrator
 import workflows_mcp.tools_memory as _tools_memory
 import workflows_mcp.tools_memory as tools_memory
 from workflows_mcp.context import SessionProjectContext
-from workflows_mcp.engine.knowledge.schema import ensure_schema
 from workflows_mcp.engine.llm_config import (
     LLMConfig,
     LLMConfigLoader,
     ProfileConfig,
     ProviderConfig,
 )
-from workflows_mcp.engine.memory_graph_builder import NodeType
-from workflows_mcp.engine.memory_onboard_sync_orchestrator import (
+from workflows_mcp.engine.sql.backend import ConnectionConfig, DatabaseEngine
+from workflows_mcp.engine.sql.postgres_backend import PostgresBackend
+from workflows_mcp.memory.knowledge.schema import ensure_schema
+from workflows_mcp.memory.memory_graph_builder import NodeType
+from workflows_mcp.memory.memory_onboard_sync_orchestrator import (
     LLMOnboardRequest,
     ProgrammaticOnboardRequest,
     ScannedFileEntry,
@@ -65,7 +67,7 @@ from workflows_mcp.engine.memory_onboard_sync_orchestrator import (
     run_llm_onboard,
     run_programmatic_onboard,
 )
-from workflows_mcp.engine.memory_scope_resolver import (
+from workflows_mcp.memory.memory_scope_resolver import (
     DEFAULT_BOUNDARY_MARKERS,
     BoundaryResolution,
     SyncContextCandidate,
@@ -77,12 +79,10 @@ from workflows_mcp.engine.memory_scope_resolver import (
     scope_key,
     sorted_scan_manifest,
 )
-from workflows_mcp.engine.project_flow_service import (
+from workflows_mcp.memory.project_flow_service import (
     classify_deletion_policy,
     compute_sync_delta,
 )
-from workflows_mcp.engine.sql.backend import ConnectionConfig, DatabaseEngine
-from workflows_mcp.engine.sql.postgres_backend import PostgresBackend
 from workflows_mcp.server import mcp as _mcp_server
 from workflows_mcp.tools_memory import register_memory_tools
 
@@ -1121,7 +1121,7 @@ class TestOnboardProgrammaticFastPath:
         async def _fake_wrapper(request: Any, *, memory_service: Any) -> Any:
             wrapper_calls.append({"request": request, "memory_service": memory_service})
             # Delegate to actual sync pipeline so result shape is correct.
-            from workflows_mcp.engine.memory_onboard_sync_orchestrator import (
+            from workflows_mcp.memory.memory_onboard_sync_orchestrator import (
                 run_programmatic_onboard,
             )
 
@@ -1941,7 +1941,7 @@ class TestOnboardContextPersistenceForSync:
     @pytest.mark.asyncio
     async def test_two_distinct_scopes_sync_returns_ambiguous(self, mock_ctx: MagicMock) -> None:
         """sync({}) with two stored contexts and no scope hint must return AMBIGUOUS_CONTEXT."""
-        from workflows_mcp.engine.memory_scope_resolver import normalize_scope
+        from workflows_mcp.memory.memory_scope_resolver import normalize_scope
 
         # Directly inject two candidates into the registry.
         scope_a = {"palace": "palace-a"}
@@ -2017,7 +2017,7 @@ async def vc_memory_service(vc_backend: PostgresBackend):
     from unittest.mock import MagicMock
 
     from workflows_mcp.engine.executor_base import Execution
-    from workflows_mcp.engine.memory_service import MemoryService
+    from workflows_mcp.memory.memory_service import MemoryService
 
     context = MagicMock(spec=Execution)
     context.execution_context = MagicMock()
@@ -2059,8 +2059,8 @@ async def test_record_system1_verification_cycle_persists_db_row_with_scope_key(
     Verifies ADR-013 Task 6: DB-backed cycle persistence replaces the
     process-local _cycle_success_registry stub from Task 3.
     """
-    from workflows_mcp.engine.memory_schema import MemoryRequest
-    from workflows_mcp.engine.memory_scope_resolver import scope_key
+    from workflows_mcp.memory.memory_schema import MemoryRequest
+    from workflows_mcp.memory.memory_scope_resolver import scope_key
 
     covered = _vc_scope()
     expected_scope_key = scope_key(covered)
@@ -2110,8 +2110,8 @@ async def test_record_system1_failed_verification_cycle_persists_failure_in_db(
     """A failed verification cycle (success=False) must be persisted with
     success=False in DB. The archive gate must not count these cycles.
     """
-    from workflows_mcp.engine.memory_schema import MemoryRequest
-    from workflows_mcp.engine.memory_scope_resolver import scope_key
+    from workflows_mcp.memory.memory_schema import MemoryRequest
+    from workflows_mcp.memory.memory_scope_resolver import scope_key
 
     covered = _vc_scope()
     expected_scope_key = scope_key(covered)
@@ -2155,7 +2155,7 @@ async def test_archive_gate_reads_absent_evidence_cycles_from_db(
     This test verifies ADR-013 Task 6 requirement: 'reconcile_semantic_lifecycle
     must read cycle success/scope metadata from DB for cycle ID validation.'
     """
-    from workflows_mcp.engine.memory_schema import MemoryRequest
+    from workflows_mcp.memory.memory_schema import MemoryRequest
 
     covered = _vc_scope()
     cycle_ids: list[str] = []
@@ -2183,7 +2183,7 @@ async def test_archive_gate_reads_absent_evidence_cycles_from_db(
     assert len(cycle_ids) == 2
 
     # Insert a claim in 'degraded' state so force_archive_claim_ids has a real target.
-    from workflows_mcp.engine.memory_scope_resolver import scope_key
+    from workflows_mcp.memory.memory_scope_resolver import scope_key
 
     computed_scope_key = scope_key(covered)
     claim_insert = await vc_backend.query(
@@ -2236,8 +2236,8 @@ async def test_archive_gate_rejects_failed_db_cycles_as_absent_evidence(
     """Failed DB cycles (success=False) must not satisfy the absent-evidence
     archive gate even when two cycle IDs are provided.
     """
-    from workflows_mcp.engine.memory_schema import MemoryRequest
-    from workflows_mcp.engine.memory_scope_resolver import scope_key
+    from workflows_mcp.memory.memory_schema import MemoryRequest
+    from workflows_mcp.memory.memory_scope_resolver import scope_key
 
     covered = _vc_scope()
     cycle_ids: list[str] = []
@@ -2303,10 +2303,10 @@ async def test_successful_programmatic_onboard_records_verification_cycle_in_db(
     Verifies ADR-013 Task 6 orchestrator integration: call site after successful
     structural processing records a System 1 verification cycle via MemoryService.
     """
-    from workflows_mcp.engine.memory_onboard_sync_orchestrator import (
+    from workflows_mcp.memory.memory_onboard_sync_orchestrator import (
         run_programmatic_onboard_with_cycle_recording,
     )
-    from workflows_mcp.engine.memory_scope_resolver import scope_key
+    from workflows_mcp.memory.memory_scope_resolver import scope_key
 
     scope = _vc_scope()
     request = ProgrammaticOnboardRequest(
@@ -2340,10 +2340,10 @@ async def test_failed_programmatic_onboard_does_not_record_verification_cycle(
     """run_programmatic_onboard_with_cycle_recording must NOT persist a cycle when
     the orchestrator returns status='failed' (e.g. graph completeness gate fails).
     """
-    from workflows_mcp.engine.memory_onboard_sync_orchestrator import (
+    from workflows_mcp.memory.memory_onboard_sync_orchestrator import (
         run_programmatic_onboard_with_cycle_recording,
     )
-    from workflows_mcp.engine.memory_scope_resolver import scope_key
+    from workflows_mcp.memory.memory_scope_resolver import scope_key
 
     # Empty files list causes the placeholder compartment to be created, which
     # actually passes graph validation. To force a failure we use an unsupported
@@ -2356,7 +2356,7 @@ async def test_failed_programmatic_onboard_does_not_record_verification_cycle(
     # Patch run_programmatic_onboard to simulate a graph failure result.
     from unittest.mock import patch as _patch
 
-    from workflows_mcp.engine.memory_onboard_sync_orchestrator import ProgrammaticOnboardResult
+    from workflows_mcp.memory.memory_onboard_sync_orchestrator import ProgrammaticOnboardResult
 
     failed_result = ProgrammaticOnboardResult(
         status="failed",
@@ -2372,7 +2372,7 @@ async def test_failed_programmatic_onboard_does_not_record_verification_cycle(
     )
 
     with _patch(
-        "workflows_mcp.engine.memory_onboard_sync_orchestrator.run_programmatic_onboard",
+        "workflows_mcp.memory.memory_onboard_sync_orchestrator.run_programmatic_onboard",
         return_value=failed_result,
     ):
         result = await run_programmatic_onboard_with_cycle_recording(

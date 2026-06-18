@@ -18,7 +18,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from workflows_mcp.engine.memory_graph_builder import (
+from workflows_mcp.memory.memory_graph_builder import (
     REQUIRED_CORRIDOR_FIELDS,
     REQUIRED_NODE_TYPES,
     CorridorSemanticType,
@@ -28,7 +28,7 @@ from workflows_mcp.engine.memory_graph_builder import (
     NodeType,
     build_structural_graph,
 )
-from workflows_mcp.engine.memory_graph_validator import (
+from workflows_mcp.memory.memory_graph_validator import (
     GraphViolation,
     build_graph_error_envelope,
     validate_graph_payload,
@@ -608,7 +608,7 @@ class TestValidateGraphStepPayload:
 
 class TestScopeKeyInCheckpoint:
     def _import_helper(self) -> Any:
-        from workflows_mcp.engine.project_flow_service import build_project_checkpoint_payload
+        from workflows_mcp.memory.project_flow_service import build_project_checkpoint_payload
 
         return build_project_checkpoint_payload
 
@@ -655,7 +655,7 @@ class TestScopeKeyInCheckpoint:
 
 class TestSortedScanManifest:
     def _import_helper(self) -> Any:
-        from workflows_mcp.engine.memory_scope_resolver import sorted_scan_manifest
+        from workflows_mcp.memory.memory_scope_resolver import sorted_scan_manifest
 
         return sorted_scan_manifest
 

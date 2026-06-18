@@ -7,9 +7,14 @@ from typing import Any, ClassVar
 
 from pydantic import Field
 
-from .block import BlockInput, BlockOutput
-from .execution import Execution
-from .executor_base import BlockExecutor, ExecutorCapabilities, ExecutorSecurityLevel
+from workflows_mcp.engine.block import BlockInput, BlockOutput
+from workflows_mcp.engine.execution import Execution
+from workflows_mcp.engine.executor_base import (
+    BlockExecutor,
+    ExecutorCapabilities,
+    ExecutorSecurityLevel,
+)
+
 from .memory_scope_resolver import scope_key
 
 

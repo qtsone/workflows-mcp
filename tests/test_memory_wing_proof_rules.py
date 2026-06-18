@@ -21,9 +21,9 @@ from typing import Any
 import pytest
 import pytest_asyncio
 
-from workflows_mcp.engine.knowledge.schema import ensure_schema
 from workflows_mcp.engine.sql.backend import ConnectionConfig, DatabaseEngine
 from workflows_mcp.engine.sql.postgres_backend import PostgresBackend
+from workflows_mcp.memory.knowledge.schema import ensure_schema
 
 pytestmark = pytest.mark.asyncio
 
@@ -64,7 +64,7 @@ async def memory_service(knowledge_backend: PostgresBackend) -> Any:
     from unittest.mock import MagicMock
 
     from workflows_mcp.engine.executor_base import Execution
-    from workflows_mcp.engine.memory_service import MemoryService
+    from workflows_mcp.memory.memory_service import MemoryService
 
     context = MagicMock(spec=Execution)
     context.execution_context = MagicMock()
@@ -110,7 +110,7 @@ async def _store_evidence(
     evidence_category: str,
 ) -> None:
     """Helper: store one structural evidence row for the test palace/wing/room."""
-    from workflows_mcp.engine.memory_schema import MemoryRequest
+    from workflows_mcp.memory.memory_schema import MemoryRequest
 
     result = await memory_service.execute(
         MemoryRequest.model_validate(
@@ -147,7 +147,7 @@ async def test_new_wing_without_proof_bundle_is_rejected(
     clean_palace: None,
 ) -> None:
     """is_new_wing=True with no proof_bundle supplied must be rejected."""
-    from workflows_mcp.engine.memory_schema import MemoryRequest
+    from workflows_mcp.memory.memory_schema import MemoryRequest
 
     await _store_evidence(
         memory_service,
@@ -184,7 +184,7 @@ async def test_new_wing_with_single_evidence_category_is_rejected(
     clean_palace: None,
 ) -> None:
     """is_new_wing=True with only one distinct evidence category must be rejected."""
-    from workflows_mcp.engine.memory_schema import MemoryRequest
+    from workflows_mcp.memory.memory_schema import MemoryRequest
 
     await _store_evidence(
         memory_service,
@@ -226,7 +226,7 @@ async def test_new_wing_with_duplicate_category_entries_is_rejected(
 
     Duplicate entries must not satisfy the >= 2 distinct categories gate.
     """
-    from workflows_mcp.engine.memory_schema import MemoryRequest
+    from workflows_mcp.memory.memory_schema import MemoryRequest
 
     await _store_evidence(
         memory_service,
@@ -275,7 +275,7 @@ async def test_new_wing_with_two_distinct_evidence_categories_succeeds(
 ) -> None:
     """is_new_wing=True with two distinct evidence categories must succeed
     and persist a proof bundle row in knowledge_wing_proof_bundles."""
-    from workflows_mcp.engine.memory_schema import MemoryRequest
+    from workflows_mcp.memory.memory_schema import MemoryRequest
 
     await _store_evidence(
         memory_service,
@@ -343,7 +343,7 @@ async def test_proof_bundle_row_links_claim_for_auditability(
     clean_palace: None,
 ) -> None:
     """The proof bundle row must be queryable by claim_id for audit inspection."""
-    from workflows_mcp.engine.memory_schema import MemoryRequest
+    from workflows_mcp.memory.memory_schema import MemoryRequest
 
     await _store_evidence(
         memory_service,
@@ -403,7 +403,7 @@ async def test_non_new_wing_claim_succeeds_without_proof_bundle(
 ) -> None:
     """derive_system2_semantic_claims with is_new_wing=False (default) must succeed
     without a proof_bundle, confirming the gate only applies to new-wing claims."""
-    from workflows_mcp.engine.memory_schema import MemoryRequest
+    from workflows_mcp.memory.memory_schema import MemoryRequest
 
     await _store_evidence(
         memory_service,
@@ -442,7 +442,7 @@ async def test_non_new_wing_claim_with_one_evidence_category_succeeds(
 ) -> None:
     """Normal derivations with a single evidence category succeed — the >= 2
     categories gate is exclusive to is_new_wing=True."""
-    from workflows_mcp.engine.memory_schema import MemoryRequest
+    from workflows_mcp.memory.memory_schema import MemoryRequest
 
     await _store_evidence(
         memory_service,

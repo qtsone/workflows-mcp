@@ -4,7 +4,7 @@ from pathlib import Path
 
 import pytest
 
-from workflows_mcp.engine.execution_memory import ExecutionMemory, Turn
+from workflows_mcp.memory.execution_memory import ExecutionMemory, Turn
 
 
 @pytest.fixture

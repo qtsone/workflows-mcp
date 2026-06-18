@@ -7,13 +7,13 @@ from typing import Any, ClassVar, Literal
 
 from pydantic import Field
 
+from workflows_mcp.code_intelligence.treesitter_languages import detect_language
 from workflows_mcp.watcher.ignore import WatcherIgnorePolicy
 from workflows_mcp.watcher.scanner import scan_project_files
 
 from .block import BlockInput, BlockOutput
 from .execution import Execution
 from .executor_base import BlockExecutor, ExecutorCapabilities, ExecutorSecurityLevel
-from .treesitter_languages import detect_language
 
 
 class ProjectFilesInput(BlockInput):

@@ -7,6 +7,7 @@ import sqlite3
 from dataclasses import dataclass
 from pathlib import Path
 
+from workflows_mcp.code_intelligence import register_code_intelligence_executors
 from workflows_mcp.context import AppContext
 from workflows_mcp.engine import WorkflowRegistry
 from workflows_mcp.engine.executor_base import ExecutorRegistry, create_default_registry
@@ -56,6 +57,7 @@ def build_resources(*, base_dir: Path) -> AppResources:
     llm_config_loader.load_config()
 
     executor_registry = create_default_registry()
+    register_code_intelligence_executors(executor_registry)
     workflow_registry = WorkflowRegistry()
 
     io_queue_enabled = os.getenv("WORKFLOWS_IO_QUEUE_ENABLED", "true").lower() == "true"

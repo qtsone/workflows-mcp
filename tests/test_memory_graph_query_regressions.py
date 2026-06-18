@@ -6,8 +6,8 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from workflows_mcp.engine.knowledge.graph import graph_neighbors, graph_stats
-from workflows_mcp.engine.memory_schema import (
+from workflows_mcp.memory.knowledge.graph import graph_neighbors, graph_stats
+from workflows_mcp.memory.memory_schema import (
     ManageMemoryRequest,
     ManageMemoryResult,
     MemoryGraphInput,
@@ -18,7 +18,7 @@ from workflows_mcp.engine.memory_schema import (
     QueryMemoryRequest,
     QueryMemoryResult,
 )
-from workflows_mcp.engine.memory_service import MemoryService
+from workflows_mcp.memory.memory_service import MemoryService
 from workflows_mcp.tools_memory import _shape_memory_response
 
 
@@ -84,7 +84,7 @@ async def test_query_graph_path_includes_evidence_when_path_exists() -> None:
     }
 
     with patch(
-        "workflows_mcp.engine.memory_service.graph_path", new=AsyncMock(return_value=path_result)
+        "workflows_mcp.memory.memory_service.graph_path", new=AsyncMock(return_value=path_result)
     ):
         result = await service._query_graph(
             QueryMemoryRequest(
@@ -139,7 +139,7 @@ async def test_query_graph_traverse_includes_evidence_when_neighbors_exist() -> 
     }
 
     with patch(
-        "workflows_mcp.engine.memory_service.graph_traverse",
+        "workflows_mcp.memory.memory_service.graph_traverse",
         new=AsyncMock(return_value=traverse_result),
     ):
         result = await service._query_graph(
@@ -196,7 +196,7 @@ async def test_query_graph_edges_include_system1_provenance_metadata() -> None:
     }
 
     with patch(
-        "workflows_mcp.engine.memory_service.graph_traverse",
+        "workflows_mcp.memory.memory_service.graph_traverse",
         new=AsyncMock(return_value=traverse_result),
     ):
         result = await service._query_graph(
@@ -272,7 +272,7 @@ async def test_query_graph_neighbors_exposes_nodes_edges_paths_and_diagnostics()
     }
 
     with patch(
-        "workflows_mcp.engine.memory_service.graph_neighbors",
+        "workflows_mcp.memory.memory_service.graph_neighbors",
         new=AsyncMock(return_value=neighbors_result),
     ):
         result = await service._query_graph(
@@ -682,7 +682,7 @@ async def test_query_graph_hydrates_supporting_memories_for_evidence_links() -> 
     }
 
     with patch(
-        "workflows_mcp.engine.memory_service.graph_traverse",
+        "workflows_mcp.memory.memory_service.graph_traverse",
         new=AsyncMock(return_value=traverse_result),
     ):
         result = await service._query_graph(

@@ -33,7 +33,7 @@ async def test_clean_palace_starts_empty(
 
 def test_memory_item_input_schema_exists() -> None:
     """MemoryItemInput must accept item identity + file metadata fields."""
-    from workflows_mcp.engine.memory_schema import MemoryItemInput
+    from workflows_mcp.memory.memory_schema import MemoryItemInput
 
     item = MemoryItemInput.model_validate(
         {
@@ -50,7 +50,7 @@ def test_memory_item_input_schema_exists() -> None:
 
 
 def test_memory_record_input_accepts_item_and_embeddings() -> None:
-    from workflows_mcp.engine.memory_schema import MemoryRecordInput
+    from workflows_mcp.memory.memory_schema import MemoryRecordInput
 
     rec = MemoryRecordInput.model_validate(
         {
@@ -88,7 +88,7 @@ def test_memory_record_input_accepts_item_and_embeddings() -> None:
 )
 def test_memory_request_accepts_new_operations(op: str) -> None:
     """MemoryRequest must accept all eight new operation names without raising."""
-    from workflows_mcp.engine.memory_schema import MemoryRequest
+    from workflows_mcp.memory.memory_schema import MemoryRequest
 
     payload: dict[str, Any] = {
         "operation": op,
@@ -107,7 +107,7 @@ def test_memory_request_accepts_new_operations(op: str) -> None:
 async def test_ensure_source_upsert_returns_id(
     memory_service, knowledge_backend, clean_palace
 ) -> None:
-    from workflows_mcp.engine.memory_schema import MemoryRequest
+    from workflows_mcp.memory.memory_schema import MemoryRequest
 
     req = MemoryRequest.model_validate(
         {
@@ -142,7 +142,7 @@ async def test_ensure_source_upsert_returns_id(
 async def test_ensure_item_upsert_updates_metadata(
     memory_service, knowledge_backend, clean_palace
 ) -> None:
-    from workflows_mcp.engine.memory_schema import MemoryRequest
+    from workflows_mcp.memory.memory_schema import MemoryRequest
 
     base = {
         "operation": "ensure_item",
@@ -214,7 +214,7 @@ async def test_ensure_item_trigger_rejects_cross_palace_source(
 
 async def test_ensure_item_rejects_missing_not_null_fields(memory_service, clean_palace) -> None:
     """ensure_item must return MEM_FIELD_REQUIRED when any NOT NULL item field is absent."""
-    from workflows_mcp.engine.memory_schema import MemoryRequest
+    from workflows_mcp.memory.memory_schema import MemoryRequest
 
     result = await memory_service.execute(
         MemoryRequest.model_validate(
@@ -243,7 +243,7 @@ async def test_ensure_item_rejects_missing_not_null_fields(memory_service, clean
 async def test_store_entities_bulk_upsert_idempotent(
     memory_service, knowledge_backend, clean_palace
 ) -> None:
-    from workflows_mcp.engine.memory_schema import MemoryRequest
+    from workflows_mcp.memory.memory_schema import MemoryRequest
 
     await memory_service.execute(
         MemoryRequest.model_validate(
@@ -317,7 +317,7 @@ async def test_store_entities_bulk_upsert_idempotent(
 
 
 async def test_store_relations_bulk_insert(memory_service, knowledge_backend, clean_palace) -> None:
-    from workflows_mcp.engine.memory_schema import MemoryRequest
+    from workflows_mcp.memory.memory_schema import MemoryRequest
 
     seed_payload = {
         "operation": "store_entities",
@@ -359,7 +359,7 @@ async def test_store_relations_bulk_insert(memory_service, knowledge_backend, cl
 async def test_store_relations_rejects_cross_palace_endpoint(
     memory_service, knowledge_backend, clean_palace
 ) -> None:
-    from workflows_mcp.engine.memory_schema import MemoryRequest
+    from workflows_mcp.memory.memory_schema import MemoryRequest
 
     own = await memory_service.execute(
         MemoryRequest.model_validate(
@@ -384,7 +384,7 @@ async def test_store_relations_rejects_cross_palace_endpoint(
         (f"{PALACE}_foreign",),
     )
 
-    from workflows_mcp.engine.memory_errors import MemoryContractError
+    from workflows_mcp.memory.memory_errors import MemoryContractError
 
     with pytest.raises(MemoryContractError, match="MEM_PALACE_MISMATCH"):
         await memory_service.execute(
@@ -415,7 +415,7 @@ async def test_store_relations_rejects_cross_palace_endpoint(
 async def test_store_memories_anchored_to_entity(
     memory_service, knowledge_backend, clean_palace, monkeypatch
 ) -> None:
-    from workflows_mcp.engine.memory_schema import MemoryRequest
+    from workflows_mcp.memory.memory_schema import MemoryRequest
 
     seeded = await memory_service.execute(
         MemoryRequest.model_validate(
@@ -438,7 +438,7 @@ async def test_store_memories_anchored_to_entity(
         return [0.0] * 1536, "test-embedding-model", 1536, {}
 
     monkeypatch.setattr(
-        "workflows_mcp.engine.memory_service.compute_embedding",
+        "workflows_mcp.memory.memory_service.compute_embedding",
         fake_compute_embedding,
     )
 
@@ -482,7 +482,7 @@ async def test_store_memories_anchored_to_entity(
 
 
 async def test_store_memories_rejects_code_wing(memory_service, clean_palace, monkeypatch) -> None:
-    from workflows_mcp.engine.memory_schema import MemoryRequest
+    from workflows_mcp.memory.memory_schema import MemoryRequest
 
     async def fake_compute_embedding(  # noqa: E501
         *args: Any, **kwargs: Any
@@ -490,7 +490,7 @@ async def test_store_memories_rejects_code_wing(memory_service, clean_palace, mo
         return [0.0] * 1536, "test-embedding-model", 1536, {}
 
     monkeypatch.setattr(  # noqa: E501
-        "workflows_mcp.engine.memory_service.compute_embedding", fake_compute_embedding
+        "workflows_mcp.memory.memory_service.compute_embedding", fake_compute_embedding
     )
 
     result = await memory_service.execute(
@@ -517,7 +517,7 @@ async def test_store_memories_rejects_code_wing(memory_service, clean_palace, mo
 async def test_store_memories_rejects_cross_palace_anchor(
     memory_service, knowledge_backend, clean_palace, monkeypatch
 ) -> None:
-    from workflows_mcp.engine.memory_schema import MemoryRequest
+    from workflows_mcp.memory.memory_schema import MemoryRequest
 
     async def fake_compute_embedding(  # noqa: E501
         *args: Any, **kwargs: Any
@@ -525,7 +525,7 @@ async def test_store_memories_rejects_cross_palace_anchor(
         return [0.0] * 1536, "test-embedding-model", 1536, {}
 
     monkeypatch.setattr(  # noqa: E501
-        "workflows_mcp.engine.memory_service.compute_embedding", fake_compute_embedding
+        "workflows_mcp.memory.memory_service.compute_embedding", fake_compute_embedding
     )
 
     foreign = await knowledge_backend.query(
@@ -539,7 +539,7 @@ async def test_store_memories_rejects_cross_palace_anchor(
         (f"{PALACE}_foreign",),
     )
 
-    from workflows_mcp.engine.memory_errors import MemoryContractError
+    from workflows_mcp.memory.memory_errors import MemoryContractError
 
     with pytest.raises(MemoryContractError, match="MEM_PALACE_MISMATCH"):
         await memory_service.execute(
@@ -570,7 +570,7 @@ async def test_store_memories_rejects_cross_palace_anchor(
 async def test_store_entity_embeddings_upsert(
     memory_service, knowledge_backend, clean_palace
 ) -> None:
-    from workflows_mcp.engine.memory_schema import MemoryRequest
+    from workflows_mcp.memory.memory_schema import MemoryRequest
 
     seeded = await memory_service.execute(
         MemoryRequest.model_validate(
@@ -627,7 +627,7 @@ async def test_store_entity_embeddings_upsert(
 async def test_store_entity_embeddings_rejects_dimension_mismatch(
     memory_service, clean_palace
 ) -> None:
-    from workflows_mcp.engine.memory_schema import MemoryRequest
+    from workflows_mcp.memory.memory_schema import MemoryRequest
 
     seeded = await memory_service.execute(
         MemoryRequest.model_validate(
@@ -642,7 +642,7 @@ async def test_store_entity_embeddings_rejects_dimension_mismatch(
             }
         )
     )
-    from workflows_mcp.engine.memory_errors import MemoryContractError
+    from workflows_mcp.memory.memory_errors import MemoryContractError
 
     with pytest.raises(MemoryContractError, match="MEM_EMBEDDING_DIMENSION_MISMATCH"):
         await memory_service.execute(
@@ -670,7 +670,7 @@ async def test_store_entity_embeddings_rejects_dimension_mismatch(
 async def test_store_entity_embeddings_rejects_cross_palace_entity(
     memory_service, knowledge_backend, clean_palace
 ) -> None:
-    from workflows_mcp.engine.memory_schema import MemoryRequest
+    from workflows_mcp.memory.memory_schema import MemoryRequest
 
     foreign = await knowledge_backend.query(
         """
@@ -682,7 +682,7 @@ async def test_store_entity_embeddings_rejects_cross_palace_entity(
         """,
         (f"{PALACE}_foreign",),
     )
-    from workflows_mcp.engine.memory_errors import MemoryContractError
+    from workflows_mcp.memory.memory_errors import MemoryContractError
 
     with pytest.raises(MemoryContractError, match="MEM_PALACE_MISMATCH"):
         await memory_service.execute(
@@ -713,7 +713,7 @@ async def test_store_entity_embeddings_rejects_cross_palace_entity(
 
 
 async def test_archive_memories_by_item(memory_service, knowledge_backend, clean_palace) -> None:
-    from workflows_mcp.engine.memory_schema import MemoryRequest
+    from workflows_mcp.memory.memory_schema import MemoryRequest
 
     await memory_service.execute(
         MemoryRequest.model_validate(
@@ -806,7 +806,7 @@ async def test_archive_memories_by_item(memory_service, knowledge_backend, clean
 async def test_archive_memories_rejects_item_in_different_palace(
     memory_service, knowledge_backend, clean_palace
 ) -> None:
-    from workflows_mcp.engine.memory_schema import MemoryRequest
+    from workflows_mcp.memory.memory_schema import MemoryRequest
 
     foreign_palace = f"{PALACE}_foreign"
     src = await knowledge_backend.query(
@@ -824,7 +824,7 @@ async def test_archive_memories_rejects_item_in_different_palace(
         (foreign_palace, str(src.rows[0]["id"])),
     )
 
-    from workflows_mcp.engine.memory_errors import MemoryContractError
+    from workflows_mcp.memory.memory_errors import MemoryContractError
 
     with pytest.raises(MemoryContractError, match="MEM_PALACE_MISMATCH"):
         await memory_service.execute(
@@ -846,7 +846,7 @@ async def test_archive_memories_rejects_item_in_different_palace(
 async def test_mark_item_dirty_sets_lifecycle_and_error(
     memory_service, knowledge_backend, clean_palace
 ) -> None:
-    from workflows_mcp.engine.memory_schema import MemoryRequest
+    from workflows_mcp.memory.memory_schema import MemoryRequest
 
     await memory_service.execute(
         MemoryRequest.model_validate(
@@ -911,7 +911,7 @@ async def test_mark_item_dirty_sets_lifecycle_and_error(
 async def test_mark_item_dirty_rejects_cross_palace_item(
     memory_service, knowledge_backend, clean_palace
 ) -> None:
-    from workflows_mcp.engine.memory_schema import MemoryRequest
+    from workflows_mcp.memory.memory_schema import MemoryRequest
 
     foreign_palace = f"{PALACE}_foreign_dirty"
     src = await knowledge_backend.query(
@@ -958,7 +958,7 @@ async def test_store_entities_persists_qualified_name_and_parent_class_id(
     memory_service, knowledge_backend, clean_palace
 ) -> None:
     """store_entities must persist qualified_name and parent_class_id columns."""
-    from workflows_mcp.engine.memory_schema import MemoryRequest
+    from workflows_mcp.memory.memory_schema import MemoryRequest
 
     # Seed parent Class entity first.
     parent_resp = await memory_service.execute(
@@ -1021,7 +1021,7 @@ async def test_store_entities_upsert_updates_qualified_name_and_parent(
     memory_service, knowledge_backend, clean_palace
 ) -> None:
     """Upsert path (ON CONFLICT) must refresh qualified_name and parent_class_id."""
-    from workflows_mcp.engine.memory_schema import MemoryRequest
+    from workflows_mcp.memory.memory_schema import MemoryRequest
 
     # Seed two Class entities to swap parents between.
     classes = await memory_service.execute(
@@ -1093,7 +1093,7 @@ async def test_store_relations_persists_metadata(
     """store_relations must persist per-edge metadata JSONB."""
     import json as _json
 
-    from workflows_mcp.engine.memory_schema import MemoryRequest
+    from workflows_mcp.memory.memory_schema import MemoryRequest
 
     seeded = await memory_service.execute(
         MemoryRequest.model_validate(
@@ -1150,7 +1150,7 @@ async def test_store_relations_metadata_defaults_to_empty_object(
     """Omitting metadata must default to empty JSONB object (NOT NULL column)."""
     import json as _json
 
-    from workflows_mcp.engine.memory_schema import MemoryRequest
+    from workflows_mcp.memory.memory_schema import MemoryRequest
 
     seeded = await memory_service.execute(
         MemoryRequest.model_validate(

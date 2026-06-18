@@ -25,11 +25,11 @@ import pytest
 import pytest_asyncio
 
 from workflows_mcp.engine.executor_base import Execution
-from workflows_mcp.engine.knowledge.schema import ensure_schema
-from workflows_mcp.engine.memory_schema import MemoryRequest
-from workflows_mcp.engine.memory_service import MemoryService
 from workflows_mcp.engine.sql.backend import ConnectionConfig, DatabaseEngine
 from workflows_mcp.engine.sql.postgres_backend import PostgresBackend
+from workflows_mcp.memory.knowledge.schema import ensure_schema
+from workflows_mcp.memory.memory_schema import MemoryRequest
+from workflows_mcp.memory.memory_service import MemoryService
 
 pytestmark = pytest.mark.asyncio
 

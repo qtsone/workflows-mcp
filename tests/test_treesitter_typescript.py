@@ -139,7 +139,10 @@ def _run_executor(
     """Write src to a temp file and execute TreeSitterExecutor synchronously."""
     import asyncio
 
-    from workflows_mcp.engine.executors_treesitter import TreeSitterExecutor, TreeSitterInput
+    from workflows_mcp.code_intelligence.executors_treesitter import (
+        TreeSitterExecutor,
+        TreeSitterInput,
+    )
 
     f = tmp_path / filename
     f.write_text(src, encoding="utf-8")
@@ -636,7 +639,10 @@ def test_non_ts_language_unchanged(tmp_path: Path) -> None:
     import asyncio
     from unittest.mock import MagicMock
 
-    from workflows_mcp.engine.executors_treesitter import TreeSitterExecutor, TreeSitterInput
+    from workflows_mcp.code_intelligence.executors_treesitter import (
+        TreeSitterExecutor,
+        TreeSitterInput,
+    )
 
     f = tmp_path / "file.rb"
     f.write_text("puts 'hello'", encoding="utf-8")

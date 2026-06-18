@@ -10,12 +10,12 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 from _helpers import _make_backend_mock, _mcp_server, memory, onboard, sync
 
-from workflows_mcp.engine.memory_schema import (
+from workflows_mcp.memory.memory_schema import (
     ManageMemoryResult,
     MemoryResult,
     QueryMemoryResult,
 )
-from workflows_mcp.engine.memory_service import MemoryContractError
+from workflows_mcp.memory.memory_service import MemoryContractError
 
 pytestmark = pytest.mark.asyncio
 

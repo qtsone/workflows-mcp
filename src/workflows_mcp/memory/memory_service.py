@@ -18,8 +18,10 @@ from collections import Counter, defaultdict
 from datetime import UTC, datetime
 from typing import Any, Literal, cast
 
-from .execution import Execution
-from .executors_llm import compute_embedding
+from workflows_mcp.engine.execution import Execution
+from workflows_mcp.engine.executors_llm import compute_embedding
+from workflows_mcp.engine.sql import DatabaseBackend, SqlSession
+
 from .knowledge.constants import (
     Authority,
     LifecycleState,
@@ -60,7 +62,6 @@ from .memory_schema import (
 )
 from .memory_scope_resolver import TOPOLOGY_PLACEHOLDER_VALUES
 from .memory_scope_resolver import scope_key as _scope_key_fn
-from .sql import DatabaseBackend, SqlSession
 
 logger = logging.getLogger(__name__)
 

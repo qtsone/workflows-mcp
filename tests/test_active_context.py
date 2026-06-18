@@ -19,7 +19,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from workflows_mcp.context import AppContext, SessionProjectContext
-from workflows_mcp.engine.memory_scope_resolver import SyncContextCandidate, scope_key
+from workflows_mcp.memory.memory_scope_resolver import SyncContextCandidate, scope_key
 from workflows_mcp.server import mcp as _mcp_server
 from workflows_mcp.tools_memory import _onboard_context_registry, register_memory_tools
 
@@ -192,7 +192,7 @@ class TestAcceptanceAOnboardActivatesContext:
         backend_mock.connect = AsyncMock()
         backend_mock.disconnect = AsyncMock()
 
-        from workflows_mcp.engine.memory_schema import MemoryResult, QueryMemoryResult
+        from workflows_mcp.memory.memory_schema import MemoryResult, QueryMemoryResult
 
         query_result = MemoryResult(
             operation="query",
@@ -209,7 +209,7 @@ class TestAcceptanceAOnboardActivatesContext:
         with (
             patch("workflows_mcp.tools_memory.PostgresBackend", return_value=backend_mock),
             patch(
-                "workflows_mcp.engine.memory_service.MemoryService.execute",
+                "workflows_mcp.memory.memory_service.MemoryService.execute",
                 new_callable=AsyncMock,
                 return_value=query_result,
             ),
@@ -322,7 +322,7 @@ class TestAcceptanceDExplicitScopeOverridesActive:
         # Track which scope was actually used by MemoryService.
         captured_requests: list[Any] = []
 
-        from workflows_mcp.engine.memory_schema import (
+        from workflows_mcp.memory.memory_schema import (
             MemoryRequest,
             MemoryResult,
             QueryMemoryResult,
@@ -349,7 +349,7 @@ class TestAcceptanceDExplicitScopeOverridesActive:
         with (
             patch("workflows_mcp.tools_memory.PostgresBackend", return_value=backend_mock),
             patch(
-                "workflows_mcp.engine.memory_service.MemoryService.execute",
+                "workflows_mcp.memory.memory_service.MemoryService.execute",
                 new=_mock_execute,
             ),
         ):

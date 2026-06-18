@@ -131,7 +131,10 @@ def _run_executor(
     repo_rel: str | None = None,
 ) -> Any:
     """Write src to a temp file and execute TreeSitterExecutor synchronously."""
-    from workflows_mcp.engine.executors_treesitter import TreeSitterExecutor, TreeSitterInput
+    from workflows_mcp.code_intelligence.executors_treesitter import (
+        TreeSitterExecutor,
+        TreeSitterInput,
+    )
 
     f = tmp_path / filename
     f.write_text(src, encoding="utf-8")
@@ -609,7 +612,10 @@ function App() {
 
 def test_non_js_languages_still_return_unsupported(tmp_path: Path) -> None:
     """Adding JavaScript support must not affect other unsupported extensions."""
-    from workflows_mcp.engine.executors_treesitter import TreeSitterExecutor, TreeSitterInput
+    from workflows_mcp.code_intelligence.executors_treesitter import (
+        TreeSitterExecutor,
+        TreeSitterInput,
+    )
 
     f = tmp_path / "file.rb"
     f.write_text("puts 'hello'", encoding="utf-8")

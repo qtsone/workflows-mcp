@@ -516,8 +516,7 @@ class ReadFilesExecutor(BlockExecutor):
             FileNotFoundError: No files match patterns
             Exception: Other I/O errors
         """
-        # Import file_outline utilities
-        from .file_outline import (
+        from workflows_mcp.code_intelligence.file_outline import (
             BASE64_ENCODE_EXTENSIONS,
             DEFAULT_EXCLUDE_PATTERNS,
             create_gitignore_spec,
@@ -725,7 +724,7 @@ class ReadFilesExecutor(BlockExecutor):
             line_start: Optional 1-indexed start line for line-range reading (full mode only)
             line_end: Optional 1-indexed end line for line-range reading (full mode only)
         """
-        from .file_outline import (
+        from workflows_mcp.code_intelligence.file_outline import (
             BASE64_ENCODE_EXTENSIONS,
             annotate_section_tokens,
             extract_markdown_code_blocks,

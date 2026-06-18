@@ -111,7 +111,7 @@ def mock_execution() -> MagicMock:
 
 def _run(path: Path, repo_relative: str, mock_execution: MagicMock) -> Any:
     """Execute TreeSitterExecutor synchronously via asyncio."""
-    from workflows_mcp.engine.executors_treesitter import (
+    from workflows_mcp.code_intelligence.executors_treesitter import (
         TreeSitterExecutor,
         TreeSitterInput,
     )
@@ -589,7 +589,7 @@ class TestNonGoUnchanged:
     @pytest.mark.asyncio
     async def test_python_file_unaffected(self, tmp_path: Path, mock_execution: MagicMock) -> None:
         """Python extractor continues to work after Go extractor is added."""
-        from workflows_mcp.engine.executors_treesitter import (
+        from workflows_mcp.code_intelligence.executors_treesitter import (
             TreeSitterExecutor,
             TreeSitterInput,
         )
@@ -607,7 +607,7 @@ class TestNonGoUnchanged:
     async def test_unsupported_extension_unchanged(
         self, tmp_path: Path, mock_execution: MagicMock
     ) -> None:
-        from workflows_mcp.engine.executors_treesitter import (
+        from workflows_mcp.code_intelligence.executors_treesitter import (
             TreeSitterExecutor,
             TreeSitterInput,
         )

@@ -48,20 +48,21 @@ from unittest.mock import MagicMock
 import pytest
 import pytest_asyncio
 
+from workflows_mcp.code_intelligence import register_code_intelligence_executors
 from workflows_mcp.context import AppContext
 from workflows_mcp.engine.block import BlockInput, BlockOutput
 from workflows_mcp.engine.execution import Execution
 from workflows_mcp.engine.executor_base import BlockExecutor, create_default_registry
 from workflows_mcp.engine.io_queue import IOQueue
 from workflows_mcp.engine.job_queue import JobQueue
-from workflows_mcp.engine.knowledge.schema import ensure_schema
 from workflows_mcp.engine.llm_config import LLMConfigLoader
-from workflows_mcp.engine.memory_schema import QueryMemoryRequest
-from workflows_mcp.engine.memory_service import MemoryService
 from workflows_mcp.engine.registry import WorkflowRegistry
 from workflows_mcp.engine.schema import WorkflowSchema
 from workflows_mcp.engine.sql.backend import ConnectionConfig, DatabaseEngine
 from workflows_mcp.engine.sql.postgres_backend import PostgresBackend
+from workflows_mcp.memory.knowledge.schema import ensure_schema
+from workflows_mcp.memory.memory_schema import QueryMemoryRequest
+from workflows_mcp.memory.memory_service import MemoryService
 from workflows_mcp.memory_runtime import register_memory_executors
 from workflows_mcp.tools import execute_workflow
 
@@ -199,6 +200,7 @@ async def workflow_context() -> AsyncIterator[MagicMock]:
     registry.load_from_directory(builtin_dir)
 
     executor_registry = create_default_registry()
+    register_code_intelligence_executors(executor_registry)
     register_memory_executors(executor_registry)
     llm_config_loader = LLMConfigLoader()
     io_queue = IOQueue()
@@ -1211,7 +1213,7 @@ async def test_system1_scan_skips_per_file_derivation_without_topology_override(
 @pytest.mark.asyncio
 async def test_treesitter_output_relations_are_schema_valid(tmp_path: Path) -> None:
     """TreeSitter extraction emits schema-valid System1 entities/relations."""
-    from workflows_mcp.engine.executors_treesitter import (  # noqa: PLC0415
+    from workflows_mcp.code_intelligence.executors_treesitter import (  # noqa: PLC0415
         TreeSitterExecutor,
         TreeSitterInput,
         validate_system1_extraction_payload,
@@ -1246,7 +1248,7 @@ async def test_treesitter_output_relations_are_schema_valid(tmp_path: Path) -> N
 async def test_treesitter_entities_and_relations_include_source_provenance(
     tmp_path: Path,
 ) -> None:
-    from workflows_mcp.engine.executors_treesitter import (  # noqa: PLC0415
+    from workflows_mcp.code_intelligence.executors_treesitter import (  # noqa: PLC0415
         TreeSitterExecutor,
         TreeSitterInput,
     )
@@ -1287,7 +1289,7 @@ async def test_treesitter_entities_and_relations_include_source_provenance(
 async def test_structural_import_evidence_lists_targets_and_resolution(
     tmp_path: Path,
 ) -> None:
-    from workflows_mcp.engine.executors_treesitter import (  # noqa: PLC0415
+    from workflows_mcp.code_intelligence.executors_treesitter import (  # noqa: PLC0415
         TreeSitterExecutor,
         TreeSitterInput,
     )
@@ -1317,7 +1319,7 @@ async def test_structural_import_evidence_lists_targets_and_resolution(
 
 @pytest.mark.asyncio
 async def test_treesitter_source_range_defaults_are_not_shared(tmp_path: Path) -> None:
-    from workflows_mcp.engine.executors_treesitter import (  # noqa: PLC0415
+    from workflows_mcp.code_intelligence.executors_treesitter import (  # noqa: PLC0415
         TreeSitterExecutor,
         TreeSitterInput,
     )
@@ -1349,7 +1351,7 @@ async def test_treesitter_execute_raises_for_invalid_schema_payload(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """Invalid extraction payload fails at the extraction boundary."""
-    from workflows_mcp.engine.executors_treesitter import (  # noqa: PLC0415
+    from workflows_mcp.code_intelligence.executors_treesitter import (  # noqa: PLC0415
         TreeSitterExecutor,
         TreeSitterInput,
     )
@@ -1364,7 +1366,7 @@ async def test_treesitter_execute_raises_for_invalid_schema_payload(
         return ([{"qualified_name": "mod.X"}], [])
 
     monkeypatch.setattr(
-        "workflows_mcp.engine.executors_treesitter.extract_code",
+        "workflows_mcp.code_intelligence.executors_treesitter.extract_code",
         _invalid_extract_code,
     )
 
@@ -1382,7 +1384,7 @@ async def test_treesitter_execute_raises_for_invalid_schema_payload(
 
 def test_validate_system1_extraction_payload_allows_empty_payload() -> None:
     """Unsupported/no-op extraction paths may produce empty payloads without error."""
-    from workflows_mcp.engine.executors_treesitter import (  # noqa: PLC0415
+    from workflows_mcp.code_intelligence.executors_treesitter import (  # noqa: PLC0415
         validate_system1_extraction_payload,
     )
 
@@ -1395,7 +1397,7 @@ def test_validate_system1_extraction_payload_allows_empty_payload() -> None:
 
 def test_treesitter_schema_error_message_is_bounded() -> None:
     """Schema invalid exceptions are summarized and size-bounded."""
-    from workflows_mcp.engine.executors_treesitter import (  # noqa: PLC0415
+    from workflows_mcp.code_intelligence.executors_treesitter import (  # noqa: PLC0415
         _raise_if_invalid_system1_extraction_payload,
     )
 

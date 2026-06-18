@@ -21,8 +21,9 @@ from collections.abc import Awaitable, Callable
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
+    from workflows_mcp.memory.execution_memory import ExecutionMemory
+
     from .execution import Execution
-    from .execution_memory import ExecutionMemory
     from .executor_base import ExecutorRegistry
     from .io_queue import IOQueue
     from .llm_config import LLMConfigLoader

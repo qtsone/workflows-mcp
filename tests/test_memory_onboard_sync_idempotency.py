@@ -20,7 +20,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from workflows_mcp.engine.project_flow_service import (
+from workflows_mcp.memory.project_flow_service import (
     compute_sync_delta,
 )
 

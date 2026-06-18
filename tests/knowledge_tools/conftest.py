@@ -32,7 +32,7 @@ def _patch_memory_config(monkeypatch: pytest.MonkeyPatch) -> None:
         lambda: sentinel,
     )
     monkeypatch.setattr(
-        "workflows_mcp.engine.knowledge.schema.ensure_schema",
+        "workflows_mcp.memory.knowledge.schema.ensure_schema",
         _noop_ensure_schema,
     )
 

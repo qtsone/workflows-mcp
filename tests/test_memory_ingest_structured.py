@@ -12,12 +12,12 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 from pydantic import ValidationError
 
-from workflows_mcp.engine.memory_schema import (
+from workflows_mcp.memory.memory_schema import (
     ManageMemoryRequest,
     ManageMemoryResult,
     MemoryRequest,
 )
-from workflows_mcp.engine.memory_service import (
+from workflows_mcp.memory.memory_service import (
     MemoryContractError,
     MemoryService,
 )
@@ -29,7 +29,7 @@ class TestStructuredIngestService:
     def _embedding_patch(self) -> Any:
         """Stub embedding generation for structured ingest service tests."""
         return patch(
-            "workflows_mcp.engine.memory_service.compute_embedding",
+            "workflows_mcp.memory.memory_service.compute_embedding",
             new=AsyncMock(return_value=([0.1, 0.2, 0.3], "embed-model", 3, None)),
         )
 
@@ -69,7 +69,7 @@ class TestStructuredIngestService:
 
         with (
             patch(
-                "workflows_mcp.engine.memory_service.uuid.uuid4",
+                "workflows_mcp.memory.memory_service.uuid.uuid4",
                 side_effect=generated_ids,
             ),
             self._embedding_patch(),
@@ -168,11 +168,11 @@ class TestStructuredIngestService:
 
         with (
             patch(
-                "workflows_mcp.engine.memory_service.uuid.uuid4",
+                "workflows_mcp.memory.memory_service.uuid.uuid4",
                 side_effect=["memory-0-id"],
             ),
             patch(
-                "workflows_mcp.engine.memory_service.compute_embedding",
+                "workflows_mcp.memory.memory_service.compute_embedding",
                 new=AsyncMock(return_value=([0.1, 0.2, 0.3], "embed-model", 3, None)),
             ),
         ):
@@ -230,7 +230,7 @@ class TestStructuredIngestService:
 
         with (
             patch(
-                "workflows_mcp.engine.memory_service.uuid.uuid4",
+                "workflows_mcp.memory.memory_service.uuid.uuid4",
                 side_effect=["memory-0-id"],
             ),
             self._embedding_patch(),
@@ -293,7 +293,7 @@ class TestStructuredIngestService:
 
         with (
             patch(
-                "workflows_mcp.engine.memory_service.uuid.uuid4",
+                "workflows_mcp.memory.memory_service.uuid.uuid4",
                 side_effect=["memory-0-id", "entity-upsert-id"],
             ),
             self._embedding_patch(),
@@ -340,7 +340,7 @@ class TestStructuredIngestService:
 
         with (
             patch(
-                "workflows_mcp.engine.memory_service.uuid.uuid4",
+                "workflows_mcp.memory.memory_service.uuid.uuid4",
                 side_effect=[
                     "memory-0-id",
                     "entity-alice-upsert-id",
@@ -402,7 +402,7 @@ class TestStructuredIngestService:
 
         with (
             patch(
-                "workflows_mcp.engine.memory_service.uuid.uuid4",
+                "workflows_mcp.memory.memory_service.uuid.uuid4",
                 side_effect=[
                     "memory-0-id",
                     "entity-a-upsert-id",
@@ -492,7 +492,7 @@ class TestStructuredIngestService:
 
         with (
             patch(
-                "workflows_mcp.engine.memory_service.uuid.uuid4",
+                "workflows_mcp.memory.memory_service.uuid.uuid4",
                 side_effect=["memory-0-id", "memory-1-id"],
             ),
             self._embedding_patch(),
@@ -537,7 +537,7 @@ class TestStructuredIngestService:
 
         with (
             patch(
-                "workflows_mcp.engine.memory_service.uuid.uuid4",
+                "workflows_mcp.memory.memory_service.uuid.uuid4",
                 side_effect=[
                     "memory-0-id",
                     "entity-alice-upsert-id",
@@ -602,7 +602,7 @@ class TestStructuredIngestService:
 
         with (
             patch(
-                "workflows_mcp.engine.memory_service.uuid.uuid4",
+                "workflows_mcp.memory.memory_service.uuid.uuid4",
                 side_effect=["source-upsert-id", "item-upsert-id", "memory-0-id"],
             ),
             self._embedding_patch(),
@@ -674,7 +674,7 @@ class TestStructuredIngestService:
 
         with (
             patch(
-                "workflows_mcp.engine.memory_service.uuid.uuid4",
+                "workflows_mcp.memory.memory_service.uuid.uuid4",
                 side_effect=["memory-0-id", "entity-alice-upsert-id"],
             ),
             self._embedding_patch(),
@@ -753,7 +753,7 @@ class TestStructuredIngestService:
 
         with (
             patch(
-                "workflows_mcp.engine.memory_service.uuid.uuid4",
+                "workflows_mcp.memory.memory_service.uuid.uuid4",
                 side_effect=["cat-upsert-id", "memory-0-id"],
             ),
             self._embedding_patch(),
@@ -794,7 +794,7 @@ class TestStructuredIngestService:
         service = MemoryService(backend=backend, context=context)
 
         with patch(
-            "workflows_mcp.engine.memory_service.uuid.uuid4", return_value="relation-upsert-id"
+            "workflows_mcp.memory.memory_service.uuid.uuid4", return_value="relation-upsert-id"
         ):
             result = await service.manage(
                 ManageMemoryRequest(
@@ -1040,7 +1040,7 @@ class TestStructuredIngestService:
         service = MemoryService(backend=backend, context=context)
 
         with patch(
-            "workflows_mcp.engine.memory_service.uuid.uuid4", return_value="relation-created-id"
+            "workflows_mcp.memory.memory_service.uuid.uuid4", return_value="relation-created-id"
         ):
             scope = {
                 "palace": "corp",

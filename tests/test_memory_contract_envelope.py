@@ -14,18 +14,18 @@ import pytest
 from pydantic import ValidationError
 
 from workflows_mcp.engine.execution import Execution
-from workflows_mcp.engine.knowledge.search import (
+from workflows_mcp.memory.knowledge.search import (
     build_fts_search_query,
     build_vector_search_query,
     rrf_fusion,
 )
-from workflows_mcp.engine.memory_schema import (
+from workflows_mcp.memory.memory_schema import (
     ManageMemoryResult,
     MemoryRequest,
     QueryMemoryRequest,
     QueryMemoryResult,
 )
-from workflows_mcp.engine.memory_service import (
+from workflows_mcp.memory.memory_service import (
     MemoryContractError,
     MemoryService,
 )
@@ -465,7 +465,7 @@ def test_tool_error_payload_uses_machine_readable_envelope_for_contract_errors()
 
 
 def test_memory_contract_error_remains_importable_from_memory_service() -> None:
-    from workflows_mcp.engine.memory_service import (
+    from workflows_mcp.memory.memory_service import (
         MemoryContractError as ImportedMemoryContractError,
     )
 
@@ -582,9 +582,9 @@ async def test_query_auto_exposes_s1_s2_diagnostics_default_on() -> None:
     context = MagicMock()
     context.execution_context = None
 
-    with patch("workflows_mcp.engine.memory_service.compute_embedding") as mock_embed:
+    with patch("workflows_mcp.memory.memory_service.compute_embedding") as mock_embed:
         mock_embed.return_value = ([0.1, 0.2, 0.3], "model", 3, None)
-        with patch("workflows_mcp.engine.memory_service.room_scoped_search") as mock_search:
+        with patch("workflows_mcp.memory.memory_service.room_scoped_search") as mock_search:
             mock_search.return_value = []
             service = MemoryService(backend=backend, context=context)
             result = await service.query(
@@ -610,9 +610,9 @@ async def test_query_auto_s2_toggle_off_disables_companion_lane() -> None:
     context = MagicMock()
     context.execution_context = None
 
-    with patch("workflows_mcp.engine.memory_service.compute_embedding") as mock_embed:
+    with patch("workflows_mcp.memory.memory_service.compute_embedding") as mock_embed:
         mock_embed.return_value = ([0.1, 0.2, 0.3], "model", 3, None)
-        with patch("workflows_mcp.engine.memory_service.room_scoped_search") as mock_search:
+        with patch("workflows_mcp.memory.memory_service.room_scoped_search") as mock_search:
             mock_search.return_value = []
             service = MemoryService(backend=backend, context=context)
             result = await service.query(
@@ -722,7 +722,7 @@ async def test_query_graph_has_normalized_retrieval_contract_shape() -> None:
     context = MagicMock()
     context.execution_context = None
 
-    with patch("workflows_mcp.engine.memory_service.graph_stats") as mock_graph_stats:
+    with patch("workflows_mcp.memory.memory_service.graph_stats") as mock_graph_stats:
         mock_graph_stats.return_value = {
             "paths": [],
             "nodes": [],
@@ -749,11 +749,11 @@ async def test_query_context_has_normalized_retrieval_contract_shape() -> None:
     context = MagicMock()
     context.execution_context = None
 
-    with patch("workflows_mcp.engine.memory_service.compute_embedding") as mock_embed:
+    with patch("workflows_mcp.memory.memory_service.compute_embedding") as mock_embed:
         mock_embed.return_value = ([0.1, 0.2, 0.3], "model", 3, None)
-        with patch("workflows_mcp.engine.memory_service.room_scoped_search") as mock_search:
+        with patch("workflows_mcp.memory.memory_service.room_scoped_search") as mock_search:
             mock_search.return_value = []
-            with patch("workflows_mcp.engine.memory_service.assemble_context") as mock_assemble:
+            with patch("workflows_mcp.memory.memory_service.assemble_context") as mock_assemble:
                 mock_assemble.return_value = ("", 0, 0)
                 service = MemoryService(backend=backend, context=context)
                 result = await service.query(
@@ -777,9 +777,9 @@ async def test_query_palace_has_normalized_retrieval_contract_shape() -> None:
     context = MagicMock()
     context.execution_context = None
 
-    with patch("workflows_mcp.engine.memory_service.compute_embedding") as mock_embed:
+    with patch("workflows_mcp.memory.memory_service.compute_embedding") as mock_embed:
         mock_embed.return_value = ([0.1, 0.2, 0.3], "model", 3, None)
-        with patch("workflows_mcp.engine.memory_service.room_scoped_search") as mock_search:
+        with patch("workflows_mcp.memory.memory_service.room_scoped_search") as mock_search:
             mock_search.return_value = []
             service = MemoryService(backend=backend, context=context)
             result = await service.query(
@@ -804,7 +804,7 @@ async def test_query_communities_has_normalized_retrieval_contract_shape() -> No
     context = MagicMock()
     context.execution_context = None
 
-    with patch("workflows_mcp.engine.memory_service.compute_embedding") as mock_embed:
+    with patch("workflows_mcp.memory.memory_service.compute_embedding") as mock_embed:
         mock_embed.return_value = ([0.1, 0.2, 0.3], "model", 3, None)
         service = MemoryService(backend=backend, context=context)
         result = await service.query(

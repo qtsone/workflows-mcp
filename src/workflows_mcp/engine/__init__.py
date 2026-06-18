@@ -39,12 +39,9 @@ from . import (  # noqa: F401
     executors_image,  # Image generation executor
     executors_interactive,  # Interactive executors
     executors_llm,  # LLM call executor
-    executors_memory,  # Memory executor
     executors_project_files,  # Project file discovery executor
     executors_sql,  # SQL database executor
     executors_state,  # JSON state executors
-    executors_system2_planner,  # System 2 semantic planning executor
-    executors_treesitter,  # TreeSitter static analysis executor
     executors_workflow,  # Workflow executor (ADR-008)
 )
 from .block import BlockInput, BlockOutput
@@ -54,7 +51,6 @@ from .dag import DAGResolver
 # This resolves forward references in Execution (ExecutionContext property)
 from .execution import Execution
 from .execution_context import ExecutionContext
-from .execution_memory import ExecutionMemory, Turn
 from .execution_result import ExecutionResult, PauseData
 from .executor_base import create_default_registry
 from .executors_core import (
@@ -86,11 +82,6 @@ from .executors_interactive import (
     PromptInput,
     PromptOutput,
 )
-from .executors_memory import (
-    MemoryExecutor,
-    MemoryInput,
-    MemoryOutput,
-)
 from .executors_project_files import (
     ProjectFilesExecutor,
     ProjectFilesInput,
@@ -111,16 +102,6 @@ from .executors_state import (
     WriteJSONStateExecutor,
     WriteJSONStateInput,
     WriteJSONStateOutput,
-)
-from .executors_system2_planner import (
-    System2PlannerExecutor,
-    System2PlannerInput,
-    System2PlannerOutput,
-)
-from .executors_treesitter import (
-    TreeSitterExecutor,
-    TreeSitterInput,
-    TreeSitterOutput,
 )
 from .executors_workflow import (
     WorkflowExecutor,
@@ -146,8 +127,6 @@ __all__ = [
     "ExecutionResult",
     "PauseData",
     "ExecutionContext",
-    "ExecutionMemory",
-    "Turn",
     "WorkflowRegistry",
     "WorkflowSchema",
     "load_workflow_from_yaml",
@@ -190,24 +169,12 @@ __all__ = [
     "MergeJSONStateExecutor",
     "MergeJSONStateInput",
     "MergeJSONStateOutput",
-    # System 2 planner
-    "System2PlannerExecutor",
-    "System2PlannerInput",
-    "System2PlannerOutput",
     # SQL Executors
     "SqlExecutor",
     "SqlInput",
     "SqlOutput",
-    # Memory Executors
-    "MemoryExecutor",
-    "MemoryInput",
-    "MemoryOutput",
     # Project file executors
     "ProjectFilesExecutor",
     "ProjectFilesInput",
     "ProjectFilesOutput",
-    # TreeSitter Executors
-    "TreeSitterExecutor",
-    "TreeSitterInput",
-    "TreeSitterOutput",
 ]

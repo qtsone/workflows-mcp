@@ -85,8 +85,8 @@ async def test_prepare_memory_schema_connects_and_initializes_without_bootstrap(
     async def _fake_ensure_schema(_backend: Any) -> None:
         ensure_schema_calls["count"] += 1
 
-    import workflows_mcp.engine.knowledge.schema as schema_mod
     import workflows_mcp.engine.sql.postgres_backend as postgres_backend_mod
+    import workflows_mcp.memory.knowledge.schema as schema_mod
 
     monkeypatch.setattr(schema_mod, "ensure_schema", _fake_ensure_schema)
     monkeypatch.setattr(postgres_backend_mod, "PostgresBackend", _FakePostgresBackend)
@@ -123,7 +123,7 @@ async def test_app_lifespan_reuses_single_memory_backend_and_disconnects_on_shut
     class _FakeMemoryExecutor:
         type_name = "Memory"
 
-    import workflows_mcp.engine.executors_memory as executors_memory_mod
+    import workflows_mcp.memory.executors_memory as executors_memory_mod
     import workflows_mcp.tools_memory as tools_memory_mod
 
     monkeypatch.setattr(server, "_prepare_memory_schema", _fake_prepare_memory_schema)
@@ -172,8 +172,8 @@ async def test_prepare_memory_schema_bootstraps_missing_db_when_enabled(
         connect=_fake_admin_connect,
     )
 
-    import workflows_mcp.engine.knowledge.schema as schema_mod
     import workflows_mcp.engine.sql.postgres_backend as postgres_backend_mod
+    import workflows_mcp.memory.knowledge.schema as schema_mod
 
     monkeypatch.setattr(schema_mod, "ensure_schema", _fake_ensure_schema)
     monkeypatch.setattr(postgres_backend_mod, "PostgresBackend", _FakePostgresBackend)
@@ -219,8 +219,8 @@ async def test_prepare_memory_schema_skips_bootstrap_when_disabled(
         connect=_fake_admin_connect,
     )
 
-    import workflows_mcp.engine.knowledge.schema as schema_mod
     import workflows_mcp.engine.sql.postgres_backend as postgres_backend_mod
+    import workflows_mcp.memory.knowledge.schema as schema_mod
 
     monkeypatch.setattr(schema_mod, "ensure_schema", _fake_ensure_schema)
     monkeypatch.setattr(postgres_backend_mod, "PostgresBackend", _FakePostgresBackend)
@@ -265,8 +265,8 @@ async def test_prepare_memory_schema_tolerates_duplicate_database_race(
         connect=_fake_admin_connect,
     )
 
-    import workflows_mcp.engine.knowledge.schema as schema_mod
     import workflows_mcp.engine.sql.postgres_backend as postgres_backend_mod
+    import workflows_mcp.memory.knowledge.schema as schema_mod
 
     monkeypatch.setattr(schema_mod, "ensure_schema", _fake_ensure_schema)
     monkeypatch.setattr(postgres_backend_mod, "PostgresBackend", _FakePostgresBackend)
@@ -308,8 +308,8 @@ async def test_prepare_memory_schema_raises_when_bootstrap_fails(
         connect=_fake_admin_connect,
     )
 
-    import workflows_mcp.engine.knowledge.schema as schema_mod
     import workflows_mcp.engine.sql.postgres_backend as postgres_backend_mod
+    import workflows_mcp.memory.knowledge.schema as schema_mod
 
     monkeypatch.setattr(schema_mod, "ensure_schema", _fake_ensure_schema)
     monkeypatch.setattr(postgres_backend_mod, "PostgresBackend", _FakePostgresBackend)
@@ -335,8 +335,8 @@ async def test_prepare_memory_schema_disconnects_on_schema_failure(
     async def _fake_ensure_schema(_backend: Any) -> None:
         raise RuntimeError("schema failure")
 
-    import workflows_mcp.engine.knowledge.schema as schema_mod
     import workflows_mcp.engine.sql.postgres_backend as postgres_backend_mod
+    import workflows_mcp.memory.knowledge.schema as schema_mod
 
     monkeypatch.setattr(schema_mod, "ensure_schema", _fake_ensure_schema)
     monkeypatch.setattr(postgres_backend_mod, "PostgresBackend", _FakePostgresBackend)

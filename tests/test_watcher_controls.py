@@ -16,7 +16,7 @@ import workflows_mcp.http.routes.admin_v1.projects as projects_routes
 import workflows_mcp.http.routes.admin_v1.sync as sync_routes
 import workflows_mcp.server as server_module
 from workflows_mcp.bootstrap import bootstrap_if_needed
-from workflows_mcp.engine.memory_schema import MemoryRequest
+from workflows_mcp.memory.memory_schema import MemoryRequest
 from workflows_mcp.metadata.db import connect_metadata_db
 from workflows_mcp.metadata.migrations import migrate_metadata_db
 from workflows_mcp.metadata.repos.projects_repo import ProjectRecord
@@ -1224,12 +1224,12 @@ async def test_watcher_sync_writes_structural_evidence_before_verification_cycle
     issues store_system1_structural_evidence BEFORE record_system1_verification_cycle
     so that the cycle record is causally downstream of evidence writes.
     """
-    from workflows_mcp.engine.memory_onboard_sync_orchestrator import (
+    from workflows_mcp.memory.memory_onboard_sync_orchestrator import (
         ProgrammaticOnboardRequest,
         ScannedFileEntry,
         run_programmatic_onboard_with_cycle_recording,
     )
-    from workflows_mcp.engine.memory_schema import ManageMemoryResult, MemoryResult
+    from workflows_mcp.memory.memory_schema import ManageMemoryResult, MemoryResult
 
     operations_called: list[str] = []
 
@@ -1303,12 +1303,12 @@ async def test_watcher_sync_structural_evidence_write_failure_blocks_cycle_recor
     from run_programmatic_onboard_with_cycle_recording so that the caller sees
     failure and cannot incorrectly record a cycle without prior evidence.
     """
-    from workflows_mcp.engine.memory_onboard_sync_orchestrator import (
+    from workflows_mcp.memory.memory_onboard_sync_orchestrator import (
         ProgrammaticOnboardRequest,
         ScannedFileEntry,
         run_programmatic_onboard_with_cycle_recording,
     )
-    from workflows_mcp.engine.memory_schema import ManageMemoryResult, MemoryResult
+    from workflows_mcp.memory.memory_schema import ManageMemoryResult, MemoryResult
 
     cycle_recording_attempted = False
 
@@ -1376,12 +1376,12 @@ async def test_watcher_sync_derives_structural_module_evidence_from_file_paths()
     evidence from file topology (not TreeSitter), preserving System 1 ownership
     without deriving System 2 semantics.
     """
-    from workflows_mcp.engine.memory_onboard_sync_orchestrator import (
+    from workflows_mcp.memory.memory_onboard_sync_orchestrator import (
         ProgrammaticOnboardRequest,
         ScannedFileEntry,
         run_programmatic_onboard_with_cycle_recording,
     )
-    from workflows_mcp.engine.memory_schema import ManageMemoryResult, MemoryResult
+    from workflows_mcp.memory.memory_schema import ManageMemoryResult, MemoryResult
 
     captured_evidence: list[dict[str, Any]] = []
 

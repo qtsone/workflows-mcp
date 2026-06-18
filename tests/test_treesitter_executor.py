@@ -46,23 +46,23 @@ def mock_execution() -> MagicMock:
 
 class TestDetectLanguage:
     def test_python_extensions(self) -> None:
-        from workflows_mcp.engine.treesitter_languages import detect_language
+        from workflows_mcp.code_intelligence.treesitter_languages import detect_language
 
         assert detect_language("foo.py") == "python"
         assert detect_language("foo.pyi") == "python"
 
     def test_typescript_extension(self) -> None:
-        from workflows_mcp.engine.treesitter_languages import detect_language
+        from workflows_mcp.code_intelligence.treesitter_languages import detect_language
 
         assert detect_language("foo.ts") == "typescript"
 
     def test_tsx_extension(self) -> None:
-        from workflows_mcp.engine.treesitter_languages import detect_language
+        from workflows_mcp.code_intelligence.treesitter_languages import detect_language
 
         assert detect_language("foo.tsx") == "tsx"
 
     def test_javascript_extensions(self) -> None:
-        from workflows_mcp.engine.treesitter_languages import detect_language
+        from workflows_mcp.code_intelligence.treesitter_languages import detect_language
 
         assert detect_language("foo.js") == "javascript"
         assert detect_language("foo.jsx") == "javascript"
@@ -70,47 +70,47 @@ class TestDetectLanguage:
         assert detect_language("foo.cjs") == "javascript"
 
     def test_go_extension(self) -> None:
-        from workflows_mcp.engine.treesitter_languages import detect_language
+        from workflows_mcp.code_intelligence.treesitter_languages import detect_language
 
         assert detect_language("foo.go") == "go"
 
     def test_rust_extension(self) -> None:
-        from workflows_mcp.engine.treesitter_languages import detect_language
+        from workflows_mcp.code_intelligence.treesitter_languages import detect_language
 
         assert detect_language("foo.rs") == "rust"
 
     def test_markdown_extensions(self) -> None:
-        from workflows_mcp.engine.treesitter_languages import detect_language
+        from workflows_mcp.code_intelligence.treesitter_languages import detect_language
 
         assert detect_language("foo.md") == "markdown"
         assert detect_language("foo.markdown") == "markdown"
 
     def test_yaml_extensions(self) -> None:
-        from workflows_mcp.engine.treesitter_languages import detect_language
+        from workflows_mcp.code_intelligence.treesitter_languages import detect_language
 
         assert detect_language("foo.yaml") == "yaml"
         assert detect_language("foo.yml") == "yaml"
 
     def test_json_extension(self) -> None:
-        from workflows_mcp.engine.treesitter_languages import detect_language
+        from workflows_mcp.code_intelligence.treesitter_languages import detect_language
 
         assert detect_language("foo.json") == "json"
 
     def test_unsupported_returns_unsupported(self) -> None:
-        from workflows_mcp.engine.treesitter_languages import detect_language
+        from workflows_mcp.code_intelligence.treesitter_languages import detect_language
 
         assert detect_language("foo.rb") == "unsupported"
         assert detect_language("Makefile") == "unsupported"
         assert detect_language("foo") == "unsupported"
 
     def test_case_insensitive_extension(self) -> None:
-        from workflows_mcp.engine.treesitter_languages import detect_language
+        from workflows_mcp.code_intelligence.treesitter_languages import detect_language
 
         assert detect_language("foo.PY") == "python"
         assert detect_language("foo.JS") == "javascript"
 
     def test_path_with_directories(self) -> None:
-        from workflows_mcp.engine.treesitter_languages import detect_language
+        from workflows_mcp.code_intelligence.treesitter_languages import detect_language
 
         assert detect_language("/some/deep/path/module.py") == "python"
         assert detect_language("relative/path/index.ts") == "typescript"
@@ -125,7 +125,7 @@ class TestParserLoading:
     def test_get_parser_returns_parser_for_python(self) -> None:
         from tree_sitter import Parser
 
-        from workflows_mcp.engine.treesitter_languages import get_parser
+        from workflows_mcp.code_intelligence.treesitter_languages import get_parser
 
         parser = get_parser("python")
         assert isinstance(parser, Parser)
@@ -133,7 +133,7 @@ class TestParserLoading:
     def test_get_parser_returns_parser_for_typescript(self) -> None:
         from tree_sitter import Parser
 
-        from workflows_mcp.engine.treesitter_languages import get_parser
+        from workflows_mcp.code_intelligence.treesitter_languages import get_parser
 
         parser = get_parser("typescript")
         assert isinstance(parser, Parser)
@@ -141,7 +141,7 @@ class TestParserLoading:
     def test_get_parser_returns_parser_for_tsx(self) -> None:
         from tree_sitter import Parser
 
-        from workflows_mcp.engine.treesitter_languages import get_parser
+        from workflows_mcp.code_intelligence.treesitter_languages import get_parser
 
         parser = get_parser("tsx")
         assert isinstance(parser, Parser)
@@ -149,7 +149,7 @@ class TestParserLoading:
     def test_get_parser_returns_parser_for_javascript(self) -> None:
         from tree_sitter import Parser
 
-        from workflows_mcp.engine.treesitter_languages import get_parser
+        from workflows_mcp.code_intelligence.treesitter_languages import get_parser
 
         parser = get_parser("javascript")
         assert isinstance(parser, Parser)
@@ -157,7 +157,7 @@ class TestParserLoading:
     def test_get_parser_returns_parser_for_go(self) -> None:
         from tree_sitter import Parser
 
-        from workflows_mcp.engine.treesitter_languages import get_parser
+        from workflows_mcp.code_intelligence.treesitter_languages import get_parser
 
         parser = get_parser("go")
         assert isinstance(parser, Parser)
@@ -165,7 +165,7 @@ class TestParserLoading:
     def test_get_parser_returns_parser_for_rust(self) -> None:
         from tree_sitter import Parser
 
-        from workflows_mcp.engine.treesitter_languages import get_parser
+        from workflows_mcp.code_intelligence.treesitter_languages import get_parser
 
         parser = get_parser("rust")
         assert isinstance(parser, Parser)
@@ -173,7 +173,7 @@ class TestParserLoading:
     def test_get_parser_returns_parser_for_markdown(self) -> None:
         from tree_sitter import Parser
 
-        from workflows_mcp.engine.treesitter_languages import get_parser
+        from workflows_mcp.code_intelligence.treesitter_languages import get_parser
 
         parser = get_parser("markdown")
         assert isinstance(parser, Parser)
@@ -181,7 +181,7 @@ class TestParserLoading:
     def test_get_parser_returns_parser_for_yaml(self) -> None:
         from tree_sitter import Parser
 
-        from workflows_mcp.engine.treesitter_languages import get_parser
+        from workflows_mcp.code_intelligence.treesitter_languages import get_parser
 
         parser = get_parser("yaml")
         assert isinstance(parser, Parser)
@@ -189,20 +189,20 @@ class TestParserLoading:
     def test_get_parser_returns_parser_for_json(self) -> None:
         from tree_sitter import Parser
 
-        from workflows_mcp.engine.treesitter_languages import get_parser
+        from workflows_mcp.code_intelligence.treesitter_languages import get_parser
 
         parser = get_parser("json")
         assert isinstance(parser, Parser)
 
     def test_get_parser_is_cached(self) -> None:
-        from workflows_mcp.engine.treesitter_languages import get_parser
+        from workflows_mcp.code_intelligence.treesitter_languages import get_parser
 
         p1 = get_parser("python")
         p2 = get_parser("python")
         assert p1 is p2
 
     def test_get_parser_raises_for_unsupported(self) -> None:
-        from workflows_mcp.engine.treesitter_languages import get_parser
+        from workflows_mcp.code_intelligence.treesitter_languages import get_parser
 
         with pytest.raises((ValueError, KeyError)):
             get_parser("unsupported")  # type: ignore[arg-type]
@@ -215,20 +215,20 @@ class TestParserLoading:
 
 class TestContentHash:
     def test_content_hash_matches_tools_memory_implementation(self) -> None:
-        from workflows_mcp.engine.treesitter_languages import content_hash
+        from workflows_mcp.code_intelligence.treesitter_languages import content_hash
 
         text = "hello world\n"
         expected = hashlib.sha256(text.encode("utf-8", errors="replace")).hexdigest()
         assert content_hash(text) == expected
 
     def test_content_hash_empty_string(self) -> None:
-        from workflows_mcp.engine.treesitter_languages import content_hash
+        from workflows_mcp.code_intelligence.treesitter_languages import content_hash
 
         expected = hashlib.sha256(b"").hexdigest()
         assert content_hash("") == expected
 
     def test_content_hash_unicode(self) -> None:
-        from workflows_mcp.engine.treesitter_languages import content_hash
+        from workflows_mcp.code_intelligence.treesitter_languages import content_hash
 
         text = "caf\u00e9 \u4e2d\u6587"
         expected = hashlib.sha256(text.encode("utf-8", errors="replace")).hexdigest()
@@ -244,13 +244,13 @@ class TestTreeSitterInput:
     def test_requires_path(self) -> None:
         from pydantic import ValidationError
 
-        from workflows_mcp.engine.executors_treesitter import TreeSitterInput
+        from workflows_mcp.code_intelligence.executors_treesitter import TreeSitterInput
 
         with pytest.raises(ValidationError):
             TreeSitterInput()  # type: ignore[call-arg]
 
     def test_minimal_valid_input(self) -> None:
-        from workflows_mcp.engine.executors_treesitter import TreeSitterInput
+        from workflows_mcp.code_intelligence.executors_treesitter import TreeSitterInput
 
         inp = TreeSitterInput(path="/some/file.py")
         assert inp.path == "/some/file.py"
@@ -260,7 +260,7 @@ class TestTreeSitterInput:
         assert inp.item_id is None
 
     def test_full_input(self) -> None:
-        from workflows_mcp.engine.executors_treesitter import TreeSitterInput
+        from workflows_mcp.code_intelligence.executors_treesitter import TreeSitterInput
 
         inp = TreeSitterInput(
             path="/repo/src/main.py",
@@ -275,7 +275,7 @@ class TestTreeSitterInput:
     def test_rejects_extra_fields(self) -> None:
         from pydantic import ValidationError
 
-        from workflows_mcp.engine.executors_treesitter import TreeSitterInput
+        from workflows_mcp.code_intelligence.executors_treesitter import TreeSitterInput
 
         with pytest.raises(ValidationError):
             TreeSitterInput(path="/file.py", unknown_field="x")  # type: ignore[call-arg]
@@ -288,7 +288,7 @@ class TestTreeSitterInput:
 
 class TestTreeSitterOutput:
     def test_output_has_required_fields(self) -> None:
-        from workflows_mcp.engine.executors_treesitter import TreeSitterOutput
+        from workflows_mcp.code_intelligence.executors_treesitter import TreeSitterOutput
 
         out = TreeSitterOutput(
             language="python",
@@ -316,16 +316,27 @@ class TestTreeSitterOutput:
 
 
 class TestRegistration:
-    def test_treesitter_executor_registered_in_default_registry(self) -> None:
+    def test_treesitter_absent_from_dag_core_default_registry(self) -> None:
+        """The DAG core no longer hard-wires the code-intelligence executor."""
         from workflows_mcp.engine.executor_base import create_default_registry
 
         registry = create_default_registry()
+        assert not registry.has("TreeSitter")
+
+    def test_treesitter_executor_registered_via_code_intelligence_seam(self) -> None:
+        from workflows_mcp.code_intelligence import register_code_intelligence_executors
+        from workflows_mcp.engine.executor_base import create_default_registry
+
+        registry = create_default_registry()
+        register_code_intelligence_executors(registry)
         assert registry.has("TreeSitter")
 
     def test_treesitter_executor_type_name(self) -> None:
+        from workflows_mcp.code_intelligence import register_code_intelligence_executors
         from workflows_mcp.engine.executor_base import create_default_registry
 
         registry = create_default_registry()
+        register_code_intelligence_executors(registry)
         executor = registry.get("TreeSitter")
         assert executor.type_name == "TreeSitter"
 
@@ -340,7 +351,7 @@ class TestTreeSitterExecutorPythonFile:
     async def test_execute_python_file_returns_valid_output(
         self, python_file: Path, mock_execution: MagicMock
     ) -> None:
-        from workflows_mcp.engine.executors_treesitter import (
+        from workflows_mcp.code_intelligence.executors_treesitter import (
             TreeSitterExecutor,
             TreeSitterInput,
             TreeSitterOutput,
@@ -357,11 +368,11 @@ class TestTreeSitterExecutorPythonFile:
     async def test_execute_python_file_content_hash_matches(
         self, python_file: Path, mock_execution: MagicMock
     ) -> None:
-        from workflows_mcp.engine.executors_treesitter import (
+        from workflows_mcp.code_intelligence.executors_treesitter import (
             TreeSitterExecutor,
             TreeSitterInput,
         )
-        from workflows_mcp.engine.treesitter_languages import content_hash
+        from workflows_mcp.code_intelligence.treesitter_languages import content_hash
 
         executor = TreeSitterExecutor()
         inputs = TreeSitterInput(path=str(python_file))
@@ -374,7 +385,7 @@ class TestTreeSitterExecutorPythonFile:
     async def test_execute_python_file_has_file_entity(
         self, python_file: Path, mock_execution: MagicMock
     ) -> None:
-        from workflows_mcp.engine.executors_treesitter import (
+        from workflows_mcp.code_intelligence.executors_treesitter import (
             TreeSitterExecutor,
             TreeSitterInput,
         )
@@ -397,7 +408,7 @@ class TestTreeSitterExecutorPythonFile:
     async def test_execute_python_file_has_module_entity(
         self, python_file: Path, mock_execution: MagicMock
     ) -> None:
-        from workflows_mcp.engine.executors_treesitter import (
+        from workflows_mcp.code_intelligence.executors_treesitter import (
             TreeSitterExecutor,
             TreeSitterInput,
         )
@@ -420,7 +431,7 @@ class TestTreeSitterExecutorPythonFile:
     async def test_execute_python_file_module_has_qualified_name(
         self, python_file: Path, mock_execution: MagicMock
     ) -> None:
-        from workflows_mcp.engine.executors_treesitter import (
+        from workflows_mcp.code_intelligence.executors_treesitter import (
             TreeSitterExecutor,
             TreeSitterInput,
         )
@@ -437,7 +448,7 @@ class TestTreeSitterExecutorPythonFile:
     async def test_execute_python_file_has_contains_relation(
         self, python_file: Path, mock_execution: MagicMock
     ) -> None:
-        from workflows_mcp.engine.executors_treesitter import (
+        from workflows_mcp.code_intelligence.executors_treesitter import (
             TreeSitterExecutor,
             TreeSitterInput,
         )
@@ -460,7 +471,7 @@ class TestTreeSitterExecutorPythonFile:
     async def test_execute_stable_id_is_deterministic(
         self, python_file: Path, mock_execution: MagicMock
     ) -> None:
-        from workflows_mcp.engine.executors_treesitter import (
+        from workflows_mcp.code_intelligence.executors_treesitter import (
             TreeSitterExecutor,
             TreeSitterInput,
         )
@@ -478,7 +489,7 @@ class TestTreeSitterExecutorPythonFile:
     async def test_execute_stable_id_length_32(
         self, python_file: Path, mock_execution: MagicMock
     ) -> None:
-        from workflows_mcp.engine.executors_treesitter import (
+        from workflows_mcp.code_intelligence.executors_treesitter import (
             TreeSitterExecutor,
             TreeSitterInput,
         )
@@ -501,7 +512,7 @@ class TestUnsupportedExtension:
     async def test_unsupported_extension_returns_unsupported_language(
         self, tmp_path: Path, mock_execution: MagicMock
     ) -> None:
-        from workflows_mcp.engine.executors_treesitter import (
+        from workflows_mcp.code_intelligence.executors_treesitter import (
             TreeSitterExecutor,
             TreeSitterInput,
         )
@@ -521,7 +532,7 @@ class TestUnsupportedExtension:
     async def test_unsupported_does_not_crash(
         self, tmp_path: Path, mock_execution: MagicMock
     ) -> None:
-        from workflows_mcp.engine.executors_treesitter import (
+        from workflows_mcp.code_intelligence.executors_treesitter import (
             TreeSitterExecutor,
             TreeSitterInput,
         )
@@ -540,7 +551,7 @@ class TestUnsupportedExtension:
         self, tmp_path: Path, mock_execution: MagicMock
     ) -> None:
         """When language is explicitly provided in input, use it instead of extension."""
-        from workflows_mcp.engine.executors_treesitter import (
+        from workflows_mcp.code_intelligence.executors_treesitter import (
             TreeSitterExecutor,
             TreeSitterInput,
             TreeSitterOutput,
@@ -569,7 +580,7 @@ class TestADR006ExceptionPropagation:
         self, tmp_path: Path, mock_execution: MagicMock
     ) -> None:
         """ADR-006: executor raises exceptions for failures; missing file must propagate."""
-        from workflows_mcp.engine.executors_treesitter import (
+        from workflows_mcp.code_intelligence.executors_treesitter import (
             TreeSitterExecutor,
             TreeSitterInput,
         )
@@ -587,7 +598,7 @@ class TestStableIdSensitivity:
         self, python_file: Path, mock_execution: MagicMock
     ) -> None:
         """stable_id must differ when palace differs (same file, same item_id)."""
-        from workflows_mcp.engine.executors_treesitter import (
+        from workflows_mcp.code_intelligence.executors_treesitter import (
             TreeSitterExecutor,
             TreeSitterInput,
         )
@@ -611,7 +622,7 @@ class TestStableIdSensitivity:
         self, python_file: Path, mock_execution: MagicMock
     ) -> None:
         """stable_id must differ when item_id differs (same file, same palace)."""
-        from workflows_mcp.engine.executors_treesitter import (
+        from workflows_mcp.code_intelligence.executors_treesitter import (
             TreeSitterExecutor,
             TreeSitterInput,
         )

@@ -130,10 +130,13 @@ def extract_schemas() -> dict[str, dict[str, Any]]:
     """Extract schemas and metadata from all registered executors."""
     registry = create_default_registry()
 
-    # Add MemoryExecutor — conditionally loaded at runtime but always in docs
-    from workflows_mcp.engine.executors_memory import MemoryExecutor
+    # Add the subsystem blocks — registered through their seams at runtime, but
+    # always present in the generated reference.
+    from workflows_mcp.code_intelligence import register_code_intelligence_executors
+    from workflows_mcp.memory_runtime import register_memory_executors
 
-    registry.register(MemoryExecutor())
+    register_code_intelligence_executors(registry)
+    register_memory_executors(registry)
 
     result = {}
 

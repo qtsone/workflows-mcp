@@ -21,13 +21,15 @@ from .context import (
     MemoryBackendUnavailableError,
     SessionProjectContext,
 )
-from .engine.memory_graph_builder import GraphPayload
-from .engine.memory_graph_validator import (
+from .engine.sql.postgres_backend import PostgresBackend
+from .http_models import OnboardRequest, SyncRequest
+from .memory.memory_graph_builder import GraphPayload
+from .memory.memory_graph_validator import (
     GraphValidationResult,
     build_graph_error_envelope,
     validate_graph_payload,
 )
-from .engine.memory_onboard_sync_orchestrator import (
+from .memory.memory_onboard_sync_orchestrator import (
     LLMOnboardRequest,
     ProgrammaticOnboardRequest,
     build_llm_onboard_response,
@@ -37,23 +39,23 @@ from .engine.memory_onboard_sync_orchestrator import (
     run_programmatic_onboard,
     run_programmatic_onboard_with_cycle_recording,
 )
-from .engine.memory_schema import (
+from .memory.memory_schema import (
     MemoryRequest,
     MemoryResponseInput,
     MemoryResult,
 )
-from .engine.memory_scope_resolver import (
+from .memory.memory_scope_resolver import (
     SyncContextCandidate,
     build_ambiguous_context_envelope,
     resolve_sync_context,
     scope_key,
     sorted_scan_manifest,
 )
-from .engine.memory_service import (
+from .memory.memory_service import (
     MemoryContractError,
     MemoryService,
 )
-from .engine.project_flow_service import (
+from .memory.project_flow_service import (
     PROJECT_FLOW_OPERATIONS,
     PROJECT_FLOW_VERSION,
     FlowState,
@@ -70,8 +72,6 @@ from .engine.project_flow_service import (
     project_flow_plan,
     restore_checkpoint,
 )
-from .engine.sql.postgres_backend import PostgresBackend
-from .http_models import OnboardRequest, SyncRequest
 from .memory_runtime import (
     memory_connection_config_from_env,
     memory_connection_config_from_metadata,
@@ -973,7 +973,7 @@ def _shape_memory_response(result: MemoryResult, response: MemoryResponseInput) 
 def _get_standalone_user_context() -> tuple[uuid.UUID | None, str | None, str]:
     import getpass
 
-    from .engine.memory_service import SYSTEM_USER_UUID
+    from .memory.memory_service import SYSTEM_USER_UUID
 
     for env_var in [
         "MEMORY_USER_ID",
@@ -1061,7 +1061,7 @@ async def _execute_memory_request(
                     retryable=False,
                 )
             await backend.connect(config)
-            from .engine.knowledge.schema import ensure_schema
+            from .memory.knowledge.schema import ensure_schema
 
             await ensure_schema(backend)
 
@@ -2664,7 +2664,7 @@ def register_memory_tools(
             backend = PostgresBackend()
             try:
                 await backend.connect(config)
-                from .engine.knowledge.schema import ensure_schema
+                from .memory.knowledge.schema import ensure_schema
 
                 await ensure_schema(backend)
             except Exception as conn_err:

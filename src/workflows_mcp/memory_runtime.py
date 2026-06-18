@@ -9,9 +9,9 @@ from typing import Any
 from urllib.parse import parse_qsl, unquote, urlparse
 
 from workflows_mcp.context import MemoryBackendUnavailableError
-from workflows_mcp.engine.knowledge.schema import ensure_schema
 from workflows_mcp.engine.sql import ConnectionConfig, DatabaseEngine
 from workflows_mcp.engine.sql.postgres_backend import PostgresBackend
+from workflows_mcp.memory.knowledge.schema import ensure_schema
 from workflows_mcp.metadata.db import connect_metadata_db
 from workflows_mcp.metadata.repos.postgres_repo import SQLitePostgresSettingsRepository
 
@@ -113,8 +113,8 @@ def register_memory_executors(executor_registry: Any) -> None:
     same seam that connects the backend.
     """
 
-    from workflows_mcp.engine.executors_memory import MemoryExecutor
-    from workflows_mcp.engine.executors_system2_planner import System2PlannerExecutor
+    from workflows_mcp.memory.executors_memory import MemoryExecutor
+    from workflows_mcp.memory.executors_system2_planner import System2PlannerExecutor
 
     if not executor_registry.has("Memory"):
         executor_registry.register(MemoryExecutor())

@@ -11,8 +11,8 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 from _helpers import _make_backend_mock, memory, onboard, sync
 
-from workflows_mcp.engine.memory_schema import ManageMemoryResult, MemoryResult
-from workflows_mcp.engine.memory_service import MemoryContractError
+from workflows_mcp.memory.memory_schema import ManageMemoryResult, MemoryResult
+from workflows_mcp.memory.memory_service import MemoryContractError
 from workflows_mcp.tools_memory import (
     ScanConfig,
     ScanSnapshot,
@@ -575,7 +575,7 @@ class TestScanStructuredIngestEmbeddingFailure:
         with (
             patch("workflows_mcp.tools_memory.PostgresBackend", return_value=backend_mock),
             patch(
-                "workflows_mcp.engine.memory_service.compute_embedding",
+                "workflows_mcp.memory.memory_service.compute_embedding",
                 side_effect=ValueError("ExecutionContext not available"),
             ),
         ):
@@ -623,7 +623,7 @@ class TestScanStructuredIngestEmbeddingFailure:
         with (
             patch("workflows_mcp.tools_memory.PostgresBackend", return_value=backend_mock),
             patch(
-                "workflows_mcp.engine.memory_service.compute_embedding",
+                "workflows_mcp.memory.memory_service.compute_embedding",
                 side_effect=ValueError("ExecutionContext not available"),
             ),
         ):
@@ -926,7 +926,7 @@ class TestMemorySchemaOperation:
         self, mock_ctx: MagicMock
     ) -> None:
         """Checkpoint version in schema response must match PROJECT_FLOW_VERSION."""
-        from workflows_mcp.engine.project_flow_service import PROJECT_FLOW_VERSION
+        from workflows_mcp.memory.project_flow_service import PROJECT_FLOW_VERSION
 
         result = await memory(
             operation="schema",

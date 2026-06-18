@@ -3,8 +3,8 @@ from __future__ import annotations
 import pytest
 from pydantic import ValidationError
 
-from workflows_mcp.engine.executors_memory import MemoryInput
-from workflows_mcp.engine.memory_schema import MemoryRequest
+from workflows_mcp.memory.executors_memory import MemoryInput
+from workflows_mcp.memory.memory_schema import MemoryRequest
 
 
 @pytest.mark.parametrize(

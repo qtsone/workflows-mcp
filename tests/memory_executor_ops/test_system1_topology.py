@@ -34,8 +34,8 @@ async def test_derive_system1_topology_fails_closed_when_evidence_rows_are_indet
     rows in this palace, the heuristic has nothing to work from and must fail closed.
     This is the authoritative indeterminate case: zero evidence rows loaded.
     """
-    from workflows_mcp.engine.memory_schema import MemoryRequest
-    from workflows_mcp.engine.memory_service import MemoryContractError
+    from workflows_mcp.memory.memory_schema import MemoryRequest
+    from workflows_mcp.memory.memory_service import MemoryContractError
 
     # Use a fabricated UUID that does not exist in knowledge_structural_evidence.
     nonexistent_evidence_id = "00000000-dead-beef-0000-000000000099"
@@ -72,8 +72,8 @@ async def test_derive_system1_topology_does_not_fallback_to_default_literal(
     Even if evidence rows exist, the result must not silently assign a default
     topology value. The operation must either produce a proven topology or fail closed.
     """
-    from workflows_mcp.engine.memory_schema import MemoryRequest
-    from workflows_mcp.engine.memory_service import MemoryContractError
+    from workflows_mcp.memory.memory_schema import MemoryRequest
+    from workflows_mcp.memory.memory_service import MemoryContractError
 
     # Attempt derivation with a fabricated evidence_id (not actually stored).
     # The operation should fail closed, not silently return 'default'.
@@ -116,7 +116,7 @@ async def _store_structural_evidence_and_get_id(
     compartment: str = "owl-compartment",
 ) -> str:
     """Helper: store one structural evidence row and return its UUID string."""
-    from workflows_mcp.engine.memory_schema import MemoryRequest
+    from workflows_mcp.memory.memory_schema import MemoryRequest
 
     req = MemoryRequest.model_validate(
         {
@@ -171,7 +171,7 @@ async def test_derive_system1_topology_explicit_override_success(
     - Return derivation_source='explicit_override', derived_wing/room/compartment,
       provenance_id, claim_id.
     """
-    from workflows_mcp.engine.memory_schema import MemoryRequest
+    from workflows_mcp.memory.memory_schema import MemoryRequest
 
     evidence_id = await _store_structural_evidence_and_get_id(
         memory_service, knowledge_backend, entity_stable_id="src/owl.py::OwlClass"
@@ -285,7 +285,7 @@ async def test_derive_system1_topology_explicit_override_provenance_is_append_on
     ADR-013 append-only requirement: every accepted override call must produce
     a distinct knowledge_topology_provenance row, preserving full history.
     """
-    from workflows_mcp.engine.memory_schema import MemoryRequest
+    from workflows_mcp.memory.memory_schema import MemoryRequest
 
     evidence_id = await _store_structural_evidence_and_get_id(
         memory_service, knowledge_backend, entity_stable_id="src/append.py::AppendClass"
@@ -338,7 +338,7 @@ async def test_derive_system1_topology_explicit_override_provenance_is_append_on
     # Idempotent claim: repeated overrides for the same scope must NOT create
     # duplicate knowledge_semantic_claims rows — exactly 1 claim row expected.
     # Re-query using scope_key derived from the placement
-    from workflows_mcp.engine.memory_service import _scope_key_fn  # type: ignore[import]
+    from workflows_mcp.memory.memory_service import _scope_key_fn  # type: ignore[import]
 
     scope_key = _scope_key_fn(
         {"palace": PALACE, "wing": "owl-wing", "room": "owl-room", "compartment": "owl-compartment"}
@@ -371,7 +371,7 @@ async def test_derive_system1_topology_explicit_override_multiple_evidence_ids(
     When multiple evidence IDs are supplied, each must have a corresponding
     link row — no partial linking permitted.
     """
-    from workflows_mcp.engine.memory_schema import MemoryRequest
+    from workflows_mcp.memory.memory_schema import MemoryRequest
 
     ev1 = await _store_structural_evidence_and_get_id(
         memory_service, knowledge_backend, entity_stable_id="src/multi1.py::ClassOne"
@@ -426,8 +426,8 @@ async def test_derive_system1_topology_explicit_override_nonexistent_evidence_id
     ADR-013 Task 2b: evidence IDs must reference persisted structural evidence rows.
     A nonexistent ID must produce an error and no orphaned rows (atomic rollback).
     """
-    from workflows_mcp.engine.memory_schema import MemoryRequest
-    from workflows_mcp.engine.memory_service import MemoryContractError
+    from workflows_mcp.memory.memory_schema import MemoryRequest
+    from workflows_mcp.memory.memory_service import MemoryContractError
 
     fake_id = "00000000-dead-beef-0000-000000000099"
 
@@ -520,7 +520,7 @@ async def test_derive_system1_topology_without_override_succeeds_via_structural_
     the operation must now succeed when sufficient structural evidence is present,
     returning derivation_source='system1_derived'.
     """
-    from workflows_mcp.engine.memory_schema import MemoryRequest
+    from workflows_mcp.memory.memory_schema import MemoryRequest
 
     evidence_id = await _store_structural_evidence_and_get_id(
         memory_service, knowledge_backend, entity_stable_id="src/no_override.py::NoOverrideClass"
@@ -566,7 +566,7 @@ async def _store_structural_evidence_typed(
     compartment: str,
 ) -> str:
     """Helper: store a structural evidence row with explicit type/category and return its UUID."""
-    from workflows_mcp.engine.memory_schema import MemoryRequest
+    from workflows_mcp.memory.memory_schema import MemoryRequest
 
     req = MemoryRequest.model_validate(
         {
@@ -620,7 +620,7 @@ async def test_derive_system1_topology_structural_success_returns_system1_derive
     - Return non-empty derived_wing, derived_room, derived_compartment.
     - Return non-None provenance_id and claim_id.
     """
-    from workflows_mcp.engine.memory_schema import MemoryRequest
+    from workflows_mcp.memory.memory_schema import MemoryRequest
 
     # Store a class entity (highest anchor priority) in a known wing/room/compartment.
     ev_id = await _store_structural_evidence_typed(
@@ -672,7 +672,7 @@ async def test_derive_system1_topology_structural_algorithm_version_is_system1_v
     ADR-013 Task 3: algorithm version must be persisted for inspectability and future
     upgrade tracking.
     """
-    from workflows_mcp.engine.memory_schema import MemoryRequest
+    from workflows_mcp.memory.memory_schema import MemoryRequest
 
     ev_id = await _store_structural_evidence_typed(
         memory_service,
@@ -728,7 +728,7 @@ async def test_derive_system1_topology_structural_provenance_is_append_only(
     ADR-013 Task 3: provenance is history, not mutable state. Each accepted derivation
     must produce a fresh knowledge_topology_provenance row.
     """
-    from workflows_mcp.engine.memory_schema import MemoryRequest
+    from workflows_mcp.memory.memory_schema import MemoryRequest
 
     ev_id = await _store_structural_evidence_typed(
         memory_service,
@@ -788,7 +788,7 @@ async def test_derive_system1_topology_structural_evidence_links_persisted(
     ADR-013 Task 3: evidence IDs used for structural derivation must be linked in the
     provenance evidence table for accountability.
     """
-    from workflows_mcp.engine.memory_schema import MemoryRequest
+    from workflows_mcp.memory.memory_schema import MemoryRequest
 
     ev_id = await _store_structural_evidence_typed(
         memory_service,
@@ -840,7 +840,7 @@ async def test_derive_system1_topology_structural_class_anchor_priority(
     function/doc unit. The derived topology must reflect the class entity's placement
     rather than the function entity's placement.
     """
-    from workflows_mcp.engine.memory_schema import MemoryRequest
+    from workflows_mcp.memory.memory_schema import MemoryRequest
 
     # Store a class entity in one wing/room/compartment.
     cls_ev_id = await _store_structural_evidence_typed(
@@ -906,7 +906,7 @@ async def test_derive_system1_topology_structural_no_semantic_labels_influence(
     semantic-sounding entity_stable_id prefix, one without) must produce the same
     wing/room/compartment topology from structural signals only.
     """
-    from workflows_mcp.engine.memory_schema import MemoryRequest
+    from workflows_mcp.memory.memory_schema import MemoryRequest
 
     # Evidence rows in identical structural positions but with names that could
     # be mistaken for semantic categories.  The heuristic must use only structural
@@ -983,7 +983,7 @@ async def test_derive_system1_topology_modal_wing_room_tie_break_is_lexicographi
     the "z-*" row is stored first so that naive Counter iteration or DB row order
     would return it before "a-*".
     """
-    from workflows_mcp.engine.memory_schema import MemoryRequest
+    from workflows_mcp.memory.memory_schema import MemoryRequest
 
     # Store "z-wing"/"z-room" with a stable_id that sorts BEFORE "a-wing" entity's stable_id.
     # The DB query returns rows ORDER BY entity_stable_id ASC, so "aaa_..." sorts first.
@@ -1058,7 +1058,7 @@ async def test_derive_system1_topology_new_wing_insufficient_bundle_one_row_two_
     artifact can satisfy at most one category. Two category labels with one row
     must not pass.
     """
-    from workflows_mcp.engine.memory_schema import MemoryRequest
+    from workflows_mcp.memory.memory_schema import MemoryRequest
 
     # Store exactly ONE evidence row under one category.
     ev_id = await _store_structural_evidence_typed(
@@ -1115,7 +1115,7 @@ async def test_derive_system1_topology_new_wing_sufficient_bundle_two_rows_two_c
 
     Verifies: one artifact per category, >=2 categories, >=2 distinct rows.
     """
-    from workflows_mcp.engine.memory_schema import MemoryRequest
+    from workflows_mcp.memory.memory_schema import MemoryRequest
 
     ev1 = await _store_structural_evidence_typed(
         memory_service,
@@ -1177,7 +1177,7 @@ async def test_derive_system1_topology_explicit_override_bypasses_proof_bundle_g
     Verifies: result succeeds with is_new_wing=True, no proof_bundle, and a valid
     topology_override — the gate must be bypassed entirely.
     """
-    from workflows_mcp.engine.memory_schema import MemoryRequest
+    from workflows_mcp.memory.memory_schema import MemoryRequest
 
     ev = await _store_structural_evidence_typed(
         memory_service,
@@ -1238,8 +1238,8 @@ async def test_derive_system1_topology_structural_atomic_rollback_on_db_failure(
     """
     from unittest.mock import patch
 
-    from workflows_mcp.engine.memory_schema import MemoryRequest
-    from workflows_mcp.engine.memory_service import MemoryContractError
+    from workflows_mcp.memory.memory_schema import MemoryRequest
+    from workflows_mcp.memory.memory_service import MemoryContractError
 
     evidence_id = await _store_structural_evidence_and_get_id(
         memory_service,
@@ -1335,8 +1335,8 @@ async def test_derive_system1_topology_explicit_override_atomic_rollback_on_db_f
     """
     from unittest.mock import patch
 
-    from workflows_mcp.engine.memory_schema import MemoryRequest
-    from workflows_mcp.engine.memory_service import MemoryContractError
+    from workflows_mcp.memory.memory_schema import MemoryRequest
+    from workflows_mcp.memory.memory_service import MemoryContractError
 
     evidence_id = await _store_structural_evidence_typed(
         memory_service,
@@ -1444,7 +1444,7 @@ async def test_derive_system1_topology_explicit_override_all_four_tables_commit_
     exactly one new row traceable back to the same derive_system1_topology call.
     This is the positive atomicity assertion — all-or-nothing in the success direction.
     """
-    from workflows_mcp.engine.memory_schema import MemoryRequest
+    from workflows_mcp.memory.memory_schema import MemoryRequest
 
     evidence_id = await _store_structural_evidence_typed(
         memory_service,
@@ -1538,7 +1538,7 @@ async def test_derive_system1_topology_inline_candidates_stored_and_derived_atom
     ADR-013 Task 5b: one operation accepts inline candidates, stores them, and derives topology
     in a single transaction. On success, structural evidence rows must exist in the database.
     """
-    from workflows_mcp.engine.memory_schema import MemoryRequest
+    from workflows_mcp.memory.memory_schema import MemoryRequest
 
     derive_req = MemoryRequest.model_validate(
         {
@@ -1616,7 +1616,7 @@ async def test_derive_system1_topology_inline_candidates_insufficient_no_partial
     override is provided, the operation must fail closed. No evidence rows, claim rows, or
     provenance rows must be written (atomic rollback).
     """
-    from workflows_mcp.engine.memory_schema import MemoryRequest
+    from workflows_mcp.memory.memory_schema import MemoryRequest
 
     # Single inline candidate without override — insufficient for complete topology.
     derive_req = MemoryRequest.model_validate(
@@ -1637,7 +1637,7 @@ async def test_derive_system1_topology_inline_candidates_insufficient_no_partial
         }
     )
 
-    from workflows_mcp.engine.memory_service import MemoryContractError
+    from workflows_mcp.memory.memory_service import MemoryContractError
 
     with pytest.raises(MemoryContractError) as exc_info:
         await memory_service.execute(derive_req)  # type: ignore[union-attr]
@@ -1708,7 +1708,7 @@ async def test_derive_system1_topology_inline_candidates_wing_not_from_language(
     ADR-013 Task 5b: wing must not default to programming language.
     Parser metadata is evidence metadata only; language value must never appear as wing.
     """
-    from workflows_mcp.engine.memory_schema import MemoryRequest
+    from workflows_mcp.memory.memory_schema import MemoryRequest
 
     derive_req = MemoryRequest.model_validate(
         {

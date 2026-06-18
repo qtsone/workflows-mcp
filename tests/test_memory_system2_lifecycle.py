@@ -24,9 +24,9 @@ from typing import Any
 import pytest
 import pytest_asyncio
 
-from workflows_mcp.engine.knowledge.schema import ensure_schema
 from workflows_mcp.engine.sql.backend import ConnectionConfig, DatabaseEngine
 from workflows_mcp.engine.sql.postgres_backend import PostgresBackend
+from workflows_mcp.memory.knowledge.schema import ensure_schema
 
 pytestmark = pytest.mark.asyncio
 
@@ -46,7 +46,7 @@ def _scope_key(
     room: str = ROOM,
     compartment: str = COMPARTMENT,
 ) -> str:
-    from workflows_mcp.engine.memory_scope_resolver import scope_key as _sk
+    from workflows_mcp.memory.memory_scope_resolver import scope_key as _sk
 
     return _sk({"palace": palace, "wing": wing, "room": room, "compartment": compartment})
 
@@ -78,7 +78,7 @@ async def memory_service(knowledge_backend: PostgresBackend) -> Any:
     from unittest.mock import MagicMock
 
     from workflows_mcp.engine.executor_base import Execution
-    from workflows_mcp.engine.memory_service import MemoryService
+    from workflows_mcp.memory.memory_service import MemoryService
 
     context = MagicMock(spec=Execution)
     context.execution_context = MagicMock()
@@ -167,7 +167,7 @@ async def _insert_claim(
     compartment: str = COMPARTMENT,
 ) -> str:
     """Insert a semantic claim directly into the DB and return its UUID string."""
-    from workflows_mcp.engine.memory_scope_resolver import scope_key as _sk
+    from workflows_mcp.memory.memory_scope_resolver import scope_key as _sk
 
     scope_key = _sk({"palace": palace, "wing": wing, "room": room, "compartment": compartment})
     result = await backend.query(
@@ -227,7 +227,7 @@ async def _record_verification_cycle(
     compartment: str = COMPARTMENT,
 ) -> str:
     """Record a System 1 verification cycle and return its cycle_id."""
-    from workflows_mcp.engine.memory_schema import MemoryRequest
+    from workflows_mcp.memory.memory_schema import MemoryRequest
 
     result = await memory_service.execute(
         MemoryRequest.model_validate(
@@ -269,7 +269,7 @@ async def test_reconcile_transitions_active_evidenced_to_degraded(
     The claim must exist in the DB with lifecycle_state='degraded' after the call.
     reconciled_count must be >= 1 (the transitioned claim was counted).
     """
-    from workflows_mcp.engine.memory_schema import MemoryRequest
+    from workflows_mcp.memory.memory_schema import MemoryRequest
 
     claim_id = await _insert_claim(knowledge_backend, lifecycle_state="active_evidenced")
 
@@ -323,7 +323,7 @@ async def test_reconcile_archives_degraded_claim_after_two_successful_absent_cyc
     - reconciled_count >= 1
     - The claim row still exists (no deletion — archived in-place)
     """
-    from workflows_mcp.engine.memory_schema import MemoryRequest
+    from workflows_mcp.memory.memory_schema import MemoryRequest
 
     claim_id = await _insert_claim(knowledge_backend, lifecycle_state="degraded")
 
@@ -377,8 +377,8 @@ async def test_direct_active_evidenced_to_archived_is_rejected(
     Attempting to force-archive an active_evidenced claim (even with two valid
     absent cycles) must fail with MEM_ARCHIVE_GATE_NOT_MET or similar guard.
     """
-    from workflows_mcp.engine.memory_schema import MemoryRequest
-    from workflows_mcp.engine.memory_service import MemoryContractError
+    from workflows_mcp.memory.memory_schema import MemoryRequest
+    from workflows_mcp.memory.memory_service import MemoryContractError
 
     claim_id = await _insert_claim(knowledge_backend, lifecycle_state="active_evidenced")
 
@@ -438,8 +438,8 @@ async def test_failed_cycles_do_not_satisfy_archive_gate(
 
     Even when supplied as absent_verification_cycle_ids, the gate must reject them.
     """
-    from workflows_mcp.engine.memory_schema import MemoryRequest
-    from workflows_mcp.engine.memory_service import MemoryContractError
+    from workflows_mcp.memory.memory_schema import MemoryRequest
+    from workflows_mcp.memory.memory_service import MemoryContractError
 
     claim_id = await _insert_claim(knowledge_backend, lifecycle_state="degraded")
 
@@ -497,8 +497,8 @@ async def test_scope_unrelated_cycles_do_not_count_for_archive_gate(
     palace/wing/room/OTHER_COMPARTMENT must not satisfy the gate for claims under
     palace/wing/room/COMPARTMENT.
     """
-    from workflows_mcp.engine.memory_schema import MemoryRequest
-    from workflows_mcp.engine.memory_service import MemoryContractError
+    from workflows_mcp.memory.memory_schema import MemoryRequest
+    from workflows_mcp.memory.memory_service import MemoryContractError
 
     claim_id = await _insert_claim(knowledge_backend, lifecycle_state="degraded")
 
@@ -555,8 +555,8 @@ async def test_single_successful_absent_cycle_insufficient_for_archive(
     memory_service: Any, knowledge_backend: PostgresBackend, clean_palace: None
 ) -> None:
     """Archive gate requires at least two successful absent cycles. One is not enough."""
-    from workflows_mcp.engine.memory_schema import MemoryRequest
-    from workflows_mcp.engine.memory_service import MemoryContractError
+    from workflows_mcp.memory.memory_schema import MemoryRequest
+    from workflows_mcp.memory.memory_service import MemoryContractError
 
     claim_id = await _insert_claim(knowledge_backend, lifecycle_state="degraded")
     cycle_id = await _record_verification_cycle(memory_service, success=True)
@@ -602,7 +602,7 @@ async def test_archived_claims_remain_in_knowledge_semantic_claims(
     """Archived claims must stay in knowledge_semantic_claims with
     lifecycle_state='archived'. The archival operation must NOT delete the row.
     """
-    from workflows_mcp.engine.memory_schema import MemoryRequest
+    from workflows_mcp.memory.memory_schema import MemoryRequest
 
     claim_id = await _insert_claim(knowledge_backend, lifecycle_state="degraded")
     cycle_id_1 = await _record_verification_cycle(memory_service, success=True)
@@ -651,7 +651,7 @@ async def test_reconciled_count_reflects_degraded_claims(
     memory_service: Any, knowledge_backend: PostgresBackend, clean_palace: None
 ) -> None:
     """When two claims are degraded in one call, reconciled_count must be 2."""
-    from workflows_mcp.engine.memory_schema import MemoryRequest
+    from workflows_mcp.memory.memory_schema import MemoryRequest
 
     claim_id_1 = await _insert_claim(knowledge_backend, lifecycle_state="active_evidenced")
     claim_id_2 = await _insert_claim(knowledge_backend, lifecycle_state="active_evidenced")
@@ -690,7 +690,7 @@ async def test_reconcile_no_op_returns_zero_count(
     """reconcile_semantic_lifecycle with no claim IDs supplied must succeed
     and return reconciled_count=0 (nothing to do).
     """
-    from workflows_mcp.engine.memory_schema import MemoryRequest
+    from workflows_mcp.memory.memory_schema import MemoryRequest
 
     result = await memory_service.execute(
         MemoryRequest.model_validate(
@@ -724,7 +724,7 @@ async def test_archive_sets_archived_at_and_absent_cycle_count(
     - archived_at IS NOT NULL (required by ck_ksc_archive_requires_two_cycles constraint)
     - absent_cycle_count == 2 (the number of proven absent-evidence cycles supplied)
     """
-    from workflows_mcp.engine.memory_schema import MemoryRequest
+    from workflows_mcp.memory.memory_schema import MemoryRequest
 
     claim_id = await _insert_claim(knowledge_backend, lifecycle_state="degraded")
     cycle_id_1 = await _record_verification_cycle(memory_service, success=True)
@@ -783,7 +783,7 @@ async def test_combined_degrade_and_archive_in_one_request(
     - The degrade and archive sets must be disjoint (each claim goes through one
       transition per call).
     """
-    from workflows_mcp.engine.memory_schema import MemoryRequest
+    from workflows_mcp.memory.memory_schema import MemoryRequest
 
     # Claim A: starts active_evidenced — will be degraded in this call.
     claim_a = await _insert_claim(knowledge_backend, lifecycle_state="active_evidenced")
@@ -845,8 +845,8 @@ async def test_combined_request_rolls_back_degrade_when_archive_gate_fails(
     After rejection, claim_a must remain active_evidenced (not degraded), proving
     the transaction was rolled back and no partial state mutation occurred.
     """
-    from workflows_mcp.engine.memory_schema import MemoryRequest
-    from workflows_mcp.engine.memory_service import MemoryContractError
+    from workflows_mcp.memory.memory_schema import MemoryRequest
+    from workflows_mcp.memory.memory_service import MemoryContractError
 
     claim_a = await _insert_claim(knowledge_backend, lifecycle_state="active_evidenced")
     claim_b = await _insert_claim(knowledge_backend, lifecycle_state="degraded")
@@ -907,7 +907,7 @@ async def test_system2_planner_derives_claims_from_structural_evidence(
     knowledge_backend: PostgresBackend, clean_palace: None
 ) -> None:
     """Planner groups System 1 evidence into a full candidate claim set per scope."""
-    from workflows_mcp.engine.executors_system2_planner import (
+    from workflows_mcp.memory.executors_system2_planner import (
         System2PlannerExecutor,
         System2PlannerInput,
     )
@@ -944,7 +944,7 @@ async def test_system2_planner_skips_existing_claims(
     knowledge_backend: PostgresBackend, clean_palace: None
 ) -> None:
     """A candidate that already exists as a non-archived claim is not re-derived."""
-    from workflows_mcp.engine.executors_system2_planner import (
+    from workflows_mcp.memory.executors_system2_planner import (
         System2PlannerExecutor,
         System2PlannerInput,
     )
@@ -981,7 +981,7 @@ async def test_system2_planner_requires_memory_backend() -> None:
     import pytest
 
     from workflows_mcp.engine.executor_base import Execution
-    from workflows_mcp.engine.executors_system2_planner import (
+    from workflows_mcp.memory.executors_system2_planner import (
         System2PlannerExecutor,
         System2PlannerInput,
     )

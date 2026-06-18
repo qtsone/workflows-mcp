@@ -11,7 +11,7 @@ import pytest
 from _helpers import onboard
 
 from workflows_mcp.engine.executors_file import _SENSITIVE_EXCLUDE_PATTERNS
-from workflows_mcp.engine.memory_service import MemoryContractError
+from workflows_mcp.memory.memory_service import MemoryContractError
 from workflows_mcp.tools_memory import (
     ScanConfig,
     ScanSnapshot,

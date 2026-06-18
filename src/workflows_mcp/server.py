@@ -138,9 +138,9 @@ async def _bootstrap_memory_database(
 
 async def _prepare_memory_schema(memory_db_host: str) -> Any:
     """Connect to memory DB, ensure schema, and return a connected backend."""
-    from .engine.knowledge.schema import ensure_schema
     from .engine.sql.backend import ConnectionConfig, DatabaseEngine
     from .engine.sql.postgres_backend import PostgresBackend
+    from .memory.knowledge.schema import ensure_schema
 
     memory_db_port = int(os.getenv("MEMORY_DB_PORT", "5432"))
     memory_db_name = os.getenv("MEMORY_DB_NAME", "memory_db")
@@ -426,7 +426,7 @@ async def app_lifespan(_server: FastMCP) -> AsyncIterator[AppContext]:
                 from .memory_runtime import register_memory_executors
 
                 register_memory_executors(executor_registry)
-                from .engine.memory_service import AUDIT_FAIL_CLOSED
+                from .memory.memory_service import AUDIT_FAIL_CLOSED
 
                 logger.info(
                     "Memory features enabled (DB ready)",

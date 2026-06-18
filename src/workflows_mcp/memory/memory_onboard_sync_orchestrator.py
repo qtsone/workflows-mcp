@@ -32,7 +32,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal
 
-from .llm_config import LLMConfigLoader, ResolvedLLMConfig
+from workflows_mcp.engine.llm_config import LLMConfigLoader, ResolvedLLMConfig
+
 from .memory_graph_builder import (
     CorridorSemanticType,
     GraphCorridor,

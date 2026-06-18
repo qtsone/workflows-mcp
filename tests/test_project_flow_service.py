@@ -12,8 +12,8 @@ from typing import Any
 
 import pytest
 
-from workflows_mcp.engine.memory_errors import MemoryContractError
-from workflows_mcp.engine.project_flow_service import (
+from workflows_mcp.memory.memory_errors import MemoryContractError
+from workflows_mcp.memory.project_flow_service import (
     PROJECT_FLOW_VERSION,
     FlowState,
     ProjectFlowService,

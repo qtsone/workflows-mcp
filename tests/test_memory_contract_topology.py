@@ -15,11 +15,11 @@ import pytest
 from pydantic import ValidationError
 
 from workflows_mcp.engine.execution import Execution
-from workflows_mcp.engine.memory_schema import (
+from workflows_mcp.memory.memory_schema import (
     ManageMemoryResult,
     MemoryRequest,
 )
-from workflows_mcp.engine.memory_service import (
+from workflows_mcp.memory.memory_service import (
     MemoryContractError,
     MemoryService,
 )
@@ -667,7 +667,7 @@ def test_override_missing_reason_rejected_with_contract_error() -> None:
     """
     from pydantic import ValidationError
 
-    from workflows_mcp.engine.memory_schema import OverrideInput
+    from workflows_mcp.memory.memory_schema import OverrideInput
 
     with pytest.raises(ValidationError):
         OverrideInput(
@@ -685,7 +685,7 @@ def test_override_missing_applied_by_rejected_with_contract_error() -> None:
     """
     from pydantic import ValidationError
 
-    from workflows_mcp.engine.memory_schema import OverrideInput
+    from workflows_mcp.memory.memory_schema import OverrideInput
 
     with pytest.raises(ValidationError):
         OverrideInput(
@@ -773,8 +773,8 @@ def test_override_service_rejects_missing_reason_at_operation_level() -> None:
     import asyncio
     from unittest.mock import AsyncMock, MagicMock
 
-    from workflows_mcp.engine.memory_schema import MemoryRequest
-    from workflows_mcp.engine.memory_service import (
+    from workflows_mcp.memory.memory_schema import MemoryRequest
+    from workflows_mcp.memory.memory_service import (
         MemoryContractError,
         MemoryService,
     )
@@ -814,7 +814,7 @@ def test_override_service_rejects_missing_reason_at_operation_level() -> None:
 
 def test_derive_system1_topology_operation_is_accepted_by_enum() -> None:
     """derive_system1_topology must be a valid MemoryOperation string."""
-    from workflows_mcp.engine.memory_schema import MEMORY_OPERATION_ENUM
+    from workflows_mcp.memory.memory_schema import MEMORY_OPERATION_ENUM
 
     assert "derive_system1_topology" in MEMORY_OPERATION_ENUM, (
         "derive_system1_topology must be registered in MEMORY_OPERATION_ENUM"
@@ -823,7 +823,7 @@ def test_derive_system1_topology_operation_is_accepted_by_enum() -> None:
 
 def test_derive_system1_topology_is_accepted_by_memory_request_validation() -> None:
     """MemoryRequest must accept derive_system1_topology without raising."""
-    from workflows_mcp.engine.memory_schema import (
+    from workflows_mcp.memory.memory_schema import (
         DeriveSystem1TopologyInput,
         MemoryRequest,
     )
@@ -855,7 +855,7 @@ def test_derive_system1_topology_requires_derivation_payload() -> None:
 
 def test_derive_system1_topology_payload_requires_palace() -> None:
     """DeriveSystem1TopologyInput must require palace field."""
-    from workflows_mcp.engine.memory_schema import DeriveSystem1TopologyInput
+    from workflows_mcp.memory.memory_schema import DeriveSystem1TopologyInput
 
     with pytest.raises(ValidationError):
         DeriveSystem1TopologyInput(evidence_ids=["11111111-1111-1111-1111-111111111111"])
@@ -863,7 +863,7 @@ def test_derive_system1_topology_payload_requires_palace() -> None:
 
 def test_derive_system1_topology_payload_requires_evidence_ids() -> None:
     """DeriveSystem1TopologyInput must require at least one evidence_id."""
-    from workflows_mcp.engine.memory_schema import DeriveSystem1TopologyInput
+    from workflows_mcp.memory.memory_schema import DeriveSystem1TopologyInput
 
     with pytest.raises(ValidationError):
         DeriveSystem1TopologyInput(palace="test-palace", evidence_ids=[])
@@ -878,7 +878,7 @@ def test_derive_system1_topology_payload_requires_evidence_ids() -> None:
 )
 def test_derive_system1_topology_payload_rejects_wing_hint_as_extra_field(wing_hint: str) -> None:
     """DeriveSystem1TopologyInput must reject wing_hint (removed in Task 2a; use topology_override)."""  # noqa: E501
-    from workflows_mcp.engine.memory_schema import DeriveSystem1TopologyInput
+    from workflows_mcp.memory.memory_schema import DeriveSystem1TopologyInput
 
     with pytest.raises(ValidationError):
         DeriveSystem1TopologyInput(  # type: ignore[call-arg]
@@ -890,7 +890,7 @@ def test_derive_system1_topology_payload_rejects_wing_hint_as_extra_field(wing_h
 
 def test_derive_system1_topology_operation_is_registered_in_executor_literal() -> None:
     """MemoryInput in executors_memory must accept derive_system1_topology."""
-    from workflows_mcp.engine.executors_memory import MemoryInput
+    from workflows_mcp.memory.executors_memory import MemoryInput
 
     inp = MemoryInput(operation="derive_system1_topology")
     assert inp.operation == "derive_system1_topology"
@@ -903,12 +903,12 @@ def test_derive_system1_topology_operation_is_registered_in_executor_literal() -
 
 def test_topology_override_input_exists_and_is_importable() -> None:
     """TopologyOverrideInput must be importable from memory_service."""
-    from workflows_mcp.engine.memory_schema import TopologyOverrideInput  # noqa: F401
+    from workflows_mcp.memory.memory_schema import TopologyOverrideInput  # noqa: F401
 
 
 def test_topology_override_input_requires_wing() -> None:
     """TopologyOverrideInput must require wing field."""
-    from workflows_mcp.engine.memory_schema import TopologyOverrideInput
+    from workflows_mcp.memory.memory_schema import TopologyOverrideInput
 
     with pytest.raises(ValidationError):
         TopologyOverrideInput(
@@ -921,7 +921,7 @@ def test_topology_override_input_requires_wing() -> None:
 
 def test_topology_override_input_requires_room() -> None:
     """TopologyOverrideInput must require room field."""
-    from workflows_mcp.engine.memory_schema import TopologyOverrideInput
+    from workflows_mcp.memory.memory_schema import TopologyOverrideInput
 
     with pytest.raises(ValidationError):
         TopologyOverrideInput(
@@ -934,7 +934,7 @@ def test_topology_override_input_requires_room() -> None:
 
 def test_topology_override_input_requires_compartment() -> None:
     """TopologyOverrideInput must require compartment field."""
-    from workflows_mcp.engine.memory_schema import TopologyOverrideInput
+    from workflows_mcp.memory.memory_schema import TopologyOverrideInput
 
     with pytest.raises(ValidationError):
         TopologyOverrideInput(
@@ -947,7 +947,7 @@ def test_topology_override_input_requires_compartment() -> None:
 
 def test_topology_override_input_requires_override_reason() -> None:
     """TopologyOverrideInput must require override_reason field."""
-    from workflows_mcp.engine.memory_schema import TopologyOverrideInput
+    from workflows_mcp.memory.memory_schema import TopologyOverrideInput
 
     with pytest.raises(ValidationError):
         TopologyOverrideInput(
@@ -960,7 +960,7 @@ def test_topology_override_input_requires_override_reason() -> None:
 
 def test_topology_override_input_requires_applied_by() -> None:
     """TopologyOverrideInput must require applied_by field."""
-    from workflows_mcp.engine.memory_schema import TopologyOverrideInput
+    from workflows_mcp.memory.memory_schema import TopologyOverrideInput
 
     with pytest.raises(ValidationError):
         TopologyOverrideInput(
@@ -973,7 +973,7 @@ def test_topology_override_input_requires_applied_by() -> None:
 
 def test_topology_override_input_rejects_whitespace_only_override_reason() -> None:
     """TopologyOverrideInput must reject whitespace-only override_reason."""
-    from workflows_mcp.engine.memory_schema import TopologyOverrideInput
+    from workflows_mcp.memory.memory_schema import TopologyOverrideInput
 
     with pytest.raises(ValidationError, match="MEM_WHITESPACE_OVERRIDE_REASON"):
         TopologyOverrideInput(
@@ -987,7 +987,7 @@ def test_topology_override_input_rejects_whitespace_only_override_reason() -> No
 
 def test_topology_override_input_rejects_whitespace_only_applied_by() -> None:
     """TopologyOverrideInput must reject whitespace-only applied_by."""
-    from workflows_mcp.engine.memory_schema import TopologyOverrideInput
+    from workflows_mcp.memory.memory_schema import TopologyOverrideInput
 
     with pytest.raises(ValidationError, match="MEM_WHITESPACE_APPLIED_BY"):
         TopologyOverrideInput(
@@ -1001,7 +1001,7 @@ def test_topology_override_input_rejects_whitespace_only_applied_by() -> None:
 
 def test_topology_override_input_rejects_empty_wing() -> None:
     """TopologyOverrideInput must reject empty wing."""
-    from workflows_mcp.engine.memory_schema import TopologyOverrideInput
+    from workflows_mcp.memory.memory_schema import TopologyOverrideInput
 
     with pytest.raises(ValidationError, match="MEM_WHITESPACE_WING"):
         TopologyOverrideInput(
@@ -1015,7 +1015,7 @@ def test_topology_override_input_rejects_empty_wing() -> None:
 
 def test_topology_override_input_rejects_whitespace_only_wing() -> None:
     """TopologyOverrideInput must reject whitespace-only wing."""
-    from workflows_mcp.engine.memory_schema import TopologyOverrideInput
+    from workflows_mcp.memory.memory_schema import TopologyOverrideInput
 
     with pytest.raises(ValidationError, match="MEM_WHITESPACE_WING"):
         TopologyOverrideInput(
@@ -1029,7 +1029,7 @@ def test_topology_override_input_rejects_whitespace_only_wing() -> None:
 
 def test_topology_override_input_rejects_empty_room() -> None:
     """TopologyOverrideInput must reject empty room."""
-    from workflows_mcp.engine.memory_schema import TopologyOverrideInput
+    from workflows_mcp.memory.memory_schema import TopologyOverrideInput
 
     with pytest.raises(ValidationError, match="MEM_WHITESPACE_ROOM"):
         TopologyOverrideInput(
@@ -1043,7 +1043,7 @@ def test_topology_override_input_rejects_empty_room() -> None:
 
 def test_topology_override_input_rejects_whitespace_only_room() -> None:
     """TopologyOverrideInput must reject whitespace-only room."""
-    from workflows_mcp.engine.memory_schema import TopologyOverrideInput
+    from workflows_mcp.memory.memory_schema import TopologyOverrideInput
 
     with pytest.raises(ValidationError, match="MEM_WHITESPACE_ROOM"):
         TopologyOverrideInput(
@@ -1057,7 +1057,7 @@ def test_topology_override_input_rejects_whitespace_only_room() -> None:
 
 def test_topology_override_input_rejects_empty_compartment() -> None:
     """TopologyOverrideInput must reject empty compartment."""
-    from workflows_mcp.engine.memory_schema import TopologyOverrideInput
+    from workflows_mcp.memory.memory_schema import TopologyOverrideInput
 
     with pytest.raises(ValidationError, match="MEM_WHITESPACE_COMPARTMENT"):
         TopologyOverrideInput(
@@ -1071,7 +1071,7 @@ def test_topology_override_input_rejects_empty_compartment() -> None:
 
 def test_topology_override_input_rejects_whitespace_only_compartment() -> None:
     """TopologyOverrideInput must reject whitespace-only compartment."""
-    from workflows_mcp.engine.memory_schema import TopologyOverrideInput
+    from workflows_mcp.memory.memory_schema import TopologyOverrideInput
 
     with pytest.raises(ValidationError, match="MEM_WHITESPACE_COMPARTMENT"):
         TopologyOverrideInput(
@@ -1085,7 +1085,7 @@ def test_topology_override_input_rejects_whitespace_only_compartment() -> None:
 
 def test_topology_override_input_rejects_extra_fields() -> None:
     """TopologyOverrideInput must forbid extra fields."""
-    from workflows_mcp.engine.memory_schema import TopologyOverrideInput
+    from workflows_mcp.memory.memory_schema import TopologyOverrideInput
 
     with pytest.raises(ValidationError):
         TopologyOverrideInput(  # type: ignore[call-arg]
@@ -1100,7 +1100,7 @@ def test_topology_override_input_rejects_extra_fields() -> None:
 
 def test_topology_override_input_accepts_valid_complete_payload() -> None:
     """TopologyOverrideInput must accept a complete, valid payload."""
-    from workflows_mcp.engine.memory_schema import TopologyOverrideInput
+    from workflows_mcp.memory.memory_schema import TopologyOverrideInput
 
     override = TopologyOverrideInput(
         wing="backend",
@@ -1116,7 +1116,7 @@ def test_topology_override_input_accepts_valid_complete_payload() -> None:
 
 def test_derive_system1_topology_input_has_topology_override_not_wing_hint() -> None:
     """DeriveSystem1TopologyInput must expose topology_override field, not wing_hint."""
-    from workflows_mcp.engine.memory_schema import DeriveSystem1TopologyInput
+    from workflows_mcp.memory.memory_schema import DeriveSystem1TopologyInput
 
     # topology_override should be present as a field
     fields = DeriveSystem1TopologyInput.model_fields
@@ -1130,7 +1130,7 @@ def test_derive_system1_topology_input_has_topology_override_not_wing_hint() -> 
 
 def test_derive_system1_topology_input_topology_override_is_optional() -> None:
     """DeriveSystem1TopologyInput must accept without topology_override (pure derivation)."""
-    from workflows_mcp.engine.memory_schema import DeriveSystem1TopologyInput
+    from workflows_mcp.memory.memory_schema import DeriveSystem1TopologyInput
 
     payload = DeriveSystem1TopologyInput(
         palace="test-palace",
@@ -1141,7 +1141,7 @@ def test_derive_system1_topology_input_topology_override_is_optional() -> None:
 
 def test_derive_system1_topology_input_accepts_valid_topology_override() -> None:
     """DeriveSystem1TopologyInput must accept a valid TopologyOverrideInput."""
-    from workflows_mcp.engine.memory_schema import (
+    from workflows_mcp.memory.memory_schema import (
         DeriveSystem1TopologyInput,
         TopologyOverrideInput,
     )
@@ -1164,7 +1164,7 @@ def test_derive_system1_topology_input_accepts_valid_topology_override() -> None
 
 def test_derive_system1_topology_input_rejects_extra_fields() -> None:
     """DeriveSystem1TopologyInput must forbid extra fields (extra='forbid')."""
-    from workflows_mcp.engine.memory_schema import DeriveSystem1TopologyInput
+    from workflows_mcp.memory.memory_schema import DeriveSystem1TopologyInput
 
     with pytest.raises(ValidationError):
         DeriveSystem1TopologyInput(  # type: ignore[call-arg]
@@ -1176,7 +1176,7 @@ def test_derive_system1_topology_input_rejects_extra_fields() -> None:
 
 def test_manage_memory_result_exposes_derived_wing() -> None:
     """ManageMemoryResult must expose derived_wing field."""
-    from workflows_mcp.engine.memory_schema import ManageMemoryResult
+    from workflows_mcp.memory.memory_schema import ManageMemoryResult
 
     result = ManageMemoryResult(operation="derive_system1_topology", derived_wing="backend")
     assert result.derived_wing == "backend"
@@ -1184,7 +1184,7 @@ def test_manage_memory_result_exposes_derived_wing() -> None:
 
 def test_manage_memory_result_exposes_derived_room() -> None:
     """ManageMemoryResult must expose derived_room field."""
-    from workflows_mcp.engine.memory_schema import ManageMemoryResult
+    from workflows_mcp.memory.memory_schema import ManageMemoryResult
 
     result = ManageMemoryResult(operation="derive_system1_topology", derived_room="auth")
     assert result.derived_room == "auth"
@@ -1192,7 +1192,7 @@ def test_manage_memory_result_exposes_derived_room() -> None:
 
 def test_manage_memory_result_exposes_derived_compartment() -> None:
     """ManageMemoryResult must expose derived_compartment field."""
-    from workflows_mcp.engine.memory_schema import ManageMemoryResult
+    from workflows_mcp.memory.memory_schema import ManageMemoryResult
 
     result = ManageMemoryResult(operation="derive_system1_topology", derived_compartment="login")
     assert result.derived_compartment == "login"
@@ -1200,7 +1200,7 @@ def test_manage_memory_result_exposes_derived_compartment() -> None:
 
 def test_manage_memory_result_exposes_derivation_source() -> None:
     """ManageMemoryResult must expose derivation_source field."""
-    from workflows_mcp.engine.memory_schema import ManageMemoryResult
+    from workflows_mcp.memory.memory_schema import ManageMemoryResult
 
     result = ManageMemoryResult(
         operation="derive_system1_topology", derivation_source="system1_derived"
@@ -1210,7 +1210,7 @@ def test_manage_memory_result_exposes_derivation_source() -> None:
 
 def test_manage_memory_result_exposes_provenance_id() -> None:
     """ManageMemoryResult must expose provenance_id field."""
-    from workflows_mcp.engine.memory_schema import ManageMemoryResult
+    from workflows_mcp.memory.memory_schema import ManageMemoryResult
 
     result = ManageMemoryResult(
         operation="derive_system1_topology",
@@ -1221,7 +1221,7 @@ def test_manage_memory_result_exposes_provenance_id() -> None:
 
 def test_manage_memory_result_exposes_claim_id() -> None:
     """ManageMemoryResult must expose claim_id field (singular, for topology derivation result)."""
-    from workflows_mcp.engine.memory_schema import ManageMemoryResult
+    from workflows_mcp.memory.memory_schema import ManageMemoryResult
 
     result = ManageMemoryResult(
         operation="derive_system1_topology",
@@ -1238,7 +1238,7 @@ def test_derive_system1_topology_input_rejects_is_new_wing_without_proof_bundle(
     """
     from pydantic import ValidationError
 
-    from workflows_mcp.engine.memory_schema import DeriveSystem1TopologyInput
+    from workflows_mcp.memory.memory_schema import DeriveSystem1TopologyInput
 
     with pytest.raises(ValidationError) as exc_info:
         DeriveSystem1TopologyInput(
@@ -1257,7 +1257,7 @@ def test_derive_system1_topology_input_rejects_is_new_wing_without_proof_bundle(
 
 def test_manage_memory_result_topology_fields_default_to_none() -> None:
     """ManageMemoryResult topology derivation fields must default to None."""
-    from workflows_mcp.engine.memory_schema import ManageMemoryResult
+    from workflows_mcp.memory.memory_schema import ManageMemoryResult
 
     result = ManageMemoryResult(operation="store")
     assert result.derived_wing is None
@@ -1279,7 +1279,7 @@ def test_derive_system1_topology_input_accepts_inline_candidates() -> None:
     ADR-013 Task 5b: inline structural evidence candidates bypass the pre-store step.
     evidence_ids is optional when inline_candidates are provided.
     """
-    from workflows_mcp.engine.memory_schema import DeriveSystem1TopologyInput
+    from workflows_mcp.memory.memory_schema import DeriveSystem1TopologyInput
 
     inp = DeriveSystem1TopologyInput(
         palace="test-palace",
@@ -1312,7 +1312,7 @@ def test_derive_system1_topology_input_rejects_when_neither_evidence_ids_nor_inl
     """
     from pydantic import ValidationError
 
-    from workflows_mcp.engine.memory_schema import DeriveSystem1TopologyInput
+    from workflows_mcp.memory.memory_schema import DeriveSystem1TopologyInput
 
     with pytest.raises(ValidationError) as exc_info:
         DeriveSystem1TopologyInput(palace="test-palace")
@@ -1331,7 +1331,7 @@ def test_derive_system1_topology_input_evidence_ids_optional_when_inline_candida
 
     ADR-013 Task 5b: inline candidates serve as evidence source so evidence_ids becomes optional.
     """
-    from workflows_mcp.engine.memory_schema import DeriveSystem1TopologyInput
+    from workflows_mcp.memory.memory_schema import DeriveSystem1TopologyInput
 
     # Must not raise
     inp = DeriveSystem1TopologyInput(
@@ -1356,7 +1356,7 @@ def test_derive_system1_topology_input_evidence_ids_required_when_no_inline_cand
     """
     from pydantic import ValidationError
 
-    from workflows_mcp.engine.memory_schema import DeriveSystem1TopologyInput
+    from workflows_mcp.memory.memory_schema import DeriveSystem1TopologyInput
 
     with pytest.raises(ValidationError):
         DeriveSystem1TopologyInput(palace="test-palace", evidence_ids=[], inline_candidates=[])
@@ -1368,7 +1368,7 @@ def test_derive_system1_topology_input_accepts_parser_metadata_as_evidence_metad
     ADR-013 Task 5b: parser metadata (language, path) is carried as diagnostics/evidence metadata,
     never as direct topology truth.
     """
-    from workflows_mcp.engine.memory_schema import DeriveSystem1TopologyInput
+    from workflows_mcp.memory.memory_schema import DeriveSystem1TopologyInput
 
     inp = DeriveSystem1TopologyInput(
         palace="test-palace",
@@ -1392,7 +1392,7 @@ def test_derive_system1_topology_inline_candidate_wing_equals_language_is_forbid
     Parser metadata is evidence metadata only, not topology truth.
     This test asserts the model does not carry a 'wing' field that could be language-derived.
     """
-    from workflows_mcp.engine.memory_schema import DeriveSystem1TopologyInput
+    from workflows_mcp.memory.memory_schema import DeriveSystem1TopologyInput
 
     inp = DeriveSystem1TopologyInput(
         palace="test-palace",
@@ -1415,7 +1415,7 @@ def test_derive_system1_topology_inline_candidate_room_equals_path_is_forbidden(
 
     ADR-013 Task 5b: room must not default to folder/package path.
     """
-    from workflows_mcp.engine.memory_schema import DeriveSystem1TopologyInput
+    from workflows_mcp.memory.memory_schema import DeriveSystem1TopologyInput
 
     inp = DeriveSystem1TopologyInput(
         palace="test-palace",
@@ -1438,7 +1438,7 @@ def test_memory_input_accepts_derivation_field_for_passthrough() -> None:
 
     ADR-013 Task 5b: inline candidates and parser_metadata must be passable from workflow blocks.
     """
-    from workflows_mcp.engine.executors_memory import MemoryInput
+    from workflows_mcp.memory.executors_memory import MemoryInput
 
     inp = MemoryInput(
         operation="derive_system1_topology",

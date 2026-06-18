@@ -7,20 +7,20 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from workflows_mcp.engine.knowledge.constants import Authority
-from workflows_mcp.engine.memory_schema import (
+from workflows_mcp.memory.knowledge.constants import Authority
+from workflows_mcp.memory.memory_schema import (
     ManageMemoryRequest,
     MemoryRequest,
     MemoryScope,
     QueryMemoryRequest,
 )
-from workflows_mcp.engine.memory_service import MemoryService
+from workflows_mcp.memory.memory_service import MemoryService
 
 
 def _embedding_patch() -> Any:
     """Stub embedding generation for community refresh and retrieval tests."""
     return patch(
-        "workflows_mcp.engine.memory_service.compute_embedding",
+        "workflows_mcp.memory.memory_service.compute_embedding",
         new=AsyncMock(return_value=([0.2, 0.6], "embed-model", 2, None)),
     )
 
@@ -382,7 +382,7 @@ class TestCommunityRetrieval:
 
         with (
             _embedding_patch(),
-            patch("workflows_mcp.engine.memory_service.room_scoped_search", new=room_search),
+            patch("workflows_mcp.memory.memory_service.room_scoped_search", new=room_search),
         ):
             result = await service.query(
                 QueryMemoryRequest(
@@ -484,7 +484,7 @@ class TestCommunityRetrieval:
 
         with (
             _embedding_patch(),
-            patch("workflows_mcp.engine.memory_service.room_scoped_search", new=room_search),
+            patch("workflows_mcp.memory.memory_service.room_scoped_search", new=room_search),
         ):
             result = await service.query(
                 QueryMemoryRequest(
@@ -529,7 +529,7 @@ class TestCommunityRetrieval:
 
         with (
             _embedding_patch(),
-            patch("workflows_mcp.engine.memory_service.room_scoped_search", new=room_search),
+            patch("workflows_mcp.memory.memory_service.room_scoped_search", new=room_search),
         ):
             result = await service.query(request)
 
@@ -558,7 +558,7 @@ class TestCommunityRetrieval:
 
         with (
             _embedding_patch(),
-            patch("workflows_mcp.engine.memory_service.room_scoped_search", new=room_search),
+            patch("workflows_mcp.memory.memory_service.room_scoped_search", new=room_search),
         ):
             result = await service.query(
                 QueryMemoryRequest(
@@ -589,7 +589,7 @@ class TestCommunityRetrieval:
 
         with (
             _embedding_patch(),
-            patch("workflows_mcp.engine.memory_service.room_scoped_search", new=room_search),
+            patch("workflows_mcp.memory.memory_service.room_scoped_search", new=room_search),
         ):
             result = await service.query(
                 QueryMemoryRequest(

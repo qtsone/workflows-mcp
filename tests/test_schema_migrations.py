@@ -17,9 +17,9 @@ from typing import Any
 import pytest
 import pytest_asyncio
 
-from workflows_mcp.engine.knowledge.schema import ensure_schema
 from workflows_mcp.engine.sql.backend import ConnectionConfig, DatabaseEngine
 from workflows_mcp.engine.sql.postgres_backend import PostgresBackend
+from workflows_mcp.memory.knowledge.schema import ensure_schema
 
 pytestmark = pytest.mark.asyncio
 
@@ -580,7 +580,7 @@ async def test_v13_items_lifecycle_state(knowledge_backend: PostgresBackend) -> 
 
 def test_item_lifecycle_state_enum_values() -> None:
     """ItemLifecycleState covers the full set of item lifecycle values."""
-    from workflows_mcp.engine.knowledge.constants import ItemLifecycleState
+    from workflows_mcp.memory.knowledge.constants import ItemLifecycleState
 
     assert {s.value for s in ItemLifecycleState} == {
         "ACTIVE",
@@ -598,7 +598,7 @@ def test_item_lifecycle_state_enum_values() -> None:
 
 async def test_schema_version_advanced_to_nineteen(knowledge_backend: PostgresBackend) -> None:
     """All migrations applied; SCHEMA_VERSION reaches 19."""
-    from workflows_mcp.engine.knowledge.schema import SCHEMA_VERSION
+    from workflows_mcp.memory.knowledge.schema import SCHEMA_VERSION
 
     assert SCHEMA_VERSION == 19
 
@@ -611,7 +611,7 @@ async def test_schema_version_advanced_to_nineteen(knowledge_backend: PostgresBa
 
 async def test_re_running_ensure_schema_is_idempotent(knowledge_backend: PostgresBackend) -> None:
     """Calling ensure_schema again is a fast no-op when already current."""
-    from workflows_mcp.engine.knowledge.schema import ensure_schema
+    from workflows_mcp.memory.knowledge.schema import ensure_schema
 
     await ensure_schema(knowledge_backend)
 
@@ -1358,7 +1358,7 @@ async def test_v17_semantic_corridors_indexes_present(
 @pytest.mark.asyncio
 async def test_v18_migration_is_registered_in_migrations_list() -> None:
     """v18 migration must exist in MIGRATIONS with version 18 and no schema epoch bump."""
-    from workflows_mcp.engine.knowledge.schema import MIGRATIONS, SCHEMA_EPOCH
+    from workflows_mcp.memory.knowledge.schema import MIGRATIONS, SCHEMA_EPOCH
 
     versions = [m[0] for m in MIGRATIONS]
     assert 18 in versions, f"v18 must be in MIGRATIONS; found versions: {versions}"
@@ -1370,7 +1370,7 @@ async def test_v18_migration_is_registered_in_migrations_list() -> None:
 @pytest.mark.asyncio
 async def test_v19_schema_version_is_19(knowledge_backend: PostgresBackend) -> None:
     """After ensure_schema, schema_version must be 19."""
-    from workflows_mcp.engine.knowledge.schema import SCHEMA_VERSION
+    from workflows_mcp.memory.knowledge.schema import SCHEMA_VERSION
 
     assert SCHEMA_VERSION == 19, (
         f"SCHEMA_VERSION must be 19 after v19 migration is appended; got {SCHEMA_VERSION}"
@@ -1610,7 +1610,7 @@ async def test_v18_provenance_evidence_index_on_evidence_id(
 @pytest.mark.asyncio
 async def test_v18_migration_is_idempotent(knowledge_backend: PostgresBackend) -> None:
     """v18 migration SQL must be safe to re-apply (idempotent via IF NOT EXISTS guards)."""
-    from workflows_mcp.engine.knowledge.schema import MIGRATIONS
+    from workflows_mcp.memory.knowledge.schema import MIGRATIONS
 
     v18_sql = next((sql for ver, _desc, sql in MIGRATIONS if ver == 18), None)
     assert v18_sql is not None, "v18 migration not found"

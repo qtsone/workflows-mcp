@@ -643,7 +643,6 @@ def create_default_registry() -> ExecutorRegistry:
         ReadJSONStateExecutor,
         WriteJSONStateExecutor,
     )
-    from .executors_treesitter import TreeSitterExecutor
     from .executors_workflow import WorkflowExecutor
 
     registry = ExecutorRegistry()
@@ -678,14 +677,13 @@ def create_default_registry() -> ExecutorRegistry:
     # Register SQL executor
     registry.register(SqlExecutor())
 
-    # Register TreeSitter executor
-    registry.register(TreeSitterExecutor())
-
     # Register project file discovery executor
     registry.register(ProjectFilesExecutor())
 
-    # Note: MemoryExecutor and System2PlannerExecutor are memory-gated; they are
-    # registered conditionally at server startup only when a memory database is
-    # configured (MEMORY_DB_HOST). See memory_runtime.register_memory_executors.
+    # Subsystem executors register through their own seam so the DAG core does
+    # not import them. code_intelligence (TreeSitter) registers at startup via
+    # code_intelligence.register_code_intelligence_executors; the memory-gated
+    # Memory and System2Planner executors register only when a memory database is
+    # configured (MEMORY_DB_HOST), via memory_runtime.register_memory_executors.
 
     return registry

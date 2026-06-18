@@ -101,10 +101,12 @@ class TestExtractDocumentFunction:
 
     def test_extract_document_is_importable(self) -> None:
         """extract_document must be importable from the extractors package."""
-        from workflows_mcp.engine.treesitter_extractors import extract_document  # noqa: F401
+        from workflows_mcp.code_intelligence.treesitter_extractors import (
+            extract_document,  # noqa: F401
+        )
 
     def test_extract_document_returns_tuple_of_entities_and_relations(self, tmp_path: Path) -> None:
-        from workflows_mcp.engine.treesitter_extractors import extract_document
+        from workflows_mcp.code_intelligence.treesitter_extractors import extract_document
 
         f = tmp_path / "readme.md"
         f.write_text(SIMPLE_MARKDOWN, encoding="utf-8")
@@ -125,7 +127,7 @@ class TestExtractDocumentFunction:
         assert isinstance(relations, list)
 
     def test_extract_document_returns_exactly_one_file_entity(self, tmp_path: Path) -> None:
-        from workflows_mcp.engine.treesitter_extractors import extract_document
+        from workflows_mcp.code_intelligence.treesitter_extractors import extract_document
 
         f = tmp_path / "doc.md"
         f.write_text("# title", encoding="utf-8")
@@ -145,7 +147,7 @@ class TestExtractDocumentFunction:
         assert entities[0]["entity_type"] == "File"
 
     def test_extract_document_no_module_entity(self, tmp_path: Path) -> None:
-        from workflows_mcp.engine.treesitter_extractors import extract_document
+        from workflows_mcp.code_intelligence.treesitter_extractors import extract_document
 
         f = tmp_path / "config.yaml"
         f.write_text(SIMPLE_YAML, encoding="utf-8")
@@ -165,7 +167,7 @@ class TestExtractDocumentFunction:
         assert module_entities == [], "Document languages must not emit Module entities"
 
     def test_extract_document_no_class_function_method_entities(self, tmp_path: Path) -> None:
-        from workflows_mcp.engine.treesitter_extractors import extract_document
+        from workflows_mcp.code_intelligence.treesitter_extractors import extract_document
 
         f = tmp_path / "data.json"
         f.write_text(SIMPLE_JSON, encoding="utf-8")
@@ -186,7 +188,7 @@ class TestExtractDocumentFunction:
         assert symbol_entities == []
 
     def test_extract_document_no_relations(self, tmp_path: Path) -> None:
-        from workflows_mcp.engine.treesitter_extractors import extract_document
+        from workflows_mcp.code_intelligence.treesitter_extractors import extract_document
 
         f = tmp_path / "readme.md"
         f.write_text(SIMPLE_MARKDOWN, encoding="utf-8")
@@ -204,7 +206,7 @@ class TestExtractDocumentFunction:
         assert relations == [], "Document languages must not emit any relations"
 
     def test_extract_document_file_entity_has_required_fields(self, tmp_path: Path) -> None:
-        from workflows_mcp.engine.treesitter_extractors import extract_document
+        from workflows_mcp.code_intelligence.treesitter_extractors import extract_document
 
         f = tmp_path / "readme.md"
         f.write_text(SIMPLE_MARKDOWN, encoding="utf-8")
@@ -242,7 +244,7 @@ class TestMarkdownExtraction:
     async def test_md_executor_returns_markdown_language(
         self, md_file: Path, mock_execution: MagicMock
     ) -> None:
-        from workflows_mcp.engine.executors_treesitter import (
+        from workflows_mcp.code_intelligence.executors_treesitter import (
             TreeSitterExecutor,
             TreeSitterInput,
         )
@@ -255,7 +257,7 @@ class TestMarkdownExtraction:
     async def test_md_executor_exactly_one_file_entity(
         self, md_file: Path, mock_execution: MagicMock
     ) -> None:
-        from workflows_mcp.engine.executors_treesitter import (
+        from workflows_mcp.code_intelligence.executors_treesitter import (
             TreeSitterExecutor,
             TreeSitterInput,
         )
@@ -270,7 +272,7 @@ class TestMarkdownExtraction:
     async def test_md_executor_no_module_entity(
         self, md_file: Path, mock_execution: MagicMock
     ) -> None:
-        from workflows_mcp.engine.executors_treesitter import (
+        from workflows_mcp.code_intelligence.executors_treesitter import (
             TreeSitterExecutor,
             TreeSitterInput,
         )
@@ -283,7 +285,7 @@ class TestMarkdownExtraction:
 
     @pytest.mark.asyncio
     async def test_md_executor_no_relations(self, md_file: Path, mock_execution: MagicMock) -> None:
-        from workflows_mcp.engine.executors_treesitter import (
+        from workflows_mcp.code_intelligence.executors_treesitter import (
             TreeSitterExecutor,
             TreeSitterInput,
         )
@@ -297,7 +299,7 @@ class TestMarkdownExtraction:
     async def test_md_executor_no_unresolved_imports(
         self, md_file: Path, mock_execution: MagicMock
     ) -> None:
-        from workflows_mcp.engine.executors_treesitter import (
+        from workflows_mcp.code_intelligence.executors_treesitter import (
             TreeSitterExecutor,
             TreeSitterInput,
         )
@@ -316,7 +318,7 @@ class TestMarkdownExtraction:
         No Module entity is emitted, but the field stores the repo-relative
         qualified name for traceability.
         """
-        from workflows_mcp.engine.executors_treesitter import (
+        from workflows_mcp.code_intelligence.executors_treesitter import (
             TreeSitterExecutor,
             TreeSitterInput,
         )
@@ -330,7 +332,7 @@ class TestMarkdownExtraction:
     async def test_md_executor_file_entity_has_required_fields(
         self, md_file: Path, mock_execution: MagicMock
     ) -> None:
-        from workflows_mcp.engine.executors_treesitter import (
+        from workflows_mcp.code_intelligence.executors_treesitter import (
             TreeSitterExecutor,
             TreeSitterInput,
         )
@@ -350,7 +352,7 @@ class TestMarkdownExtraction:
     async def test_md_executor_emits_file_structural_evidence(
         self, md_file: Path, mock_execution: MagicMock
     ) -> None:
-        from workflows_mcp.engine.executors_treesitter import (
+        from workflows_mcp.code_intelligence.executors_treesitter import (
             TreeSitterExecutor,
             TreeSitterInput,
         )
@@ -377,7 +379,7 @@ class TestMarkdownExtraction:
         self, markdown_ext_file: Path, mock_execution: MagicMock
     ) -> None:
         """.markdown extension must also work."""
-        from workflows_mcp.engine.executors_treesitter import (
+        from workflows_mcp.code_intelligence.executors_treesitter import (
             TreeSitterExecutor,
             TreeSitterInput,
         )
@@ -393,7 +395,7 @@ class TestMarkdownExtraction:
     async def test_md_stable_id_is_deterministic(
         self, md_file: Path, mock_execution: MagicMock
     ) -> None:
-        from workflows_mcp.engine.executors_treesitter import (
+        from workflows_mcp.code_intelligence.executors_treesitter import (
             TreeSitterExecutor,
             TreeSitterInput,
         )
@@ -415,7 +417,7 @@ class TestYamlExtraction:
     async def test_yaml_executor_returns_yaml_language(
         self, yaml_file: Path, mock_execution: MagicMock
     ) -> None:
-        from workflows_mcp.engine.executors_treesitter import (
+        from workflows_mcp.code_intelligence.executors_treesitter import (
             TreeSitterExecutor,
             TreeSitterInput,
         )
@@ -429,7 +431,7 @@ class TestYamlExtraction:
     async def test_yaml_executor_exactly_one_file_entity(
         self, yaml_file: Path, mock_execution: MagicMock
     ) -> None:
-        from workflows_mcp.engine.executors_treesitter import (
+        from workflows_mcp.code_intelligence.executors_treesitter import (
             TreeSitterExecutor,
             TreeSitterInput,
         )
@@ -444,7 +446,7 @@ class TestYamlExtraction:
     async def test_yaml_executor_no_module_entity(
         self, yaml_file: Path, mock_execution: MagicMock
     ) -> None:
-        from workflows_mcp.engine.executors_treesitter import (
+        from workflows_mcp.code_intelligence.executors_treesitter import (
             TreeSitterExecutor,
             TreeSitterInput,
         )
@@ -458,7 +460,7 @@ class TestYamlExtraction:
     async def test_yaml_executor_no_relations(
         self, yaml_file: Path, mock_execution: MagicMock
     ) -> None:
-        from workflows_mcp.engine.executors_treesitter import (
+        from workflows_mcp.code_intelligence.executors_treesitter import (
             TreeSitterExecutor,
             TreeSitterInput,
         )
@@ -472,7 +474,7 @@ class TestYamlExtraction:
     async def test_yml_extension_is_supported(
         self, yml_file: Path, mock_execution: MagicMock
     ) -> None:
-        from workflows_mcp.engine.executors_treesitter import (
+        from workflows_mcp.code_intelligence.executors_treesitter import (
             TreeSitterExecutor,
             TreeSitterInput,
         )
@@ -487,7 +489,7 @@ class TestYamlExtraction:
     async def test_yaml_executor_module_qualified_name_nonempty(
         self, yaml_file: Path, mock_execution: MagicMock
     ) -> None:
-        from workflows_mcp.engine.executors_treesitter import (
+        from workflows_mcp.code_intelligence.executors_treesitter import (
             TreeSitterExecutor,
             TreeSitterInput,
         )
@@ -505,7 +507,7 @@ class TestJsonExtraction:
     async def test_json_executor_returns_json_language(
         self, json_file: Path, mock_execution: MagicMock
     ) -> None:
-        from workflows_mcp.engine.executors_treesitter import (
+        from workflows_mcp.code_intelligence.executors_treesitter import (
             TreeSitterExecutor,
             TreeSitterInput,
         )
@@ -519,7 +521,7 @@ class TestJsonExtraction:
     async def test_json_executor_exactly_one_file_entity(
         self, json_file: Path, mock_execution: MagicMock
     ) -> None:
-        from workflows_mcp.engine.executors_treesitter import (
+        from workflows_mcp.code_intelligence.executors_treesitter import (
             TreeSitterExecutor,
             TreeSitterInput,
         )
@@ -534,7 +536,7 @@ class TestJsonExtraction:
     async def test_json_executor_no_module_entity(
         self, json_file: Path, mock_execution: MagicMock
     ) -> None:
-        from workflows_mcp.engine.executors_treesitter import (
+        from workflows_mcp.code_intelligence.executors_treesitter import (
             TreeSitterExecutor,
             TreeSitterInput,
         )
@@ -548,7 +550,7 @@ class TestJsonExtraction:
     async def test_json_executor_no_relations(
         self, json_file: Path, mock_execution: MagicMock
     ) -> None:
-        from workflows_mcp.engine.executors_treesitter import (
+        from workflows_mcp.code_intelligence.executors_treesitter import (
             TreeSitterExecutor,
             TreeSitterInput,
         )
@@ -562,7 +564,7 @@ class TestJsonExtraction:
     async def test_json_executor_no_unresolved_imports(
         self, json_file: Path, mock_execution: MagicMock
     ) -> None:
-        from workflows_mcp.engine.executors_treesitter import (
+        from workflows_mcp.code_intelligence.executors_treesitter import (
             TreeSitterExecutor,
             TreeSitterInput,
         )
@@ -576,7 +578,7 @@ class TestJsonExtraction:
     async def test_json_executor_module_qualified_name_nonempty(
         self, json_file: Path, mock_execution: MagicMock
     ) -> None:
-        from workflows_mcp.engine.executors_treesitter import (
+        from workflows_mcp.code_intelligence.executors_treesitter import (
             TreeSitterExecutor,
             TreeSitterInput,
         )
@@ -604,7 +606,7 @@ class TestMalformedDocumentFiles:
     async def test_malformed_yaml_does_not_raise(
         self, tmp_path: Path, mock_execution: MagicMock
     ) -> None:
-        from workflows_mcp.engine.executors_treesitter import (
+        from workflows_mcp.code_intelligence.executors_treesitter import (
             TreeSitterExecutor,
             TreeSitterInput,
         )
@@ -620,7 +622,7 @@ class TestMalformedDocumentFiles:
     async def test_malformed_yaml_returns_exactly_one_file_entity(
         self, tmp_path: Path, mock_execution: MagicMock
     ) -> None:
-        from workflows_mcp.engine.executors_treesitter import (
+        from workflows_mcp.code_intelligence.executors_treesitter import (
             TreeSitterExecutor,
             TreeSitterInput,
         )
@@ -636,7 +638,7 @@ class TestMalformedDocumentFiles:
     async def test_malformed_yaml_no_relations(
         self, tmp_path: Path, mock_execution: MagicMock
     ) -> None:
-        from workflows_mcp.engine.executors_treesitter import (
+        from workflows_mcp.code_intelligence.executors_treesitter import (
             TreeSitterExecutor,
             TreeSitterInput,
         )
@@ -652,7 +654,7 @@ class TestMalformedDocumentFiles:
         self, tmp_path: Path, mock_execution: MagicMock
     ) -> None:
         """File entity metadata.syntax_errors must be True for malformed YAML."""
-        from workflows_mcp.engine.executors_treesitter import (
+        from workflows_mcp.code_intelligence.executors_treesitter import (
             TreeSitterExecutor,
             TreeSitterInput,
         )
@@ -668,7 +670,7 @@ class TestMalformedDocumentFiles:
     async def test_malformed_json_does_not_raise(
         self, tmp_path: Path, mock_execution: MagicMock
     ) -> None:
-        from workflows_mcp.engine.executors_treesitter import (
+        from workflows_mcp.code_intelligence.executors_treesitter import (
             TreeSitterExecutor,
             TreeSitterInput,
         )
@@ -683,7 +685,7 @@ class TestMalformedDocumentFiles:
     async def test_malformed_json_returns_exactly_one_file_entity(
         self, tmp_path: Path, mock_execution: MagicMock
     ) -> None:
-        from workflows_mcp.engine.executors_treesitter import (
+        from workflows_mcp.code_intelligence.executors_treesitter import (
             TreeSitterExecutor,
             TreeSitterInput,
         )
@@ -699,7 +701,7 @@ class TestMalformedDocumentFiles:
     async def test_malformed_json_no_relations(
         self, tmp_path: Path, mock_execution: MagicMock
     ) -> None:
-        from workflows_mcp.engine.executors_treesitter import (
+        from workflows_mcp.code_intelligence.executors_treesitter import (
             TreeSitterExecutor,
             TreeSitterInput,
         )
@@ -715,7 +717,7 @@ class TestMalformedDocumentFiles:
         self, tmp_path: Path, mock_execution: MagicMock
     ) -> None:
         """File entity metadata.syntax_errors must be True for malformed JSON."""
-        from workflows_mcp.engine.executors_treesitter import (
+        from workflows_mcp.code_intelligence.executors_treesitter import (
             TreeSitterExecutor,
             TreeSitterInput,
         )
@@ -740,7 +742,7 @@ class TestCodeLanguageExtractorsUnchanged:
     async def test_python_still_emits_module_entity(
         self, tmp_path: Path, mock_execution: MagicMock
     ) -> None:
-        from workflows_mcp.engine.executors_treesitter import (
+        from workflows_mcp.code_intelligence.executors_treesitter import (
             TreeSitterExecutor,
             TreeSitterInput,
         )
@@ -758,7 +760,7 @@ class TestCodeLanguageExtractorsUnchanged:
         self, tmp_path: Path, mock_execution: MagicMock
     ) -> None:
         """Python must still emit a File->Module CONTAINS relation (not file-only)."""
-        from workflows_mcp.engine.executors_treesitter import (
+        from workflows_mcp.code_intelligence.executors_treesitter import (
             TreeSitterExecutor,
             TreeSitterInput,
         )

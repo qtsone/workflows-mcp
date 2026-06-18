@@ -12,8 +12,8 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 from pydantic import ValidationError
 
-from workflows_mcp.engine.memory_schema import MemoryRequest, QueryMemoryRequest
-from workflows_mcp.engine.memory_service import MemoryService
+from workflows_mcp.memory.memory_schema import MemoryRequest, QueryMemoryRequest
+from workflows_mcp.memory.memory_service import MemoryService
 
 # ---------------------------------------------------------------------------
 # MEMORY-CONTRACT-v3.1 blocker conformance tests
@@ -186,7 +186,7 @@ def test_b3_memory_user_id_takes_priority_over_workflows_user_id(
 
 def test_b4_merge_transparency_org_only() -> None:
     """B-4: When only org record is present, effective_source is 'org' and conflict is False."""
-    from workflows_mcp.engine.memory_service import _build_merge_transparency
+    from workflows_mcp.memory.memory_service import _build_merge_transparency
 
     result = _build_merge_transparency(
         org_record={"id": "org-1", "updated_at": "2024-01-01T00:00:00+00:00"},
@@ -200,7 +200,7 @@ def test_b4_merge_transparency_org_only() -> None:
 
 def test_b4_merge_transparency_user_only() -> None:
     """B-4: When only user record is present, effective_source is 'user' and conflict is False."""
-    from workflows_mcp.engine.memory_service import _build_merge_transparency
+    from workflows_mcp.memory.memory_service import _build_merge_transparency
 
     result = _build_merge_transparency(
         org_record=None,
@@ -214,7 +214,7 @@ def test_b4_merge_transparency_user_only() -> None:
 
 def test_b4_merge_transparency_user_wins_when_newer() -> None:
     """B-4: Merge rule — user wins when user updated_at is strictly newer."""
-    from workflows_mcp.engine.memory_service import _build_merge_transparency
+    from workflows_mcp.memory.memory_service import _build_merge_transparency
 
     result = _build_merge_transparency(
         org_record={"updated_at": "2024-01-01T00:00:00+00:00"},
@@ -227,7 +227,7 @@ def test_b4_merge_transparency_user_wins_when_newer() -> None:
 
 def test_b4_merge_transparency_org_wins_on_tie() -> None:
     """B-4: Merge rule — org wins when updated_at timestamps are equal."""
-    from workflows_mcp.engine.memory_service import _build_merge_transparency
+    from workflows_mcp.memory.memory_service import _build_merge_transparency
 
     result = _build_merge_transparency(
         org_record={"updated_at": "2024-01-01T00:00:00+00:00"},
@@ -240,7 +240,7 @@ def test_b4_merge_transparency_org_wins_on_tie() -> None:
 
 def test_b4_merge_transparency_org_wins_when_org_newer() -> None:
     """B-4: Merge rule — org wins when org updated_at is strictly newer."""
-    from workflows_mcp.engine.memory_service import _build_merge_transparency
+    from workflows_mcp.memory.memory_service import _build_merge_transparency
 
     result = _build_merge_transparency(
         org_record={"updated_at": "2024-06-01T00:00:00+00:00"},
@@ -253,7 +253,7 @@ def test_b4_merge_transparency_org_wins_when_org_newer() -> None:
 
 def test_b4_merge_transparency_none_when_both_absent() -> None:
     """B-4: No merge envelope when both org and user records are absent."""
-    from workflows_mcp.engine.memory_service import _build_merge_transparency
+    from workflows_mcp.memory.memory_service import _build_merge_transparency
 
     result = _build_merge_transparency(org_record=None, user_record=None)
     assert result is None
@@ -264,8 +264,8 @@ async def test_b4_merge_wired_into_query_result_when_both_layers_present() -> No
     """B-4: MemoryResult.merge is populated in live query when both org and user layers exist."""
     import uuid
 
-    from workflows_mcp.engine.memory_schema import MemoryRequest, QueryMemoryResult
-    from workflows_mcp.engine.memory_service import MemoryService
+    from workflows_mcp.memory.memory_schema import MemoryRequest, QueryMemoryResult
+    from workflows_mcp.memory.memory_service import MemoryService
 
     org_item = {
         "id": str(uuid.uuid4()),
@@ -313,8 +313,8 @@ async def test_b4_merge_wired_into_query_result_when_both_layers_present() -> No
 @pytest.mark.asyncio
 async def test_b4_merge_is_none_when_only_org_layer_present() -> None:
     """B-4: MemoryResult.merge reflects single-layer when only org records returned."""
-    from workflows_mcp.engine.memory_schema import MemoryRequest, QueryMemoryResult
-    from workflows_mcp.engine.memory_service import MemoryService
+    from workflows_mcp.memory.memory_schema import MemoryRequest, QueryMemoryResult
+    from workflows_mcp.memory.memory_service import MemoryService
 
     org_item = {"id": "org-1", "content": "org only", "updated_at": "2024-01-01T00:00:00+00:00"}
     fake_query_result = QueryMemoryResult(
@@ -352,8 +352,8 @@ async def test_b4_merge_is_none_when_only_org_layer_present() -> None:
 @pytest.mark.asyncio
 async def test_b4_merge_is_none_when_no_results() -> None:
     """B-4: MemoryResult.merge is None when query returns empty results."""
-    from workflows_mcp.engine.memory_schema import MemoryRequest, QueryMemoryResult
-    from workflows_mcp.engine.memory_service import MemoryService
+    from workflows_mcp.memory.memory_schema import MemoryRequest, QueryMemoryResult
+    from workflows_mcp.memory.memory_service import MemoryService
 
     fake_query_result = QueryMemoryResult(facts=[], memories=[])
 
@@ -403,9 +403,9 @@ async def test_scope_isolation_companion_lane_suppressed_when_full_scope_explici
     context = MagicMock()
     context.execution_context = None
 
-    with patch("workflows_mcp.engine.memory_service.compute_embedding") as mock_embed:
+    with patch("workflows_mcp.memory.memory_service.compute_embedding") as mock_embed:
         mock_embed.return_value = ([0.1, 0.2, 0.3], "model", 3, None)
-        with patch("workflows_mcp.engine.memory_service.room_scoped_search") as mock_search:
+        with patch("workflows_mcp.memory.memory_service.room_scoped_search") as mock_search:
             mock_search.return_value = []
             service = MemoryService(backend=backend, context=context)
             await service.query(
@@ -436,9 +436,9 @@ async def test_scope_isolation_companion_lane_suppressed_with_corridor() -> None
     context = MagicMock()
     context.execution_context = None
 
-    with patch("workflows_mcp.engine.memory_service.compute_embedding") as mock_embed:
+    with patch("workflows_mcp.memory.memory_service.compute_embedding") as mock_embed:
         mock_embed.return_value = ([0.1, 0.2, 0.3], "model", 3, None)
-        with patch("workflows_mcp.engine.memory_service.room_scoped_search") as mock_search:
+        with patch("workflows_mcp.memory.memory_service.room_scoped_search") as mock_search:
             mock_search.return_value = []
             service = MemoryService(backend=backend, context=context)
             await service.query(
@@ -472,9 +472,9 @@ async def test_scope_isolation_execute_auto_strategy_suppresses_companion_lane()
     context = MagicMock()
     context.execution_context = None
 
-    with patch("workflows_mcp.engine.memory_service.compute_embedding") as mock_embed:
+    with patch("workflows_mcp.memory.memory_service.compute_embedding") as mock_embed:
         mock_embed.return_value = ([0.1, 0.2, 0.3], "model", 3, None)
-        with patch("workflows_mcp.engine.memory_service.room_scoped_search") as mock_search:
+        with patch("workflows_mcp.memory.memory_service.room_scoped_search") as mock_search:
             mock_search.return_value = []
             service = MemoryService(backend=backend, context=context)
             # Use the full MemoryRequest contract envelope with explicit scope
@@ -522,9 +522,9 @@ async def test_palace_scope_passed_to_room_scoped_search() -> None:
     context = MagicMock()
     context.execution_context = None
 
-    with patch("workflows_mcp.engine.memory_service.compute_embedding") as mock_embed:
+    with patch("workflows_mcp.memory.memory_service.compute_embedding") as mock_embed:
         mock_embed.return_value = ([0.1, 0.2, 0.3], "model", 3, None)
-        with patch("workflows_mcp.engine.memory_service.room_scoped_search") as mock_search:
+        with patch("workflows_mcp.memory.memory_service.room_scoped_search") as mock_search:
             mock_search.return_value = []
             service = MemoryService(backend=backend, context=context)
             await service.query(
@@ -556,9 +556,9 @@ async def test_palace_collision_isolation_query() -> None:
     context = MagicMock()
     context.execution_context = None
 
-    with patch("workflows_mcp.engine.memory_service.compute_embedding") as mock_embed:
+    with patch("workflows_mcp.memory.memory_service.compute_embedding") as mock_embed:
         mock_embed.return_value = ([0.1, 0.2, 0.3], "model", 3, None)
-        with patch("workflows_mcp.engine.memory_service.room_scoped_search") as mock_search:
+        with patch("workflows_mcp.memory.memory_service.room_scoped_search") as mock_search:
             mock_search.return_value = []
             service = MemoryService(backend=backend, context=context)
 
@@ -626,10 +626,10 @@ async def test_palace_store_write_path_includes_palace() -> None:
 
     backend.query = stub_query
 
-    with patch("workflows_mcp.engine.memory_service.compute_embedding") as mock_embed:
+    with patch("workflows_mcp.memory.memory_service.compute_embedding") as mock_embed:
         mock_embed.return_value = ([0.1] * 384, "model", 384, None)
         service = MemoryService(backend=backend, context=context)
-        from workflows_mcp.engine.memory_schema import ManageMemoryRequest
+        from workflows_mcp.memory.memory_schema import ManageMemoryRequest
 
         await service.manage(
             ManageMemoryRequest(
@@ -693,7 +693,7 @@ async def test_palace_community_insert_includes_palace() -> None:
 
     # Simulate what _insert_community produces by inspecting the SQL it would emit.
     # We call it directly since community inserts happen through manage → consolidate paths.
-    from workflows_mcp.engine.memory_schema import ManageMemoryRequest
+    from workflows_mcp.memory.memory_schema import ManageMemoryRequest
 
     request = ManageMemoryRequest(
         operation="store",
@@ -705,7 +705,7 @@ async def test_palace_community_insert_includes_palace() -> None:
 
     service = MemoryService(backend=backend, context=context)
 
-    with patch("workflows_mcp.engine.memory_service.compute_embedding") as mock_embed:
+    with patch("workflows_mcp.memory.memory_service.compute_embedding") as mock_embed:
         mock_embed.return_value = ([0.1] * 384, "model", 384, None)
         with patch.object(service, "_assert_valid_parent_lineage", new_callable=AsyncMock):
             await service._insert_community(  # type: ignore[attr-defined]
@@ -753,9 +753,9 @@ async def test_palace_strategy_forwards_palace_to_room_scoped_search() -> None:
     context = MagicMock()
     context.execution_context = None
 
-    with patch("workflows_mcp.engine.memory_service.compute_embedding") as mock_embed:
+    with patch("workflows_mcp.memory.memory_service.compute_embedding") as mock_embed:
         mock_embed.return_value = ([0.1, 0.2, 0.3], "model", 3, None)
-        with patch("workflows_mcp.engine.memory_service.room_scoped_search") as mock_search:
+        with patch("workflows_mcp.memory.memory_service.room_scoped_search") as mock_search:
             mock_search.return_value = []
             service = MemoryService(backend=backend, context=context)
             await service.query(
@@ -790,7 +790,7 @@ def test_b4_merge_transparency_naive_db_timestamps_do_not_raise() -> None:
     aware _epoch sentinel raises TypeError. The function must handle this gracefully and
     still determine the correct effective_source.
     """
-    from workflows_mcp.engine.memory_service import _build_merge_transparency
+    from workflows_mcp.memory.memory_service import _build_merge_transparency
 
     # Naive ISO strings — no timezone offset — simulate DB-returned timestamps
     result = _build_merge_transparency(
@@ -804,7 +804,7 @@ def test_b4_merge_transparency_naive_db_timestamps_do_not_raise() -> None:
 
 def test_b4_merge_transparency_mixed_naive_aware_timestamps_do_not_raise() -> None:
     """_build_merge_transparency must handle mixed naive/aware timestamps without crashing."""
-    from workflows_mcp.engine.memory_service import _build_merge_transparency
+    from workflows_mcp.memory.memory_service import _build_merge_transparency
 
     result = _build_merge_transparency(
         org_record={"updated_at": "2024-06-01T00:00:00+00:00"},
@@ -817,7 +817,7 @@ def test_b4_merge_transparency_mixed_naive_aware_timestamps_do_not_raise() -> No
 
 def test_b4_merge_transparency_both_naive_timestamps_org_wins_on_tie() -> None:
     """Tie-breaking (org wins) must work correctly with naive timestamps."""
-    from workflows_mcp.engine.memory_service import _build_merge_transparency
+    from workflows_mcp.memory.memory_service import _build_merge_transparency
 
     result = _build_merge_transparency(
         org_record={"updated_at": "2024-03-15 12:00:00"},

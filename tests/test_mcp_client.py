@@ -280,7 +280,7 @@ class TestProjectMemoryToolsExposureInOssMode:
         def _fake_register_memory_tools(_mcp: Any, *, enable_project_tools: bool = True) -> None:
             register_calls.append(enable_project_tools)
 
-        import workflows_mcp.engine.executors_memory as executors_memory_mod
+        import workflows_mcp.memory.executors_memory as executors_memory_mod
         import workflows_mcp.tools_memory as tools_memory_mod
 
         monkeypatch.setattr(server_mod, "_prepare_memory_schema", _fake_prepare_memory_schema)
@@ -320,7 +320,7 @@ class TestProjectMemoryToolsExposureInOssMode:
         def _fake_register_memory_tools(_mcp: Any, *, enable_project_tools: bool = True) -> None:
             register_calls.append(enable_project_tools)
 
-        import workflows_mcp.engine.executors_memory as executors_memory_mod
+        import workflows_mcp.memory.executors_memory as executors_memory_mod
         import workflows_mcp.tools_memory as tools_memory_mod
 
         monkeypatch.setattr(server_mod, "_prepare_memory_schema", _fake_prepare_memory_schema)

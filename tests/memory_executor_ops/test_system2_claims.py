@@ -19,7 +19,7 @@ pytestmark = pytest.mark.asyncio
 
 def test_system1_store_structural_evidence_operation_accepted_by_request() -> None:
     """MemoryRequest must accept 'store_system1_structural_evidence' without raising."""
-    from workflows_mcp.engine.memory_schema import MemoryRequest
+    from workflows_mcp.memory.memory_schema import MemoryRequest
 
     req = MemoryRequest.model_validate(
         {
@@ -33,7 +33,7 @@ def test_system1_store_structural_evidence_operation_accepted_by_request() -> No
 
 def test_system1_record_verification_cycle_operation_accepted_by_request() -> None:
     """MemoryRequest must accept 'record_system1_verification_cycle' without raising."""
-    from workflows_mcp.engine.memory_schema import MemoryRequest
+    from workflows_mcp.memory.memory_schema import MemoryRequest
 
     req = MemoryRequest.model_validate(
         {
@@ -47,7 +47,7 @@ def test_system1_record_verification_cycle_operation_accepted_by_request() -> No
 
 def test_system2_derive_semantic_claims_operation_accepted_by_request() -> None:
     """MemoryRequest must accept 'derive_system2_semantic_claims' without raising."""
-    from workflows_mcp.engine.memory_schema import MemoryRequest
+    from workflows_mcp.memory.memory_schema import MemoryRequest
 
     req = MemoryRequest.model_validate(
         {
@@ -61,7 +61,7 @@ def test_system2_derive_semantic_claims_operation_accepted_by_request() -> None:
 
 def test_system2_apply_semantic_override_operation_accepted_by_request() -> None:
     """MemoryRequest must accept 'apply_semantic_override' without raising."""
-    from workflows_mcp.engine.memory_schema import MemoryRequest
+    from workflows_mcp.memory.memory_schema import MemoryRequest
 
     req = MemoryRequest.model_validate(
         {
@@ -75,7 +75,7 @@ def test_system2_apply_semantic_override_operation_accepted_by_request() -> None
 
 def test_system2_reconcile_semantic_lifecycle_operation_accepted_by_request() -> None:
     """MemoryRequest must accept 'reconcile_semantic_lifecycle' without raising."""
-    from workflows_mcp.engine.memory_schema import MemoryRequest
+    from workflows_mcp.memory.memory_schema import MemoryRequest
 
     req = MemoryRequest.model_validate(
         {
@@ -92,7 +92,7 @@ async def test_system1_store_structural_evidence_persists_evidence_rows(
 ) -> None:
     """store_system1_structural_evidence must write structural evidence rows keyed by
     scope/entity and return success with stored evidence IDs."""
-    from workflows_mcp.engine.memory_schema import MemoryRequest
+    from workflows_mcp.memory.memory_schema import MemoryRequest
 
     result = await memory_service.execute(
         MemoryRequest.model_validate(
@@ -136,7 +136,7 @@ async def test_system1_store_structural_evidence_row_exists_in_db(
     Querying knowledge_structural_evidence after the call must return exactly
     one row matching the submitted scope/entity/category key.
     """
-    from workflows_mcp.engine.memory_schema import MemoryRequest
+    from workflows_mcp.memory.memory_schema import MemoryRequest
 
     await memory_service.execute(
         MemoryRequest.model_validate(
@@ -181,7 +181,7 @@ async def test_system1_record_verification_cycle_persists_cycle_metadata(
 ) -> None:
     """record_system1_verification_cycle must persist a verification cycle row
     with scope_key identity and success/failure status."""
-    from workflows_mcp.engine.memory_schema import MemoryRequest
+    from workflows_mcp.memory.memory_schema import MemoryRequest
 
     result = await memory_service.execute(
         MemoryRequest.model_validate(
@@ -213,7 +213,7 @@ async def test_system2_derive_semantic_claims_returns_claim_ids(
 ) -> None:
     """derive_system2_semantic_claims must derive claims backed by System 1 evidence
     and return claim IDs in the response."""
-    from workflows_mcp.engine.memory_schema import MemoryRequest
+    from workflows_mcp.memory.memory_schema import MemoryRequest
 
     # Pre-store structural evidence so the derivation can resolve stable IDs.
     await memory_service.execute(
@@ -262,7 +262,7 @@ async def test_system2_apply_semantic_override_activates_immediately_with_proven
 ) -> None:
     """apply_semantic_override must activate the override immediately and persist
     provenance fields (override_reason, overridden_by, activated_at)."""
-    from workflows_mcp.engine.memory_schema import MemoryRequest
+    from workflows_mcp.memory.memory_schema import MemoryRequest
 
     # First, store structural evidence so a real claim can be derived.
     await memory_service.execute(
@@ -332,7 +332,7 @@ async def test_system2_reconcile_semantic_lifecycle_returns_transition_summary(
 ) -> None:
     """reconcile_semantic_lifecycle must evaluate lifecycle transitions and return
     a summary of affected claims and their new states."""
-    from workflows_mcp.engine.memory_schema import MemoryRequest
+    from workflows_mcp.memory.memory_schema import MemoryRequest
 
     result = await memory_service.execute(
         MemoryRequest.model_validate(
@@ -364,8 +364,8 @@ async def test_system1_failed_verification_cycle_does_not_count_for_archive_gate
     This is a runtime service invariant — failed cycles must not satisfy the gate
     even when two cycle IDs are technically present.
     """
-    from workflows_mcp.engine.memory_schema import MemoryRequest
-    from workflows_mcp.engine.memory_service import MemoryContractError
+    from workflows_mcp.memory.memory_schema import MemoryRequest
+    from workflows_mcp.memory.memory_service import MemoryContractError
 
     scope_key = _scope_key()
 
@@ -453,7 +453,7 @@ async def test_system1_store_structural_evidence_is_idempotent_for_same_scope_en
       for the conflict key after two store calls, proving no duplicate was
       created.
     """
-    from workflows_mcp.engine.memory_schema import MemoryRequest
+    from workflows_mcp.memory.memory_schema import MemoryRequest
 
     evidence_payload = {
         "operation": "store_system1_structural_evidence",
@@ -533,8 +533,8 @@ async def test_archive_gate_rejects_unregistered_fabricated_cycle_ids(
     cycles.  Passing two fabricated/unregistered IDs must be rejected with
     MEM_ARCHIVE_GATE_NOT_MET — unknown IDs are not countable.
     """
-    from workflows_mcp.engine.memory_schema import MemoryRequest
-    from workflows_mcp.engine.memory_service import MemoryContractError
+    from workflows_mcp.memory.memory_schema import MemoryRequest
+    from workflows_mcp.memory.memory_service import MemoryContractError
 
     scope_key = _scope_key()
     # Fabricated UUIDs — never registered with the service (not in DB).
@@ -580,7 +580,7 @@ async def test_archive_gate_rejects_unregistered_fabricated_cycle_ids(
 
 async def _store_evidence(memory_service: Any, stable_id: str) -> None:
     """Helper: store one structural evidence row in the test palace/scope."""
-    from workflows_mcp.engine.memory_schema import MemoryRequest
+    from workflows_mcp.memory.memory_schema import MemoryRequest
 
     result = await memory_service.execute(
         MemoryRequest.model_validate(
@@ -615,7 +615,7 @@ async def test_system2_room_intent_label_persists_claim_and_evidence_link(
     in knowledge_semantic_claims with claim_type='room_intent' and
     lifecycle_state='active_evidenced'.  A matching knowledge_claim_evidence_links
     row must also exist."""
-    from workflows_mcp.engine.memory_schema import MemoryRequest
+    from workflows_mcp.memory.memory_schema import MemoryRequest
 
     stable_id = "src/t7_room.py::RoomClass"
     await _store_evidence(memory_service, stable_id)
@@ -672,7 +672,7 @@ async def test_system2_compartment_reasoning_unit_persists_claim_and_evidence_li
 ) -> None:
     """derive_system2_semantic_claims must persist a compartment_reasoning_unit claim
     backed by at least one evidence link when compartment_reasoning_unit is supplied."""
-    from workflows_mcp.engine.memory_schema import MemoryRequest
+    from workflows_mcp.memory.memory_schema import MemoryRequest
 
     stable_id = "src/t7_comp.py::CompClass"
     await _store_evidence(memory_service, stable_id)
@@ -726,7 +726,7 @@ async def test_system2_semantic_corridor_persists_claim_edge_and_canonical_type(
     2. Persist a directed edge row in knowledge_semantic_corridors with
        canonicalized corridor_type and original raw type in corridor_type_raw.
     3. Return the corridor claim ID in claim_ids."""
-    from workflows_mcp.engine.memory_schema import MemoryRequest
+    from workflows_mcp.memory.memory_schema import MemoryRequest
 
     stable_id = "src/t7_corr.py::CorrClass"
     await _store_evidence(memory_service, stable_id)
@@ -833,7 +833,7 @@ async def test_system2_partial_corridor_fields_rejected(
     all three required fields."""
     from pydantic import ValidationError
 
-    from workflows_mcp.engine.memory_schema import MemoryRequest
+    from workflows_mcp.memory.memory_schema import MemoryRequest
 
     stable_id = "src/t7_partial.py::PartialClass"
     await _store_evidence(memory_service, stable_id)
@@ -871,7 +871,7 @@ async def test_system2_corridor_self_loop_rejected(
     with a message that mentions self-loop."""
     from pydantic import ValidationError
 
-    from workflows_mcp.engine.memory_schema import MemoryRequest
+    from workflows_mcp.memory.memory_schema import MemoryRequest
 
     stable_id = "src/t7_loop.py::LoopClass"
     await _store_evidence(memory_service, stable_id)
@@ -905,8 +905,8 @@ async def test_system2_derive_without_resolvable_evidence_fails(
 ) -> None:
     """derive_system2_semantic_claims must fail when no matching structural evidence
     rows exist in the scope — claims must not be born without resolvable evidence."""
-    from workflows_mcp.engine.memory_schema import MemoryRequest
-    from workflows_mcp.engine.memory_service import MemoryContractError
+    from workflows_mcp.memory.memory_schema import MemoryRequest
+    from workflows_mcp.memory.memory_service import MemoryContractError
 
     # Do NOT store evidence — stable ID will not resolve.
     try:
@@ -951,7 +951,7 @@ async def test_duplicate_corridor_edge_rolls_back_and_leaves_no_orphaned_claim(
     - No orphaned claim row (half-inserted state) was left in
       knowledge_semantic_claims from the second call.
     """
-    from workflows_mcp.engine.memory_schema import MemoryRequest
+    from workflows_mcp.memory.memory_schema import MemoryRequest
 
     stable_id = "src/t7_atomicity.py::AtomicityClass"
     await _store_evidence(memory_service, stable_id)
@@ -1092,7 +1092,7 @@ async def test_verification_cycle_updates_override_accountability(
     - After a failed cycle (success=False): accountability_status does NOT change.
     - Trajectory via cycle-operation path: pending → supported → unsupported → supported.
     """
-    from workflows_mcp.engine.memory_schema import MemoryRequest
+    from workflows_mcp.memory.memory_schema import MemoryRequest
 
     # Step 1: Store structural evidence so we can derive a real claim.
     await memory_service.execute(

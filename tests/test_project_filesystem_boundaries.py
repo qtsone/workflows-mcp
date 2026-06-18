@@ -8,7 +8,7 @@ import pytest
 
 from workflows_mcp.context import SessionProjectContext
 from workflows_mcp.engine.executors_file import run_readfiles_scan
-from workflows_mcp.engine.memory_service import MemoryContractError
+from workflows_mcp.memory.memory_service import MemoryContractError
 from workflows_mcp.security.filesystem_boundaries import (
     normalize_project_roots,
     validate_path_within_effective_boundary,

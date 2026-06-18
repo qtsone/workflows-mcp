@@ -8,9 +8,14 @@ from typing import Any, ClassVar, Literal
 
 from pydantic import Field
 
-from .block import BlockInput, BlockOutput
-from .execution import Execution
-from .executor_base import BlockExecutor, ExecutorCapabilities, ExecutorSecurityLevel
+from workflows_mcp.engine.block import BlockInput, BlockOutput
+from workflows_mcp.engine.execution import Execution
+from workflows_mcp.engine.executor_base import (
+    BlockExecutor,
+    ExecutorCapabilities,
+    ExecutorSecurityLevel,
+)
+
 from .memory_schema import MemoryRequest
 from .memory_service import MemoryService
 
@@ -193,7 +198,7 @@ class MemoryExecutor(BlockExecutor):
 
     def _create_backend(self) -> Any:
         try:
-            from .sql.postgres_backend import PostgresBackend
+            from workflows_mcp.engine.sql.postgres_backend import PostgresBackend
         except ImportError as e:
             raise ImportError(
                 "PostgreSQL backend requires 'asyncpg'. "
@@ -202,7 +207,7 @@ class MemoryExecutor(BlockExecutor):
         return PostgresBackend()
 
     def _create_config(self, inputs: MemoryInput) -> Any:
-        from .sql import ConnectionConfig, DatabaseEngine
+        from workflows_mcp.engine.sql import ConnectionConfig, DatabaseEngine
 
         return ConnectionConfig(
             dialect=DatabaseEngine.POSTGRESQL,

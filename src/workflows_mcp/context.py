@@ -16,16 +16,16 @@ from mcp.server.fastmcp import Context
 from mcp.server.session import ServerSession
 
 from .engine import ExecutionContext, WorkflowRegistry
-from .engine.execution_memory import ExecutionMemory
 from .engine.executor_base import ExecutorRegistry
 from .engine.io_queue import IOQueue
 from .engine.job_queue import JobQueue
 from .engine.llm_config import LLMConfigLoader
 from .engine.secrets import SecretProvider
+from .memory.execution_memory import ExecutionMemory
 
 if TYPE_CHECKING:
-    from .engine.memory_scope_resolver import SyncContextCandidate
     from .engine.workflow_source_loader import WorkflowSourceReloadSummary
+    from .memory.memory_scope_resolver import SyncContextCandidate
     from .watcher.manager import WatcherManager
 
 

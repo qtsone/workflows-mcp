@@ -19,13 +19,14 @@ from typing import Any, ClassVar, TypedDict, cast
 
 from pydantic import Field
 
-from .block import BlockInput, BlockOutput
-from .execution import Execution
-from .executor_base import (
+from workflows_mcp.engine.block import BlockInput, BlockOutput
+from workflows_mcp.engine.execution import Execution
+from workflows_mcp.engine.executor_base import (
     BlockExecutor,
     ExecutorCapabilities,
     ExecutorSecurityLevel,
 )
+
 from .treesitter_extractors import (
     extract_code,
     extract_document,

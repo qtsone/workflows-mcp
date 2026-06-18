@@ -596,7 +596,7 @@ class TestActiveScopeSourceLabeling:
         must be 'active_context', not 'request'."""
         from unittest.mock import AsyncMock
 
-        from workflows_mcp.engine.memory_scope_resolver import SyncContextCandidate, scope_key
+        from workflows_mcp.memory.memory_scope_resolver import SyncContextCandidate, scope_key
 
         # Install a fake active context on the mock session.
         candidate_scope = {"palace": "forge", "wing": None, "room": None, "compartment": None}
@@ -609,7 +609,7 @@ class TestActiveScopeSourceLabeling:
         mock_ctx.request_context.lifespan_context.get_active_context.return_value = candidate
 
         memory = _get_tool_fn("memory")
-        from workflows_mcp.engine.memory_schema import MemoryResult, QueryMemoryResult
+        from workflows_mcp.memory.memory_schema import MemoryResult, QueryMemoryResult
 
         query_result = MemoryResult(
             operation="query",
@@ -623,7 +623,7 @@ class TestActiveScopeSourceLabeling:
             ),
         )
         with patch(
-            "workflows_mcp.engine.memory_service.MemoryService.execute",
+            "workflows_mcp.memory.memory_service.MemoryService.execute",
             new_callable=AsyncMock,
             return_value=query_result,
         ):
@@ -680,7 +680,7 @@ class TestActiveProjectDefaultResolution:
 
         async def _capture_execute(self: Any, request: Any) -> Any:
             captured.append(request)
-            from workflows_mcp.engine.memory_schema import MemoryResult, QueryMemoryResult
+            from workflows_mcp.memory.memory_schema import MemoryResult, QueryMemoryResult
 
             return MemoryResult(
                 operation="query",
@@ -693,7 +693,7 @@ class TestActiveProjectDefaultResolution:
         with (
             patch("workflows_mcp.tools_memory.PostgresBackend", return_value=AsyncMock()),
             patch(
-                "workflows_mcp.engine.memory_service.MemoryService.execute",
+                "workflows_mcp.memory.memory_service.MemoryService.execute",
                 new=_capture_execute,
             ),
         ):
@@ -741,7 +741,7 @@ class TestActiveProjectDefaultResolution:
         with (
             patch("workflows_mcp.tools_memory.PostgresBackend", return_value=backend),
             patch(
-                "workflows_mcp.engine.memory_service.compute_embedding",
+                "workflows_mcp.memory.memory_service.compute_embedding",
                 return_value=(fake_embedding, "text-embedding-3-small", 1, 0.0),
             ),
         ):
@@ -781,7 +781,7 @@ class TestActiveProjectDefaultResolution:
 
         async def _capture_execute(self: Any, request: Any) -> Any:
             captured.append(request)
-            from workflows_mcp.engine.memory_schema import MemoryResult, QueryMemoryResult
+            from workflows_mcp.memory.memory_schema import MemoryResult, QueryMemoryResult
 
             return MemoryResult(
                 operation="query",
@@ -794,7 +794,7 @@ class TestActiveProjectDefaultResolution:
         with (
             patch("workflows_mcp.tools_memory.PostgresBackend", return_value=AsyncMock()),
             patch(
-                "workflows_mcp.engine.memory_service.MemoryService.execute",
+                "workflows_mcp.memory.memory_service.MemoryService.execute",
                 new=_capture_execute,
             ),
         ):
@@ -832,7 +832,7 @@ class TestActiveProjectDefaultResolution:
 
         async def _capture_execute(self: Any, request: Any) -> Any:
             captured.append(request)
-            from workflows_mcp.engine.memory_schema import MemoryResult, QueryMemoryResult
+            from workflows_mcp.memory.memory_schema import MemoryResult, QueryMemoryResult
 
             return MemoryResult(
                 operation="query",
@@ -845,7 +845,7 @@ class TestActiveProjectDefaultResolution:
         with (
             patch("workflows_mcp.tools_memory.PostgresBackend", return_value=AsyncMock()),
             patch(
-                "workflows_mcp.engine.memory_service.MemoryService.execute",
+                "workflows_mcp.memory.memory_service.MemoryService.execute",
                 new=_capture_execute,
             ),
         ):
@@ -892,7 +892,7 @@ class TestActiveProjectDefaultResolution:
 
         async def _capture_execute(self: Any, request: Any) -> Any:
             captured.append(request)
-            from workflows_mcp.engine.memory_schema import MemoryResult, QueryMemoryResult
+            from workflows_mcp.memory.memory_schema import MemoryResult, QueryMemoryResult
 
             return MemoryResult(
                 operation="query",
@@ -905,7 +905,7 @@ class TestActiveProjectDefaultResolution:
         with (
             patch("workflows_mcp.tools_memory.PostgresBackend", return_value=AsyncMock()),
             patch(
-                "workflows_mcp.engine.memory_service.MemoryService.execute",
+                "workflows_mcp.memory.memory_service.MemoryService.execute",
                 new=_capture_execute,
             ),
         ):
@@ -1045,7 +1045,7 @@ class TestPlacementWritesDoNotUseSessionFallback:
     ) -> None:
         """memory(operation='ingest') with no scope must fail with INSUFFICIENT_LOCALITY
         even when an active context is present in the session."""
-        from workflows_mcp.engine.memory_scope_resolver import SyncContextCandidate, scope_key
+        from workflows_mcp.memory.memory_scope_resolver import SyncContextCandidate, scope_key
 
         # Arrange: active context candidate with a fully qualified scope.
         candidate_scope = {

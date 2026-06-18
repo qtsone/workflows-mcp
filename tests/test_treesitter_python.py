@@ -88,7 +88,7 @@ def _run(path: Path, repo_relative: str, mock_execution: MagicMock) -> Any:
     """Helper: execute TreeSitterExecutor synchronously via asyncio."""
     import asyncio
 
-    from workflows_mcp.engine.executors_treesitter import (
+    from workflows_mcp.code_intelligence.executors_treesitter import (
         TreeSitterExecutor,
         TreeSitterInput,
     )
@@ -525,7 +525,7 @@ class TestNonPythonUnchanged:
     async def test_unsupported_extension_still_returns_empty(
         self, tmp_path: Path, mock_execution: MagicMock
     ) -> None:
-        from workflows_mcp.engine.executors_treesitter import (
+        from workflows_mcp.code_intelligence.executors_treesitter import (
             TreeSitterExecutor,
             TreeSitterInput,
         )
@@ -544,7 +544,7 @@ class TestNonPythonUnchanged:
         self, tmp_path: Path, mock_execution: MagicMock
     ) -> None:
         """Non-Python languages still only get File+Module entities (Phase 1-2)."""
-        from workflows_mcp.engine.executors_treesitter import (
+        from workflows_mcp.code_intelligence.executors_treesitter import (
             TreeSitterExecutor,
             TreeSitterInput,
         )

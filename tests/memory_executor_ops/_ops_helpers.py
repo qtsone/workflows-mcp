@@ -27,7 +27,7 @@ def _scope_key(
     room: str = ROOM,
     compartment: str = COMPARTMENT,
 ) -> str:
-    from workflows_mcp.engine.memory_scope_resolver import scope_key as _sk
+    from workflows_mcp.memory.memory_scope_resolver import scope_key as _sk
 
     return _sk({"palace": palace, "wing": wing, "room": room, "compartment": compartment})
 

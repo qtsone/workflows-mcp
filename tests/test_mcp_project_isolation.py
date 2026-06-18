@@ -9,10 +9,10 @@ from mcp import ClientSession
 from mcp.client.streamable_http import streamable_http_client
 
 from workflows_mcp.auth import TokenStore
-from workflows_mcp.engine.memory_scope_resolver import SyncContextCandidate
 from workflows_mcp.http.lifespan import build_resources
 from workflows_mcp.http_app import create_app
 from workflows_mcp.http_models import ReadinessState
+from workflows_mcp.memory.memory_scope_resolver import SyncContextCandidate
 from workflows_mcp.metadata.db import connect_metadata_db
 from workflows_mcp.metadata.repos.projects_repo import ProjectCreate, SQLiteProjectsRepository
 from workflows_mcp.metadata.repos.run_history_repo import SQLiteRunHistoryRepository

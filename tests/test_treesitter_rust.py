@@ -132,7 +132,7 @@ def mock_execution() -> MagicMock:
 
 def _run(path: Path, repo_relative: str, mock_execution: MagicMock) -> Any:
     """Execute TreeSitterExecutor synchronously via asyncio."""
-    from workflows_mcp.engine.executors_treesitter import (
+    from workflows_mcp.code_intelligence.executors_treesitter import (
         TreeSitterExecutor,
         TreeSitterInput,
     )
@@ -793,7 +793,7 @@ class TestNonRustUnchanged:
     @pytest.mark.asyncio
     async def test_python_file_unaffected(self, tmp_path: Path, mock_execution: MagicMock) -> None:
         """Python extractor continues to work after Rust extractor added."""
-        from workflows_mcp.engine.executors_treesitter import (
+        from workflows_mcp.code_intelligence.executors_treesitter import (
             TreeSitterExecutor,
             TreeSitterInput,
         )
@@ -810,7 +810,7 @@ class TestNonRustUnchanged:
     @pytest.mark.asyncio
     async def test_go_file_unaffected(self, tmp_path: Path, mock_execution: MagicMock) -> None:
         """Go extractor continues to work after Rust extractor added."""
-        from workflows_mcp.engine.executors_treesitter import (
+        from workflows_mcp.code_intelligence.executors_treesitter import (
             TreeSitterExecutor,
             TreeSitterInput,
         )
