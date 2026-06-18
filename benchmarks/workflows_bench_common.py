@@ -9,9 +9,9 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from workflows_mcp.engine.knowledge.constants import Authority, LifecycleState
-from workflows_mcp.engine.knowledge.schema import ensure_schema
-from workflows_mcp.engine.knowledge.search import (
+from workflows_mcp.memory.knowledge.constants import Authority, LifecycleState
+from workflows_mcp.memory.knowledge.schema import ensure_schema
+from workflows_mcp.memory.knowledge.search import (
     build_fts_search_query,
     build_vector_search_query,
     rrf_fusion,

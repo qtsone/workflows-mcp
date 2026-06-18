@@ -40,9 +40,9 @@ from workflows_bench_common import (
     purge_benchmark_source,
 )
 
-from workflows_mcp.engine.knowledge.constants import Authority, LifecycleState
-from workflows_mcp.engine.knowledge.context import assemble_context
-from workflows_mcp.engine.knowledge.search import room_scoped_search
+from workflows_mcp.memory.knowledge.constants import Authority, LifecycleState
+from workflows_mcp.memory.knowledge.context import assemble_context
+from workflows_mcp.memory.knowledge.search import room_scoped_search
 
 SYSTEM_USER_UUID = uuid.UUID("00000000-0000-0000-0000-000000000001")
 

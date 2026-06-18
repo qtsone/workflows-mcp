@@ -48,8 +48,8 @@ from workflows_bench_common import (
     run_hybrid_search,
 )
 
-from workflows_mcp.engine.knowledge.constants import Authority, LifecycleState
-from workflows_mcp.engine.knowledge.search import room_scoped_search
+from workflows_mcp.memory.knowledge.constants import Authority, LifecycleState
+from workflows_mcp.memory.knowledge.search import room_scoped_search
 
 CATEGORIES = {
     1: "Single-hop",
