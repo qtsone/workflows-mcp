@@ -12,11 +12,6 @@ Phase 5 — LLM ingestion mode (``mode="llm"``) with:
 - INVALID_LLM_PROFILE error envelope for missing / invalid profiles.
 - LLM provenance block (model/profile/version fingerprint) only when debug=True.
 
-Phase 6 — graph construction for the sync pipeline:
-- Selective rebuild: only changed compartments are re-ingested.
-- Global recompute of derived depends_on corridors from content analysis.
-- Weak-link reporting.
-
 The resumable checkpoint state machine and its sync-delta/deletion-policy logic
 live in ``project_flow_service`` (ADR-014); this module is the graph builder.
 
@@ -44,58 +39,24 @@ from .memory_graph_builder import (
     GraphNode,
     GraphPayload,
     NodeType,
+    build_structural_backbone,
 )
 from .memory_graph_validator import (
     GraphValidationResult,
     GraphViolation,
     validate_graph_payload,
 )
-from .memory_scope_resolver import normalize_scope, scope_key
+from .memory_scope_resolver import (
+    DEFAULT_PALACE_LABEL,
+    normalize_scope,
+    normalize_topology_label,
+    scope_key,
+)
 
 if TYPE_CHECKING:
     from .memory_service import MemoryService
 
 logger = logging.getLogger(__name__)
-
-# ---------------------------------------------------------------------------
-# Phase 6 — Graph diagnostics types
-# ---------------------------------------------------------------------------
-
-
-@dataclass(frozen=True)
-class WeakLinkReport:
-    """Diagnostic report about weak/suspect corridors in a graph payload.
-
-    A weak link is a corridor that references node_ids not present in the
-    graph's node set.  These indicate orphaned references that may cause
-    query failures or silent data loss.
-
-    Attributes:
-        orphaned_source_ids: Corridor source_ids not found in the node set.
-        orphaned_target_ids: Corridor target_ids not found in the node set.
-        total_corridors: Total corridors inspected.
-        weak_link_count: Number of corridors with at least one orphaned endpoint.
-    """
-
-    orphaned_source_ids: list[str]
-    orphaned_target_ids: list[str]
-    total_corridors: int
-    weak_link_count: int
-
-    @property
-    def has_weak_links(self) -> bool:
-        """True when at least one weak link was detected."""
-        return self.weak_link_count > 0
-
-    def to_debug_dict(self) -> dict[str, Any]:
-        return {
-            "has_weak_links": self.has_weak_links,
-            "weak_link_count": self.weak_link_count,
-            "total_corridors": self.total_corridors,
-            "orphaned_source_ids": sorted(set(self.orphaned_source_ids)),
-            "orphaned_target_ids": sorted(set(self.orphaned_target_ids)),
-        }
-
 
 # ---------------------------------------------------------------------------
 # Public types
@@ -294,22 +255,6 @@ def _build_content_compartment(
     return node, corridor
 
 
-_TOPOLOGY_PLACEHOLDER_VALUES: frozenset[str] = frozenset(
-    {"default-wing", "default-room", "default", "code"}
-)
-
-
-def _normalize_optional_topology_label(value: str | None) -> str:
-    if value is None:
-        return ""
-    stripped = value.strip()
-    if not stripped:
-        return ""
-    if stripped.lower() in _TOPOLOGY_PLACEHOLDER_VALUES:
-        return ""
-    return stripped
-
-
 def _build_graph_from_files(
     files: list[ScannedFileEntry],
     *,
@@ -327,37 +272,24 @@ def _build_graph_from_files(
     """
     normalized = normalize_scope(scope)
 
-    palace_label = normalized.get("palace") or "default-palace"
-    wing_label = _normalize_optional_topology_label(normalized.get("wing"))
-    room_label = _normalize_optional_topology_label(normalized.get("room"))
+    palace_label = normalized.get("palace") or DEFAULT_PALACE_LABEL
+    wing_label = normalize_topology_label(normalized.get("wing"))
+    room_label = normalize_topology_label(normalized.get("room"))
 
     palace_id = _stable_node_id("palace", palace_label)
     wing_id = _stable_node_id("wing", wing_label)
     room_id = _stable_node_id("room", room_label)
 
-    # Structural backbone nodes and corridors
-    palace_node = GraphNode(node_id=palace_id, node_type=NodeType.PALACE, label=palace_label)
-    wing_node = GraphNode(node_id=wing_id, node_type=NodeType.WING, label=wing_label)
-    room_node = GraphNode(node_id=room_id, node_type=NodeType.ROOM, label=room_label)
-
-    structural_corridors = [
-        GraphCorridor(
-            source_id=palace_id,
-            target_id=wing_id,
-            semantic_type=CorridorSemanticType.CONTAINS,
-            confidence=confidence,
-            provenance=provenance,
-            evidence=[],
-        ),
-        GraphCorridor(
-            source_id=wing_id,
-            target_id=room_id,
-            semantic_type=CorridorSemanticType.CONTAINS,
-            confidence=confidence,
-            provenance=provenance,
-            evidence=[],
-        ),
-    ]
+    backbone = build_structural_backbone(
+        palace_id=palace_id,
+        palace_label=palace_label,
+        wing_id=wing_id,
+        wing_label=wing_label,
+        room_id=room_id,
+        room_label=room_label,
+        provenance=provenance,
+        confidence=confidence,
+    )
 
     compartment_nodes_raw: list[GraphNode] = []
     compartment_corridors: list[GraphCorridor] = []
@@ -426,128 +358,13 @@ def _build_graph_from_files(
             compartment_nodes_raw.append(node)
             compartment_corridors.append(corridor)
 
-    all_nodes = [palace_node, wing_node, room_node] + compartment_nodes_raw
-    all_corridors = structural_corridors + compartment_corridors
+    all_nodes = [backbone.palace, backbone.wing, backbone.room] + compartment_nodes_raw
+    all_corridors = backbone.corridors + compartment_corridors
 
     return (
         GraphPayload(nodes=all_nodes, corridors=all_corridors),
         compartment_infos,
         metadata_only_count,
-    )
-
-
-# ---------------------------------------------------------------------------
-# Phase 6 — Weak-link analysis
-# ---------------------------------------------------------------------------
-
-
-def compute_weak_links(graph: GraphPayload) -> WeakLinkReport:
-    """Analyse a graph payload for corridors referencing non-existent nodes.
-
-    A weak link is a corridor whose source_id or target_id is not present in
-    the graph's node set.  These indicate orphaned references that can cause
-    silent query failures or data inconsistencies.
-
-    Args:
-        graph: The graph payload to inspect.
-
-    Returns:
-        WeakLinkReport describing detected orphaned references.
-    """
-    node_ids: frozenset[str] = frozenset(n.node_id for n in graph.nodes)
-    orphaned_sources: list[str] = []
-    orphaned_targets: list[str] = []
-    weak_count = 0
-
-    for corridor in graph.corridors:
-        has_weak = False
-        if corridor.source_id not in node_ids:
-            orphaned_sources.append(corridor.source_id)
-            has_weak = True
-        if corridor.target_id not in node_ids:
-            orphaned_targets.append(corridor.target_id)
-            has_weak = True
-        if has_weak:
-            weak_count += 1
-
-    return WeakLinkReport(
-        orphaned_source_ids=orphaned_sources,
-        orphaned_target_ids=orphaned_targets,
-        total_corridors=len(graph.corridors),
-        weak_link_count=weak_count,
-    )
-
-
-def recompute_depends_on_corridors(
-    graph: GraphPayload,
-    *,
-    provenance: str = "sync",
-    confidence: float = 0.8,
-) -> GraphPayload:
-    """Derive and inject ``depends_on`` corridors between COMPARTMENT nodes.
-
-    Phase 6 global recompute of derived ``depends_on`` relationships.
-
-    Current heuristic: compartments that share a common token prefix in their
-    ``path`` metadata field are considered potential dependencies.  This is a
-    structural approximation — a full semantic analysis requires LLM mode.
-
-    The recompute is additive: existing corridors are preserved; new
-    ``depends_on`` corridors are appended only when no equivalent corridor
-    already exists between the same (source, target) pair.
-
-    Args:
-        graph: Input graph (not mutated).
-        provenance: Provenance tag for injected corridors.
-        confidence: Confidence score for injected corridors.
-
-    Returns:
-        A new GraphPayload with derived depends_on corridors added.
-    """
-    compartments = [n for n in graph.nodes if n.node_type == NodeType.COMPARTMENT]
-
-    # Build path prefix index: first segment (directory) of the path.
-    def _prefix(node: GraphNode) -> str:
-        p = str(node.metadata.get("path") or "")
-        parts = p.replace("\\", "/").split("/")
-        return parts[0] if len(parts) > 1 else ""
-
-    prefix_to_nodes: dict[str, list[GraphNode]] = {}
-    for node in compartments:
-        px = _prefix(node)
-        if px:
-            prefix_to_nodes.setdefault(px, []).append(node)
-
-    # Existing corridor pairs
-    existing_pairs: set[tuple[str, str]] = {(c.source_id, c.target_id) for c in graph.corridors}
-
-    new_corridors: list[GraphCorridor] = []
-    for px, nodes in prefix_to_nodes.items():
-        if len(nodes) < 2:
-            continue
-        # Connect each node to the alphabetically prior node (deterministic ordering).
-        sorted_nodes = sorted(nodes, key=lambda n: str(n.metadata.get("path") or ""))
-        for i in range(1, len(sorted_nodes)):
-            source_id = sorted_nodes[i - 1].node_id
-            target_id = sorted_nodes[i].node_id
-            if (source_id, target_id) not in existing_pairs:
-                new_corridors.append(
-                    GraphCorridor(
-                        source_id=source_id,
-                        target_id=target_id,
-                        semantic_type=CorridorSemanticType.DEPENDS_ON,
-                        confidence=confidence,
-                        provenance=provenance,
-                        evidence=[],
-                    )
-                )
-                existing_pairs.add((source_id, target_id))
-
-    if not new_corridors:
-        return graph
-    return GraphPayload(
-        nodes=list(graph.nodes),
-        corridors=list(graph.corridors) + new_corridors,
     )
 
 

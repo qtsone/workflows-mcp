@@ -213,6 +213,62 @@ class GraphPayload:
 # ---------------------------------------------------------------------------
 
 
+def _structural_corridor(
+    source_id: str, target_id: str, *, provenance: str, confidence: float
+) -> GraphCorridor:
+    """Build a single top-down containment corridor between hierarchy levels."""
+    return GraphCorridor(
+        source_id=source_id,
+        target_id=target_id,
+        semantic_type=STRUCTURAL_SEMANTIC_TYPE,
+        confidence=confidence,
+        provenance=provenance,
+        evidence=[],
+    )
+
+
+@dataclass
+class StructuralBackbone:
+    """Palace→Wing→Room backbone shared by every onboarded scope.
+
+    Holds the three upper-level nodes and the two containment corridors that
+    chain them. Compartments are attached to ``room`` by the caller.
+    """
+
+    palace: GraphNode
+    wing: GraphNode
+    room: GraphNode
+    corridors: list[GraphCorridor]
+
+
+def build_structural_backbone(
+    *,
+    palace_id: str,
+    palace_label: str,
+    wing_id: str,
+    wing_label: str,
+    room_id: str,
+    room_label: str,
+    provenance: str = "onboard",
+    confidence: float = 1.0,
+) -> StructuralBackbone:
+    """Build the Palace→Wing→Room backbone for a scope.
+
+    This is the single construction path for the upper three hierarchy levels;
+    compartment attachment is left to the caller so a backbone can carry either
+    one compartment (:func:`build_structural_graph`) or many (the onboard
+    file-walk).
+    """
+    palace = GraphNode(node_id=palace_id, node_type=NodeType.PALACE, label=palace_label)
+    wing = GraphNode(node_id=wing_id, node_type=NodeType.WING, label=wing_label)
+    room = GraphNode(node_id=room_id, node_type=NodeType.ROOM, label=room_label)
+    corridors = [
+        _structural_corridor(palace_id, wing_id, provenance=provenance, confidence=confidence),
+        _structural_corridor(wing_id, room_id, provenance=provenance, confidence=confidence),
+    ]
+    return StructuralBackbone(palace=palace, wing=wing, room=room, corridors=corridors)
+
+
 def build_structural_graph(
     *,
     palace_id: str,
@@ -246,36 +302,23 @@ def build_structural_graph(
     Returns:
         GraphPayload ready for :func:`validate_graph_payload`.
     """
-    nodes = [
-        GraphNode(node_id=palace_id, node_type=NodeType.PALACE, label=palace_label),
-        GraphNode(node_id=wing_id, node_type=NodeType.WING, label=wing_label),
-        GraphNode(node_id=room_id, node_type=NodeType.ROOM, label=room_label),
-        GraphNode(node_id=compartment_id, node_type=NodeType.COMPARTMENT, label=compartment_label),
-    ]
-    corridors = [
-        GraphCorridor(
-            source_id=palace_id,
-            target_id=wing_id,
-            semantic_type=STRUCTURAL_SEMANTIC_TYPE,
-            confidence=confidence,
-            provenance=provenance,
-            evidence=[],
-        ),
-        GraphCorridor(
-            source_id=wing_id,
-            target_id=room_id,
-            semantic_type=STRUCTURAL_SEMANTIC_TYPE,
-            confidence=confidence,
-            provenance=provenance,
-            evidence=[],
-        ),
-        GraphCorridor(
-            source_id=room_id,
-            target_id=compartment_id,
-            semantic_type=STRUCTURAL_SEMANTIC_TYPE,
-            confidence=confidence,
-            provenance=provenance,
-            evidence=[],
-        ),
-    ]
-    return GraphPayload(nodes=nodes, corridors=corridors)
+    backbone = build_structural_backbone(
+        palace_id=palace_id,
+        palace_label=palace_label,
+        wing_id=wing_id,
+        wing_label=wing_label,
+        room_id=room_id,
+        room_label=room_label,
+        provenance=provenance,
+        confidence=confidence,
+    )
+    compartment = GraphNode(
+        node_id=compartment_id, node_type=NodeType.COMPARTMENT, label=compartment_label
+    )
+    backbone.corridors.append(
+        _structural_corridor(room_id, compartment_id, provenance=provenance, confidence=confidence)
+    )
+    return GraphPayload(
+        nodes=[backbone.palace, backbone.wing, backbone.room, compartment],
+        corridors=backbone.corridors,
+    )

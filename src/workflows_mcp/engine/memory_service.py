@@ -58,6 +58,7 @@ from .memory_schema import (
     _validate_query_temporal_inputs,
     _validate_temporal_window,
 )
+from .memory_scope_resolver import TOPOLOGY_PLACEHOLDER_VALUES
 from .memory_scope_resolver import scope_key as _scope_key_fn
 from .sql import DatabaseBackend, SqlSession
 
@@ -432,7 +433,6 @@ def _derive_project_wrc_from_entity_metadata(
     metadata: dict[str, Any],
 ) -> tuple[str, str, str] | None:
     """Derive project wing/room/compartment from persisted path metadata."""
-    forbidden_exact = {"default-wing", "default-room", "default", "code"}
     forbidden_prefixes = ("graph-component-", "cluster-", "reasoning-unit-")
 
     def _normalize_path_label(raw: str) -> str | None:
@@ -440,7 +440,7 @@ def _derive_project_wrc_from_entity_metadata(
         if not candidate:
             return None
         lowered = candidate.casefold()
-        if lowered in forbidden_exact or any(
+        if lowered in TOPOLOGY_PLACEHOLDER_VALUES or any(
             lowered.startswith(prefix) for prefix in forbidden_prefixes
         ):
             candidate = f"path-{candidate}"

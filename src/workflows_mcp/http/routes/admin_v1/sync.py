@@ -9,6 +9,7 @@ from typing import Annotated, Any
 from fastapi import APIRouter, Depends, HTTPException, Path, Query, status
 from pydantic import BaseModel, ValidationError
 
+from workflows_mcp.engine.memory_scope_resolver import normalize_topology_label
 from workflows_mcp.engine.memory_service import MemoryContractError
 from workflows_mcp.http.dependencies import (
     CurrentAdminSession,
@@ -35,20 +36,6 @@ ProjectId = Annotated[str, Path(min_length=1, max_length=128)]
 def _normalized_optional(value: str | None) -> str | None:
     normalized = (value or "").strip()
     return normalized or None
-
-
-_TOPOLOGY_PLACEHOLDER_VALUES: frozenset[str] = frozenset(
-    {"default-wing", "default-room", "default", "code"}
-)
-
-
-def _normalized_topology_optional(value: str | None) -> str:
-    normalized = _normalized_optional(value)
-    if normalized is None:
-        return ""
-    if normalized.lower() in _TOPOLOGY_PLACEHOLDER_VALUES:
-        return ""
-    return normalized
 
 
 class SyncProjectSummary(BaseModel):
@@ -134,8 +121,8 @@ def _assert_project_exists(repo: SQLiteWatcherRepository, project_id: str) -> No
 def _scope_for_project(project: ProjectRecord) -> dict[str, str]:
     return {
         "palace": project.palace,
-        "wing": _normalized_topology_optional(project.default_wing),
-        "room": _normalized_topology_optional(project.default_room),
+        "wing": normalize_topology_label(project.default_wing),
+        "room": normalize_topology_label(project.default_room),
         "compartment": project.slug,
     }
 

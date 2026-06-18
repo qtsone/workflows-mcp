@@ -25,9 +25,7 @@ Phase 4 coverage:
 
 Phase 6 coverage:
 - compute_sync_delta: four-class deterministic classification
-- compute_weak_links: orphaned corridor detection
 - classify_deletion_policy: alias normalisation
-- recompute_depends_on_corridors: structural corridor injection
 """
 
 from __future__ import annotations
@@ -56,13 +54,7 @@ from workflows_mcp.engine.llm_config import (
     ProfileConfig,
     ProviderConfig,
 )
-from workflows_mcp.engine.memory_graph_builder import (
-    CorridorSemanticType,
-    GraphCorridor,
-    GraphNode,
-    GraphPayload,
-    NodeType,
-)
+from workflows_mcp.engine.memory_graph_builder import NodeType
 from workflows_mcp.engine.memory_onboard_sync_orchestrator import (
     LLMOnboardRequest,
     ProgrammaticOnboardRequest,
@@ -70,8 +62,6 @@ from workflows_mcp.engine.memory_onboard_sync_orchestrator import (
     build_llm_onboard_response,
     build_programmatic_onboard_response,
     classify_scan_files_for_programmatic_mode,
-    compute_weak_links,
-    recompute_depends_on_corridors,
     run_llm_onboard,
     run_programmatic_onboard,
 )
@@ -1862,81 +1852,6 @@ class TestComputeSyncDelta:
 
 
 # ===========================================================================
-# Phase 6 — compute_weak_links
-# ===========================================================================
-
-
-def _node(node_id: str) -> GraphNode:
-    return GraphNode(
-        node_id=node_id,
-        node_type=NodeType.COMPARTMENT,
-        label=node_id,
-        metadata={},
-    )
-
-
-def _corridor(source_id: str, target_id: str) -> GraphCorridor:
-    return GraphCorridor(
-        source_id=source_id,
-        target_id=target_id,
-        semantic_type=CorridorSemanticType.DEPENDS_ON,
-        confidence=1.0,
-        provenance="test",
-        evidence=[],
-    )
-
-
-class TestComputeWeakLinks:
-    def test_no_corridors_no_weak_links(self) -> None:
-        graph = GraphPayload(nodes=[_node("a"), _node("b")], corridors=[])
-        report = compute_weak_links(graph)
-        assert not report.has_weak_links
-        assert report.weak_link_count == 0
-
-    def test_valid_corridor_no_weak_links(self) -> None:
-        graph = GraphPayload(
-            nodes=[_node("a"), _node("b")],
-            corridors=[_corridor("a", "b")],
-        )
-        report = compute_weak_links(graph)
-        assert not report.has_weak_links
-
-    def test_orphaned_source_detected(self) -> None:
-        graph = GraphPayload(
-            nodes=[_node("b")],
-            corridors=[_corridor("missing", "b")],
-        )
-        report = compute_weak_links(graph)
-        assert report.has_weak_links
-        assert "missing" in report.orphaned_source_ids
-        assert report.weak_link_count == 1
-
-    def test_orphaned_target_detected(self) -> None:
-        graph = GraphPayload(
-            nodes=[_node("a")],
-            corridors=[_corridor("a", "missing_target")],
-        )
-        report = compute_weak_links(graph)
-        assert report.has_weak_links
-        assert "missing_target" in report.orphaned_target_ids
-
-    def test_total_corridors_count(self) -> None:
-        graph = GraphPayload(
-            nodes=[_node("a"), _node("b")],
-            corridors=[_corridor("a", "b"), _corridor("b", "a")],
-        )
-        report = compute_weak_links(graph)
-        assert report.total_corridors == 2
-
-    def test_to_debug_dict_structure(self) -> None:
-        graph = GraphPayload(nodes=[_node("a")], corridors=[_corridor("a", "ghost")])
-        d = compute_weak_links(graph).to_debug_dict()
-        assert "has_weak_links" in d
-        assert "weak_link_count" in d
-        assert "orphaned_target_ids" in d
-
-
-# ===========================================================================
 # Phase 6 — classify_deletion_policy
 # ===========================================================================
 
@@ -1960,94 +1875,6 @@ class TestClassifyDeletionPolicy:
     def test_unknown_raises_value_error(self) -> None:
         with pytest.raises(ValueError, match="Unknown deletion_policy"):
             classify_deletion_policy("delete_forever")
-
-
-# ===========================================================================
-# Phase 6 — recompute_depends_on_corridors
-# ===========================================================================
-
-
-def _path_node(node_id: str, path: str) -> GraphNode:
-    return GraphNode(
-        node_id=node_id,
-        node_type=NodeType.COMPARTMENT,
-        label=node_id,
-        metadata={"path": path},
-    )
-
-
-class TestRecomputeDependsOnCorridors:
-    def test_returns_same_graph_when_no_shared_prefix(self) -> None:
-        graph = GraphPayload(
-            nodes=[_path_node("a", "src/a.py"), _path_node("b", "tests/b.py")],
-            corridors=[],
-        )
-        result = recompute_depends_on_corridors(graph)
-        # Different prefixes: no new corridors
-        assert len(result.corridors) == 0
-
-    def test_injects_depends_on_for_shared_prefix(self) -> None:
-        graph = GraphPayload(
-            nodes=[_path_node("a", "src/a.py"), _path_node("b", "src/b.py")],
-            corridors=[],
-        )
-        result = recompute_depends_on_corridors(graph)
-        assert len(result.corridors) == 1
-        c = result.corridors[0]
-        assert c.semantic_type == CorridorSemanticType.DEPENDS_ON
-        assert c.provenance == "sync"
-
-    def test_does_not_duplicate_existing_corridor(self) -> None:
-        existing = _corridor("a", "b")
-        existing = GraphCorridor(
-            source_id="a",
-            target_id="b",
-            semantic_type=CorridorSemanticType.DEPENDS_ON,
-            confidence=1.0,
-            provenance="prior",
-            evidence=[],
-        )
-        graph = GraphPayload(
-            nodes=[_path_node("a", "src/a.py"), _path_node("b", "src/b.py")],
-            corridors=[existing],
-        )
-        result = recompute_depends_on_corridors(graph)
-        # Should not add a duplicate
-        assert len(result.corridors) == 1
-
-    def test_preserves_existing_corridors(self) -> None:
-        prior = GraphCorridor(
-            source_id="x",
-            target_id="y",
-            semantic_type=CorridorSemanticType.DEPENDS_ON,
-            confidence=0.9,
-            provenance="manual",
-            evidence=[],
-        )
-        graph = GraphPayload(
-            nodes=[_path_node("a", "lib/a.py"), _path_node("b", "lib/b.py")],
-            corridors=[prior],
-        )
-        result = recompute_depends_on_corridors(graph)
-        # prior corridor preserved (even though x/y not in node list)
-        assert any(c.provenance == "manual" for c in result.corridors)
-
-    def test_custom_provenance_tag(self) -> None:
-        graph = GraphPayload(
-            nodes=[_path_node("a", "pkg/a.py"), _path_node("b", "pkg/b.py")],
-            corridors=[],
-        )
-        result = recompute_depends_on_corridors(graph, provenance="resync")
-        assert all(c.provenance == "resync" for c in result.corridors if c.provenance != "manual")
-
-    def test_original_graph_not_mutated(self) -> None:
-        graph = GraphPayload(
-            nodes=[_path_node("a", "mod/a.py"), _path_node("b", "mod/b.py")],
-            corridors=[],
-        )
-        original_corridor_count = len(graph.corridors)
-        recompute_depends_on_corridors(graph)
-        assert len(graph.corridors) == original_corridor_count
 
 
 # ===========================================================================

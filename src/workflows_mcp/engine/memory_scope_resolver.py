@@ -26,7 +26,33 @@ from typing import Any, Literal
 # Scope normalisation
 # ---------------------------------------------------------------------------
 
+#: Containment hierarchy for the MemPalace scope, top to bottom.
 _SCOPE_FIELDS: tuple[str, str, str, str] = ("palace", "wing", "room", "compartment")
+
+#: Default-palace label used when a scope omits the top-level palace.
+DEFAULT_PALACE_LABEL: str = "default-palace"
+
+#: Placeholder labels that signal "no real lower-topology value was supplied".
+#: Project onboarding seeds these defaults; the graph builder and sync paths
+#: treat them as absent so they are never persisted as literal node labels.
+TOPOLOGY_PLACEHOLDER_VALUES: frozenset[str] = frozenset(
+    {"default-wing", "default-room", "default", "code"}
+)
+
+
+def normalize_topology_label(value: str | None) -> str:
+    """Collapse blank or placeholder topology labels to the empty string.
+
+    Returns the stripped label, or ``""`` when *value* is absent, blank, or a
+    known placeholder (case-insensitive). Used wherever a project's seeded
+    ``default-*`` topology values must not surface as real labels.
+    """
+    if value is None:
+        return ""
+    stripped = value.strip()
+    if not stripped or stripped.casefold() in TOPOLOGY_PLACEHOLDER_VALUES:
+        return ""
+    return stripped
 
 
 def _normalize_field(value: str | None) -> str | None:
