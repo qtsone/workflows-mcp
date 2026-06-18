@@ -35,49 +35,15 @@ from typing import Any
 
 from tree_sitter import Node
 
+from .base import BaseExtractor, make_relation, node_text
+
 logger = logging.getLogger(__name__)
 
 # Sentinel prefix for parent class hint in method metadata.
 _PARENT_CLASS_PREFIX = "__class_qname__:"
 
 
-def extract_rust(
-    root: Node,
-    file_qname: str,
-    module_qname: str,
-    file_entity: dict[str, Any],
-    module_entity: dict[str, Any],
-    contains_file_module: dict[str, Any],
-    stable_id_fn: Any,
-) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
-    """Extract Rust entities and relations from a parsed tree-sitter tree.
-
-    Args:
-        root: The root node of the parsed tree (node.type == "source_file").
-        file_qname: Qualified name of the File entity.
-        module_qname: Qualified name of the Module entity (repo-relative, dotted).
-        file_entity: Pre-built File entity dict from the executor.
-        module_entity: Pre-built Module entity dict from the executor.
-        contains_file_module: Pre-built CONTAINS File->Module relation.
-        stable_id_fn: Callable(qualified_name, entity_type) -> str.
-
-    Returns:
-        (entities, relations): Lists of entity/relation dicts in deterministic
-        order as defined in the module docstring.
-    """
-    extractor = _RustExtractor(
-        root=root,
-        file_qname=file_qname,
-        module_qname=module_qname,
-        file_entity=file_entity,
-        module_entity=module_entity,
-        contains_file_module=contains_file_module,
-        stable_id_fn=stable_id_fn,
-    )
-    return extractor.extract()
-
-
-class _RustExtractor:
+class RustExtractor(BaseExtractor):
     """Stateless per-invocation Rust extractor."""
 
     def __init__(
@@ -90,39 +56,22 @@ class _RustExtractor:
         contains_file_module: dict[str, Any],
         stable_id_fn: Any,
     ) -> None:
-        self._root = root
-        self._file_qname = file_qname
-        self._module_qname = module_qname
-        self._file_entity = file_entity
-        self._module_entity = module_entity
-        self._contains_file_module = contains_file_module
-        self._stable_id_fn = stable_id_fn
-
-        # Accumulated output — populated during extract()
-        self._class_entities: list[dict[str, Any]] = []
-        self._method_entities: list[dict[str, Any]] = []
-        self._function_entities: list[dict[str, Any]] = []
-
-        self._contains_relations: list[dict[str, Any]] = []
-        self._import_relations: list[dict[str, Any]] = []
-        self._inherits_relations: list[dict[str, Any]] = []
-        self._call_relations: list[dict[str, Any]] = []
-
-        # Known same-module symbols for CALLS resolution: simple_name -> qname
-        self._known_symbols: dict[str, str] = {}
-
+        super().__init__(
+            root=root,
+            file_qname=file_qname,
+            module_qname=module_qname,
+            file_entity=file_entity,
+            module_entity=module_entity,
+            contains_file_module=contains_file_module,
+            stable_id_fn=stable_id_fn,
+        )
         # Known trait qnames in this module (for INHERITS_FROM resolution)
         self._local_trait_qnames: set[str] = set()
 
         # Track seen import paths for deduplication
         self._seen_import_paths: set[str] = set()
 
-    # ------------------------------------------------------------------
-    # Public entry point
-    # ------------------------------------------------------------------
-
-    def extract(self) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
-        """Run extraction and return (entities, relations)."""
+    def _run_passes(self) -> None:
         # Pass 1: collect symbol names for resolution
         self._collect_known_symbols()
 
@@ -138,20 +87,13 @@ class _RustExtractor:
         # Pass 5: extract calls
         self._extract_calls()
 
-        entities = (
-            [self._file_entity, self._module_entity]
-            + self._class_entities
-            + self._method_entities
-            + self._function_entities
-        )
-        relations = (
-            [self._contains_file_module]
-            + self._contains_relations
-            + self._import_relations
-            + self._inherits_relations
-            + self._call_relations
-        )
-        return entities, relations
+    def _relation_buckets(self) -> list[list[dict[str, Any]]]:
+        return [
+            self._contains_relations,
+            self._import_relations,
+            self._inherits_relations,
+            self._call_relations,
+        ]
 
     # ------------------------------------------------------------------
     # Pass 1: symbol index
@@ -214,7 +156,7 @@ class _RustExtractor:
 
         # CONTAINS Module -> Class
         self._contains_relations.append(
-            _make_relation(
+            make_relation(
                 source_qname=self._module_qname,
                 source_entity_type="Module",
                 target_qname=class_qname,
@@ -248,7 +190,7 @@ class _RustExtractor:
 
         # CONTAINS Module -> Class (trait)
         self._contains_relations.append(
-            _make_relation(
+            make_relation(
                 source_qname=self._module_qname,
                 source_entity_type="Module",
                 target_qname=class_qname,
@@ -281,7 +223,7 @@ class _RustExtractor:
 
         # CONTAINS Module -> Function
         self._contains_relations.append(
-            _make_relation(
+            make_relation(
                 source_qname=self._module_qname,
                 source_entity_type="Module",
                 target_qname=func_qname,
@@ -322,7 +264,7 @@ class _RustExtractor:
                 after_for = True
                 continue
             if child.type == "type_identifier":
-                text = _node_text(child)
+                text = node_text(child)
                 if not text:
                     continue
                 if after_for:
@@ -346,7 +288,7 @@ class _RustExtractor:
             trait_dotted = None
             for child in node.children:
                 if child.type == "type_identifier":
-                    struct_name = _node_text(child)
+                    struct_name = node_text(child)
                     break
 
         if not struct_name:
@@ -386,7 +328,7 @@ class _RustExtractor:
                 }
 
             self._inherits_relations.append(
-                _make_relation(
+                make_relation(
                     source_qname=class_qname,
                     source_entity_type="Class",
                     target_qname=target_qname,
@@ -422,7 +364,7 @@ class _RustExtractor:
 
         # CONTAINS Class -> Method
         self._contains_relations.append(
-            _make_relation(
+            make_relation(
                 source_qname=class_qname,
                 source_entity_type="Class",
                 target_qname=method_qname,
@@ -459,7 +401,7 @@ class _RustExtractor:
                         # Emit import for each named item (skip 'self')
                         for item in sub.children:
                             if item.type == "identifier":
-                                name = _node_text(item)
+                                name = node_text(item)
                                 if name:
                                     self._emit_import(f"{prefix}.{name}")
                             elif item.type == "scoped_identifier":
@@ -468,7 +410,7 @@ class _RustExtractor:
                                     self._emit_import(f"{prefix}.{item_path}")
             elif child.type == "identifier":
                 # bare `use foo;`
-                name = _node_text(child)
+                name = node_text(child)
                 if name:
                     self._emit_import(name)
 
@@ -479,7 +421,7 @@ class _RustExtractor:
         self._seen_import_paths.add(path)
 
         self._import_relations.append(
-            _make_relation(
+            make_relation(
                 source_qname=self._module_qname,
                 source_entity_type="Module",
                 target_qname=path,
@@ -525,7 +467,7 @@ class _RustExtractor:
                 after_for = True
                 continue
             if child.type == "type_identifier":
-                text = _node_text(child)
+                text = node_text(child)
                 if not text:
                     continue
                 if after_for:
@@ -582,7 +524,7 @@ class _RustExtractor:
         call_site = call_node.start_point
 
         if func_node.type == "identifier":
-            callee_text = _node_text(func_node)
+            callee_text = node_text(func_node)
             if not callee_text:
                 return
             resolved = self._known_symbols.get(callee_text)
@@ -603,7 +545,7 @@ class _RustExtractor:
                 }
         elif func_node.type == "field_expression":
             # e.g. self.method(), bar.baz()
-            callee_text = _node_text(func_node) or ""
+            callee_text = node_text(func_node) or ""
             target_qname = callee_text
             confidence = 0.5
             meta = {
@@ -623,7 +565,7 @@ class _RustExtractor:
                 target_entity_type = "Class"
 
         self._call_relations.append(
-            _make_relation(
+            make_relation(
                 source_qname=scope_qname,
                 source_entity_type=scope_entity_type,
                 target_qname=target_qname,
@@ -640,16 +582,6 @@ class _RustExtractor:
 # ---------------------------------------------------------------------------
 
 
-def _node_text(node: Node) -> str | None:
-    """Return decoded text for a node."""
-    text = node.text
-    if text is None:
-        return None
-    if isinstance(text, bytes):
-        return text.decode("utf-8", errors="replace")
-    return str(text)
-
-
 def _item_name(node: Node) -> str | None:
     """Return the identifier or type_identifier name from a top-level item node.
 
@@ -657,9 +589,9 @@ def _item_name(node: Node) -> str | None:
     """
     for child in node.children:
         if child.type == "type_identifier":
-            return _node_text(child)
+            return node_text(child)
         if child.type == "identifier":
-            return _node_text(child)
+            return node_text(child)
     return None
 
 
@@ -674,7 +606,7 @@ def _scoped_identifier_to_dotted(node: Node) -> str | None:
 
     def _collect(n: Node) -> None:
         if n.type in ("identifier", "crate", "super"):
-            text = _node_text(n)
+            text = node_text(n)
             if text:
                 parts.append(text)
         elif n.type == "scoped_identifier":
@@ -702,7 +634,7 @@ def _scoped_type_identifier_to_dotted(node: Node) -> str | None:
 
     def _collect(n: Node) -> None:
         if n.type in ("identifier", "type_identifier", "crate", "super"):
-            text = _node_text(n)
+            text = node_text(n)
             if text:
                 parts.append(text)
         elif n.type in ("scoped_identifier", "scoped_type_identifier"):
@@ -714,25 +646,3 @@ def _scoped_type_identifier_to_dotted(node: Node) -> str | None:
     if not parts:
         return None
     return ".".join(parts)
-
-
-def _make_relation(
-    *,
-    source_qname: str,
-    source_entity_type: str,
-    target_qname: str,
-    target_entity_type: str,
-    relation_type: str,
-    confidence: float = 1.0,
-    metadata: dict[str, Any] | None = None,
-) -> dict[str, Any]:
-    """Build a relation dict with all required fields."""
-    return {
-        "source_qname": source_qname,
-        "source_entity_type": source_entity_type,
-        "target_qname": target_qname,
-        "target_entity_type": target_entity_type,
-        "relation_type": relation_type,
-        "confidence": confidence,
-        "metadata": metadata or {},
-    }

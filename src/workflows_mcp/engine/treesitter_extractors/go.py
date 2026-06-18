@@ -25,46 +25,12 @@ from typing import Any
 
 from tree_sitter import Node
 
+from .base import BaseExtractor, make_relation, node_text
+
 logger = logging.getLogger(__name__)
 
 # Sentinel prefix for parent class hint in method metadata.
 _PARENT_CLASS_PREFIX = "__class_qname__:"
-
-
-def extract_go(
-    root: Node,
-    file_qname: str,
-    module_qname: str,
-    file_entity: dict[str, Any],
-    module_entity: dict[str, Any],
-    contains_file_module: dict[str, Any],
-    stable_id_fn: Any,
-) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
-    """Extract Go entities and relations from a parsed tree-sitter tree.
-
-    Args:
-        root: The root node of the parsed tree (node.type == "source_file").
-        file_qname: Qualified name of the File entity.
-        module_qname: Qualified name of the Module entity (package name).
-        file_entity: Pre-built File entity dict from the executor.
-        module_entity: Pre-built Module entity dict from the executor.
-        contains_file_module: Pre-built CONTAINS File->Module relation.
-        stable_id_fn: Callable(qualified_name, entity_type) -> str.
-
-    Returns:
-        (entities, relations): Lists of entity/relation dicts in deterministic
-        order as defined in the module docstring.
-    """
-    extractor = _GoExtractor(
-        root=root,
-        file_qname=file_qname,
-        module_qname=module_qname,
-        file_entity=file_entity,
-        module_entity=module_entity,
-        contains_file_module=contains_file_module,
-        stable_id_fn=stable_id_fn,
-    )
-    return extractor.extract()
 
 
 def extract_package_name(root: Node) -> str | None:
@@ -73,11 +39,11 @@ def extract_package_name(root: Node) -> str | None:
         if child.type == "package_clause":
             for sub in child.children:
                 if sub.type == "package_identifier":
-                    return _node_text(sub)
+                    return node_text(sub)
     return None
 
 
-class _GoExtractor:
+class GoExtractor(BaseExtractor):
     """Stateless per-invocation Go extractor."""
 
     def __init__(
@@ -90,35 +56,19 @@ class _GoExtractor:
         contains_file_module: dict[str, Any],
         stable_id_fn: Any,
     ) -> None:
-        self._root = root
-        self._file_qname = file_qname
-        self._module_qname = module_qname
-        self._file_entity = file_entity
-        self._module_entity = module_entity
-        self._contains_file_module = contains_file_module
-        self._stable_id_fn = stable_id_fn
-
-        # Accumulated output — populated during extract()
-        self._class_entities: list[dict[str, Any]] = []
-        self._method_entities: list[dict[str, Any]] = []
-        self._function_entities: list[dict[str, Any]] = []
-
-        self._contains_relations: list[dict[str, Any]] = []
-        self._import_relations: list[dict[str, Any]] = []
-        self._call_relations: list[dict[str, Any]] = []
-
-        # Known same-package symbols for CALLS resolution: simple_name -> qname
-        self._known_symbols: dict[str, str] = {}
-
+        super().__init__(
+            root=root,
+            file_qname=file_qname,
+            module_qname=module_qname,
+            file_entity=file_entity,
+            module_entity=module_entity,
+            contains_file_module=contains_file_module,
+            stable_id_fn=stable_id_fn,
+        )
         # Track seen import paths for deduplication
         self._seen_import_paths: set[str] = set()
 
-    # ------------------------------------------------------------------
-    # Public entry point
-    # ------------------------------------------------------------------
-
-    def extract(self) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
-        """Run extraction and return (entities, relations)."""
+    def _run_passes(self) -> None:
         # Pass 1: collect symbol names for resolution
         self._collect_known_symbols()
 
@@ -131,19 +81,13 @@ class _GoExtractor:
         # Pass 4: extract calls
         self._extract_calls()
 
-        entities = (
-            [self._file_entity, self._module_entity]
-            + self._class_entities
-            + self._method_entities
-            + self._function_entities
-        )
-        relations = (
-            [self._contains_file_module]
-            + self._contains_relations
-            + self._import_relations
-            + self._call_relations
-        )
-        return entities, relations
+    def _relation_buckets(self) -> list[list[dict[str, Any]]]:
+        # Go has no class inheritance; INHERITS_FROM is never emitted.
+        return [
+            self._contains_relations,
+            self._import_relations,
+            self._call_relations,
+        ]
 
     # ------------------------------------------------------------------
     # Pass 1: symbol index
@@ -218,7 +162,7 @@ class _GoExtractor:
 
         # CONTAINS Module -> Class
         self._contains_relations.append(
-            _make_relation(
+            make_relation(
                 source_qname=self._module_qname,
                 source_entity_type="Module",
                 target_qname=class_qname,
@@ -256,7 +200,7 @@ class _GoExtractor:
 
         # CONTAINS Class -> Method
         self._contains_relations.append(
-            _make_relation(
+            make_relation(
                 source_qname=class_qname,
                 source_entity_type="Class",
                 target_qname=method_qname,
@@ -289,7 +233,7 @@ class _GoExtractor:
 
         # CONTAINS Module -> Function
         self._contains_relations.append(
-            _make_relation(
+            make_relation(
                 source_qname=self._module_qname,
                 source_entity_type="Module",
                 target_qname=func_qname,
@@ -331,7 +275,7 @@ class _GoExtractor:
         self._seen_import_paths.add(path)
 
         self._import_relations.append(
-            _make_relation(
+            make_relation(
                 source_qname=self._module_qname,
                 source_entity_type="Module",
                 target_qname=path,
@@ -391,7 +335,7 @@ class _GoExtractor:
         call_site = call_node.start_point
 
         if func_node.type == "identifier":
-            callee_text = _node_text(func_node)
+            callee_text = node_text(func_node)
             if not callee_text:
                 return
             resolved = self._known_symbols.get(callee_text)
@@ -412,7 +356,7 @@ class _GoExtractor:
                 }
         elif func_node.type == "selector_expression":
             # e.g. fmt.Println, g.Method
-            callee_text = _node_text(func_node) or ""
+            callee_text = node_text(func_node) or ""
             target_qname = callee_text
             confidence = 0.5
             meta = {
@@ -432,7 +376,7 @@ class _GoExtractor:
                 target_entity_type = "Class"
 
         self._call_relations.append(
-            _make_relation(
+            make_relation(
                 source_qname=scope_qname,
                 source_entity_type=scope_entity_type,
                 target_qname=target_qname,
@@ -449,21 +393,11 @@ class _GoExtractor:
 # ---------------------------------------------------------------------------
 
 
-def _node_text(node: Node) -> str | None:
-    """Return decoded text for a node."""
-    text = node.text
-    if text is None:
-        return None
-    if isinstance(text, bytes):
-        return text.decode("utf-8", errors="replace")
-    return str(text)
-
-
 def _type_spec_name(spec_node: Node) -> str | None:
     """Return the type_identifier name from a type_spec node."""
     for child in spec_node.children:
         if child.type == "type_identifier":
-            return _node_text(child)
+            return node_text(child)
     return None
 
 
@@ -471,7 +405,7 @@ def _function_decl_name(node: Node) -> str | None:
     """Return the identifier name from a function_declaration node."""
     for child in node.children:
         if child.type == "identifier":
-            return _node_text(child)
+            return node_text(child)
     return None
 
 
@@ -479,7 +413,7 @@ def _method_decl_name(node: Node) -> str | None:
     """Return the field_identifier (method name) from a method_declaration node."""
     for child in node.children:
         if child.type == "field_identifier":
-            return _node_text(child)
+            return node_text(child)
     return None
 
 
@@ -516,12 +450,12 @@ def _extract_type_name_from_param(param_node: Node) -> str | None:
     """
     for child in param_node.children:
         if child.type == "type_identifier":
-            return _node_text(child)
+            return node_text(child)
         elif child.type == "pointer_type":
             # pointer_type -> * type_identifier
             for sub in child.children:
                 if sub.type == "type_identifier":
-                    return _node_text(sub)
+                    return node_text(sub)
     return None
 
 
@@ -535,31 +469,9 @@ def _import_path_from_spec(spec_node: Node) -> str | None:
         if child.type == "interpreted_string_literal":
             for sub in child.children:
                 if sub.type == "interpreted_string_literal_content":
-                    return _node_text(sub)
+                    return node_text(sub)
             # Fallback: raw text without surrounding quotes
-            raw = _node_text(child)
+            raw = node_text(child)
             if raw:
                 return raw.strip('"')
     return None
-
-
-def _make_relation(
-    *,
-    source_qname: str,
-    source_entity_type: str,
-    target_qname: str,
-    target_entity_type: str,
-    relation_type: str,
-    confidence: float = 1.0,
-    metadata: dict[str, Any] | None = None,
-) -> dict[str, Any]:
-    """Build a relation dict with all required fields."""
-    return {
-        "source_qname": source_qname,
-        "source_entity_type": source_entity_type,
-        "target_qname": target_qname,
-        "target_entity_type": target_entity_type,
-        "relation_type": relation_type,
-        "confidence": confidence,
-        "metadata": metadata or {},
-    }

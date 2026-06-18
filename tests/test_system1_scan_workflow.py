@@ -1356,15 +1356,15 @@ async def test_treesitter_execute_raises_for_invalid_schema_payload(
     source = tmp_path / "broken.py"
     source.write_text("def run() -> None:\n    return None\n", encoding="utf-8")
 
-    def _invalid_extract_python(
+    def _invalid_extract_code(
         *args: object, **kwargs: object
     ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
         del args, kwargs
         return ([{"qualified_name": "mod.X"}], [])
 
     monkeypatch.setattr(
-        "workflows_mcp.engine.executors_treesitter.extract_python",
-        _invalid_extract_python,
+        "workflows_mcp.engine.executors_treesitter.extract_code",
+        _invalid_extract_code,
     )
 
     with pytest.raises(ValueError, match="SYSTEM1_EXTRACTION_SCHEMA_INVALID"):

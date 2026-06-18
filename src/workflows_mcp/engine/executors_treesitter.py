@@ -27,13 +27,10 @@ from .executor_base import (
     ExecutorSecurityLevel,
 )
 from .treesitter_extractors import (
+    extract_code,
     extract_document,
-    extract_go,
-    extract_javascript,
     extract_package_name,
-    extract_python,
-    extract_rust,
-    extract_typescript,
+    has_extractor,
 )
 from .treesitter_languages import (
     SupportedLanguage,
@@ -617,49 +614,11 @@ class TreeSitterExecutor(BlockExecutor):
             "metadata": {},
         }
 
-        # Delegate to language-specific extractor for additional entities/relations
-        if language == "go":
-            entities, relations = extract_go(
-                root=tree.root_node,
-                file_qname=file_qname,
-                module_qname=module_qname,
-                file_entity=file_entity,
-                module_entity=module_entity,
-                contains_file_module=contains_relation,
-                stable_id_fn=_sid,
-            )
-        elif language == "python":
-            entities, relations = extract_python(
-                root=tree.root_node,
-                file_qname=file_qname,
-                module_qname=module_qname,
-                file_entity=file_entity,
-                module_entity=module_entity,
-                contains_file_module=contains_relation,
-                stable_id_fn=_sid,
-            )
-        elif language in ("typescript", "tsx"):
-            entities, relations = extract_typescript(
-                root=tree.root_node,
-                file_qname=file_qname,
-                module_qname=module_qname,
-                file_entity=file_entity,
-                module_entity=module_entity,
-                contains_file_module=contains_relation,
-                stable_id_fn=_sid,
-            )
-        elif language == "javascript":
-            entities, relations = extract_javascript(
-                root=tree.root_node,
-                file_qname=file_qname,
-                module_qname=module_qname,
-                file_entity=file_entity,
-                module_entity=module_entity,
-                contains_file_module=contains_relation,
-                stable_id_fn=_sid,
-            )
-        elif language == "rust":
-            entities, relations = extract_rust(
+        # Delegate to the registered language extractor for additional
+        # entities/relations. Adding a language is a registry edit, not a change here.
+        if has_extractor(language):
+            entities, relations = extract_code(
+                language,
                 root=tree.root_node,
                 file_qname=file_qname,
                 module_qname=module_qname,

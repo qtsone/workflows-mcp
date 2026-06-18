@@ -45,86 +45,15 @@ from typing import Any
 
 from tree_sitter import Node
 
+from .base import BaseExtractor, make_relation, node_text
+
 logger = logging.getLogger(__name__)
 
 
-def extract_typescript(
-    root: Node,
-    file_qname: str,
-    module_qname: str,
-    file_entity: dict[str, Any],
-    module_entity: dict[str, Any],
-    contains_file_module: dict[str, Any],
-    stable_id_fn: Any,
-) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
-    """Extract TypeScript/TSX entities and relations from a parsed tree-sitter tree.
-
-    Args:
-        root: The root node of the parsed tree (node.type == "program").
-        file_qname: Qualified name of the File entity.
-        module_qname: Qualified name of the Module entity (dotted, no extension).
-        file_entity: Pre-built File entity dict from the executor.
-        module_entity: Pre-built Module entity dict from the executor.
-        contains_file_module: Pre-built CONTAINS File->Module relation.
-        stable_id_fn: Callable(qualified_name, entity_type) -> str.
-
-    Returns:
-        (entities, relations): Lists of entity/relation dicts in deterministic
-        order as defined in the module docstring.
-    """
-    extractor = _TypeScriptExtractor(
-        root=root,
-        file_qname=file_qname,
-        module_qname=module_qname,
-        file_entity=file_entity,
-        module_entity=module_entity,
-        contains_file_module=contains_file_module,
-        stable_id_fn=stable_id_fn,
-    )
-    return extractor.extract()
-
-
-class _TypeScriptExtractor:
+class TypeScriptExtractor(BaseExtractor):
     """Stateless per-invocation TypeScript/TSX extractor."""
 
-    def __init__(
-        self,
-        root: Node,
-        file_qname: str,
-        module_qname: str,
-        file_entity: dict[str, Any],
-        module_entity: dict[str, Any],
-        contains_file_module: dict[str, Any],
-        stable_id_fn: Any,
-    ) -> None:
-        self._root = root
-        self._file_qname = file_qname
-        self._module_qname = module_qname
-        self._file_entity = file_entity
-        self._module_entity = module_entity
-        self._contains_file_module = contains_file_module
-        self._stable_id_fn = stable_id_fn
-
-        # Accumulated output — populated during extract()
-        self._class_entities: list[dict[str, Any]] = []
-        self._method_entities: list[dict[str, Any]] = []
-        self._function_entities: list[dict[str, Any]] = []
-
-        self._contains_relations: list[dict[str, Any]] = []
-        self._inherits_relations: list[dict[str, Any]] = []
-        self._import_relations: list[dict[str, Any]] = []
-        self._call_relations: list[dict[str, Any]] = []
-
-        # Known same-module symbols for CALLS resolution.
-        # Populated in a first pass before CALLS extraction.
-        self._known_symbols: dict[str, str] = {}  # simple_name -> qname
-
-    # ------------------------------------------------------------------
-    # Public entry point
-    # ------------------------------------------------------------------
-
-    def extract(self) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
-        """Run extraction and return (entities, relations)."""
+    def _run_passes(self) -> None:
         # Pass 1: collect class/function names for symbol resolution
         self._collect_known_symbols()
 
@@ -137,20 +66,13 @@ class _TypeScriptExtractor:
         # Pass 4: extract calls (needs known symbols)
         self._extract_calls_from_program(self._root)
 
-        entities = (
-            [self._file_entity, self._module_entity]
-            + self._class_entities
-            + self._method_entities
-            + self._function_entities
-        )
-        relations = (
-            [self._contains_file_module]
-            + self._contains_relations
-            + self._inherits_relations
-            + self._import_relations
-            + self._call_relations
-        )
-        return entities, relations
+    def _relation_buckets(self) -> list[list[dict[str, Any]]]:
+        return [
+            self._contains_relations,
+            self._inherits_relations,
+            self._import_relations,
+            self._call_relations,
+        ]
 
     # ------------------------------------------------------------------
     # Pass 1: symbol index
@@ -217,7 +139,7 @@ class _TypeScriptExtractor:
 
         # CONTAINS Module -> Class
         self._contains_relations.append(
-            _make_relation(
+            make_relation(
                 source_qname=self._module_qname,
                 source_entity_type="Module",
                 target_qname=class_qname,
@@ -269,7 +191,7 @@ class _TypeScriptExtractor:
         # Could be identifier (simple name) or member_expression (e.g., React.Component)
         for base_node in extends_clause.named_children:
             if base_node.type in ("identifier", "member_expression", "type_identifier"):
-                base_text = _node_text(base_node)
+                base_text = node_text(base_node)
                 if not base_text:
                     continue
 
@@ -286,7 +208,7 @@ class _TypeScriptExtractor:
                     meta = {"resolution": "unresolved"}
 
                 self._inherits_relations.append(
-                    _make_relation(
+                    make_relation(
                         source_qname=class_qname,
                         source_entity_type="Class",
                         target_qname=target_qname,
@@ -323,7 +245,7 @@ class _TypeScriptExtractor:
 
         # CONTAINS Class -> Method
         self._contains_relations.append(
-            _make_relation(
+            make_relation(
                 source_qname=class_qname,
                 source_entity_type="Class",
                 target_qname=method_qname,
@@ -355,7 +277,7 @@ class _TypeScriptExtractor:
 
         # CONTAINS Module -> Function
         self._contains_relations.append(
-            _make_relation(
+            make_relation(
                 source_qname=self._module_qname,
                 source_entity_type="Module",
                 target_qname=func_qname,
@@ -400,7 +322,7 @@ class _TypeScriptExtractor:
 
     def _emit_import(self, target_module: str) -> None:
         self._import_relations.append(
-            _make_relation(
+            make_relation(
                 source_qname=self._module_qname,
                 source_entity_type="Module",
                 target_qname=target_module,
@@ -467,7 +389,7 @@ class _TypeScriptExtractor:
             return
 
         call_site = call_node.start_point
-        callee_text = _node_text(func_node)
+        callee_text = node_text(func_node)
         if not callee_text:
             return
 
@@ -507,7 +429,7 @@ class _TypeScriptExtractor:
                 target_entity_type = "Class"
 
         self._call_relations.append(
-            _make_relation(
+            make_relation(
                 source_qname=scope_qname,
                 source_entity_type=scope_entity_type,
                 target_qname=target_qname,
@@ -531,7 +453,7 @@ class _TypeScriptExtractor:
             return
 
         call_site = new_node.start_point
-        callee_text = _node_text(ctor_node)
+        callee_text = node_text(ctor_node)
         if not callee_text:
             return
 
@@ -580,7 +502,7 @@ class _TypeScriptExtractor:
             target_entity_type = "Class"
 
         self._call_relations.append(
-            _make_relation(
+            make_relation(
                 source_qname=scope_qname,
                 source_entity_type=scope_entity_type,
                 target_qname=target_qname,
@@ -601,7 +523,7 @@ def _type_identifier_name(node: Node) -> str | None:
     """Return the type_identifier name for a class_declaration node."""
     for child in node.named_children:
         if child.type == "type_identifier":
-            return _node_text(child)
+            return node_text(child)
     return None
 
 
@@ -609,7 +531,7 @@ def _identifier_name(node: Node) -> str | None:
     """Return the identifier name for a function_declaration node."""
     for child in node.named_children:
         if child.type == "identifier":
-            return _node_text(child)
+            return node_text(child)
     return None
 
 
@@ -617,7 +539,7 @@ def _property_identifier_name(node: Node) -> str | None:
     """Return the property_identifier name for a method_definition node."""
     for child in node.named_children:
         if child.type == "property_identifier":
-            return _node_text(child)
+            return node_text(child)
     return None
 
 
@@ -632,41 +554,9 @@ def _import_source(import_node: Node) -> str | None:
         if child.type == "string":
             for frag in child.named_children:
                 if frag.type == "string_fragment":
-                    return _node_text(frag)
+                    return node_text(frag)
             # Fallback: decode the whole string and strip quotes
-            raw = _node_text(child)
+            raw = node_text(child)
             if raw:
                 return raw.strip("'\"")
     return None
-
-
-def _node_text(node: Node) -> str | None:
-    """Return decoded text for a node."""
-    text = node.text
-    if text is None:
-        return None
-    if isinstance(text, bytes):
-        return text.decode("utf-8", errors="replace")
-    return str(text)
-
-
-def _make_relation(
-    *,
-    source_qname: str,
-    source_entity_type: str,
-    target_qname: str,
-    target_entity_type: str,
-    relation_type: str,
-    confidence: float = 1.0,
-    metadata: dict[str, Any] | None = None,
-) -> dict[str, Any]:
-    """Build a relation dict with all required fields."""
-    return {
-        "source_qname": source_qname,
-        "source_entity_type": source_entity_type,
-        "target_qname": target_qname,
-        "target_entity_type": target_entity_type,
-        "relation_type": relation_type,
-        "confidence": confidence,
-        "metadata": metadata or {},
-    }
