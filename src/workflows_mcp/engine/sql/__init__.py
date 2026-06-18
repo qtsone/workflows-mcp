@@ -53,6 +53,7 @@ from .backend import (
 from .model import ColumnDef, IndexDef, ModelSchema
 from .param_converter import ParamConverter, convert_sql_for_dialect
 from .query_builder import QueryBuilder
+from .session import SqlSession
 from .sqlite_backend import SqliteBackend
 
 # PostgreSQL backend (optional dependency)
@@ -77,6 +78,8 @@ __all__ = [
     # Parameter conversion
     "ParamConverter",
     "convert_sql_for_dialect",
+    # Session
+    "SqlSession",
     # Backends
     "SqliteBackend",
     "PostgresBackend",

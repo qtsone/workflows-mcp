@@ -35,7 +35,7 @@ async def test_query_graph_path_includes_evidence_when_path_exists() -> None:
     # Call 1: entity name resolution "a" → "a-id"
     # Call 2: entity name resolution "b" → "b-id"
     # Call 3: scope filter returns both node IDs so neither is dropped
-    service._backend.query = AsyncMock(
+    service._sql.query = AsyncMock(
         side_effect=[
             MagicMock(rows=[{"id": "a-id"}]),
             MagicMock(rows=[{"id": "b-id"}]),
@@ -110,7 +110,7 @@ async def test_query_graph_traverse_includes_evidence_when_neighbors_exist() -> 
     service = _make_service()
     # Call 1: entity name resolution "a" → "a-id"
     # Call 2: scope filter returns both node IDs so neither is dropped
-    service._backend.query = AsyncMock(
+    service._sql.query = AsyncMock(
         side_effect=[
             MagicMock(rows=[{"id": "a-id"}]),
             MagicMock(rows=[{"id": "a-id"}, {"id": "b-id"}]),
@@ -162,7 +162,7 @@ async def test_query_graph_traverse_includes_evidence_when_neighbors_exist() -> 
 @pytest.mark.asyncio
 async def test_query_graph_edges_include_system1_provenance_metadata() -> None:
     service = _make_service()
-    service._backend.query = AsyncMock(
+    service._sql.query = AsyncMock(
         side_effect=[
             MagicMock(rows=[{"id": "a-id"}]),
             MagicMock(rows=[{"id": "a-id"}, {"id": "b-id"}]),
@@ -216,7 +216,7 @@ async def test_query_graph_edges_include_system1_provenance_metadata() -> None:
 @pytest.mark.asyncio
 async def test_query_graph_stats_without_start_entity_does_not_error() -> None:
     service = _make_service()
-    service._backend.query = AsyncMock(
+    service._sql.query = AsyncMock(
         return_value=MagicMock(
             rows=[{"entity_count": 2, "relation_count": 1, "distinct_relation_types": 1}]
         )
@@ -243,7 +243,7 @@ async def test_query_graph_stats_without_start_entity_does_not_error() -> None:
 @pytest.mark.asyncio
 async def test_query_graph_neighbors_exposes_nodes_edges_paths_and_diagnostics() -> None:
     service = _make_service()
-    service._backend.query = AsyncMock(
+    service._sql.query = AsyncMock(
         side_effect=[
             MagicMock(rows=[{"id": "a-id"}]),
             MagicMock(rows=[{"id": "a-id"}, {"id": "b-id"}]),
@@ -380,7 +380,7 @@ async def test_query_graph_rejects_interval_temporal_filters() -> None:
 @pytest.mark.asyncio
 async def test_query_graph_applies_scope_for_start_entity_resolution() -> None:
     service = _make_service()
-    service._backend.query = AsyncMock(return_value=MagicMock(rows=[]))
+    service._sql.query = AsyncMock(return_value=MagicMock(rows=[]))
 
     result = await service._query_graph(
         QueryMemoryRequest(
@@ -403,7 +403,7 @@ async def test_query_graph_applies_scope_for_start_entity_resolution() -> None:
 @pytest.mark.asyncio
 async def test_query_graph_stats_uses_scoped_aggregate_when_scope_present() -> None:
     service = _make_service()
-    service._backend.query = AsyncMock(
+    service._sql.query = AsyncMock(
         return_value=MagicMock(
             rows=[{"entity_count": 4, "relation_count": 3, "distinct_relation_types": 2}]
         )
@@ -497,7 +497,7 @@ async def test_graph_store_relation_rejects_non_curated_without_evidence() -> No
 @pytest.mark.asyncio
 async def test_graph_store_relation_allows_curated_without_evidence() -> None:
     service = _make_service()
-    service._backend.query = AsyncMock(
+    service._sql.query = AsyncMock(
         side_effect=[
             MagicMock(rows=[{"id": "11111111-1111-1111-1111-111111111111"}]),
             MagicMock(rows=[{"id": "22222222-2222-2222-2222-222222222222"}]),
@@ -523,7 +523,7 @@ async def test_graph_store_relation_allows_curated_without_evidence() -> None:
 @pytest.mark.asyncio
 async def test_graph_store_relation_preserves_curated_true_on_update_when_request_false() -> None:
     service = _make_service()
-    service._backend.query = AsyncMock(
+    service._sql.query = AsyncMock(
         side_effect=[
             MagicMock(rows=[{"id": "11111111-1111-1111-1111-111111111111"}]),
             MagicMock(rows=[{"id": "22222222-2222-2222-2222-222222222222"}]),
@@ -543,7 +543,7 @@ async def test_graph_store_relation_preserves_curated_true_on_update_when_reques
     )
 
     assert result.success is True
-    update_sql, update_params = service._backend.query.await_args_list[3].args
+    update_sql, update_params = service._sql.query.await_args_list[3].args
     assert "WHEN curated AND NOT $5 THEN TRUE" in update_sql
     assert update_params[4] is False
 
@@ -572,7 +572,7 @@ async def test_graph_store_relation_accepts_corridor_with_only_legacy_single_evi
     None
 ):
     service = _make_service()
-    service._backend.query = AsyncMock(
+    service._sql.query = AsyncMock(
         side_effect=[
             MagicMock(rows=[{"id": "11111111-1111-1111-1111-111111111111"}]),
             MagicMock(rows=[{"id": "22222222-2222-2222-2222-222222222222"}]),
@@ -635,7 +635,7 @@ async def test_query_graph_hydrates_supporting_memories_for_evidence_links() -> 
     # Call 1: entity name resolution "a" → "a-id"
     # Call 2: scope filter returns both node IDs so neither is dropped
     # Call 3: memory hydration for evidence_memory_ids
-    service._backend.query = AsyncMock(
+    service._sql.query = AsyncMock(
         side_effect=[
             MagicMock(rows=[{"id": "a-id"}]),
             MagicMock(rows=[{"id": "a-id"}, {"id": "b-id"}]),

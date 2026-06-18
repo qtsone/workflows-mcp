@@ -59,6 +59,7 @@ from .memory_schema import (
     _validate_temporal_window,
 )
 from .memory_scope_resolver import scope_key as _scope_key_fn
+from .sql import DatabaseBackend, SqlSession
 
 logger = logging.getLogger(__name__)
 
@@ -571,6 +572,19 @@ def _build_merge_transparency(
 # ---------------------------------------------------------------------------
 
 
+class _TransactionAbortError(Exception):
+    """Roll back the active transaction and return a pre-built result.
+
+    Raised inside a ``SqlSession.transaction()`` block to undo partial writes
+    (the session rolls back on it) while carrying an early-exit result out to
+    the caller, which catches it just outside the block. Used for gate failures
+    that must not surface as an error to the caller.
+    """
+
+    def __init__(self, result: ManageMemoryResult) -> None:
+        self.result = result
+
+
 class MemoryService:
     """Shared orchestration layer for all memory operations.
 
@@ -583,8 +597,8 @@ class MemoryService:
         context: Execution context carrying user identity for audit.
     """
 
-    def __init__(self, backend: Any, context: Execution) -> None:
-        self._backend = backend
+    def __init__(self, backend: DatabaseBackend, context: Execution) -> None:
+        self._sql = SqlSession(backend)
         self._context = context
 
     async def execute(self, request: MemoryRequest) -> MemoryResult:
@@ -1067,7 +1081,7 @@ class MemoryService:
                 error="MEM_PALACE_REQUIRED: 'palace' is required for ensure_source",
             )
 
-        result = await self._backend.query(
+        result = await self._sql.query(
             """
             INSERT INTO knowledge_sources (id, palace, name, source_type, category_ids)
             VALUES ($1::uuid, $2, $3, $4, '{}'::uuid[])
@@ -1137,7 +1151,7 @@ class MemoryService:
             )
 
         item_title = os.path.basename(request.path) or request.path
-        result = await self._backend.query(
+        result = await self._sql.query(
             """
             INSERT INTO knowledge_items
                 (id, palace, source_id, path, title,
@@ -1211,8 +1225,7 @@ class MemoryService:
             )
 
         entity_ids: list[str] = []
-        await self._backend.begin_transaction()
-        try:
+        async with self._sql.transaction():
             for entity in request.raw_entities:
                 entity_type = entity["entity_type"]
                 name = entity["name"]
@@ -1226,7 +1239,7 @@ class MemoryService:
                 qualified_name = entity.get("qualified_name")
                 parent_class_id = entity.get("parent_class_id")
 
-                row = await self._backend.query(
+                row = await self._sql.query(
                     """
                     INSERT INTO knowledge_entities
                         (id, palace, namespace, room, corridor,
@@ -1271,10 +1284,6 @@ class MemoryService:
                 )
                 if row.rows:
                     entity_ids.append(str(row.rows[0]["id"]))
-            await self._backend.commit()
-        except Exception:
-            await self._backend.rollback()
-            raise
 
         return ManageMemoryResult(
             operation="store_entities",
@@ -1300,8 +1309,7 @@ class MemoryService:
             )
 
         relation_ids: list[str | None] = []
-        await self._backend.begin_transaction()
-        try:
+        async with self._sql.transaction():
             for relation in request.raw_relations:
                 src_id = relation["source_entity_id"]
                 tgt_id = relation["target_entity_id"]
@@ -1311,7 +1319,7 @@ class MemoryService:
                 # v14: per-edge metadata (e.g. {"resolution": "unresolved"} for CALLS).
                 relation_metadata = relation.get("metadata") or {}
 
-                check = await self._backend.query(
+                check = await self._sql.query(
                     "SELECT id, palace FROM knowledge_entities WHERE id IN ($1::uuid, $2::uuid)",
                     (src_id, tgt_id),
                 )
@@ -1330,7 +1338,7 @@ class MemoryService:
                         retryable=False,
                     )
 
-                row = await self._backend.query(
+                row = await self._sql.query(
                     """
                     INSERT INTO knowledge_relations
                         (id, source_entity_id, target_entity_id, relation_type,
@@ -1351,10 +1359,6 @@ class MemoryService:
                 )
                 if row.rows:
                     relation_ids.append(str(row.rows[0]["id"]))
-            await self._backend.commit()
-        except Exception:
-            await self._backend.rollback()
-            raise
 
         return ManageMemoryResult(
             operation="store_relations",
@@ -1390,8 +1394,7 @@ class MemoryService:
         user_string = _get_user_string_id(self._context)
 
         memory_ids: list[str] = []
-        await self._backend.begin_transaction()
-        try:
+        async with self._sql.transaction():
             for memory in request.raw_memories:
                 content = memory["content"]
                 metadata = memory.get("metadata") or {}
@@ -1423,7 +1426,7 @@ class MemoryService:
                         retryable=True,
                     ) from embed_exc
 
-                await self._backend.execute(
+                await self._sql.execute(
                     """
                     INSERT INTO knowledge_memories
                         (id, content, embedding, search_vector,
@@ -1468,7 +1471,7 @@ class MemoryService:
                 )
 
                 if anchor_entity_id is not None:
-                    anchor_check = await self._backend.query(
+                    anchor_check = await self._sql.query(
                         "SELECT palace FROM knowledge_entities WHERE id = $1::uuid",
                         (anchor_entity_id,),
                     )
@@ -1481,7 +1484,7 @@ class MemoryService:
                             ),
                             retryable=False,
                         )
-                    await self._backend.execute(
+                    await self._sql.execute(
                         """
                         INSERT INTO knowledge_entity_memories
                             (memory_id, entity_id, confidence,
@@ -1512,10 +1515,6 @@ class MemoryService:
                             anchor_kind,
                         ),
                     )
-            await self._backend.commit()
-        except Exception:
-            await self._backend.rollback()
-            raise
 
         return ManageMemoryResult(
             operation="store_memories",
@@ -1577,8 +1576,7 @@ class MemoryService:
         external_entities_created: list[dict[str, Any]] = []
         unresolved_or_ambiguous: list[dict[str, Any]] = []
 
-        await self._backend.begin_transaction()
-        try:
+        async with self._sql.transaction():
             # Track EXTERNAL entities created during this call to avoid double-reporting.
             external_created_this_call: set[str] = set()
 
@@ -1668,7 +1666,7 @@ class MemoryService:
                         ext_stable_id = hashlib.sha256(
                             f"{palace}:__external__:{target_qname}:Module".encode()
                         ).hexdigest()
-                        ext_row = await self._backend.query(
+                        ext_row = await self._sql.query(
                             """
                             INSERT INTO knowledge_entities
                                 (id, palace, namespace, room, corridor,
@@ -1712,7 +1710,7 @@ class MemoryService:
                 assert tgt_id is not None
 
                 # --- Palace isolation check (same as _manage_store_relations) ---
-                check = await self._backend.query(
+                check = await self._sql.query(
                     "SELECT id, palace FROM knowledge_entities WHERE id IN ($1::uuid, $2::uuid)",
                     (src_id, tgt_id),
                 )
@@ -1732,7 +1730,7 @@ class MemoryService:
                     )
 
                 # --- Idempotency check: SELECT-before-INSERT with metadata containment ---
-                existing = await self._backend.query(
+                existing = await self._sql.query(
                     """
                     SELECT id FROM knowledge_relations
                     WHERE source_entity_id = $1::uuid
@@ -1750,7 +1748,7 @@ class MemoryService:
 
                 # --- Insert new relation ---
                 new_rel_id = str(uuid.uuid4())
-                await self._backend.query(
+                await self._sql.query(
                     """
                     INSERT INTO knowledge_relations
                         (id, source_entity_id, target_entity_id, relation_type,
@@ -1771,11 +1769,6 @@ class MemoryService:
                 )
                 relation_ids.append(new_rel_id)
                 created_count += 1
-
-            await self._backend.commit()
-        except Exception:
-            await self._backend.rollback()
-            raise
 
         return ManageMemoryResult(
             operation="store_relations_by_qname",
@@ -1802,14 +1795,14 @@ class MemoryService:
             dict with "candidates": list[str] — multiple matches (ambiguous).
         """
         if source_item_id is not None:
-            rows = await self._backend.query(
+            rows = await self._sql.query(
                 "SELECT id FROM knowledge_entities "
                 "WHERE palace = $1 AND source = 'STRUCTURAL' "
                 "AND entity_type = $2 AND qualified_name = $3 AND source_item_id = $4::uuid",
                 (palace, entity_type, qualified_name, source_item_id),
             )
         else:
-            rows = await self._backend.query(
+            rows = await self._sql.query(
                 "SELECT id FROM knowledge_entities "
                 "WHERE palace = $1 AND source = 'STRUCTURAL' "
                 "AND entity_type = $2 AND qualified_name = $3",
@@ -1841,8 +1834,7 @@ class MemoryService:
                 error="MEM_PALACE_REQUIRED: 'palace' is required",
             )
 
-        await self._backend.begin_transaction()
-        try:
+        async with self._sql.transaction():
             for emb in request.entity_embeddings:
                 if emb.dimension != len(emb.embedding):
                     raise MemoryContractError(
@@ -1852,7 +1844,7 @@ class MemoryService:
                         ),
                         retryable=False,
                     )
-                check = await self._backend.query(
+                check = await self._sql.query(
                     "SELECT 1 FROM knowledge_entities WHERE id = $1::uuid AND palace = $2",
                     (emb.entity_id, palace),
                 )
@@ -1865,7 +1857,7 @@ class MemoryService:
                         ),
                         retryable=False,
                     )
-                await self._backend.execute(
+                await self._sql.execute(
                     """
                     INSERT INTO knowledge_entity_embeddings
                         (entity_id, profile, model, dimension, embedding)
@@ -1884,10 +1876,6 @@ class MemoryService:
                         str(emb.embedding),
                     ),
                 )
-            await self._backend.commit()
-        except Exception:
-            await self._backend.rollback()
-            raise
 
         return ManageMemoryResult(
             operation="store_entity_embeddings",
@@ -1908,7 +1896,7 @@ class MemoryService:
         clauses: list[str] = ["palace = $1", "lifecycle_state <> 'ARCHIVED'"]
         params: list[Any] = [palace]
         if request.item_id:
-            item_check = await self._backend.query(
+            item_check = await self._sql.query(
                 "SELECT palace FROM knowledge_items WHERE id = $1::uuid",
                 (request.item_id,),
             )
@@ -1934,7 +1922,7 @@ class MemoryService:
             )
 
         metadata_param = len(params) + 1
-        result = await self._backend.query(
+        result = await self._sql.query(
             f"""
             UPDATE knowledge_memories
                SET lifecycle_state = 'ARCHIVED',
@@ -1969,7 +1957,7 @@ class MemoryService:
                 error="MEM_PALACE_REQUIRED: 'palace' is required",
             )
 
-        result = await self._backend.query(
+        result = await self._sql.query(
             """
             UPDATE knowledge_items
                SET lifecycle_state = 'DIRTY',
@@ -2232,8 +2220,7 @@ class MemoryService:
             entity_degree: Counter[str] = Counter()
             entity_ids: list[str] = []
             stored_evidence_ids: list[str] = []
-            await self._backend.begin_transaction()
-            try:
+            async with self._sql.transaction():
                 for entity in graph.entities:
                     entity_type = str(entity.get("entity_type") or "").strip() or "unknown"
                     name = str(entity.get("name") or "").strip() or "unknown"
@@ -2283,7 +2270,7 @@ class MemoryService:
                         fallback_name=name,
                     )
 
-                    stable_match = await self._backend.query(
+                    stable_match = await self._sql.query(
                         """
                         UPDATE knowledge_entities
                            SET namespace = $3,
@@ -2319,7 +2306,7 @@ class MemoryService:
                     if stable_match.rows:
                         row = stable_match
                     else:
-                        row = await self._backend.query(
+                        row = await self._sql.query(
                             """
                             INSERT INTO knowledge_entities
                                 (id, palace, namespace, room, corridor,
@@ -2514,7 +2501,7 @@ class MemoryService:
                     normalized_metadata["target_qname"] = target_qname
                     normalized_metadata["resolution"] = "exact"
 
-                    existing_relation = await self._backend.query(
+                    existing_relation = await self._sql.query(
                         """
                         SELECT id
                         FROM knowledge_relations
@@ -2531,7 +2518,7 @@ class MemoryService:
                     )
                     if existing_relation.rows:
                         existing_id = str(existing_relation.rows[0]["id"])
-                        await self._backend.execute(
+                        await self._sql.execute(
                             """
                             UPDATE knowledge_relations
                                SET confidence = $2,
@@ -2546,7 +2533,7 @@ class MemoryService:
                         entity_degree[target_qname] += 1
                         continue
 
-                    relation_row = await self._backend.query(
+                    relation_row = await self._sql.query(
                         """
                         INSERT INTO knowledge_relations
                             (id, source_entity_id, target_entity_id, relation_type,
@@ -2572,7 +2559,7 @@ class MemoryService:
                     entity_degree[target_qname] += 1
 
                 for item in graph.structural_evidence:
-                    row = await self._backend.query(
+                    row = await self._sql.query(
                         """
                         INSERT INTO knowledge_structural_evidence
                             (id, palace, wing, room, compartment,
@@ -2606,11 +2593,6 @@ class MemoryService:
                     )
                     if row.rows:
                         stored_evidence_ids.append(str(row.rows[0]["id"]))
-
-                await self._backend.commit()
-            except Exception:
-                await self._backend.rollback()
-                raise
 
             relations_by_type = dict(sorted(relation_type_counter.items()))
             isolate_identifiers = sorted(
@@ -2673,10 +2655,9 @@ class MemoryService:
                 )
             evidence_items = record.structural_evidence
             stored_ids: list[str] = []
-            await self._backend.begin_transaction()
-            try:
+            async with self._sql.transaction():
                 for item in evidence_items:
-                    row = await self._backend.query(
+                    row = await self._sql.query(
                         """
                         INSERT INTO knowledge_structural_evidence
                             (id, palace, wing, room, compartment,
@@ -2709,10 +2690,6 @@ class MemoryService:
                         ),
                     )
                     stored_ids.append(str(row.rows[0]["id"]))
-                await self._backend.commit()
-            except Exception:
-                await self._backend.rollback()
-                raise
             return ManageMemoryResult(
                 operation=op,
                 success=True,
@@ -2752,7 +2729,7 @@ class MemoryService:
             palace = resolved_scope.palace or ""
 
             cycle_uuid = uuid.uuid4()
-            await self._backend.execute(
+            await self._sql.execute(
                 """
                 INSERT INTO knowledge_verification_cycles
                     (id, palace, scope_key,
@@ -2805,7 +2782,7 @@ class MemoryService:
                 accountability_status_applied: str | None = None
             else:
                 # Successful cycle: derive supported/unsupported from live evidence links.
-                accountability_update_result = await self._backend.query(
+                accountability_update_result = await self._sql.query(
                     """
                     UPDATE knowledge_semantic_overrides AS o
                        SET accountability_status = CASE
@@ -2955,105 +2932,108 @@ class MemoryService:
             # in the same request.  This prevents partial state mutations when
             # a combined degrade + force-archive call is rejected mid-way.
             try:
-                await self._backend.begin_transaction()
-
-                # ------------------------------------------------------------------
-                # Phase 1: active_evidenced -> degraded transitions.
-                # ------------------------------------------------------------------
-                if reconciliation.degrade_claim_ids:
-                    degrade_placeholders = ", ".join(
-                        f"${i + 1}::uuid" for i in range(len(reconciliation.degrade_claim_ids))
-                    )
-                    degrade_result = await self._backend.query(
-                        f"""
-                        UPDATE knowledge_semantic_claims
-                           SET lifecycle_state = 'degraded', updated_at = NOW()
-                         WHERE id IN ({degrade_placeholders})
-                           AND lifecycle_state = 'active_evidenced'
-                        RETURNING id
-                        """,
-                        tuple(reconciliation.degrade_claim_ids),
-                    )
-                    reconciled_count += len(degrade_result.rows)
-
-                # ------------------------------------------------------------------
-                # Phase 2: degraded -> archived transitions (archive gate enforced).
-                # ------------------------------------------------------------------
-                if reconciliation.force_archive_claim_ids:
-                    cycle_ids = reconciliation.absent_verification_cycle_ids
-
-                    # Gate: require >= 2 successful absent cycles covering the same
-                    # scope_key (exact normalized identity, not prefix/contains).
-                    if cycle_ids:
-                        placeholders = ", ".join(f"${i + 1}::uuid" for i in range(len(cycle_ids)))
-                        count_result = await self._backend.query(
-                            f"SELECT COUNT(*)::int AS n FROM knowledge_verification_cycles"
-                            f" WHERE id IN ({placeholders})"
-                            f"   AND success = TRUE"
-                            f"   AND scope_key = ${len(cycle_ids) + 1}",
-                            tuple(cycle_ids) + (scope_key,),
+                async with self._sql.transaction():
+                    # ------------------------------------------------------------------
+                    # Phase 1: active_evidenced -> degraded transitions.
+                    # ------------------------------------------------------------------
+                    if reconciliation.degrade_claim_ids:
+                        degrade_placeholders = ", ".join(
+                            f"${i + 1}::uuid" for i in range(len(reconciliation.degrade_claim_ids))
                         )
-                        successful_absent = count_result.rows[0]["n"] if count_result.rows else 0
-                    else:
-                        successful_absent = 0
-
-                    if successful_absent < 2:
-                        await self._backend.rollback()
-                        return ManageMemoryResult(
-                            operation=op,
-                            success=False,
-                            error=(
-                                "MEM_ARCHIVE_GATE_NOT_MET: force_archive_claim_ids requires"
-                                " at least two successful absent_verification_cycle_ids"
-                                " covering the target scope_key"
-                            ),
+                        degrade_result = await self._sql.query(
+                            f"""
+                            UPDATE knowledge_semantic_claims
+                               SET lifecycle_state = 'degraded', updated_at = NOW()
+                             WHERE id IN ({degrade_placeholders})
+                               AND lifecycle_state = 'active_evidenced'
+                            RETURNING id
+                            """,
+                            tuple(reconciliation.degrade_claim_ids),
                         )
+                        reconciled_count += len(degrade_result.rows)
 
-                    # Gate passed: archive only claims currently in 'degraded' state.
-                    # Direct active_evidenced -> archived is rejected by the WHERE clause.
-                    # absent_cycle_count records the proven cycle count.
-                    # archived_at satisfies the ck_ksc_archive_requires_two_cycles constraint.
-                    # RETURNING gives an exact count of rows actually transitioned.
-                    archive_placeholders = ", ".join(
-                        f"${i + 1}::uuid"
-                        for i in range(len(reconciliation.force_archive_claim_ids))
-                    )
-                    n = len(reconciliation.force_archive_claim_ids)
-                    archive_result = await self._backend.query(
-                        f"""
-                        UPDATE knowledge_semantic_claims
-                           SET lifecycle_state = 'archived',
-                               absent_cycle_count = ${n + 1},
-                               archived_at = NOW(),
-                               updated_at = NOW()
-                         WHERE id IN ({archive_placeholders})
-                           AND lifecycle_state = 'degraded'
-                        RETURNING id
-                        """,
-                        tuple(reconciliation.force_archive_claim_ids) + (successful_absent,),
-                    )
-                    archived_count = len(archive_result.rows)
+                    # ------------------------------------------------------------------
+                    # Phase 2: degraded -> archived transitions (archive gate enforced).
+                    # ------------------------------------------------------------------
+                    if reconciliation.force_archive_claim_ids:
+                        cycle_ids = reconciliation.absent_verification_cycle_ids
 
-                    # If none were updated, the supplied claims are not in 'degraded'
-                    # state — roll back Phase 1 degradations and reject.
-                    if archived_count == 0:
-                        await self._backend.rollback()
-                        return ManageMemoryResult(
-                            operation=op,
-                            success=False,
-                            error=(
-                                "MEM_ARCHIVE_GATE_NOT_MET: none of the supplied"
-                                " force_archive_claim_ids are in 'degraded' state;"
-                                " claims must be degraded before archival"
-                            ),
+                        # Gate: require >= 2 successful absent cycles covering the same
+                        # scope_key (exact normalized identity, not prefix/contains).
+                        if cycle_ids:
+                            placeholders = ", ".join(
+                                f"${i + 1}::uuid" for i in range(len(cycle_ids))
+                            )
+                            count_result = await self._sql.query(
+                                f"SELECT COUNT(*)::int AS n FROM knowledge_verification_cycles"
+                                f" WHERE id IN ({placeholders})"
+                                f"   AND success = TRUE"
+                                f"   AND scope_key = ${len(cycle_ids) + 1}",
+                                tuple(cycle_ids) + (scope_key,),
+                            )
+                            successful_absent = (
+                                count_result.rows[0]["n"] if count_result.rows else 0
+                            )
+                        else:
+                            successful_absent = 0
+
+                        if successful_absent < 2:
+                            raise _TransactionAbortError(
+                                ManageMemoryResult(
+                                    operation=op,
+                                    success=False,
+                                    error=(
+                                        "MEM_ARCHIVE_GATE_NOT_MET: force_archive_claim_ids"
+                                        " requires at least two successful"
+                                        " absent_verification_cycle_ids covering the target"
+                                        " scope_key"
+                                    ),
+                                )
+                            )
+
+                        # Gate passed: archive only claims currently in 'degraded' state.
+                        # Direct active_evidenced -> archived is rejected by the WHERE clause.
+                        # absent_cycle_count records the proven cycle count.
+                        # archived_at satisfies ck_ksc_archive_requires_two_cycles.
+                        # RETURNING gives an exact count of rows actually transitioned.
+                        archive_placeholders = ", ".join(
+                            f"${i + 1}::uuid"
+                            for i in range(len(reconciliation.force_archive_claim_ids))
                         )
+                        n = len(reconciliation.force_archive_claim_ids)
+                        archive_result = await self._sql.query(
+                            f"""
+                            UPDATE knowledge_semantic_claims
+                               SET lifecycle_state = 'archived',
+                                   absent_cycle_count = ${n + 1},
+                                   archived_at = NOW(),
+                                   updated_at = NOW()
+                             WHERE id IN ({archive_placeholders})
+                               AND lifecycle_state = 'degraded'
+                            RETURNING id
+                            """,
+                            tuple(reconciliation.force_archive_claim_ids) + (successful_absent,),
+                        )
+                        archived_count = len(archive_result.rows)
 
-                    reconciled_count += archived_count
+                        # If none were updated, the supplied claims are not in 'degraded'
+                        # state — roll back Phase 1 degradations and reject.
+                        if archived_count == 0:
+                            raise _TransactionAbortError(
+                                ManageMemoryResult(
+                                    operation=op,
+                                    success=False,
+                                    error=(
+                                        "MEM_ARCHIVE_GATE_NOT_MET: none of the supplied"
+                                        " force_archive_claim_ids are in 'degraded' state;"
+                                        " claims must be degraded before archival"
+                                    ),
+                                )
+                            )
 
-                await self._backend.commit()
-            except Exception:
-                await self._backend.rollback()
-                raise
+                        reconciled_count += archived_count
+            except _TransactionAbortError as abort:
+                return abort.result
 
             return ManageMemoryResult(
                 operation=op,
@@ -3077,7 +3057,7 @@ class MemoryService:
                 ),
             )
 
-        orphan_empty_cleanup = await self._backend.query(
+        orphan_empty_cleanup = await self._sql.query(
             """
             WITH orphan_rows AS (
                 SELECT kse.id
@@ -3112,7 +3092,7 @@ class MemoryService:
         )
         orphan_empty_evidence_pruned = int(orphan_empty_cleanup.rows[0]["pruned_count"])
 
-        legacy_default_cleanup = await self._backend.query(
+        legacy_default_cleanup = await self._sql.query(
             """
             WITH legacy_candidates AS (
                 SELECT kse.id
@@ -3171,7 +3151,7 @@ class MemoryService:
         )
         legacy_default_links_pruned = int(legacy_default_cleanup.rows[0]["link_pruned_count"])
 
-        entity_rows_result = await self._backend.query(
+        entity_rows_result = await self._sql.query(
             """
             SELECT id, stable_id, entity_type, metadata
               FROM knowledge_entities
@@ -3221,7 +3201,7 @@ class MemoryService:
                 normalized_entity_type,
                 "structural_module",
             )
-            await self._backend.execute(
+            await self._sql.execute(
                 """
                 INSERT INTO knowledge_structural_evidence
                     (id, palace, wing, room, compartment,
@@ -3257,7 +3237,7 @@ class MemoryService:
             if stable_id in stable_id_to_entity_id
         ]
         structural_relation_types = ("CONTAINS", "INHERITS_FROM", "IMPORTS", "CALLS")
-        relation_rows_result = await self._backend.query(
+        relation_rows_result = await self._sql.query(
             """
             SELECT source_entity_id, target_entity_id
               FROM knowledge_relations
@@ -3288,7 +3268,7 @@ class MemoryService:
                 continue
 
             wing, room, compartment = derived_topology
-            guard_result = await self._backend.query(
+            guard_result = await self._sql.query(
                 """
                 SELECT 1
                   FROM knowledge_structural_evidence kse
@@ -3317,7 +3297,7 @@ class MemoryService:
                 guard_blocked_entities += 1
                 continue
 
-            coalesce_result = await self._backend.query(
+            coalesce_result = await self._sql.query(
                 """
                 WITH candidates AS (
                     SELECT kse.id,
@@ -3362,7 +3342,7 @@ class MemoryService:
             )
             coalesced_evidence_rows += int(coalesce_result.rows[0]["coalesced_count"])
 
-            update_result = await self._backend.query(
+            update_result = await self._sql.query(
                 """
                 UPDATE knowledge_structural_evidence
                    SET wing = $1,
@@ -3460,7 +3440,7 @@ class MemoryService:
 
         # Build a parameterized query using UUID-typed placeholders (index-friendly).
         placeholders = ", ".join(f"${i + 1}::uuid" for i in range(len(evidence_ids)))
-        rows_result = await self._backend.query(
+        rows_result = await self._sql.query(
             f"""
             SELECT id, evidence_category
               FROM knowledge_structural_evidence
@@ -3537,7 +3517,7 @@ class MemoryService:
             if derivation.parser_metadata:
                 evidence_data["parser_metadata"] = derivation.parser_metadata
 
-            result = await self._backend.query(
+            result = await self._sql.query(
                 """
                 INSERT INTO knowledge_structural_evidence
                     (id, palace, entity_stable_id, entity_type,
@@ -3598,187 +3578,180 @@ class MemoryService:
         provenance_uuid = str(uuid.uuid4())
 
         try:
-            await self._backend.begin_transaction()
+            async with self._sql.transaction():
+                # Task 5b: if inline candidates are provided, persist them atomically first
+                # and merge their IDs into evidence_ids for the heuristic below.
+                if derivation.inline_candidates:
+                    inline_ids = await self._store_inline_candidates_in_txn(derivation)
+                    evidence_ids = evidence_ids + inline_ids
 
-            # Task 5b: if inline candidates are provided, persist them atomically first
-            # and merge their IDs into evidence_ids for the heuristic below.
-            if derivation.inline_candidates:
-                inline_ids = await self._store_inline_candidates_in_txn(derivation)
-                evidence_ids = evidence_ids + inline_ids
+                # Load evidence rows for the combined IDs within this palace.
+                if not evidence_ids:
+                    _raise_contract_error(
+                        code="MEM_INSUFFICIENT_EVIDENCE",
+                        message=(
+                            "No evidence sources provided (evidence_ids and inline_candidates "
+                            f"are both empty) for palace {palace!r}. Cannot determine topology."
+                        ),
+                    )
 
-            # Load evidence rows for the combined IDs within this palace.
-            if not evidence_ids:
-                await self._backend.rollback()
-                _raise_contract_error(
-                    code="MEM_INSUFFICIENT_EVIDENCE",
-                    message=(
-                        "No evidence sources provided (evidence_ids and inline_candidates "
-                        f"are both empty) for palace {palace!r}. Cannot determine topology."
-                    ),
+                placeholders = ", ".join(f"${i + 2}::uuid" for i in range(len(evidence_ids)))
+                ev_rows_result = await self._sql.query(
+                    f"""
+                    SELECT id, palace, wing, room, compartment, entity_stable_id, entity_type
+                      FROM knowledge_structural_evidence
+                     WHERE palace = $1
+                       AND id IN ({placeholders})
+                    ORDER BY entity_stable_id ASC
+                    """,
+                    (palace, *evidence_ids),
                 )
 
-            placeholders = ", ".join(f"${i + 2}::uuid" for i in range(len(evidence_ids)))
-            ev_rows_result = await self._backend.query(
-                f"""
-                SELECT id, palace, wing, room, compartment, entity_stable_id, entity_type
-                  FROM knowledge_structural_evidence
-                 WHERE palace = $1
-                   AND id IN ({placeholders})
-                ORDER BY entity_stable_id ASC
-                """,
-                (palace, *evidence_ids),
-            )
+                if not ev_rows_result.rows:
+                    _raise_contract_error(
+                        code="MEM_INSUFFICIENT_EVIDENCE",
+                        message=(
+                            "No persisted structural evidence rows found for the provided "
+                            f"evidence_ids in palace {palace!r}. Cannot determine topology."
+                        ),
+                    )
 
-            if not ev_rows_result.rows:
-                await self._backend.rollback()
-                _raise_contract_error(
-                    code="MEM_INSUFFICIENT_EVIDENCE",
-                    message=(
-                        "No persisted structural evidence rows found for the provided evidence_ids "
-                        f"in palace {palace!r}. Cannot determine topology."
-                    ),
-                )
-
-            # Anchor priority: class > module > others. Within same priority bucket,
-            # deterministic tie-break by entity_stable_id (already ORDER BY above).
-            _anchor_priority: dict[str, int] = {
-                "class": 0,
-                "module": 1,
-            }
-
-            def _anchor_key(row: dict[str, object]) -> tuple[int, str]:
-                entity_type = str(row["entity_type"])
-                priority = _anchor_priority.get(entity_type, 2)
-                return (priority, str(row["entity_stable_id"]))
-
-            anchor = min(ev_rows_result.rows, key=_anchor_key)
-
-            # Derive topology levels from structural signals only.
-            derived_compartment: str = str(anchor["compartment"])
-
-            # Modal room and wing across all evidence rows.
-            # Tie-break among equal-count values is lexicographic (ascending) for determinism.
-            room_counter: Counter[str] = Counter(
-                str(r["room"]) for r in ev_rows_result.rows if r["room"]
-            )
-            wing_counter: Counter[str] = Counter(
-                str(r["wing"]) for r in ev_rows_result.rows if r["wing"]
-            )
-
-            def _modal_lexicographic(counter: Counter[str]) -> str:
-                if not counter:
-                    return ""
-                max_count = counter.most_common(1)[0][1]
-                return min(v for v, c in counter.items() if c == max_count)
-
-            derived_room: str = _modal_lexicographic(room_counter)
-            derived_wing: str = _modal_lexicographic(wing_counter)
-
-            # Completeness gate: all three levels must be deterministic.
-            missing = [
-                level
-                for level, val in [
-                    ("wing", derived_wing),
-                    ("room", derived_room),
-                    ("compartment", derived_compartment),
-                ]
-                if not val
-            ]
-            if missing:
-                await self._backend.rollback()
-                _raise_contract_error(
-                    code="MEM_INSUFFICIENT_EVIDENCE",
-                    message=(
-                        f"Structural evidence is insufficient to determine topology: "
-                        f"missing levels {missing!r}. "
-                        "All three levels (wing, room, compartment) must be provable from "
-                        "structural evidence. No fallback is permitted."
-                    ),
-                )
-
-            scope_key = _scope_key_fn(
-                {
-                    "palace": palace,
-                    "wing": derived_wing,
-                    "room": derived_room,
-                    "compartment": derived_compartment,
+                # Anchor priority: class > module > others. Within same priority bucket,
+                # deterministic tie-break by entity_stable_id (already ORDER BY above).
+                _anchor_priority: dict[str, int] = {
+                    "class": 0,
+                    "module": 1,
                 }
-            )
 
-            # Upsert semantic claim (deduplicated per scope, type, palace).
-            claim_text = f"topology_placement:{scope_key}"
-            existing_claim = await self._backend.query(
-                """
-                SELECT id FROM knowledge_semantic_claims
-                 WHERE palace = $1
-                   AND scope_key = $2
-                   AND claim_type = 'room_intent'
-                 LIMIT 1
-                """,
-                (palace, scope_key),
-            )
-            if existing_claim.rows:
-                claim_uuid = str(existing_claim.rows[0]["id"])
-            else:
-                await self._backend.query(
+                def _anchor_key(row: dict[str, object]) -> tuple[int, str]:
+                    entity_type = str(row["entity_type"])
+                    priority = _anchor_priority.get(entity_type, 2)
+                    return (priority, str(row["entity_stable_id"]))
+
+                anchor = min(ev_rows_result.rows, key=_anchor_key)
+
+                # Derive topology levels from structural signals only.
+                derived_compartment: str = str(anchor["compartment"])
+
+                # Modal room and wing across all evidence rows.
+                # Tie-break among equal-count values is lexicographic (ascending) for determinism.
+                room_counter: Counter[str] = Counter(
+                    str(r["room"]) for r in ev_rows_result.rows if r["room"]
+                )
+                wing_counter: Counter[str] = Counter(
+                    str(r["wing"]) for r in ev_rows_result.rows if r["wing"]
+                )
+
+                def _modal_lexicographic(counter: Counter[str]) -> str:
+                    if not counter:
+                        return ""
+                    max_count = counter.most_common(1)[0][1]
+                    return min(v for v, c in counter.items() if c == max_count)
+
+                derived_room: str = _modal_lexicographic(room_counter)
+                derived_wing: str = _modal_lexicographic(wing_counter)
+
+                # Completeness gate: all three levels must be deterministic.
+                missing = [
+                    level
+                    for level, val in [
+                        ("wing", derived_wing),
+                        ("room", derived_room),
+                        ("compartment", derived_compartment),
+                    ]
+                    if not val
+                ]
+                if missing:
+                    _raise_contract_error(
+                        code="MEM_INSUFFICIENT_EVIDENCE",
+                        message=(
+                            f"Structural evidence is insufficient to determine topology: "
+                            f"missing levels {missing!r}. "
+                            "All three levels (wing, room, compartment) must be provable from "
+                            "structural evidence. No fallback is permitted."
+                        ),
+                    )
+
+                scope_key = _scope_key_fn(
+                    {
+                        "palace": palace,
+                        "wing": derived_wing,
+                        "room": derived_room,
+                        "compartment": derived_compartment,
+                    }
+                )
+
+                # Upsert semantic claim (deduplicated per scope, type, palace).
+                claim_text = f"topology_placement:{scope_key}"
+                existing_claim = await self._sql.query(
                     """
-                    INSERT INTO knowledge_semantic_claims
-                        (id, palace, wing, room, compartment, claim_type, lifecycle_state,
-                         claim_text, scope_key, created_at, updated_at)
-                    VALUES ($1::uuid, $2, $3, $4, $5, 'room_intent',
-                            'active_evidenced', $6, $7, NOW(), NOW())
+                    SELECT id FROM knowledge_semantic_claims
+                     WHERE palace = $1
+                       AND scope_key = $2
+                       AND claim_type = 'room_intent'
+                     LIMIT 1
+                    """,
+                    (palace, scope_key),
+                )
+                if existing_claim.rows:
+                    claim_uuid = str(existing_claim.rows[0]["id"])
+                else:
+                    await self._sql.query(
+                        """
+                        INSERT INTO knowledge_semantic_claims
+                            (id, palace, wing, room, compartment, claim_type, lifecycle_state,
+                             claim_text, scope_key, created_at, updated_at)
+                        VALUES ($1::uuid, $2, $3, $4, $5, 'room_intent',
+                                'active_evidenced', $6, $7, NOW(), NOW())
+                        """,
+                        (
+                            claim_uuid,
+                            palace,
+                            derived_wing,
+                            derived_room,
+                            derived_compartment,
+                            claim_text,
+                            scope_key,
+                        ),
+                    )
+
+                # Append-only provenance row (system1_derived).
+                await self._sql.query(
+                    """
+                    INSERT INTO knowledge_topology_provenance
+                        (id, claim_id, palace, wing, room, compartment, scope_key,
+                         derivation_source, derivation_algorithm_version,
+                         derived_at, created_at)
+                    VALUES ($1::uuid, $2::uuid, $3, $4, $5, $6, $7,
+                            'system1_derived', 'system1.v1',
+                            NOW(), NOW())
                     """,
                     (
+                        provenance_uuid,
                         claim_uuid,
                         palace,
                         derived_wing,
                         derived_room,
                         derived_compartment,
-                        claim_text,
                         scope_key,
                     ),
                 )
 
-            # Append-only provenance row (system1_derived).
-            await self._backend.query(
-                """
-                INSERT INTO knowledge_topology_provenance
-                    (id, claim_id, palace, wing, room, compartment, scope_key,
-                     derivation_source, derivation_algorithm_version,
-                     derived_at, created_at)
-                VALUES ($1::uuid, $2::uuid, $3, $4, $5, $6, $7,
-                        'system1_derived', 'system1.v1',
-                        NOW(), NOW())
-                """,
-                (
-                    provenance_uuid,
-                    claim_uuid,
-                    palace,
-                    derived_wing,
-                    derived_room,
-                    derived_compartment,
-                    scope_key,
-                ),
-            )
-
-            # Evidence links for each evidence ID (pre-existing + inline).
-            for ev_id in evidence_ids:
-                await self._backend.query(
-                    """
-                    INSERT INTO knowledge_topology_provenance_evidence
-                        (provenance_id, evidence_id)
-                    VALUES ($1::uuid, $2::uuid)
-                    ON CONFLICT DO NOTHING
-                    """,
-                    (provenance_uuid, ev_id),
-                )
-
-            await self._backend.commit()
+                # Evidence links for each evidence ID (pre-existing + inline).
+                for ev_id in evidence_ids:
+                    await self._sql.query(
+                        """
+                        INSERT INTO knowledge_topology_provenance_evidence
+                            (provenance_id, evidence_id)
+                        VALUES ($1::uuid, $2::uuid)
+                        ON CONFLICT DO NOTHING
+                        """,
+                        (provenance_uuid, ev_id),
+                    )
 
         except MemoryContractError:
             raise
         except Exception as exc:
-            await self._backend.rollback()
             logger.exception("derive_system1_topology_structural: transaction rolled back")
             _raise_contract_error(
                 code="MEM_DB_ERROR",
@@ -3862,130 +3835,126 @@ class MemoryService:
         evidence_ids: list[str] = list(derivation.evidence_ids)
 
         try:
-            await self._backend.begin_transaction()
+            async with self._sql.transaction():
+                # Task 5b: if inline candidates are provided, persist them atomically first
+                # and merge their IDs into evidence_ids.
+                if derivation.inline_candidates:
+                    inline_ids = await self._store_inline_candidates_in_txn(
+                        derivation,
+                        topology=override,
+                    )
+                    evidence_ids = evidence_ids + inline_ids
 
-            # Task 5b: if inline candidates are provided, persist them atomically first
-            # and merge their IDs into evidence_ids.
-            if derivation.inline_candidates:
-                inline_ids = await self._store_inline_candidates_in_txn(
-                    derivation,
-                    topology=override,
-                )
-                evidence_ids = evidence_ids + inline_ids
+                # Step 1: verify all evidence IDs are persisted rows in this palace.
+                for ev_id in evidence_ids:
+                    ev_check = await self._sql.query(
+                        """
+                        SELECT id FROM knowledge_structural_evidence
+                         WHERE id = $1::uuid AND palace = $2
+                        """,
+                        (ev_id, palace),
+                    )
+                    if not ev_check.rows:
+                        _raise_contract_error(
+                            code="MEM_EVIDENCE_NOT_FOUND",
+                            message=(
+                                f"evidence_id {ev_id!r} does not reference a persisted "
+                                f"knowledge_structural_evidence row in palace {palace!r}. "
+                                "All evidence IDs must be persisted before an explicit override "
+                                "can be accepted."
+                            ),
+                        )
 
-            # Step 1: verify all evidence IDs are persisted rows in this palace.
-            for ev_id in evidence_ids:
-                ev_check = await self._backend.query(
+                # Step 2: idempotent upsert of topology_placement semantic claim.
+                # claim_text encodes the wing/room/compartment scope so it is
+                # human-readable and distinct per topology placement.
+                # SELECT-then-INSERT within the transaction: if a claim already
+                # exists for this (palace, scope_key, claim_type='room_intent'),
+                # reuse its id to keep claim rows deduplicated across repeated
+                # accepted overrides.  Provenance remains append-only (Step 4).
+                claim_text = f"topology_placement:{scope_key}"
+                existing_claim = await self._sql.query(
                     """
-                    SELECT id FROM knowledge_structural_evidence
-                     WHERE id = $1::uuid AND palace = $2
+                    SELECT id FROM knowledge_semantic_claims
+                     WHERE palace = $1
+                       AND scope_key = $2
+                       AND claim_type = 'room_intent'
+                     LIMIT 1
                     """,
-                    (ev_id, palace),
+                    (palace, scope_key),
                 )
-                if not ev_check.rows:
-                    await self._backend.rollback()
-                    _raise_contract_error(
-                        code="MEM_EVIDENCE_NOT_FOUND",
-                        message=(
-                            f"evidence_id {ev_id!r} does not reference a persisted "
-                            f"knowledge_structural_evidence row in palace {palace!r}. "
-                            "All evidence IDs must be persisted before an explicit override "
-                            "can be accepted."
-                        ),
+                if existing_claim.rows:
+                    claim_uuid = str(existing_claim.rows[0]["id"])
+                else:
+                    await self._sql.query(
+                        """
+                        INSERT INTO knowledge_semantic_claims
+                            (id, palace, wing, room, compartment, claim_type, lifecycle_state,
+                             claim_text, scope_key, created_at, updated_at)
+                        VALUES ($1::uuid, $2, $3, $4, $5, 'room_intent',
+                                'active_evidenced', $6, $7, NOW(), NOW())
+                        """,
+                        (claim_uuid, palace, wing, room, compartment, claim_text, scope_key),
                     )
 
-            # Step 2: idempotent upsert of topology_placement semantic claim.
-            # claim_text encodes the wing/room/compartment scope so it is
-            # human-readable and distinct per topology placement.
-            # SELECT-then-INSERT within the transaction: if a claim already
-            # exists for this (palace, scope_key, claim_type='room_intent'),
-            # reuse its id to keep claim rows deduplicated across repeated
-            # accepted overrides.  Provenance remains append-only (Step 4).
-            claim_text = f"topology_placement:{scope_key}"
-            existing_claim = await self._backend.query(
-                """
-                SELECT id FROM knowledge_semantic_claims
-                 WHERE palace = $1
-                   AND scope_key = $2
-                   AND claim_type = 'room_intent'
-                 LIMIT 1
-                """,
-                (palace, scope_key),
-            )
-            if existing_claim.rows:
-                claim_uuid = str(existing_claim.rows[0]["id"])
-            else:
-                await self._backend.query(
+                # Step 3: insert semantic override accountability row.
+                await self._sql.query(
                     """
-                    INSERT INTO knowledge_semantic_claims
-                        (id, palace, wing, room, compartment, claim_type, lifecycle_state,
-                         claim_text, scope_key, created_at, updated_at)
-                    VALUES ($1::uuid, $2, $3, $4, $5, 'room_intent',
-                            'active_evidenced', $6, $7, NOW(), NOW())
+                    INSERT INTO knowledge_semantic_overrides
+                        (id, claim_id, applied_by, override_reason,
+                         override_lifecycle_state, accountability_status,
+                         activated_at, created_at)
+                    VALUES ($1::uuid, $2::uuid, $3, $4, 'active_evidenced', 'pending',
+                            NOW(), NOW())
                     """,
-                    (claim_uuid, palace, wing, room, compartment, claim_text, scope_key),
+                    (override_uuid, claim_uuid, applied_by, override_reason),
                 )
 
-            # Step 3: insert semantic override accountability row.
-            await self._backend.query(
-                """
-                INSERT INTO knowledge_semantic_overrides
-                    (id, claim_id, applied_by, override_reason,
-                     override_lifecycle_state, accountability_status,
-                     activated_at, created_at)
-                VALUES ($1::uuid, $2::uuid, $3, $4, 'active_evidenced', 'pending',
-                        NOW(), NOW())
-                """,
-                (override_uuid, claim_uuid, applied_by, override_reason),
-            )
-
-            # Step 4: insert topology provenance row (append-only).
-            await self._backend.query(
-                """
-                INSERT INTO knowledge_topology_provenance
-                    (id, claim_id, palace, wing, room, compartment, scope_key,
-                     derivation_source, derivation_algorithm_version,
-                     override_reason, applied_by, override_id,
-                     derived_at, created_at)
-                VALUES ($1::uuid, $2::uuid, $3, $4, $5, $6, $7,
-                        $8, $9,
-                        $10, $11, $12::uuid,
-                        NOW(), NOW())
-                """,
-                (
-                    provenance_uuid,
-                    claim_uuid,
-                    palace,
-                    wing,
-                    room,
-                    compartment,
-                    scope_key,
-                    derivation_source,
-                    derivation_algorithm_version,
-                    override_reason,
-                    applied_by,
-                    override_uuid,
-                ),
-            )
-
-            # Step 5: insert provenance evidence link rows for each evidence ID.
-            for ev_id in evidence_ids:
-                await self._backend.query(
+                # Step 4: insert topology provenance row (append-only).
+                await self._sql.query(
                     """
-                    INSERT INTO knowledge_topology_provenance_evidence
-                        (provenance_id, evidence_id)
-                    VALUES ($1::uuid, $2::uuid)
+                    INSERT INTO knowledge_topology_provenance
+                        (id, claim_id, palace, wing, room, compartment, scope_key,
+                         derivation_source, derivation_algorithm_version,
+                         override_reason, applied_by, override_id,
+                         derived_at, created_at)
+                    VALUES ($1::uuid, $2::uuid, $3, $4, $5, $6, $7,
+                            $8, $9,
+                            $10, $11, $12::uuid,
+                            NOW(), NOW())
                     """,
-                    (provenance_uuid, ev_id),
+                    (
+                        provenance_uuid,
+                        claim_uuid,
+                        palace,
+                        wing,
+                        room,
+                        compartment,
+                        scope_key,
+                        derivation_source,
+                        derivation_algorithm_version,
+                        override_reason,
+                        applied_by,
+                        override_uuid,
+                    ),
                 )
 
-            await self._backend.commit()
+                # Step 5: insert provenance evidence link rows for each evidence ID.
+                for ev_id in evidence_ids:
+                    await self._sql.query(
+                        """
+                        INSERT INTO knowledge_topology_provenance_evidence
+                            (provenance_id, evidence_id)
+                        VALUES ($1::uuid, $2::uuid)
+                        """,
+                        (provenance_uuid, ev_id),
+                    )
 
         except MemoryContractError:
-            # Already raised after rollback above; re-raise without swallowing.
+            # Contract violations are already rolled back by the transaction helper;
+            # re-raise without remapping to MEM_DB_ERROR.
             raise
         except Exception as exc:
-            await self._backend.rollback()
             logger.exception("derive_system1_topology_explicit_override: transaction rolled back")
             _raise_contract_error(
                 code="MEM_DB_ERROR",
@@ -4036,7 +4005,7 @@ class MemoryService:
         """
         override_uuid = str(uuid.uuid4())
         try:
-            row = await self._backend.query(
+            row = await self._sql.query(
                 """
                 INSERT INTO knowledge_semantic_overrides
                     (id, claim_id, applied_by, override_reason,
@@ -4091,7 +4060,7 @@ class MemoryService:
         Returns the new accountability_status string.
         """
         new_status = "supported" if evidence_present else "unsupported"
-        await self._backend.query(
+        await self._sql.query(
             """
             UPDATE knowledge_semantic_overrides
                SET accountability_status = $1,
@@ -4147,7 +4116,7 @@ class MemoryService:
 
         placeholders = ", ".join(f"${i + 1}" for i in range(len(stable_ids)))
         # Positional: stable_ids first, then scope columns.
-        evidence_rows = await self._backend.query(
+        evidence_rows = await self._sql.query(
             f"""
             SELECT id, entity_stable_id, evidence_category
               FROM knowledge_structural_evidence
@@ -4217,106 +4186,107 @@ class MemoryService:
         # half-linked evidence row can remain.
         # ------------------------------------------------------------------
         try:
-            await self._backend.begin_transaction()
+            async with self._sql.transaction():
+                # Insert claim row.
+                # claim_text: human-readable summary derived from payload fields.
+                if claim_type == "wing_intent":
+                    claim_text = f"wing_intent:{derivation.wing_intent_label}"
+                elif claim_type == "room_intent":
+                    claim_text = f"room_intent:{derivation.room_intent_label}"
+                elif claim_type == "compartment_reasoning_unit":
+                    claim_text = (
+                        f"compartment_reasoning_unit:{derivation.compartment_reasoning_unit}"
+                    )
+                elif claim_type == "memory_claim":
+                    claim_text = f"memory_claim:{derivation.memory_claim_text}"
+                else:
+                    canonical_type_for_text = _canonical_corridor_type(derivation.corridor_type)  # type: ignore[arg-type]
+                    claim_text = (
+                        f"semantic_corridor:{derivation.corridor_from_claim_id}"
+                        f"->{derivation.corridor_to_claim_id}:{canonical_type_for_text}"
+                    )
 
-            # Insert claim row.
-            # claim_text: human-readable summary derived from payload fields.
-            if claim_type == "wing_intent":
-                claim_text = f"wing_intent:{derivation.wing_intent_label}"
-            elif claim_type == "room_intent":
-                claim_text = f"room_intent:{derivation.room_intent_label}"
-            elif claim_type == "compartment_reasoning_unit":
-                claim_text = f"compartment_reasoning_unit:{derivation.compartment_reasoning_unit}"
-            elif claim_type == "memory_claim":
-                claim_text = f"memory_claim:{derivation.memory_claim_text}"
-            else:
-                canonical_type_for_text = _canonical_corridor_type(derivation.corridor_type)  # type: ignore[arg-type]
-                claim_text = (
-                    f"semantic_corridor:{derivation.corridor_from_claim_id}"
-                    f"->{derivation.corridor_to_claim_id}:{canonical_type_for_text}"
-                )
-
-            claim_result = await self._backend.query(
-                """
-                INSERT INTO knowledge_semantic_claims
-                    (palace, wing, room, compartment, claim_type, lifecycle_state,
-                     claim_text, scope_key, created_at, updated_at)
-                VALUES ($1, $2, $3, $4, $5, 'active_evidenced', $6, $7, NOW(), NOW())
-                RETURNING id::text
-                """,
-                (
-                    palace,
-                    wing,
-                    room,
-                    compartment,
-                    claim_type,
-                    claim_text,
-                    scope_key,
-                ),
-            )
-            if not claim_result.rows:
-                await self._backend.rollback()
-                return ManageMemoryResult(
-                    operation="derive_system2_semantic_claims",
-                    success=False,
-                    error="MEM_DB_ERROR: claim insert returned no rows",
-                )
-            claim_id = str(claim_result.rows[0]["id"])
-
-            # Persist proof bundle row when this claim introduces a new wing.
-            if derivation.is_new_wing and derivation.proof_bundle is not None:
-                distinct_cats = sorted(set(derivation.proof_bundle.evidence_categories))
-                await self._backend.query(
+                claim_result = await self._sql.query(
                     """
-                    INSERT INTO knowledge_wing_proof_bundles
-                        (palace, wing, activating_claim_id,
-                         evidence_categories, gate_satisfied, created_at)
-                    VALUES ($1, $2, $3::uuid, $4, $5, NOW())
+                    INSERT INTO knowledge_semantic_claims
+                        (palace, wing, room, compartment, claim_type, lifecycle_state,
+                         claim_text, scope_key, created_at, updated_at)
+                    VALUES ($1, $2, $3, $4, $5, 'active_evidenced', $6, $7, NOW(), NOW())
+                    RETURNING id::text
                     """,
                     (
                         palace,
                         wing,
-                        claim_id,
-                        distinct_cats,
-                        True,
+                        room,
+                        compartment,
+                        claim_type,
+                        claim_text,
+                        scope_key,
                     ),
                 )
+                if not claim_result.rows:
+                    raise _TransactionAbortError(
+                        ManageMemoryResult(
+                            operation="derive_system2_semantic_claims",
+                            success=False,
+                            error="MEM_DB_ERROR: claim insert returned no rows",
+                        )
+                    )
+                claim_id = str(claim_result.rows[0]["id"])
 
-            # Insert evidence links.
-            for evidence_id, evidence_category in resolved_evidence:
-                await self._backend.query(
-                    """
-                    INSERT INTO knowledge_claim_evidence_links
-                        (claim_id, evidence_id, evidence_category, linked_at)
-                    VALUES ($1::uuid, $2::uuid, $3, NOW())
-                    ON CONFLICT DO NOTHING
-                    """,
-                    (claim_id, evidence_id, evidence_category),
-                )
+                # Persist proof bundle row when this claim introduces a new wing.
+                if derivation.is_new_wing and derivation.proof_bundle is not None:
+                    distinct_cats = sorted(set(derivation.proof_bundle.evidence_categories))
+                    await self._sql.query(
+                        """
+                        INSERT INTO knowledge_wing_proof_bundles
+                            (palace, wing, activating_claim_id,
+                             evidence_categories, gate_satisfied, created_at)
+                        VALUES ($1, $2, $3::uuid, $4, $5, NOW())
+                        """,
+                        (
+                            palace,
+                            wing,
+                            claim_id,
+                            distinct_cats,
+                            True,
+                        ),
+                    )
 
-            # For corridor claims, also insert the directed edge row.
-            if claim_type == "semantic_corridor":
-                canonical_type = _canonical_corridor_type(derivation.corridor_type)  # type: ignore[arg-type]
-                await self._backend.query(
-                    """
-                    INSERT INTO knowledge_semantic_corridors
-                        (claim_id, from_claim_id, to_claim_id,
-                         corridor_type, corridor_type_raw, created_at)
-                    VALUES ($1::uuid, $2::uuid, $3::uuid, $4, $5, NOW())
-                    """,
-                    (
-                        claim_id,
-                        derivation.corridor_from_claim_id,
-                        derivation.corridor_to_claim_id,
-                        canonical_type,
-                        derivation.corridor_type,
-                    ),
-                )
+                # Insert evidence links.
+                for evidence_id, evidence_category in resolved_evidence:
+                    await self._sql.query(
+                        """
+                        INSERT INTO knowledge_claim_evidence_links
+                            (claim_id, evidence_id, evidence_category, linked_at)
+                        VALUES ($1::uuid, $2::uuid, $3, NOW())
+                        ON CONFLICT DO NOTHING
+                        """,
+                        (claim_id, evidence_id, evidence_category),
+                    )
 
-            await self._backend.commit()
+                # For corridor claims, also insert the directed edge row.
+                if claim_type == "semantic_corridor":
+                    canonical_type = _canonical_corridor_type(derivation.corridor_type)  # type: ignore[arg-type]
+                    await self._sql.query(
+                        """
+                        INSERT INTO knowledge_semantic_corridors
+                            (claim_id, from_claim_id, to_claim_id,
+                             corridor_type, corridor_type_raw, created_at)
+                        VALUES ($1::uuid, $2::uuid, $3::uuid, $4, $5, NOW())
+                        """,
+                        (
+                            claim_id,
+                            derivation.corridor_from_claim_id,
+                            derivation.corridor_to_claim_id,
+                            canonical_type,
+                            derivation.corridor_type,
+                        ),
+                    )
 
+        except _TransactionAbortError as abort:
+            return abort.result
         except Exception as exc:
-            await self._backend.rollback()
             return ManageMemoryResult(
                 operation="derive_system2_semantic_claims",
                 success=False,
@@ -4390,7 +4360,7 @@ class MemoryService:
         rows = await room_scoped_search(
             embedding,
             request.query,
-            self._backend,
+            self._sql,
             palace=palace,
             namespace=request.namespace,
             room=request.room,
@@ -4409,7 +4379,7 @@ class MemoryService:
         if rows:
             ids = [row["id"] for row in rows]
             placeholders = ", ".join(f"${i + 1}::uuid" for i in range(len(ids)))
-            await self._backend.execute(
+            await self._sql.execute(
                 "UPDATE knowledge_memories "
                 "SET retrieval_count = retrieval_count + 1, last_retrieved_at = NOW() "
                 f"WHERE id IN ({placeholders})",
@@ -4543,7 +4513,7 @@ class MemoryService:
         params.append(request.max_items)
         where_clause = " AND ".join(clauses) if clauses else "TRUE"
 
-        result = await self._backend.query(
+        result = await self._sql.query(
             f"""
             SELECT
                 kc.id,
@@ -4595,7 +4565,7 @@ class MemoryService:
             rows = await room_scoped_search(
                 embedding,
                 request.query,
-                self._backend,
+                self._sql,
                 palace=palace,
                 namespace=request.namespace,
                 room=request.room,
@@ -4615,7 +4585,7 @@ class MemoryService:
             if rows:
                 ids = [row["id"] for row in rows]
                 placeholders = ", ".join(f"${i + 1}::uuid" for i in range(len(ids)))
-                await self._backend.execute(
+                await self._sql.execute(
                     "UPDATE knowledge_memories "
                     "SET retrieval_count = retrieval_count + 1, last_retrieved_at = NOW() "
                     f"WHERE id IN ({placeholders})",
@@ -4700,7 +4670,7 @@ class MemoryService:
         rows = await room_scoped_search(
             embedding,
             request.query,
-            self._backend,
+            self._sql,
             palace=palace,
             namespace=request.namespace,
             room=request.room,
@@ -4721,7 +4691,7 @@ class MemoryService:
         if rows:
             ids = [row["id"] for row in rows]
             placeholders = ", ".join(f"${i + 1}::uuid" for i in range(len(ids)))
-            await self._backend.execute(
+            await self._sql.execute(
                 "UPDATE knowledge_memories "
                 "SET retrieval_count = retrieval_count + 1, last_retrieved_at = NOW() "
                 f"WHERE id IN ({placeholders})",
@@ -4788,7 +4758,7 @@ class MemoryService:
         rows = await room_scoped_search(
             embedding,
             request.query,
-            self._backend,
+            self._sql,
             namespace=request.namespace,
             room=request.room,
             corridor=corridor,
@@ -4892,7 +4862,7 @@ class MemoryService:
                     scoped_uuid_params.extend(
                         [normalized_namespace, normalized_room, normalized_corridor]
                     )
-                scoped_uuid_result = await self._backend.query(
+                scoped_uuid_result = await self._sql.query(
                     "SELECT id FROM knowledge_entities WHERE " + " AND ".join(scoped_uuid_clauses),
                     tuple(scoped_uuid_params),
                 )
@@ -4902,7 +4872,7 @@ class MemoryService:
 
             resolved = await _resolve_entity_id_manage(
                 entity_ref,
-                self._backend,
+                self._sql,
                 namespace=namespace,
                 room=room,
                 corridor=corridor,
@@ -4940,7 +4910,7 @@ class MemoryService:
             if palace is not None:
                 clauses.append(f"palace = ${len(filter_params) + 1}")
                 filter_params.append(palace)
-            scoped_nodes_result = await self._backend.query(
+            scoped_nodes_result = await self._sql.query(
                 "SELECT id FROM knowledge_entities WHERE " + " AND ".join(clauses),
                 tuple(filter_params),
             )
@@ -5016,7 +4986,7 @@ class MemoryService:
                 )
                 stats_params.append(as_of)
 
-            result = await self._backend.query(
+            result = await self._sql.query(
                 f"""
                 WITH scoped_entities AS (
                     SELECT id
@@ -5123,7 +5093,7 @@ class MemoryService:
             assert start_entity is not None
             result = await graph_traverse(
                 start_entity,
-                self._backend,
+                self._sql,
                 relation_types=request.relation_types,
                 max_hops=request.max_hops,
                 max_nodes=request.max_nodes,
@@ -5166,7 +5136,7 @@ class MemoryService:
             assert start_entity is not None
             result = await graph_neighbors(
                 start_entity,
-                self._backend,
+                self._sql,
                 relation_types=request.relation_types,
                 max_nodes=request.max_nodes,
                 as_of=as_of,
@@ -5209,7 +5179,7 @@ class MemoryService:
             result = await graph_path(
                 start_entity,
                 end_entity,
-                self._backend,
+                self._sql,
                 relation_types=request.relation_types,
                 max_hops=request.max_hops,
                 max_nodes=request.max_nodes,
@@ -5281,7 +5251,7 @@ class MemoryService:
 
             result = await graph_stats(
                 start_entity,
-                self._backend,
+                self._sql,
                 as_of=as_of,
                 palace=palace,
             )
@@ -5391,16 +5361,12 @@ class MemoryService:
                     ),
                 )
 
-        transaction_started = False
-        try:
-            await self._backend.begin_transaction()
-            transaction_started = True
-
+        async with self._sql.transaction():
             item_id: str | None = None
             source_name: str | None = None
             if request.source and request.path:
                 ingest_palace = _normalize_scope_value(_get_palace(request)) or "default"
-                source_result = await self._backend.query(
+                source_result = await self._sql.query(
                     """
                     INSERT INTO knowledge_sources
                         (id, palace, name, source_type, category_ids)
@@ -5413,7 +5379,7 @@ class MemoryService:
                 if source_result.rows:
                     actual_source_id = str(source_result.rows[0]["id"])
                     item_title = os.path.basename(request.path) or request.path
-                    item_result = await self._backend.query(
+                    item_result = await self._sql.query(
                         """
                         INSERT INTO knowledge_items
                             (id, palace, source_id, path, title,
@@ -5465,7 +5431,7 @@ class MemoryService:
                         ),
                         retryable=True,
                     ) from embed_exc
-                await self._backend.execute(
+                await self._sql.execute(
                     """
                     INSERT INTO knowledge_memories
                         (id, item_id, content, embedding, search_vector,
@@ -5594,7 +5560,7 @@ class MemoryService:
                         if relation.confidence is not None
                         else request.confidence,
                     )
-                relation_result = await self._backend.query(
+                relation_result = await self._sql.query(
                     """
                     INSERT INTO knowledge_relations
                         (id, source_entity_id, target_entity_id, relation_type,
@@ -5619,7 +5585,6 @@ class MemoryService:
                 if relation_result.rows:
                     relation_ids.append(str(relation_result.rows[0]["id"]))
 
-            await self._backend.commit()
             return ManageMemoryResult(
                 operation="ingest_structured",
                 success=True,
@@ -5630,22 +5595,6 @@ class MemoryService:
                 entities_stored_count=len(entity_ids_in_order),
                 relations_stored_count=len(relation_ids),
             )
-        except Exception as exc:
-            try:
-                await self._backend.rollback()
-            except Exception:
-                logger.warning(
-                    "Failed to rollback ingest_structured transaction",
-                    exc_info=True,
-                )
-
-            if not transaction_started:
-                detail = str(exc).strip() or exc.__class__.__name__
-                raise RuntimeError(
-                    f"Failed to begin transaction for ingest_structured: {detail}"
-                ) from exc
-
-            raise
 
     async def _manage_store(self, request: ManageMemoryRequest) -> ManageMemoryResult:
         """Store a new memory."""
@@ -5676,7 +5625,7 @@ class MemoryService:
         source_name: str | None = None
 
         if request.source and request.path:
-            source_result = await self._backend.query(
+            source_result = await self._sql.query(
                 """
                 INSERT INTO knowledge_sources
                     (id, name, source_type, category_ids)
@@ -5689,7 +5638,7 @@ class MemoryService:
             if source_result.rows:
                 actual_source_id = str(source_result.rows[0]["id"])
                 item_title = os.path.basename(request.path) or request.path
-                item_result = await self._backend.query(
+                item_result = await self._sql.query(
                     """
                     INSERT INTO knowledge_items (id, source_id, path, title)
                     VALUES ($1::uuid, $2::uuid, $3, $4)
@@ -5717,7 +5666,7 @@ class MemoryService:
             prop_metadata["user_identifier"] = user_string
         metadata_json = json.dumps(prop_metadata)
 
-        await self._backend.execute(
+        await self._sql.execute(
             """
             INSERT INTO knowledge_memories
                 (id, item_id, content, embedding, search_vector,
@@ -5764,7 +5713,7 @@ class MemoryService:
         )
 
         for cat_id in category_ids:
-            await self._backend.execute(
+            await self._sql.execute(
                 """
                 INSERT INTO knowledge_memory_categories
                     (memory_id, category_id, assigned_by)
@@ -5799,7 +5748,7 @@ class MemoryService:
             )
         ids = [str(i) for i in request.memory_ids]
         placeholders = ", ".join(f"${i + 1}::uuid" for i in range(len(ids)))
-        result = await self._backend.query(
+        result = await self._sql.query(
             f"""
             UPDATE knowledge_memories
             SET authority = 'USER_VALIDATED', updated_at = NOW()
@@ -5844,7 +5793,7 @@ class MemoryService:
                 error="'superseded_by' is required for supersede operation",
             )
 
-        replacement_result = await self._backend.query(
+        replacement_result = await self._sql.query(
             "SELECT id FROM knowledge_memories WHERE id = $1::uuid",
             (request.superseded_by,),
         )
@@ -5871,7 +5820,7 @@ class MemoryService:
             {"reason": request.reason or "superseded", "superseded_by": request.superseded_by}
         )
         explicit_valid_to = _coerce_iso_datetime(request.valid_to, "valid_to")
-        result = await self._backend.query(
+        result = await self._sql.query(
             f"""
             UPDATE knowledge_memories
             SET lifecycle_state = 'SUPERSEDED',
@@ -5928,7 +5877,7 @@ class MemoryService:
         # The DB trigger trg_km_supersede_append_only forbids changing lifecycle_state
         # away from SUPERSEDED. Raise a deterministic contract error here so callers
         # receive MEM_SUPERSEDE_APPEND_ONLY rather than a generic MEM_INTERNAL_ERROR.
-        superseded_check = await self._backend.query(
+        superseded_check = await self._sql.query(
             f"""
             SELECT id FROM knowledge_memories
             WHERE id IN ({placeholders})
@@ -5947,7 +5896,7 @@ class MemoryService:
                 ),
             )
 
-        skipped_result = await self._backend.query(
+        skipped_result = await self._sql.query(
             f"""
             SELECT COUNT(*) AS cnt FROM knowledge_memories
             WHERE id IN ({placeholders})
@@ -5957,7 +5906,7 @@ class MemoryService:
         )
         skipped = skipped_result.rows[0]["cnt"] if skipped_result.rows else 0
 
-        archive_result = await self._backend.query(
+        archive_result = await self._sql.query(
             f"""
             UPDATE knowledge_memories
             SET lifecycle_state = 'ARCHIVED',
@@ -6008,60 +5957,57 @@ class MemoryService:
                 error=f"Unknown consolidate mode: {request.mode!r}",
             )
 
-        await self._backend.begin_transaction()
         try:
-            entity_rows = await self._load_scoped_entities(request)
-            entity_ids = [str(row["id"]) for row in entity_rows]
+            async with self._sql.transaction():
+                entity_rows = await self._load_scoped_entities(request)
+                entity_ids = [str(row["id"]) for row in entity_rows]
 
-            relation_rows: list[dict[str, Any]] = []
-            if entity_ids:
-                relation_rows = await self._load_scoped_relations(entity_ids, request)
+                relation_rows: list[dict[str, Any]] = []
+                if entity_ids:
+                    relation_rows = await self._load_scoped_relations(entity_ids, request)
 
-            await self._clear_communities(request, entity_ids)
+                await self._clear_communities(request, entity_ids)
 
-            if not entity_rows:
-                await self._backend.commit()
+                if not entity_rows:
+                    return ManageMemoryResult(
+                        operation="consolidate",
+                        communities_updated=0,
+                        diagnostics={
+                            "mode": request.mode,
+                            "status": "ok",
+                            "entity_count": 0,
+                            "community_count": 0,
+                        },
+                    )
+
+                entity_names = {str(row["id"]): row.get("name", "") for row in entity_rows}
+                components = _connected_components(entity_ids, relation_rows)
+
+                community_count = 0
+                for component in components:
+                    memory_rows = await self._load_component_memories(component, request)
+                    community_id = await self._insert_community(
+                        component, entity_names, memory_rows, request
+                    )
+                    await self._sql.execute(
+                        "UPDATE knowledge_entities SET community_id = $1::uuid "
+                        "WHERE id = ANY($2::uuid[])",
+                        (community_id, component),
+                    )
+                    community_count += 1
+
+                await self._propagate_memory_communities(request)
                 return ManageMemoryResult(
                     operation="consolidate",
-                    communities_updated=0,
+                    communities_updated=community_count,
                     diagnostics={
                         "mode": request.mode,
                         "status": "ok",
-                        "entity_count": 0,
-                        "community_count": 0,
+                        "entity_count": len(entity_rows),
+                        "community_count": community_count,
                     },
                 )
-
-            entity_names = {str(row["id"]): row.get("name", "") for row in entity_rows}
-            components = _connected_components(entity_ids, relation_rows)
-
-            community_count = 0
-            for component in components:
-                memory_rows = await self._load_component_memories(component, request)
-                community_id = await self._insert_community(
-                    component, entity_names, memory_rows, request
-                )
-                await self._backend.execute(
-                    "UPDATE knowledge_entities SET community_id = $1::uuid "
-                    "WHERE id = ANY($2::uuid[])",
-                    (community_id, component),
-                )
-                community_count += 1
-
-            await self._propagate_memory_communities(request)
-            await self._backend.commit()
-            return ManageMemoryResult(
-                operation="consolidate",
-                communities_updated=community_count,
-                diagnostics={
-                    "mode": request.mode,
-                    "status": "ok",
-                    "entity_count": len(entity_rows),
-                    "community_count": community_count,
-                },
-            )
         except MemoryContractError as exc:
-            await self._backend.rollback()
             return ManageMemoryResult(
                 operation="consolidate",
                 success=False,
@@ -6072,9 +6018,6 @@ class MemoryService:
                     "error_code": exc.code,
                 },
             )
-        except Exception:
-            await self._backend.rollback()
-            raise
 
     async def _manage_maintain(self, request: ManageMemoryRequest) -> ManageMemoryResult:
         """Decay, prune, and maintenance operations.
@@ -6139,7 +6082,7 @@ class MemoryService:
             "COMMUNITY_SUMMARY": 0.4,
         }
 
-        rows_result = await self._backend.query(
+        rows_result = await self._sql.query(
             "SELECT p.id, p.base_score, p.authority, p.created_at, "
             "  p.retrieval_count, p.last_retrieved_at, "
             "  COALESCE(ki.content_updated_at, ki.created_at) AS item_updated_at "
@@ -6215,7 +6158,7 @@ class MemoryService:
                 values_parts.append(f"(${base_idx}::uuid, ${base_idx + 1}::float8)")
                 params.extend([pid, score])
             if values_parts:
-                await self._backend.execute(
+                await self._sql.execute(
                     "UPDATE knowledge_memories AS p "
                     "SET relevance_score = v.score "
                     f"FROM (VALUES {', '.join(values_parts)}) AS v(id, score) "
@@ -6240,7 +6183,7 @@ class MemoryService:
         auto_threshold = request.auto_archive_threshold
         review_thr = request.review_threshold
 
-        rows_result = await self._backend.query(
+        rows_result = await self._sql.query(
             "SELECT p.id, p.content, p.relevance_score, p.authority, "
             "  p.lifecycle_state, p.created_at, p.last_retrieved_at, "
             "  COALESCE(lc.link_count, 0) AS entity_link_count "
@@ -6302,7 +6245,7 @@ class MemoryService:
 
     async def _maintain_expire_quarantine(self, request: ManageMemoryRequest) -> ManageMemoryResult:
         """Archive quarantined propositions that exceeded the grace period."""
-        result = await self._backend.query(
+        result = await self._sql.query(
             "UPDATE knowledge_memories "
             "SET lifecycle_state = 'ARCHIVED', "
             "    archived_at = NOW(), "
@@ -6334,7 +6277,7 @@ class MemoryService:
 
     async def _maintain_expire_flags(self, request: ManageMemoryRequest) -> ManageMemoryResult:
         """Unflag expired flagged propositions and auto-resolve their conflicts."""
-        expired_rows = await self._backend.query(
+        expired_rows = await self._sql.query(
             "UPDATE knowledge_memories "
             "SET lifecycle_state = 'ACTIVE', flagged_at = NULL "
             "WHERE lifecycle_state = 'FLAGGED' "
@@ -6361,7 +6304,7 @@ class MemoryService:
         resolved_count = 0
         if expired_ids:
             id_placeholders = ", ".join(f"${i + 1}::uuid" for i in range(len(expired_ids)))
-            conflict_rows = await self._backend.query(
+            conflict_rows = await self._sql.query(
                 "SELECT id FROM knowledge_conflicts "
                 f"WHERE new_memory_id IN ({id_placeholders}) "
                 "AND resolved_at IS NULL",
@@ -6370,7 +6313,7 @@ class MemoryService:
             if conflict_rows.rows:
                 conflict_ids = [str(row["id"]) for row in conflict_rows.rows]
                 c_placeholders = ", ".join(f"${i + 1}::uuid" for i in range(len(conflict_ids)))
-                resolve_result = await self._backend.execute(
+                resolve_result = await self._sql.execute(
                     "UPDATE knowledge_conflicts "
                     "SET resolved_at = NOW(), resolution = 'auto_expired' "
                     f"WHERE id IN ({c_placeholders})",
@@ -6445,7 +6388,7 @@ class MemoryService:
         entity_scope_room = _normalize_scope_value(request.room)
         entity_scope_corridor = _normalize_scope_value(_get_corridor(request))
 
-        result = await self._backend.query(
+        result = await self._sql.query(
             """
             INSERT INTO knowledge_entities (
                 id, entity_type, name, palace, namespace, room, corridor, confidence
@@ -6514,7 +6457,7 @@ class MemoryService:
         try:
             source_id = await _resolve_entity_id_manage(
                 request.source_entity,
-                self._backend,
+                self._sql,
                 namespace=request.namespace,
                 room=request.room,
                 corridor=_get_corridor(request),
@@ -6534,7 +6477,7 @@ class MemoryService:
         try:
             target_id = await _resolve_entity_id_manage(
                 request.target_entity,
-                self._backend,
+                self._sql,
                 namespace=request.namespace,
                 room=request.room,
                 corridor=_get_corridor(request),
@@ -6556,7 +6499,7 @@ class MemoryService:
         evidence_id = evidence_ids[0] if evidence_ids else None
 
         if evidence_ids:
-            evidence_count_result = await self._backend.query(
+            evidence_count_result = await self._sql.query(
                 "SELECT COUNT(*) AS cnt FROM knowledge_memories WHERE id = ANY($1::uuid[])",
                 (evidence_ids,),
             )
@@ -6571,7 +6514,7 @@ class MemoryService:
                     "do not reference existing memories",
                 )
 
-        existing_result = await self._backend.query(
+        existing_result = await self._sql.query(
             """
             SELECT id
             FROM knowledge_relations
@@ -6589,7 +6532,7 @@ class MemoryService:
         )
 
         if existing_result.rows:
-            result = await self._backend.query(
+            result = await self._sql.query(
                 """
                 UPDATE knowledge_relations
                 SET confidence = GREATEST(confidence, $2),
@@ -6618,7 +6561,7 @@ class MemoryService:
                 ),
             )
         else:
-            result = await self._backend.query(
+            result = await self._sql.query(
                 """
                 INSERT INTO knowledge_relations
                     (id, source_entity_id, target_entity_id, relation_type,
@@ -6669,7 +6612,7 @@ class MemoryService:
                 edge["supporting_memories"] = []
             return edges, []
 
-        result = await self._backend.query(
+        result = await self._sql.query(
             """
             SELECT
                 km.id,
@@ -6724,7 +6667,7 @@ class MemoryService:
 
         placeholders = ", ".join(f"${i + 1}::uuid" for i in range(len(ids)))
         relation_placeholders = ", ".join(f"${len(ids) + i + 1}::uuid" for i in range(len(ids)))
-        relation_count_result = await self._backend.query(
+        relation_count_result = await self._sql.query(
             f"""
             SELECT COUNT(*) AS cnt
             FROM knowledge_relations
@@ -6736,7 +6679,7 @@ class MemoryService:
         deleted_relations = (
             int(relation_count_result.rows[0]["cnt"]) if relation_count_result.rows else 0
         )
-        result = await self._backend.query(
+        result = await self._sql.query(
             f"DELETE FROM knowledge_entities WHERE id IN ({placeholders}) RETURNING id",
             tuple(ids),
         )
@@ -6760,7 +6703,7 @@ class MemoryService:
             )
 
         placeholders = ", ".join(f"${i + 1}::uuid" for i in range(len(ids)))
-        result = await self._backend.query(
+        result = await self._sql.query(
             f"DELETE FROM knowledge_relations WHERE id IN ({placeholders}) RETURNING id",
             tuple(ids),
         )
@@ -6797,7 +6740,7 @@ class MemoryService:
                 pass
 
             normalized_name = _normalize_category_name(entry)
-            lookup = await self._backend.query(
+            lookup = await self._sql.query(
                 """
                 SELECT id
                 FROM knowledge_categories
@@ -6814,7 +6757,7 @@ class MemoryService:
                 missing_names.append(entry)
                 continue
 
-            result = await self._backend.query(
+            result = await self._sql.query(
                 """
                 INSERT INTO knowledge_categories (id, name)
                 VALUES ($1::uuid, $2)
@@ -6858,7 +6801,7 @@ class MemoryService:
         if user_string:
             metadata_with_user["user_identifier"] = user_string
         try:
-            await self._backend.execute(
+            await self._sql.execute(
                 """
                 INSERT INTO knowledge_memory_audits
                     (memory_id, action, performed_by, auth_method, metadata)
@@ -6897,7 +6840,7 @@ class MemoryService:
             palace=palace,
         )
         where_clause = " AND ".join(clauses) if clauses else "TRUE"
-        result = await self._backend.query(
+        result = await self._sql.query(
             f"""
             SELECT DISTINCT e.id, e.entity_type, e.name
             FROM knowledge_entities e
@@ -6940,7 +6883,7 @@ class MemoryService:
             )
             params.extend(scope_params)
 
-        result = await self._backend.query(
+        result = await self._sql.query(
             "SELECT DISTINCT kr.source_entity_id, kr.target_entity_id "
             "FROM knowledge_relations kr "
             f"WHERE {' AND '.join(clauses)}",
@@ -6965,7 +6908,7 @@ class MemoryService:
         )
         where_clause = ["kem.entity_id = ANY($1::uuid[])", *scope_clauses]
         params.extend(scope_params)
-        result = await self._backend.query(
+        result = await self._sql.query(
             "SELECT DISTINCT km.id, km.content, km.embedding "
             "FROM knowledge_memories km "
             "JOIN knowledge_entity_memories kem ON kem.memory_id = km.id "
@@ -6982,7 +6925,7 @@ class MemoryService:
     ) -> None:
         """Clear stale community rows and assignments for the targeted scope."""
         if entity_ids:
-            await self._backend.execute(
+            await self._sql.execute(
                 "UPDATE knowledge_entities SET community_id = NULL WHERE id = ANY($1::uuid[])",
                 (entity_ids,),
             )
@@ -6997,13 +6940,13 @@ class MemoryService:
             palace=palace,
         )
         if scope_clauses:
-            await self._backend.execute(
+            await self._sql.execute(
                 "UPDATE knowledge_memories SET community_id = NULL WHERE "
                 + " AND ".join(scope_clauses),
                 tuple(scope_params),
             )
         else:
-            await self._backend.execute("UPDATE knowledge_memories SET community_id = NULL", ())
+            await self._sql.execute("UPDATE knowledge_memories SET community_id = NULL", ())
 
         community_scope_clauses, community_scope_params, _ = _build_memory_scope_filters(
             request.namespace,
@@ -7013,12 +6956,12 @@ class MemoryService:
             palace=palace,
         )
         if community_scope_clauses:
-            await self._backend.execute(
+            await self._sql.execute(
                 "DELETE FROM knowledge_communities WHERE " + " AND ".join(community_scope_clauses),
                 tuple(community_scope_params),
             )
         else:
-            await self._backend.execute("DELETE FROM knowledge_communities", ())
+            await self._sql.execute("DELETE FROM knowledge_communities", ())
 
     async def _insert_community(
         self,
@@ -7042,7 +6985,7 @@ class MemoryService:
         summary_names = ordered_names[:5]
         content = "Community: " + ", ".join(summary_names) if summary_names else "Community"
 
-        result = await self._backend.query(
+        result = await self._sql.query(
             """
             INSERT INTO knowledge_communities
                 (id, content, embedding, member_count, memory_count,
@@ -7101,7 +7044,7 @@ class MemoryService:
             profile=request.embedding_profile,
         )
 
-        await self._backend.execute(
+        await self._sql.execute(
             """
             INSERT INTO knowledge_memories
                 (id, community_id, content, embedding, search_vector,
@@ -7154,7 +7097,7 @@ class MemoryService:
                 message="derived memories require at least one parent memory reference",
             )
 
-        result = await self._backend.query(
+        result = await self._sql.query(
             "SELECT id, memory_tier FROM knowledge_memories WHERE id = ANY($1::uuid[])",
             (normalized,),
         )
@@ -7191,7 +7134,7 @@ class MemoryService:
         clauses.extend(scope_clauses)
         params.extend(scope_params)
 
-        result = await self._backend.query(
+        result = await self._sql.query(
             "SELECT km.id AS memory_id, ke.community_id, kem.confidence AS link_confidence "
             "FROM knowledge_memories km "
             "JOIN knowledge_entity_memories kem ON kem.memory_id = km.id "
@@ -7211,7 +7154,7 @@ class MemoryService:
                 scores.items(),
                 key=lambda item: (-item[1], item[0]),
             )[0]
-            await self._backend.execute(
+            await self._sql.execute(
                 "UPDATE knowledge_memories SET community_id = $1::uuid WHERE id = $2::uuid",
                 (winning_community, memory_id),
             )
@@ -7228,7 +7171,7 @@ class MemoryService:
         corridor: str,
     ) -> str:
         """Upsert a structured entity and return its UUID string."""
-        result = await self._backend.query(
+        result = await self._sql.query(
             """
             INSERT INTO knowledge_entities (
                 id, entity_type, name, palace, namespace, room, corridor, confidence
@@ -7291,7 +7234,7 @@ class MemoryService:
         confidence: float,
     ) -> None:
         """Upsert a direct memory-entity link for structured ingest flows."""
-        await self._backend.execute(
+        await self._sql.execute(
             """
             INSERT INTO knowledge_entity_memories
                 (memory_id, entity_id, role, confidence)
