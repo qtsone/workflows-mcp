@@ -16,8 +16,7 @@ from workflows_mcp.metadata.repos.tokens_repo import (
     SQLiteTokensRepository,
     UnknownTokenError,
 )
-
-_AUTH_SCOPE_KEY = "workflows_mcp.auth_context"
+from workflows_mcp.tool_helpers import AUTH_SCOPE_KEY
 
 # Readiness blockers that do not compromise MCP token authentication,
 # project scoping, or transport-session ownership guarantees.
@@ -151,7 +150,7 @@ class MCPAuthMiddleware:
             sqlite_ctx = _resolve_sqlite_auth_context(scope, token)
             if sqlite_ctx is not None:
                 if sqlite_ctx.token_id:
-                    scope[_AUTH_SCOPE_KEY] = sqlite_ctx
+                    scope[AUTH_SCOPE_KEY] = sqlite_ctx
                     authenticated = True
                 else:
                     authenticated = False
@@ -191,7 +190,7 @@ class MCPAuthMiddleware:
         if scope.get("method") == "DELETE":
             session_header = _extract_header(scope, b"mcp-session-id")
             if session_header:
-                auth_ctx = scope.get(_AUTH_SCOPE_KEY)
+                auth_ctx = scope.get(AUTH_SCOPE_KEY)
                 requester_token_id = (
                     auth_ctx.token_id if isinstance(auth_ctx, MCPAuthContext) else None
                 )

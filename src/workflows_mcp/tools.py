@@ -31,37 +31,7 @@ from .metadata.db import connect_metadata_db
 from .metadata.migrations import migrate_metadata_db
 from .metadata.repos.run_history_repo import SQLiteRunHistoryRepository
 from .server import mcp
-
-# =============================================================================
-# Response Helpers
-# =============================================================================
-
-_AUTH_SCOPE_KEY = "workflows_mcp.auth_context"
-
-
-def _json_response(data: dict[str, Any]) -> CallToolResult:
-    """Build a CallToolResult with both compact text and structured content.
-
-    Returns a CallToolResult that the SDK passes through unchanged:
-    - content: compact JSON string in TextContent (preserves TASK-057 fix)
-    - structuredContent: raw dict for clients that support it (TASK-062)
-
-    This avoids the SDK's default indent=2 serialization while also providing
-    parsed JSON objects via structuredContent for modern MCP clients.
-    """
-    return CallToolResult(
-        content=[TextContent(type="text", text=json.dumps(data, separators=(",", ":")))],
-        structuredContent=data,
-    )
-
-
-def _get_request_scope(ctx: AppContextType) -> dict[str, Any] | None:
-    """Best-effort access to HTTP request scope from MCP tool context."""
-    request = getattr(ctx.request_context, "request", None)
-    scope = getattr(request, "scope", None)
-    if isinstance(scope, dict):
-        return scope
-    return None
+from .tool_helpers import AUTH_SCOPE_KEY, get_request_scope, json_response
 
 
 def _resolve_run_binding(ctx: AppContextType) -> tuple[str | None, str | None]:
@@ -69,8 +39,8 @@ def _resolve_run_binding(ctx: AppContextType) -> tuple[str | None, str | None]:
     app_ctx = ctx.request_context.lifespan_context
     session = ctx.request_context.session
 
-    scope = _get_request_scope(ctx)
-    auth_ctx = scope.get(_AUTH_SCOPE_KEY) if scope else None
+    scope = get_request_scope(ctx)
+    auth_ctx = scope.get(AUTH_SCOPE_KEY) if scope else None
     token_id = getattr(auth_ctx, "token_id", None)
     if not isinstance(token_id, str) or not token_id:
         token_id = None
@@ -322,7 +292,7 @@ async def execute_workflow(
     """
     # Validate context availability
     if ctx is None:
-        return _json_response(
+        return json_response(
             {
                 "status": "failure",
                 "error": "Server context not available. Tool requires context to access resources.",
@@ -335,7 +305,7 @@ async def execute_workflow(
     # Handle async mode - submit to job queue and return immediately
     if mode == "async":
         if not app_ctx.job_queue:
-            return _json_response(
+            return json_response(
                 {
                     "status": "failure",
                     "error": "Async execution not enabled",
@@ -357,7 +327,7 @@ async def execute_workflow(
         )
         # Get effective timeout for response
         effective_timeout = timeout if timeout else app_ctx.job_queue._default_job_timeout
-        return _json_response(
+        return json_response(
             {
                 "job_id": job_id,
                 "workflow": workflow,
@@ -376,7 +346,7 @@ async def execute_workflow(
     # Validate workflow exists
     if workflow not in registry:
         available = registry.list_names()
-        return _json_response(
+        return json_response(
             {
                 "status": "failure",
                 "error": (
@@ -392,7 +362,7 @@ async def execute_workflow(
     # Get workflow schema
     workflow_schema = registry.get(workflow)
     if workflow_schema is None:
-        return _json_response(
+        return json_response(
             {
                 "status": "failure",
                 "error": f"Failed to load workflow '{workflow}' from registry.",
@@ -427,7 +397,7 @@ async def execute_workflow(
     if result.status == "paused":
         # Paused workflows require job_queue for resume
         if not app_ctx.job_queue:
-            return _json_response(
+            return json_response(
                 {
                     "status": "failure",
                     "error": "Workflow paused but job queue not enabled",
@@ -467,10 +437,10 @@ async def execute_workflow(
             f"Workflow paused waiting for input. "
             f"Use resume_workflow(job_id='{job_id}', response='your_answer') to continue."
         )
-        return _json_response(response)
+        return json_response(response)
 
     # Format response using ExecutionResult.to_response()
-    return _json_response(_execution_response(result, debug=debug, run_id=run_id))
+    return json_response(_execution_response(result, debug=debug, run_id=run_id))
 
 
 @mcp.tool(
@@ -537,7 +507,7 @@ async def execute_inline_workflow(
     """
     # Validate context availability
     if ctx is None:
-        return _json_response(
+        return json_response(
             {
                 "status": "failure",
                 "error": "Server context not available. Tool requires context to access resources.",
@@ -551,7 +521,7 @@ async def execute_inline_workflow(
     load_result = load_workflow_from_yaml(workflow_yaml, source="<inline-workflow>")
 
     if not load_result.is_success:
-        return _json_response(
+        return json_response(
             {
                 "status": "failure",
                 "error": (
@@ -565,7 +535,7 @@ async def execute_inline_workflow(
 
     workflow_schema = load_result.value
     if workflow_schema is None:
-        return _json_response(
+        return json_response(
             {
                 "status": "failure",
                 "error": (
@@ -603,7 +573,7 @@ async def execute_inline_workflow(
     _update_sync_run_record(app_ctx, run_id=run_id, result=result, inputs=run_inputs)
 
     # Format response using ExecutionResult.to_response()
-    return _json_response(_execution_response(result, debug=debug, run_id=run_id))
+    return json_response(_execution_response(result, debug=debug, run_id=run_id))
 
 
 @mcp.tool(
@@ -654,7 +624,7 @@ async def list_workflows(
     """
     # Validate context availability
     if ctx is None:
-        return _json_response({"status": "failure", "error": "Server context not available"})
+        return json_response({"status": "failure", "error": "Server context not available"})
 
     # Access shared resources from lifespan context
     app_ctx = ctx.request_context.lifespan_context
@@ -724,7 +694,7 @@ async def get_workflow_info(
     """
     # Validate context availability
     if ctx is None:
-        return _json_response({"status": "failure", "error": "Server context not available"})
+        return json_response({"status": "failure", "error": "Server context not available"})
 
     # Access shared resources from lifespan context
     app_ctx = ctx.request_context.lifespan_context
@@ -733,9 +703,9 @@ async def get_workflow_info(
     # Check if workflow exists
     if workflow not in registry:
         error_result = format_workflow_not_found_error(workflow, registry.list_names(), format)
-        # Wrap dict result (for json format) with _json_response
+        # Wrap dict result (for json format) with json_response
         if isinstance(error_result, dict):
-            return _json_response(error_result)
+            return json_response(error_result)
         return CallToolResult(
             content=[TextContent(type="text", text=error_result)],
         )
@@ -790,7 +760,7 @@ async def get_workflow_info(
             content=[TextContent(type="text", text=format_workflow_info_markdown(info))],
         )
 
-    return _json_response(info)
+    return json_response(info)
 
 
 @mcp.tool(
@@ -820,13 +790,13 @@ async def get_workflow_schema(
     """
     # Validate context availability
     if ctx is None:
-        return _json_response({"status": "failure", "error": "Server context not available"})
+        return json_response({"status": "failure", "error": "Server context not available"})
 
     # Use executor registry from lifespan context (efficient, no recreation)
     app_ctx = ctx.request_context.lifespan_context
     registry = app_ctx.executor_registry
     schema: dict[str, Any] = registry.generate_workflow_schema()
-    return _json_response(schema)
+    return json_response(schema)
 
 
 @mcp.tool(
@@ -864,13 +834,13 @@ async def validate_workflow_yaml(
     """
     # Validate context availability
     if ctx is None:
-        return _json_response({"status": "failure", "error": "Server context not available"})
+        return json_response({"status": "failure", "error": "Server context not available"})
 
     # Parse workflow YAML
     load_result = load_workflow_from_yaml(yaml_content, source="<validation>")
 
     if not load_result.is_success:
-        return _json_response(
+        return json_response(
             {
                 "valid": False,
                 "errors": [
@@ -886,7 +856,7 @@ async def validate_workflow_yaml(
 
     workflow_def = load_result.value
     if workflow_def is None:
-        return _json_response(
+        return json_response(
             {
                 "valid": False,
                 "errors": [
@@ -923,7 +893,7 @@ async def validate_workflow_yaml(
             )
 
     # If no errors, workflow is valid
-    return _json_response(
+    return json_response(
         {
             "valid": len(errors) == 0,
             "errors": errors,
@@ -958,7 +928,7 @@ async def reload_workflows(
     """
     # Access shared resources from lifespan context
     if ctx is None:
-        return _json_response(
+        return json_response(
             {
                 "status": "failure",
                 "message": "Server context not available.",
@@ -969,7 +939,7 @@ async def reload_workflows(
     reload_callback = app_ctx.reload_workflows
 
     if reload_callback is None:
-        return _json_response(
+        return json_response(
             {
                 "status": "failure",
                 "message": "Workflow reload is not available in current server context.",
@@ -979,14 +949,14 @@ async def reload_workflows(
     try:
         summary = reload_callback()
     except Exception as e:
-        return _json_response(
+        return json_response(
             {
                 "status": "failure",
                 "message": f"Failed to reload workflows: {str(e)}",
             }
         )
 
-    return _json_response(
+    return json_response(
         {
             "status": "success",
             "message": "Successfully reloaded workflows",
@@ -1056,7 +1026,7 @@ async def resume_workflow(
 
     # Require job_queue for unified architecture
     if not app_ctx.job_queue:
-        return _json_response(
+        return json_response(
             {
                 "status": "failure",
                 "error": "Job queue not enabled",
@@ -1071,7 +1041,7 @@ async def resume_workflow(
     try:
         job_data = await app_ctx.job_queue._store.load_job(job_id)
     except KeyError:
-        return _json_response(
+        return json_response(
             {
                 "status": "failure",
                 "error": f"Job not found: {job_id}",
@@ -1084,7 +1054,7 @@ async def resume_workflow(
 
     job = Job.model_validate(job_data)
     if job.status != WorkflowStatus.PAUSED:
-        return _json_response(
+        return json_response(
             {
                 "status": "failure",
                 "error": f"Job not paused: {job_id} (status={job.status.value})",
@@ -1096,7 +1066,7 @@ async def resume_workflow(
 
     # Extract ExecutionState from Job.result
     if not job.result:
-        return _json_response(
+        return json_response(
             {
                 "status": "failure",
                 "error": f"Job missing result data: {job_id}",
@@ -1108,7 +1078,7 @@ async def resume_workflow(
     try:
         execution_state = WorkflowRunner._extract_execution_state(job.result)
     except ValueError as e:
-        return _json_response(
+        return json_response(
             {
                 "status": "failure",
                 "error": str(e),
@@ -1167,12 +1137,12 @@ async def resume_workflow(
             f"Workflow paused again. "
             f"Use resume_workflow(job_id='{job_id}', response='your_answer') to continue."
         )
-        return _json_response(response_dict)
+        return json_response(response_dict)
 
     # Format response using ExecutionResult.to_response()
     response_dict = _execution_response(result, debug=debug, run_id=job_id)
     response_dict["job_id"] = job_id
-    return _json_response(response_dict)
+    return json_response(response_dict)
 
 
 # =============================================================================
@@ -1215,7 +1185,7 @@ async def get_job_status(
 
     # Check if job queue is available
     if not app_ctx.job_queue:
-        return _json_response(
+        return json_response(
             {
                 "status": "failure",
                 "error": "Job queue not available",
@@ -1226,9 +1196,9 @@ async def get_job_status(
     # Get job status
     try:
         result = await app_ctx.job_queue.get_status(job_id)
-        return _json_response(result)
+        return json_response(result)
     except KeyError:
-        return _json_response(
+        return json_response(
             {
                 "status": "failure",
                 "error": "Job not found",
@@ -1279,7 +1249,7 @@ async def cancel_job(
 
     # Check if job queue is available
     if not app_ctx.job_queue:
-        return _json_response(
+        return json_response(
             {
                 "status": "failure",
                 "error": "Job queue not available",
@@ -1288,7 +1258,7 @@ async def cancel_job(
         )
 
     result = await app_ctx.job_queue.cancel_job(job_id)
-    return _json_response(result)
+    return json_response(result)
 
 
 @mcp.tool(
@@ -1339,7 +1309,7 @@ async def list_jobs(
 
     # Check if job queue is available
     if not app_ctx.job_queue:
-        return _json_response(
+        return json_response(
             {
                 "status": "failure",
                 "error": "Job queue not available",
@@ -1357,7 +1327,7 @@ async def list_jobs(
         try:
             status_filter = WorkflowStatus(status.lower())
         except ValueError:
-            return _json_response(
+            return json_response(
                 {
                     "status": "failure",
                     "error": "Invalid status",
@@ -1373,7 +1343,7 @@ async def list_jobs(
     # Get total from stats (now async)
     stats = await app_ctx.job_queue.get_stats()
 
-    return _json_response(
+    return json_response(
         {
             "jobs": jobs,
             "total": stats.get("total_jobs", 0),
@@ -1415,7 +1385,7 @@ async def get_queue_stats(
         stats["job_queue"] = await app_ctx.job_queue.get_stats()
 
     if not stats:
-        return _json_response(
+        return json_response(
             {
                 "status": "failure",
                 "error": "No queues enabled",
@@ -1423,7 +1393,7 @@ async def get_queue_stats(
             }
         )
 
-    return _json_response(stats)
+    return json_response(stats)
 
 
 # =============================================================================

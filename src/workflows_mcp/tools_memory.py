@@ -11,7 +11,7 @@ from pathlib import Path
 from typing import Annotated, Any, Literal
 
 from mcp.server.fastmcp import FastMCP
-from mcp.types import CallToolResult, TextContent, ToolAnnotations
+from mcp.types import CallToolResult, ToolAnnotations
 from pydantic import BaseModel, Field, ValidationError, field_validator, model_validator
 
 from .context import (
@@ -63,12 +63,12 @@ from .security.filesystem_boundaries import (
     normalize_project_roots,
     validate_path_within_effective_boundary,
 )
+from .tool_helpers import AUTH_SCOPE_KEY, get_request_scope, json_response
 
 logger = logging.getLogger(__name__)
 
 _PROJECT_FLOW_VERSION = "oss-r3"
 _PROJECT_FLOW_OPERATIONS: tuple[str, ...] = ("ingest", "supersede", "archive", "maintain")
-_AUTH_SCOPE_KEY = "workflows_mcp.auth_context"
 
 # ---------------------------------------------------------------------------
 # Session-scoped active context helpers
@@ -78,15 +78,6 @@ _AUTH_SCOPE_KEY = "workflows_mcp.auth_context"
 def _get_session(ctx: AppContextType) -> Any:
     """Return the underlying session object from an MCP tool context."""
     return ctx.request_context.session
-
-
-def _get_request_scope(ctx: AppContextType) -> dict[str, Any] | None:
-    """Best-effort access to HTTP request scope from MCP tool context."""
-    request = getattr(ctx.request_context, "request", None)
-    scope = getattr(request, "scope", None)
-    if isinstance(scope, dict):
-        return scope
-    return None
 
 
 def _get_header_from_scope(scope: dict[str, Any], header_name: bytes) -> str | None:
@@ -100,11 +91,11 @@ def _get_header_from_scope(scope: dict[str, Any], header_name: bytes) -> str | N
 
 def _prime_session_project_context_from_auth(ctx: AppContextType) -> None:
     """Hydrate per-session allowed/active projects from auth middleware context."""
-    scope = _get_request_scope(ctx)
+    scope = get_request_scope(ctx)
     if scope is None:
         return
 
-    auth_ctx = scope.get(_AUTH_SCOPE_KEY)
+    auth_ctx = scope.get(AUTH_SCOPE_KEY)
     projects = getattr(auth_ctx, "projects", None)
     if not isinstance(projects, tuple) or not all(
         isinstance(project, SessionProjectContext) for project in projects
@@ -672,13 +663,6 @@ def _compute_full_scan_delta(
     prior_entries = [{"path": e.path, "content_hash": e.content_hash} for e in snapshot.entries]
     new_entries = [{"path": e.path, "content_hash": e.content_hash} for e in new_snapshot.entries]
     return compute_sync_delta(prior_entries, new_entries)
-
-
-def _json_response(data: dict[str, Any]) -> CallToolResult:
-    return CallToolResult(
-        content=[TextContent(type="text", text=json.dumps(data, separators=(",", ":")))],
-        structuredContent=data,
-    )
 
 
 def _tool_error_payload(
@@ -1748,12 +1732,12 @@ def register_memory_tools(
         """Run one memory operation and return compact JSON results."""
         # Schema operation short-circuits before any DB connectivity.
         if operation == "schema":
-            return _json_response(memory_schema_payload())
+            return json_response(memory_schema_payload())
 
         app_ctx = ctx.request_context.lifespan_context
         unavailable = _memory_backend_unavailable_envelope(app_ctx)
         if unavailable is not None:
-            return _json_response(unavailable)
+            return json_response(unavailable)
 
         # Scope precedence for Slice D:
         # 1) scope_token/context_id (handled in service) — never overridden here.
@@ -1779,7 +1763,7 @@ def register_memory_tools(
                     _scope_from_active_context = True
                 else:
                     # No active context/project and no explicit scope — actionable error.
-                    return _json_response(_build_no_active_context_envelope())
+                    return json_response(_build_no_active_context_envelope())
 
         execution = _create_memory_execution(ctx)
         try:
@@ -1802,9 +1786,9 @@ def register_memory_tools(
             # active context, not an explicit caller argument.
             if _scope_from_active_context:
                 payload = _relabel_scope_source_active_context(payload)
-            return _json_response(payload)
+            return json_response(payload)
         except Exception as e:
-            return _json_response(_tool_error_payload("memory", e))
+            return json_response(_tool_error_payload("memory", e))
 
     if not enable_project_tools:
         return
@@ -1933,7 +1917,7 @@ def register_memory_tools(
         app_ctx = ctx.request_context.lifespan_context
         unavailable = _memory_backend_unavailable_envelope(app_ctx)
         if unavailable is not None:
-            return _json_response(unavailable)
+            return json_response(unavailable)
 
         # Merge root-level debug flag into response shaping dict.
         if debug and response is None:
@@ -2002,8 +1986,8 @@ def register_memory_tools(
                             "nodes": persistence["nodes"],
                             "corridors": persistence["corridors"],
                         }
-                    return _json_response(payload)
-                return _json_response(build_programmatic_onboard_response(result, debug=debug))
+                    return json_response(payload)
+                return json_response(build_programmatic_onboard_response(result, debug=debug))
 
             # --- Phase 5: LLM onboard fast-path ---
             # Activated only when ingestion.mode='llm': scan provided, no checkpoint,
@@ -2017,7 +2001,7 @@ def register_memory_tools(
             ):
                 llm_profile: str | None = _ingestion.get("llm_profile") or None
                 if not llm_profile:
-                    return _json_response(
+                    return json_response(
                         {
                             "error": {
                                 "code": "INVALID_LLM_PROFILE",
@@ -2077,8 +2061,8 @@ def register_memory_tools(
                             "nodes": persistence["nodes"],
                             "corridors": persistence["corridors"],
                         }
-                    return _json_response(payload)
-                return _json_response(build_llm_onboard_response(llm_result, debug=debug))
+                    return json_response(payload)
+                return json_response(build_llm_onboard_response(llm_result, debug=debug))
 
             # --- scan handling for new flows (checkpoint not provided) ---
             effective_scan: ScanConfig | None = None
@@ -2189,7 +2173,7 @@ def register_memory_tools(
                             "stage": operation_name,
                             "actionable_fix": None,
                         }
-                    return _json_response(
+                    return json_response(
                         _build_project_failed_checkpoint_payload(
                             error=step_error,
                             failed_operation=operation_name,
@@ -2205,7 +2189,7 @@ def register_memory_tools(
                     )
                 step_error = _extract_error_envelope(step_result)
                 if step_error is not None:
-                    return _json_response(
+                    return json_response(
                         _build_project_failed_checkpoint_payload(
                             error=step_error,
                             failed_operation=operation_name,
@@ -2248,7 +2232,7 @@ def register_memory_tools(
 
             _debug = _is_debug_response(response)
             if next_index < len(plan):
-                return _json_response(
+                return json_response(
                     {
                         "status": "checkpoint",
                         "remaining_operations": [
@@ -2275,9 +2259,9 @@ def register_memory_tools(
             )
             _set_active_context(ctx, candidate)
             _enable_watcher_for_active_project_after_onboard(ctx)
-            return _json_response(completed_response)
+            return json_response(completed_response)
         except Exception as e:
-            return _json_response(_tool_error_payload("onboard", e))
+            return json_response(_tool_error_payload("onboard", e))
 
     @mcp_server.tool(
         description=(
@@ -2376,7 +2360,7 @@ def register_memory_tools(
         app_ctx = ctx.request_context.lifespan_context
         unavailable = _memory_backend_unavailable_envelope(app_ctx)
         if unavailable is not None:
-            return _json_response(unavailable)
+            return json_response(unavailable)
 
         # Merge root-level debug flag into response shaping dict.
         if debug and response is None:
@@ -2446,7 +2430,7 @@ def register_memory_tools(
                     }
                     if _fp_debug:
                         _fp_response["results"] = _done
-                    return _json_response(_fp_response)
+                    return json_response(_fp_response)
 
             effective_scan: ScanConfig | None = None
             prior_snapshot: ScanSnapshot | None = None
@@ -2533,7 +2517,7 @@ def register_memory_tools(
                         }
                         if _sync_debug:
                             unchanged_response["delta"] = sync_delta.to_debug_dict()
-                        return _json_response(unchanged_response)
+                        return json_response(unchanged_response)
                     added = sync_delta.added
                     modified = sync_delta.modified
                     deleted = sync_delta.deleted
@@ -2619,7 +2603,7 @@ def register_memory_tools(
                         resolution = resolve_sync_context(candidates, requested_scope=scope)
 
                     if resolution.status == "AMBIGUOUS_CONTEXT":
-                        return _json_response(
+                        return json_response(
                             build_ambiguous_context_envelope(resolution.candidates)
                         )
                     if resolution.status == "success" and resolution.context is not None:
@@ -2644,7 +2628,7 @@ def register_memory_tools(
                         if effective_scan is None:
                             # No scan config in stored checkpoint: return UNCHANGED so
                             # callers know onboard completed but nothing to re-sync.
-                            return _json_response(
+                            return json_response(
                                 {
                                     "status": "UNCHANGED",
                                     "scope": resolved_scope,
@@ -2657,7 +2641,7 @@ def register_memory_tools(
                         _registry_resolved = True
                         # Fall through to scan + delta handling below.
                     else:
-                        return _json_response(_build_no_active_context_envelope())
+                        return json_response(_build_no_active_context_envelope())
 
                 effective_ingest = ingest
                 if effective_scan is not None:
@@ -2722,7 +2706,7 @@ def register_memory_tools(
                             "stage": operation_name,
                             "actionable_fix": None,
                         }
-                    return _json_response(
+                    return json_response(
                         _build_project_failed_checkpoint_payload(
                             error=step_error,
                             failed_operation=operation_name,
@@ -2738,7 +2722,7 @@ def register_memory_tools(
                     )
                 step_error = _extract_error_envelope(step_result)
                 if step_error is not None:
-                    return _json_response(
+                    return json_response(
                         _build_project_failed_checkpoint_payload(
                             error=step_error,
                             failed_operation=operation_name,
@@ -2785,7 +2769,7 @@ def register_memory_tools(
 
             _sync_debug = _is_debug_response(response)
             if next_index < len(plan):
-                return _json_response(
+                return json_response(
                     {
                         "status": "checkpoint",
                         "remaining_operations": [
@@ -2807,9 +2791,9 @@ def register_memory_tools(
                 sync_completed_response["results"] = completed_results
                 if sync_delta is not None:
                     sync_completed_response["delta"] = sync_delta.to_debug_dict()
-            return _json_response(sync_completed_response)
+            return json_response(sync_completed_response)
         except Exception as e:
-            return _json_response(_tool_error_payload("sync", e))
+            return json_response(_tool_error_payload("sync", e))
 
     # -----------------------------------------------------------------------
     # Wire strict HTTP adapters (Task 6)
@@ -2920,14 +2904,14 @@ def register_memory_tools(
         app_ctx = ctx.request_context.lifespan_context
         unavailable = _memory_backend_unavailable_envelope(app_ctx)
         if unavailable is not None:
-            return _json_response(unavailable)
+            return json_response(unavailable)
 
         if project is not None:
             session = _get_session(ctx)
             _prime_session_project_context_from_auth(ctx)
             allowed = app_ctx.list_allowed_projects(session)
             if not allowed:
-                return _json_response(
+                return json_response(
                     {
                         "error": {
                             "code": "MEM_NO_ACTIVE_CONTEXT",
@@ -2946,7 +2930,7 @@ def register_memory_tools(
 
             matches = [p for p in allowed if project in {p.project_id, p.slug, p.palace}]
             if len(matches) > 1:
-                return _json_response(
+                return json_response(
                     {
                         "error": {
                             "code": "MEM_SELECT_AMBIGUOUS_PROJECT",
@@ -2962,7 +2946,7 @@ def register_memory_tools(
                     }
                 )
             if not matches:
-                return _json_response(
+                return json_response(
                     {
                         "error": {
                             "code": "MEM_SELECT_NOT_FOUND",
@@ -2977,7 +2961,7 @@ def register_memory_tools(
 
             selected = matches[0]
             app_ctx.set_active_project(session, selected)
-            return _json_response(
+            return json_response(
                 {
                     "status": "selected",
                     "active_project": {
@@ -2996,7 +2980,7 @@ def register_memory_tools(
             )
 
         if scope is None:
-            return _json_response(
+            return json_response(
                 {
                     "error": {
                         "code": "MEM_SELECT_INVALID_REQUEST",
@@ -3010,7 +2994,7 @@ def register_memory_tools(
         # Resolve against this session's onboard registry.
         candidates: list[SyncContextCandidate] = _list_session_onboard_candidates(ctx)
         if not candidates:
-            return _json_response(
+            return json_response(
                 {
                     "error": {
                         "code": "MEM_NO_ACTIVE_CONTEXT",
@@ -3027,12 +3011,12 @@ def register_memory_tools(
         resolution = resolve_sync_context(candidates, requested_scope=scope)
 
         if resolution.status == "AMBIGUOUS_CONTEXT":
-            return _json_response(build_ambiguous_context_envelope(resolution.candidates))
+            return json_response(build_ambiguous_context_envelope(resolution.candidates))
 
         if resolution.status == "success" and resolution.context is not None:
             _set_active_context(ctx, resolution.context)
             active = resolution.context
-            return _json_response(
+            return json_response(
                 {
                     "status": "selected",
                     "active_context": {
@@ -3049,7 +3033,7 @@ def register_memory_tools(
 
         # NO_CONTEXT — scope not found in registry.
         candidate_scopes = [c.scope for c in candidates]
-        return _json_response(
+        return json_response(
             {
                 "error": {
                     "code": "MEM_SELECT_NOT_FOUND",
@@ -3110,7 +3094,7 @@ def register_memory_tools(
         """Clear all ADR-013 ontology rows for the given palace, atomically."""
         # --- guard: palace is required ---
         if not palace:
-            return _json_response(
+            return json_response(
                 {
                     "error": {
                         "code": "MEM_FRESH_START_MISSING_SCOPE",
@@ -3130,7 +3114,7 @@ def register_memory_tools(
         app_ctx = ctx.request_context.lifespan_context
         unavailable = _memory_backend_unavailable_envelope(app_ctx)
         if unavailable is not None:
-            return _json_response(unavailable)
+            return json_response(unavailable)
 
         scope_identity: dict[str, Any] = {"palace": palace}
         if scope:
@@ -3150,7 +3134,7 @@ def register_memory_tools(
                 or memory_connection_config_from_env()
             )
             if config is None:
-                return _json_response(
+                return json_response(
                     {
                         "error": {
                             "code": "MEMORY_BACKEND_UNAVAILABLE",
@@ -3169,7 +3153,7 @@ def register_memory_tools(
 
                 await ensure_schema(backend)
             except Exception as conn_err:
-                return _json_response(_tool_error_payload("fresh_start", conn_err))
+                return json_response(_tool_error_payload("fresh_start", conn_err))
 
         try:
             # --- scope existence validation: reject unknown palace before any delete ---
@@ -3187,7 +3171,7 @@ def register_memory_tools(
                     "fresh_start: palace=%r not found in any ontology table; rejecting",
                     palace,
                 )
-                return _json_response(
+                return json_response(
                     {
                         "error": {
                             "code": "MEM_FRESH_START_SCOPE_NOT_FOUND",
@@ -3310,7 +3294,7 @@ def register_memory_tools(
                     del_err,
                     exc_info=True,
                 )
-                return _json_response(_tool_error_payload("fresh_start", del_err))
+                return json_response(_tool_error_payload("fresh_start", del_err))
 
             total_deleted = sum(per_table.values())
             logger.info(
@@ -3320,7 +3304,7 @@ def register_memory_tools(
                 scope_identity,
             )
 
-            return _json_response(
+            return json_response(
                 {
                     "status": "completed",
                     "scope_identity": scope_identity,
