@@ -83,8 +83,6 @@ blocks:
         default_wing: "{{inputs.default_wing}}"
         default_room: "{{inputs.default_room}}"
         default_compartment: "{{inputs.default_compartment}}"
-        verification_cycle_id: "{{blocks.system1.outputs.verification_cycle_id}}"
-        sync_scope: "{{inputs.sync_scope}}"
 
 outputs:
   memory_mode:

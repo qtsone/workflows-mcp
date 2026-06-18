@@ -729,6 +729,26 @@ class TestExecutorRegistration:
         registry = create_default_registry()
         assert not registry.has("Memory")
 
+    def test_memory_gated_executors_not_in_default_registry(self) -> None:
+        """Memory-subsystem executors stay out of the general-purpose default registry."""
+        from workflows_mcp.engine.executor_base import create_default_registry
+
+        registry = create_default_registry()
+        assert not registry.has("Memory")
+        assert not registry.has("System2Planner")
+
+    def test_register_memory_executors_registers_memory_gated_pair(self) -> None:
+        """The memory seam registers both memory-gated executors, idempotently."""
+        from workflows_mcp.engine.executor_base import create_default_registry
+        from workflows_mcp.memory_runtime import register_memory_executors
+
+        registry = create_default_registry()
+        register_memory_executors(registry)
+        register_memory_executors(registry)  # idempotent — no duplicate-register error
+
+        assert registry.has("Memory")
+        assert registry.has("System2Planner")
+
     def test_memory_executor_can_be_registered(self) -> None:
         """MemoryExecutor can be registered manually (as done at server startup)."""
         from workflows_mcp.engine.executor_base import ExecutorRegistry

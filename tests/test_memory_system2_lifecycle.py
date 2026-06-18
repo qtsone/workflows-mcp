@@ -183,6 +183,40 @@ async def _insert_claim(
     return str(result.rows[0]["id"])
 
 
+async def _insert_structural_evidence(
+    backend: PostgresBackend,
+    *,
+    entity_stable_id: str,
+    evidence_category: str,
+    palace: str = PALACE,
+    wing: str = WING,
+    room: str = ROOM,
+    compartment: str = COMPARTMENT,
+) -> None:
+    """Seed one System 1 structural evidence row the planner derives claims from."""
+    await backend.execute(
+        """
+        INSERT INTO knowledge_structural_evidence
+            (palace, wing, room, compartment, entity_stable_id, entity_type,
+             evidence_category)
+        VALUES ($1, $2, $3, $4, $5, 'module', $6)
+        """,
+        (palace, wing, room, compartment, entity_stable_id, evidence_category),
+    )
+
+
+def _planner_context(backend: PostgresBackend) -> Any:
+    """Build an Execution stub exposing the memory backend the planner reads."""
+    from unittest.mock import MagicMock
+
+    from workflows_mcp.engine.executor_base import Execution
+
+    context = MagicMock(spec=Execution)
+    context.execution_context = MagicMock()
+    context.execution_context.memory_backend = backend
+    return context
+
+
 async def _record_verification_cycle(
     memory_service: Any,
     *,
@@ -857,3 +891,102 @@ async def test_combined_request_rolls_back_degrade_when_archive_gate_fails(
         (claim_b,),
     )
     assert row_b.rows[0]["lifecycle_state"] == "degraded"
+
+
+# ---------------------------------------------------------------------------
+# System2PlannerExecutor: evidence-backed derivation
+# ---------------------------------------------------------------------------
+
+
+async def test_system2_planner_derives_claims_from_structural_evidence(
+    knowledge_backend: PostgresBackend, clean_palace: None
+) -> None:
+    """Planner groups System 1 evidence into a full candidate claim set per scope."""
+    from workflows_mcp.engine.executors_system2_planner import (
+        System2PlannerExecutor,
+        System2PlannerInput,
+    )
+
+    await _insert_structural_evidence(
+        knowledge_backend, entity_stable_id="mod.a", evidence_category="structural_module"
+    )
+    await _insert_structural_evidence(
+        knowledge_backend, entity_stable_id="cls.B", evidence_category="structural_class"
+    )
+
+    output = await System2PlannerExecutor().execute(
+        System2PlannerInput(palace=PALACE, default_wing=WING, default_room=ROOM),
+        _planner_context(knowledge_backend),
+    )
+
+    assert output.derivation_count == len(output.derivations)
+    claim_types = {(d["wing"], d["room"], d["compartment"]) for d in output.derivations}
+    assert claim_types == {(WING, ROOM, COMPARTMENT)}
+    # Four candidate claim types per scope: wing/room/compartment intents + memory claim.
+    assert output.derivation_count == 4
+
+    wing_intent = next(d for d in output.derivations if d["wing_intent_label"] == WING)
+    # Two distinct evidence categories mark the wing as new.
+    assert wing_intent["is_new_wing"] is True
+    assert wing_intent["proof_bundle_evidence_categories"] == [
+        "structural_class",
+        "structural_module",
+    ]
+    assert output.lifecycle["scope_key"] == _scope_key(wing=WING, room=ROOM, compartment="")
+
+
+async def test_system2_planner_skips_existing_claims(
+    knowledge_backend: PostgresBackend, clean_palace: None
+) -> None:
+    """A candidate that already exists as a non-archived claim is not re-derived."""
+    from workflows_mcp.engine.executors_system2_planner import (
+        System2PlannerExecutor,
+        System2PlannerInput,
+    )
+
+    await _insert_structural_evidence(
+        knowledge_backend, entity_stable_id="mod.a", evidence_category="structural_module"
+    )
+    await knowledge_backend.execute(
+        """
+        INSERT INTO knowledge_semantic_claims
+            (palace, wing, room, compartment, claim_type, lifecycle_state,
+             claim_text, scope_key, created_at, updated_at)
+        VALUES ($1, $2, $3, $4, 'room_intent', 'active_evidenced', $5, $6, NOW(), NOW())
+        """,
+        (PALACE, WING, ROOM, COMPARTMENT, f"room_intent:{ROOM}", _scope_key()),
+    )
+
+    output = await System2PlannerExecutor().execute(
+        System2PlannerInput(palace=PALACE, default_wing=WING, default_room=ROOM),
+        _planner_context(knowledge_backend),
+    )
+
+    assert not any(d["room_intent_label"] == ROOM for d in output.derivations), (
+        "Existing room_intent claim must be skipped"
+    )
+    # Wing/compartment intents and the memory claim still need deriving.
+    assert output.derivation_count == 3
+
+
+async def test_system2_planner_requires_memory_backend() -> None:
+    """Without a connected backend the planner refuses to run."""
+    from unittest.mock import MagicMock
+
+    import pytest
+
+    from workflows_mcp.engine.executor_base import Execution
+    from workflows_mcp.engine.executors_system2_planner import (
+        System2PlannerExecutor,
+        System2PlannerInput,
+    )
+
+    context = MagicMock(spec=Execution)
+    context.execution_context = MagicMock()
+    context.execution_context.memory_backend = None
+
+    with pytest.raises(RuntimeError, match="memory backend"):
+        await System2PlannerExecutor().execute(
+            System2PlannerInput(palace=PALACE, default_wing=WING, default_room=ROOM),
+            context,
+        )

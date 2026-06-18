@@ -26,16 +26,6 @@ inputs:
     default: ""
     description: "Default project compartment."
 
-  verification_cycle_id:
-    type: str
-    default: ""
-    description: "System 1 verification cycle that completed immediately before System 2."
-
-  sync_scope:
-    type: str
-    default: "rebuild"
-    description: "Command scope: dirty, reconcile, or rebuild."
-
 blocks:
   - id: plan_semantic_claims
     description: "Plan ADR-013 semantic claims from persisted System 1 evidence."
@@ -45,8 +35,6 @@ blocks:
       default_wing: "{{inputs.default_wing}}"
       default_room: "{{inputs.default_room}}"
       default_compartment: "{{inputs.default_compartment}}"
-      verification_cycle_id: "{{inputs.verification_cycle_id}}"
-      sync_scope: "{{inputs.sync_scope}}"
 
   - id: derive_claims
     description: "Derive evidence-backed System 2 claims."

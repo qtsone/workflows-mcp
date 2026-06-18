@@ -52,7 +52,6 @@ from workflows_mcp.context import AppContext
 from workflows_mcp.engine.block import BlockInput, BlockOutput
 from workflows_mcp.engine.execution import Execution
 from workflows_mcp.engine.executor_base import BlockExecutor, create_default_registry
-from workflows_mcp.engine.executors_memory import MemoryExecutor
 from workflows_mcp.engine.io_queue import IOQueue
 from workflows_mcp.engine.job_queue import JobQueue
 from workflows_mcp.engine.knowledge.schema import ensure_schema
@@ -62,6 +61,7 @@ from workflows_mcp.engine.registry import WorkflowRegistry
 from workflows_mcp.engine.schema import WorkflowSchema
 from workflows_mcp.engine.sql.backend import ConnectionConfig, DatabaseEngine
 from workflows_mcp.engine.sql.postgres_backend import PostgresBackend
+from workflows_mcp.memory_runtime import register_memory_executors
 from workflows_mcp.tools import execute_workflow
 
 # ---------------------------------------------------------------------------
@@ -198,7 +198,7 @@ async def workflow_context() -> AsyncIterator[MagicMock]:
     registry.load_from_directory(builtin_dir)
 
     executor_registry = create_default_registry()
-    executor_registry.register(MemoryExecutor())
+    register_memory_executors(executor_registry)
     llm_config_loader = LLMConfigLoader()
     io_queue = IOQueue()
 

@@ -9,7 +9,6 @@ from typing import Annotated, Any
 from fastapi import APIRouter, Depends, HTTPException, Path, Query, status
 from pydantic import BaseModel, ValidationError
 
-from workflows_mcp.engine.executors_memory import MemoryExecutor
 from workflows_mcp.engine.memory_service import MemoryContractError
 from workflows_mcp.http.dependencies import (
     CurrentAdminSession,
@@ -18,7 +17,7 @@ from workflows_mcp.http.dependencies import (
     require_current_admin_session,
 )
 from workflows_mcp.http.lifespan import AppResources
-from workflows_mcp.memory_runtime import refresh_memory_backend
+from workflows_mcp.memory_runtime import refresh_memory_backend, register_memory_executors
 from workflows_mcp.metadata.db import connect_metadata_db
 from workflows_mcp.metadata.repos.projects_repo import ProjectRecord, SQLiteProjectsRepository
 from workflows_mcp.metadata.repos.watcher_repo import (
@@ -351,8 +350,7 @@ async def _ensure_memory_runtime(resources: AppResources) -> None:
             ),
             retryable=False,
         )
-    if not resources.executor_registry.has("Memory"):
-        resources.executor_registry.register(MemoryExecutor())
+    register_memory_executors(resources.executor_registry)
 
 
 def _project_sync_inputs(

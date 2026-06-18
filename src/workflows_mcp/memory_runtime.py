@@ -104,6 +104,24 @@ async def connect_memory_backend(config: ConnectionConfig) -> PostgresBackend:
     return backend
 
 
+def register_memory_executors(executor_registry: Any) -> None:
+    """Register memory-gated block executors on a registry, idempotently.
+
+    These executors operate directly against the knowledge tables and only make
+    sense once a memory backend is connected. They are deliberately kept out of
+    the default registry (general-purpose blocks only) and registered here at the
+    same seam that connects the backend.
+    """
+
+    from workflows_mcp.engine.executors_memory import MemoryExecutor
+    from workflows_mcp.engine.executors_system2_planner import System2PlannerExecutor
+
+    if not executor_registry.has("Memory"):
+        executor_registry.register(MemoryExecutor())
+    if not executor_registry.has("System2Planner"):
+        executor_registry.register(System2PlannerExecutor())
+
+
 def _memory_backend_unavailable(message: str) -> MemoryBackendUnavailableError:
     return MemoryBackendUnavailableError(
         code="MEMORY_BACKEND_UNAVAILABLE",
@@ -150,7 +168,4 @@ async def refresh_memory_backend(
     app_ctx.memory_backend_lock = asyncio.Lock()
     app_ctx.memory_backend_unavailable_error = None
 
-    if not executor_registry.has("Memory"):
-        from workflows_mcp.engine.executors_memory import MemoryExecutor
-
-        executor_registry.register(MemoryExecutor())
+    register_memory_executors(executor_registry)

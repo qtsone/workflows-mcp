@@ -422,11 +422,10 @@ async def app_lifespan(_server: FastMCP) -> AsyncIterator[AppContext]:
                 app_context.memory_backend_lock = asyncio.Lock()
                 app_context.memory_backend_unavailable_error = None
 
-                # Schema OK — register memory block executor.
-                from .engine.executors_memory import MemoryExecutor
+                # Schema OK — register memory-gated block executors.
+                from .memory_runtime import register_memory_executors
 
-                if not executor_registry.has("Memory"):
-                    executor_registry.register(MemoryExecutor())
+                register_memory_executors(executor_registry)
                 from .engine.memory_service import AUDIT_FAIL_CLOSED
 
                 logger.info(

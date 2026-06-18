@@ -643,7 +643,6 @@ def create_default_registry() -> ExecutorRegistry:
         ReadJSONStateExecutor,
         WriteJSONStateExecutor,
     )
-    from .executors_system2_planner import System2PlannerExecutor
     from .executors_treesitter import TreeSitterExecutor
     from .executors_workflow import WorkflowExecutor
 
@@ -685,10 +684,8 @@ def create_default_registry() -> ExecutorRegistry:
     # Register project file discovery executor
     registry.register(ProjectFilesExecutor())
 
-    # Register System 2 semantic planner executor
-    registry.register(System2PlannerExecutor())
-
-    # Note: MemoryExecutor is registered conditionally at server startup
-    # only when a memory database is configured (MEMORY_DB_HOST)
+    # Note: MemoryExecutor and System2PlannerExecutor are memory-gated; they are
+    # registered conditionally at server startup only when a memory database is
+    # configured (MEMORY_DB_HOST). See memory_runtime.register_memory_executors.
 
     return registry

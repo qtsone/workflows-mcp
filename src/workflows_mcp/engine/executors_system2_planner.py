@@ -20,8 +20,6 @@ class System2PlannerInput(BlockInput):
     default_wing: str
     default_room: str
     default_compartment: str = ""
-    verification_cycle_id: str | None = None
-    sync_scope: str = "rebuild"
 
 
 class System2PlannerOutput(BlockOutput):
