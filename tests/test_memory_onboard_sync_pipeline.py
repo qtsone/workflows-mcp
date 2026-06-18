@@ -69,9 +69,7 @@ from workflows_mcp.engine.memory_onboard_sync_orchestrator import (
     ScannedFileEntry,
     build_llm_onboard_response,
     build_programmatic_onboard_response,
-    classify_deletion_policy,
     classify_scan_files_for_programmatic_mode,
-    compute_sync_delta,
     compute_weak_links,
     recompute_depends_on_corridors,
     run_llm_onboard,
@@ -88,6 +86,10 @@ from workflows_mcp.engine.memory_scope_resolver import (
     resolve_sync_context,
     scope_key,
     sorted_scan_manifest,
+)
+from workflows_mcp.engine.project_flow_service import (
+    classify_deletion_policy,
+    compute_sync_delta,
 )
 from workflows_mcp.engine.sql.backend import ConnectionConfig, DatabaseEngine
 from workflows_mcp.engine.sql.postgres_backend import PostgresBackend

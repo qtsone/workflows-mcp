@@ -7,6 +7,7 @@ import json
 import logging
 import os
 import uuid
+from collections.abc import Callable
 from pathlib import Path
 from typing import Annotated, Any, Literal
 
@@ -29,12 +30,9 @@ from .engine.memory_graph_validator import (
 from .engine.memory_onboard_sync_orchestrator import (
     LLMOnboardRequest,
     ProgrammaticOnboardRequest,
-    SyncDelta,
     build_llm_onboard_response,
     build_programmatic_onboard_response,
-    classify_deletion_policy,
     classify_scan_files_for_programmatic_mode,
-    compute_sync_delta,
     run_llm_onboard,
     run_programmatic_onboard,
     run_programmatic_onboard_with_cycle_recording,
@@ -53,6 +51,23 @@ from .engine.memory_service import (
     MemoryResult,
     MemoryService,
 )
+from .engine.project_flow_service import (
+    PROJECT_FLOW_OPERATIONS,
+    PROJECT_FLOW_VERSION,
+    FlowState,
+    OperationExecutor,
+    ProjectFlowService,
+    StepSections,
+    SyncDelta,
+    build_project_checkpoint_payload,
+    checkpoint_error,
+    classify_deletion_policy,
+    compact_checkpoint,
+    compute_sync_delta,
+    normalize_project_checkpoint,
+    project_flow_plan,
+    restore_checkpoint,
+)
 from .engine.sql.postgres_backend import PostgresBackend
 from .http_models import OnboardRequest, SyncRequest
 from .memory_runtime import (
@@ -67,8 +82,8 @@ from .tool_helpers import AUTH_SCOPE_KEY, get_request_scope, json_response
 
 logger = logging.getLogger(__name__)
 
-_PROJECT_FLOW_VERSION = "oss-r3"
-_PROJECT_FLOW_OPERATIONS: tuple[str, ...] = ("ingest", "supersede", "archive", "maintain")
+# Stateless and shared across all sessions — the checkpoint dict is the state.
+_PROJECT_FLOW_SERVICE = ProjectFlowService()
 
 # ---------------------------------------------------------------------------
 # Session-scoped active context helpers
@@ -631,13 +646,39 @@ def _update_snapshot_with_memory_ids(
     return ScanSnapshot(scan_config=snapshot.scan_config, entries=updated_entries)
 
 
+def _make_scan_snapshot_backfill(
+    snapshot: ScanSnapshot | None,
+    ingested_paths: list[str],
+) -> Callable[[dict[str, Any]], dict[str, Any] | None] | None:
+    """Build the ``FlowState.on_ingest`` callback for scan-driven flows.
+
+    After the ingest step returns its memory ids, fold them back into the scan
+    snapshot so a later sync can target deletions by id. Returns ``None`` when
+    there is no scan snapshot to back-populate (the snapshot stays untouched).
+    """
+    if snapshot is None or not ingested_paths:
+        return None
+
+    def _backfill(step_result: dict[str, Any]) -> dict[str, Any]:
+        raw_ids = step_result.get("ids") or step_result.get("id")
+        returned_ids: list[str] = []
+        if isinstance(raw_ids, list):
+            returned_ids = [str(x) for x in raw_ids]
+        elif isinstance(raw_ids, str):
+            returned_ids = [raw_ids]
+        updated = _update_snapshot_with_memory_ids(snapshot, ingested_paths, returned_ids)
+        return updated.model_dump()
+
+    return _backfill
+
+
 def _compute_scan_delta(
     snapshot: ScanSnapshot,
     new_snapshot: ScanSnapshot,
 ) -> tuple[list[str], list[str], list[str]]:
     """Compute added, modified, deleted relative paths between two snapshots.
 
-    Delegates to the canonical ``compute_sync_delta`` from the orchestrator
+    Delegates to the canonical ``compute_sync_delta`` in ``project_flow_service``
     so that the four-class delta (added/modified/deleted/unchanged) is always
     computed consistently.  This wrapper preserves the existing (added, modified,
     deleted) three-tuple return type for backwards-compatible call sites.
@@ -1050,6 +1091,39 @@ async def _execute_memory_request(
             await backend.disconnect()
 
 
+def _build_step_executor(
+    *,
+    app_ctx: Any,
+    execution: Any,
+    response: dict[str, Any] | None,
+) -> OperationExecutor:
+    """Adapt the per-step memory backend call to the ProjectFlowService port.
+
+    Captures the transport-bound parameters (backend, execution, response
+    shaping) so the service sees only ``(operation, scope, sections)``.
+    """
+
+    async def _executor(
+        operation: str, scope: dict[str, Any], sections: StepSections
+    ) -> dict[str, Any]:
+        query_payload, record_payload, maintenance_payload = sections
+        return await _execute_memory_request(
+            app_ctx=app_ctx,
+            execution=execution,
+            operation=operation,
+            scope=scope,
+            scope_token=None,
+            context_id=None,
+            query=query_payload,
+            record=record_payload,
+            graph=None,
+            maintenance=maintenance_payload,
+            response=response,
+        )
+
+    return _executor
+
+
 async def persist_graph_payload(
     *,
     app_ctx: Any,
@@ -1166,192 +1240,6 @@ async def _persist_graph_payload_if_configured(
     )
 
 
-def _project_flow_plan(
-    *,
-    ingest: dict[str, Any] | None,
-    supersede: dict[str, Any] | None,
-    archive: dict[str, Any] | None,
-    maintain: dict[str, Any] | None,
-) -> list[dict[str, Any]]:
-    plan: list[dict[str, Any]] = []
-    if ingest is not None:
-        plan.append({"operation": "ingest", "payload": ingest})
-    if supersede is not None:
-        plan.append({"operation": "supersede", "payload": supersede})
-    if archive is not None:
-        plan.append({"operation": "archive", "payload": archive})
-    if maintain is not None:
-        plan.append({"operation": "maintain", "payload": maintain})
-    return plan
-
-
-def _checkpoint_error(message: str) -> MemoryContractError:
-    return MemoryContractError(
-        code="MEM_CHECKPOINT_INVALID",
-        message=f"MEM_CHECKPOINT_INVALID: {message}",
-        retryable=False,
-    )
-
-
-def _restore_checkpoint(
-    checkpoint: dict[str, Any],
-    *,
-    require_ingest: bool,
-) -> tuple[dict[str, Any], list[dict[str, Any]], int, list[dict[str, Any]]]:
-    if checkpoint.get("version") != _PROJECT_FLOW_VERSION:
-        raise _checkpoint_error("unsupported checkpoint version")
-
-    raw_scope = checkpoint.get("scope", {})
-    if not isinstance(raw_scope, dict):
-        raise _checkpoint_error("checkpoint.scope must be an object")
-
-    raw_plan = checkpoint.get("plan")
-    if not isinstance(raw_plan, list) or not raw_plan:
-        raise _checkpoint_error("checkpoint.plan must be a non-empty list")
-
-    normalized_plan: list[dict[str, Any]] = []
-    for idx, step in enumerate(raw_plan):
-        if not isinstance(step, dict):
-            raise _checkpoint_error(f"checkpoint.plan[{idx}] must be an object")
-        operation = step.get("operation")
-        if operation not in _PROJECT_FLOW_OPERATIONS:
-            allowed = ", ".join(_PROJECT_FLOW_OPERATIONS)
-            raise _checkpoint_error(f"checkpoint.plan[{idx}].operation must be one of: {allowed}")
-        payload = step.get("payload")
-        if payload is not None and not isinstance(payload, dict):
-            raise _checkpoint_error(f"checkpoint.plan[{idx}].payload must be an object")
-        normalized_plan.append({"operation": operation, "payload": payload or {}})
-
-    if require_ingest and normalized_plan[0]["operation"] != "ingest":
-        raise _checkpoint_error("onboard checkpoint plan must start with ingest")
-
-    raw_next_index = checkpoint.get("next_index", 0)
-    # Accept integral floats (e.g. 1.0 from JSON deserialisation); reject non-integral floats.
-    if isinstance(raw_next_index, float):
-        if raw_next_index != int(raw_next_index):
-            raise _checkpoint_error("checkpoint.next_index is out of range")
-        raw_next_index = int(raw_next_index)
-    if (
-        not isinstance(raw_next_index, int)
-        or raw_next_index < 0
-        or raw_next_index > len(normalized_plan)
-    ):
-        raise _checkpoint_error("checkpoint.next_index is out of range")
-
-    raw_completed = checkpoint.get("completed", [])
-    if not isinstance(raw_completed, list):
-        raise _checkpoint_error("checkpoint.completed must be a list")
-
-    normalized_completed: list[dict[str, Any]] = []
-    for idx, item in enumerate(raw_completed):
-        if not isinstance(item, dict):
-            raise _checkpoint_error(f"checkpoint.completed[{idx}] must be an object")
-        if idx >= len(normalized_plan):
-            raise _checkpoint_error(
-                f"checkpoint.completed[{idx}] has no corresponding checkpoint.plan step"
-            )
-        completed_operation = item.get("operation")
-        if completed_operation is None:
-            raise _checkpoint_error(f"checkpoint.completed[{idx}].operation must be present")
-        if not isinstance(completed_operation, str):
-            raise _checkpoint_error(f"checkpoint.completed[{idx}].operation must be a string")
-        expected_operation = str(normalized_plan[idx]["operation"])
-        if completed_operation != expected_operation:
-            raise _checkpoint_error(
-                f"checkpoint.completed[{idx}].operation must match checkpoint.plan[{idx}].operation"
-            )
-        normalized_completed.append(item)
-
-    if len(normalized_completed) != raw_next_index:
-        raise _checkpoint_error("checkpoint.completed length must equal checkpoint.next_index")
-
-    return raw_scope, normalized_plan, raw_next_index, normalized_completed
-
-
-def _build_new_checkpoint(
-    *,
-    scope: dict[str, Any] | None,
-    ingest: dict[str, Any] | None,
-    supersede: dict[str, Any] | None,
-    archive: dict[str, Any] | None,
-    maintain: dict[str, Any] | None,
-    require_ingest: bool,
-) -> tuple[dict[str, Any], list[dict[str, Any]], int, list[dict[str, Any]]]:
-    plan = _project_flow_plan(
-        ingest=ingest,
-        supersede=supersede,
-        archive=archive,
-        maintain=maintain,
-    )
-    if not plan:
-        raise MemoryContractError(
-            code="MEM_PROJECT_FLOW_EMPTY",
-            message=(
-                "MEM_PROJECT_FLOW_EMPTY: provide at least one of ingest, "
-                "supersede, archive, or maintain"
-            ),
-            retryable=False,
-        )
-    if require_ingest and plan[0]["operation"] != "ingest":
-        raise MemoryContractError(
-            code="MEM_PROJECT_ONBOARD_REQUIRES_INGEST",
-            message=("MEM_PROJECT_ONBOARD_REQUIRES_INGEST: onboard must start with ingest"),
-            retryable=False,
-        )
-    return scope or {}, plan, 0, []
-
-
-def _normalize_project_checkpoint(
-    *,
-    checkpoint: dict[str, Any] | None,
-    scope: dict[str, Any] | None,
-    ingest: dict[str, Any] | None,
-    supersede: dict[str, Any] | None,
-    archive: dict[str, Any] | None,
-    maintain: dict[str, Any] | None,
-    require_ingest: bool,
-) -> tuple[dict[str, Any], list[dict[str, Any]], int, list[dict[str, Any]]]:
-    if checkpoint is not None:
-        has_new_plan_input = (
-            any(payload is not None for payload in (ingest, supersede, archive, maintain))
-            or scope is not None
-        )
-        if has_new_plan_input:
-            raise MemoryContractError(
-                code="MEM_CHECKPOINT_CONFLICT",
-                message=(
-                    "MEM_CHECKPOINT_CONFLICT: provide either checkpoint OR "
-                    "scope/plan payloads, not both"
-                ),
-                retryable=False,
-            )
-        return _restore_checkpoint(checkpoint, require_ingest=require_ingest)
-
-    return _build_new_checkpoint(
-        scope=scope,
-        ingest=ingest,
-        supersede=supersede,
-        archive=archive,
-        maintain=maintain,
-        require_ingest=require_ingest,
-    )
-
-
-def _step_sections(
-    operation: str,
-    payload: dict[str, Any],
-) -> tuple[dict[str, Any] | None, dict[str, Any] | None, dict[str, Any] | None]:
-    if operation in {"ingest", "supersede", "archive"}:
-        return None, payload, None
-    if operation == "maintain":
-        return None, None, payload
-    raise MemoryContractError(
-        code="MEM_INVALID_OPERATION",
-        message=f"MEM_INVALID_OPERATION: unsupported project flow operation {operation!r}",
-        retryable=False,
-    )
-
-
 def _validate_graph_step_payload(
     step_payload: dict[str, Any],
     *,
@@ -1400,184 +1288,11 @@ def _validate_graph_step_payload(
     )
 
 
-def _extract_error_envelope(payload: dict[str, Any]) -> dict[str, Any] | None:
-    """Return deterministic error envelope object when present, else None."""
-    maybe_error = payload.get("error")
-    if not isinstance(maybe_error, dict):
-        return None
-
-    code = maybe_error.get("code")
-    message = maybe_error.get("message")
-    retryable = maybe_error.get("retryable")
-    if not isinstance(code, str) or not isinstance(message, str) or not isinstance(retryable, bool):
-        return None
-
-    envelope_error: dict[str, Any] = {
-        "code": code,
-        "message": message,
-        "retryable": retryable,
-    }
-    correlation_id = maybe_error.get("correlation_id")
-    if isinstance(correlation_id, str):
-        envelope_error["correlation_id"] = correlation_id
-    return envelope_error
-
-
 def _is_debug_response(response: dict[str, Any] | None) -> bool:
     """Return True when the caller requested debug-level project flow output."""
     if response is None:
         return False
     return bool(response.get("debug"))
-
-
-def _compact_plan_step_payload(payload: dict[str, Any]) -> dict[str, Any]:
-    """Return a compacted copy of a *completed* plan step payload.
-
-    Only ``memories[].content`` is stripped — it is the dominant source of
-    payload bloat and is no longer needed once the step has been executed.
-    All other keys (format, metadata, ids, …) are preserved so the checkpoint
-    remains human-readable and auditable.
-
-    This function is intentionally conservative: it only modifies the
-    ``memories`` list and leaves every other key intact.
-    """
-    if "memories" not in payload:
-        return payload
-    compacted = dict(payload)
-    compacted["memories"] = [
-        {k: v for k, v in mem.items() if k != "content"} if isinstance(mem, dict) else mem
-        for mem in payload["memories"]
-    ]
-    return compacted
-
-
-def _compact_checkpoint(
-    checkpoint: dict[str, Any],
-    *,
-    debug: bool,
-) -> dict[str, Any]:
-    """Return a copy of *checkpoint* shaped for the given verbosity level.
-
-    Compact (debug=False):
-    - ``completed[].result`` blobs are stripped (not needed for resume; only
-      ``operation`` is required by ``_restore_checkpoint``).
-    - ``plan[i].payload.memories[].content`` is stripped for *completed* steps
-      (index < next_index) — these steps will not be re-executed, so their
-      heavy memory bodies are dead weight.  Pending steps (index >= next_index)
-      keep their full payload so resume can pass it through unchanged.
-    - ``scan_snapshot`` is kept fully intact because ``sync`` reads
-      entries to compute delta between scans.  Stripping entries would break
-      resume functionality for scan-based flows.
-    - Everything else (plan, scope, next_index, scan config, version) is kept
-      intact so the checkpoint remains fully usable for resume.
-
-    Debug (debug=True):
-    - Checkpoint is returned as-is with all blobs present.
-    """
-    if debug:
-        return checkpoint
-
-    result = dict(checkpoint)
-
-    # Strip result blobs from completed items; keep operation for resume.
-    if isinstance(result.get("completed"), list):
-        result["completed"] = [
-            {"operation": item["operation"]}
-            if isinstance(item, dict) and "operation" in item
-            else item
-            for item in result["completed"]
-        ]
-
-    # Strip memories content from completed plan steps (index < next_index).
-    # Pending steps (index >= next_index) keep their payload intact for resume.
-    next_index = result.get("next_index", 0)
-    if not isinstance(next_index, int):
-        # Accept integral floats produced by JSON round-trips
-        try:
-            next_index = int(next_index)
-        except (TypeError, ValueError):
-            next_index = 0
-
-    if isinstance(result.get("plan"), list) and next_index > 0:
-        compacted_plan: list[dict[str, Any]] = []
-        for i, step in enumerate(result["plan"]):
-            if not isinstance(step, dict):
-                compacted_plan.append(step)
-                continue
-            if i < next_index:
-                # Completed step — strip heavy payload content
-                raw_payload = step.get("payload")
-                compacted_step = dict(step)
-                if isinstance(raw_payload, dict):
-                    compacted_step["payload"] = _compact_plan_step_payload(raw_payload)
-                compacted_plan.append(compacted_step)
-            else:
-                # Pending step — keep as-is (needed for resume)
-                compacted_plan.append(step)
-        result["plan"] = compacted_plan
-
-    return result
-
-
-def _build_project_checkpoint_payload(
-    *,
-    scope: dict[str, Any],
-    plan: list[dict[str, Any]],
-    next_index: int,
-    completed: list[dict[str, Any]],
-    scan: ScanConfig | None = None,
-    scan_snapshot: ScanSnapshot | None = None,
-) -> dict[str, Any]:
-    payload: dict[str, Any] = {
-        "version": _PROJECT_FLOW_VERSION,
-        "scope": scope,
-        # Phase 2: include stable scope_key for deterministic context lookup.
-        "scope_key": scope_key(scope),
-        "plan": plan,
-        "next_index": next_index,
-        "completed": completed,
-    }
-    if scan is not None:
-        payload["scan"] = scan.model_dump()
-    if scan_snapshot is not None:
-        payload["scan_snapshot"] = scan_snapshot.model_dump()
-    return payload
-
-
-def _build_project_failed_checkpoint_payload(
-    *,
-    error: dict[str, Any],
-    failed_operation: str,
-    scope: dict[str, Any],
-    plan: list[dict[str, Any]],
-    next_index: int,
-    completed: list[dict[str, Any]],
-    completed_ops: list[str],
-    result: dict[str, Any] | None,
-    scan: ScanConfig | None = None,
-    scan_snapshot: ScanSnapshot | None = None,
-) -> dict[str, Any]:
-    """Build deterministic checkpoint payload for failed project flow steps."""
-    checkpoint_payload = _build_project_checkpoint_payload(
-        scope=scope,
-        plan=plan,
-        next_index=next_index,
-        completed=completed,
-        scan=scan,
-        scan_snapshot=scan_snapshot,
-    )
-    return {
-        "status": "checkpoint",
-        "failed_operation": failed_operation,
-        "error": error,
-        "remaining_operations": [
-            str(remaining_step["operation"]) for remaining_step in plan[next_index:]
-        ],
-        "completed_operations": completed_ops,
-        "last_operation": completed_ops[-1] if completed_ops else None,
-        "result": result,
-        "checkpoint": checkpoint_payload,
-    }
 
 
 def memory_schema_payload() -> dict[str, Any]:
@@ -1588,7 +1303,7 @@ def memory_schema_payload() -> dict[str, Any]:
     Callable from the HTTP transport layer as well as the MCP tool layer.
     """
     return {
-        "version": _PROJECT_FLOW_VERSION,
+        "version": PROJECT_FLOW_VERSION,
         "operations": [
             "query",
             "ingest",
@@ -1648,7 +1363,7 @@ def memory_schema_payload() -> dict[str, Any]:
             ),
         },
         "checkpoint": {
-            "version": _PROJECT_FLOW_VERSION,
+            "version": PROJECT_FLOW_VERSION,
             "fields": {
                 "version": "Checkpoint format version string (must match server version).",
                 "scope": "Project scope dict passed through all steps.",
@@ -1662,7 +1377,7 @@ def memory_schema_payload() -> dict[str, Any]:
                     "ScanSnapshot from last scan pass (optional, entries preserved for delta)."
                 ),
             },
-            "flow_operations": list(_PROJECT_FLOW_OPERATIONS),
+            "flow_operations": list(PROJECT_FLOW_OPERATIONS),
             "response_debug": {
                 "description": (
                     "Pass response={'debug': True} to onboard or sync to "
@@ -2095,7 +1810,7 @@ def register_memory_tools(
             # Build effective scope for the checkpoint plan, but only when we have an
             # actual scope or need to inject one for scan-driven auto-ingest.
             # Passing an empty dict (scope or {}) instead of None would falsely trigger
-            # the MEM_CHECKPOINT_CONFLICT guard in _normalize_project_checkpoint when a
+            # the MEM_CHECKPOINT_CONFLICT guard in normalize_project_checkpoint when a
             # checkpoint is being resumed without any explicit scope override.
             effective_scope_for_plan: dict[str, Any] | None = scope if scope else None
             if _scan_auto_ingest_active and not (effective_scope_for_plan or {}).get("wing"):
@@ -2107,7 +1822,7 @@ def register_memory_tools(
                     "wing": "scan",
                 }
 
-            resolved_scope, plan, next_index, completed = _normalize_project_checkpoint(
+            resolved_scope, plan, next_index, completed = normalize_project_checkpoint(
                 checkpoint=checkpoint,
                 scope=effective_scope_for_plan,
                 ingest=effective_ingest,
@@ -2132,134 +1847,34 @@ def register_memory_tools(
                     except Exception:
                         scan_snapshot = None
 
-            completed_ops: list[str] = []
-            last_result: dict[str, Any] | None = None
-
-            for _ in range(max_operations):
-                if next_index >= len(plan):
-                    break
-                step = plan[next_index]
-                operation_name = str(step["operation"])
-                step_payload = step.get("payload")
-                if not isinstance(step_payload, dict):
-                    raise _checkpoint_error("checkpoint step payload must be an object")
-                query_payload, record_payload, maintenance_payload = _step_sections(
-                    operation_name, step_payload
-                )
-                try:
-                    step_result = await _execute_memory_request(
-                        app_ctx=app_ctx,
-                        execution=execution,
-                        operation=operation_name,
-                        scope=resolved_scope,
-                        scope_token=None,
-                        context_id=None,
-                        query=query_payload,
-                        record=record_payload,
-                        graph=None,
-                        maintenance=maintenance_payload,
-                        response=response,
-                    )
-                except Exception as step_exc:
-                    step_error_payload = _tool_error_payload(
-                        "onboard", step_exc, stage=operation_name
-                    )
-                    step_error = step_error_payload.get("error")
-                    if not isinstance(step_error, dict):
-                        step_error = {
-                            "code": "MEM_INTERNAL_ERROR",
-                            "message": "onboard failed",
-                            "retryable": False,
-                            "stage": operation_name,
-                            "actionable_fix": None,
-                        }
-                    return json_response(
-                        _build_project_failed_checkpoint_payload(
-                            error=step_error,
-                            failed_operation=operation_name,
-                            scope=resolved_scope,
-                            plan=plan,
-                            next_index=next_index,
-                            completed=completed,
-                            completed_ops=completed_ops,
-                            result=last_result,
-                            scan=effective_scan,
-                            scan_snapshot=scan_snapshot,
-                        )
-                    )
-                step_error = _extract_error_envelope(step_result)
-                if step_error is not None:
-                    return json_response(
-                        _build_project_failed_checkpoint_payload(
-                            error=step_error,
-                            failed_operation=operation_name,
-                            scope=resolved_scope,
-                            plan=plan,
-                            next_index=next_index,
-                            completed=completed,
-                            completed_ops=completed_ops,
-                            result=step_result,
-                            scan=effective_scan,
-                            scan_snapshot=scan_snapshot,
-                        )
-                    )
-                # Back-populate memory_ids into snapshot entries after a scan-driven ingest.
-                if operation_name == "ingest" and scan_snapshot is not None and scan_ingested_paths:
-                    returned_ids: list[str] = []
-                    if isinstance(step_result, dict):
-                        raw_ids = step_result.get("ids") or step_result.get("id")
-                        if isinstance(raw_ids, list):
-                            returned_ids = [str(x) for x in raw_ids]
-                        elif isinstance(raw_ids, str):
-                            returned_ids = [raw_ids]
-                    scan_snapshot = _update_snapshot_with_memory_ids(
-                        scan_snapshot, scan_ingested_paths, returned_ids
-                    )
-                completed.append({"operation": operation_name, "result": step_result})
-                completed_ops.append(operation_name)
-                last_result = step_result
-                next_index += 1
-
-            completed_results: list[dict[str, Any]] = completed
-            checkpoint_payload = _build_project_checkpoint_payload(
+            state = FlowState(
                 scope=resolved_scope,
                 plan=plan,
                 next_index=next_index,
-                completed=completed_results,
-                scan=effective_scan,
-                scan_snapshot=scan_snapshot,
+                completed=completed,
+                scan=effective_scan.model_dump() if effective_scan is not None else None,
+                scan_snapshot=scan_snapshot.model_dump() if scan_snapshot is not None else None,
+                on_ingest=_make_scan_snapshot_backfill(scan_snapshot, scan_ingested_paths),
             )
-
-            _debug = _is_debug_response(response)
-            if next_index < len(plan):
-                return json_response(
-                    {
-                        "status": "checkpoint",
-                        "remaining_operations": [
-                            str(step["operation"]) for step in plan[next_index:]
-                        ],
-                        "completed_operations": completed_ops,
-                        "last_operation": completed_ops[-1] if completed_ops else None,
-                        "result": last_result,
-                        "checkpoint": _compact_checkpoint(checkpoint_payload, debug=_debug),
-                    }
+            advance_result = await _PROJECT_FLOW_SERVICE.advance(
+                state,
+                executor=_build_step_executor(
+                    app_ctx=app_ctx, execution=execution, response=response
+                ),
+                error_shaper=lambda exc, stage: _tool_error_payload("onboard", exc, stage=stage),
+                flow_name="onboard",
+                max_operations=max_operations,
+                debug=_is_debug_response(response),
+            )
+            if advance_result.completed:
+                candidate = _register_onboard_context_for_session(
+                    ctx,
+                    resolved_scope,
+                    advance_result.checkpoint,
                 )
-
-            completed_response: dict[str, Any] = {
-                "status": "completed",
-                "completed_operations": [str(item.get("operation")) for item in completed_results],
-                "checkpoint": _compact_checkpoint(checkpoint_payload, debug=_debug),
-            }
-            if _debug:
-                completed_response["results"] = completed_results
-            candidate = _register_onboard_context_for_session(
-                ctx,
-                resolved_scope,
-                checkpoint_payload,
-            )
-            _set_active_context(ctx, candidate)
-            _enable_watcher_for_active_project_after_onboard(ctx)
-            return json_response(completed_response)
+                _set_active_context(ctx, candidate)
+                _enable_watcher_for_active_project_after_onboard(ctx)
+            return json_response(advance_result.response)
         except Exception as e:
             return json_response(_tool_error_payload("onboard", e))
 
@@ -2380,7 +1995,7 @@ def register_memory_tools(
                 # B: Accept integral floats (e.g. 1.0) by coercing safely; reject non-integral.
                 if isinstance(_raw_next, float):
                     if _raw_next != int(_raw_next):
-                        raise _checkpoint_error(
+                        raise checkpoint_error(
                             "checkpoint.next_index must be an integer; "
                             f"non-integral float {_raw_next!r} is not allowed"
                         )
@@ -2399,13 +2014,11 @@ def register_memory_tools(
                         len(_raw_plan),
                     )
                     # Run full validation (raises MemoryContractError on corrupt checkpoint).
-                    _scope, _plan, _ni, _done = _restore_checkpoint(
-                        checkpoint, require_ingest=False
-                    )
+                    _scope, _plan, _ni, _done = restore_checkpoint(checkpoint, require_ingest=False)
                     # A: Include from_checkpoint flag and note in response.
                     _fp_debug = _is_debug_response(response)
                     _fp_checkpoint = (
-                        _build_project_checkpoint_payload(
+                        build_project_checkpoint_payload(
                             scope=_scope,
                             plan=_plan,
                             next_index=_ni,
@@ -2426,7 +2039,7 @@ def register_memory_tools(
                         "completed_operations": [
                             str(item.get("operation")) for item in _done if isinstance(item, dict)
                         ],
-                        "checkpoint": _compact_checkpoint(_fp_checkpoint, debug=_fp_debug),
+                        "checkpoint": compact_checkpoint(_fp_checkpoint, debug=_fp_debug),
                     }
                     if _fp_debug:
                         _fp_response["results"] = _done
@@ -2453,7 +2066,7 @@ def register_memory_tools(
                 effective_scan = ScanConfig.model_validate(scan)
 
             if checkpoint is not None and effective_scan is None:
-                resolved_scope, plan, next_index, completed = _normalize_project_checkpoint(
+                resolved_scope, plan, next_index, completed = normalize_project_checkpoint(
                     checkpoint=checkpoint,
                     scope=scope,
                     ingest=ingest,
@@ -2473,7 +2086,7 @@ def register_memory_tools(
                         retryable=False,
                     )
 
-                resolved_scope, plan, next_index, completed = _normalize_project_checkpoint(
+                resolved_scope, plan, next_index, completed = normalize_project_checkpoint(
                     checkpoint=checkpoint,
                     scope=None,
                     ingest=None,
@@ -2569,7 +2182,7 @@ def register_memory_tools(
                     else supersede
                 )
 
-                rebuilt_plan = _project_flow_plan(
+                rebuilt_plan = project_flow_plan(
                     ingest=effective_ingest,
                     supersede=effective_supersede,
                     archive=effective_archive,
@@ -2657,7 +2270,7 @@ def register_memory_tools(
                 # When resolved_scope/plan/next_index/completed were set by the registry
                 # path above, skip re-building (they are already final).
                 if not _registry_resolved:
-                    resolved_scope, plan, next_index, completed = _normalize_project_checkpoint(
+                    resolved_scope, plan, next_index, completed = normalize_project_checkpoint(
                         checkpoint=None,
                         scope=scope,
                         ingest=effective_ingest,
@@ -2667,131 +2280,31 @@ def register_memory_tools(
                         require_ingest=False,
                     )
 
-            completed_ops: list[str] = []
-            last_result: dict[str, Any] | None = None
-
-            for _ in range(max_operations):
-                if next_index >= len(plan):
-                    break
-                step = plan[next_index]
-                operation_name = str(step["operation"])
-                step_payload = step.get("payload")
-                if not isinstance(step_payload, dict):
-                    raise _checkpoint_error("checkpoint step payload must be an object")
-                query_payload, record_payload, maintenance_payload = _step_sections(
-                    operation_name, step_payload
-                )
-                try:
-                    step_result = await _execute_memory_request(
-                        app_ctx=app_ctx,
-                        execution=execution,
-                        operation=operation_name,
-                        scope=resolved_scope,
-                        scope_token=None,
-                        context_id=None,
-                        query=query_payload,
-                        record=record_payload,
-                        graph=None,
-                        maintenance=maintenance_payload,
-                        response=response,
-                    )
-                except Exception as step_exc:
-                    step_error_payload = _tool_error_payload("sync", step_exc, stage=operation_name)
-                    step_error = step_error_payload.get("error")
-                    if not isinstance(step_error, dict):
-                        step_error = {
-                            "code": "MEM_INTERNAL_ERROR",
-                            "message": "sync failed",
-                            "retryable": False,
-                            "stage": operation_name,
-                            "actionable_fix": None,
-                        }
-                    return json_response(
-                        _build_project_failed_checkpoint_payload(
-                            error=step_error,
-                            failed_operation=operation_name,
-                            scope=resolved_scope,
-                            plan=plan,
-                            next_index=next_index,
-                            completed=completed,
-                            completed_ops=completed_ops,
-                            result=last_result,
-                            scan=effective_scan,
-                            scan_snapshot=new_scan_snapshot,
-                        )
-                    )
-                step_error = _extract_error_envelope(step_result)
-                if step_error is not None:
-                    return json_response(
-                        _build_project_failed_checkpoint_payload(
-                            error=step_error,
-                            failed_operation=operation_name,
-                            scope=resolved_scope,
-                            plan=plan,
-                            next_index=next_index,
-                            completed=completed,
-                            completed_ops=completed_ops,
-                            result=step_result,
-                            scan=effective_scan,
-                            scan_snapshot=new_scan_snapshot,
-                        )
-                    )
-                # Back-populate memory_ids into snapshot entries after a scan-driven ingest.
-                if (
-                    operation_name == "ingest"
-                    and new_scan_snapshot is not None
-                    and sync_ingested_paths
-                ):
-                    sync_returned_ids: list[str] = []
-                    if isinstance(step_result, dict):
-                        raw_ids = step_result.get("ids") or step_result.get("id")
-                        if isinstance(raw_ids, list):
-                            sync_returned_ids = [str(x) for x in raw_ids]
-                        elif isinstance(raw_ids, str):
-                            sync_returned_ids = [raw_ids]
-                    new_scan_snapshot = _update_snapshot_with_memory_ids(
-                        new_scan_snapshot, sync_ingested_paths, sync_returned_ids
-                    )
-                completed.append({"operation": operation_name, "result": step_result})
-                completed_ops.append(operation_name)
-                last_result = step_result
-                next_index += 1
-
-            completed_results: list[dict[str, Any]] = completed
-            checkpoint_payload = _build_project_checkpoint_payload(
+            _sync_debug = _is_debug_response(response)
+            state = FlowState(
                 scope=resolved_scope,
                 plan=plan,
                 next_index=next_index,
-                completed=completed_results,
-                scan=effective_scan,
-                scan_snapshot=new_scan_snapshot,
+                completed=completed,
+                scan=effective_scan.model_dump() if effective_scan is not None else None,
+                scan_snapshot=(
+                    new_scan_snapshot.model_dump() if new_scan_snapshot is not None else None
+                ),
+                on_ingest=_make_scan_snapshot_backfill(new_scan_snapshot, sync_ingested_paths),
             )
-
-            _sync_debug = _is_debug_response(response)
-            if next_index < len(plan):
-                return json_response(
-                    {
-                        "status": "checkpoint",
-                        "remaining_operations": [
-                            str(step["operation"]) for step in plan[next_index:]
-                        ],
-                        "completed_operations": completed_ops,
-                        "last_operation": completed_ops[-1] if completed_ops else None,
-                        "result": last_result,
-                        "checkpoint": _compact_checkpoint(checkpoint_payload, debug=_sync_debug),
-                    }
-                )
-
-            sync_completed_response: dict[str, Any] = {
-                "status": "completed",
-                "completed_operations": [str(item.get("operation")) for item in completed_results],
-                "checkpoint": _compact_checkpoint(checkpoint_payload, debug=_sync_debug),
-            }
-            if _sync_debug:
-                sync_completed_response["results"] = completed_results
-                if sync_delta is not None:
-                    sync_completed_response["delta"] = sync_delta.to_debug_dict()
-            return json_response(sync_completed_response)
+            result = await _PROJECT_FLOW_SERVICE.advance(
+                state,
+                executor=_build_step_executor(
+                    app_ctx=app_ctx, execution=execution, response=response
+                ),
+                error_shaper=lambda exc, stage: _tool_error_payload("sync", exc, stage=stage),
+                flow_name="sync",
+                max_operations=max_operations,
+                debug=_sync_debug,
+            )
+            if _sync_debug and result.completed and sync_delta is not None:
+                result.response["delta"] = sync_delta.to_debug_dict()
+            return json_response(result.response)
         except Exception as e:
             return json_response(_tool_error_payload("sync", e))
 

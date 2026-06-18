@@ -2030,15 +2030,15 @@ class TestMemorySchemaOperation:
     async def test_schema_operation_checkpoint_version_matches_flow_version(
         self, mock_ctx: MagicMock
     ) -> None:
-        """Checkpoint version in schema response must match _PROJECT_FLOW_VERSION."""
-        from workflows_mcp.tools_memory import _PROJECT_FLOW_VERSION
+        """Checkpoint version in schema response must match PROJECT_FLOW_VERSION."""
+        from workflows_mcp.engine.project_flow_service import PROJECT_FLOW_VERSION
 
         result = await memory(
             operation="schema",
             ctx=mock_ctx,
         )
         payload = json.loads(result.content[0].text)
-        assert payload.get("checkpoint", {}).get("version") == _PROJECT_FLOW_VERSION
+        assert payload.get("checkpoint", {}).get("version") == PROJECT_FLOW_VERSION
 
     @pytest.mark.asyncio
     async def test_schema_operation_lists_known_operations(self, mock_ctx: MagicMock) -> None:

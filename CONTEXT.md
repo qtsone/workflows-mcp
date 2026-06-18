@@ -37,3 +37,11 @@ A scope candidate is stored session context that can contain `scope`, `scope_key
 ## Memory→Postgres fast-path invariant
 
 The memory subsystem requires a PostgreSQL backend with the `pgvector` extension. Unlike the SQL block — which is multi-DB and selects its backend through the `DatabaseBackend` dialect-selection Protocol — memory binds `PostgresBackend` / `DatabaseEngine.POSTGRESQL` directly at every production site and emits Postgres-only SQL (pgvector ANN search, full-text search, RRF) with no SQLite path. This asymmetry is intentional and documented as a fast-path invariant: memory is single-DB by design; only the SQL block is portable. See ADR-016.
+
+## Project flow
+
+A project flow is a resumable, multi-step memory operation plan — the onboard and sync paths — that executes ingest, supersede, archive, and maintain steps in order and can pause between steps and resume on a later call. It is owned by the stateless `ProjectFlowService`, which advances one or more steps and returns the next state; the single impure dependency (running one memory operation) is supplied as an injected operation executor. See ADR-014.
+
+## Resume checkpoint
+
+A resume checkpoint is the serialisable dict that carries all project-flow state across calls: the resolved scope, the ordered plan, the next-step index, the completed steps, and any scan snapshot. The checkpoint IS the state — there is no server-side flow state — so it round-trips through the client and keeps the flow concurrency-safe under many agent sessions against one central server.

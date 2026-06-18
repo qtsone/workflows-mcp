@@ -12,19 +12,18 @@ Phase 5 — LLM ingestion mode (``mode="llm"``) with:
 - INVALID_LLM_PROFILE error envelope for missing / invalid profiles.
 - LLM provenance block (model/profile/version fingerprint) only when debug=True.
 
-Phase 6 — sync pipeline with deterministic delta handling:
-- SyncDelta classification: added/modified/deleted/unchanged per-file.
+Phase 6 — graph construction for the sync pipeline:
 - Selective rebuild: only changed compartments are re-ingested.
-- Deletion policy: mark_missing (new) vs archive_missing (new alias) vs archive/supersede/ignore.
 - Global recompute of derived depends_on corridors from content analysis.
-- Idempotency: unchanged replay yields zero semantic delta (UNCHANGED status).
-- Debug delta diagnostics and weak-link reporting.
+- Weak-link reporting.
+
+The resumable checkpoint state machine and its sync-delta/deletion-policy logic
+live in ``project_flow_service`` (ADR-014); this module is the graph builder.
 
 Design invariants:
 - ``run_programmatic_onboard`` is the programmatic-mode entry point.
 - ``run_llm_onboard`` is the LLM-mode entry point; callers pass an
   ``LLMOnboardRequest`` and receive an ``LLMOnboardResult``.
-- ``compute_sync_delta`` is the deterministic delta computation entry point.
 - Both share the same graph-building and graph-validation infrastructure.
 - LLMConfigLoader is injected (not instantiated here) to reuse the existing registry.
 - Graph validation is a hard gate for both modes.
@@ -59,62 +58,8 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
-# Phase 6 — Delta classification types
+# Phase 6 — Graph diagnostics types
 # ---------------------------------------------------------------------------
-
-#: All valid deletion policy values (Phase 6 extends with mark_missing and archive_missing).
-DELETION_POLICY_VALUES: frozenset[str] = frozenset(
-    {"archive", "supersede", "ignore", "mark_missing", "archive_missing"}
-)
-
-
-@dataclass(frozen=True)
-class SyncDelta:
-    """Deterministic delta between two scan snapshots.
-
-    Phase 6 output of ``compute_sync_delta``.  All path lists are sorted for
-    deterministic ordering across calls.
-
-    Attributes:
-        added: Paths present in new_snapshot but absent in prior_snapshot.
-        modified: Paths present in both snapshots with differing content_hash.
-        deleted: Paths present in prior_snapshot but absent in new_snapshot.
-        unchanged: Paths present in both snapshots with identical content_hash.
-        has_semantic_delta: True when any file was added, modified, or deleted.
-        total_files: Total files in the new snapshot.
-    """
-
-    added: list[str]
-    modified: list[str]
-    deleted: list[str]
-    unchanged: list[str]
-
-    @property
-    def has_semantic_delta(self) -> bool:
-        """True when at least one file was added, modified, or deleted."""
-        return bool(self.added or self.modified or self.deleted)
-
-    @property
-    def total_files(self) -> int:
-        """Total file count in new snapshot (added + modified + unchanged)."""
-        return len(self.added) + len(self.modified) + len(self.unchanged)
-
-    def to_debug_dict(self) -> dict[str, Any]:
-        """Serialise the delta for debug diagnostics in sync responses."""
-        return {
-            "added": sorted(self.added),
-            "modified": sorted(self.modified),
-            "deleted": sorted(self.deleted),
-            "unchanged": sorted(self.unchanged),
-            "has_semantic_delta": self.has_semantic_delta,
-            "total_files": self.total_files,
-            "counts": {
-                "added": len(self.added),
-                "modified": len(self.modified),
-                "deleted": len(self.deleted),
-                "unchanged": len(self.unchanged),
-            },
-        }
 
 
 @dataclass(frozen=True)
@@ -492,61 +437,8 @@ def _build_graph_from_files(
 
 
 # ---------------------------------------------------------------------------
-# Phase 6 — Delta computation and weak-link analysis
+# Phase 6 — Weak-link analysis
 # ---------------------------------------------------------------------------
-
-
-def compute_sync_delta(
-    prior_entries: list[dict[str, Any]],
-    new_entries: list[dict[str, Any]],
-) -> SyncDelta:
-    """Compute a deterministic four-class delta between two file entry sets.
-
-    Each entry must have at minimum a ``path`` field and a ``content_hash``
-    field.  Entries with missing ``path`` are silently ignored.
-
-    Classification rules:
-    - ``added``:     path in new_entries but not in prior_entries.
-    - ``modified``:  path in both sets with differing content_hash values.
-    - ``deleted``:   path in prior_entries but not in new_entries.
-    - ``unchanged``: path in both sets with identical content_hash values.
-
-    Args:
-        prior_entries: File entries from the previous scan (snapshot).
-        new_entries: File entries from the current scan.
-
-    Returns:
-        SyncDelta with all four classified path lists, sorted for determinism.
-    """
-    old_by_path: dict[str, str] = {}
-    for e in prior_entries:
-        p = e.get("path") or ""
-        if p:
-            old_by_path[p] = str(e.get("content_hash") or "")
-
-    new_by_path: dict[str, str] = {}
-    for e in new_entries:
-        p = e.get("path") or ""
-        if p:
-            new_by_path[p] = str(e.get("content_hash") or "")
-
-    added: list[str] = sorted(p for p in new_by_path if p not in old_by_path)
-    deleted: list[str] = sorted(p for p in old_by_path if p not in new_by_path)
-    modified: list[str] = []
-    unchanged: list[str] = []
-    for path, new_hash in new_by_path.items():
-        if path in old_by_path:
-            if old_by_path[path] != new_hash:
-                modified.append(path)
-            else:
-                unchanged.append(path)
-
-    return SyncDelta(
-        added=added,
-        modified=sorted(modified),
-        deleted=deleted,
-        unchanged=sorted(unchanged),
-    )
 
 
 def compute_weak_links(graph: GraphPayload) -> WeakLinkReport:
@@ -657,40 +549,6 @@ def recompute_depends_on_corridors(
         nodes=list(graph.nodes),
         corridors=list(graph.corridors) + new_corridors,
     )
-
-
-def classify_deletion_policy(
-    deletion_policy: str,
-) -> Literal["archive", "supersede", "ignore"]:
-    """Normalise Phase 6 deletion policy aliases to canonical storage actions.
-
-    Phase 6 introduces two semantic aliases:
-    - ``mark_missing``    → maps to ``archive`` (marks files as inactive).
-    - ``archive_missing`` → maps to ``archive`` (explicit alias for clarity).
-
-    The three original policies are passed through unchanged.
-
-    Args:
-        deletion_policy: Raw deletion policy string from ScanConfig.
-
-    Returns:
-        Canonical action: ``"archive"``, ``"supersede"``, or ``"ignore"``.
-
-    Raises:
-        ValueError: When the policy string is not recognised.
-    """
-    _policy_map: dict[str, Literal["archive", "supersede", "ignore"]] = {
-        "archive": "archive",
-        "supersede": "supersede",
-        "ignore": "ignore",
-        "mark_missing": "archive",
-        "archive_missing": "archive",
-    }
-    canonical = _policy_map.get(deletion_policy)
-    if canonical is None:
-        allowed = ", ".join(sorted(_policy_map.keys()))
-        raise ValueError(f"Unknown deletion_policy {deletion_policy!r}. Allowed values: {allowed}.")
-    return canonical
 
 
 # ---------------------------------------------------------------------------

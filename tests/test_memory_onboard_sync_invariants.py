@@ -608,9 +608,9 @@ class TestValidateGraphStepPayload:
 
 class TestScopeKeyInCheckpoint:
     def _import_helper(self) -> Any:
-        from workflows_mcp.tools_memory import _build_project_checkpoint_payload
+        from workflows_mcp.engine.project_flow_service import build_project_checkpoint_payload
 
-        return _build_project_checkpoint_payload
+        return build_project_checkpoint_payload
 
     def test_checkpoint_contains_scope_key_field(self) -> None:
         fn = self._import_helper()
