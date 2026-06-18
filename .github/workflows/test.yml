@@ -117,6 +117,23 @@ jobs:
             echo "✅ docs/llm/ files are up to date"
           fi
 
+      - name: Regenerate schema
+        run: uv run python scripts/generate_schema.py
+
+      - name: Check schema is up to date
+        run: |
+          if [ -n "$(git status --porcelain schema.json)" ]; then
+            echo "❌ schema.json is out of date!"
+            echo ""
+            echo "Run: uv run python scripts/generate_schema.py"
+            echo "Then commit the changes."
+            echo ""
+            git diff --stat schema.json
+            exit 1
+          else
+            echo "✅ schema.json is up to date"
+          fi
+
   summary:
     name: Summary
     runs-on: ubuntu-latest
