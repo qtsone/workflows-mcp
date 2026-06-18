@@ -85,9 +85,7 @@ class TestForEachPauseResume:
     """Test for_each pause/resume functionality (ADR-010)."""
 
     @pytest.mark.asyncio
-    async def test_sequential_for_each_pause_first_iteration(
-        self, full_context: MagicMock
-    ) -> None:
+    async def test_sequential_for_each_pause_first_iteration(self, full_context: MagicMock) -> None:
         """Test that sequential for_each pauses on first Prompt iteration."""
         result = await execute_workflow(
             workflow="for-each-pause-sequential",

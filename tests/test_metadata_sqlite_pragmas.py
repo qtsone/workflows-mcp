@@ -8,9 +8,7 @@ from workflows_mcp.metadata.migrations import CURRENT_SCHEMA_VERSION, migrate_me
 
 
 def _table_names(conn: sqlite3.Connection) -> set[str]:
-    rows = conn.execute(
-        "SELECT name FROM sqlite_master WHERE type = 'table'"
-    ).fetchall()
+    rows = conn.execute("SELECT name FROM sqlite_master WHERE type = 'table'").fetchall()
     return {str(row[0]) for row in rows}
 
 
@@ -71,9 +69,7 @@ def test_migrate_metadata_db_creates_required_and_reserved_tables_and_version(
         assert required_tables.issubset(tables)
         assert reserved_future_tables.issubset(tables)
 
-        versions = conn.execute(
-            "SELECT version FROM schema_migrations ORDER BY version"
-        ).fetchall()
+        versions = conn.execute("SELECT version FROM schema_migrations ORDER BY version").fetchall()
         assert [int(row[0]) for row in versions] == _expected_schema_versions()
     finally:
         conn.close()
@@ -86,9 +82,7 @@ def test_migrate_metadata_db_is_idempotent(tmp_path: Path) -> None:
         migrate_metadata_db(conn)
         migrate_metadata_db(conn)
 
-        versions = conn.execute(
-            "SELECT version FROM schema_migrations ORDER BY version"
-        ).fetchall()
+        versions = conn.execute("SELECT version FROM schema_migrations ORDER BY version").fetchall()
         assert [int(row[0]) for row in versions] == _expected_schema_versions()
     finally:
         conn.close()

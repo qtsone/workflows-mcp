@@ -357,8 +357,7 @@ def test_resume_endpoint_uses_public_job_queue_resume_api(app_client: TestClient
 
 def test_runs_route_source_has_no_private_queue_or_runner_calls() -> None:
     route_file = (
-        Path(__file__).resolve().parents[1]
-        / "src/workflows_mcp/http/routes/admin_v1/runs.py"
+        Path(__file__).resolve().parents[1] / "src/workflows_mcp/http/routes/admin_v1/runs.py"
     )
     source = route_file.read_text(encoding="utf-8")
     assert "._store" not in source

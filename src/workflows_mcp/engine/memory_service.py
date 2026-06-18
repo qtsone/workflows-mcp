@@ -258,8 +258,7 @@ async def _resolve_entity_id_manage(
     normalized_corridor = _normalize_scope_value(corridor)
 
     has_explicit_topology_scope = any(
-        value is not None and str(value).strip() != ""
-        for value in (namespace, room, corridor)
+        value is not None and str(value).strip() != "" for value in (namespace, room, corridor)
     )
 
     clauses = ["name = $1"]
@@ -278,9 +277,7 @@ async def _resolve_entity_id_manage(
         params.append(palace)
 
     result = await backend.query(
-        "SELECT id FROM knowledge_entities WHERE "
-        + " AND ".join(clauses)
-        + " ORDER BY id LIMIT 2",
+        "SELECT id FROM knowledge_entities WHERE " + " AND ".join(clauses) + " ORDER BY id LIMIT 2",
         tuple(params),
     )
     if len(result.rows) > 1:
@@ -1058,9 +1055,7 @@ class ManageMemoryResult(BaseModel):
     )
     derivation_source: str | None = Field(
         default=None,
-        description=(
-            "How topology was determined: 'explicit_override' or 'system1_derived'."
-        ),
+        description=("How topology was determined: 'explicit_override' or 'system1_derived'."),
     )
     provenance_id: str | None = Field(
         default=None,
@@ -1265,13 +1260,9 @@ class TopologyOverrideInput(BaseModel):
     @model_validator(mode="after")
     def _reject_whitespace_fields(self) -> TopologyOverrideInput:
         if not self.wing.strip():
-            raise ValueError(
-                "MEM_WHITESPACE_WING: wing must not be empty or whitespace-only"
-            )
+            raise ValueError("MEM_WHITESPACE_WING: wing must not be empty or whitespace-only")
         if not self.room.strip():
-            raise ValueError(
-                "MEM_WHITESPACE_ROOM: room must not be empty or whitespace-only"
-            )
+            raise ValueError("MEM_WHITESPACE_ROOM: room must not be empty or whitespace-only")
         if not self.compartment.strip():
             raise ValueError(
                 "MEM_WHITESPACE_COMPARTMENT: compartment must not be empty or whitespace-only"
@@ -1281,9 +1272,7 @@ class TopologyOverrideInput(BaseModel):
                 "MEM_WHITESPACE_OVERRIDE_REASON: override_reason must not be whitespace-only"
             )
         if not self.applied_by.strip():
-            raise ValueError(
-                "MEM_WHITESPACE_APPLIED_BY: applied_by must not be whitespace-only"
-            )
+            raise ValueError("MEM_WHITESPACE_APPLIED_BY: applied_by must not be whitespace-only")
         return self
 
 
@@ -1364,9 +1353,7 @@ class DeriveSystem1TopologyInput(BaseModel):
     @model_validator(mode="after")
     def _require_proof_bundle_for_new_wing(self) -> DeriveSystem1TopologyInput:
         if self.is_new_wing and self.topology_override is None and self.proof_bundle is None:
-            raise ValueError(
-                "proof_bundle is required when is_new_wing=True"
-            )
+            raise ValueError("proof_bundle is required when is_new_wing=True")
         return self
 
 
@@ -1707,9 +1694,7 @@ class OrgUserMergeTransparency(BaseModel):
         default=None,
         description="User-layer record when present",
     )
-    conflict: bool = Field(
-        description="True when both org and user records exist and differ"
-    )
+    conflict: bool = Field(description="True when both org and user records exist and differ")
 
 
 def _build_merge_transparency(
@@ -2357,7 +2342,8 @@ class MemoryService:
             )
 
         missing_not_null = [
-            f for f in ("content_hash", "size_bytes", "mtime_ns")
+            f
+            for f in ("content_hash", "size_bytes", "mtime_ns")
             if getattr(request, f, None) is None
         ]
         if missing_not_null:
@@ -2570,8 +2556,7 @@ class MemoryService:
                 relation_metadata = relation.get("metadata") or {}
 
                 check = await self._backend.query(
-                    "SELECT id, palace FROM knowledge_entities "
-                    "WHERE id IN ($1::uuid, $2::uuid)",
+                    "SELECT id, palace FROM knowledge_entities WHERE id IN ($1::uuid, $2::uuid)",
                     (src_id, tgt_id),
                 )
                 endpoint_palaces = {str(row["id"]): row["palace"] for row in check.rows}
@@ -2802,8 +2787,7 @@ class MemoryService:
                 operation="store_relations_by_qname",
                 success=False,
                 error=(
-                    "MEM_FIELD_REQUIRED: 'graph.relations' is required"
-                    " for store_relations_by_qname"
+                    "MEM_FIELD_REQUIRED: 'graph.relations' is required for store_relations_by_qname"
                 ),
             )
 
@@ -2862,23 +2846,27 @@ class MemoryService:
                 )
                 if isinstance(src_resolve, dict):
                     # Ambiguous
-                    unresolved_or_ambiguous.append({
-                        "index": idx,
-                        "reason": "ambiguous",
-                        "qname": source_qname,
-                        "entity_type": source_entity_type,
-                        "candidates": src_resolve["candidates"],
-                    })
+                    unresolved_or_ambiguous.append(
+                        {
+                            "index": idx,
+                            "reason": "ambiguous",
+                            "qname": source_qname,
+                            "entity_type": source_entity_type,
+                            "candidates": src_resolve["candidates"],
+                        }
+                    )
                     relation_ids.append(None)
                     continue
 
                 if src_resolve == "unresolved":
-                    unresolved_or_ambiguous.append({
-                        "index": idx,
-                        "reason": "unresolved_source",
-                        "qname": source_qname,
-                        "entity_type": source_entity_type,
-                    })
+                    unresolved_or_ambiguous.append(
+                        {
+                            "index": idx,
+                            "reason": "unresolved_source",
+                            "qname": source_qname,
+                            "entity_type": source_entity_type,
+                        }
+                    )
                     relation_ids.append(None)
                     continue
 
@@ -2896,23 +2884,27 @@ class MemoryService:
 
                 if isinstance(tgt_resolve, dict):
                     # Ambiguous
-                    unresolved_or_ambiguous.append({
-                        "index": idx,
-                        "reason": "ambiguous",
-                        "qname": target_qname,
-                        "entity_type": target_entity_type,
-                        "candidates": tgt_resolve["candidates"],
-                    })
+                    unresolved_or_ambiguous.append(
+                        {
+                            "index": idx,
+                            "reason": "ambiguous",
+                            "qname": target_qname,
+                            "entity_type": target_entity_type,
+                            "candidates": tgt_resolve["candidates"],
+                        }
+                    )
                     relation_ids.append(None)
                     continue
                 elif tgt_resolve == "unresolved":
                     if external_fallback == "reject":
-                        unresolved_or_ambiguous.append({
-                            "index": idx,
-                            "reason": "unresolved_target",
-                            "qname": target_qname,
-                            "entity_type": target_entity_type,
-                        })
+                        unresolved_or_ambiguous.append(
+                            {
+                                "index": idx,
+                                "reason": "unresolved_target",
+                                "qname": target_qname,
+                                "entity_type": target_entity_type,
+                            }
+                        )
                         relation_ids.append(None)
                         continue
                     else:
@@ -2952,10 +2944,12 @@ class MemoryService:
                         # in this call (handles duplicate qnames within one call).
                         if was_inserted and ext_stable_id not in external_created_this_call:
                             external_created_this_call.add(ext_stable_id)
-                            external_entities_created.append({
-                                "qname": target_qname,
-                                "entity_id": tgt_id,
-                            })
+                            external_entities_created.append(
+                                {
+                                    "qname": target_qname,
+                                    "entity_id": tgt_id,
+                                }
+                            )
                 else:
                     tgt_id = tgt_resolve  # valid UUID string
 
@@ -2963,8 +2957,7 @@ class MemoryService:
 
                 # --- Palace isolation check (same as _manage_store_relations) ---
                 check = await self._backend.query(
-                    "SELECT id, palace FROM knowledge_entities "
-                    "WHERE id IN ($1::uuid, $2::uuid)",
+                    "SELECT id, palace FROM knowledge_entities WHERE id IN ($1::uuid, $2::uuid)",
                     (src_id, tgt_id),
                 )
                 endpoint_palaces = {str(row["id"]): row["palace"] for row in check.rows}
@@ -3099,8 +3092,7 @@ class MemoryService:
                     raise MemoryContractError(
                         code="MEM_EMBEDDING_DIMENSION_MISMATCH",
                         message=(
-                            "MEM_EMBEDDING_DIMENSION_MISMATCH: "
-                            "dimension must equal len(embedding)"
+                            "MEM_EMBEDDING_DIMENSION_MISMATCH: dimension must equal len(embedding)"
                         ),
                         retryable=False,
                     )
@@ -3147,9 +3139,7 @@ class MemoryService:
             stored_count=len(request.entity_embeddings),
         )
 
-    async def _manage_archive_memories(
-        self, request: ManageMemoryRequest
-    ) -> ManageMemoryResult:
+    async def _manage_archive_memories(self, request: ManageMemoryRequest) -> ManageMemoryResult:
         """Soft-delete memories by item_id or explicit memory_ids; idempotent."""
         palace = _normalize_scope_value(_get_palace(request))
         if palace is None:
@@ -3194,7 +3184,7 @@ class MemoryService:
                SET lifecycle_state = 'ARCHIVED',
                    metadata = metadata || ${metadata_param}::jsonb,
                    updated_at = NOW()
-             WHERE {' AND '.join(clauses)}
+             WHERE {" AND ".join(clauses)}
             RETURNING id
             """,
             tuple(params + [json.dumps({"archived_reason": request.reason or "item_tombstoned"})]),
@@ -3207,9 +3197,7 @@ class MemoryService:
             stored_count=len(affected),
         )
 
-    async def _manage_mark_item_dirty(
-        self, request: ManageMemoryRequest
-    ) -> ManageMemoryResult:
+    async def _manage_mark_item_dirty(self, request: ManageMemoryRequest) -> ManageMemoryResult:
         """Set knowledge_items.lifecycle_state='DIRTY' and write error_metadata."""
         if not request.item_id:
             return ManageMemoryResult(
@@ -3343,19 +3331,14 @@ class MemoryService:
                 final_metadata: dict[str, Any] = (
                     dict(entity_metadata) if isinstance(entity_metadata, dict) else {}
                 )
-                if (
-                    "source_file" not in final_metadata
-                    and graph.parser_metadata.get("source_file")
-                ):
+                if "source_file" not in final_metadata and graph.parser_metadata.get("source_file"):
                     final_metadata["source_file"] = graph.parser_metadata.get("source_file")
-                if (
-                    "source_range" not in final_metadata
-                    and graph.parser_metadata.get("source_range")
+                if "source_range" not in final_metadata and graph.parser_metadata.get(
+                    "source_range"
                 ):
                     final_metadata["source_range"] = graph.parser_metadata.get("source_range")
-                if (
-                    "content_hash" not in final_metadata
-                    and graph.parser_metadata.get("content_hash")
+                if "content_hash" not in final_metadata and graph.parser_metadata.get(
+                    "content_hash"
                 ):
                     final_metadata["content_hash"] = graph.parser_metadata.get("content_hash")
 
@@ -3442,23 +3425,20 @@ class MemoryService:
                     )
 
                 final_relation_metadata: dict[str, Any] = dict(metadata)
-                if (
-                    "source_file" not in final_relation_metadata
-                    and graph.parser_metadata.get("source_file")
+                if "source_file" not in final_relation_metadata and graph.parser_metadata.get(
+                    "source_file"
                 ):
                     final_relation_metadata["source_file"] = graph.parser_metadata.get(
                         "source_file"
                     )
-                if (
-                    "source_range" not in final_relation_metadata
-                    and graph.parser_metadata.get("source_range")
+                if "source_range" not in final_relation_metadata and graph.parser_metadata.get(
+                    "source_range"
                 ):
                     final_relation_metadata["source_range"] = graph.parser_metadata.get(
                         "source_range"
                     )
-                if (
-                    "content_hash" not in final_relation_metadata
-                    and graph.parser_metadata.get("content_hash")
+                if "content_hash" not in final_relation_metadata and graph.parser_metadata.get(
+                    "content_hash"
                 ):
                     final_relation_metadata["content_hash"] = graph.parser_metadata.get(
                         "content_hash"
@@ -3507,9 +3487,7 @@ class MemoryService:
                     ) or None
                     qualified_name_raw = entity.get("qualified_name")
                     qualified_name_value = (
-                        str(qualified_name_raw).strip()
-                        if qualified_name_raw is not None
-                        else None
+                        str(qualified_name_raw).strip() if qualified_name_raw is not None else None
                     ) or None
                     confidence = entity.get("confidence")
 
@@ -3525,19 +3503,16 @@ class MemoryService:
                     merged_metadata: dict[str, Any] = (
                         dict(entity_metadata) if isinstance(entity_metadata, dict) else {}
                     )
-                    if (
-                        "source_file" not in merged_metadata
-                        and graph.parser_metadata.get("source_file")
+                    if "source_file" not in merged_metadata and graph.parser_metadata.get(
+                        "source_file"
                     ):
                         merged_metadata["source_file"] = graph.parser_metadata.get("source_file")
-                    if (
-                        "source_range" not in merged_metadata
-                        and graph.parser_metadata.get("source_range")
+                    if "source_range" not in merged_metadata and graph.parser_metadata.get(
+                        "source_range"
                     ):
                         merged_metadata["source_range"] = graph.parser_metadata.get("source_range")
-                    if (
-                        "content_hash" not in merged_metadata
-                        and graph.parser_metadata.get("content_hash")
+                    if "content_hash" not in merged_metadata and graph.parser_metadata.get(
+                        "content_hash"
                     ):
                         merged_metadata["content_hash"] = graph.parser_metadata.get("content_hash")
 
@@ -4129,10 +4104,7 @@ class MemoryService:
             if request.derivation is None:
                 _raise_contract_error(
                     code="MEM_MISSING_REQUIRED_FIELD",
-                    message=(
-                        "'derivation' is required"
-                        " for operation='derive_system1_topology'"
-                    ),
+                    message=("'derivation' is required for operation='derive_system1_topology'"),
                 )
             derivation_input = request.derivation
             topology_override = derivation_input.topology_override
@@ -4140,15 +4112,11 @@ class MemoryService:
                 # Task 2b: explicit override path.
                 # All five override fields are required (enforced by TopologyOverrideInput).
                 # evidence_ids must reference persisted rows — FK checked inside transaction.
-                return await self._derive_system1_topology_explicit_override(
-                    derivation_input
-                )
+                return await self._derive_system1_topology_explicit_override(derivation_input)
             # Non-override path: Task 3 structural heuristic.
             # Task 4: enforce proof-bundle gate for new-wing derivation before structural work.
             if derivation_input.is_new_wing:
-                gate_result = await self._enforce_system1_proof_bundle_gate(
-                    derivation_input, op
-                )
+                gate_result = await self._enforce_system1_proof_bundle_gate(derivation_input, op)
                 if gate_result is not None:
                     return gate_result
             return await self._derive_system1_topology_structural(derivation_input)
@@ -4261,9 +4229,7 @@ class MemoryService:
                     # Gate: require >= 2 successful absent cycles covering the same
                     # scope_key (exact normalized identity, not prefix/contains).
                     if cycle_ids:
-                        placeholders = ", ".join(
-                            f"${i + 1}::uuid" for i in range(len(cycle_ids))
-                        )
+                        placeholders = ", ".join(f"${i + 1}::uuid" for i in range(len(cycle_ids)))
                         count_result = await self._backend.query(
                             f"SELECT COUNT(*)::int AS n FROM knowledge_verification_cycles"
                             f" WHERE id IN ({placeholders})"
@@ -4351,8 +4317,7 @@ class MemoryService:
             _raise_contract_error(
                 code="MEM_PALACE_REQUIRED",
                 message=(
-                    "'scope.palace' is required for "
-                    "operation='derive_system1_project_topology'"
+                    "'scope.palace' is required for operation='derive_system1_project_topology'"
                 ),
             )
 
@@ -5008,8 +4973,13 @@ class MemoryService:
                             'active_evidenced', $6, $7, NOW(), NOW())
                     """,
                     (
-                        claim_uuid, palace, derived_wing, derived_room, derived_compartment,
-                        claim_text, scope_key,
+                        claim_uuid,
+                        palace,
+                        derived_wing,
+                        derived_room,
+                        derived_compartment,
+                        claim_text,
+                        scope_key,
                     ),
                 )
 
@@ -5025,8 +4995,13 @@ class MemoryService:
                         NOW(), NOW())
                 """,
                 (
-                    provenance_uuid, claim_uuid, palace,
-                    derived_wing, derived_room, derived_compartment, scope_key,
+                    provenance_uuid,
+                    claim_uuid,
+                    palace,
+                    derived_wing,
+                    derived_room,
+                    derived_compartment,
+                    scope_key,
                 ),
             )
 
@@ -5048,9 +5023,7 @@ class MemoryService:
             raise
         except Exception as exc:
             await self._backend.rollback()
-            logger.exception(
-                "derive_system1_topology_structural: transaction rolled back"
-            )
+            logger.exception("derive_system1_topology_structural: transaction rolled back")
             _raise_contract_error(
                 code="MEM_DB_ERROR",
                 message=f"transaction rolled back — {exc}",
@@ -5059,8 +5032,12 @@ class MemoryService:
         logger.info(
             "derive_system1_topology_structural: "
             "palace=%s wing=%s room=%s compartment=%s provenance_id=%s claim_id=%s",
-            palace, derived_wing, derived_room, derived_compartment,
-            provenance_uuid, claim_uuid,
+            palace,
+            derived_wing,
+            derived_room,
+            derived_compartment,
+            provenance_uuid,
+            claim_uuid,
         )
 
         return ManageMemoryResult(
@@ -5220,7 +5197,13 @@ class MemoryService:
                         NOW(), NOW())
                 """,
                 (
-                    provenance_uuid, claim_uuid, palace, wing, room, compartment, scope_key,
+                    provenance_uuid,
+                    claim_uuid,
+                    palace,
+                    wing,
+                    room,
+                    compartment,
+                    scope_key,
                     derivation_source,
                     derivation_algorithm_version,
                     override_reason,
@@ -5247,9 +5230,7 @@ class MemoryService:
             raise
         except Exception as exc:
             await self._backend.rollback()
-            logger.exception(
-                "derive_system1_topology_explicit_override: transaction rolled back"
-            )
+            logger.exception("derive_system1_topology_explicit_override: transaction rolled back")
             _raise_contract_error(
                 code="MEM_DB_ERROR",
                 message=f"transaction rolled back — {exc}",
@@ -5258,7 +5239,12 @@ class MemoryService:
         logger.info(
             "derive_system1_topology_explicit_override: "
             "palace=%s wing=%s room=%s compartment=%s provenance_id=%s claim_id=%s",
-            palace, wing, room, compartment, provenance_uuid, claim_uuid,
+            palace,
+            wing,
+            room,
+            compartment,
+            provenance_uuid,
+            claim_uuid,
         )
 
         return ManageMemoryResult(
@@ -5277,7 +5263,6 @@ class MemoryService:
                 "evidence_ids": evidence_ids,
             },
         )
-
 
     async def _apply_semantic_override(
         self,
@@ -5485,9 +5470,7 @@ class MemoryService:
             elif claim_type == "room_intent":
                 claim_text = f"room_intent:{derivation.room_intent_label}"
             elif claim_type == "compartment_reasoning_unit":
-                claim_text = (
-                    f"compartment_reasoning_unit:{derivation.compartment_reasoning_unit}"
-                )
+                claim_text = f"compartment_reasoning_unit:{derivation.compartment_reasoning_unit}"
             elif claim_type == "memory_claim":
                 claim_text = f"memory_claim:{derivation.memory_claim_text}"
             else:
@@ -5506,7 +5489,10 @@ class MemoryService:
                 RETURNING id::text
                 """,
                 (
-                    palace, wing, room, compartment,
+                    palace,
+                    wing,
+                    room,
+                    compartment,
                     claim_type,
                     claim_text,
                     scope_key,
@@ -6115,8 +6101,7 @@ class MemoryService:
         scope_applied = bool(namespace or room or corridor or palace)
         scope_mode = "graph_scoped" if scope_applied else "graph_global"
         has_explicit_topology_scope = any(
-            value is not None and str(value).strip() != ""
-            for value in (namespace, room, corridor)
+            value is not None and str(value).strip() != "" for value in (namespace, room, corridor)
         )
 
         async def _resolve_scoped_graph_entity(
@@ -6195,15 +6180,12 @@ class MemoryService:
                         f"corridor = ${len(filter_params) + 3}",
                     ]
                 )
-                filter_params.extend(
-                    [normalized_namespace, normalized_room, normalized_corridor]
-                )
+                filter_params.extend([normalized_namespace, normalized_room, normalized_corridor])
             if palace is not None:
                 clauses.append(f"palace = ${len(filter_params) + 1}")
                 filter_params.append(palace)
             scoped_nodes_result = await self._backend.query(
-                "SELECT id FROM knowledge_entities WHERE "
-                + " AND ".join(clauses),
+                "SELECT id FROM knowledge_entities WHERE " + " AND ".join(clauses),
                 tuple(filter_params),
             )
             scoped_node_ids = {str(row["id"]) for row in scoped_nodes_result.rows}
@@ -6283,7 +6265,7 @@ class MemoryService:
                 WITH scoped_entities AS (
                     SELECT id
                     FROM knowledge_entities
-                    WHERE {' AND '.join(scoped_clauses)}
+                    WHERE {" AND ".join(scoped_clauses)}
                 )
                 SELECT
                     (SELECT COUNT(*)::bigint FROM scoped_entities) AS entity_count,

@@ -360,8 +360,9 @@ async def test_store_system1_structural_graph_returns_deterministic_diagnostics(
 
 
 @pytest.mark.asyncio
-async def test_store_system1_structural_graph_rejects_non_dict_relation_item_without_pydantic_crash(
-) -> None:
+async def test_store_system1_structural_graph_rejects_non_dict_relation_item_without_pydantic_crash() -> (  # noqa: E501
+    None
+):
     request = MemoryRequest.model_validate(
         {
             "operation": "store_system1_structural_graph",
@@ -383,8 +384,9 @@ async def test_store_system1_structural_graph_rejects_non_dict_relation_item_wit
 
 
 @pytest.mark.asyncio
-async def test_store_system1_structural_graph_rejects_non_dict_entity_item_without_pydantic_crash(
-) -> None:
+async def test_store_system1_structural_graph_rejects_non_dict_entity_item_without_pydantic_crash() -> (  # noqa: E501
+    None
+):
     request = MemoryRequest.model_validate(
         {
             "operation": "store_system1_structural_graph",
@@ -2596,9 +2598,9 @@ async def test_derive_system1_project_topology_defers_isolates_without_path_only
             "entity_type": "module",
             "evidence_category": "structural_module",
             "evidence_data": {
-                    "content_hash": "graph123",
-                },
-            }
+                "content_hash": "graph123",
+            },
+        }
     )
 
     store_request = MemoryRequest.model_validate(payload)

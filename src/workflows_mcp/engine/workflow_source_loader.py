@@ -45,9 +45,7 @@ def reload_registry_from_source_paths(
     # be shadowed by user workflows.
     normalized_builtins = [_normalize_source_path(path) for path in builtin_paths]
     for builtin_path in normalized_builtins:
-        yaml_files = sorted(
-            [*builtin_path.glob("**/*.yaml"), *builtin_path.glob("**/*.yml")]
-        )
+        yaml_files = sorted([*builtin_path.glob("**/*.yaml"), *builtin_path.glob("**/*.yml")])
         for yaml_file in yaml_files:
             result = load_workflow_from_file(yaml_file)
             if not result.is_success or result.value is None:
@@ -77,9 +75,7 @@ def reload_registry_from_source_paths(
     # Phase 2: load user workflows; reject any that shadow a built-in name.
     normalized_sources = [_normalize_source_path(path) for path in source_paths]
     for source_path in normalized_sources:
-        yaml_files = sorted(
-            [*source_path.glob("**/*.yaml"), *source_path.glob("**/*.yml")]
-        )
+        yaml_files = sorted([*source_path.glob("**/*.yaml"), *source_path.glob("**/*.yml")])
         for yaml_file in yaml_files:
             result = load_workflow_from_file(yaml_file)
             if not result.is_success or result.value is None:

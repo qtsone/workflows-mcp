@@ -291,9 +291,7 @@ async def test_filter_graph_result_drops_cross_palace_nodes(
         for node in evidence.get("nodes", [])
         if node.get("id")
     }
-    assert palace_b_beta not in node_ids, (
-        "cross-palace beta leaked through the post-filter"
-    )
+    assert palace_b_beta not in node_ids, "cross-palace beta leaked through the post-filter"
 
 
 async def test_graph_traverse_refuses_to_cross_palace_via_relation(

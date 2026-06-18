@@ -186,9 +186,7 @@ class TestProjectMemoryToolsScanParameter:
         assert "start or continue project memory onboarding" in onboard.description.lower()
 
     @pytest.mark.asyncio
-    async def test_onboard_rejects_scan_with_extra_fields(
-        self, mock_context: MagicMock
-    ) -> None:
+    async def test_onboard_rejects_scan_with_extra_fields(self, mock_context: MagicMock) -> None:
         """onboard with invalid scan config (extra fields) must return error."""
         from workflows_mcp.tools import execute_workflow  # noqa: F401 (trigger import check)
         from workflows_mcp.tools_memory import register_memory_tools as _rtm
@@ -211,9 +209,7 @@ class TestProjectMemoryToolsScanParameter:
         assert "code" in error
 
     @pytest.mark.asyncio
-    async def test_onboard_rejects_oss_r2_checkpoint(
-        self, mock_context: MagicMock
-    ) -> None:
+    async def test_onboard_rejects_oss_r2_checkpoint(self, mock_context: MagicMock) -> None:
         """onboard must reject checkpoints with version != oss-r3."""
         from workflows_mcp.tools_memory import register_memory_tools as _rtm
 
@@ -239,9 +235,7 @@ class TestProjectMemoryToolsScanParameter:
         assert error.get("code") == "MEM_CHECKPOINT_INVALID"
 
     @pytest.mark.asyncio
-    async def test_sync_rejects_oss_r2_checkpoint(
-        self, mock_context: MagicMock
-    ) -> None:
+    async def test_sync_rejects_oss_r2_checkpoint(self, mock_context: MagicMock) -> None:
         """sync must reject checkpoints with version != oss-r3."""
         from workflows_mcp.tools_memory import register_memory_tools as _rtm
 
@@ -286,9 +280,7 @@ class TestProjectMemoryToolsExposureInOssMode:
         async def _fake_prepare_memory_schema(_memory_db_host: str) -> _FakeBackend:
             return _FakeBackend()
 
-        def _fake_register_memory_tools(
-            _mcp: Any, *, enable_project_tools: bool = True
-        ) -> None:
+        def _fake_register_memory_tools(_mcp: Any, *, enable_project_tools: bool = True) -> None:
             register_calls.append(enable_project_tools)
 
         import workflows_mcp.engine.executors_memory as executors_memory_mod
@@ -328,9 +320,7 @@ class TestProjectMemoryToolsExposureInOssMode:
         async def _fake_prepare_memory_schema(_memory_db_host: str) -> _FakeBackend:
             return _FakeBackend()
 
-        def _fake_register_memory_tools(
-            _mcp: Any, *, enable_project_tools: bool = True
-        ) -> None:
+        def _fake_register_memory_tools(_mcp: Any, *, enable_project_tools: bool = True) -> None:
             register_calls.append(enable_project_tools)
 
         import workflows_mcp.engine.executors_memory as executors_memory_mod
@@ -980,10 +970,13 @@ class TestHTTPServerIntegration:
 
     def test_protected_config_requires_token(self, tmp_path: Path) -> None:
         client = self._make_client(tmp_path)
-        assert client.post(
-            "/mcp",
-            json={"jsonrpc": "2.0", "id": "1", "method": "tools/list", "params": {}},
-        ).status_code == 401
+        assert (
+            client.post(
+                "/mcp",
+                json={"jsonrpc": "2.0", "id": "1", "method": "tools/list", "params": {}},
+            ).status_code
+            == 401
+        )
 
     def test_build_app_no_longer_requires_bootstrap_token(self, tmp_path: Path) -> None:
         """build_app should initialize without requiring legacy bootstrap token state."""
@@ -1047,10 +1040,8 @@ class TestBuiltinWorkflowDiscovery:
         }
         missing = required - declared_inputs
         assert not missing, (
-            f"system2-derive is missing expected inputs: {missing}. "
-            f"Declared: {declared_inputs}"
+            f"system2-derive is missing expected inputs: {missing}. Declared: {declared_inputs}"
         )
-
 
     def test_system2_verify_lifecycle_is_discoverable_as_builtin_workflow(self) -> None:
         """system2-verify-lifecycle must be present in the built-in template registry."""
@@ -1102,8 +1093,7 @@ class TestBuiltinWorkflowDiscovery:
             return inputs.get("operation")
 
         reconcile_blocks = [
-            b for b in blocks
-            if _block_operation(b) == "reconcile_semantic_lifecycle"
+            b for b in blocks if _block_operation(b) == "reconcile_semantic_lifecycle"
         ]
         assert reconcile_blocks, (
             "system2-verify-lifecycle has no block invoking 'reconcile_semantic_lifecycle'. "

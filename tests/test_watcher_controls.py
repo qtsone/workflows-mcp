@@ -228,9 +228,9 @@ def test_sync_now_without_dirty_work_is_idle_and_does_not_enqueue_job(
         fs_root=str(project_root),
         fs_allowlist=[str(project_root)],
     )
-    SQLiteWatcherRepository(app_client.app.state.resources.metadata_db_conn).mark_active_dirty_processed(
-        project_id=project_id
-    )
+    SQLiteWatcherRepository(
+        app_client.app.state.resources.metadata_db_conn
+    ).mark_active_dirty_processed(project_id=project_id)
     submitted: list[dict[str, object]] = []
 
     async def _submit_job(*args: object, **kwargs: object) -> str:
@@ -1035,9 +1035,7 @@ def test_events_watchers_sse_and_polling_state_are_equivalent(app_client: TestCl
 
     event_name, event_data = _single_live_sse_event(
         "watcher.status",
-        lambda: _watcher_status_payload(app_client.app.state.resources).model_dump(
-            mode="json"
-        ),
+        lambda: _watcher_status_payload(app_client.app.state.resources).model_dump(mode="json"),
     )
     assert event_name == "watcher.status"
     assert event_data == state_payload
@@ -1068,9 +1066,7 @@ def test_events_sync_sse_and_polling_state_are_equivalent(app_client: TestClient
 
     event_name, event_data = _single_live_sse_event(
         "sync.status",
-        lambda: _sync_status_payload(app_client.app.state.resources).model_dump(
-            mode="json"
-        ),
+        lambda: _sync_status_payload(app_client.app.state.resources).model_dump(mode="json"),
     )
     assert event_name == "sync.status"
     assert event_data == state_payload
@@ -1249,7 +1245,7 @@ async def test_watcher_sync_writes_structural_evidence_before_verification_cycle
                         success=True,
                         stored_count=1,
                         stored_evidence_ids=["fake-evidence-id"],
-                    )
+                    ),
                 )
             if op == "record_system1_verification_cycle":
                 return MemoryResult(
@@ -1258,7 +1254,7 @@ async def test_watcher_sync_writes_structural_evidence_before_verification_cycle
                         operation=op,
                         success=True,
                         cycle_id="fake-cycle-id",
-                    )
+                    ),
                 )
             raise AssertionError(f"Unexpected operation: {op!r}")
 
@@ -1281,7 +1277,8 @@ async def test_watcher_sync_writes_structural_evidence_before_verification_cycle
     )
 
     result = await run_programmatic_onboard_with_cycle_recording(
-        request, memory_service=_FakeMemoryService()  # type: ignore[arg-type]
+        request,
+        memory_service=_FakeMemoryService(),  # type: ignore[arg-type]
     )
 
     assert result.status == "completed", f"Expected completed, got: {result.error}"
@@ -1325,7 +1322,7 @@ async def test_watcher_sync_structural_evidence_write_failure_blocks_cycle_recor
                         operation=op,
                         success=False,
                         error="simulated structural evidence write failure",
-                    )
+                    ),
                 )
             if op == "record_system1_verification_cycle":
                 nonlocal cycle_recording_attempted
@@ -1336,7 +1333,7 @@ async def test_watcher_sync_structural_evidence_write_failure_blocks_cycle_recor
                         operation=op,
                         success=True,
                         cycle_id="should-not-be-recorded",
-                    )
+                    ),
                 )
             raise AssertionError(f"Unexpected operation: {op!r}")
 
@@ -1360,7 +1357,8 @@ async def test_watcher_sync_structural_evidence_write_failure_blocks_cycle_recor
 
     with pytest.raises(RuntimeError, match="store_system1_structural_evidence"):
         await run_programmatic_onboard_with_cycle_recording(
-            request, memory_service=_FailingEvidenceMemoryService()  # type: ignore[arg-type]
+            request,
+            memory_service=_FailingEvidenceMemoryService(),  # type: ignore[arg-type]
         )
 
     assert not cycle_recording_attempted, (
@@ -1401,7 +1399,7 @@ async def test_watcher_sync_derives_structural_module_evidence_from_file_paths()
                         success=True,
                         stored_count=len(captured_evidence),
                         stored_evidence_ids=["eid-1"],
-                    )
+                    ),
                 )
             if op == "record_system1_verification_cycle":
                 return MemoryResult(
@@ -1410,7 +1408,7 @@ async def test_watcher_sync_derives_structural_module_evidence_from_file_paths()
                         operation=op,
                         success=True,
                         cycle_id="cap-cycle-id",
-                    )
+                    ),
                 )
             raise AssertionError(f"Unexpected operation: {op!r}")
 
@@ -1438,7 +1436,8 @@ async def test_watcher_sync_derives_structural_module_evidence_from_file_paths()
     )
 
     result = await run_programmatic_onboard_with_cycle_recording(
-        request, memory_service=_CapturingMemoryService()  # type: ignore[arg-type]
+        request,
+        memory_service=_CapturingMemoryService(),  # type: ignore[arg-type]
     )
 
     assert result.status == "completed", f"Expected completed, got: {result.error}"

@@ -241,9 +241,7 @@ class SQLiteProjectsRepository:
             else json.dumps(current.fs_allowlist)
         )
         system2_enabled = (
-            data.system2_enabled
-            if data.system2_enabled is not None
-            else current.system2_enabled
+            data.system2_enabled if data.system2_enabled is not None else current.system2_enabled
         )
 
         self._conn.execute("BEGIN IMMEDIATE")

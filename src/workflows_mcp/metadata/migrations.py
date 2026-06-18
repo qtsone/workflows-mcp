@@ -45,9 +45,7 @@ def migrate_metadata_db(conn: sqlite3.Connection) -> None:
     sql = _schema_sql_path().read_text(encoding="utf-8")
     statements = _split_sql_statements(sql)
 
-    project_defaults_rebuild_may_be_needed = (
-        _project_default_locations_rebuild_may_be_needed(conn)
-    )
+    project_defaults_rebuild_may_be_needed = _project_default_locations_rebuild_may_be_needed(conn)
     v9_to_v10_rebuild_may_be_needed = _v9_to_v10_rebuild_may_be_needed(conn)
     foreign_keys_row = conn.execute("PRAGMA foreign_keys").fetchone()
     foreign_keys_were_enabled = int(foreign_keys_row[0]) if foreign_keys_row else 0
@@ -67,13 +65,9 @@ def migrate_metadata_db(conn: sqlite3.Connection) -> None:
             "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'schema_migrations'"
         ).fetchone()
         if schema_table_exists is not None:
-            max_version_row = conn.execute(
-                "SELECT MAX(version) FROM schema_migrations"
-            ).fetchone()
+            max_version_row = conn.execute("SELECT MAX(version) FROM schema_migrations").fetchone()
             max_version = (
-                int(max_version_row[0])
-                if max_version_row and max_version_row[0] is not None
-                else 0
+                int(max_version_row[0]) if max_version_row and max_version_row[0] is not None else 0
             )
             if max_version > CURRENT_SCHEMA_VERSION:
                 raise IncompatibleMetadataSchema(
@@ -85,49 +79,31 @@ def migrate_metadata_db(conn: sqlite3.Connection) -> None:
 
         if max_version < 2:
             _migrate_v1_to_v2(conn)
-            conn.execute(
-                "INSERT OR IGNORE INTO schema_migrations(version) VALUES (2)"
-            )
+            conn.execute("INSERT OR IGNORE INTO schema_migrations(version) VALUES (2)")
         if max_version < 3:
             _migrate_v2_to_v3(conn)
-            conn.execute(
-                "INSERT OR IGNORE INTO schema_migrations(version) VALUES (3)"
-            )
+            conn.execute("INSERT OR IGNORE INTO schema_migrations(version) VALUES (3)")
         if max_version < 4:
             _migrate_v3_to_v4(conn)
-            conn.execute(
-                "INSERT OR IGNORE INTO schema_migrations(version) VALUES (4)"
-            )
+            conn.execute("INSERT OR IGNORE INTO schema_migrations(version) VALUES (4)")
         if max_version < 5:
             _migrate_v4_to_v5(conn)
-            conn.execute(
-                "INSERT OR IGNORE INTO schema_migrations(version) VALUES (5)"
-            )
+            conn.execute("INSERT OR IGNORE INTO schema_migrations(version) VALUES (5)")
         if max_version < 6:
             _migrate_v5_to_v6(conn)
-            conn.execute(
-                "INSERT OR IGNORE INTO schema_migrations(version) VALUES (6)"
-            )
+            conn.execute("INSERT OR IGNORE INTO schema_migrations(version) VALUES (6)")
         if max_version < 7:
             _migrate_v6_to_v7(conn)
-            conn.execute(
-                "INSERT OR IGNORE INTO schema_migrations(version) VALUES (7)"
-            )
+            conn.execute("INSERT OR IGNORE INTO schema_migrations(version) VALUES (7)")
         if max_version < 8:
             _migrate_v7_to_v8(conn)
-            conn.execute(
-                "INSERT OR IGNORE INTO schema_migrations(version) VALUES (8)"
-            )
+            conn.execute("INSERT OR IGNORE INTO schema_migrations(version) VALUES (8)")
         if max_version < 9:
             _migrate_v8_to_v9(conn)
-            conn.execute(
-                "INSERT OR IGNORE INTO schema_migrations(version) VALUES (9)"
-            )
+            conn.execute("INSERT OR IGNORE INTO schema_migrations(version) VALUES (9)")
         if max_version < 10:
             _migrate_v9_to_v10(conn)
-            conn.execute(
-                "INSERT OR IGNORE INTO schema_migrations(version) VALUES (10)"
-            )
+            conn.execute("INSERT OR IGNORE INTO schema_migrations(version) VALUES (10)")
 
         # Phase 10+ internal-only resumable state for paused runs.
         # Keep schema version stable while ensuring additive column exists.
@@ -565,9 +541,7 @@ def _migrate_v9_to_v10(conn: sqlite3.Connection) -> None:
 
     # Step 3: Delete exact legacy System project row.
     if has_project_id:
-        conn.execute(
-            "DELETE FROM projects WHERE slug = 'system' AND palace = '__system__'"
-        )
+        conn.execute("DELETE FROM projects WHERE slug = 'system' AND palace = '__system__'")
 
     # Step 4: Rebuild workflow_sources without project_id and is_system.
     # SQLite does not support DROP COLUMN for old schema; use rename-create-copy-drop pattern.
@@ -608,9 +582,7 @@ def _migrate_v9_to_v10(conn: sqlite3.Connection) -> None:
 def _ensure_workflow_sources_is_system_column(conn: sqlite3.Connection) -> None:
     columns = _table_columns(conn, "workflow_sources")
     if "is_system" not in columns:
-        conn.execute(
-            "ALTER TABLE workflow_sources ADD COLUMN is_system INTEGER NOT NULL DEFAULT 0"
-        )
+        conn.execute("ALTER TABLE workflow_sources ADD COLUMN is_system INTEGER NOT NULL DEFAULT 0")
 
 
 def _ensure_postgresql_settings_structured_columns(conn: sqlite3.Connection) -> None:
@@ -676,9 +648,7 @@ def _ensure_job_runs_execution_state_column(conn: sqlite3.Connection) -> None:
 def _ensure_job_runs_execution_columns(conn: sqlite3.Connection) -> None:
     columns = _table_columns(conn, "job_runs")
     if "execution_mode" not in columns:
-        conn.execute(
-            "ALTER TABLE job_runs ADD COLUMN execution_mode TEXT NOT NULL DEFAULT 'async'"
-        )
+        conn.execute("ALTER TABLE job_runs ADD COLUMN execution_mode TEXT NOT NULL DEFAULT 'async'")
     if "execution_json" not in columns:
         conn.execute("ALTER TABLE job_runs ADD COLUMN execution_json TEXT")
     if not _index_exists(conn, "idx_job_runs_workflow"):
@@ -696,9 +666,7 @@ def _ensure_job_runs_execution_columns(conn: sqlite3.Connection) -> None:
 def _ensure_project_extraction_settings(conn: sqlite3.Connection) -> None:
     columns = _table_columns(conn, "projects")
     if "system2_enabled" not in columns:
-        conn.execute(
-            "ALTER TABLE projects ADD COLUMN system2_enabled INTEGER NOT NULL DEFAULT 0"
-        )
+        conn.execute("ALTER TABLE projects ADD COLUMN system2_enabled INTEGER NOT NULL DEFAULT 0")
 
 
 def _project_default_locations_rebuild_may_be_needed(conn: sqlite3.Connection) -> bool:
@@ -729,9 +697,7 @@ def _ensure_project_default_locations_nullable(conn: sqlite3.Connection) -> None
         return
 
     legacy_alter_table_row = conn.execute("PRAGMA legacy_alter_table").fetchone()
-    legacy_alter_table = (
-        int(legacy_alter_table_row[0]) if legacy_alter_table_row else 0
-    )
+    legacy_alter_table = int(legacy_alter_table_row[0]) if legacy_alter_table_row else 0
     conn.execute("PRAGMA legacy_alter_table = ON")
     try:
         _rebuild_projects_with_nullable_default_locations(conn)

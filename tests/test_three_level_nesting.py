@@ -245,9 +245,7 @@ class TestThreeLevelNestedWorkflow:
             job_id=job_id_2, response="approved 2", debug=True, ctx=full_context
         )
         resume2_response: dict[str, Any] = resume2_result.structuredContent
-        assert resume2_response["status"] == "success", (
-            f"Expected success, got: {resume2_response}"
-        )
+        assert resume2_response["status"] == "success", f"Expected success, got: {resume2_response}"
 
         outputs = resume2_response.get("outputs", {})
         assert outputs.get("grandparent_complete_ran") is True

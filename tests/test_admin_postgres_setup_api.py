@@ -118,9 +118,7 @@ def test_admin_database_routes_reject_bearer_token_auth(
         json=settings_body,
         headers=headers,
     )
-    assert (
-        settings_response.status_code == 403
-    )
+    assert settings_response.status_code == 403
     assert client.post("/api/admin/v1/database/connection-test", headers=headers).status_code == 403
 
 

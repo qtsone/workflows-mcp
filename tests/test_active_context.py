@@ -235,9 +235,7 @@ class TestAcceptanceBSecondOnboardUpdatesActive:
     """After two onboards, the second one wins as active context."""
 
     @pytest.mark.asyncio
-    async def test_second_onboard_replaces_active_context(
-        self, session_a: MagicMock
-    ) -> None:
+    async def test_second_onboard_replaces_active_context(self, session_a: MagicMock) -> None:
         ctx = _make_mock_ctx(session=session_a)
 
         # Set up context A.
@@ -314,9 +312,7 @@ class TestAcceptanceDExplicitScopeOverridesActive:
     """Explicit scope arg always takes precedence over active context."""
 
     @pytest.mark.asyncio
-    async def test_explicit_scope_wins_over_active_context(
-        self, session_a: MagicMock
-    ) -> None:
+    async def test_explicit_scope_wins_over_active_context(self, session_a: MagicMock) -> None:
         ctx = _make_mock_ctx(session=session_a)
 
         # Set active context to proj-a.
@@ -366,9 +362,7 @@ class TestAcceptanceDExplicitScopeOverridesActive:
 
         assert len(captured_requests) == 1
         used_scope = captured_requests[0].scope
-        assert used_scope.palace == "proj-explicit", (
-            f"Expected 'proj-explicit', got: {used_scope}"
-        )
+        assert used_scope.palace == "proj-explicit", f"Expected 'proj-explicit', got: {used_scope}"
 
 
 # ---------------------------------------------------------------------------
@@ -380,9 +374,7 @@ class TestAcceptanceESelectSetsActiveContext:
     """select() updates the session active context; memory() picks it up."""
 
     @pytest.mark.asyncio
-    async def test_select_then_memory_uses_selected_context(
-        self, session_a: MagicMock
-    ) -> None:
+    async def test_select_then_memory_uses_selected_context(self, session_a: MagicMock) -> None:
         ctx = _make_mock_ctx(session=session_a)
 
         # Seed registry with two contexts.
@@ -403,9 +395,7 @@ class TestAcceptanceESelectSetsActiveContext:
         assert active.scope.get("palace") == "proj-y"
 
     @pytest.mark.asyncio
-    async def test_select_response_includes_all_required_fields(
-        self, session_a: MagicMock
-    ) -> None:
+    async def test_select_response_includes_all_required_fields(self, session_a: MagicMock) -> None:
         ctx = _make_mock_ctx(session=session_a)
         _inject_registry_entry({"palace": "proj-z"}, ctx=ctx, session=session_a)
 
@@ -429,9 +419,7 @@ class TestAcceptanceFSelectErrors:
     """select() returns clear actionable errors for ambiguous or missing scope."""
 
     @pytest.mark.asyncio
-    async def test_select_not_found_returns_actionable_error(
-        self, session_a: MagicMock
-    ) -> None:
+    async def test_select_not_found_returns_actionable_error(self, session_a: MagicMock) -> None:
         ctx = _make_mock_ctx(session=session_a)
         _inject_registry_entry({"palace": "known-proj"}, ctx=ctx, session=session_a)
 

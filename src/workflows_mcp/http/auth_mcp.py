@@ -88,9 +88,7 @@ def _resolve_sqlite_auth_context(scope: Scope, token: str) -> MCPAuthContext | N
                 project = project_repo.get_by_id(project_id)
                 if project is None:
                     continue
-                resolved_projects.append(
-                    _to_session_project_context(project, source="token_bound")
-                )
+                resolved_projects.append(_to_session_project_context(project, source="token_bound"))
         else:
             resolved_projects = [
                 _to_session_project_context(project, source="token_unbound")
@@ -195,9 +193,7 @@ class MCPAuthMiddleware:
             if session_header:
                 auth_ctx = scope.get(_AUTH_SCOPE_KEY)
                 requester_token_id = (
-                    auth_ctx.token_id
-                    if isinstance(auth_ctx, MCPAuthContext)
-                    else None
+                    auth_ctx.token_id if isinstance(auth_ctx, MCPAuthContext) else None
                 )
                 app = scope.get("app")
                 resources = getattr(getattr(app, "state", None), "resources", None)

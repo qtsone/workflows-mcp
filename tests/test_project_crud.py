@@ -406,9 +406,7 @@ def test_admin_sync_details_topology_counts_ignore_empty_wing_room_labels(
             if "knowledge_items" in sql:
                 return type("Result", (), {"rows": [{"n": 0}]})()
             if "knowledge_structural_evidence" in sql and "COUNT(DISTINCT" in sql:
-                uses_empty_label_filter = (
-                    "NULLIF(wing, '')" in sql and "NULLIF(room, '')" in sql
-                )
+                uses_empty_label_filter = "NULLIF(wing, '')" in sql and "NULLIF(room, '')" in sql
                 if uses_empty_label_filter:
                     return type(
                         "Result",

@@ -91,9 +91,7 @@ def _resolve_run_binding(ctx: AppContextType) -> tuple[str | None, str | None]:
 
     active_project = app_ctx.get_active_project(session)
     project_id = (
-        active_project.project_id
-        if isinstance(active_project, SessionProjectContext)
-        else None
+        active_project.project_id if isinstance(active_project, SessionProjectContext) else None
     )
     return project_id, token_id
 

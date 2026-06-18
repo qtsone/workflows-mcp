@@ -151,6 +151,7 @@ class WeakLinkReport:
             "orphaned_target_ids": sorted(set(self.orphaned_target_ids)),
         }
 
+
 # ---------------------------------------------------------------------------
 # Public types
 # ---------------------------------------------------------------------------
@@ -626,9 +627,7 @@ def recompute_depends_on_corridors(
             prefix_to_nodes.setdefault(px, []).append(node)
 
     # Existing corridor pairs
-    existing_pairs: set[tuple[str, str]] = {
-        (c.source_id, c.target_id) for c in graph.corridors
-    }
+    existing_pairs: set[tuple[str, str]] = {(c.source_id, c.target_id) for c in graph.corridors}
 
     new_corridors: list[GraphCorridor] = []
     for px, nodes in prefix_to_nodes.items():
@@ -690,10 +689,7 @@ def classify_deletion_policy(
     canonical = _policy_map.get(deletion_policy)
     if canonical is None:
         allowed = ", ".join(sorted(_policy_map.keys()))
-        raise ValueError(
-            f"Unknown deletion_policy {deletion_policy!r}. "
-            f"Allowed values: {allowed}."
-        )
+        raise ValueError(f"Unknown deletion_policy {deletion_policy!r}. Allowed values: {allowed}.")
     return canonical
 
 
@@ -1042,9 +1038,7 @@ def _build_invalid_profile_envelope(
     return {
         "error": {
             "code": "INVALID_LLM_PROFILE",
-            "message": (
-                f"LLM profile '{profile}' is invalid or missing: {reason}"
-            ),
+            "message": (f"LLM profile '{profile}' is invalid or missing: {reason}"),
             "retryable": False,
             "stage": stage,
             "actionable_fix": (
@@ -1138,9 +1132,7 @@ def run_llm_onboard(
             scope=normalized_scope,
             scope_key_value=key,
             graph=None,
-            error=_build_invalid_profile_envelope(
-                request.profile, reason=str(exc)
-            ),
+            error=_build_invalid_profile_envelope(request.profile, reason=str(exc)),
         )
 
     # Stage 3: Strict reproducibility check
@@ -1154,9 +1146,7 @@ def run_llm_onboard(
             error=_build_strict_violation_envelope(request.profile, temperature),
         )
 
-    reproducibility: Literal["strict", "relaxed"] = (
-        "strict" if request.strict else "relaxed"
-    )
+    reproducibility: Literal["strict", "relaxed"] = "strict" if request.strict else "relaxed"
     provenance_info = LLMProvenanceInfo(
         profile=request.profile,
         model=resolved.model,
@@ -1293,16 +1283,18 @@ def _extract_structural_evidence_from_files(
         if not entry.has_readable_content:
             continue
         path = entry.path
-        items.append({
-            "entity_stable_id": path,
-            "entity_type": "module",
-            "evidence_category": "structural_module",
-            "evidence_data": {
-                "path": path,
-                "size_bytes": entry.size_bytes,
-                "content_hash": entry.content_hash,
-            },
-        })
+        items.append(
+            {
+                "entity_stable_id": path,
+                "entity_type": "module",
+                "evidence_category": "structural_module",
+                "evidence_data": {
+                    "path": path,
+                    "size_bytes": entry.size_bytes,
+                    "content_hash": entry.content_hash,
+                },
+            }
+        )
     return items
 
 
@@ -1353,14 +1345,16 @@ async def run_programmatic_onboard_with_cycle_recording(
     # and is outside the scope of this orchestrator.
     evidence_items = _extract_structural_evidence_from_files(request.files)
     if evidence_items:
-        evidence_request = MemoryRequest.model_validate({
-            "operation": "store_system1_structural_evidence",
-            "scope": covered_scope,
-            "record": {
-                "format": "structured",
-                "structural_evidence": evidence_items,
-            },
-        })
+        evidence_request = MemoryRequest.model_validate(
+            {
+                "operation": "store_system1_structural_evidence",
+                "scope": covered_scope,
+                "record": {
+                    "format": "structured",
+                    "structural_evidence": evidence_items,
+                },
+            }
+        )
         evidence_result = await memory_service.execute(evidence_request)
         if evidence_result.manage is None or not evidence_result.manage.success:
             error_detail = (
@@ -1377,17 +1371,19 @@ async def run_programmatic_onboard_with_cycle_recording(
             result.scope_key_value,
         )
 
-    record_request = MemoryRequest.model_validate({
-        "operation": "record_system1_verification_cycle",
-        "scope": covered_scope,
-        "record": {
-            "format": "structured",
-            "verification_cycle": {
-                "success": True,
-                "covered_scope": covered_scope,
+    record_request = MemoryRequest.model_validate(
+        {
+            "operation": "record_system1_verification_cycle",
+            "scope": covered_scope,
+            "record": {
+                "format": "structured",
+                "verification_cycle": {
+                    "success": True,
+                    "covered_scope": covered_scope,
+                },
             },
-        },
-    })
+        }
+    )
     cycle_result = await memory_service.execute(record_request)
     if cycle_result.manage is None or not cycle_result.manage.success:
         error_detail = (

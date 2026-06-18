@@ -39,6 +39,7 @@ from .metadata.repos.workflow_sources_repo import SQLiteWorkflowSourcesRepositor
 
 logger = logging.getLogger(__name__)
 
+
 def _has_registered_memory_tools(mcp_server: FastMCP) -> bool:
     """Return True when memory MCP tools are already registered."""
     tools = mcp_server._tool_manager._tools
@@ -658,9 +659,7 @@ def main() -> None:
     try:
         port = int(port_str)
     except ValueError:
-        logger.error(
-            "Invalid WORKFLOWS_PORT value %r — must be an integer. Exiting.", port_str
-        )
+        logger.error("Invalid WORKFLOWS_PORT value %r — must be an integer. Exiting.", port_str)
         sys.exit(1)
 
     try:

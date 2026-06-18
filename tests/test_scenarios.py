@@ -172,9 +172,7 @@ class TestEndToEndScenarios:
         assert response["outputs"]["parallel_3_output"].strip() == "parallel_3"
 
     @pytest.mark.asyncio
-    async def test_error_recovery_with_optional_dependencies(
-        self, full_context: MagicMock
-    ) -> None:
+    async def test_error_recovery_with_optional_dependencies(self, full_context: MagicMock) -> None:
         """Test workflow continues when optional dependency fails."""
         result = await execute_workflow(
             workflow="dag-execution-optional-deps",

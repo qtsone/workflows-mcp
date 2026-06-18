@@ -142,15 +142,17 @@ async def _seed_entity(
         entity["source_item_id"] = source_item_id
 
     result = await memory_service.execute(
-        MemoryRequest.model_validate({
-            "operation": "store_entities",
-            "scope": _scope(palace),
-            "record": {
-                "format": "structured",
-                "source": "STRUCTURAL",
-                "entities": [entity],
-            },
-        })
+        MemoryRequest.model_validate(
+            {
+                "operation": "store_entities",
+                "scope": _scope(palace),
+                "record": {
+                    "format": "structured",
+                    "source": "STRUCTURAL",
+                    "entities": [entity],
+                },
+            }
+        )
     )
     assert result.manage.success, f"seed_entity failed: {result.manage.error}"
     return result.manage.entity_ids[0]
@@ -171,20 +173,22 @@ async def _seed_item(
 ) -> str:
     """Create a knowledge_items row via ensure_item and return its UUID."""
     result = await memory_service.execute(
-        MemoryRequest.model_validate({
-            "operation": "ensure_item",
-            "scope": _scope(palace),
-            "record": {
-                "format": "raw",
-                "source": source,
-                "path": path,
-                "item": {
-                    "content_hash": "test_hash",
-                    "size_bytes": 1,
-                    "mtime_ns": 0,
+        MemoryRequest.model_validate(
+            {
+                "operation": "ensure_item",
+                "scope": _scope(palace),
+                "record": {
+                    "format": "raw",
+                    "source": source,
+                    "path": path,
+                    "item": {
+                        "content_hash": "test_hash",
+                        "size_bytes": 1,
+                        "mtime_ns": 0,
+                    },
                 },
-            },
-        })
+            }
+        )
     )
     assert result.manage.success, f"seed_item failed: {result.manage.error}"
     assert result.manage.item_id is not None
@@ -216,24 +220,26 @@ async def test_happy_path_calls_relation_by_qname(
     )
 
     result = await memory_service.execute(
-        MemoryRequest.model_validate({
-            "operation": "store_relations_by_qname",
-            "scope": _scope(),
-            "graph": {
-                "relations": [
-                    {
-                        "source_qname": "pkg.mod.caller",
-                        "source_entity_type": "Function",
-                        "target_qname": "pkg.mod.callee",
-                        "target_entity_type": "Function",
-                        "relation_type": "CALLS",
-                        "confidence": 0.9,
-                        "metadata": {"call_site": {"line": 10, "col": 4}},
-                    }
-                ],
-                "external_fallback": "module",
-            },
-        })
+        MemoryRequest.model_validate(
+            {
+                "operation": "store_relations_by_qname",
+                "scope": _scope(),
+                "graph": {
+                    "relations": [
+                        {
+                            "source_qname": "pkg.mod.caller",
+                            "source_entity_type": "Function",
+                            "target_qname": "pkg.mod.callee",
+                            "target_entity_type": "Function",
+                            "relation_type": "CALLS",
+                            "confidence": 0.9,
+                            "metadata": {"call_site": {"line": 10, "col": 4}},
+                        }
+                    ],
+                    "external_fallback": "module",
+                },
+            }
+        )
     )
 
     m = result.manage
@@ -355,25 +361,27 @@ async def test_palace_isolation_target_in_other_palace(
     )
 
     result = await memory_service.execute(
-        MemoryRequest.model_validate({
-            "operation": "store_relations_by_qname",
-            "scope": _scope(palace_a),
-            "graph": {
-                "relations": [
-                    {
-                        "source_qname": "iso.pkg.src",
-                        "source_entity_type": "Function",
-                        "target_qname": "iso.pkg.tgt",
-                        "target_entity_type": "Function",
-                        "relation_type": "CALLS",
-                        "confidence": 0.7,
-                        "metadata": {},
-                        "external_fallback": "reject",
-                    }
-                ],
-                "external_fallback": "reject",
-            },
-        })
+        MemoryRequest.model_validate(
+            {
+                "operation": "store_relations_by_qname",
+                "scope": _scope(palace_a),
+                "graph": {
+                    "relations": [
+                        {
+                            "source_qname": "iso.pkg.src",
+                            "source_entity_type": "Function",
+                            "target_qname": "iso.pkg.tgt",
+                            "target_entity_type": "Function",
+                            "relation_type": "CALLS",
+                            "confidence": 0.7,
+                            "metadata": {},
+                            "external_fallback": "reject",
+                        }
+                    ],
+                    "external_fallback": "reject",
+                },
+            }
+        )
     )
 
     m = result.manage
@@ -420,23 +428,25 @@ async def test_qname_collision_different_entity_type_disambiguates(
     )
 
     result = await memory_service.execute(
-        MemoryRequest.model_validate({
-            "operation": "store_relations_by_qname",
-            "scope": _scope(),
-            "graph": {
-                "relations": [
-                    {
-                        "source_qname": "pkg.col.multi",
-                        "source_entity_type": "Function",
-                        "target_qname": "pkg.col.multi",
-                        "target_entity_type": "Class",  # narrows to the Class entity
-                        "relation_type": "CALLS",
-                        "confidence": 0.7,
-                        "metadata": {},
-                    }
-                ]
-            },
-        })
+        MemoryRequest.model_validate(
+            {
+                "operation": "store_relations_by_qname",
+                "scope": _scope(),
+                "graph": {
+                    "relations": [
+                        {
+                            "source_qname": "pkg.col.multi",
+                            "source_entity_type": "Function",
+                            "target_qname": "pkg.col.multi",
+                            "target_entity_type": "Class",  # narrows to the Class entity
+                            "relation_type": "CALLS",
+                            "confidence": 0.7,
+                            "metadata": {},
+                        }
+                    ]
+                },
+            }
+        )
     )
 
     m = result.manage
@@ -498,24 +508,26 @@ async def test_ambiguity_same_qname_entity_type_different_items(
     )
 
     result = await memory_service.execute(
-        MemoryRequest.model_validate({
-            "operation": "store_relations_by_qname",
-            "scope": _scope(),
-            "graph": {
-                "relations": [
-                    {
-                        "source_qname": "mod.caller",
-                        "source_entity_type": "Function",
-                        "target_qname": "mod.helper",
-                        "target_entity_type": "Function",
-                        # No target_item_id — must surface ambiguity
-                        "relation_type": "CALLS",
-                        "confidence": 0.7,
-                        "metadata": {},
-                    }
-                ]
-            },
-        })
+        MemoryRequest.model_validate(
+            {
+                "operation": "store_relations_by_qname",
+                "scope": _scope(),
+                "graph": {
+                    "relations": [
+                        {
+                            "source_qname": "mod.caller",
+                            "source_entity_type": "Function",
+                            "target_qname": "mod.helper",
+                            "target_entity_type": "Function",
+                            # No target_item_id — must surface ambiguity
+                            "relation_type": "CALLS",
+                            "confidence": 0.7,
+                            "metadata": {},
+                        }
+                    ]
+                },
+            }
+        )
     )
 
     m = result.manage
@@ -552,12 +564,8 @@ async def test_source_item_id_narrows_ambiguous_source_to_one(
     name-per-room constraint).  Without source_item_id the resolver returns ambiguous;
     with it the correct entity is pinned and the relation is inserted.
     """
-    item_a_id = await _seed_item(
-        memory_service, source="narrow-source-a", path="narrow/a.py"
-    )
-    item_b_id = await _seed_item(
-        memory_service, source="narrow-source-b", path="narrow/b.py"
-    )
+    item_a_id = await _seed_item(memory_service, source="narrow-source-a", path="narrow/a.py")
+    item_b_id = await _seed_item(memory_service, source="narrow-source-b", path="narrow/b.py")
 
     # Two source candidates: same qname + entity_type, different rooms + source_item_ids.
     # Direct SQL required because store_entities enforces unique (palace, ns, room, corridor,
@@ -589,24 +597,26 @@ async def test_source_item_id_narrows_ambiguous_source_to_one(
     )
 
     result = await memory_service.execute(
-        MemoryRequest.model_validate({
-            "operation": "store_relations_by_qname",
-            "scope": _scope(),
-            "graph": {
-                "relations": [
-                    {
-                        "source_qname": "mod.shared_fn",
-                        "source_entity_type": "Function",
-                        "source_item_id": item_a_id,  # pins to src_a only
-                        "target_qname": "mod.target_fn",
-                        "target_entity_type": "Function",
-                        "relation_type": "CALLS",
-                        "confidence": 0.9,
-                        "metadata": {},
-                    }
-                ]
-            },
-        })
+        MemoryRequest.model_validate(
+            {
+                "operation": "store_relations_by_qname",
+                "scope": _scope(),
+                "graph": {
+                    "relations": [
+                        {
+                            "source_qname": "mod.shared_fn",
+                            "source_entity_type": "Function",
+                            "source_item_id": item_a_id,  # pins to src_a only
+                            "target_qname": "mod.target_fn",
+                            "target_entity_type": "Function",
+                            "relation_type": "CALLS",
+                            "confidence": 0.9,
+                            "metadata": {},
+                        }
+                    ]
+                },
+            }
+        )
     )
 
     m = result.manage
@@ -660,35 +670,37 @@ async def test_mixed_batch_success_and_unresolved_in_order(
     # "mod.ghost" is intentionally absent — will be unresolved.
 
     result = await memory_service.execute(
-        MemoryRequest.model_validate({
-            "operation": "store_relations_by_qname",
-            "scope": _scope(),
-            "graph": {
-                "external_fallback": "reject",  # ensure no ghost entity is auto-created
-                "relations": [
-                    {
-                        # index 0 — will succeed
-                        "source_qname": "mod.batch_src",
-                        "source_entity_type": "Function",
-                        "target_qname": "mod.batch_tgt",
-                        "target_entity_type": "Function",
-                        "relation_type": "CALLS",
-                        "confidence": 0.85,
-                        "metadata": {},
-                    },
-                    {
-                        # index 1 — target does not exist → unresolved (reject mode)
-                        "source_qname": "mod.batch_src",
-                        "source_entity_type": "Function",
-                        "target_qname": "mod.ghost",
-                        "target_entity_type": "Function",
-                        "relation_type": "CALLS",
-                        "confidence": 0.85,
-                        "metadata": {},
-                    },
-                ],
-            },
-        })
+        MemoryRequest.model_validate(
+            {
+                "operation": "store_relations_by_qname",
+                "scope": _scope(),
+                "graph": {
+                    "external_fallback": "reject",  # ensure no ghost entity is auto-created
+                    "relations": [
+                        {
+                            # index 0 — will succeed
+                            "source_qname": "mod.batch_src",
+                            "source_entity_type": "Function",
+                            "target_qname": "mod.batch_tgt",
+                            "target_entity_type": "Function",
+                            "relation_type": "CALLS",
+                            "confidence": 0.85,
+                            "metadata": {},
+                        },
+                        {
+                            # index 1 — target does not exist → unresolved (reject mode)
+                            "source_qname": "mod.batch_src",
+                            "source_entity_type": "Function",
+                            "target_qname": "mod.ghost",
+                            "target_entity_type": "Function",
+                            "relation_type": "CALLS",
+                            "confidence": 0.85,
+                            "metadata": {},
+                        },
+                    ],
+                },
+            }
+        )
     )
 
     m = result.manage
@@ -778,6 +790,7 @@ async def test_external_fallback_creates_and_reuses_module(
     meta = row["metadata"]
     if isinstance(meta, str):
         import json as _json
+
         meta = _json.loads(meta)
     assert meta.get("external") is True
 
@@ -818,24 +831,26 @@ async def test_reject_mode_unresolved_target(
     )
 
     result = await memory_service.execute(
-        MemoryRequest.model_validate({
-            "operation": "store_relations_by_qname",
-            "scope": _scope(),
-            "graph": {
-                "relations": [
-                    {
-                        "source_qname": "rej.my_module",
-                        "source_entity_type": "Module",
-                        "target_qname": "unknown.external.pkg",
-                        "target_entity_type": "Module",
-                        "relation_type": "IMPORTS",
-                        "confidence": 0.8,
-                        "metadata": {},
-                    }
-                ],
-                "external_fallback": "reject",
-            },
-        })
+        MemoryRequest.model_validate(
+            {
+                "operation": "store_relations_by_qname",
+                "scope": _scope(),
+                "graph": {
+                    "relations": [
+                        {
+                            "source_qname": "rej.my_module",
+                            "source_entity_type": "Module",
+                            "target_qname": "unknown.external.pkg",
+                            "target_entity_type": "Module",
+                            "relation_type": "IMPORTS",
+                            "confidence": 0.8,
+                            "metadata": {},
+                        }
+                    ],
+                    "external_fallback": "reject",
+                },
+            }
+        )
     )
 
     m = result.manage
@@ -881,23 +896,25 @@ async def test_invalid_relation_type_rejected(
     )
 
     result = await memory_service.execute(
-        MemoryRequest.model_validate({
-            "operation": "store_relations_by_qname",
-            "scope": _scope(),
-            "graph": {
-                "relations": [
-                    {
-                        "source_qname": "inv.pkg.fn",
-                        "source_entity_type": "Function",
-                        "target_qname": "inv.pkg.fn",
-                        "target_entity_type": "Function",
-                        "relation_type": "MENTIONS",
-                        "confidence": 0.5,
-                        "metadata": {},
-                    }
-                ]
-            },
-        })
+        MemoryRequest.model_validate(
+            {
+                "operation": "store_relations_by_qname",
+                "scope": _scope(),
+                "graph": {
+                    "relations": [
+                        {
+                            "source_qname": "inv.pkg.fn",
+                            "source_entity_type": "Function",
+                            "target_qname": "inv.pkg.fn",
+                            "target_entity_type": "Function",
+                            "relation_type": "MENTIONS",
+                            "confidence": 0.5,
+                            "metadata": {},
+                        }
+                    ]
+                },
+            }
+        )
     )
 
     m = result.manage
@@ -916,13 +933,15 @@ async def test_empty_relations_raises_field_required(
 ) -> None:
     """Empty graph.relations list → MEM_FIELD_REQUIRED."""
     result = await memory_service.execute(
-        MemoryRequest.model_validate({
-            "operation": "store_relations_by_qname",
-            "scope": _scope(),
-            "graph": {
-                "relations": [],
-            },
-        })
+        MemoryRequest.model_validate(
+            {
+                "operation": "store_relations_by_qname",
+                "scope": _scope(),
+                "graph": {
+                    "relations": [],
+                },
+            }
+        )
     )
 
     m = result.manage
@@ -979,24 +998,26 @@ async def test_source_ambiguity_reason_is_ambiguous(
     )
 
     result = await memory_service.execute(
-        MemoryRequest.model_validate({
-            "operation": "store_relations_by_qname",
-            "scope": _scope(),
-            "graph": {
-                "relations": [
-                    {
-                        "source_qname": "mod.ambig_src",
-                        "source_entity_type": "Function",
-                        "target_qname": "mod.clear_target",
-                        "target_entity_type": "Function",
-                        # No source_item_id — must surface source ambiguity.
-                        "relation_type": "CALLS",
-                        "confidence": 0.9,
-                        "metadata": {},
-                    }
-                ]
-            },
-        })
+        MemoryRequest.model_validate(
+            {
+                "operation": "store_relations_by_qname",
+                "scope": _scope(),
+                "graph": {
+                    "relations": [
+                        {
+                            "source_qname": "mod.ambig_src",
+                            "source_entity_type": "Function",
+                            "target_qname": "mod.clear_target",
+                            "target_entity_type": "Function",
+                            # No source_item_id — must surface source ambiguity.
+                            "relation_type": "CALLS",
+                            "confidence": 0.9,
+                            "metadata": {},
+                        }
+                    ]
+                },
+            }
+        )
     )
 
     m = result.manage
@@ -1105,8 +1126,7 @@ async def test_explain_analyze_benchmark(
     p95 = latencies[int(n * 0.95)]
 
     print(  # noqa: T201
-        f"\nBenchmark (10k entities, {n} queries): "
-        f"median={median:.3f}ms  p95={p95:.3f}ms"
+        f"\nBenchmark (10k entities, {n} queries): median={median:.3f}ms  p95={p95:.3f}ms"
     )
 
     assert median < 5.0, (

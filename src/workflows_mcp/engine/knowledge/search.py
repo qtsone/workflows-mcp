@@ -392,10 +392,7 @@ async def room_scoped_search(
     when strict scoped retrieval is required.
     """
     has_room_scope = (
-        palace is not None
-        or namespace is not None
-        or room is not None
-        or corridor is not None
+        palace is not None or namespace is not None or room is not None or corridor is not None
     )
     run_global_lane = include_global_companion or not has_room_scope
 

@@ -273,9 +273,7 @@ class TestResponseUnknownFieldSchemaRejection:
         )
 
     @pytest.mark.asyncio
-    async def test_onboard_response_mode_llm_rejected_by_schema(
-        self, mock_ctx: MagicMock
-    ) -> None:
+    async def test_onboard_response_mode_llm_rejected_by_schema(self, mock_ctx: MagicMock) -> None:
         """response={'mode': 'llm'} must fail strict response schema."""
         onboard = _get_tool_fn("onboard")
         with patch("workflows_mcp.tools_memory.PostgresBackend"):
@@ -309,9 +307,7 @@ class TestResponseUnknownFieldSchemaRejection:
         )
 
     @pytest.mark.asyncio
-    async def test_sync_response_profile_rejected_by_schema(
-        self, mock_ctx: MagicMock
-    ) -> None:
+    async def test_sync_response_profile_rejected_by_schema(self, mock_ctx: MagicMock) -> None:
         """sync response={'profile': ...} must fail strict response schema."""
         sync = _get_tool_fn("sync")
         with patch("workflows_mcp.tools_memory.PostgresBackend"):
@@ -437,9 +433,7 @@ class TestIngestionLLMValidation:
         )
 
     @pytest.mark.asyncio
-    async def test_sync_empty_returns_no_context_not_flow_empty(
-        self, mock_ctx: MagicMock
-    ) -> None:
+    async def test_sync_empty_returns_no_context_not_flow_empty(self, mock_ctx: MagicMock) -> None:
         """sync({}) must return MEM_NO_ACTIVE_CONTEXT, not MEM_PROJECT_FLOW_EMPTY (spec §4.2)."""
         sync = _get_tool_fn("sync")
         with patch("workflows_mcp.tools_memory.PostgresBackend"):
@@ -552,9 +546,7 @@ class TestSchemaValidationFailedFieldDetail:
         message = err.get("message", "")
         actionable_fix = err.get("actionable_fix", "")
         # Both message and actionable_fix must contain the specific field name.
-        assert "max_files" in message, (
-            f"Expected 'max_files' in message, got: {message!r}"
-        )
+        assert "max_files" in message, f"Expected 'max_files' in message, got: {message!r}"
         assert "max_files" in actionable_fix, (
             f"Expected 'max_files' in actionable_fix, got: {actionable_fix!r}"
         )
@@ -961,9 +953,7 @@ class TestStrictHttpAdapters:
             )
 
     @pytest.mark.asyncio
-    async def test_onboard_http_rejects_legacy_response_mode(
-        self, mock_ctx: MagicMock
-    ) -> None:
+    async def test_onboard_http_rejects_legacy_response_mode(self, mock_ctx: MagicMock) -> None:
         """onboard_http must raise ValidationError when response.mode is supplied."""
         from pydantic import ValidationError
 
@@ -989,9 +979,7 @@ class TestStrictHttpAdapters:
             )
 
     @pytest.mark.asyncio
-    async def test_sync_http_rejects_legacy_response_mode(
-        self, mock_ctx: MagicMock
-    ) -> None:
+    async def test_sync_http_rejects_legacy_response_mode(self, mock_ctx: MagicMock) -> None:
         """sync_http must raise ValidationError when response.mode is supplied."""
         from pydantic import ValidationError
 

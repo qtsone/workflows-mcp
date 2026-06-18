@@ -356,9 +356,7 @@ class ImageGenExecutor(BlockExecutor):
         # Resolve API key from secrets
         api_key = None
         if resolved_config.api_key_secret:
-            api_key = await _resolve_secret_from_context(
-                resolved_config.api_key_secret, context
-            )
+            api_key = await _resolve_secret_from_context(resolved_config.api_key_secret, context)
 
         # Map provider type
         provider_type = self._map_provider_type(resolved_config.provider, resolved_config.api_url)

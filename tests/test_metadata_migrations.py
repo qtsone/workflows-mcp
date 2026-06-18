@@ -47,9 +47,7 @@ def test_concurrent_metadata_migrations_apply_once(tmp_path: Path) -> None:
 
     conn = connect_metadata_db(db_path)
     try:
-        versions = conn.execute(
-            "SELECT version FROM schema_migrations ORDER BY version"
-        ).fetchall()
+        versions = conn.execute("SELECT version FROM schema_migrations ORDER BY version").fetchall()
         assert [int(row[0]) for row in versions] == [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]
     finally:
         conn.close()
@@ -82,9 +80,7 @@ def test_incompatible_metadata_schema_fails_closed(tmp_path: Path) -> None:
         ).fetchall()
         assert server_settings == []
 
-        versions = conn.execute(
-            "SELECT version FROM schema_migrations ORDER BY version"
-        ).fetchall()
+        versions = conn.execute("SELECT version FROM schema_migrations ORDER BY version").fetchall()
         assert [int(row[0]) for row in versions] == [999]
     finally:
         conn.close()
@@ -214,9 +210,7 @@ def test_project_defaults_are_nullable_after_v7_shape_repair(tmp_path: Path) -> 
             "PRAGMA foreign_key_list('project_token_bindings')"
         ).fetchall()
         assert any(
-            str(row[2]) == "projects"
-            and str(row[3]) == "project_id"
-            and str(row[4]) == "id"
+            str(row[2]) == "projects" and str(row[3]) == "project_id" and str(row[4]) == "id"
             for row in binding_foreign_keys
         )
 
@@ -254,9 +248,7 @@ def test_project_defaults_are_nullable_after_v7_shape_repair(tmp_path: Path) -> 
         assert inserted[0] is None
         assert inserted[1] is None
 
-        versions = conn.execute(
-            "SELECT version FROM schema_migrations ORDER BY version"
-        ).fetchall()
+        versions = conn.execute("SELECT version FROM schema_migrations ORDER BY version").fetchall()
         assert [int(row[0]) for row in versions] == [1, 7, 8, 9, 10]
     finally:
         conn.close()
@@ -319,14 +311,11 @@ def test_watcher_queue_v1_shape_is_upgraded_to_v2(tmp_path: Path) -> None:
         assert str(updated_at[4]) == "CURRENT_TIMESTAMP"
 
         index_names = {
-            str(row[1])
-            for row in conn.execute("PRAGMA index_list('watcher_queue')").fetchall()
+            str(row[1]) for row in conn.execute("PRAGMA index_list('watcher_queue')").fetchall()
         }
         assert "idx_watcher_queue_active_dedupe" in index_names
 
-        versions = conn.execute(
-            "SELECT version FROM schema_migrations ORDER BY version"
-        ).fetchall()
+        versions = conn.execute("SELECT version FROM schema_migrations ORDER BY version").fetchall()
         assert [int(row[0]) for row in versions] == [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]
 
         # After v10, workflow_sources has a global unique constraint on source_path (autoindex).
@@ -353,9 +342,7 @@ def test_workflow_sources_unique_index_is_applied_idempotently_in_v3(tmp_path: P
             f"indexes: {[r[1] for r in index_rows]}"
         )
 
-        versions = conn.execute(
-            "SELECT version FROM schema_migrations ORDER BY version"
-        ).fetchall()
+        versions = conn.execute("SELECT version FROM schema_migrations ORDER BY version").fetchall()
         assert [int(row[0]) for row in versions] == [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]
     finally:
         conn.close()
@@ -410,9 +397,7 @@ def test_postgresql_settings_structured_columns_are_added_without_touching_legac
     conn = connect_metadata_db(db_path)
     try:
         migrate_metadata_db(conn)
-        columns = {
-            str(row[1]) for row in conn.execute("PRAGMA table_info('postgresql_settings')")
-        }
+        columns = {str(row[1]) for row in conn.execute("PRAGMA table_info('postgresql_settings')")}
         assert {
             "host",
             "port",
@@ -553,9 +538,7 @@ def test_job_runs_v3_shape_is_upgraded_to_v4(tmp_path: Path) -> None:
         assert str(row[8]) == legacy_started_at
         assert str(row[9]) == legacy_finished_at
 
-        versions = conn.execute(
-            "SELECT version FROM schema_migrations ORDER BY version"
-        ).fetchall()
+        versions = conn.execute("SELECT version FROM schema_migrations ORDER BY version").fetchall()
         assert [int(row[0]) for row in versions] == [1, 3, 4, 5, 6, 7, 8, 9, 10]
     finally:
         conn.close()
@@ -679,9 +662,7 @@ def test_job_runs_v4_shape_is_upgraded_to_v5_with_safe_defaults(tmp_path: Path) 
         assert str(row[6]) == legacy_started_at
         assert row[7] is None
 
-        versions = conn.execute(
-            "SELECT version FROM schema_migrations ORDER BY version"
-        ).fetchall()
+        versions = conn.execute("SELECT version FROM schema_migrations ORDER BY version").fetchall()
         assert [int(row[0]) for row in versions] == [1, 4, 5, 6, 7, 8, 9, 10]
     finally:
         conn.close()
@@ -815,9 +796,7 @@ def test_job_runs_v5_shape_is_upgraded_to_v6_with_created_started_contract(tmp_p
         assert str(completed[2]) == "2026-04-29T12:00:02Z"
         assert str(completed[3]) == "2026-04-29T12:00:02Z"
 
-        versions = conn.execute(
-            "SELECT version FROM schema_migrations ORDER BY version"
-        ).fetchall()
+        versions = conn.execute("SELECT version FROM schema_migrations ORDER BY version").fetchall()
         assert [int(row[0]) for row in versions] == [1, 5, 6, 7, 8, 9, 10]
     finally:
         conn.close()
@@ -889,9 +868,7 @@ def test_migration_schema_version_advances_to_ten(tmp_path: Path) -> None:
     conn = connect_metadata_db(tmp_path / "version.db")
     try:
         migrate_metadata_db(conn)
-        row = conn.execute(
-            "SELECT MAX(version) FROM schema_migrations"
-        ).fetchone()
+        row = conn.execute("SELECT MAX(version) FROM schema_migrations").fetchone()
         assert row is not None
         assert int(row[0]) >= 10
     finally:
@@ -1071,9 +1048,7 @@ def test_v8_to_v9_and_v10_migration_from_pre_v9_db(tmp_path: Path) -> None:
         assert str(row[0]) == "/tmp/v8/workflows"
 
         # Versions 9 and 10 both recorded.
-        versions = conn.execute(
-            "SELECT version FROM schema_migrations ORDER BY version"
-        ).fetchall()
+        versions = conn.execute("SELECT version FROM schema_migrations ORDER BY version").fetchall()
         version_ints = [int(r[0]) for r in versions]
         assert 9 in version_ints
         assert 10 in version_ints

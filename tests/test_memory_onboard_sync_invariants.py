@@ -184,9 +184,7 @@ class TestRequiredCorridorFields:
         payload.corridors[0] = GraphCorridor(
             source_id=raw_corridor.get("source_id", ""),
             target_id=raw_corridor.get("target_id", ""),
-            semantic_type=CorridorSemanticType(
-                raw_corridor.get("semantic_type", "contains")
-            ),
+            semantic_type=CorridorSemanticType(raw_corridor.get("semantic_type", "contains")),
             confidence=raw_corridor.get("confidence", 0.0),
             provenance=raw_corridor.get("provenance", ""),
             evidence=raw_corridor.get("evidence", []),
@@ -324,9 +322,7 @@ class TestIllegalDirectSemanticLinks:
         result = validate_graph_payload(payload, strict_orphan_check=False)
         codes = [v.code for v in result.violations]
         assert "GRAPH_ILLEGAL_LINK" in codes
-        context = next(
-            v.context for v in result.violations if v.code == "GRAPH_ILLEGAL_LINK"
-        )
+        context = next(v.context for v in result.violations if v.code == "GRAPH_ILLEGAL_LINK")
         assert context.get("semantic_type") == "depends_on"
 
     def test_palace_contains_wing_is_legal(self) -> None:
@@ -371,9 +367,7 @@ class TestOrphanSemanticNodes:
         assert result.valid is False
         orphan_codes = [v.code for v in result.violations if v.code == "GRAPH_ORPHAN_NODE"]
         assert len(orphan_codes) == 1
-        orphan_context = next(
-            v.context for v in result.violations if v.code == "GRAPH_ORPHAN_NODE"
-        )
+        orphan_context = next(v.context for v in result.violations if v.code == "GRAPH_ORPHAN_NODE")
         assert orphan_context["node_id"] == "orphan-99"
 
     def test_orphan_node_skipped_when_strict_false(self) -> None:
@@ -565,6 +559,7 @@ class TestBuildStructuralGraph:
 class TestValidateGraphStepPayload:
     def _import_helper(self) -> Any:
         from workflows_mcp.tools_memory import _validate_graph_step_payload
+
         return _validate_graph_step_payload
 
     def test_non_graph_payload_returns_none(self) -> None:
@@ -614,6 +609,7 @@ class TestValidateGraphStepPayload:
 class TestScopeKeyInCheckpoint:
     def _import_helper(self) -> Any:
         from workflows_mcp.tools_memory import _build_project_checkpoint_payload
+
         return _build_project_checkpoint_payload
 
     def test_checkpoint_contains_scope_key_field(self) -> None:
@@ -660,6 +656,7 @@ class TestScopeKeyInCheckpoint:
 class TestSortedScanManifest:
     def _import_helper(self) -> Any:
         from workflows_mcp.engine.memory_scope_resolver import sorted_scan_manifest
+
         return sorted_scan_manifest
 
     def test_empty_list_returns_empty(self) -> None:
@@ -751,9 +748,7 @@ class TestBuildGraphErrorEnvelope:
         assert err["retryable"] is False
 
     def test_violations_included_when_provided(self) -> None:
-        violations = [
-            GraphViolation(code="GRAPH_MISSING_NODE_TYPE", message="missing Palace")
-        ]
+        violations = [GraphViolation(code="GRAPH_MISSING_NODE_TYPE", message="missing Palace")]
         result = build_graph_error_envelope(
             code="GRAPH_COMPLETENESS_FAILED",
             message="Failed",

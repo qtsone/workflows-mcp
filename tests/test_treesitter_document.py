@@ -103,9 +103,7 @@ class TestExtractDocumentFunction:
         """extract_document must be importable from the extractors package."""
         from workflows_mcp.engine.treesitter_extractors import extract_document  # noqa: F401
 
-    def test_extract_document_returns_tuple_of_entities_and_relations(
-        self, tmp_path: Path
-    ) -> None:
+    def test_extract_document_returns_tuple_of_entities_and_relations(self, tmp_path: Path) -> None:
         from workflows_mcp.engine.treesitter_extractors import extract_document
 
         f = tmp_path / "readme.md"
@@ -126,9 +124,7 @@ class TestExtractDocumentFunction:
         assert isinstance(entities, list)
         assert isinstance(relations, list)
 
-    def test_extract_document_returns_exactly_one_file_entity(
-        self, tmp_path: Path
-    ) -> None:
+    def test_extract_document_returns_exactly_one_file_entity(self, tmp_path: Path) -> None:
         from workflows_mcp.engine.treesitter_extractors import extract_document
 
         f = tmp_path / "doc.md"
@@ -168,9 +164,7 @@ class TestExtractDocumentFunction:
         module_entities = [e for e in entities if e["entity_type"] == "Module"]
         assert module_entities == [], "Document languages must not emit Module entities"
 
-    def test_extract_document_no_class_function_method_entities(
-        self, tmp_path: Path
-    ) -> None:
+    def test_extract_document_no_class_function_method_entities(self, tmp_path: Path) -> None:
         from workflows_mcp.engine.treesitter_extractors import extract_document
 
         f = tmp_path / "data.json"
@@ -209,9 +203,7 @@ class TestExtractDocumentFunction:
         _, relations = extract_document(file_entity=file_entity)
         assert relations == [], "Document languages must not emit any relations"
 
-    def test_extract_document_file_entity_has_required_fields(
-        self, tmp_path: Path
-    ) -> None:
+    def test_extract_document_file_entity_has_required_fields(self, tmp_path: Path) -> None:
         from workflows_mcp.engine.treesitter_extractors import extract_document
 
         f = tmp_path / "readme.md"
@@ -256,9 +248,7 @@ class TestMarkdownExtraction:
         )
 
         executor = TreeSitterExecutor()
-        result = await executor.execute(
-            TreeSitterInput(path=str(md_file)), mock_execution
-        )
+        result = await executor.execute(TreeSitterInput(path=str(md_file)), mock_execution)
         assert result.language == "markdown"
 
     @pytest.mark.asyncio
@@ -271,9 +261,7 @@ class TestMarkdownExtraction:
         )
 
         executor = TreeSitterExecutor()
-        result = await executor.execute(
-            TreeSitterInput(path=str(md_file)), mock_execution
-        )
+        result = await executor.execute(TreeSitterInput(path=str(md_file)), mock_execution)
 
         file_entities = [e for e in result.entities if e["entity_type"] == "File"]
         assert len(file_entities) == 1
@@ -288,26 +276,20 @@ class TestMarkdownExtraction:
         )
 
         executor = TreeSitterExecutor()
-        result = await executor.execute(
-            TreeSitterInput(path=str(md_file)), mock_execution
-        )
+        result = await executor.execute(TreeSitterInput(path=str(md_file)), mock_execution)
 
         module_entities = [e for e in result.entities if e["entity_type"] == "Module"]
         assert module_entities == [], "Markdown must not emit Module entity"
 
     @pytest.mark.asyncio
-    async def test_md_executor_no_relations(
-        self, md_file: Path, mock_execution: MagicMock
-    ) -> None:
+    async def test_md_executor_no_relations(self, md_file: Path, mock_execution: MagicMock) -> None:
         from workflows_mcp.engine.executors_treesitter import (
             TreeSitterExecutor,
             TreeSitterInput,
         )
 
         executor = TreeSitterExecutor()
-        result = await executor.execute(
-            TreeSitterInput(path=str(md_file)), mock_execution
-        )
+        result = await executor.execute(TreeSitterInput(path=str(md_file)), mock_execution)
 
         assert result.relations == [], "Markdown must not emit relations"
 
@@ -321,9 +303,7 @@ class TestMarkdownExtraction:
         )
 
         executor = TreeSitterExecutor()
-        result = await executor.execute(
-            TreeSitterInput(path=str(md_file)), mock_execution
-        )
+        result = await executor.execute(TreeSitterInput(path=str(md_file)), mock_execution)
 
         assert result.unresolved_imports == []
 
@@ -342,9 +322,7 @@ class TestMarkdownExtraction:
         )
 
         executor = TreeSitterExecutor()
-        result = await executor.execute(
-            TreeSitterInput(path=str(md_file)), mock_execution
-        )
+        result = await executor.execute(TreeSitterInput(path=str(md_file)), mock_execution)
 
         assert result.module_qualified_name != ""
 
@@ -358,9 +336,7 @@ class TestMarkdownExtraction:
         )
 
         executor = TreeSitterExecutor()
-        result = await executor.execute(
-            TreeSitterInput(path=str(md_file)), mock_execution
-        )
+        result = await executor.execute(TreeSitterInput(path=str(md_file)), mock_execution)
 
         fe = next(e for e in result.entities if e["entity_type"] == "File")
         assert "entity_type" in fe
@@ -637,9 +613,7 @@ class TestMalformedDocumentFiles:
         f.write_text("key: [\n  - bad indent\n  missing: close\n{{{{", encoding="utf-8")
 
         # Must not raise
-        result = await TreeSitterExecutor().execute(
-            TreeSitterInput(path=str(f)), mock_execution
-        )
+        result = await TreeSitterExecutor().execute(TreeSitterInput(path=str(f)), mock_execution)
         assert result.language == "yaml"
 
     @pytest.mark.asyncio
@@ -654,9 +628,7 @@ class TestMalformedDocumentFiles:
         f = tmp_path / "broken.yaml"
         f.write_text("key: [\n  - bad indent\n  missing: close\n{{{{", encoding="utf-8")
 
-        result = await TreeSitterExecutor().execute(
-            TreeSitterInput(path=str(f)), mock_execution
-        )
+        result = await TreeSitterExecutor().execute(TreeSitterInput(path=str(f)), mock_execution)
         file_entities = [e for e in result.entities if e["entity_type"] == "File"]
         assert len(file_entities) == 1
 
@@ -672,9 +644,7 @@ class TestMalformedDocumentFiles:
         f = tmp_path / "broken.yaml"
         f.write_text("key: [\n  - bad indent\n  missing: close\n{{{{", encoding="utf-8")
 
-        result = await TreeSitterExecutor().execute(
-            TreeSitterInput(path=str(f)), mock_execution
-        )
+        result = await TreeSitterExecutor().execute(TreeSitterInput(path=str(f)), mock_execution)
         assert result.relations == []
 
     @pytest.mark.asyncio
@@ -690,9 +660,7 @@ class TestMalformedDocumentFiles:
         f = tmp_path / "broken.yaml"
         f.write_text("key: [\n  - bad indent\n  missing: close\n{{{{", encoding="utf-8")
 
-        result = await TreeSitterExecutor().execute(
-            TreeSitterInput(path=str(f)), mock_execution
-        )
+        result = await TreeSitterExecutor().execute(TreeSitterInput(path=str(f)), mock_execution)
         fe = next(e for e in result.entities if e["entity_type"] == "File")
         assert fe["metadata"]["syntax_errors"] is True
 
@@ -708,9 +676,7 @@ class TestMalformedDocumentFiles:
         f = tmp_path / "broken.json"
         f.write_text('{"key": "value", bad syntax here}', encoding="utf-8")
 
-        result = await TreeSitterExecutor().execute(
-            TreeSitterInput(path=str(f)), mock_execution
-        )
+        result = await TreeSitterExecutor().execute(TreeSitterInput(path=str(f)), mock_execution)
         assert result.language == "json"
 
     @pytest.mark.asyncio
@@ -725,9 +691,7 @@ class TestMalformedDocumentFiles:
         f = tmp_path / "broken.json"
         f.write_text('{"key": "value", bad syntax here}', encoding="utf-8")
 
-        result = await TreeSitterExecutor().execute(
-            TreeSitterInput(path=str(f)), mock_execution
-        )
+        result = await TreeSitterExecutor().execute(TreeSitterInput(path=str(f)), mock_execution)
         file_entities = [e for e in result.entities if e["entity_type"] == "File"]
         assert len(file_entities) == 1
 
@@ -743,9 +707,7 @@ class TestMalformedDocumentFiles:
         f = tmp_path / "broken.json"
         f.write_text('{"key": "value", bad syntax here}', encoding="utf-8")
 
-        result = await TreeSitterExecutor().execute(
-            TreeSitterInput(path=str(f)), mock_execution
-        )
+        result = await TreeSitterExecutor().execute(TreeSitterInput(path=str(f)), mock_execution)
         assert result.relations == []
 
     @pytest.mark.asyncio
@@ -761,9 +723,7 @@ class TestMalformedDocumentFiles:
         f = tmp_path / "broken.json"
         f.write_text('{"key": "value", bad syntax here}', encoding="utf-8")
 
-        result = await TreeSitterExecutor().execute(
-            TreeSitterInput(path=str(f)), mock_execution
-        )
+        result = await TreeSitterExecutor().execute(TreeSitterInput(path=str(f)), mock_execution)
         fe = next(e for e in result.entities if e["entity_type"] == "File")
         assert fe["metadata"]["syntax_errors"] is True
 
@@ -788,9 +748,7 @@ class TestCodeLanguageExtractorsUnchanged:
         f = tmp_path / "app.py"
         f.write_text("x = 1\n", encoding="utf-8")
 
-        result = await TreeSitterExecutor().execute(
-            TreeSitterInput(path=str(f)), mock_execution
-        )
+        result = await TreeSitterExecutor().execute(TreeSitterInput(path=str(f)), mock_execution)
         assert result.language == "python"
         module_entities = [e for e in result.entities if e["entity_type"] == "Module"]
         assert len(module_entities) == 1, "Python must still emit Module entity"
@@ -808,9 +766,7 @@ class TestCodeLanguageExtractorsUnchanged:
         f = tmp_path / "app.py"
         f.write_text("x = 1\n", encoding="utf-8")
 
-        result = await TreeSitterExecutor().execute(
-            TreeSitterInput(path=str(f)), mock_execution
-        )
+        result = await TreeSitterExecutor().execute(TreeSitterInput(path=str(f)), mock_execution)
         contains_rels = [r for r in result.relations if r["relation_type"] == "CONTAINS"]
         assert len(contains_rels) >= 1, "Python must emit at least one CONTAINS relation"
         file_qname = next(

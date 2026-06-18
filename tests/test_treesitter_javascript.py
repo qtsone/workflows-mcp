@@ -330,7 +330,8 @@ def test_contains_file_module(tmp_path: Path) -> None:
     result = _run_executor(tmp_path, FULL_JS_SRC, "animals.js", "src/animals.js")
     contains = _find_relations(result.relations, "CONTAINS")
     file_module = [
-        r for r in contains
+        r
+        for r in contains
         if r["source_entity_type"] == "File" and r["target_entity_type"] == "Module"
     ]
     assert len(file_module) == 1
@@ -340,7 +341,8 @@ def test_contains_module_class(tmp_path: Path) -> None:
     result = _run_executor(tmp_path, FULL_JS_SRC, "animals.js", "src/animals.js")
     contains = _find_relations(result.relations, "CONTAINS")
     module_class = [
-        r for r in contains
+        r
+        for r in contains
         if r["source_entity_type"] == "Module" and r["target_entity_type"] == "Class"
     ]
     class_targets = {r["target_qname"] for r in module_class}
@@ -352,7 +354,8 @@ def test_contains_module_function(tmp_path: Path) -> None:
     result = _run_executor(tmp_path, FULL_JS_SRC, "animals.js", "src/animals.js")
     contains = _find_relations(result.relations, "CONTAINS")
     module_fn = [
-        r for r in contains
+        r
+        for r in contains
         if r["source_entity_type"] == "Module" and r["target_entity_type"] == "Function"
     ]
     fn_targets = {r["target_qname"] for r in module_fn}
@@ -364,7 +367,8 @@ def test_contains_class_method(tmp_path: Path) -> None:
     result = _run_executor(tmp_path, FULL_JS_SRC, "animals.js", "src/animals.js")
     contains = _find_relations(result.relations, "CONTAINS")
     class_method = [
-        r for r in contains
+        r
+        for r in contains
         if r["source_entity_type"] == "Class" and r["target_entity_type"] == "Method"
     ]
     targets = {r["target_qname"] for r in class_method}
@@ -378,9 +382,7 @@ def test_contains_class_method(tmp_path: Path) -> None:
 
 
 def test_inherits_from_same_module(tmp_path: Path) -> None:
-    result = _run_executor(
-        tmp_path, SAME_MODULE_INHERIT_JS_SRC, "inherit.js", "src/inherit.js"
-    )
+    result = _run_executor(tmp_path, SAME_MODULE_INHERIT_JS_SRC, "inherit.js", "src/inherit.js")
     inherits = _find_relations(result.relations, "INHERITS_FROM")
     assert len(inherits) == 1
     rel = inherits[0]
@@ -390,9 +392,7 @@ def test_inherits_from_same_module(tmp_path: Path) -> None:
 
 
 def test_inherits_from_external_unresolved(tmp_path: Path) -> None:
-    result = _run_executor(
-        tmp_path, EXTERNAL_INHERIT_JS_SRC, "myclass.js", "src/myclass.js"
-    )
+    result = _run_executor(tmp_path, EXTERNAL_INHERIT_JS_SRC, "myclass.js", "src/myclass.js")
     inherits = _find_relations(result.relations, "INHERITS_FROM")
     assert len(inherits) == 1
     rel = inherits[0]
@@ -417,45 +417,35 @@ def test_inherits_from_full_js(tmp_path: Path) -> None:
 
 
 def test_imports_from_default_import(tmp_path: Path) -> None:
-    result = _run_executor(
-        tmp_path, SIMPLE_IMPORT_JS_SRC, "importer.js", "src/importer.js"
-    )
+    result = _run_executor(tmp_path, SIMPLE_IMPORT_JS_SRC, "importer.js", "src/importer.js")
     imports = _find_relations(result.relations, "IMPORTS")
     targets = {r["target_qname"] for r in imports}
     assert "react" in targets
 
 
 def test_imports_from_named_import(tmp_path: Path) -> None:
-    result = _run_executor(
-        tmp_path, SIMPLE_IMPORT_JS_SRC, "importer.js", "src/importer.js"
-    )
+    result = _run_executor(tmp_path, SIMPLE_IMPORT_JS_SRC, "importer.js", "src/importer.js")
     imports = _find_relations(result.relations, "IMPORTS")
     targets = {r["target_qname"] for r in imports}
     assert "react" in targets
 
 
 def test_imports_star_import(tmp_path: Path) -> None:
-    result = _run_executor(
-        tmp_path, SIMPLE_IMPORT_JS_SRC, "importer.js", "src/importer.js"
-    )
+    result = _run_executor(tmp_path, SIMPLE_IMPORT_JS_SRC, "importer.js", "src/importer.js")
     imports = _find_relations(result.relations, "IMPORTS")
     targets = {r["target_qname"] for r in imports}
     assert "lodash" in targets
 
 
 def test_imports_side_effect(tmp_path: Path) -> None:
-    result = _run_executor(
-        tmp_path, SIMPLE_IMPORT_JS_SRC, "importer.js", "src/importer.js"
-    )
+    result = _run_executor(tmp_path, SIMPLE_IMPORT_JS_SRC, "importer.js", "src/importer.js")
     imports = _find_relations(result.relations, "IMPORTS")
     targets = {r["target_qname"] for r in imports}
     assert "./side-effect" in targets
 
 
 def test_imports_confidence_unresolved(tmp_path: Path) -> None:
-    result = _run_executor(
-        tmp_path, SIMPLE_IMPORT_JS_SRC, "importer.js", "src/importer.js"
-    )
+    result = _run_executor(tmp_path, SIMPLE_IMPORT_JS_SRC, "importer.js", "src/importer.js")
     imports = _find_relations(result.relations, "IMPORTS")
     for imp in imports:
         assert imp["confidence"] == 0.5
@@ -463,9 +453,7 @@ def test_imports_confidence_unresolved(tmp_path: Path) -> None:
 
 
 def test_imports_source_is_module(tmp_path: Path) -> None:
-    result = _run_executor(
-        tmp_path, SIMPLE_IMPORT_JS_SRC, "importer.js", "src/importer.js"
-    )
+    result = _run_executor(tmp_path, SIMPLE_IMPORT_JS_SRC, "importer.js", "src/importer.js")
     imports = _find_relations(result.relations, "IMPORTS")
     for imp in imports:
         assert imp["source_entity_type"] == "Module"
@@ -473,9 +461,7 @@ def test_imports_source_is_module(tmp_path: Path) -> None:
 
 
 def test_unresolved_imports_populated(tmp_path: Path) -> None:
-    result = _run_executor(
-        tmp_path, SIMPLE_IMPORT_JS_SRC, "importer.js", "src/importer.js"
-    )
+    result = _run_executor(tmp_path, SIMPLE_IMPORT_JS_SRC, "importer.js", "src/importer.js")
     assert len(result.unresolved_imports) > 0
     assert "react" in result.unresolved_imports
 
@@ -553,8 +539,7 @@ function factory() {
     result = _run_executor(tmp_path, src, "mod.js", "src/mod.js")
     calls = _find_relations(result.relations, "CALLS")
     new_greet_calls = [
-        r for r in calls
-        if r["target_qname"] == "mod.greet" and r["metadata"].get("is_constructor")
+        r for r in calls if r["target_qname"] == "mod.greet" and r["metadata"].get("is_constructor")
     ]
     assert len(new_greet_calls) == 1
     rel = new_greet_calls[0]

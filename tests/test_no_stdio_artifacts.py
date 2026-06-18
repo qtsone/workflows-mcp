@@ -41,19 +41,14 @@ def _git_grep(pattern: str, *paths: Path) -> list[str]:
         capture_output=True,
         text=True,
     )
-    return [
-        line
-        for line in result.stdout.splitlines()
-        if line.strip() and _SELF not in line
-    ]
+    return [line for line in result.stdout.splitlines() if line.strip() and _SELF not in line]
 
 
 def test_no_stdio_server_import() -> None:
     """stdio_server must not be imported or called anywhere."""
     matches = _git_grep("stdio_server", SRC_DIR, TESTS_DIR)
-    assert not matches, (
-        "stdio_server reference(s) found — remove before merging:\n"
-        + "\n".join(matches)
+    assert not matches, "stdio_server reference(s) found — remove before merging:\n" + "\n".join(
+        matches
     )
 
 
@@ -61,8 +56,7 @@ def test_no_run_stdio_server() -> None:
     """run_stdio_server entry point must not exist."""
     matches = _git_grep("run_stdio_server", SRC_DIR, TESTS_DIR)
     assert not matches, (
-        "run_stdio_server reference(s) found — remove before merging:\n"
-        + "\n".join(matches)
+        "run_stdio_server reference(s) found — remove before merging:\n" + "\n".join(matches)
     )
 
 
@@ -70,17 +64,15 @@ def test_no_stdio_server_parameters() -> None:
     """StdioServerParameters must not be used anywhere."""
     matches = _git_grep("StdioServerParameters", SRC_DIR, TESTS_DIR)
     assert not matches, (
-        "StdioServerParameters reference(s) found — remove before merging:\n"
-        + "\n".join(matches)
+        "StdioServerParameters reference(s) found — remove before merging:\n" + "\n".join(matches)
     )
 
 
 def test_no_stdio_client() -> None:
     """stdio_client must not be used anywhere."""
     matches = _git_grep("stdio_client", SRC_DIR, TESTS_DIR)
-    assert not matches, (
-        "stdio_client reference(s) found — remove before merging:\n"
-        + "\n".join(matches)
+    assert not matches, "stdio_client reference(s) found — remove before merging:\n" + "\n".join(
+        matches
     )
 
 

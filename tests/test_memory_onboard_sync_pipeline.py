@@ -295,6 +295,7 @@ class TestFindBoundaryMarkerNearest:
             if p.exists():
                 if p.is_dir():
                     import shutil
+
                     shutil.rmtree(p)
                 else:
                     p.unlink()
@@ -324,9 +325,7 @@ class TestFindBoundaryMarkerNearest:
 class TestFindBoundaryMarkerCustom:
     def test_custom_marker_found(self, tmp_path: Path) -> None:
         (tmp_path / "MYMARKER").touch()
-        result = find_boundary_marker(
-            tmp_path, strategy="custom", marker_files=["MYMARKER"]
-        )
+        result = find_boundary_marker(tmp_path, strategy="custom", marker_files=["MYMARKER"])
         assert result.path == tmp_path
         assert result.marker == "MYMARKER"
         assert result.strategy == "custom"
@@ -334,9 +333,7 @@ class TestFindBoundaryMarkerCustom:
     def test_custom_marker_not_in_default_list(self, tmp_path: Path) -> None:
         """Custom markers must not fall back to default list."""
         (tmp_path / ".git").mkdir()  # default marker exists
-        result = find_boundary_marker(
-            tmp_path, strategy="custom", marker_files=["NOTEXIST"]
-        )
+        result = find_boundary_marker(tmp_path, strategy="custom", marker_files=["NOTEXIST"])
         # Should not find .git because we specified custom markers only.
         # May walk up and find marker elsewhere; just assert .git is NOT the marker.
         if result.path is not None:
@@ -394,26 +391,20 @@ class TestResolveSyncContext:
     def test_scope_filter_selects_matching(self) -> None:
         c1 = _make_candidate(palace="org", wing="svc1")
         c2 = _make_candidate(palace="org", wing="svc2")
-        result = resolve_sync_context(
-            [c1, c2], requested_scope={"palace": "org", "wing": "svc1"}
-        )
+        result = resolve_sync_context([c1, c2], requested_scope={"palace": "org", "wing": "svc1"})
         assert result.status == "success"
         assert result.context is c1
 
     def test_scope_filter_no_match_returns_no_context(self) -> None:
         c1 = _make_candidate(palace="org", wing="svc1")
-        result = resolve_sync_context(
-            [c1], requested_scope={"palace": "org", "wing": "NOMATCH"}
-        )
+        result = resolve_sync_context([c1], requested_scope={"palace": "org", "wing": "NOMATCH"})
         assert result.status == "NO_CONTEXT"
 
     def test_scope_filter_uses_key_not_object_equality(self) -> None:
         """Whitespace variants of the same scope must match the same candidate."""
         c = _make_candidate(palace="org", wing="svc")
         # Whitespace variant of the same scope.
-        result = resolve_sync_context(
-            [c], requested_scope={"palace": "  org  ", "wing": "  svc  "}
-        )
+        result = resolve_sync_context([c], requested_scope={"palace": "  org  ", "wing": "  svc  "})
         assert result.status == "success"
 
     def test_empty_requested_scope_considers_all(self) -> None:
@@ -481,6 +472,7 @@ class TestErrorEnvelopeShapes:
 # These tests call the sync() MCP tool handler directly (not over stdio) to
 # verify that the NO_CONTEXT and AMBIGUOUS_CONTEXT paths surface correctly when
 # sync is called with no arguments and no checkpoint.
+
 
 def _get_tool_fn(name: str) -> Any:
     tool = _mcp_server._tool_manager._tools.get(name)
@@ -609,6 +601,7 @@ class TestSyncAmbiguousContextEnvelopeShape:
 # ===========================================================================
 # 9. Phase 4 — programmatic onboard orchestrator (unit tests)
 # ===========================================================================
+
 
 def _readable_entry(path: str, content: str = "hello world") -> ScannedFileEntry:
     return ScannedFileEntry(path=path, content=content, size_bytes=len(content))
@@ -794,6 +787,7 @@ class TestProgrammaticOnboardValidationFailure:
     def test_unsupported_mode_returns_failed(self) -> None:
         """Passing mode != 'programmatic' should return a failed result."""
         import dataclasses
+
         req = ProgrammaticOnboardRequest(scope=_SCOPE, files=[_readable_entry("main.py")])
         # Bypass frozen check by creating a new object with mode overridden
         req_bad = dataclasses.replace(req, mode="llm")  # type: ignore[call-overload]
@@ -1002,13 +996,16 @@ class TestOnboardProgrammaticFastPath:
             return {"relation_id": f"relation-{len(persisted)}"}
 
         onboard = _get_tool_fn("onboard")
-        with patch(
-            "workflows_mcp.tools_memory._execute_memory_request",
-            new=AsyncMock(side_effect=_capture_memory_request),
-        ), patch(
-            "workflows_mcp.tools_memory.run_programmatic_onboard_with_cycle_recording",
-            new=AsyncMock(
-                side_effect=lambda req, *, memory_service: run_programmatic_onboard(req)
+        with (
+            patch(
+                "workflows_mcp.tools_memory._execute_memory_request",
+                new=AsyncMock(side_effect=_capture_memory_request),
+            ),
+            patch(
+                "workflows_mcp.tools_memory.run_programmatic_onboard_with_cycle_recording",
+                new=AsyncMock(
+                    side_effect=lambda req, *, memory_service: run_programmatic_onboard(req)
+                ),
             ),
         ):
             result = await onboard(
@@ -1031,10 +1028,7 @@ class TestOnboardProgrammaticFastPath:
         assert payload["graph"]["corridors"] == len(
             [item for item in persisted if item["kind"] == "link"]
         )
-        assert any(
-            item["kind"] == "place" and item["place_type"] == "Palace"
-            for item in persisted
-        )
+        assert any(item["kind"] == "place" and item["place_type"] == "Palace" for item in persisted)
         assert any(
             item["kind"] == "link"
             and item["link_type"] == "contains"
@@ -1101,11 +1095,11 @@ class TestOnboardProgrammaticFastPath:
             result = await onboard(
                 scope={"palace": "org"},
                 scan={
-                "patterns": ["*.py"],
-                "root": str(tmp_path),
-                "max_files": 5,
-                "max_size_kb": 10,
-            },
+                    "patterns": ["*.py"],
+                    "root": str(tmp_path),
+                    "max_files": 5,
+                    "max_size_kb": 10,
+                },
                 ctx=mock_ctx,
             )
         # Checkpoint flow (not the orchestrator) handles it; response will not have graph key.
@@ -1132,22 +1126,24 @@ class TestOnboardProgrammaticFastPath:
         onboard = _get_tool_fn("onboard")
         wrapper_calls: list[Any] = []
 
-        async def _fake_wrapper(
-            request: Any, *, memory_service: Any
-        ) -> Any:
+        async def _fake_wrapper(request: Any, *, memory_service: Any) -> Any:
             wrapper_calls.append({"request": request, "memory_service": memory_service})
             # Delegate to actual sync pipeline so result shape is correct.
             from workflows_mcp.engine.memory_onboard_sync_orchestrator import (
                 run_programmatic_onboard,
             )
+
             return run_programmatic_onboard(request)
 
-        with patch(
-            "workflows_mcp.tools_memory.run_programmatic_onboard_with_cycle_recording",
-            new=AsyncMock(side_effect=_fake_wrapper),
-        ), patch(
-            "workflows_mcp.tools_memory._persist_graph_payload_if_configured",
-            new=AsyncMock(return_value=None),
+        with (
+            patch(
+                "workflows_mcp.tools_memory.run_programmatic_onboard_with_cycle_recording",
+                new=AsyncMock(side_effect=_fake_wrapper),
+            ),
+            patch(
+                "workflows_mcp.tools_memory._persist_graph_payload_if_configured",
+                new=AsyncMock(return_value=None),
+            ),
         ):
             result = await onboard(
                 scope={"palace": "org", "wing": "api", "room": "runtime", "compartment": "service"},
@@ -1557,9 +1553,7 @@ class TestLLMOnboardDebugProvenance:
 class TestOnboardLLMModeToolFastPath:
     """onboard tool: mode=llm fast-path integration tests."""
 
-    def _make_ctx_with_loader(
-        self, loader: LLMConfigLoader
-    ) -> MagicMock:
+    def _make_ctx_with_loader(self, loader: LLMConfigLoader) -> MagicMock:
         """Build a mock ctx whose app_ctx carries the supplied loader."""
         ctx = MagicMock()
         app_ctx = MagicMock()
@@ -1648,9 +1642,7 @@ class TestOnboardLLMModeToolFastPath:
         assert payload.get("status") == "completed", f"Unexpected: {payload}"
 
     @pytest.mark.asyncio
-    async def test_llm_mode_strict_violation_returns_error(
-        self, tmp_path: Path
-    ) -> None:
+    async def test_llm_mode_strict_violation_returns_error(self, tmp_path: Path) -> None:
         loader = _make_loader(temperature=0.9)
         ctx = self._make_ctx_with_loader(loader)
         (tmp_path / "x.py").write_text("pass")
@@ -1724,9 +1716,7 @@ class TestOnboardLLMModeToolFastPath:
         assert "llm_provenance" in payload, f"Expected llm_provenance in debug response: {payload}"
 
     @pytest.mark.asyncio
-    async def test_llm_mode_concise_response_omits_llm_provenance(
-        self, tmp_path: Path
-    ) -> None:
+    async def test_llm_mode_concise_response_omits_llm_provenance(self, tmp_path: Path) -> None:
         loader = _make_loader(temperature=0.0)
         ctx = self._make_ctx_with_loader(loader)
         (tmp_path / "c.py").write_text("z = 3")
@@ -1857,8 +1847,13 @@ class TestComputeSyncDelta:
         delta = compute_sync_delta(prior, new)
         d = delta.to_debug_dict()
         assert set(d.keys()) >= {
-            "added", "modified", "deleted", "unchanged",
-            "has_semantic_delta", "total_files", "counts",
+            "added",
+            "modified",
+            "deleted",
+            "unchanged",
+            "has_semantic_delta",
+            "total_files",
+            "counts",
         }
         assert d["counts"]["added"] == 1
         assert d["counts"]["modified"] == 1
@@ -2079,12 +2074,12 @@ class TestOnboardContextPersistenceForSync:
         _disable_memory_backend_config(monkeypatch)
 
         with patch(
-                "workflows_mcp.tools_memory._run_scan",
-                return_value=(
-                    [{"path": "main.py", "content": "print('hello')", "size_bytes": 16}],
-                    MagicMock(entries=[], scan_config=MagicMock()),
-                ),
-            ):
+            "workflows_mcp.tools_memory._run_scan",
+            return_value=(
+                [{"path": "main.py", "content": "print('hello')", "size_bytes": 16}],
+                MagicMock(entries=[], scan_config=MagicMock()),
+            ),
+        ):
             _onboard_result = await onboard(
                 scope={**scope, "room": "runtime", "compartment": "main"},
                 ingestion={"mode": "programmatic"},
@@ -2099,8 +2094,7 @@ class TestOnboardContextPersistenceForSync:
             sync_result = await sync(ctx=mock_ctx)
         sync_payload = json.loads(sync_result.content[0].text)
         assert sync_payload.get("status") == "UNCHANGED", (
-            "Expected UNCHANGED after programmatic onboard context resolution; "
-            f"got: {sync_payload}"
+            f"Expected UNCHANGED after programmatic onboard context resolution; got: {sync_payload}"
         )
 
     @pytest.mark.asyncio
@@ -2116,9 +2110,7 @@ class TestOnboardContextPersistenceForSync:
         )
 
     @pytest.mark.asyncio
-    async def test_two_distinct_scopes_sync_returns_ambiguous(
-        self, mock_ctx: MagicMock
-    ) -> None:
+    async def test_two_distinct_scopes_sync_returns_ambiguous(self, mock_ctx: MagicMock) -> None:
         """sync({}) with two stored contexts and no scope hint must return AMBIGUOUS_CONTEXT."""
         from workflows_mcp.engine.memory_scope_resolver import normalize_scope
 
@@ -2245,17 +2237,19 @@ async def test_record_system1_verification_cycle_persists_db_row_with_scope_key(
     expected_scope_key = scope_key(covered)
 
     result = await vc_memory_service.execute(
-        MemoryRequest.model_validate({
-            "operation": "record_system1_verification_cycle",
-            "scope": covered,
-            "record": {
-                "format": "structured",
-                "verification_cycle": {
-                    "success": True,
-                    "covered_scope": covered,
+        MemoryRequest.model_validate(
+            {
+                "operation": "record_system1_verification_cycle",
+                "scope": covered,
+                "record": {
+                    "format": "structured",
+                    "verification_cycle": {
+                        "success": True,
+                        "covered_scope": covered,
+                    },
                 },
-            },
-        })
+            }
+        )
     )
 
     assert result.manage is not None
@@ -2270,9 +2264,7 @@ async def test_record_system1_verification_cycle_persists_db_row_with_scope_key(
         " WHERE palace = $1 AND scope_key = $2",
         (_VCT_PALACE, expected_scope_key),
     )
-    assert len(rows.rows) == 1, (
-        f"Expected 1 verification cycle row in DB, got {len(rows.rows)}"
-    )
+    assert len(rows.rows) == 1, f"Expected 1 verification cycle row in DB, got {len(rows.rows)}"
     row = rows.rows[0]
     assert row["success"] is True
     assert row["covered_wing"] == _VCT_WING
@@ -2296,17 +2288,19 @@ async def test_record_system1_failed_verification_cycle_persists_failure_in_db(
     expected_scope_key = scope_key(covered)
 
     result = await vc_memory_service.execute(
-        MemoryRequest.model_validate({
-            "operation": "record_system1_verification_cycle",
-            "scope": covered,
-            "record": {
-                "format": "structured",
-                "verification_cycle": {
-                    "success": False,
-                    "covered_scope": covered,
+        MemoryRequest.model_validate(
+            {
+                "operation": "record_system1_verification_cycle",
+                "scope": covered,
+                "record": {
+                    "format": "structured",
+                    "verification_cycle": {
+                        "success": False,
+                        "covered_scope": covered,
+                    },
                 },
-            },
-        })
+            }
+        )
     )
 
     assert result.manage is not None
@@ -2314,14 +2308,11 @@ async def test_record_system1_failed_verification_cycle_persists_failure_in_db(
     assert result.manage.cycle_id is not None
 
     rows = await vc_backend.query(
-        "SELECT success FROM knowledge_verification_cycles"
-        " WHERE palace = $1 AND scope_key = $2",
+        "SELECT success FROM knowledge_verification_cycles WHERE palace = $1 AND scope_key = $2",
         (_VCT_PALACE, expected_scope_key),
     )
     assert len(rows.rows) == 1
-    assert rows.rows[0]["success"] is False, (
-        "Failed cycle must be stored with success=False in DB"
-    )
+    assert rows.rows[0]["success"] is False, "Failed cycle must be stored with success=False in DB"
 
 
 @pytest.mark.asyncio
@@ -2342,17 +2333,19 @@ async def test_archive_gate_reads_absent_evidence_cycles_from_db(
 
     for _ in range(2):
         r = await vc_memory_service.execute(
-            MemoryRequest.model_validate({
-                "operation": "record_system1_verification_cycle",
-                "scope": covered,
-                "record": {
-                    "format": "structured",
-                    "verification_cycle": {
-                        "success": True,
-                        "covered_scope": covered,
+            MemoryRequest.model_validate(
+                {
+                    "operation": "record_system1_verification_cycle",
+                    "scope": covered,
+                    "record": {
+                        "format": "structured",
+                        "verification_cycle": {
+                            "success": True,
+                            "covered_scope": covered,
+                        },
                     },
-                },
-            })
+                }
+            )
         )
         assert r.manage is not None
         assert r.manage.cycle_id is not None
@@ -2374,7 +2367,10 @@ async def test_archive_gate_reads_absent_evidence_cycles_from_db(
         RETURNING id::text
         """,
         (
-            _VCT_PALACE, _VCT_WING, _VCT_ROOM, _VCT_COMPARTMENT,
+            _VCT_PALACE,
+            _VCT_WING,
+            _VCT_ROOM,
+            _VCT_COMPARTMENT,
             computed_scope_key,
         ),
     )
@@ -2383,18 +2379,20 @@ async def test_archive_gate_reads_absent_evidence_cycles_from_db(
 
     # Archive gate should accept two successful absent cycles from DB.
     result = await vc_memory_service.execute(
-        MemoryRequest.model_validate({
-            "operation": "reconcile_semantic_lifecycle",
-            "scope": covered,
-            "record": {
-                "format": "structured",
-                "lifecycle_reconciliation": {
-                    "scope_key": computed_scope_key,
-                    "force_archive_claim_ids": [degraded_claim_id],
-                    "absent_verification_cycle_ids": cycle_ids,
+        MemoryRequest.model_validate(
+            {
+                "operation": "reconcile_semantic_lifecycle",
+                "scope": covered,
+                "record": {
+                    "format": "structured",
+                    "lifecycle_reconciliation": {
+                        "scope_key": computed_scope_key,
+                        "force_archive_claim_ids": [degraded_claim_id],
+                        "absent_verification_cycle_ids": cycle_ids,
+                    },
                 },
-            },
-        })
+            }
+        )
     )
     assert result.manage is not None
     assert result.manage.success is True, (
@@ -2417,35 +2415,39 @@ async def test_archive_gate_rejects_failed_db_cycles_as_absent_evidence(
 
     for _ in range(2):
         r = await vc_memory_service.execute(
-            MemoryRequest.model_validate({
-                "operation": "record_system1_verification_cycle",
-                "scope": covered,
-                "record": {
-                    "format": "structured",
-                    "verification_cycle": {
-                        "success": False,
-                        "covered_scope": covered,
+            MemoryRequest.model_validate(
+                {
+                    "operation": "record_system1_verification_cycle",
+                    "scope": covered,
+                    "record": {
+                        "format": "structured",
+                        "verification_cycle": {
+                            "success": False,
+                            "covered_scope": covered,
+                        },
                     },
-                },
-            })
+                }
+            )
         )
         assert r.manage is not None
         assert r.manage.cycle_id is not None
         cycle_ids.append(r.manage.cycle_id)
 
     result = await vc_memory_service.execute(
-        MemoryRequest.model_validate({
-            "operation": "reconcile_semantic_lifecycle",
-            "scope": covered,
-            "record": {
-                "format": "structured",
-                "lifecycle_reconciliation": {
-                    "scope_key": scope_key(covered),
-                    "force_archive_claim_ids": ["00000000-0000-0000-0000-000000000002"],
-                    "absent_verification_cycle_ids": cycle_ids,
+        MemoryRequest.model_validate(
+            {
+                "operation": "reconcile_semantic_lifecycle",
+                "scope": covered,
+                "record": {
+                    "format": "structured",
+                    "lifecycle_reconciliation": {
+                        "scope_key": scope_key(covered),
+                        "force_archive_claim_ids": ["00000000-0000-0000-0000-000000000002"],
+                        "absent_verification_cycle_ids": cycle_ids,
+                    },
                 },
-            },
-        })
+            }
+        )
     )
     assert result.manage is not None
     assert result.manage.success is False, (
@@ -2496,9 +2498,7 @@ async def test_successful_programmatic_onboard_records_verification_cycle_in_db(
         " WHERE palace = $1 AND scope_key = $2",
         (_VCT_PALACE, expected_scope_key),
     )
-    assert len(rows.rows) == 1, (
-        f"Expected 1 verification cycle row in DB, got {len(rows.rows)}"
-    )
+    assert len(rows.rows) == 1, f"Expected 1 verification cycle row in DB, got {len(rows.rows)}"
     assert rows.rows[0]["success"] is True, (
         "Successful onboard must record a successful verification cycle"
     )
@@ -2554,8 +2554,7 @@ async def test_failed_programmatic_onboard_does_not_record_verification_cycle(
 
     expected_scope_key = scope_key(_vc_scope())
     rows = await vc_backend.query(
-        "SELECT id FROM knowledge_verification_cycles"
-        " WHERE palace = $1 AND scope_key = $2",
+        "SELECT id FROM knowledge_verification_cycles WHERE palace = $1 AND scope_key = $2",
         (_VCT_PALACE, expected_scope_key),
     )
     assert len(rows.rows) == 0, (
@@ -2664,9 +2663,7 @@ class TestFreshStartUnknownPalaceRejected:
         assert err.get("code") in (
             "MEM_FRESH_START_SCOPE_NOT_FOUND",
             "MEM_FRESH_START_UNKNOWN_PALACE",
-        ), (
-            f"Expected scope-not-found error, got: {err.get('code')!r}"
-        )
+        ), f"Expected scope-not-found error, got: {err.get('code')!r}"
         assert err.get("retryable") is False
 
         # Confirm no deletes were attempted on an unknown palace.
@@ -2688,9 +2685,7 @@ class TestFreshStartTransactionalRollback:
 
         backend = AsyncMock()
         # First query (scope existence check) returns at least one row.
-        backend.query = AsyncMock(
-            return_value=MagicMock(rows=[{"count": 1}])
-        )
+        backend.query = AsyncMock(return_value=MagicMock(rows=[{"count": 1}]))
         # Simulate failure mid-transaction (execute raises on first DELETE call).
         backend.execute = AsyncMock(side_effect=RuntimeError("simulated DB failure"))
         backend.begin_transaction = AsyncMock()
@@ -2711,16 +2706,19 @@ class TestFreshStartTransactionalRollback:
         ), f"Expected failure code, got: {code!r}"
 
         # Transaction guard: begin_transaction must have been called before any DELETE.
-        backend.begin_transaction.assert_awaited_once(), (
-            "begin_transaction() must be called before the delete sequence"
+        (
+            backend.begin_transaction.assert_awaited_once(),
+            ("begin_transaction() must be called before the delete sequence"),
         )
         # Rollback must have been awaited to prevent partial-delete persistence.
-        backend.rollback.assert_awaited_once(), (
-            "rollback() must be awaited after a mid-delete failure to undo partial deletes"
+        (
+            backend.rollback.assert_awaited_once(),
+            ("rollback() must be awaited after a mid-delete failure to undo partial deletes"),
         )
         # Commit must NOT have been called when the operation failed.
-        backend.commit.assert_not_awaited(), (
-            "commit() must not be called after a failed delete sequence"
+        (
+            backend.commit.assert_not_awaited(),
+            ("commit() must not be called after a failed delete sequence"),
         )
 
     @pytest.mark.asyncio
@@ -2730,9 +2728,7 @@ class TestFreshStartTransactionalRollback:
 
         backend = AsyncMock()
         # Scope existence check returns rows (palace exists).
-        backend.query = AsyncMock(
-            return_value=MagicMock(rows=[{"count": 3}])
-        )
+        backend.query = AsyncMock(return_value=MagicMock(rows=[{"count": 3}]))
         # Each DELETE returns a result with rowcount.
         delete_result = MagicMock()
         delete_result.rowcount = 2
@@ -2759,15 +2755,15 @@ class TestFreshStartTransactionalRollback:
         )
 
         # Transaction guard: begin + commit must both have been called.
-        backend.begin_transaction.assert_awaited_once(), (
-            "begin_transaction() must be called before the delete sequence"
+        (
+            backend.begin_transaction.assert_awaited_once(),
+            ("begin_transaction() must be called before the delete sequence"),
         )
-        backend.commit.assert_awaited_once(), (
-            "commit() must be awaited after all deletes succeed"
-        )
+        backend.commit.assert_awaited_once(), ("commit() must be awaited after all deletes succeed")
         # Rollback must NOT have been called on success.
-        backend.rollback.assert_not_awaited(), (
-            "rollback() must not be called when the delete sequence succeeds"
+        (
+            backend.rollback.assert_not_awaited(),
+            ("rollback() must not be called when the delete sequence succeeds"),
         )
 
     @pytest.mark.asyncio
@@ -2847,6 +2843,4 @@ class TestFreshStartNoCompatibilityLayer:
         if "error" not in payload:
             disallowed_keys = {"migrated", "compat", "compatibility", "migration_path"}
             found = set(payload.keys()) & disallowed_keys
-            assert not found, (
-                f"fresh_start response must not contain compat fields; found: {found}"
-            )
+            assert not found, f"fresh_start response must not contain compat fields; found: {found}"

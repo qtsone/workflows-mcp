@@ -16,11 +16,9 @@ def test_readme_documents_scan_root_hardening_baseline() -> None:
     )
     assert (
         "ci/release runners: `workflows_scan_root=$ci_project_dir` "
-        "(or runner workspace root for this repository only)"
-        in readme
+        "(or runner workspace root for this repository only)" in readme
     )
     assert (
         "effective knowledge file access is an intersection: "
-        "`workflows_scan_root ∩ fs_root`, plus explicitly approved extra allowlist roots."
-        in readme
+        "`workflows_scan_root ∩ fs_root`, plus explicitly approved extra allowlist roots." in readme
     )

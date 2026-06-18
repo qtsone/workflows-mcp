@@ -118,9 +118,7 @@ class TestModuleQname:
         assert len(module_entities) == 1
         assert module_entities[0]["qualified_name"] == "pkg.greeter"
 
-    def test_pkg_init_py_becomes_pkg(
-        self, init_py_file: Path, mock_execution: MagicMock
-    ) -> None:
+    def test_pkg_init_py_becomes_pkg(self, init_py_file: Path, mock_execution: MagicMock) -> None:
         """pkg/__init__.py -> pkg (strip __init__)."""
         result = _run(init_py_file, "pkg/__init__.py", mock_execution)
         module_entities = [e for e in result.entities if e["entity_type"] == "Module"]
@@ -162,9 +160,7 @@ class TestClassEntities:
         self, full_python_file: Path, mock_execution: MagicMock
     ) -> None:
         result = _run(full_python_file, "pkg/greeter.py", mock_execution)
-        base = next(
-            e for e in result.entities if e.get("qualified_name") == "pkg.greeter.Base"
-        )
+        base = next(e for e in result.entities if e.get("qualified_name") == "pkg.greeter.Base")
         greeter = next(
             e for e in result.entities if e.get("qualified_name") == "pkg.greeter.Greeter"
         )
@@ -222,8 +218,7 @@ class TestMethodEntities:
     ) -> None:
         result = _run(full_python_file, "pkg/greeter.py", mock_execution)
         greet = next(
-            e for e in result.entities
-            if e.get("qualified_name") == "pkg.greeter.Greeter.greet"
+            e for e in result.entities if e.get("qualified_name") == "pkg.greeter.Greeter.greet"
         )
         assert greet["metadata"]["parent_class_id"] == "__class_qname__:pkg.greeter.Greeter"
 
@@ -238,9 +233,7 @@ class TestFunctionEntities:
         assert "pkg.greeter.main" in qnames
         assert "pkg.greeter.helper" in qnames
 
-    def test_functions_not_methods(
-        self, full_python_file: Path, mock_execution: MagicMock
-    ) -> None:
+    def test_functions_not_methods(self, full_python_file: Path, mock_execution: MagicMock) -> None:
         """greet/_helper must be Method, not Function."""
         result = _run(full_python_file, "pkg/greeter.py", mock_execution)
         func_entities = [e for e in result.entities if e["entity_type"] == "Function"]
@@ -302,9 +295,9 @@ class TestContainsRelations:
         contains = [r for r in result.relations if r["relation_type"] == "CONTAINS"]
         # Module -> Class
         module_to_class = [
-            r for r in contains
-            if r["source_qname"] == "pkg.greeter"
-            and r.get("target_entity_type") == "Class"
+            r
+            for r in contains
+            if r["source_qname"] == "pkg.greeter" and r.get("target_entity_type") == "Class"
         ]
         target_qnames = {r["target_qname"] for r in module_to_class}
         assert "pkg.greeter.Base" in target_qnames
@@ -316,9 +309,9 @@ class TestContainsRelations:
         result = _run(full_python_file, "pkg/greeter.py", mock_execution)
         contains = [r for r in result.relations if r["relation_type"] == "CONTAINS"]
         module_to_func = [
-            r for r in contains
-            if r["source_qname"] == "pkg.greeter"
-            and r.get("target_entity_type") == "Function"
+            r
+            for r in contains
+            if r["source_qname"] == "pkg.greeter" and r.get("target_entity_type") == "Function"
         ]
         target_qnames = {r["target_qname"] for r in module_to_func}
         assert "pkg.greeter.main" in target_qnames
@@ -330,7 +323,8 @@ class TestContainsRelations:
         result = _run(full_python_file, "pkg/greeter.py", mock_execution)
         contains = [r for r in result.relations if r["relation_type"] == "CONTAINS"]
         class_to_method = [
-            r for r in contains
+            r
+            for r in contains
             if r["source_qname"] == "pkg.greeter.Greeter"
             and r.get("target_entity_type") == "Method"
         ]
@@ -398,9 +392,7 @@ class TestInheritsFrom:
 
 
 class TestImports:
-    def test_plain_import_emitted(
-        self, tmp_path: Path, mock_execution: MagicMock
-    ) -> None:
+    def test_plain_import_emitted(self, tmp_path: Path, mock_execution: MagicMock) -> None:
         """import os -> IMPORTS relation from module to os."""
         f = tmp_path / "mymod.py"
         f.write_text("import os\n", encoding="utf-8")
@@ -408,9 +400,7 @@ class TestImports:
         imports = [r for r in result.relations if r["relation_type"] == "IMPORTS"]
         assert any(r["target_qname"] == "os" for r in imports)
 
-    def test_aliased_import_emitted(
-        self, tmp_path: Path, mock_execution: MagicMock
-    ) -> None:
+    def test_aliased_import_emitted(self, tmp_path: Path, mock_execution: MagicMock) -> None:
         """import sys as system -> target qname is 'sys' (original module)."""
         f = tmp_path / "mymod.py"
         f.write_text("import sys as system\n", encoding="utf-8")
@@ -418,9 +408,7 @@ class TestImports:
         imports = [r for r in result.relations if r["relation_type"] == "IMPORTS"]
         assert any(r["target_qname"] == "sys" for r in imports)
 
-    def test_from_import_emitted(
-        self, tmp_path: Path, mock_execution: MagicMock
-    ) -> None:
+    def test_from_import_emitted(self, tmp_path: Path, mock_execution: MagicMock) -> None:
         """from pathlib import Path -> target qname is 'pathlib'."""
         f = tmp_path / "mymod.py"
         f.write_text("from pathlib import Path\n", encoding="utf-8")
@@ -440,9 +428,7 @@ class TestImports:
             assert rel["confidence"] == 0.5
             assert rel["metadata"].get("resolution") == "unresolved"
 
-    def test_import_source_is_module(
-        self, tmp_path: Path, mock_execution: MagicMock
-    ) -> None:
+    def test_import_source_is_module(self, tmp_path: Path, mock_execution: MagicMock) -> None:
         f = tmp_path / "mymod.py"
         f.write_text("import os\n", encoding="utf-8")
         result = _run(f, "mymod.py", mock_execution)
@@ -452,9 +438,7 @@ class TestImports:
             assert rel.get("source_entity_type") == "Module"
             assert rel.get("target_entity_type") == "Module"
 
-    def test_from_dotted_import(
-        self, tmp_path: Path, mock_execution: MagicMock
-    ) -> None:
+    def test_from_dotted_import(self, tmp_path: Path, mock_execution: MagicMock) -> None:
         """from os.path import join -> target qname 'os.path'."""
         f = tmp_path / "mymod.py"
         f.write_text("from os.path import join\n", encoding="utf-8")
@@ -594,12 +578,10 @@ class TestDeterminism:
         assert qnames1 == qnames2
 
         rel_types1 = sorted(
-            (r["relation_type"], r["source_qname"], r["target_qname"])
-            for r in result1.relations
+            (r["relation_type"], r["source_qname"], r["target_qname"]) for r in result1.relations
         )
         rel_types2 = sorted(
-            (r["relation_type"], r["source_qname"], r["target_qname"])
-            for r in result2.relations
+            (r["relation_type"], r["source_qname"], r["target_qname"]) for r in result2.relations
         )
         assert rel_types1 == rel_types2
 
@@ -681,9 +663,7 @@ class TestUnresolvedImports:
         result = _run(f, "mymod.py", mock_execution)
         assert result.unresolved_imports.count("os") == 1
 
-    def test_unresolved_imports_sorted(
-        self, tmp_path: Path, mock_execution: MagicMock
-    ) -> None:
+    def test_unresolved_imports_sorted(self, tmp_path: Path, mock_execution: MagicMock) -> None:
         """unresolved_imports must be in sorted order for determinism."""
         f = tmp_path / "mymod.py"
         f.write_text("import sys\nimport os\nimport pathlib\n", encoding="utf-8")
@@ -702,9 +682,7 @@ class TestUnresolvedImports:
 class TestRelativeImportNormalization:
     """Item 5: relative import qnames resolved from module_qname context."""
 
-    def test_single_dot_sibling_import(
-        self, tmp_path: Path, mock_execution: MagicMock
-    ) -> None:
+    def test_single_dot_sibling_import(self, tmp_path: Path, mock_execution: MagicMock) -> None:
         """from .sibling import x in pkg.mod -> target qname pkg.sibling."""
         f = tmp_path / "mod.py"
         f.write_text("from .sibling import foo\n", encoding="utf-8")
@@ -712,9 +690,7 @@ class TestRelativeImportNormalization:
         imports = [r for r in result.relations if r["relation_type"] == "IMPORTS"]
         assert any(r["target_qname"] == "pkg.sibling" for r in imports)
 
-    def test_single_dot_bare_import(
-        self, tmp_path: Path, mock_execution: MagicMock
-    ) -> None:
+    def test_single_dot_bare_import(self, tmp_path: Path, mock_execution: MagicMock) -> None:
         """from . import foo in pkg.mod -> target qname pkg."""
         f = tmp_path / "mod.py"
         f.write_text("from . import foo\n", encoding="utf-8")
@@ -722,9 +698,7 @@ class TestRelativeImportNormalization:
         imports = [r for r in result.relations if r["relation_type"] == "IMPORTS"]
         assert any(r["target_qname"] == "pkg" for r in imports)
 
-    def test_double_dot_sibling_import(
-        self, tmp_path: Path, mock_execution: MagicMock
-    ) -> None:
+    def test_double_dot_sibling_import(self, tmp_path: Path, mock_execution: MagicMock) -> None:
         """from ..parent import x in pkg.sub.mod -> target qname pkg.parent."""
         f = tmp_path / "mod.py"
         f.write_text("from ..parent import x\n", encoding="utf-8")
@@ -740,9 +714,7 @@ class TestRelativeImportNormalization:
         f.write_text("from .sibling import foo\n", encoding="utf-8")
         result = _run(f, "pkg/mod.py", mock_execution)
         imports = [r for r in result.relations if r["relation_type"] == "IMPORTS"]
-        sibling_import = next(
-            r for r in imports if r["target_qname"] == "pkg.sibling"
-        )
+        sibling_import = next(r for r in imports if r["target_qname"] == "pkg.sibling")
         assert sibling_import["confidence"] == 0.5
 
     def test_unresolvable_relative_import_kept_as_best_effort(
@@ -761,9 +733,7 @@ class TestRelativeImportNormalization:
 class TestNestedCallExtraction:
     """Item 6: nested calls in argument lists are emitted as separate CALLS relations."""
 
-    def test_nested_call_emits_both_calls(
-        self, tmp_path: Path, mock_execution: MagicMock
-    ) -> None:
+    def test_nested_call_emits_both_calls(self, tmp_path: Path, mock_execution: MagicMock) -> None:
         """bar(baz()) in foo() -> both bar and baz appear as CALLS from foo."""
         f = tmp_path / "mymod.py"
         f.write_text(
@@ -789,7 +759,8 @@ class TestNestedCallExtraction:
         result = _run(f, "mymod.py", mock_execution)
         calls = [r for r in result.relations if r["relation_type"] == "CALLS"]
         baz_call = next(
-            r for r in calls
+            r
+            for r in calls
             if r["source_qname"] == "mymod.foo" and r["target_qname"] == "mymod.baz"
         )
         assert baz_call["confidence"] == 1.0

@@ -59,9 +59,7 @@ def scope_key(scope: dict[str, Any]) -> str:
     - Collision resistance (SHA-256 of the full canonical string).
     """
     normalized = normalize_scope(scope)
-    canonical = "|".join(
-        f"{f}={normalized[f] or ''}" for f in _SCOPE_FIELDS
-    )
+    canonical = "|".join(f"{f}={normalized[f] or ''}" for f in _SCOPE_FIELDS)
     return hashlib.sha256(canonical.encode()).hexdigest()
 
 
@@ -140,9 +138,7 @@ def find_boundary_marker(
 
     if strategy == "custom":
         if not marker_files:
-            raise ValueError(
-                "marker_files must be a non-empty list when strategy='custom'"
-            )
+            raise ValueError("marker_files must be a non-empty list when strategy='custom'")
         candidates: tuple[str, ...] = tuple(marker_files)
     else:
         candidates = DEFAULT_BOUNDARY_MARKERS
@@ -282,8 +278,7 @@ def build_no_context_envelope() -> dict[str, Any]:
 def build_ambiguous_context_envelope(candidates: list[SyncContextCandidate]) -> dict[str, Any]:
     """Return a deterministic AMBIGUOUS_CONTEXT error envelope for sync({})."""
     candidate_info = [
-        {"scope": c.scope, "scope_key": c.scope_key_value, "source": c.source}
-        for c in candidates
+        {"scope": c.scope, "scope_key": c.scope_key_value, "source": c.source} for c in candidates
     ]
     return {
         "error": {

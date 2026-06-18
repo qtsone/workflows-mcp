@@ -316,9 +316,7 @@ class LLMConfigLoader:
         if self._config is not None:
             return self._config
 
-        logger.info(
-            "No SQLite LLM metadata source configured. Using direct provider/model mode."
-        )
+        logger.info("No SQLite LLM metadata source configured. Using direct provider/model mode.")
         self._config = LLMConfig()
         return self._config
 

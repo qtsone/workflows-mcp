@@ -562,9 +562,7 @@ class _RustExtractor:
                 self._walk_for_calls(child, scope_qname, scope_entity_type)
                 return
 
-    def _walk_for_calls(
-        self, node: Node, scope_qname: str, scope_entity_type: str
-    ) -> None:
+    def _walk_for_calls(self, node: Node, scope_qname: str, scope_entity_type: str) -> None:
         """Recursively walk AST collecting call_expression nodes."""
         for child in node.children:
             if child.type == "call_expression":
@@ -574,9 +572,7 @@ class _RustExtractor:
             else:
                 self._walk_for_calls(child, scope_qname, scope_entity_type)
 
-    def _emit_call(
-        self, call_node: Node, scope_qname: str, scope_entity_type: str
-    ) -> None:
+    def _emit_call(self, call_node: Node, scope_qname: str, scope_entity_type: str) -> None:
         """Emit a CALLS relation for a call_expression node."""
         # First child is the function expression (identifier or field_expression)
         func_node = call_node.children[0] if call_node.children else None

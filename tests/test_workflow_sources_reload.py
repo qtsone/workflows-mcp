@@ -39,9 +39,7 @@ def test_create_get_list_and_delete_workflow_source(tmp_path: Path) -> None:
         source_dir = tmp_path / "sources" / "a"
         source_dir.mkdir(parents=True)
 
-        created = sources_repo.create(
-            WorkflowSourceCreate(source_path=f"{source_dir}/..//a")
-        )
+        created = sources_repo.create(WorkflowSourceCreate(source_path=f"{source_dir}/..//a"))
         expected_path = str(source_dir.expanduser().resolve(strict=False))
 
         assert created.source_path == expected_path
@@ -478,9 +476,7 @@ def test_builtin_path_with_no_workflows_loads_cleanly(tmp_path: Path) -> None:
     builtin_dir = tmp_path / "builtins"
     builtin_dir.mkdir()
 
-    summary = reload_registry_from_source_paths(
-        registry, [], builtin_paths=[builtin_dir]
-    )
+    summary = reload_registry_from_source_paths(registry, [], builtin_paths=[builtin_dir])
 
     assert summary.workflow_count == 0
     assert summary.builtin_workflow_count == 0
@@ -495,9 +491,7 @@ def test_builtin_workflow_loads_and_appears_in_registry(tmp_path: Path) -> None:
     builtin_dir.mkdir()
     _write_workflow_yaml(builtin_dir, filename="foo.yaml", name="builtin-foo")
 
-    summary = reload_registry_from_source_paths(
-        registry, [], builtin_paths=[builtin_dir]
-    )
+    summary = reload_registry_from_source_paths(registry, [], builtin_paths=[builtin_dir])
 
     assert summary.builtin_workflow_count == 1
     assert summary.workflow_count == 1
@@ -516,9 +510,7 @@ def test_user_workflow_shadowing_builtin_is_rejected(tmp_path: Path) -> None:
     user_yaml = _write_workflow_yaml(user_dir, filename="u.yaml", name="system1-scan")
 
     with pytest.raises(WorkflowSourceReloadError) as exc:
-        reload_registry_from_source_paths(
-            registry, [user_dir], builtin_paths=[builtin_dir]
-        )
+        reload_registry_from_source_paths(registry, [user_dir], builtin_paths=[builtin_dir])
 
     assert exc.value.code == "user_workflow_shadows_builtin"
     assert "system1-scan" in exc.value.message
@@ -537,9 +529,7 @@ def test_user_workflow_with_unique_name_loads_alongside_builtin(tmp_path: Path) 
     _write_workflow_yaml(builtin_dir, filename="b.yaml", name="system1-scan")
     _write_workflow_yaml(user_dir, filename="u.yaml", name="my-pipeline")
 
-    summary = reload_registry_from_source_paths(
-        registry, [user_dir], builtin_paths=[builtin_dir]
-    )
+    summary = reload_registry_from_source_paths(registry, [user_dir], builtin_paths=[builtin_dir])
 
     assert summary.workflow_count == 2
     assert summary.builtin_workflow_count == 1
@@ -557,9 +547,7 @@ def test_builtin_duplicate_name_within_builtin_dir_is_rejected(tmp_path: Path) -
     _write_workflow_yaml(builtin_dir, filename="b.yaml", name="builtin-foo")
 
     with pytest.raises(WorkflowSourceReloadError) as exc:
-        reload_registry_from_source_paths(
-            registry, [], builtin_paths=[builtin_dir]
-        )
+        reload_registry_from_source_paths(registry, [], builtin_paths=[builtin_dir])
 
     assert exc.value.code == "builtin_workflow_duplicate_name"
     assert "builtin-foo" in exc.value.message
@@ -575,9 +563,7 @@ def test_invalid_builtin_workflow_yaml_is_rejected_with_distinct_code(
     _write_invalid_workflow_yaml(builtin_dir, filename="broken.yaml")
 
     with pytest.raises(WorkflowSourceReloadError) as exc:
-        reload_registry_from_source_paths(
-            registry, [], builtin_paths=[builtin_dir]
-        )
+        reload_registry_from_source_paths(registry, [], builtin_paths=[builtin_dir])
 
     assert exc.value.code == "builtin_workflow_invalid_definition"
 
@@ -617,9 +603,7 @@ async def test_load_workflows_existing_user_sources_still_load(tmp_path: Path) -
 
         server.load_workflows(resources)
 
-        user_wf_names = [
-            n for n in resources.workflow_registry.list_names() if not _is_builtin(n)
-        ]
+        user_wf_names = [n for n in resources.workflow_registry.list_names() if not _is_builtin(n)]
         assert "my-user-workflow" in user_wf_names
     finally:
         await stop_resources(resources)
@@ -649,6 +633,7 @@ async def test_load_workflows_runtime_builtin_path_loads_system_workflows(
         expected_names: set[str] = set()
         for yf in yaml_files:
             import yaml as _yaml  # noqa: PLC0415
+
             data = _yaml.safe_load(yf.read_text(encoding="utf-8"))
             if isinstance(data, dict) and "name" in data:
                 expected_names.add(data["name"])
@@ -679,6 +664,7 @@ async def test_load_workflows_user_workflow_shadowing_builtin_is_rejected(
             pytest.skip("No builtin YAMLs present; cannot test shadowing")
 
         import yaml as _yaml  # noqa: PLC0415
+
         data = _yaml.safe_load(yaml_files[0].read_text(encoding="utf-8"))
         builtin_name = data.get("name") if isinstance(data, dict) else None
         if not builtin_name:
@@ -717,9 +703,7 @@ def test_user_workflow_shadowing_system2_derive_is_rejected(tmp_path: Path) -> N
     user_yaml = _write_workflow_yaml(user_dir, filename="u.yaml", name="system2-derive")
 
     with pytest.raises(WorkflowSourceReloadError) as exc:
-        reload_registry_from_source_paths(
-            registry, [user_dir], builtin_paths=[builtin_dir]
-        )
+        reload_registry_from_source_paths(registry, [user_dir], builtin_paths=[builtin_dir])
 
     assert exc.value.code == "user_workflow_shadows_builtin"
     assert "system2-derive" in exc.value.message
@@ -738,9 +722,7 @@ def test_user_workflow_shadowing_system2_verify_lifecycle_is_rejected(tmp_path: 
     user_yaml = _write_workflow_yaml(user_dir, filename="u.yaml", name="system2-verify-lifecycle")
 
     with pytest.raises(WorkflowSourceReloadError) as exc:
-        reload_registry_from_source_paths(
-            registry, [user_dir], builtin_paths=[builtin_dir]
-        )
+        reload_registry_from_source_paths(registry, [user_dir], builtin_paths=[builtin_dir])
 
     assert exc.value.code == "user_workflow_shadows_builtin"
     assert "system2-verify-lifecycle" in exc.value.message
@@ -761,9 +743,7 @@ def test_system2_derive_and_verify_lifecycle_load_alongside_user_workflows(
     _write_workflow_yaml(builtin_dir, filename="s2vl.yaml", name="system2-verify-lifecycle")
     _write_workflow_yaml(user_dir, filename="u.yaml", name="my-custom-pipeline")
 
-    summary = reload_registry_from_source_paths(
-        registry, [user_dir], builtin_paths=[builtin_dir]
-    )
+    summary = reload_registry_from_source_paths(registry, [user_dir], builtin_paths=[builtin_dir])
 
     assert summary.builtin_workflow_count == 2
     assert summary.workflow_count == 3

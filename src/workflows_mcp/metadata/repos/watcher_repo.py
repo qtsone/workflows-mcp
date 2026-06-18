@@ -104,10 +104,7 @@ class SQLiteWatcherRepository:
 
     def list_statuses(self, *, state: str | None = None) -> list[WatcherStatusRecord]:
         params: tuple[object, ...] = ()
-        query = (
-            "SELECT project_id, state, last_event_at, updated_at "
-            "FROM watcher_status "
-        )
+        query = "SELECT project_id, state, last_event_at, updated_at FROM watcher_status "
         if state is not None:
             if state not in _ALLOWED_WATCHER_STATES:
                 raise InvalidWatcherStateError(

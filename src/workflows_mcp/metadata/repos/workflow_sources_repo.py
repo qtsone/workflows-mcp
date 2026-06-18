@@ -76,9 +76,7 @@ class SQLiteWorkflowSourcesRepository:
         except sqlite3.IntegrityError as exc:
             self._conn.rollback()
             if self._is_unique_source_path_violation(exc):
-                raise DuplicateWorkflowSourceError(
-                    "workflow source path already exists"
-                ) from exc
+                raise DuplicateWorkflowSourceError("workflow source path already exists") from exc
             raise
         except Exception:
             self._conn.rollback()

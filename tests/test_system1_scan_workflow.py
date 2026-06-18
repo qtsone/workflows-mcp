@@ -181,13 +181,7 @@ async def clean_palace(knowledge_backend: PostgresBackend) -> AsyncIterator[None
 @pytest_asyncio.fixture
 async def workflow_context() -> AsyncIterator[MagicMock]:
     """AppContext wired to the built-in workflow registry."""
-    builtin_dir = (
-        Path(__file__).parent.parent
-        / "src"
-        / "workflows_mcp"
-        / "templates"
-        / "memory"
-    )
+    builtin_dir = Path(__file__).parent.parent / "src" / "workflows_mcp" / "templates" / "memory"
 
     # Ensure MemoryExecutor picks up the same DB credentials as the test fixture.
     db_env_defaults = {
@@ -248,8 +242,7 @@ async def workflow_context() -> AsyncIterator[MagicMock]:
 
 async def _count_structural_evidence(backend: PostgresBackend) -> int:
     rows = await backend.query(
-        "SELECT COUNT(*)::int AS n FROM knowledge_structural_evidence"
-        " WHERE palace = $1",
+        "SELECT COUNT(*)::int AS n FROM knowledge_structural_evidence WHERE palace = $1",
         (PALACE,),
     )
     return int(rows.rows[0]["n"])
@@ -276,8 +269,7 @@ async def _count_structural_relations(backend: PostgresBackend) -> int:
 
 async def _fetch_evidence_categories(backend: PostgresBackend) -> set[str]:
     rows = await backend.query(
-        "SELECT DISTINCT evidence_category FROM knowledge_structural_evidence"
-        " WHERE palace = $1",
+        "SELECT DISTINCT evidence_category FROM knowledge_structural_evidence WHERE palace = $1",
         (PALACE,),
     )
     return {r["evidence_category"] for r in rows.rows}
@@ -285,8 +277,7 @@ async def _fetch_evidence_categories(backend: PostgresBackend) -> set[str]:
 
 async def _fetch_evidence_entity_types(backend: PostgresBackend) -> set[str]:
     rows = await backend.query(
-        "SELECT DISTINCT entity_type FROM knowledge_structural_evidence"
-        " WHERE palace = $1",
+        "SELECT DISTINCT entity_type FROM knowledge_structural_evidence WHERE palace = $1",
         (PALACE,),
     )
     return {r["entity_type"] for r in rows.rows}
@@ -390,8 +381,7 @@ async def test_system1_scan_first_run_stores_structural_evidence(
     )
     assert topology_rows.rows, "Expected structural evidence rows to carry topology"
     observed_topologies = {
-        (str(row["wing"]), str(row["room"]), str(row["compartment"]))
-        for row in topology_rows.rows
+        (str(row["wing"]), str(row["room"]), str(row["compartment"])) for row in topology_rows.rows
     }
     non_empty_topologies = {topology for topology in observed_topologies if any(topology)}
     assert non_empty_topologies == {("application", "greeting", "core")}, (
@@ -445,9 +435,7 @@ async def test_system1_scan_markdown_file_stores_file_structural_evidence(
     )
 
     response: dict[str, Any] = result.structuredContent
-    assert response.get("status") == "success", (
-        f"Markdown System 1 scan failed: {response}"
-    )
+    assert response.get("status") == "success", f"Markdown System 1 scan failed: {response}"
 
 
 async def test_system1_scan_without_override_persists_graph_without_placeholder_topology(
@@ -549,13 +537,7 @@ async def test_system1_project_sync_preserves_null_topology_override_for_system1
     fixture_file.parent.mkdir(parents=True, exist_ok=True)
     fixture_file.write_text("def main() -> int:\n    return 1\n", encoding="utf-8")
 
-    builtin_dir = (
-        Path(__file__).parent.parent
-        / "src"
-        / "workflows_mcp"
-        / "templates"
-        / "memory"
-    )
+    builtin_dir = Path(__file__).parent.parent / "src" / "workflows_mcp" / "templates" / "memory"
     registry = WorkflowRegistry()
     registry.load_from_directory(builtin_dir)
 
@@ -624,6 +606,7 @@ async def test_system1_project_sync_preserves_null_topology_override_for_system1
     assert response.get("status") == "success", response
     assert captured, "Expected at least one discovered file to trigger system1-scan"
     assert captured[0] is None
+
 
 async def test_system1_scan_second_run_is_idempotent(
     workflow_context: MagicMock,
@@ -715,9 +698,7 @@ async def test_system1_scan_persists_graph_and_neighbors_metadata_e2e(
 
     caller = tmp_path / "caller.py"
     caller.write_text(
-        "from callee import greet\n\n"
-        "def run() -> str:\n"
-        "    return greet()\n",
+        "from callee import greet\n\ndef run() -> str:\n    return greet()\n",
         encoding="utf-8",
     )
 
@@ -757,8 +738,7 @@ async def test_system1_scan_persists_graph_and_neighbors_metadata_e2e(
 
     structural_entities = await _count_structural_entities(knowledge_backend)
     assert structural_entities >= 2, (
-        "Expected at least two STRUCTURAL entities after two-file scan, got "
-        f"{structural_entities}"
+        f"Expected at least two STRUCTURAL entities after two-file scan, got {structural_entities}"
     )
 
     relation_rows = await knowledge_backend.query(
@@ -982,13 +962,9 @@ def test_workflow_sequence_persists_graph_before_topology_derivation() -> None:
     persist = memory_blocks[0].get("inputs", {}).get("record", {}).get("system1_graph", {})
     assert persist["entities"] == "{{blocks.parse_file.outputs.entities}}"
     assert persist["relations"] == "{{blocks.parse_file.outputs.relations}}"
+    assert persist["unresolved_imports"] == "{{blocks.parse_file.outputs.unresolved_imports}}"
     assert (
-        persist["unresolved_imports"]
-        == "{{blocks.parse_file.outputs.unresolved_imports}}"
-    )
-    assert (
-        persist["structural_evidence"]
-        == "{{blocks.parse_file.outputs.structural_evidence_items}}"
+        persist["structural_evidence"] == "{{blocks.parse_file.outputs.structural_evidence_items}}"
     )
 
 
@@ -1275,9 +1251,7 @@ async def test_treesitter_entities_and_relations_include_source_provenance(
     )
 
     source = tmp_path / "svc.py"
-    source.write_text(
-        "import os\n\ndef run():\n    return os.getcwd()\n", encoding="utf-8"
-    )
+    source.write_text("import os\n\ndef run():\n    return os.getcwd()\n", encoding="utf-8")
 
     output = await TreeSitterExecutor().execute(
         TreeSitterInput(
@@ -1348,9 +1322,7 @@ async def test_treesitter_source_range_defaults_are_not_shared(tmp_path: Path) -
     )
 
     source = tmp_path / "svc.py"
-    source.write_text(
-        "import os\n\ndef run():\n    return os.getcwd()\n", encoding="utf-8"
-    )
+    source.write_text("import os\n\ndef run():\n    return os.getcwd()\n", encoding="utf-8")
 
     output = await TreeSitterExecutor().execute(
         TreeSitterInput(
@@ -1367,12 +1339,8 @@ async def test_treesitter_source_range_defaults_are_not_shared(tmp_path: Path) -
     assert len({id(source_range) for source_range in entity_ranges}) == len(entity_ranges)
 
     if output.relations:
-        relation_ranges = [
-            relation["metadata"]["source_range"] for relation in output.relations
-        ]
-        assert len({id(source_range) for source_range in relation_ranges}) == len(
-            relation_ranges
-        )
+        relation_ranges = [relation["metadata"]["source_range"] for relation in output.relations]
+        assert len({id(source_range) for source_range in relation_ranges}) == len(relation_ranges)
 
 
 @pytest.mark.asyncio

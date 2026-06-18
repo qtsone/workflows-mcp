@@ -441,9 +441,7 @@ class _TypeScriptExtractor:
                     if body_node:
                         self._walk_for_calls(body_node, func_qname, "Function")
 
-    def _walk_for_calls(
-        self, node: Node, scope_qname: str, scope_entity_type: str
-    ) -> None:
+    def _walk_for_calls(self, node: Node, scope_qname: str, scope_entity_type: str) -> None:
         """Walk AST recursively collecting call and new_expression nodes."""
         for child in node.named_children:
             if child.type == "call_expression":
@@ -455,9 +453,7 @@ class _TypeScriptExtractor:
             else:
                 self._walk_for_calls(child, scope_qname, scope_entity_type)
 
-    def _emit_call(
-        self, call_node: Node, scope_qname: str, scope_entity_type: str
-    ) -> None:
+    def _emit_call(self, call_node: Node, scope_qname: str, scope_entity_type: str) -> None:
         """Emit a CALLS relation for a call_expression node."""
         # The function being called is the first named child
         # (identifier or member_expression in TS grammar)
@@ -522,9 +518,7 @@ class _TypeScriptExtractor:
             )
         )
 
-    def _emit_new(
-        self, new_node: Node, scope_qname: str, scope_entity_type: str
-    ) -> None:
+    def _emit_new(self, new_node: Node, scope_qname: str, scope_entity_type: str) -> None:
         """Emit a CALLS relation for a new_expression node (constructor call)."""
         # new_expression: first named child is typically identifier (class name)
         ctor_node = None

@@ -250,9 +250,7 @@ def build_structural_graph(
         GraphNode(node_id=palace_id, node_type=NodeType.PALACE, label=palace_label),
         GraphNode(node_id=wing_id, node_type=NodeType.WING, label=wing_label),
         GraphNode(node_id=room_id, node_type=NodeType.ROOM, label=room_label),
-        GraphNode(
-            node_id=compartment_id, node_type=NodeType.COMPARTMENT, label=compartment_label
-        ),
+        GraphNode(node_id=compartment_id, node_type=NodeType.COMPARTMENT, label=compartment_label),
     ]
     corridors = [
         GraphCorridor(

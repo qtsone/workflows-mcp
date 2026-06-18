@@ -232,9 +232,7 @@ class _PythonExtractor:
             return
 
         # Collect same-module class names for resolution
-        same_module_classes = {
-            e["name"] for e in self._class_entities
-        }
+        same_module_classes = {e["name"] for e in self._class_entities}
         # Also peek ahead at siblings not yet extracted:
         # re-scan root for class names to allow forward references
         for sibling in self._root.named_children:
@@ -483,9 +481,7 @@ class _PythonExtractor:
             return
         self._walk_for_calls(body, scope_qname, scope_entity_type)
 
-    def _walk_for_calls(
-        self, node: Node, scope_qname: str, scope_entity_type: str
-    ) -> None:
+    def _walk_for_calls(self, node: Node, scope_qname: str, scope_entity_type: str) -> None:
         """Walk AST recursively collecting call nodes.
 
         When a ``call`` node is found, emit it and continue recursing into its
@@ -499,9 +495,7 @@ class _PythonExtractor:
             else:
                 self._walk_for_calls(child, scope_qname, scope_entity_type)
 
-    def _emit_call(
-        self, call_node: Node, scope_qname: str, scope_entity_type: str
-    ) -> None:
+    def _emit_call(self, call_node: Node, scope_qname: str, scope_entity_type: str) -> None:
         """Emit a CALLS relation for a call expression node."""
         # Function part of the call is the first named child (identifier or attribute)
         func_node = None

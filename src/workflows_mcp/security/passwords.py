@@ -24,10 +24,7 @@ def _b64decode(value: str) -> bytes:
 
 def hash_password(password: str, iterations: int = DEFAULT_ITERATIONS) -> str:
     if not (MIN_ITERATIONS <= iterations <= MAX_ITERATIONS):
-        msg = (
-            f"iterations must be between {MIN_ITERATIONS} "
-            f"and {MAX_ITERATIONS}"
-        )
+        msg = f"iterations must be between {MIN_ITERATIONS} and {MAX_ITERATIONS}"
         raise ValueError(msg)
 
     salt = secrets.token_bytes(SALT_BYTES)

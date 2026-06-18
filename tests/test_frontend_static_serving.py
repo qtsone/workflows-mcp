@@ -1,8 +1,8 @@
 from __future__ import annotations
 
+import logging
 import re
 import shutil
-import logging
 import subprocess
 import tarfile
 import tempfile
@@ -319,8 +319,7 @@ def test_build_distributions_include_frontend_admin_static_assets() -> None:
             sdist_names = sdist_tar.getnames()
 
         assert any(
-            name.endswith("src/workflows_mcp/static/admin/index.html")
-            for name in sdist_names
+            name.endswith("src/workflows_mcp/static/admin/index.html") for name in sdist_names
         )
         assert any(
             "/src/workflows_mcp/static/admin/assets/" in name and not name.endswith("/")
@@ -386,8 +385,7 @@ def test_frontend_bundle_does_not_leak_sensitive_env_literals(
             path for path, content in file_contents if "-----BEGIN PRIVATE KEY-----" in content
         ]
         assert not private_key_marker_hits, (
-            "Found private key marker in bundled frontend assets: "
-            f"{private_key_marker_hits}"
+            f"Found private key marker in bundled frontend assets: {private_key_marker_hits}"
         )
 
         # Guard against obvious token-shaped bearer values while allowing harmless scheme text.
@@ -396,6 +394,5 @@ def test_frontend_bundle_does_not_leak_sensitive_env_literals(
             path for path, content in file_contents if bearer_token_pattern.search(content)
         ]
         assert not bearer_token_hits, (
-            "Found bearer token-like literal in bundled frontend assets: "
-            f"{bearer_token_hits}"
+            f"Found bearer token-like literal in bundled frontend assets: {bearer_token_hits}"
         )

@@ -327,9 +327,8 @@ async def put_postgres_settings(
         input_extra_params = str(imported["extra_params"])
 
     password_was_provided = (
-        (("password" in body.model_fields_set) and input_password is not None)
-        or imported_password_was_provided
-    )
+        ("password" in body.model_fields_set) and input_password is not None
+    ) or imported_password_was_provided
 
     repo, conn = _repo(resources)
     try:

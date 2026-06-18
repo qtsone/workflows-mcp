@@ -363,6 +363,7 @@ async def test_v9_knowledge_entities_structural_columns_and_source_check(
             (),
         )
 
+
 async def test_v9_entities_metadata_round_trip_and_updated_at_advances(db: PostgresBackend) -> None:
     """v9: metadata defaults to {}, updates round-trip, and updated_at advances."""
     inserted = await db.query(
@@ -400,8 +401,14 @@ async def test_v9_entities_metadata_round_trip_and_updated_at_advances(db: Postg
 async def test_v9_unique_partial_stable_id_index_rejects_duplicate(db: PostgresBackend) -> None:
     """v9: duplicate (palace, source, stable_id) where stable_id is set is rejected."""
     payload = (
-        "palace_entities_unique", "code", "default", "schema",
-        "Function", "dup", "STRUCTURAL", "same-stable-id",
+        "palace_entities_unique",
+        "code",
+        "default",
+        "schema",
+        "Function",
+        "dup",
+        "STRUCTURAL",
+        "same-stable-id",
     )
     await db.execute(
         """
@@ -576,8 +583,13 @@ def test_item_lifecycle_state_enum_values() -> None:
     from workflows_mcp.engine.knowledge.constants import ItemLifecycleState
 
     assert {s.value for s in ItemLifecycleState} == {
-        "ACTIVE", "ARCHIVED", "QUARANTINED", "USER_VALIDATED", "DIRTY",
+        "ACTIVE",
+        "ARCHIVED",
+        "QUARANTINED",
+        "USER_VALIDATED",
+        "DIRTY",
     }
+
 
 # ---------------------------------------------------------------------------
 # Task 10: Schema version and idempotency
@@ -708,10 +720,19 @@ async def test_v15_knowledge_structural_evidence_table_exists(
     """v15: knowledge_structural_evidence table exists with required columns."""
     assert await _table_exists(knowledge_backend, "knowledge_structural_evidence")
     for col in (
-        "id", "palace", "wing", "room", "compartment",
-        "entity_stable_id", "entity_type", "cycle_id",
-        "evidence_category", "evidence_payload", "source_item_id",
-        "scanned_at", "created_at",
+        "id",
+        "palace",
+        "wing",
+        "room",
+        "compartment",
+        "entity_stable_id",
+        "entity_type",
+        "cycle_id",
+        "evidence_category",
+        "evidence_payload",
+        "source_item_id",
+        "scanned_at",
+        "created_at",
     ):
         assert await _column_exists(knowledge_backend, "knowledge_structural_evidence", col), col
     # v16: upsert uniqueness constraint must be present.
@@ -728,9 +749,19 @@ async def test_v15_knowledge_verification_cycles_table_exists(
     """v15: knowledge_verification_cycles table exists with required columns."""
     assert await _table_exists(knowledge_backend, "knowledge_verification_cycles")
     for col in (
-        "id", "palace", "scope_key", "covered_wing", "covered_room",
-        "covered_compartment", "success", "failure_reason",
-        "evidence_found", "evidence_absent", "started_at", "completed_at", "created_at",
+        "id",
+        "palace",
+        "scope_key",
+        "covered_wing",
+        "covered_room",
+        "covered_compartment",
+        "success",
+        "failure_reason",
+        "evidence_found",
+        "evidence_absent",
+        "started_at",
+        "completed_at",
+        "created_at",
     ):
         assert await _column_exists(knowledge_backend, "knowledge_verification_cycles", col), col
 
@@ -741,10 +772,19 @@ async def test_v15_knowledge_semantic_claims_table_exists(
     """v15: knowledge_semantic_claims table exists with lifecycle state constraint."""
     assert await _table_exists(knowledge_backend, "knowledge_semantic_claims")
     for col in (
-        "id", "palace", "wing", "room", "compartment",
-        "claim_text", "claim_type", "lifecycle_state",
-        "absent_cycle_count", "scope_key",
-        "created_at", "updated_at", "archived_at",
+        "id",
+        "palace",
+        "wing",
+        "room",
+        "compartment",
+        "claim_text",
+        "claim_type",
+        "lifecycle_state",
+        "absent_cycle_count",
+        "scope_key",
+        "created_at",
+        "updated_at",
+        "archived_at",
     ):
         assert await _column_exists(knowledge_backend, "knowledge_semantic_claims", col), col
     assert await _constraint_exists(
@@ -775,8 +815,13 @@ async def test_v15_knowledge_wing_proof_bundles_table_exists(
     """v15: knowledge_wing_proof_bundles table exists with gate constraint."""
     assert await _table_exists(knowledge_backend, "knowledge_wing_proof_bundles")
     for col in (
-        "id", "palace", "wing", "activating_claim_id",
-        "evidence_categories", "gate_satisfied", "created_at",
+        "id",
+        "palace",
+        "wing",
+        "activating_claim_id",
+        "evidence_categories",
+        "gate_satisfied",
+        "created_at",
     ):
         assert await _column_exists(knowledge_backend, "knowledge_wing_proof_bundles", col), col
     assert await _constraint_exists(
@@ -792,9 +837,16 @@ async def test_v15_knowledge_semantic_overrides_table_exists(
     """v15: knowledge_semantic_overrides table exists with provenance constraints."""
     assert await _table_exists(knowledge_backend, "knowledge_semantic_overrides")
     for col in (
-        "id", "claim_id", "applied_by", "override_reason",
-        "override_lifecycle_state", "accountability_status",
-        "accountability_deadline", "activated_at", "last_checked_at", "created_at",
+        "id",
+        "claim_id",
+        "applied_by",
+        "override_reason",
+        "override_lifecycle_state",
+        "accountability_status",
+        "accountability_deadline",
+        "activated_at",
+        "last_checked_at",
+        "created_at",
     ):
         assert await _column_exists(knowledge_backend, "knowledge_semantic_overrides", col), col
     assert await _constraint_exists(
@@ -1108,13 +1160,15 @@ async def test_v17_semantic_corridors_required_columns_present(
     )
     present = {row["column_name"] for row in result.rows}
     required = {
-        "claim_id", "from_claim_id", "to_claim_id",
-        "corridor_type", "corridor_type_raw", "created_at",
+        "claim_id",
+        "from_claim_id",
+        "to_claim_id",
+        "corridor_type",
+        "corridor_type_raw",
+        "created_at",
     }
     missing = required - present
-    assert not missing, (
-        f"knowledge_semantic_corridors is missing columns: {missing!r}"
-    )
+    assert not missing, f"knowledge_semantic_corridors is missing columns: {missing!r}"
 
 
 @pytest.mark.asyncio
@@ -1153,16 +1207,12 @@ async def test_v17_semantic_corridors_self_loop_constraint_rejects_insert(
             """,
             (corridor_id, claim_id),
         )
-        pytest.fail(
-            "Expected CHECK constraint ck_kscorr_no_self_loop to reject self-loop insert"
-        )
+        pytest.fail("Expected CHECK constraint ck_kscorr_no_self_loop to reject self-loop insert")
     except Exception as exc:
         exc_lower = str(exc).lower()
-        assert (
-            "self_loop" in exc_lower
-            or "check" in exc_lower
-            or "violat" in exc_lower
-        ), f"Expected constraint violation; got: {exc!r}"
+        assert "self_loop" in exc_lower or "check" in exc_lower or "violat" in exc_lower, (
+            f"Expected constraint violation; got: {exc!r}"
+        )
     finally:
         await db.execute(
             "DELETE FROM knowledge_semantic_claims WHERE palace = 'palace_v17_test'",
@@ -1250,9 +1300,7 @@ async def test_v17_semantic_corridors_unique_directed_edge_constraint(
             """,
             (corr2_id, from_id, to_id),
         )
-        pytest.fail(
-            "Expected unique constraint uq_kscorr_directed_edge to reject duplicate edge"
-        )
+        pytest.fail("Expected unique constraint uq_kscorr_directed_edge to reject duplicate edge")
     except Exception as exc:
         assert "unique" in str(exc).lower() or "violat" in str(exc).lower(), (
             f"Expected unique constraint violation; got: {exc!r}"
@@ -1380,13 +1428,9 @@ async def test_v18_topology_provenance_required_columns(
         "created_at",
     }
     missing = required - set(columns)
-    assert not missing, (
-        f"knowledge_topology_provenance is missing columns: {missing!r}"
-    )
+    assert not missing, f"knowledge_topology_provenance is missing columns: {missing!r}"
     # override_reason and applied_by must be nullable
-    assert columns["override_reason"]["is_nullable"] == "YES", (
-        "override_reason must be nullable"
-    )
+    assert columns["override_reason"]["is_nullable"] == "YES", "override_reason must be nullable"
     assert columns["applied_by"]["is_nullable"] == "YES", "applied_by must be nullable"
     assert columns["override_id"]["is_nullable"] == "YES", "override_id must be nullable"
 
@@ -1407,9 +1451,9 @@ async def test_v18_topology_provenance_fk_to_semantic_claims(
         (),
     )
     fk_names = {row["conname"]: row["ref_table"] for row in result.rows}
-    assert any(
-        "semantic_claims" in ref for ref in fk_names.values()
-    ), f"claim_id FK to knowledge_semantic_claims not found; FKs found: {fk_names}"
+    assert any("semantic_claims" in ref for ref in fk_names.values()), (
+        f"claim_id FK to knowledge_semantic_claims not found; FKs found: {fk_names}"
+    )
 
 
 @pytest.mark.asyncio
@@ -1428,9 +1472,9 @@ async def test_v18_topology_provenance_fk_to_semantic_overrides_nullable(
         (),
     )
     fk_names = {row["conname"]: row["ref_table"] for row in result.rows}
-    assert any(
-        "semantic_overrides" in ref for ref in fk_names.values()
-    ), f"override_id FK to knowledge_semantic_overrides not found; FKs found: {fk_names}"
+    assert any("semantic_overrides" in ref for ref in fk_names.values()), (
+        f"override_id FK to knowledge_semantic_overrides not found; FKs found: {fk_names}"
+    )
 
 
 @pytest.mark.asyncio
@@ -1509,9 +1553,7 @@ async def test_v18_provenance_evidence_composite_pk(
         """,
         (),
     )
-    assert result.rows, (
-        "No PRIMARY KEY found on knowledge_topology_provenance_evidence"
-    )
+    assert result.rows, "No PRIMARY KEY found on knowledge_topology_provenance_evidence"
 
 
 @pytest.mark.asyncio
@@ -1530,14 +1572,14 @@ async def test_v18_provenance_evidence_fk_to_structural_evidence(
         (),
     )
     fk_rows = {row["conname"]: row for row in result.rows}
-    assert any(
-        "structural_evidence" in row["ref_table"] for row in fk_rows.values()
-    ), f"evidence_id FK to knowledge_structural_evidence not found; FKs: {fk_rows}"
+    assert any("structural_evidence" in row["ref_table"] for row in fk_rows.values()), (
+        f"evidence_id FK to knowledge_structural_evidence not found; FKs: {fk_rows}"
+    )
     # Verify RESTRICT (confdeltype = 'r') on that FK
     restrict_rows = [
-        row for row in fk_rows.values()
-        if "structural_evidence" in row["ref_table"]
-        and row["confdeltype"] in ("r", b"r")
+        row
+        for row in fk_rows.values()
+        if "structural_evidence" in row["ref_table"] and row["confdeltype"] in ("r", b"r")
     ]
     assert restrict_rows, (
         "evidence_id FK to knowledge_structural_evidence must use ON DELETE RESTRICT"

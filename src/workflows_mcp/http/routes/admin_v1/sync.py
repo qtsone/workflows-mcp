@@ -317,9 +317,7 @@ def _memory_mode(project: ProjectRecord) -> str:
 
 
 def _load_builtin_memory_workflows(resources: AppResources) -> None:
-    builtin_path = FilePath(
-        str(files("workflows_mcp").joinpath("templates").joinpath("memory"))
-    )
+    builtin_path = FilePath(str(files("workflows_mcp").joinpath("templates").joinpath("memory")))
     resources.workflow_registry.load_from_directory(builtin_path)
 
 

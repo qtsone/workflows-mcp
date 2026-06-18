@@ -458,9 +458,7 @@ class LLMCallExecutor(BlockExecutor):
         validation_schema: dict[str, Any] | None = None
         if needs_validation:
             if effective_inputs.provider is None:
-                raise ValueError(
-                    "provider must be specified when response_schema is provided"
-                )
+                raise ValueError("provider must be specified when response_schema is provided")
             if not isinstance(effective_inputs.response_schema, dict):
                 raise ValueError("response_schema must resolve to a JSON object")
 
@@ -679,9 +677,7 @@ class LLMCallExecutor(BlockExecutor):
         # Resolve API key from secrets if api_key_secret is specified
         api_key = None
         if resolved_config.api_key_secret:
-            api_key = await _resolve_secret_from_context(
-                resolved_config.api_key_secret, context
-            )
+            api_key = await _resolve_secret_from_context(resolved_config.api_key_secret, context)
 
         # Create new LLMCallInput with resolved values
         # Preserve original prompt and validation settings
@@ -1737,9 +1733,7 @@ async def compute_embedding(
 
         # Resolve API key from secrets if not provided
         if api_key is None and resolved_config.api_key_secret:
-            api_key = await _resolve_secret_from_context(
-                resolved_config.api_key_secret, context
-            )
+            api_key = await _resolve_secret_from_context(resolved_config.api_key_secret, context)
 
     # Default model if still not set
     if model is None:
@@ -1859,9 +1853,7 @@ async def compute_embedding_batch(
 
         # Resolve API key from secrets if not provided
         if api_key is None and resolved_config.api_key_secret:
-            api_key = await _resolve_secret_from_context(
-                resolved_config.api_key_secret, context
-            )
+            api_key = await _resolve_secret_from_context(resolved_config.api_key_secret, context)
 
     # Default model if still not set
     if model is None:

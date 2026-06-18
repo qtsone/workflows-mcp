@@ -12,9 +12,7 @@ def test_legacy_config_routes_are_unmounted(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     monkeypatch.setenv("WORKFLOWS_BOOTSTRAP_TOKEN", "a" * 40)
-    client = TestClient(
-        build_app(base_dir=tmp_path / ".workflows"), raise_server_exceptions=False
-    )
+    client = TestClient(build_app(base_dir=tmp_path / ".workflows"), raise_server_exceptions=False)
 
     legacy_paths = (
         ("GET", "/config"),

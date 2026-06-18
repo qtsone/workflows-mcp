@@ -24,7 +24,7 @@ router = APIRouter(prefix="/llm")
 class RawYAMLRequest(BaseModel):
     model_config = ConfigDict(
         json_schema_extra={
-            "examples": [{"raw_yaml": "version: \"1.0\"\nproviders: {}\nprofiles: {}"}]
+            "examples": [{"raw_yaml": 'version: "1.0"\nproviders: {}\nprofiles: {}'}]
         }
     )
 

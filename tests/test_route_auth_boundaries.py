@@ -150,6 +150,5 @@ def test_public_status_exposes_non_loopback_bind_warning(
         " ".join(payload.get("warnings", [])) if isinstance(payload.get("warnings"), list) else "",
     ]
     assert any(
-        "0.0.0.0" in warning and "loopback" in warning.lower()
-        for warning in warning_candidates
+        "0.0.0.0" in warning and "loopback" in warning.lower() for warning in warning_candidates
     )

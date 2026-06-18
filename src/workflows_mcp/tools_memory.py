@@ -654,14 +654,8 @@ def _compute_scan_delta(
     Returns:
         (added, modified, deleted) lists of relative paths.
     """
-    prior_entries = [
-        {"path": e.path, "content_hash": e.content_hash}
-        for e in snapshot.entries
-    ]
-    new_entries = [
-        {"path": e.path, "content_hash": e.content_hash}
-        for e in new_snapshot.entries
-    ]
+    prior_entries = [{"path": e.path, "content_hash": e.content_hash} for e in snapshot.entries]
+    new_entries = [{"path": e.path, "content_hash": e.content_hash} for e in new_snapshot.entries]
     delta = compute_sync_delta(prior_entries, new_entries)
     return delta.added, delta.modified, delta.deleted
 
@@ -675,14 +669,8 @@ def _compute_full_scan_delta(
     Returns the complete SyncDelta (added/modified/deleted/unchanged) for
     use in Phase 6 idempotency checks and debug diagnostics.
     """
-    prior_entries = [
-        {"path": e.path, "content_hash": e.content_hash}
-        for e in snapshot.entries
-    ]
-    new_entries = [
-        {"path": e.path, "content_hash": e.content_hash}
-        for e in new_snapshot.entries
-    ]
+    prior_entries = [{"path": e.path, "content_hash": e.content_hash} for e in snapshot.entries]
+    new_entries = [{"path": e.path, "content_hash": e.content_hash} for e in new_snapshot.entries]
     return compute_sync_delta(prior_entries, new_entries)
 
 
@@ -750,10 +738,7 @@ def _tool_error_payload(
                 field_errors.append(f"{loc}: {msg}")
             if field_errors:
                 message = "Request schema validation failed — " + "; ".join(field_errors)
-                actionable_fix = (
-                    "Fix the following field(s) and retry: "
-                    + "; ".join(field_errors)
-                )
+                actionable_fix = "Fix the following field(s) and retry: " + "; ".join(field_errors)
             else:
                 message = "Request schema validation failed"
                 actionable_fix = "Check required fields and types against the schema."
@@ -1411,10 +1396,13 @@ def _validate_graph_step_payload(
     if isinstance(envelope, dict) and "error" in envelope:
         err = dict(envelope["error"])
         err.setdefault("stage", stage)
-        err.setdefault("actionable_fix", (
-            "Fix graph payload: ensure required node types and corridor fields are present, "
-            "remove illegal same-level links, and eliminate orphan nodes."
-        ))
+        err.setdefault(
+            "actionable_fix",
+            (
+                "Fix graph payload: ensure required node types and corridor fields are present, "
+                "remove illegal same-level links, and eliminate orphan nodes."
+            ),
+        )
         return {"error": err}
     return build_graph_error_envelope(
         code="GRAPH_COMPLETENESS_FAILED",
@@ -1683,13 +1671,11 @@ def memory_schema_payload() -> dict[str, Any]:
                 "plan": "List of {operation, payload} steps to execute.",
                 "next_index": "Index of next step to execute (0-based).",
                 "completed": (
-                    "List of completed {operation} entries "
-                    "(result stripped in compact mode)."
+                    "List of completed {operation} entries (result stripped in compact mode)."
                 ),
                 "scan": "ScanConfig used for file-system scans (optional).",
                 "scan_snapshot": (
-                    "ScanSnapshot from last scan pass "
-                    "(optional, entries preserved for delta)."
+                    "ScanSnapshot from last scan pass (optional, entries preserved for delta)."
                 ),
             },
             "flow_operations": list(_PROJECT_FLOW_OPERATIONS),
@@ -1899,9 +1885,7 @@ def register_memory_tools(
             dict[str, Any] | None,
             Field(
                 default=None,
-                description=(
-                    "Checkpoint returned by onboard or sync to resume progress."
-                ),
+                description=("Checkpoint returned by onboard or sync to resume progress."),
             ),
         ] = None,
         scan: Annotated[
@@ -2043,9 +2027,7 @@ def register_memory_tools(
                                 ),
                                 "retryable": False,
                                 "stage": "profile_resolution",
-                                "actionable_fix": (
-                                    "Add 'llm_profile' key to the ingestion dict."
-                                ),
+                                "actionable_fix": ("Add 'llm_profile' key to the ingestion dict."),
                             }
                         }
                     )
@@ -2238,11 +2220,7 @@ def register_memory_tools(
                         )
                     )
                 # Back-populate memory_ids into snapshot entries after a scan-driven ingest.
-                if (
-                    operation_name == "ingest"
-                    and scan_snapshot is not None
-                    and scan_ingested_paths
-                ):
+                if operation_name == "ingest" and scan_snapshot is not None and scan_ingested_paths:
                     returned_ids: list[str] = []
                     if isinstance(step_result, dict):
                         raw_ids = step_result.get("ids") or step_result.get("id")
@@ -2285,9 +2263,7 @@ def register_memory_tools(
 
             completed_response: dict[str, Any] = {
                 "status": "completed",
-                "completed_operations": [
-                    str(item.get("operation")) for item in completed_results
-                ],
+                "completed_operations": [str(item.get("operation")) for item in completed_results],
                 "checkpoint": _compact_checkpoint(checkpoint_payload, debug=_debug),
             }
             if _debug:
@@ -2321,9 +2297,7 @@ def register_memory_tools(
             dict[str, Any] | None,
             Field(
                 default=None,
-                description=(
-                    "Checkpoint returned by onboard or sync."
-                ),
+                description=("Checkpoint returned by onboard or sync."),
             ),
         ] = None,
         scope: Annotated[
@@ -2382,7 +2356,7 @@ def register_memory_tools(
                 default=1,
                 ge=1,
                 le=20,
-                 description="Maximum sync steps to execute before returning.",
+                description="Maximum sync steps to execute before returning.",
             ),
         ] = 1,
         debug: Annotated[
@@ -2466,9 +2440,7 @@ def register_memory_tools(
                             "no operations were re-executed."
                         ),
                         "completed_operations": [
-                            str(item.get("operation"))
-                            for item in _done
-                            if isinstance(item, dict)
+                            str(item.get("operation")) for item in _done if isinstance(item, dict)
                         ],
                         "checkpoint": _compact_checkpoint(_fp_checkpoint, debug=_fp_debug),
                     }
@@ -2631,10 +2603,7 @@ def register_memory_tools(
                 # 3. Registry-wide (ambiguous or no-context)
                 # Return actionable error instead of MEM_PROJECT_FLOW_EMPTY.
                 _no_plan = (
-                    ingest is None
-                    and supersede is None
-                    and archive is None
-                    and maintain is None
+                    ingest is None and supersede is None and archive is None and maintain is None
                 )
                 _registry_resolved = False
                 if effective_scan is None and _no_plan:
@@ -2831,9 +2800,7 @@ def register_memory_tools(
 
             sync_completed_response: dict[str, Any] = {
                 "status": "completed",
-                "completed_operations": [
-                    str(item.get("operation")) for item in completed_results
-                ],
+                "completed_operations": [str(item.get("operation")) for item in completed_results],
                 "checkpoint": _compact_checkpoint(checkpoint_payload, debug=_sync_debug),
             }
             if _sync_debug:
@@ -2853,9 +2820,7 @@ def register_memory_tools(
     # CallToolResult text into a plain dict for the HTTP layer.
     # -----------------------------------------------------------------------
 
-    async def _onboard_http_impl(
-        payload: dict[str, Any], *, ctx: AppContextType
-    ) -> dict[str, Any]:
+    async def _onboard_http_impl(payload: dict[str, Any], *, ctx: AppContextType) -> dict[str, Any]:
         """Validate payload strictly then delegate to onboard() orchestration."""
         request = OnboardRequest.model_validate(payload)  # raises ValidationError on violation
         result = await onboard(
@@ -2871,9 +2836,7 @@ def register_memory_tools(
             if request.checkpoint
             else None,
             scan=request.scan,
-            response=request.response.model_dump(exclude_none=True)
-            if request.response
-            else None,
+            response=request.response.model_dump(exclude_none=True) if request.response else None,
             max_operations=request.max_operations,
             debug=request.debug,
             ctx=ctx,
@@ -2883,9 +2846,7 @@ def register_memory_tools(
             raise RuntimeError("onboard() must return a JSON object payload")
         return decoded
 
-    async def _sync_http_impl(
-        payload: dict[str, Any], *, ctx: AppContextType
-    ) -> dict[str, Any]:
+    async def _sync_http_impl(payload: dict[str, Any], *, ctx: AppContextType) -> dict[str, Any]:
         """Validate payload strictly then delegate to sync() orchestration."""
         request = SyncRequest.model_validate(payload)  # raises ValidationError on violation
         result = await sync(
@@ -2898,9 +2859,7 @@ def register_memory_tools(
             if request.checkpoint
             else None,
             scan=request.scan,
-            response=request.response.model_dump(exclude_none=True)
-            if request.response
-            else None,
+            response=request.response.model_dump(exclude_none=True) if request.response else None,
             max_operations=request.max_operations,
             debug=request.debug,
             ctx=ctx,
@@ -2985,11 +2944,7 @@ def register_memory_tools(
                     }
                 )
 
-            matches = [
-                p
-                for p in allowed
-                if project in {p.project_id, p.slug, p.palace}
-            ]
+            matches = [p for p in allowed if project in {p.project_id, p.slug, p.palace}]
             if len(matches) > 1:
                 return _json_response(
                     {
@@ -3226,9 +3181,7 @@ def register_memory_tools(
                 "SELECT COUNT(*) FROM knowledge_semantic_claims WHERE palace = $1",
                 (palace, palace, palace),
             )
-            total_existing = sum(
-                int(row.get("count", 0)) for row in existence_rows.rows
-            )
+            total_existing = sum(int(row.get("count", 0)) for row in existence_rows.rows)
             if total_existing == 0:
                 logger.warning(
                     "fresh_start: palace=%r not found in any ontology table; rejecting",
@@ -3400,17 +3353,11 @@ def register_memory_tools(
 async def _onboard_http_not_ready(
     payload: dict[str, Any], *, ctx: AppContextType
 ) -> dict[str, Any]:
-    raise RuntimeError(
-        "onboard_http is not available: call register_memory_tools() first."
-    )
+    raise RuntimeError("onboard_http is not available: call register_memory_tools() first.")
 
 
-async def _sync_http_not_ready(
-    payload: dict[str, Any], *, ctx: AppContextType
-) -> dict[str, Any]:
-    raise RuntimeError(
-        "sync_http is not available: call register_memory_tools() first."
-    )
+async def _sync_http_not_ready(payload: dict[str, Any], *, ctx: AppContextType) -> dict[str, Any]:
+    raise RuntimeError("sync_http is not available: call register_memory_tools() first.")
 
 
 onboard_http = _onboard_http_not_ready

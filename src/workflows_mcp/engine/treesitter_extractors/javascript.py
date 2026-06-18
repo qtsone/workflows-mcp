@@ -432,9 +432,7 @@ class _JavaScriptExtractor:
                     if body_node:
                         self._walk_for_calls(body_node, func_qname, "Function")
 
-    def _walk_for_calls(
-        self, node: Node, scope_qname: str, scope_entity_type: str
-    ) -> None:
+    def _walk_for_calls(self, node: Node, scope_qname: str, scope_entity_type: str) -> None:
         """Walk AST recursively collecting call and new_expression nodes."""
         for child in node.named_children:
             if child.type == "call_expression":
@@ -446,9 +444,7 @@ class _JavaScriptExtractor:
             else:
                 self._walk_for_calls(child, scope_qname, scope_entity_type)
 
-    def _emit_call(
-        self, call_node: Node, scope_qname: str, scope_entity_type: str
-    ) -> None:
+    def _emit_call(self, call_node: Node, scope_qname: str, scope_entity_type: str) -> None:
         """Emit a CALLS relation for a call_expression node."""
         # The function being called: first named child (identifier or member_expression)
         func_node = None
@@ -512,9 +508,7 @@ class _JavaScriptExtractor:
             )
         )
 
-    def _emit_new(
-        self, new_node: Node, scope_qname: str, scope_entity_type: str
-    ) -> None:
+    def _emit_new(self, new_node: Node, scope_qname: str, scope_entity_type: str) -> None:
         """Emit a CALLS relation for a new_expression node (constructor call)."""
         ctor_node = None
         for child in new_node.named_children:

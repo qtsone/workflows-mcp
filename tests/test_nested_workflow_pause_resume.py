@@ -129,9 +129,7 @@ class TestNestedWorkflowPauseResume:
         job_id = exec_response["job_id"]
 
         prompt = exec_response.get("prompt", "")
-        assert "item1" in prompt, (
-            f"Expected prompt to mention 'item1' (first child), got: {prompt}"
-        )
+        assert "item1" in prompt, f"Expected prompt to mention 'item1' (first child), got: {prompt}"
 
         # Step 2: Resume first child with "yes" — should pause for second child
         resume1_result = await resume_workflow(
@@ -168,9 +166,7 @@ class TestNestedWorkflowPauseResume:
         assert outputs.get("finalize_completed") is True
 
     @pytest.mark.asyncio
-    async def test_nested_workflow_single_item_pause_resume(
-        self, full_context: MagicMock
-    ) -> None:
+    async def test_nested_workflow_single_item_pause_resume(self, full_context: MagicMock) -> None:
         """Test simpler case: single item for_each with nested workflow pause."""
         exec_result = await execute_workflow(
             workflow="nested-workflow-in-foreach-parent",

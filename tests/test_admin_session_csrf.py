@@ -536,9 +536,9 @@ def test_rotate_csrf_token_rejects_revoked_and_expired_sessions(tmp_path: Path) 
             "UPDATE admin_sessions SET absolute_expires_at = ? WHERE session_hash = ?",
             (
                 (now - timedelta(seconds=1)).isoformat(),
-                __import__("hashlib").sha256(
-                    absolute_expired.session_id.encode("utf-8")
-                ).hexdigest(),
+                __import__("hashlib")
+                .sha256(absolute_expired.session_id.encode("utf-8"))
+                .hexdigest(),
             ),
         )
         conn.commit()
@@ -555,9 +555,7 @@ def test_naive_db_timestamps_are_treated_as_utc_for_session_and_csrf(tmp_path: P
     now = datetime(2026, 1, 1, 10, 0, tzinfo=UTC)
     try:
         created = create_admin_session(conn, now=now)
-        session_hash = __import__("hashlib").sha256(
-            created.session_id.encode("utf-8")
-        ).hexdigest()
+        session_hash = __import__("hashlib").sha256(created.session_id.encode("utf-8")).hexdigest()
         conn.execute(
             """
             UPDATE admin_sessions

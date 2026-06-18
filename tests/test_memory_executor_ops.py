@@ -39,6 +39,7 @@ def _scope_key(
     compartment: str = COMPARTMENT,
 ) -> str:
     from workflows_mcp.engine.memory_scope_resolver import scope_key as _sk
+
     return _sk({"palace": palace, "wing": wing, "room": room, "compartment": compartment})
 
 
@@ -205,10 +206,13 @@ def test_memory_record_input_accepts_item_and_embeddings() -> None:
             "format": "structured",
             "item": {"content_hash": "h", "size_bytes": 1, "mtime_ns": 1, "language": "py"},
             "entity_embeddings": [
-                 {"entity_id": str(uuid.uuid4()), "profile": "embedding",
-                  "model": "text-embedding-3-small",
-                  "dimension": 1536,
-                  "embedding": [0.1] * 1536}
+                {
+                    "entity_id": str(uuid.uuid4()),
+                    "profile": "embedding",
+                    "model": "text-embedding-3-small",
+                    "dimension": 1536,
+                    "embedding": [0.1] * 1536,
+                }
             ],
         }
     )
@@ -311,6 +315,7 @@ async def test_ensure_item_upsert_updates_metadata(
 
     # Update with a new hash + size; same (palace, source, path) keeps the same id.
     import copy
+
     payload2 = copy.deepcopy(base)
     payload2["record"]["item"]["content_hash"] = "h2"
     payload2["record"]["item"]["size_bytes"] = 200
@@ -356,9 +361,7 @@ async def test_ensure_item_trigger_rejects_cross_palace_source(
     )
 
 
-async def test_ensure_item_rejects_missing_not_null_fields(
-    memory_service, clean_palace
-) -> None:
+async def test_ensure_item_rejects_missing_not_null_fields(memory_service, clean_palace) -> None:
     """ensure_item must return MEM_FIELD_REQUIRED when any NOT NULL item field is absent."""
     from workflows_mcp.engine.memory_service import MemoryRequest
 
@@ -451,8 +454,7 @@ async def test_store_entities_bulk_upsert_idempotent(
     assert sorted(r2.manage.entity_ids) == sorted(r1.manage.entity_ids)
 
     rows = await knowledge_backend.query(
-        "SELECT COUNT(*)::int AS n FROM knowledge_entities "
-        "WHERE palace = $1 AND source = $2",
+        "SELECT COUNT(*)::int AS n FROM knowledge_entities WHERE palace = $1 AND source = $2",
         (PALACE, "STRUCTURAL"),
     )
     assert rows.rows[0]["n"] == 2
@@ -463,9 +465,7 @@ async def test_store_entities_bulk_upsert_idempotent(
 # ---------------------------------------------------------------------------
 
 
-async def test_store_relations_bulk_insert(
-    memory_service, knowledge_backend, clean_palace
-) -> None:
+async def test_store_relations_bulk_insert(memory_service, knowledge_backend, clean_palace) -> None:
     from workflows_mcp.engine.memory_service import MemoryRequest
 
     seed_payload = {
@@ -510,15 +510,19 @@ async def test_store_relations_rejects_cross_palace_endpoint(
 ) -> None:
     from workflows_mcp.engine.memory_service import MemoryRequest
 
-    own = await memory_service.execute(MemoryRequest.model_validate({
-        "operation": "store_entities",
-        "scope": _scope(),
-        "record": {
-            "format": "structured",
-            "source": "STRUCTURAL",
-            "entities": [{"entity_type": "Function", "name": "own", "stable_id": "own::f"}],
-        },
-    }))
+    own = await memory_service.execute(
+        MemoryRequest.model_validate(
+            {
+                "operation": "store_entities",
+                "scope": _scope(),
+                "record": {
+                    "format": "structured",
+                    "source": "STRUCTURAL",
+                    "entities": [{"entity_type": "Function", "name": "own", "stable_id": "own::f"}],
+                },
+            }
+        )
+    )
     foreign = await knowledge_backend.query(
         """
         INSERT INTO knowledge_entities
@@ -532,18 +536,24 @@ async def test_store_relations_rejects_cross_palace_endpoint(
     from workflows_mcp.engine.memory_errors import MemoryContractError
 
     with pytest.raises(MemoryContractError, match="MEM_PALACE_MISMATCH"):
-        await memory_service.execute(MemoryRequest.model_validate({
-            "operation": "store_relations",
-            "scope": _scope(),
-            "record": {
-                "format": "structured",
-                "relations": [{
-                    "source_entity_id": own.manage.entity_ids[0],
-                    "target_entity_id": str(foreign.rows[0]["id"]),
-                    "relation_type": "CALLS",
-                }],
-            },
-        }))
+        await memory_service.execute(
+            MemoryRequest.model_validate(
+                {
+                    "operation": "store_relations",
+                    "scope": _scope(),
+                    "record": {
+                        "format": "structured",
+                        "relations": [
+                            {
+                                "source_entity_id": own.manage.entity_ids[0],
+                                "target_entity_id": str(foreign.rows[0]["id"]),
+                                "relation_type": "CALLS",
+                            }
+                        ],
+                    },
+                }
+            )
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -564,9 +574,7 @@ async def test_store_memories_anchored_to_entity(
                 "record": {
                     "format": "structured",
                     "source": "STRUCTURAL",
-                    "entities": [
-                        {"entity_type": "Function", "name": "f", "stable_id": "x::f"}
-                    ],
+                    "entities": [{"entity_type": "Function", "name": "f", "stable_id": "x::f"}],
                 },
             }
         )
@@ -622,9 +630,7 @@ async def test_store_memories_anchored_to_entity(
     assert row["anchor_kind"] == "symbol"
 
 
-async def test_store_memories_rejects_code_wing(
-    memory_service, clean_palace, monkeypatch
-) -> None:
+async def test_store_memories_rejects_code_wing(memory_service, clean_palace, monkeypatch) -> None:
     from workflows_mcp.engine.memory_service import MemoryRequest
 
     async def fake_compute_embedding(  # noqa: E501
@@ -636,11 +642,23 @@ async def test_store_memories_rejects_code_wing(
         "workflows_mcp.engine.memory_service.compute_embedding", fake_compute_embedding
     )
 
-    result = await memory_service.execute(MemoryRequest.model_validate({
-        "operation": "store_memories",
-        "scope": {"palace": PALACE, "wing": CODE_WING, "room": ROOM, "compartment": COMPARTMENT},
-        "record": {"format": "structured", "memories": [{"content": "do not write to code wing"}]},
-    }))
+    result = await memory_service.execute(
+        MemoryRequest.model_validate(
+            {
+                "operation": "store_memories",
+                "scope": {
+                    "palace": PALACE,
+                    "wing": CODE_WING,
+                    "room": ROOM,
+                    "compartment": COMPARTMENT,
+                },
+                "record": {
+                    "format": "structured",
+                    "memories": [{"content": "do not write to code wing"}],
+                },
+            }
+        )
+    )
     assert not result.manage.success
     assert "MEM_RESERVED_WING" in (result.manage.error or "")
 
@@ -673,18 +691,24 @@ async def test_store_memories_rejects_cross_palace_anchor(
     from workflows_mcp.engine.memory_errors import MemoryContractError
 
     with pytest.raises(MemoryContractError, match="MEM_PALACE_MISMATCH"):
-        await memory_service.execute(MemoryRequest.model_validate({
-            "operation": "store_memories",
-            "scope": _scope(),
-            "record": {
-                "format": "structured",
-                "memories": [{
-                    "content": "bad anchor",
-                    "anchor_entity_id": str(foreign.rows[0]["id"]),
-                    "anchor_kind": "symbol",
-                }],
-            },
-        }))
+        await memory_service.execute(
+            MemoryRequest.model_validate(
+                {
+                    "operation": "store_memories",
+                    "scope": _scope(),
+                    "record": {
+                        "format": "structured",
+                        "memories": [
+                            {
+                                "content": "bad anchor",
+                                "anchor_entity_id": str(foreign.rows[0]["id"]),
+                                "anchor_kind": "symbol",
+                            }
+                        ],
+                    },
+                }
+            )
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -705,9 +729,7 @@ async def test_store_entity_embeddings_upsert(
                 "record": {
                     "format": "structured",
                     "source": "STRUCTURAL",
-                    "entities": [
-                        {"entity_type": "Function", "name": "g", "stable_id": "x::g"}
-                    ],
+                    "entities": [{"entity_type": "Function", "name": "g", "stable_id": "x::g"}],
                 },
             }
         )
@@ -723,8 +745,13 @@ async def test_store_entity_embeddings_upsert(
         "record": {
             "format": "structured",
             "entity_embeddings": [
-                {"entity_id": entity_id, "profile": "embedding",
-                 "model": "text-embedding-3-small", "dimension": 1536, "embedding": vec_v1}
+                {
+                    "entity_id": entity_id,
+                    "profile": "embedding",
+                    "model": "text-embedding-3-small",
+                    "dimension": 1536,
+                    "embedding": vec_v1,
+                }
             ],
         },
     }
@@ -732,6 +759,7 @@ async def test_store_entity_embeddings_upsert(
     assert r1.manage.success
 
     import copy
+
     payload2 = copy.deepcopy(payload)
     payload2["record"]["entity_embeddings"][0]["embedding"] = vec_v2
     r2 = await memory_service.execute(MemoryRequest.model_validate(payload2))
@@ -750,32 +778,42 @@ async def test_store_entity_embeddings_rejects_dimension_mismatch(
 ) -> None:
     from workflows_mcp.engine.memory_service import MemoryRequest
 
-    seeded = await memory_service.execute(MemoryRequest.model_validate({
-        "operation": "store_entities",
-        "scope": _scope(),
-        "record": {
-            "format": "structured",
-            "source": "STRUCTURAL",
-            "entities": [{"entity_type": "Function", "name": "dim", "stable_id": "dim::f"}],
-        },
-    }))
+    seeded = await memory_service.execute(
+        MemoryRequest.model_validate(
+            {
+                "operation": "store_entities",
+                "scope": _scope(),
+                "record": {
+                    "format": "structured",
+                    "source": "STRUCTURAL",
+                    "entities": [{"entity_type": "Function", "name": "dim", "stable_id": "dim::f"}],
+                },
+            }
+        )
+    )
     from workflows_mcp.engine.memory_errors import MemoryContractError
 
     with pytest.raises(MemoryContractError, match="MEM_EMBEDDING_DIMENSION_MISMATCH"):
-        await memory_service.execute(MemoryRequest.model_validate({
-            "operation": "store_entity_embeddings",
-            "scope": _scope(),
-            "record": {
-                "format": "structured",
-                "entity_embeddings": [{
-                    "entity_id": seeded.manage.entity_ids[0],
-                    "profile": "embedding",
-                    "model": "text-embedding-3-small",
-                    "dimension": 1536,
-                    "embedding": [0.1] * 3,
-                }],
-            },
-        }))
+        await memory_service.execute(
+            MemoryRequest.model_validate(
+                {
+                    "operation": "store_entity_embeddings",
+                    "scope": _scope(),
+                    "record": {
+                        "format": "structured",
+                        "entity_embeddings": [
+                            {
+                                "entity_id": seeded.manage.entity_ids[0],
+                                "profile": "embedding",
+                                "model": "text-embedding-3-small",
+                                "dimension": 1536,
+                                "embedding": [0.1] * 3,
+                            }
+                        ],
+                    },
+                }
+            )
+        )
 
 
 async def test_store_entity_embeddings_rejects_cross_palace_entity(
@@ -796,20 +834,26 @@ async def test_store_entity_embeddings_rejects_cross_palace_entity(
     from workflows_mcp.engine.memory_errors import MemoryContractError
 
     with pytest.raises(MemoryContractError, match="MEM_PALACE_MISMATCH"):
-        await memory_service.execute(MemoryRequest.model_validate({
-            "operation": "store_entity_embeddings",
-            "scope": _scope(),
-            "record": {
-                "format": "structured",
-                "entity_embeddings": [{
-                    "entity_id": str(foreign.rows[0]["id"]),
-                    "profile": "embedding",
-                    "model": "text-embedding-3-small",
-                    "dimension": 3,
-                    "embedding": [0.1] * 3,
-                }],
-            },
-        }))
+        await memory_service.execute(
+            MemoryRequest.model_validate(
+                {
+                    "operation": "store_entity_embeddings",
+                    "scope": _scope(),
+                    "record": {
+                        "format": "structured",
+                        "entity_embeddings": [
+                            {
+                                "entity_id": str(foreign.rows[0]["id"]),
+                                "profile": "embedding",
+                                "model": "text-embedding-3-small",
+                                "dimension": 3,
+                                "embedding": [0.1] * 3,
+                            }
+                        ],
+                    },
+                }
+            )
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -817,21 +861,28 @@ async def test_store_entity_embeddings_rejects_cross_palace_entity(
 # ---------------------------------------------------------------------------
 
 
-async def test_archive_memories_by_item(
-    memory_service, knowledge_backend, clean_palace
-) -> None:
+async def test_archive_memories_by_item(memory_service, knowledge_backend, clean_palace) -> None:
     from workflows_mcp.engine.memory_service import MemoryRequest
 
-    await memory_service.execute(MemoryRequest.model_validate({
-        "operation": "ensure_item",
-        "scope": _scope(),
-        "record": {
-            "format": "raw",
-            "source": "ops-test-source-g",
-            "path": "to/archive.py",
-            "item": {"content_hash": "h", "size_bytes": 1, "mtime_ns": 1, "language": "python"},
-        },
-    }))
+    await memory_service.execute(
+        MemoryRequest.model_validate(
+            {
+                "operation": "ensure_item",
+                "scope": _scope(),
+                "record": {
+                    "format": "raw",
+                    "source": "ops-test-source-g",
+                    "path": "to/archive.py",
+                    "item": {
+                        "content_hash": "h",
+                        "size_bytes": 1,
+                        "mtime_ns": 1,
+                        "language": "python",
+                    },
+                },
+            }
+        )
+    )
     item_row = await knowledge_backend.query(
         "SELECT ki.id FROM knowledge_items ki "
         "JOIN knowledge_sources ks ON ks.id = ki.source_id "
@@ -869,11 +920,15 @@ async def test_archive_memories_by_item(
         ),
     )
 
-    result = await memory_service.execute(MemoryRequest.model_validate({
-        "operation": "archive_memories",
-        "scope": _scope(),
-        "record": {"format": "raw", "item": {"id": item_id}},
-    }))
+    result = await memory_service.execute(
+        MemoryRequest.model_validate(
+            {
+                "operation": "archive_memories",
+                "scope": _scope(),
+                "record": {"format": "raw", "item": {"id": item_id}},
+            }
+        )
+    )
     assert result.manage.success
     assert result.manage.stored_count == 1
 
@@ -884,11 +939,15 @@ async def test_archive_memories_by_item(
     assert state.rows[0]["lifecycle_state"] == "ARCHIVED"
 
     # Idempotent: second call reports zero affected.
-    again = await memory_service.execute(MemoryRequest.model_validate({
-        "operation": "archive_memories",
-        "scope": _scope(),
-        "record": {"format": "raw", "item": {"id": item_id}},
-    }))
+    again = await memory_service.execute(
+        MemoryRequest.model_validate(
+            {
+                "operation": "archive_memories",
+                "scope": _scope(),
+                "record": {"format": "raw", "item": {"id": item_id}},
+            }
+        )
+    )
     assert again.manage.success
     assert again.manage.stored_count == 0
 
@@ -917,11 +976,15 @@ async def test_archive_memories_rejects_item_in_different_palace(
     from workflows_mcp.engine.memory_errors import MemoryContractError
 
     with pytest.raises(MemoryContractError, match="MEM_PALACE_MISMATCH"):
-        await memory_service.execute(MemoryRequest.model_validate({
-            "operation": "archive_memories",
-            "scope": _scope(),
-            "record": {"format": "raw", "item": {"id": str(item.rows[0]["id"])}},
-        }))
+        await memory_service.execute(
+            MemoryRequest.model_validate(
+                {
+                    "operation": "archive_memories",
+                    "scope": _scope(),
+                    "record": {"format": "raw", "item": {"id": str(item.rows[0]["id"])}},
+                }
+            )
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -934,16 +997,25 @@ async def test_mark_item_dirty_sets_lifecycle_and_error(
 ) -> None:
     from workflows_mcp.engine.memory_service import MemoryRequest
 
-    await memory_service.execute(MemoryRequest.model_validate({
-        "operation": "ensure_item",
-        "scope": _scope(),
-        "record": {
-            "format": "raw",
-            "source": "ops-test-source-h",
-            "path": "to/dirty.py",
-            "item": {"content_hash": "h", "size_bytes": 1, "mtime_ns": 1, "language": "python"},
-        },
-    }))
+    await memory_service.execute(
+        MemoryRequest.model_validate(
+            {
+                "operation": "ensure_item",
+                "scope": _scope(),
+                "record": {
+                    "format": "raw",
+                    "source": "ops-test-source-h",
+                    "path": "to/dirty.py",
+                    "item": {
+                        "content_hash": "h",
+                        "size_bytes": 1,
+                        "mtime_ns": 1,
+                        "language": "python",
+                    },
+                },
+            }
+        )
+    )
     item_row = await knowledge_backend.query(
         "SELECT ki.id FROM knowledge_items ki "
         "JOIN knowledge_sources ks ON ks.id = ki.source_id "
@@ -953,17 +1025,21 @@ async def test_mark_item_dirty_sets_lifecycle_and_error(
     )
     item_id = str(item_row.rows[0]["id"])
 
-    result = await memory_service.execute(MemoryRequest.model_validate({
-        "operation": "mark_item_dirty",
-        "scope": _scope(),
-        "record": {
-            "format": "raw",
-            "item": {
-                "id": item_id,
-                "error_metadata": {"reason": "embedding too long", "phase": "system2"},
-            },
-        },
-    }))
+    result = await memory_service.execute(
+        MemoryRequest.model_validate(
+            {
+                "operation": "mark_item_dirty",
+                "scope": _scope(),
+                "record": {
+                    "format": "raw",
+                    "item": {
+                        "id": item_id,
+                        "error_metadata": {"reason": "embedding too long", "phase": "system2"},
+                    },
+                },
+            }
+        )
+    )
     assert result.manage.success
 
     state = await knowledge_backend.query(
@@ -975,6 +1051,7 @@ async def test_mark_item_dirty_sets_lifecycle_and_error(
     err = row["error_metadata"]
     if isinstance(err, str):
         import json as _json
+
         err = _json.loads(err)
     assert err["reason"] == "embedding too long"
     assert err["phase"] == "system2"
@@ -1001,17 +1078,21 @@ async def test_mark_item_dirty_rejects_cross_palace_item(
         (foreign_palace, str(src.rows[0]["id"])),
     )
 
-    result = await memory_service.execute(MemoryRequest.model_validate({
-        "operation": "mark_item_dirty",
-        "scope": _scope(),
-        "record": {
-            "format": "raw",
-            "item": {
-                "id": str(item.rows[0]["id"]),
-                "error_metadata": {"reason": "cross palace test"},
-            },
-        },
-    }))
+    result = await memory_service.execute(
+        MemoryRequest.model_validate(
+            {
+                "operation": "mark_item_dirty",
+                "scope": _scope(),
+                "record": {
+                    "format": "raw",
+                    "item": {
+                        "id": str(item.rows[0]["id"]),
+                        "error_metadata": {"reason": "cross palace test"},
+                    },
+                },
+            }
+        )
+    )
     # Should fail — item belongs to a different palace
     assert not result.manage.success
     assert "MEM_PALACE_MISMATCH" in (result.manage.error or "")
@@ -1029,45 +1110,56 @@ async def test_store_entities_persists_qualified_name_and_parent_class_id(
     from workflows_mcp.engine.memory_service import MemoryRequest
 
     # Seed parent Class entity first.
-    parent_resp = await memory_service.execute(MemoryRequest.model_validate({
-        "operation": "store_entities",
-        "scope": _scope(),
-        "record": {
-            "format": "structured",
-            "source": "STRUCTURAL",
-            "entities": [{
-                "entity_type": "Class",
-                "name": "MyClass",
-                "stable_id": "src/m.py::MyClass",
-                "qualified_name": "src.m.MyClass",
-            }],
-        },
-    }))
+    parent_resp = await memory_service.execute(
+        MemoryRequest.model_validate(
+            {
+                "operation": "store_entities",
+                "scope": _scope(),
+                "record": {
+                    "format": "structured",
+                    "source": "STRUCTURAL",
+                    "entities": [
+                        {
+                            "entity_type": "Class",
+                            "name": "MyClass",
+                            "stable_id": "src/m.py::MyClass",
+                            "qualified_name": "src.m.MyClass",
+                        }
+                    ],
+                },
+            }
+        )
+    )
     assert parent_resp.manage.success
     parent_id = parent_resp.manage.entity_ids[0]
 
     # Insert Method that points at parent_class_id.
-    method_resp = await memory_service.execute(MemoryRequest.model_validate({
-        "operation": "store_entities",
-        "scope": _scope(),
-        "record": {
-            "format": "structured",
-            "source": "STRUCTURAL",
-            "entities": [{
-                "entity_type": "Method",
-                "name": "do_thing",
-                "stable_id": "src/m.py::MyClass.do_thing",
-                "qualified_name": "src.m.MyClass.do_thing",
-                "parent_class_id": parent_id,
-            }],
-        },
-    }))
+    method_resp = await memory_service.execute(
+        MemoryRequest.model_validate(
+            {
+                "operation": "store_entities",
+                "scope": _scope(),
+                "record": {
+                    "format": "structured",
+                    "source": "STRUCTURAL",
+                    "entities": [
+                        {
+                            "entity_type": "Method",
+                            "name": "do_thing",
+                            "stable_id": "src/m.py::MyClass.do_thing",
+                            "qualified_name": "src.m.MyClass.do_thing",
+                            "parent_class_id": parent_id,
+                        }
+                    ],
+                },
+            }
+        )
+    )
     assert method_resp.manage.success
     method_id = method_resp.manage.entity_ids[0]
 
     rows = await knowledge_backend.query(
-        "SELECT id, qualified_name, parent_class_id FROM knowledge_entities "
-        "WHERE id = $1::uuid",
+        "SELECT id, qualified_name, parent_class_id FROM knowledge_entities WHERE id = $1::uuid",
         (method_id,),
     )
     assert rows.rows[0]["qualified_name"] == "src.m.MyClass.do_thing"
@@ -1081,20 +1173,32 @@ async def test_store_entities_upsert_updates_qualified_name_and_parent(
     from workflows_mcp.engine.memory_service import MemoryRequest
 
     # Seed two Class entities to swap parents between.
-    classes = await memory_service.execute(MemoryRequest.model_validate({
-        "operation": "store_entities",
-        "scope": _scope(),
-        "record": {
-            "format": "structured",
-            "source": "STRUCTURAL",
-            "entities": [
-                {"entity_type": "Class", "name": "A", "stable_id": "f::A",
-                 "qualified_name": "f.A"},
-                {"entity_type": "Class", "name": "B", "stable_id": "f::B",
-                 "qualified_name": "f.B"},
-            ],
-        },
-    }))
+    classes = await memory_service.execute(
+        MemoryRequest.model_validate(
+            {
+                "operation": "store_entities",
+                "scope": _scope(),
+                "record": {
+                    "format": "structured",
+                    "source": "STRUCTURAL",
+                    "entities": [
+                        {
+                            "entity_type": "Class",
+                            "name": "A",
+                            "stable_id": "f::A",
+                            "qualified_name": "f.A",
+                        },
+                        {
+                            "entity_type": "Class",
+                            "name": "B",
+                            "stable_id": "f::B",
+                            "qualified_name": "f.B",
+                        },
+                    ],
+                },
+            }
+        )
+    )
     a_id, b_id = classes.manage.entity_ids
 
     # First insert with parent A.
@@ -1104,13 +1208,15 @@ async def test_store_entities_upsert_updates_qualified_name_and_parent(
         "record": {
             "format": "structured",
             "source": "STRUCTURAL",
-            "entities": [{
-                "entity_type": "Method",
-                "name": "m",
-                "stable_id": "f::A.m",
-                "qualified_name": "f.A.m",
-                "parent_class_id": a_id,
-            }],
+            "entities": [
+                {
+                    "entity_type": "Method",
+                    "name": "m",
+                    "stable_id": "f::A.m",
+                    "qualified_name": "f.A.m",
+                    "parent_class_id": a_id,
+                }
+            ],
         },
     }
     first = await memory_service.execute(MemoryRequest.model_validate(payload))
@@ -1123,8 +1229,7 @@ async def test_store_entities_upsert_updates_qualified_name_and_parent(
     assert second.manage.entity_ids[0] == method_id  # same row
 
     rows = await knowledge_backend.query(
-        "SELECT qualified_name, parent_class_id FROM knowledge_entities "
-        "WHERE id = $1::uuid",
+        "SELECT qualified_name, parent_class_id FROM knowledge_entities WHERE id = $1::uuid",
         (method_id,),
     )
     assert rows.rows[0]["qualified_name"] == "f.B.m"
@@ -1139,33 +1244,43 @@ async def test_store_relations_persists_metadata(
 
     from workflows_mcp.engine.memory_service import MemoryRequest
 
-    seeded = await memory_service.execute(MemoryRequest.model_validate({
-        "operation": "store_entities",
-        "scope": _scope(),
-        "record": {
-            "format": "structured",
-            "source": "STRUCTURAL",
-            "entities": [
-                {"entity_type": "Function", "name": "a", "stable_id": "f::a"},
-                {"entity_type": "Function", "name": "b", "stable_id": "f::b"},
-            ],
-        },
-    }))
+    seeded = await memory_service.execute(
+        MemoryRequest.model_validate(
+            {
+                "operation": "store_entities",
+                "scope": _scope(),
+                "record": {
+                    "format": "structured",
+                    "source": "STRUCTURAL",
+                    "entities": [
+                        {"entity_type": "Function", "name": "a", "stable_id": "f::a"},
+                        {"entity_type": "Function", "name": "b", "stable_id": "f::b"},
+                    ],
+                },
+            }
+        )
+    )
     a_id, b_id = seeded.manage.entity_ids
 
-    result = await memory_service.execute(MemoryRequest.model_validate({
-        "operation": "store_relations",
-        "scope": _scope(),
-        "record": {
-            "format": "structured",
-            "relations": [{
-                "source_entity_id": a_id,
-                "target_entity_id": b_id,
-                "relation_type": "CALLS",
-                "metadata": {"resolution": "unresolved", "call_site_line": 42},
-            }],
-        },
-    }))
+    result = await memory_service.execute(
+        MemoryRequest.model_validate(
+            {
+                "operation": "store_relations",
+                "scope": _scope(),
+                "record": {
+                    "format": "structured",
+                    "relations": [
+                        {
+                            "source_entity_id": a_id,
+                            "target_entity_id": b_id,
+                            "relation_type": "CALLS",
+                            "metadata": {"resolution": "unresolved", "call_site_line": 42},
+                        }
+                    ],
+                },
+            }
+        )
+    )
     assert result.manage.success
     rel_id = result.manage.relation_ids[0]
 
@@ -1186,32 +1301,42 @@ async def test_store_relations_metadata_defaults_to_empty_object(
 
     from workflows_mcp.engine.memory_service import MemoryRequest
 
-    seeded = await memory_service.execute(MemoryRequest.model_validate({
-        "operation": "store_entities",
-        "scope": _scope(),
-        "record": {
-            "format": "structured",
-            "source": "STRUCTURAL",
-            "entities": [
-                {"entity_type": "Function", "name": "x", "stable_id": "f::x"},
-                {"entity_type": "Function", "name": "y", "stable_id": "f::y"},
-            ],
-        },
-    }))
+    seeded = await memory_service.execute(
+        MemoryRequest.model_validate(
+            {
+                "operation": "store_entities",
+                "scope": _scope(),
+                "record": {
+                    "format": "structured",
+                    "source": "STRUCTURAL",
+                    "entities": [
+                        {"entity_type": "Function", "name": "x", "stable_id": "f::x"},
+                        {"entity_type": "Function", "name": "y", "stable_id": "f::y"},
+                    ],
+                },
+            }
+        )
+    )
     x_id, y_id = seeded.manage.entity_ids
 
-    result = await memory_service.execute(MemoryRequest.model_validate({
-        "operation": "store_relations",
-        "scope": _scope(),
-        "record": {
-            "format": "structured",
-            "relations": [{
-                "source_entity_id": x_id,
-                "target_entity_id": y_id,
-                "relation_type": "CALLS",
-            }],
-        },
-    }))
+    result = await memory_service.execute(
+        MemoryRequest.model_validate(
+            {
+                "operation": "store_relations",
+                "scope": _scope(),
+                "record": {
+                    "format": "structured",
+                    "relations": [
+                        {
+                            "source_entity_id": x_id,
+                            "target_entity_id": y_id,
+                            "relation_type": "CALLS",
+                        }
+                    ],
+                },
+            }
+        )
+    )
     assert result.manage.success
     rel_id = result.manage.relation_ids[0]
 
@@ -1235,11 +1360,13 @@ def test_system1_store_structural_evidence_operation_accepted_by_request() -> No
     """MemoryRequest must accept 'store_system1_structural_evidence' without raising."""
     from workflows_mcp.engine.memory_service import MemoryRequest
 
-    req = MemoryRequest.model_validate({
-        "operation": "store_system1_structural_evidence",
-        "scope": _scope(),
-        "record": {"format": "structured"},
-    })
+    req = MemoryRequest.model_validate(
+        {
+            "operation": "store_system1_structural_evidence",
+            "scope": _scope(),
+            "record": {"format": "structured"},
+        }
+    )
     assert req.operation == "store_system1_structural_evidence"
 
 
@@ -1247,11 +1374,13 @@ def test_system1_record_verification_cycle_operation_accepted_by_request() -> No
     """MemoryRequest must accept 'record_system1_verification_cycle' without raising."""
     from workflows_mcp.engine.memory_service import MemoryRequest
 
-    req = MemoryRequest.model_validate({
-        "operation": "record_system1_verification_cycle",
-        "scope": _scope(),
-        "record": {"format": "structured"},
-    })
+    req = MemoryRequest.model_validate(
+        {
+            "operation": "record_system1_verification_cycle",
+            "scope": _scope(),
+            "record": {"format": "structured"},
+        }
+    )
     assert req.operation == "record_system1_verification_cycle"
 
 
@@ -1259,11 +1388,13 @@ def test_system2_derive_semantic_claims_operation_accepted_by_request() -> None:
     """MemoryRequest must accept 'derive_system2_semantic_claims' without raising."""
     from workflows_mcp.engine.memory_service import MemoryRequest
 
-    req = MemoryRequest.model_validate({
-        "operation": "derive_system2_semantic_claims",
-        "scope": _scope(),
-        "record": {"format": "structured"},
-    })
+    req = MemoryRequest.model_validate(
+        {
+            "operation": "derive_system2_semantic_claims",
+            "scope": _scope(),
+            "record": {"format": "structured"},
+        }
+    )
     assert req.operation == "derive_system2_semantic_claims"
 
 
@@ -1271,11 +1402,13 @@ def test_system2_apply_semantic_override_operation_accepted_by_request() -> None
     """MemoryRequest must accept 'apply_semantic_override' without raising."""
     from workflows_mcp.engine.memory_service import MemoryRequest
 
-    req = MemoryRequest.model_validate({
-        "operation": "apply_semantic_override",
-        "scope": _scope(),
-        "record": {"format": "structured"},
-    })
+    req = MemoryRequest.model_validate(
+        {
+            "operation": "apply_semantic_override",
+            "scope": _scope(),
+            "record": {"format": "structured"},
+        }
+    )
     assert req.operation == "apply_semantic_override"
 
 
@@ -1283,11 +1416,13 @@ def test_system2_reconcile_semantic_lifecycle_operation_accepted_by_request() ->
     """MemoryRequest must accept 'reconcile_semantic_lifecycle' without raising."""
     from workflows_mcp.engine.memory_service import MemoryRequest
 
-    req = MemoryRequest.model_validate({
-        "operation": "reconcile_semantic_lifecycle",
-        "scope": _scope(),
-        "record": {"format": "structured"},
-    })
+    req = MemoryRequest.model_validate(
+        {
+            "operation": "reconcile_semantic_lifecycle",
+            "scope": _scope(),
+            "record": {"format": "structured"},
+        }
+    )
     assert req.operation == "reconcile_semantic_lifecycle"
 
 
@@ -1298,27 +1433,31 @@ async def test_system1_store_structural_evidence_persists_evidence_rows(
     scope/entity and return success with stored evidence IDs."""
     from workflows_mcp.engine.memory_service import MemoryRequest
 
-    result = await memory_service.execute(MemoryRequest.model_validate({
-        "operation": "store_system1_structural_evidence",
-        "scope": _scope(),
-        "record": {
-            "format": "structured",
-            "structural_evidence": [
-                {
-                    "entity_stable_id": "src/mod.py::MyClass",
-                    "entity_type": "class",
-                    "evidence_category": "structural_class",
-                    "evidence_data": {"file": "src/mod.py", "line": 1},
+    result = await memory_service.execute(
+        MemoryRequest.model_validate(
+            {
+                "operation": "store_system1_structural_evidence",
+                "scope": _scope(),
+                "record": {
+                    "format": "structured",
+                    "structural_evidence": [
+                        {
+                            "entity_stable_id": "src/mod.py::MyClass",
+                            "entity_type": "class",
+                            "evidence_category": "structural_class",
+                            "evidence_data": {"file": "src/mod.py", "line": 1},
+                        },
+                        {
+                            "entity_stable_id": "src/mod.py::MyClass.method",
+                            "entity_type": "function",
+                            "evidence_category": "structural_function",
+                            "evidence_data": {"file": "src/mod.py", "line": 10},
+                        },
+                    ],
                 },
-                {
-                    "entity_stable_id": "src/mod.py::MyClass.method",
-                    "entity_type": "function",
-                    "evidence_category": "structural_function",
-                    "evidence_data": {"file": "src/mod.py", "line": 10},
-                },
-            ],
-        },
-    }))
+            }
+        )
+    )
     assert result.manage is not None
     assert result.manage.success
     assert result.manage.stored_count >= 2
@@ -1338,21 +1477,25 @@ async def test_system1_store_structural_evidence_row_exists_in_db(
     """
     from workflows_mcp.engine.memory_service import MemoryRequest
 
-    await memory_service.execute(MemoryRequest.model_validate({
-        "operation": "store_system1_structural_evidence",
-        "scope": _scope(),
-        "record": {
-            "format": "structured",
-            "structural_evidence": [
-                {
-                    "entity_stable_id": "src/db_test.py::DbCheck",
-                    "entity_type": "class",
-                    "evidence_category": "structural_class",
-                    "evidence_data": {"file": "src/db_test.py", "line": 5},
+    await memory_service.execute(
+        MemoryRequest.model_validate(
+            {
+                "operation": "store_system1_structural_evidence",
+                "scope": _scope(),
+                "record": {
+                    "format": "structured",
+                    "structural_evidence": [
+                        {
+                            "entity_stable_id": "src/db_test.py::DbCheck",
+                            "entity_type": "class",
+                            "evidence_category": "structural_class",
+                            "evidence_data": {"file": "src/db_test.py", "line": 5},
+                        },
+                    ],
                 },
-            ],
-        },
-    }))
+            }
+        )
+    )
 
     rows = await knowledge_backend.query(
         """
@@ -1379,22 +1522,26 @@ async def test_system1_record_verification_cycle_persists_cycle_metadata(
     with scope_key identity and success/failure status."""
     from workflows_mcp.engine.memory_service import MemoryRequest
 
-    result = await memory_service.execute(MemoryRequest.model_validate({
-        "operation": "record_system1_verification_cycle",
-        "scope": _scope(),
-        "record": {
-            "format": "structured",
-            "verification_cycle": {
-                "success": True,
-                "covered_scope": {
-                    "palace": PALACE,
-                    "wing": WING,
-                    "room": ROOM,
-                    "compartment": COMPARTMENT,
+    result = await memory_service.execute(
+        MemoryRequest.model_validate(
+            {
+                "operation": "record_system1_verification_cycle",
+                "scope": _scope(),
+                "record": {
+                    "format": "structured",
+                    "verification_cycle": {
+                        "success": True,
+                        "covered_scope": {
+                            "palace": PALACE,
+                            "wing": WING,
+                            "room": ROOM,
+                            "compartment": COMPARTMENT,
+                        },
+                    },
                 },
-            },
-        },
-    }))
+            }
+        )
+    )
     assert result.manage is not None
     assert result.manage.success
     assert result.manage.cycle_id is not None
@@ -1408,33 +1555,41 @@ async def test_system2_derive_semantic_claims_returns_claim_ids(
     from workflows_mcp.engine.memory_service import MemoryRequest
 
     # Pre-store structural evidence so the derivation can resolve stable IDs.
-    await memory_service.execute(MemoryRequest.model_validate({
-        "operation": "store_system1_structural_evidence",
-        "scope": _scope(),
-        "record": {
-            "format": "structured",
-            "structural_evidence": [
-                {
-                    "entity_stable_id": "src/mod.py::MyClass",
-                    "entity_type": "class",
-                    "evidence_category": "structural_class",
-                    "evidence_data": {"file": "src/mod.py", "line": 1},
+    await memory_service.execute(
+        MemoryRequest.model_validate(
+            {
+                "operation": "store_system1_structural_evidence",
+                "scope": _scope(),
+                "record": {
+                    "format": "structured",
+                    "structural_evidence": [
+                        {
+                            "entity_stable_id": "src/mod.py::MyClass",
+                            "entity_type": "class",
+                            "evidence_category": "structural_class",
+                            "evidence_data": {"file": "src/mod.py", "line": 1},
+                        },
+                    ],
                 },
-            ],
-        },
-    }))
+            }
+        )
+    )
 
-    result = await memory_service.execute(MemoryRequest.model_validate({
-        "operation": "derive_system2_semantic_claims",
-        "scope": _scope(),
-        "record": {
-            "format": "structured",
-            "derivation": {
-                "room_intent_label": "data_access_layer",
-                "evidence_entity_stable_ids": ["src/mod.py::MyClass"],
-            },
-        },
-    }))
+    result = await memory_service.execute(
+        MemoryRequest.model_validate(
+            {
+                "operation": "derive_system2_semantic_claims",
+                "scope": _scope(),
+                "record": {
+                    "format": "structured",
+                    "derivation": {
+                        "room_intent_label": "data_access_layer",
+                        "evidence_entity_stable_ids": ["src/mod.py::MyClass"],
+                    },
+                },
+            }
+        )
+    )
     assert result.manage is not None
     assert result.manage.success
     assert result.manage.claim_ids is not None
@@ -1449,51 +1604,63 @@ async def test_system2_apply_semantic_override_activates_immediately_with_proven
     from workflows_mcp.engine.memory_service import MemoryRequest
 
     # First, store structural evidence so a real claim can be derived.
-    await memory_service.execute(MemoryRequest.model_validate({
-        "operation": "store_system1_structural_evidence",
-        "scope": _scope(),
-        "record": {
-            "format": "structured",
-            "structural_evidence": [
-                {
-                    "entity_stable_id": "src/override_test.py::OverrideClass",
-                    "entity_type": "class",
-                    "evidence_category": "structural_class",
-                    "evidence_data": {"file": "src/override_test.py", "line": 1},
+    await memory_service.execute(
+        MemoryRequest.model_validate(
+            {
+                "operation": "store_system1_structural_evidence",
+                "scope": _scope(),
+                "record": {
+                    "format": "structured",
+                    "structural_evidence": [
+                        {
+                            "entity_stable_id": "src/override_test.py::OverrideClass",
+                            "entity_type": "class",
+                            "evidence_category": "structural_class",
+                            "evidence_data": {"file": "src/override_test.py", "line": 1},
+                        },
+                    ],
                 },
-            ],
-        },
-    }))
+            }
+        )
+    )
 
     # Derive a claim to obtain a real claim_id (FK constraint on overrides table).
-    derive_result = await memory_service.execute(MemoryRequest.model_validate({
-        "operation": "derive_system2_semantic_claims",
-        "scope": _scope(),
-        "record": {
-            "format": "structured",
-            "derivation": {
-                "room_intent_label": "data_access_layer",
-                "evidence_entity_stable_ids": ["src/override_test.py::OverrideClass"],
-            },
-        },
-    }))
+    derive_result = await memory_service.execute(
+        MemoryRequest.model_validate(
+            {
+                "operation": "derive_system2_semantic_claims",
+                "scope": _scope(),
+                "record": {
+                    "format": "structured",
+                    "derivation": {
+                        "room_intent_label": "data_access_layer",
+                        "evidence_entity_stable_ids": ["src/override_test.py::OverrideClass"],
+                    },
+                },
+            }
+        )
+    )
     assert derive_result.manage is not None
     assert derive_result.manage.claim_ids and len(derive_result.manage.claim_ids) >= 1
     real_claim_id = derive_result.manage.claim_ids[0]
 
-    result = await memory_service.execute(MemoryRequest.model_validate({
-        "operation": "apply_semantic_override",
-        "scope": _scope(),
-        "record": {
-            "format": "structured",
-            "override": {
-                "claim_id": real_claim_id,
-                "override_reason": "manual correction by architect",
-                "overridden_by": "alice",
-                "new_lifecycle_state": "active_evidenced",
-            },
-        },
-    }))
+    result = await memory_service.execute(
+        MemoryRequest.model_validate(
+            {
+                "operation": "apply_semantic_override",
+                "scope": _scope(),
+                "record": {
+                    "format": "structured",
+                    "override": {
+                        "claim_id": real_claim_id,
+                        "override_reason": "manual correction by architect",
+                        "overridden_by": "alice",
+                        "new_lifecycle_state": "active_evidenced",
+                    },
+                },
+            }
+        )
+    )
     assert result.manage is not None
     assert result.manage.success
     assert result.manage.override_id is not None
@@ -1506,16 +1673,20 @@ async def test_system2_reconcile_semantic_lifecycle_returns_transition_summary(
     a summary of affected claims and their new states."""
     from workflows_mcp.engine.memory_service import MemoryRequest
 
-    result = await memory_service.execute(MemoryRequest.model_validate({
-        "operation": "reconcile_semantic_lifecycle",
-        "scope": _scope(),
-        "record": {
-            "format": "structured",
-            "lifecycle_reconciliation": {
-                "scope_key": _scope_key(),
-            },
-        },
-    }))
+    result = await memory_service.execute(
+        MemoryRequest.model_validate(
+            {
+                "operation": "reconcile_semantic_lifecycle",
+                "scope": _scope(),
+                "record": {
+                    "format": "structured",
+                    "lifecycle_reconciliation": {
+                        "scope_key": _scope_key(),
+                    },
+                },
+            }
+        )
+    )
     assert result.manage is not None
     assert result.manage.success
     assert result.manage.reconciled_count is not None
@@ -1540,22 +1711,26 @@ async def test_system1_failed_verification_cycle_does_not_count_for_archive_gate
     # found — the absence condition was NOT met).
     cycle_ids: list[str] = []
     for _ in range(2):
-        cycle_result = await memory_service.execute(MemoryRequest.model_validate({
-            "operation": "record_system1_verification_cycle",
-            "scope": _scope(),
-            "record": {
-                "format": "structured",
-                "verification_cycle": {
-                    "success": False,  # Evidence still present — absence NOT confirmed.
-                    "covered_scope": {
-                        "palace": PALACE,
-                        "wing": WING,
-                        "room": ROOM,
-                        "compartment": COMPARTMENT,
+        cycle_result = await memory_service.execute(
+            MemoryRequest.model_validate(
+                {
+                    "operation": "record_system1_verification_cycle",
+                    "scope": _scope(),
+                    "record": {
+                        "format": "structured",
+                        "verification_cycle": {
+                            "success": False,  # Evidence still present — absence NOT confirmed.
+                            "covered_scope": {
+                                "palace": PALACE,
+                                "wing": WING,
+                                "room": ROOM,
+                                "compartment": COMPARTMENT,
+                            },
+                        },
                     },
-                },
-            },
-        }))
+                }
+            )
+        )
         # The operation itself succeeds (cycle is recorded), but the cycle is
         # marked as failed (absence not confirmed). Collect the cycle IDs.
         assert cycle_result.manage is not None
@@ -1566,18 +1741,22 @@ async def test_system1_failed_verification_cycle_does_not_count_for_archive_gate
     # The service must reject this with MEM_ARCHIVE_GATE_NOT_MET because the
     # cycles did not confirm absence of evidence.
     try:
-        result = await memory_service.execute(MemoryRequest.model_validate({
-            "operation": "reconcile_semantic_lifecycle",
-            "scope": _scope(),
-            "record": {
-                "format": "structured",
-                "lifecycle_reconciliation": {
-                    "scope_key": scope_key,
-                    "force_archive_claim_ids": ["claim-from-test"],
-                    "absent_verification_cycle_ids": cycle_ids,
-                },
-            },
-        }))
+        result = await memory_service.execute(
+            MemoryRequest.model_validate(
+                {
+                    "operation": "reconcile_semantic_lifecycle",
+                    "scope": _scope(),
+                    "record": {
+                        "format": "structured",
+                        "lifecycle_reconciliation": {
+                            "scope_key": scope_key,
+                            "force_archive_claim_ids": ["claim-from-test"],
+                            "absent_verification_cycle_ids": cycle_ids,
+                        },
+                    },
+                }
+            )
+        )
         assert result.manage is not None, (
             "Archive using failed verification cycles must not succeed silently; "
             "expected MEM_ARCHIVE_GATE_NOT_MET"
@@ -1664,8 +1843,12 @@ async def test_system1_store_structural_evidence_is_idempotent_for_same_scope_en
            AND evidence_category = $6
         """,
         (
-            PALACE, WING, ROOM, COMPARTMENT,
-            "src/idempotent.py::MyClass", "structural_class",
+            PALACE,
+            WING,
+            ROOM,
+            COMPARTMENT,
+            "src/idempotent.py::MyClass",
+            "structural_class",
         ),
     )
     assert len(rows.rows) == 1, (
@@ -1695,18 +1878,22 @@ async def test_archive_gate_rejects_unregistered_fabricated_cycle_ids(
     fake_cycle_ids = [str(uuid.uuid4()), str(uuid.uuid4())]
 
     try:
-        result = await memory_service.execute(MemoryRequest.model_validate({
-            "operation": "reconcile_semantic_lifecycle",
-            "scope": _scope(),
-            "record": {
-                "format": "structured",
-                "lifecycle_reconciliation": {
-                    "scope_key": scope_key,
-                    "force_archive_claim_ids": ["claim-fabricated"],
-                    "absent_verification_cycle_ids": fake_cycle_ids,
-                },
-            },
-        }))
+        result = await memory_service.execute(
+            MemoryRequest.model_validate(
+                {
+                    "operation": "reconcile_semantic_lifecycle",
+                    "scope": _scope(),
+                    "record": {
+                        "format": "structured",
+                        "lifecycle_reconciliation": {
+                            "scope_key": scope_key,
+                            "force_archive_claim_ids": ["claim-fabricated"],
+                            "absent_verification_cycle_ids": fake_cycle_ids,
+                        },
+                    },
+                }
+            )
+        )
         assert result.manage is not None, (
             "Archive with fabricated cycle IDs must not succeed silently; "
             "expected MEM_ARCHIVE_GATE_NOT_MET"
@@ -1732,21 +1919,25 @@ async def _store_evidence(memory_service: Any, stable_id: str) -> None:
     """Helper: store one structural evidence row in the test palace/scope."""
     from workflows_mcp.engine.memory_service import MemoryRequest
 
-    result = await memory_service.execute(MemoryRequest.model_validate({
-        "operation": "store_system1_structural_evidence",
-        "scope": _scope(),
-        "record": {
-            "format": "structured",
-            "structural_evidence": [
-                {
-                    "entity_stable_id": stable_id,
-                    "entity_type": "class",
-                    "evidence_category": "structural_class",
-                    "evidence_data": {"file": "src/t7.py", "line": 1},
+    result = await memory_service.execute(
+        MemoryRequest.model_validate(
+            {
+                "operation": "store_system1_structural_evidence",
+                "scope": _scope(),
+                "record": {
+                    "format": "structured",
+                    "structural_evidence": [
+                        {
+                            "entity_stable_id": stable_id,
+                            "entity_type": "class",
+                            "evidence_category": "structural_class",
+                            "evidence_data": {"file": "src/t7.py", "line": 1},
+                        },
+                    ],
                 },
-            ],
-        },
-    }))
+            }
+        )
+    )
     assert result.manage is not None and result.manage.success, (
         f"Pre-condition failed: could not store evidence for {stable_id!r}"
     )
@@ -1766,17 +1957,21 @@ async def test_system2_room_intent_label_persists_claim_and_evidence_link(
     stable_id = "src/t7_room.py::RoomClass"
     await _store_evidence(memory_service, stable_id)
 
-    result = await memory_service.execute(MemoryRequest.model_validate({
-        "operation": "derive_system2_semantic_claims",
-        "scope": _scope(),
-        "record": {
-            "format": "structured",
-            "derivation": {
-                "room_intent_label": "data_access_layer",
-                "evidence_entity_stable_ids": [stable_id],
-            },
-        },
-    }))
+    result = await memory_service.execute(
+        MemoryRequest.model_validate(
+            {
+                "operation": "derive_system2_semantic_claims",
+                "scope": _scope(),
+                "record": {
+                    "format": "structured",
+                    "derivation": {
+                        "room_intent_label": "data_access_layer",
+                        "evidence_entity_stable_ids": [stable_id],
+                    },
+                },
+            }
+        )
+    )
     assert result.manage is not None
     assert result.manage.success, f"Expected success, got error: {result.manage.error!r}"
     assert result.manage.claim_ids is not None
@@ -1819,17 +2014,21 @@ async def test_system2_compartment_reasoning_unit_persists_claim_and_evidence_li
     stable_id = "src/t7_comp.py::CompClass"
     await _store_evidence(memory_service, stable_id)
 
-    result = await memory_service.execute(MemoryRequest.model_validate({
-        "operation": "derive_system2_semantic_claims",
-        "scope": _scope(),
-        "record": {
-            "format": "structured",
-            "derivation": {
-                "compartment_reasoning_unit": "query_builder",
-                "evidence_entity_stable_ids": [stable_id],
-            },
-        },
-    }))
+    result = await memory_service.execute(
+        MemoryRequest.model_validate(
+            {
+                "operation": "derive_system2_semantic_claims",
+                "scope": _scope(),
+                "record": {
+                    "format": "structured",
+                    "derivation": {
+                        "compartment_reasoning_unit": "query_builder",
+                        "evidence_entity_stable_ids": [stable_id],
+                    },
+                },
+            }
+        )
+    )
     assert result.manage is not None
     assert result.manage.success, f"Expected success, got error: {result.manage.error!r}"
     assert result.manage.claim_ids is not None
@@ -1870,48 +2069,60 @@ async def test_system2_semantic_corridor_persists_claim_edge_and_canonical_type(
     await _store_evidence(memory_service, stable_id)
 
     # Derive two endpoint claims first.
-    r_from = await memory_service.execute(MemoryRequest.model_validate({
-        "operation": "derive_system2_semantic_claims",
-        "scope": _scope(),
-        "record": {
-            "format": "structured",
-            "derivation": {
-                "room_intent_label": "from_room",
-                "evidence_entity_stable_ids": [stable_id],
-            },
-        },
-    }))
+    r_from = await memory_service.execute(
+        MemoryRequest.model_validate(
+            {
+                "operation": "derive_system2_semantic_claims",
+                "scope": _scope(),
+                "record": {
+                    "format": "structured",
+                    "derivation": {
+                        "room_intent_label": "from_room",
+                        "evidence_entity_stable_ids": [stable_id],
+                    },
+                },
+            }
+        )
+    )
     assert r_from.manage is not None and r_from.manage.success
     from_claim_id = r_from.manage.claim_ids[0]
 
-    r_to = await memory_service.execute(MemoryRequest.model_validate({
-        "operation": "derive_system2_semantic_claims",
-        "scope": _scope(),
-        "record": {
-            "format": "structured",
-            "derivation": {
-                "room_intent_label": "to_room",
-                "evidence_entity_stable_ids": [stable_id],
-            },
-        },
-    }))
+    r_to = await memory_service.execute(
+        MemoryRequest.model_validate(
+            {
+                "operation": "derive_system2_semantic_claims",
+                "scope": _scope(),
+                "record": {
+                    "format": "structured",
+                    "derivation": {
+                        "room_intent_label": "to_room",
+                        "evidence_entity_stable_ids": [stable_id],
+                    },
+                },
+            }
+        )
+    )
     assert r_to.manage is not None and r_to.manage.success
     to_claim_id = r_to.manage.claim_ids[0]
 
     # Derive the corridor claim.
-    result = await memory_service.execute(MemoryRequest.model_validate({
-        "operation": "derive_system2_semantic_claims",
-        "scope": _scope(),
-        "record": {
-            "format": "structured",
-            "derivation": {
-                "corridor_from_claim_id": from_claim_id,
-                "corridor_to_claim_id": to_claim_id,
-                "corridor_type": "calls-into",   # raw: should canonicalize to CALLS_INTO
-                "evidence_entity_stable_ids": [stable_id],
-            },
-        },
-    }))
+    result = await memory_service.execute(
+        MemoryRequest.model_validate(
+            {
+                "operation": "derive_system2_semantic_claims",
+                "scope": _scope(),
+                "record": {
+                    "format": "structured",
+                    "derivation": {
+                        "corridor_from_claim_id": from_claim_id,
+                        "corridor_to_claim_id": to_claim_id,
+                        "corridor_type": "calls-into",  # raw: should canonicalize to CALLS_INTO
+                        "evidence_entity_stable_ids": [stable_id],
+                    },
+                },
+            }
+        )
+    )
     assert result.manage is not None
     assert result.manage.success, f"Expected success, got error: {result.manage.error!r}"
     assert result.manage.claim_ids is not None
@@ -1965,17 +2176,19 @@ async def test_system2_partial_corridor_fields_rejected(
     await _store_evidence(memory_service, stable_id)
 
     with pytest.raises(ValidationError) as exc_info:
-        MemoryRequest.model_validate({
-            "operation": "derive_system2_semantic_claims",
-            "scope": _scope(),
-            "record": {
-                "format": "structured",
-                "derivation": {
-                    "corridor_from_claim_id": str(uuid.uuid4()),
-                    "evidence_entity_stable_ids": [stable_id],
+        MemoryRequest.model_validate(
+            {
+                "operation": "derive_system2_semantic_claims",
+                "scope": _scope(),
+                "record": {
+                    "format": "structured",
+                    "derivation": {
+                        "corridor_from_claim_id": str(uuid.uuid4()),
+                        "evidence_entity_stable_ids": [stable_id],
+                    },
                 },
-            },
-        })
+            }
+        )
     error_text = str(exc_info.value)
     assert "corridor_from_claim_id" in error_text, (
         f"Expected 'corridor_from_claim_id' in error; got: {error_text!r}"
@@ -1983,9 +2196,7 @@ async def test_system2_partial_corridor_fields_rejected(
     assert "corridor_to_claim_id" in error_text, (
         f"Expected 'corridor_to_claim_id' in error; got: {error_text!r}"
     )
-    assert "corridor_type" in error_text, (
-        f"Expected 'corridor_type' in error; got: {error_text!r}"
-    )
+    assert "corridor_type" in error_text, f"Expected 'corridor_type' in error; got: {error_text!r}"
 
 
 @pytest.mark.asyncio
@@ -2004,19 +2215,21 @@ async def test_system2_corridor_self_loop_rejected(
 
     same_id = str(uuid.uuid4())
     with pytest.raises(ValidationError) as exc_info:
-        MemoryRequest.model_validate({
-            "operation": "derive_system2_semantic_claims",
-            "scope": _scope(),
-            "record": {
-                "format": "structured",
-                "derivation": {
-                    "corridor_from_claim_id": same_id,
-                    "corridor_to_claim_id": same_id,
-                    "corridor_type": "depends_on",
-                    "evidence_entity_stable_ids": [stable_id],
+        MemoryRequest.model_validate(
+            {
+                "operation": "derive_system2_semantic_claims",
+                "scope": _scope(),
+                "record": {
+                    "format": "structured",
+                    "derivation": {
+                        "corridor_from_claim_id": same_id,
+                        "corridor_to_claim_id": same_id,
+                        "corridor_type": "depends_on",
+                        "evidence_entity_stable_ids": [stable_id],
+                    },
                 },
-            },
-        })
+            }
+        )
     error_text = str(exc_info.value)
     assert "self-loop" in error_text.lower(), (
         f"Expected 'self-loop' in error message; got: {error_text!r}"
@@ -2033,21 +2246,23 @@ async def test_system2_derive_without_resolvable_evidence_fails(
 
     # Do NOT store evidence — stable ID will not resolve.
     try:
-        result = await memory_service.execute(MemoryRequest.model_validate({
-            "operation": "derive_system2_semantic_claims",
-            "scope": _scope(),
-            "record": {
-                "format": "structured",
-                "derivation": {
-                    "room_intent_label": "orphan_room",
-                    "evidence_entity_stable_ids": ["nonexistent::StableId"],
-                },
-            },
-        }))
-        assert result.manage is not None
-        assert not result.manage.success, (
-            "Derivation with unresolvable evidence must not succeed"
+        result = await memory_service.execute(
+            MemoryRequest.model_validate(
+                {
+                    "operation": "derive_system2_semantic_claims",
+                    "scope": _scope(),
+                    "record": {
+                        "format": "structured",
+                        "derivation": {
+                            "room_intent_label": "orphan_room",
+                            "evidence_entity_stable_ids": ["nonexistent::StableId"],
+                        },
+                    },
+                }
+            )
         )
+        assert result.manage is not None
+        assert not result.manage.success, "Derivation with unresolvable evidence must not succeed"
         assert result.manage.error is not None
     except MemoryContractError:
         pass  # contract error is also acceptable
@@ -2078,31 +2293,39 @@ async def test_duplicate_corridor_edge_rolls_back_and_leaves_no_orphaned_claim(
     await _store_evidence(memory_service, stable_id)
 
     # Derive two endpoint claims to act as corridor endpoints.
-    r_from = await memory_service.execute(MemoryRequest.model_validate({
-        "operation": "derive_system2_semantic_claims",
-        "scope": _scope(),
-        "record": {
-            "format": "structured",
-            "derivation": {
-                "room_intent_label": "atomicity_from",
-                "evidence_entity_stable_ids": [stable_id],
-            },
-        },
-    }))
+    r_from = await memory_service.execute(
+        MemoryRequest.model_validate(
+            {
+                "operation": "derive_system2_semantic_claims",
+                "scope": _scope(),
+                "record": {
+                    "format": "structured",
+                    "derivation": {
+                        "room_intent_label": "atomicity_from",
+                        "evidence_entity_stable_ids": [stable_id],
+                    },
+                },
+            }
+        )
+    )
     assert r_from.manage is not None and r_from.manage.success
     from_claim_id = r_from.manage.claim_ids[0]
 
-    r_to = await memory_service.execute(MemoryRequest.model_validate({
-        "operation": "derive_system2_semantic_claims",
-        "scope": _scope(),
-        "record": {
-            "format": "structured",
-            "derivation": {
-                "room_intent_label": "atomicity_to",
-                "evidence_entity_stable_ids": [stable_id],
-            },
-        },
-    }))
+    r_to = await memory_service.execute(
+        MemoryRequest.model_validate(
+            {
+                "operation": "derive_system2_semantic_claims",
+                "scope": _scope(),
+                "record": {
+                    "format": "structured",
+                    "derivation": {
+                        "room_intent_label": "atomicity_to",
+                        "evidence_entity_stable_ids": [stable_id],
+                    },
+                },
+            }
+        )
+    )
     assert r_to.manage is not None and r_to.manage.success
     to_claim_id = r_to.manage.claim_ids[0]
 
@@ -2208,55 +2431,67 @@ async def test_verification_cycle_updates_override_accountability(
     from workflows_mcp.engine.memory_service import MemoryRequest
 
     # Step 1: Store structural evidence so we can derive a real claim.
-    await memory_service.execute(MemoryRequest.model_validate({
-        "operation": "store_system1_structural_evidence",
-        "scope": _scope(),
-        "record": {
-            "format": "structured",
-            "structural_evidence": [
-                {
-                    "entity_stable_id": "src/accountability_test.py::AccountabilityClass",
-                    "entity_type": "class",
-                    "evidence_category": "structural_class",
-                    "evidence_data": {"file": "src/accountability_test.py", "line": 1},
+    await memory_service.execute(
+        MemoryRequest.model_validate(
+            {
+                "operation": "store_system1_structural_evidence",
+                "scope": _scope(),
+                "record": {
+                    "format": "structured",
+                    "structural_evidence": [
+                        {
+                            "entity_stable_id": "src/accountability_test.py::AccountabilityClass",
+                            "entity_type": "class",
+                            "evidence_category": "structural_class",
+                            "evidence_data": {"file": "src/accountability_test.py", "line": 1},
+                        },
+                    ],
                 },
-            ],
-        },
-    }))
+            }
+        )
+    )
 
     # Step 2: Derive a semantic claim with the evidence entity — this creates
     # knowledge_claim_evidence_links rows linking claim_id → evidence_id.
-    derive_result = await memory_service.execute(MemoryRequest.model_validate({
-        "operation": "derive_system2_semantic_claims",
-        "scope": _scope(),
-        "record": {
-            "format": "structured",
-            "derivation": {
-                "room_intent_label": "accountability_test_layer",
-                "evidence_entity_stable_ids": [
-                    "src/accountability_test.py::AccountabilityClass"
-                ],
-            },
-        },
-    }))
+    derive_result = await memory_service.execute(
+        MemoryRequest.model_validate(
+            {
+                "operation": "derive_system2_semantic_claims",
+                "scope": _scope(),
+                "record": {
+                    "format": "structured",
+                    "derivation": {
+                        "room_intent_label": "accountability_test_layer",
+                        "evidence_entity_stable_ids": [
+                            "src/accountability_test.py::AccountabilityClass"
+                        ],
+                    },
+                },
+            }
+        )
+    )
     assert derive_result.manage is not None and derive_result.manage.success
     assert derive_result.manage.claim_ids
     real_claim_id = derive_result.manage.claim_ids[0]
 
     # Step 3: Apply an override — starts as 'pending'.
-    override_result = await memory_service.execute(MemoryRequest.model_validate({
-        "operation": "apply_semantic_override",
-        "scope": _scope(),
-        "record": {
-            "format": "structured",
-            "override": {
-                "claim_id": real_claim_id,
-                "override_reason": "architect manual correction for accountability test",
-                "overridden_by": "test-architect",
-                "new_lifecycle_state": "active_evidenced",
-            },
-        },
-    }))
+    override_result = await memory_service.execute(
+        MemoryRequest.model_validate(
+            {
+                "operation": "apply_semantic_override",
+                "scope": _scope(),
+                "record": {
+                    "format": "structured",
+                    "override": {
+                        "claim_id": real_claim_id,
+                        "override_reason": "architect manual correction for accountability test",
+                        "overridden_by": "test-architect",
+                        "new_lifecycle_state": "active_evidenced",
+                    },
+                },
+            }
+        )
+    )
     assert override_result.manage is not None and override_result.manage.success
     override_id = override_result.manage.override_id
     assert override_id is not None

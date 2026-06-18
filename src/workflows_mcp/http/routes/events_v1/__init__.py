@@ -124,7 +124,7 @@ async def system_events(
     """Return minimal SSE stream for v1 events namespace."""
 
     async def _stream() -> AsyncIterator[bytes]:
-        yield b"event: system\ndata: {\"status\":\"ok\"}\n\n"
+        yield b'event: system\ndata: {"status":"ok"}\n\n'
 
     return StreamingResponse(_stream(), media_type="text/event-stream")
 

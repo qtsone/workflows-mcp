@@ -135,8 +135,7 @@ def _fail_locality(
             f"Provided: {provided}."
         ),
         actionable_fix=(
-            f"Retry {operation} with {accepted_sources}; "
-            f"include missing locality: {missing_text}."
+            f"Retry {operation} with {accepted_sources}; include missing locality: {missing_text}."
         ),
     )
 
@@ -245,8 +244,7 @@ def resolve_memory_locality(request: LocalityRequest) -> LocalityDecision:
         elif op == "graph_upsert":
             requirement = "complete topology locality for graph link name disambiguation"
             accepted_sources = (
-                "UUID refs in graph.from/graph.to, "
-                "or complete topology scope for name refs"
+                "UUID refs in graph.from/graph.to, or complete topology scope for name refs"
             )
         else:
             requirement = f"locality for {label}"

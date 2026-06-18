@@ -94,9 +94,7 @@ class AppContext:
         repr=False,
     )
     # Session-scoped active context: keyed by id(session) → SyncContextCandidate.
-    _active_contexts: dict[int, "SyncContextCandidate"] = field(
-        default_factory=dict, repr=False
-    )
+    _active_contexts: dict[int, "SyncContextCandidate"] = field(default_factory=dict, repr=False)
     # Session/token-scoped project bindings.
     _allowed_projects: dict[int, list[SessionProjectContext]] = field(
         default_factory=dict, repr=False

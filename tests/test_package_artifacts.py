@@ -74,9 +74,7 @@ def test_sdist_contains_python_source(built_artifacts: Path) -> None:
     sdist = _find_artifact(built_artifacts, "*.tar.gz")
     members = _sdist_members(sdist)
     target = "src/workflows_mcp/server.py"
-    assert any(_member_endswith(m, target) for m in members), (
-        f"Sdist missing {target!r}."
-    )
+    assert any(_member_endswith(m, target) for m in members), f"Sdist missing {target!r}."
 
 
 @pytest.mark.slow

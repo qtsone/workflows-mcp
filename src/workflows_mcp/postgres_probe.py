@@ -51,8 +51,7 @@ async def _asyncpg_connect(dsn: str) -> Any:
         import asyncpg  # type: ignore[import-untyped]
     except ImportError:
         raise RuntimeError(
-            "asyncpg is required for PostgreSQL probing. "
-            "Install it with: uv add asyncpg"
+            "asyncpg is required for PostgreSQL probing. Install it with: uv add asyncpg"
         ) from None
     return await asyncpg.connect(dsn)
 
@@ -121,9 +120,7 @@ class PostgresProbe:
                 )
                 return result
             except TimeoutError:
-                last_error = TimeoutError(
-                    f"PostgreSQL probe timed out after {self.timeout}s"
-                )
+                last_error = TimeoutError(f"PostgreSQL probe timed out after {self.timeout}s")
             except Exception as exc:  # noqa: BLE001
                 last_error = exc
 
@@ -169,12 +166,8 @@ class PostgresProbe:
                     await conn.execute(
                         "CREATE TEMP TABLE IF NOT EXISTS _wf_readiness_probe (id int)"
                     )
-                    await conn.execute(
-                        "INSERT INTO _wf_readiness_probe (id) VALUES (1)"
-                    )
-                    await conn.fetchval(
-                        "SELECT COUNT(*) FROM _wf_readiness_probe"
-                    )
+                    await conn.execute("INSERT INTO _wf_readiness_probe (id) VALUES (1)")
+                    await conn.fetchval("SELECT COUNT(*) FROM _wf_readiness_probe")
                 except Exception as exc:  # noqa: BLE001
                     logger.warning("PostgreSQL read/write probe failed: %s", exc)
                     blockers.append("postgresql_readwrite_failed")

@@ -177,8 +177,7 @@ def test_rate_limit_returns_429_on_protected_routes(app):
     responses = [client.post("/mcp", headers=AUTH_HEADER, json={}) for _ in range(100)]
     status_codes = {r.status_code for r in responses}
     assert 429 in status_codes, (
-        f"Expected at least one 429 after 100 rapid requests to /mcp; "
-        f"got statuses: {status_codes}"
+        f"Expected at least one 429 after 100 rapid requests to /mcp; got statuses: {status_codes}"
     )
 
 

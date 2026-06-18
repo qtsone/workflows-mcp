@@ -1522,6 +1522,5 @@ async def run_readfiles_scan(
     )
     output = await executor.execute(inputs, Execution())
     return [
-        {"path": f.path, "content": f.content, "size_bytes": f.size_bytes}
-        for f in output.files
+        {"path": f.path, "content": f.content, "size_bytes": f.size_bytes} for f in output.files
     ]

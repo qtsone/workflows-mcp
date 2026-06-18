@@ -91,9 +91,7 @@ class TreeSitterOutput(BlockOutput):
     content_hash: str = Field(description="SHA-256 hex digest of the file content.")
     size_bytes: int = Field(description="File size in bytes.")
     mtime_ns: int = Field(description="File modification time in nanoseconds.")
-    module_qualified_name: str = Field(
-        description="Qualified name of the top-level module entity."
-    )
+    module_qualified_name: str = Field(description="Qualified name of the top-level module entity.")
     entities: list[dict[str, Any]] = Field(
         default_factory=list,
         description="Extracted graph entities (File, Module, …).",
@@ -180,31 +178,37 @@ _ENTITY_TYPE_TO_EVIDENCE_CATEGORY: dict[str, str] = {
     "method": "structural_function",
 }
 
-SYSTEM1_REQUIRED_ENTITY_KEYS: frozenset[str] = frozenset({
-    "qualified_name",
-    "stable_id",
-    "entity_type",
-    "name",
-    "metadata",
-    "confidence",
-})
+SYSTEM1_REQUIRED_ENTITY_KEYS: frozenset[str] = frozenset(
+    {
+        "qualified_name",
+        "stable_id",
+        "entity_type",
+        "name",
+        "metadata",
+        "confidence",
+    }
+)
 
-SYSTEM1_REQUIRED_RELATION_KEYS: frozenset[str] = frozenset({
-    "source_qname",
-    "source_entity_type",
-    "target_qname",
-    "target_entity_type",
-    "relation_type",
-    "confidence",
-    "metadata",
-})
+SYSTEM1_REQUIRED_RELATION_KEYS: frozenset[str] = frozenset(
+    {
+        "source_qname",
+        "source_entity_type",
+        "target_qname",
+        "target_entity_type",
+        "relation_type",
+        "confidence",
+        "metadata",
+    }
+)
 
-SYSTEM1_ALLOWED_RELATION_TYPES: frozenset[str] = frozenset({
-    "CONTAINS",
-    "IMPORTS",
-    "CALLS",
-    "INHERITS_FROM",
-})
+SYSTEM1_ALLOWED_RELATION_TYPES: frozenset[str] = frozenset(
+    {
+        "CONTAINS",
+        "IMPORTS",
+        "CALLS",
+        "INHERITS_FROM",
+    }
+)
 
 SYSTEM1_ERROR_MESSAGE_MAX_ITEMS: int = 10
 
@@ -242,16 +246,12 @@ def validate_system1_extraction_payload(
     for index, entity in enumerate(entities):
         missing = SYSTEM1_REQUIRED_ENTITY_KEYS.difference(entity.keys())
         if missing:
-            errors.append(
-                f"entity[{index}] missing required keys: {sorted(missing)}"
-            )
+            errors.append(f"entity[{index}] missing required keys: {sorted(missing)}")
 
     for index, relation in enumerate(relations):
         missing = SYSTEM1_REQUIRED_RELATION_KEYS.difference(relation.keys())
         if missing:
-            errors.append(
-                f"relation[{index}] missing required keys: {sorted(missing)}"
-            )
+            errors.append(f"relation[{index}] missing required keys: {sorted(missing)}")
         relation_type_raw = relation.get("relation_type")
         if isinstance(relation_type_raw, str):
             relation_types.add(relation_type_raw)
@@ -263,11 +263,7 @@ def validate_system1_extraction_payload(
                 )
         else:
             relation_type_name = type(relation_type_raw).__name__
-            errors.append(
-                "relation["
-                f"{index}] relation_type must be str, "
-                f"got {relation_type_name}"
-            )
+            errors.append(f"relation[{index}] relation_type must be str, got {relation_type_name}")
 
     return {
         "valid": len(errors) == 0,
@@ -300,9 +296,7 @@ def _raise_if_invalid_system1_extraction_payload(
 
     details = "; ".join(shown)
     tail = f"; and {remaining} more" if remaining > 0 else ""
-    raise ValueError(
-        f"{summary} Details: {details}{tail}"
-    )
+    raise ValueError(f"{summary} Details: {details}{tail}")
 
 
 def _build_structural_evidence_items(
@@ -333,22 +327,22 @@ def _build_structural_evidence_items(
     for entity in entities:
         stable_id: str = entity.get("stable_id", "")
         raw_type: str = entity.get("entity_type", "unknown")
-        category = _ENTITY_TYPE_TO_EVIDENCE_CATEGORY.get(
-            raw_type.lower(), "structural_module"
-        )
+        category = _ENTITY_TYPE_TO_EVIDENCE_CATEGORY.get(raw_type.lower(), "structural_module")
         key = (stable_id, category)
         if key in seen or not stable_id:
             continue
         seen.add(key)
-        items.append({
-            "entity_stable_id": stable_id,
-            "entity_type": raw_type.lower(),
-            "evidence_category": category,
-            "evidence_data": {
-                "qualified_name": entity.get("qualified_name", ""),
-                "name": entity.get("name", ""),
-            },
-        })
+        items.append(
+            {
+                "entity_stable_id": stable_id,
+                "entity_type": raw_type.lower(),
+                "evidence_category": category,
+                "evidence_data": {
+                    "qualified_name": entity.get("qualified_name", ""),
+                    "name": entity.get("name", ""),
+                },
+            }
+        )
 
     # Emit structural_import evidence for each unique import-relation source entity.
     # Relations use source_qname (not source_stable_id); resolve via qname_to_entity.
@@ -371,15 +365,14 @@ def _build_structural_evidence_items(
             continue
         seen.add(key)
         import_count = sum(
-            1 for r in relations
-            if r.get("relation_type") == "IMPORTS"
-            and r.get("source_qname") == src_qname
+            1
+            for r in relations
+            if r.get("relation_type") == "IMPORTS" and r.get("source_qname") == src_qname
         )
         import_relations = [
             r
             for r in relations
-            if r.get("relation_type") == "IMPORTS"
-            and r.get("source_qname") == src_qname
+            if r.get("relation_type") == "IMPORTS" and r.get("source_qname") == src_qname
         ]
         imports_payload: list[dict[str, Any]] = []
         for import_relation in import_relations:
@@ -387,27 +380,27 @@ def _build_structural_evidence_items(
             if not isinstance(relation_metadata, dict):
                 relation_metadata = {}
             resolution = relation_metadata.get("resolution")
-            normalized_resolution = (
-                "resolved" if resolution == "resolved" else "unresolved"
+            normalized_resolution = "resolved" if resolution == "resolved" else "unresolved"
+            imports_payload.append(
+                {
+                    "target_qname": str(import_relation.get("target_qname", "")),
+                    "target_entity_type": str(import_relation.get("target_entity_type", "Unknown")),
+                    "resolution": normalized_resolution,
+                    "confidence": float(import_relation.get("confidence", 1.0)),
+                    "source_range": relation_metadata.get("source_range", {}),
+                }
             )
-            imports_payload.append({
-                "target_qname": str(import_relation.get("target_qname", "")),
-                "target_entity_type": str(
-                    import_relation.get("target_entity_type", "Unknown")
-                ),
-                "resolution": normalized_resolution,
-                "confidence": float(import_relation.get("confidence", 1.0)),
-                "source_range": relation_metadata.get("source_range", {}),
-            })
-        items.append({
-            "entity_stable_id": src_id,
-            "entity_type": src_entity.get("entity_type", "module").lower(),
-            "evidence_category": "structural_import",
-            "evidence_data": {
-                "import_count": import_count,
-                "imports": imports_payload,
-            },
-        })
+        items.append(
+            {
+                "entity_stable_id": src_id,
+                "entity_type": src_entity.get("entity_type", "module").lower(),
+                "evidence_category": "structural_import",
+                "evidence_data": {
+                    "import_count": import_count,
+                    "imports": imports_payload,
+                },
+            }
+        )
 
     return items
 
@@ -468,8 +461,8 @@ class TreeSitterExecutor(BlockExecutor):
         mtime_ns = stat.st_mtime_ns
 
         # Resolve language
-        language: str = inputs.language if inputs.language is not None else detect_language(
-            inputs.path
+        language: str = (
+            inputs.language if inputs.language is not None else detect_language(inputs.path)
         )
 
         if language == "unsupported":
@@ -536,6 +529,7 @@ class TreeSitterExecutor(BlockExecutor):
                 "end_line": source_range_end_line,
                 "end_column": 0,
             }
+
         base_metadata: dict[str, Any] = {
             "source_file": str(file_path),
             "repo_relative_path": inputs.repo_relative_path,
@@ -592,9 +586,7 @@ class TreeSitterExecutor(BlockExecutor):
                 entities=entities,
                 relations=relations,
                 unresolved_imports=[],
-                structural_evidence_items=_build_structural_evidence_items(
-                    entities, relations
-                ),
+                structural_evidence_items=_build_structural_evidence_items(entities, relations),
             )
 
         # Code languages: build Module entity and File->Module CONTAINS relation,

@@ -771,6 +771,7 @@ async def test_concurrent_submit_admission_never_exceeds_active_capacity(app_con
     queue._max_concurrent_jobs = 2
     await queue.start()
     try:
+
         async def _submit_one() -> tuple[bool, str]:
             try:
                 job_id = await queue.submit_job("slow-admission", {})

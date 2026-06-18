@@ -177,9 +177,7 @@ def test_tsx_file_detected_as_tsx(tmp_path: Path) -> None:
 
 
 def test_module_qname_from_repo_relative(tmp_path: Path) -> None:
-    result = _run_executor(
-        tmp_path, FULL_TS_SRC, "greeter.ts", "src/services/greeter.ts"
-    )
+    result = _run_executor(tmp_path, FULL_TS_SRC, "greeter.ts", "src/services/greeter.ts")
     assert result.module_qualified_name == "services.greeter"
 
 
@@ -224,9 +222,7 @@ def test_module_entity_present(tmp_path: Path) -> None:
 
 
 def test_class_entities_extracted(tmp_path: Path) -> None:
-    result = _run_executor(
-        tmp_path, FULL_TS_SRC, "animals.ts", "src/animals.ts"
-    )
+    result = _run_executor(tmp_path, FULL_TS_SRC, "animals.ts", "src/animals.ts")
     class_names = _entity_names(result.entities, "Class")
     assert "Animal" in class_names
     assert "Dog" in class_names
@@ -330,7 +326,8 @@ def test_contains_file_module(tmp_path: Path) -> None:
     result = _run_executor(tmp_path, FULL_TS_SRC, "animals.ts", "src/animals.ts")
     contains = _find_relations(result.relations, "CONTAINS")
     file_module = [
-        r for r in contains
+        r
+        for r in contains
         if r["source_entity_type"] == "File" and r["target_entity_type"] == "Module"
     ]
     assert len(file_module) == 1
@@ -340,7 +337,8 @@ def test_contains_module_class(tmp_path: Path) -> None:
     result = _run_executor(tmp_path, FULL_TS_SRC, "animals.ts", "src/animals.ts")
     contains = _find_relations(result.relations, "CONTAINS")
     module_class = [
-        r for r in contains
+        r
+        for r in contains
         if r["source_entity_type"] == "Module" and r["target_entity_type"] == "Class"
     ]
     class_targets = {r["target_qname"] for r in module_class}
@@ -352,7 +350,8 @@ def test_contains_module_function(tmp_path: Path) -> None:
     result = _run_executor(tmp_path, FULL_TS_SRC, "animals.ts", "src/animals.ts")
     contains = _find_relations(result.relations, "CONTAINS")
     module_fn = [
-        r for r in contains
+        r
+        for r in contains
         if r["source_entity_type"] == "Module" and r["target_entity_type"] == "Function"
     ]
     fn_targets = {r["target_qname"] for r in module_fn}
@@ -364,7 +363,8 @@ def test_contains_class_method(tmp_path: Path) -> None:
     result = _run_executor(tmp_path, FULL_TS_SRC, "animals.ts", "src/animals.ts")
     contains = _find_relations(result.relations, "CONTAINS")
     class_method = [
-        r for r in contains
+        r
+        for r in contains
         if r["source_entity_type"] == "Class" and r["target_entity_type"] == "Method"
     ]
     targets = {r["target_qname"] for r in class_method}
@@ -378,9 +378,7 @@ def test_contains_class_method(tmp_path: Path) -> None:
 
 
 def test_inherits_from_same_module(tmp_path: Path) -> None:
-    result = _run_executor(
-        tmp_path, SAME_MODULE_INHERIT_TS_SRC, "inherit.ts", "src/inherit.ts"
-    )
+    result = _run_executor(tmp_path, SAME_MODULE_INHERIT_TS_SRC, "inherit.ts", "src/inherit.ts")
     inherits = _find_relations(result.relations, "INHERITS_FROM")
     assert len(inherits) == 1
     rel = inherits[0]
@@ -390,9 +388,7 @@ def test_inherits_from_same_module(tmp_path: Path) -> None:
 
 
 def test_inherits_from_external_unresolved(tmp_path: Path) -> None:
-    result = _run_executor(
-        tmp_path, EXTERNAL_INHERIT_TS_SRC, "myclass.ts", "src/myclass.ts"
-    )
+    result = _run_executor(tmp_path, EXTERNAL_INHERIT_TS_SRC, "myclass.ts", "src/myclass.ts")
     inherits = _find_relations(result.relations, "INHERITS_FROM")
     assert len(inherits) == 1
     rel = inherits[0]
@@ -417,45 +413,35 @@ def test_inherits_from_full_ts(tmp_path: Path) -> None:
 
 
 def test_imports_from_default_import(tmp_path: Path) -> None:
-    result = _run_executor(
-        tmp_path, SIMPLE_IMPORT_TS_SRC, "importer.ts", "src/importer.ts"
-    )
+    result = _run_executor(tmp_path, SIMPLE_IMPORT_TS_SRC, "importer.ts", "src/importer.ts")
     imports = _find_relations(result.relations, "IMPORTS")
     targets = {r["target_qname"] for r in imports}
     assert "react" in targets
 
 
 def test_imports_from_named_import(tmp_path: Path) -> None:
-    result = _run_executor(
-        tmp_path, SIMPLE_IMPORT_TS_SRC, "importer.ts", "src/importer.ts"
-    )
+    result = _run_executor(tmp_path, SIMPLE_IMPORT_TS_SRC, "importer.ts", "src/importer.ts")
     imports = _find_relations(result.relations, "IMPORTS")
     targets = {r["target_qname"] for r in imports}
     assert "react" in targets
 
 
 def test_imports_star_import(tmp_path: Path) -> None:
-    result = _run_executor(
-        tmp_path, SIMPLE_IMPORT_TS_SRC, "importer.ts", "src/importer.ts"
-    )
+    result = _run_executor(tmp_path, SIMPLE_IMPORT_TS_SRC, "importer.ts", "src/importer.ts")
     imports = _find_relations(result.relations, "IMPORTS")
     targets = {r["target_qname"] for r in imports}
     assert "lodash" in targets
 
 
 def test_imports_side_effect(tmp_path: Path) -> None:
-    result = _run_executor(
-        tmp_path, SIMPLE_IMPORT_TS_SRC, "importer.ts", "src/importer.ts"
-    )
+    result = _run_executor(tmp_path, SIMPLE_IMPORT_TS_SRC, "importer.ts", "src/importer.ts")
     imports = _find_relations(result.relations, "IMPORTS")
     targets = {r["target_qname"] for r in imports}
     assert "./side-effect" in targets
 
 
 def test_imports_confidence_unresolved(tmp_path: Path) -> None:
-    result = _run_executor(
-        tmp_path, SIMPLE_IMPORT_TS_SRC, "importer.ts", "src/importer.ts"
-    )
+    result = _run_executor(tmp_path, SIMPLE_IMPORT_TS_SRC, "importer.ts", "src/importer.ts")
     imports = _find_relations(result.relations, "IMPORTS")
     for imp in imports:
         assert imp["confidence"] == 0.5
@@ -463,9 +449,7 @@ def test_imports_confidence_unresolved(tmp_path: Path) -> None:
 
 
 def test_imports_source_is_module(tmp_path: Path) -> None:
-    result = _run_executor(
-        tmp_path, SIMPLE_IMPORT_TS_SRC, "importer.ts", "src/importer.ts"
-    )
+    result = _run_executor(tmp_path, SIMPLE_IMPORT_TS_SRC, "importer.ts", "src/importer.ts")
     imports = _find_relations(result.relations, "IMPORTS")
     for imp in imports:
         assert imp["source_entity_type"] == "Module"
@@ -473,9 +457,7 @@ def test_imports_source_is_module(tmp_path: Path) -> None:
 
 
 def test_unresolved_imports_populated(tmp_path: Path) -> None:
-    result = _run_executor(
-        tmp_path, SIMPLE_IMPORT_TS_SRC, "importer.ts", "src/importer.ts"
-    )
+    result = _run_executor(tmp_path, SIMPLE_IMPORT_TS_SRC, "importer.ts", "src/importer.ts")
     assert len(result.unresolved_imports) > 0
     assert "react" in result.unresolved_imports
 
@@ -555,8 +537,7 @@ function factory(): void {
     result = _run_executor(tmp_path, src, "mod.ts", "src/mod.ts")
     calls = _find_relations(result.relations, "CALLS")
     new_greet_calls = [
-        r for r in calls
-        if r["target_qname"] == "mod.greet" and r["metadata"].get("is_constructor")
+        r for r in calls if r["target_qname"] == "mod.greet" and r["metadata"].get("is_constructor")
     ]
     assert len(new_greet_calls) == 1
     rel = new_greet_calls[0]
@@ -639,9 +620,7 @@ import type Bar from 'bar-pkg';
 
 def test_interface_not_invented_as_new_entity_type(tmp_path: Path) -> None:
     """Interfaces should not introduce entity types outside Class/Method/Function."""
-    result = _run_executor(
-        tmp_path, INTERFACE_TS_SRC, "iface.ts", "src/iface.ts"
-    )
+    result = _run_executor(tmp_path, INTERFACE_TS_SRC, "iface.ts", "src/iface.ts")
     entity_types = {e["entity_type"] for e in result.entities}
     allowed_types = {"File", "Module", "Class", "Method", "Function"}
     assert entity_types.issubset(allowed_types)

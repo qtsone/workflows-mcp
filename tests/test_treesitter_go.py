@@ -141,17 +141,13 @@ class TestModuleQname:
         assert len(module_entities) == 1
         assert module_entities[0]["qualified_name"] == "greeter"
 
-    def test_go_module_name_field(
-        self, full_go_file: Path, mock_execution: MagicMock
-    ) -> None:
+    def test_go_module_name_field(self, full_go_file: Path, mock_execution: MagicMock) -> None:
         """Module entity name field equals the package name."""
         result = _run(full_go_file, "pkg/greeter.go", mock_execution)
         module_entity = next(e for e in result.entities if e["entity_type"] == "Module")
         assert module_entity["name"] == "greeter"
 
-    def test_go_language_detected(
-        self, full_go_file: Path, mock_execution: MagicMock
-    ) -> None:
+    def test_go_language_detected(self, full_go_file: Path, mock_execution: MagicMock) -> None:
         result = _run(full_go_file, "pkg/greeter.go", mock_execution)
         assert result.language == "go"
 
@@ -175,9 +171,7 @@ class TestModuleQname:
 
 
 class TestFileEntity:
-    def test_file_entity_exists(
-        self, full_go_file: Path, mock_execution: MagicMock
-    ) -> None:
+    def test_file_entity_exists(self, full_go_file: Path, mock_execution: MagicMock) -> None:
         result = _run(full_go_file, "pkg/greeter.go", mock_execution)
         file_entities = [e for e in result.entities if e["entity_type"] == "File"]
         assert len(file_entities) == 1
@@ -209,9 +203,7 @@ class TestFileEntity:
 
 
 class TestClassEntities:
-    def test_struct_extracted_as_class(
-        self, full_go_file: Path, mock_execution: MagicMock
-    ) -> None:
+    def test_struct_extracted_as_class(self, full_go_file: Path, mock_execution: MagicMock) -> None:
         """type Greeter struct{} -> Class entity 'greeter.Greeter'."""
         result = _run(full_go_file, "pkg/greeter.go", mock_execution)
         class_entities = [e for e in result.entities if e["entity_type"] == "Class"]
@@ -238,9 +230,7 @@ class TestClassEntities:
         """Struct entities must not have is_interface=True."""
         result = _run(full_go_file, "pkg/greeter.go", mock_execution)
         class_entities = [e for e in result.entities if e["entity_type"] == "Class"]
-        greeter = next(
-            e for e in class_entities if e["qualified_name"] == "greeter.Greeter"
-        )
+        greeter = next(e for e in class_entities if e["qualified_name"] == "greeter.Greeter")
         assert greeter["metadata"].get("is_interface", False) is False
 
     def test_class_entity_has_required_fields(
@@ -258,20 +248,12 @@ class TestClassEntities:
             assert len(entity["stable_id"]) == 32
             assert entity["confidence"] == 1.0
 
-    def test_class_name_is_simple(
-        self, full_go_file: Path, mock_execution: MagicMock
-    ) -> None:
+    def test_class_name_is_simple(self, full_go_file: Path, mock_execution: MagicMock) -> None:
         result = _run(full_go_file, "pkg/greeter.go", mock_execution)
-        greeter = next(
-            e
-            for e in result.entities
-            if e.get("qualified_name") == "greeter.Greeter"
-        )
+        greeter = next(e for e in result.entities if e.get("qualified_name") == "greeter.Greeter")
         assert greeter["name"] == "Greeter"
 
-    def test_class_has_source_span(
-        self, full_go_file: Path, mock_execution: MagicMock
-    ) -> None:
+    def test_class_has_source_span(self, full_go_file: Path, mock_execution: MagicMock) -> None:
         result = _run(full_go_file, "pkg/greeter.go", mock_execution)
         class_entities = [e for e in result.entities if e["entity_type"] == "Class"]
         for entity in class_entities:
@@ -325,20 +307,14 @@ class TestMethodEntities:
     ) -> None:
         result = _run(full_go_file, "pkg/greeter.go", mock_execution)
         greet = next(
-            e
-            for e in result.entities
-            if e.get("qualified_name") == "greeter.Greeter.Greet"
+            e for e in result.entities if e.get("qualified_name") == "greeter.Greeter.Greet"
         )
         assert greet["metadata"]["parent_class_id"] == "__class_qname__:greeter.Greeter"
 
-    def test_method_name_simple(
-        self, full_go_file: Path, mock_execution: MagicMock
-    ) -> None:
+    def test_method_name_simple(self, full_go_file: Path, mock_execution: MagicMock) -> None:
         result = _run(full_go_file, "pkg/greeter.go", mock_execution)
         greet = next(
-            e
-            for e in result.entities
-            if e.get("qualified_name") == "greeter.Greeter.Greet"
+            e for e in result.entities if e.get("qualified_name") == "greeter.Greeter.Greet"
         )
         assert greet["name"] == "Greet"
 
@@ -359,9 +335,7 @@ class TestFunctionEntities:
         assert "greeter.NewGreeter" in qnames
         assert "greeter.main" in qnames
 
-    def test_methods_not_in_functions(
-        self, full_go_file: Path, mock_execution: MagicMock
-    ) -> None:
+    def test_methods_not_in_functions(self, full_go_file: Path, mock_execution: MagicMock) -> None:
         """Methods must be Method type, not Function."""
         result = _run(full_go_file, "pkg/greeter.go", mock_execution)
         func_entities = [e for e in result.entities if e["entity_type"] == "Function"]
@@ -414,9 +388,7 @@ class TestEntityOrdering:
 
 
 class TestContainsRelations:
-    def test_contains_file_to_module(
-        self, full_go_file: Path, mock_execution: MagicMock
-    ) -> None:
+    def test_contains_file_to_module(self, full_go_file: Path, mock_execution: MagicMock) -> None:
         result = _run(full_go_file, "pkg/greeter.go", mock_execution)
         contains = [r for r in result.relations if r["relation_type"] == "CONTAINS"]
         file_entity = next(e for e in result.entities if e["entity_type"] == "File")
@@ -428,9 +400,7 @@ class TestContainsRelations:
         ]
         assert len(file_to_module) == 1
 
-    def test_contains_module_to_class(
-        self, full_go_file: Path, mock_execution: MagicMock
-    ) -> None:
+    def test_contains_module_to_class(self, full_go_file: Path, mock_execution: MagicMock) -> None:
         result = _run(full_go_file, "pkg/greeter.go", mock_execution)
         contains = [r for r in result.relations if r["relation_type"] == "CONTAINS"]
         module_to_class = [
@@ -451,23 +421,19 @@ class TestContainsRelations:
         module_to_func = [
             r
             for r in contains
-            if r["source_qname"] == "greeter"
-            and r["target_entity_type"] == "Function"
+            if r["source_qname"] == "greeter" and r["target_entity_type"] == "Function"
         ]
         qnames = {r["target_qname"] for r in module_to_func}
         assert "greeter.NewGreeter" in qnames
         assert "greeter.main" in qnames
 
-    def test_contains_class_to_method(
-        self, full_go_file: Path, mock_execution: MagicMock
-    ) -> None:
+    def test_contains_class_to_method(self, full_go_file: Path, mock_execution: MagicMock) -> None:
         result = _run(full_go_file, "pkg/greeter.go", mock_execution)
         contains = [r for r in result.relations if r["relation_type"] == "CONTAINS"]
         class_to_method = [
             r
             for r in contains
-            if r["source_qname"] == "greeter.Greeter"
-            and r["target_entity_type"] == "Method"
+            if r["source_qname"] == "greeter.Greeter" and r["target_entity_type"] == "Method"
         ]
         qnames = {r["target_qname"] for r in class_to_method}
         assert "greeter.Greeter.Greet" in qnames
@@ -492,9 +458,7 @@ class TestContainsRelations:
 
 
 class TestImports:
-    def test_single_import_emitted(
-        self, tmp_path: Path, mock_execution: MagicMock
-    ) -> None:
+    def test_single_import_emitted(self, tmp_path: Path, mock_execution: MagicMock) -> None:
         """import 'fmt' -> IMPORTS relation to 'fmt'."""
         f = tmp_path / "main.go"
         f.write_text('package main\nimport "fmt"\n', encoding="utf-8")
@@ -502,14 +466,10 @@ class TestImports:
         imports = [r for r in result.relations if r["relation_type"] == "IMPORTS"]
         assert any(r["target_qname"] == "fmt" for r in imports)
 
-    def test_grouped_imports_emitted(
-        self, tmp_path: Path, mock_execution: MagicMock
-    ) -> None:
+    def test_grouped_imports_emitted(self, tmp_path: Path, mock_execution: MagicMock) -> None:
         """Grouped import block -> each package emitted as separate IMPORTS."""
         f = tmp_path / "main.go"
-        f.write_text(
-            'package main\nimport (\n\t"os"\n\t"strings"\n)\n', encoding="utf-8"
-        )
+        f.write_text('package main\nimport (\n\t"os"\n\t"strings"\n)\n', encoding="utf-8")
         result = _run(f, "main.go", mock_execution)
         imports = [r for r in result.relations if r["relation_type"] == "IMPORTS"]
         target_qnames = {r["target_qname"] for r in imports}
@@ -528,9 +488,7 @@ class TestImports:
             assert rel["confidence"] == 0.5
             assert rel["metadata"].get("resolution") == "unresolved"
 
-    def test_import_source_is_module(
-        self, tmp_path: Path, mock_execution: MagicMock
-    ) -> None:
+    def test_import_source_is_module(self, tmp_path: Path, mock_execution: MagicMock) -> None:
         f = tmp_path / "main.go"
         f.write_text('package main\nimport "fmt"\n', encoding="utf-8")
         result = _run(f, "main.go", mock_execution)
@@ -539,33 +497,23 @@ class TestImports:
             assert rel["source_entity_type"] == "Module"
             assert rel["target_entity_type"] == "Module"
 
-    def test_import_deduplication(
-        self, tmp_path: Path, mock_execution: MagicMock
-    ) -> None:
+    def test_import_deduplication(self, tmp_path: Path, mock_execution: MagicMock) -> None:
         """Duplicate import paths emitted only once."""
         f = tmp_path / "main.go"
-        f.write_text(
-            'package main\nimport "fmt"\nimport "fmt"\n', encoding="utf-8"
-        )
+        f.write_text('package main\nimport "fmt"\nimport "fmt"\n', encoding="utf-8")
         result = _run(f, "main.go", mock_execution)
         imports = [r for r in result.relations if r["relation_type"] == "IMPORTS"]
         targets = [r["target_qname"] for r in imports]
         assert targets.count("fmt") == 1
 
-    def test_unresolved_imports_populated(
-        self, tmp_path: Path, mock_execution: MagicMock
-    ) -> None:
+    def test_unresolved_imports_populated(self, tmp_path: Path, mock_execution: MagicMock) -> None:
         f = tmp_path / "main.go"
-        f.write_text(
-            'package main\nimport (\n\t"os"\n\t"fmt"\n)\n', encoding="utf-8"
-        )
+        f.write_text('package main\nimport (\n\t"os"\n\t"fmt"\n)\n', encoding="utf-8")
         result = _run(f, "main.go", mock_execution)
         assert "os" in result.unresolved_imports
         assert "fmt" in result.unresolved_imports
 
-    def test_unresolved_imports_sorted(
-        self, tmp_path: Path, mock_execution: MagicMock
-    ) -> None:
+    def test_unresolved_imports_sorted(self, tmp_path: Path, mock_execution: MagicMock) -> None:
         f = tmp_path / "main.go"
         f.write_text(
             'package main\nimport (\n\t"strings"\n\t"os"\n\t"fmt"\n)\n',
@@ -589,40 +537,30 @@ class TestImports:
 
 
 class TestCalls:
-    def test_same_package_call_resolved(
-        self, tmp_path: Path, mock_execution: MagicMock
-    ) -> None:
+    def test_same_package_call_resolved(self, tmp_path: Path, mock_execution: MagicMock) -> None:
         """foo() calls helper() -> resolved to mymod.helper, confidence=1.0."""
         f = tmp_path / "mymod.go"
         f.write_text(CALLS_GO_SRC, encoding="utf-8")
         result = _run(f, "mymod.go", mock_execution)
         calls = [r for r in result.relations if r["relation_type"] == "CALLS"]
         foo_calls = [r for r in calls if r["source_qname"] == "mymod.foo"]
-        helper_call = next(
-            (r for r in foo_calls if r["target_qname"] == "mymod.helper"), None
-        )
+        helper_call = next((r for r in foo_calls if r["target_qname"] == "mymod.helper"), None)
         assert helper_call is not None
         assert helper_call["confidence"] == 1.0
 
-    def test_selector_call_unresolved(
-        self, tmp_path: Path, mock_execution: MagicMock
-    ) -> None:
+    def test_selector_call_unresolved(self, tmp_path: Path, mock_execution: MagicMock) -> None:
         """fmt.Println call -> unresolved, confidence=0.5."""
         f = tmp_path / "mymod.go"
         f.write_text(CALLS_GO_SRC, encoding="utf-8")
         result = _run(f, "mymod.go", mock_execution)
         calls = [r for r in result.relations if r["relation_type"] == "CALLS"]
         foo_calls = [r for r in calls if r["source_qname"] == "mymod.foo"]
-        selector_calls = [
-            r for r in foo_calls if r["metadata"].get("resolution") == "unresolved"
-        ]
+        selector_calls = [r for r in foo_calls if r["metadata"].get("resolution") == "unresolved"]
         assert len(selector_calls) >= 1
         for c in selector_calls:
             assert c["confidence"] == 0.5
 
-    def test_call_has_site_metadata(
-        self, tmp_path: Path, mock_execution: MagicMock
-    ) -> None:
+    def test_call_has_site_metadata(self, tmp_path: Path, mock_execution: MagicMock) -> None:
         """CALLS relations include call_line and call_column."""
         f = tmp_path / "mymod.go"
         f.write_text(CALLS_GO_SRC, encoding="utf-8")
@@ -632,9 +570,7 @@ class TestCalls:
             assert "call_line" in rel["metadata"]
             assert "call_column" in rel["metadata"]
 
-    def test_call_has_entity_type_fields(
-        self, tmp_path: Path, mock_execution: MagicMock
-    ) -> None:
+    def test_call_has_entity_type_fields(self, tmp_path: Path, mock_execution: MagicMock) -> None:
         f = tmp_path / "mymod.go"
         f.write_text(CALLS_GO_SRC, encoding="utf-8")
         result = _run(f, "mymod.go", mock_execution)
@@ -651,9 +587,7 @@ class TestCalls:
 
 class TestNonGoUnchanged:
     @pytest.mark.asyncio
-    async def test_python_file_unaffected(
-        self, tmp_path: Path, mock_execution: MagicMock
-    ) -> None:
+    async def test_python_file_unaffected(self, tmp_path: Path, mock_execution: MagicMock) -> None:
         """Python extractor continues to work after Go extractor is added."""
         from workflows_mcp.engine.executors_treesitter import (
             TreeSitterExecutor,
@@ -663,9 +597,7 @@ class TestNonGoUnchanged:
         f = tmp_path / "mymod.py"
         f.write_text("def foo(): pass\n", encoding="utf-8")
         executor = TreeSitterExecutor()
-        inputs = TreeSitterInput(
-            path=str(f), repo_relative_path="mymod.py"
-        )
+        inputs = TreeSitterInput(path=str(f), repo_relative_path="mymod.py")
         result = await executor.execute(inputs, mock_execution)
         assert result.language == "python"
         func_entities = [e for e in result.entities if e["entity_type"] == "Function"]
@@ -696,9 +628,7 @@ class TestNonGoUnchanged:
 
 
 class TestDeterminism:
-    def test_output_is_deterministic(
-        self, full_go_file: Path, mock_execution: MagicMock
-    ) -> None:
+    def test_output_is_deterministic(self, full_go_file: Path, mock_execution: MagicMock) -> None:
         result1 = _run(full_go_file, "pkg/greeter.go", mock_execution)
         result2 = _run(full_go_file, "pkg/greeter.go", mock_execution)
 
@@ -707,11 +637,9 @@ class TestDeterminism:
         assert qnames1 == qnames2
 
         rel_keys1 = sorted(
-            (r["relation_type"], r["source_qname"], r["target_qname"])
-            for r in result1.relations
+            (r["relation_type"], r["source_qname"], r["target_qname"]) for r in result1.relations
         )
         rel_keys2 = sorted(
-            (r["relation_type"], r["source_qname"], r["target_qname"])
-            for r in result2.relations
+            (r["relation_type"], r["source_qname"], r["target_qname"]) for r in result2.relations
         )
         assert rel_keys1 == rel_keys2

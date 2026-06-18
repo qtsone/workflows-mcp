@@ -47,6 +47,7 @@ def _scope_key(
     compartment: str = COMPARTMENT,
 ) -> str:
     from workflows_mcp.engine.memory_scope_resolver import scope_key as _sk
+
     return _sk({"palace": palace, "wing": wing, "room": room, "compartment": compartment})
 
 
@@ -167,6 +168,7 @@ async def _insert_claim(
 ) -> str:
     """Insert a semantic claim directly into the DB and return its UUID string."""
     from workflows_mcp.engine.memory_scope_resolver import scope_key as _sk
+
     scope_key = _sk({"palace": palace, "wing": wing, "room": room, "compartment": compartment})
     result = await backend.query(
         """
@@ -193,22 +195,26 @@ async def _record_verification_cycle(
     """Record a System 1 verification cycle and return its cycle_id."""
     from workflows_mcp.engine.memory_service import MemoryRequest
 
-    result = await memory_service.execute(MemoryRequest.model_validate({
-        "operation": "record_system1_verification_cycle",
-        "scope": {"palace": palace, "wing": wing, "room": room, "compartment": compartment},
-        "record": {
-            "format": "structured",
-            "verification_cycle": {
-                "success": success,
-                "covered_scope": {
-                    "palace": palace,
-                    "wing": wing,
-                    "room": room,
-                    "compartment": compartment,
+    result = await memory_service.execute(
+        MemoryRequest.model_validate(
+            {
+                "operation": "record_system1_verification_cycle",
+                "scope": {"palace": palace, "wing": wing, "room": room, "compartment": compartment},
+                "record": {
+                    "format": "structured",
+                    "verification_cycle": {
+                        "success": success,
+                        "covered_scope": {
+                            "palace": palace,
+                            "wing": wing,
+                            "room": room,
+                            "compartment": compartment,
+                        },
+                    },
                 },
-            },
-        },
-    }))
+            }
+        )
+    )
     assert result.manage is not None and result.manage.cycle_id is not None, (
         f"Failed to record verification cycle: {result.manage}"
     )
@@ -233,17 +239,21 @@ async def test_reconcile_transitions_active_evidenced_to_degraded(
 
     claim_id = await _insert_claim(knowledge_backend, lifecycle_state="active_evidenced")
 
-    result = await memory_service.execute(MemoryRequest.model_validate({
-        "operation": "reconcile_semantic_lifecycle",
-        "scope": _scope(),
-        "record": {
-            "format": "structured",
-            "lifecycle_reconciliation": {
-                "scope_key": _scope_key(),
-                "degrade_claim_ids": [claim_id],
-            },
-        },
-    }))
+    result = await memory_service.execute(
+        MemoryRequest.model_validate(
+            {
+                "operation": "reconcile_semantic_lifecycle",
+                "scope": _scope(),
+                "record": {
+                    "format": "structured",
+                    "lifecycle_reconciliation": {
+                        "scope_key": _scope_key(),
+                        "degrade_claim_ids": [claim_id],
+                    },
+                },
+            }
+        )
+    )
 
     assert result.manage is not None
     assert result.manage.success, f"Expected success, got error: {result.manage.error!r}"
@@ -287,18 +297,22 @@ async def test_reconcile_archives_degraded_claim_after_two_successful_absent_cyc
     cycle_id_1 = await _record_verification_cycle(memory_service, success=True)
     cycle_id_2 = await _record_verification_cycle(memory_service, success=True)
 
-    result = await memory_service.execute(MemoryRequest.model_validate({
-        "operation": "reconcile_semantic_lifecycle",
-        "scope": _scope(),
-        "record": {
-            "format": "structured",
-            "lifecycle_reconciliation": {
-                "scope_key": _scope_key(),
-                "force_archive_claim_ids": [claim_id],
-                "absent_verification_cycle_ids": [cycle_id_1, cycle_id_2],
-            },
-        },
-    }))
+    result = await memory_service.execute(
+        MemoryRequest.model_validate(
+            {
+                "operation": "reconcile_semantic_lifecycle",
+                "scope": _scope(),
+                "record": {
+                    "format": "structured",
+                    "lifecycle_reconciliation": {
+                        "scope_key": _scope_key(),
+                        "force_archive_claim_ids": [claim_id],
+                        "absent_verification_cycle_ids": [cycle_id_1, cycle_id_2],
+                    },
+                },
+            }
+        )
+    )
 
     assert result.manage is not None
     assert result.manage.success, f"Expected success, got error: {result.manage.error!r}"
@@ -337,18 +351,22 @@ async def test_direct_active_evidenced_to_archived_is_rejected(
     cycle_id_2 = await _record_verification_cycle(memory_service, success=True)
 
     try:
-        result = await memory_service.execute(MemoryRequest.model_validate({
-            "operation": "reconcile_semantic_lifecycle",
-            "scope": _scope(),
-            "record": {
-                "format": "structured",
-                "lifecycle_reconciliation": {
-                    "scope_key": _scope_key(),
-                    "force_archive_claim_ids": [claim_id],
-                    "absent_verification_cycle_ids": [cycle_id_1, cycle_id_2],
-                },
-            },
-        }))
+        result = await memory_service.execute(
+            MemoryRequest.model_validate(
+                {
+                    "operation": "reconcile_semantic_lifecycle",
+                    "scope": _scope(),
+                    "record": {
+                        "format": "structured",
+                        "lifecycle_reconciliation": {
+                            "scope_key": _scope_key(),
+                            "force_archive_claim_ids": [claim_id],
+                            "absent_verification_cycle_ids": [cycle_id_1, cycle_id_2],
+                        },
+                    },
+                }
+            )
+        )
         assert result.manage is not None
         assert not result.manage.success, (
             "Direct active_evidenced -> archived must not succeed; "
@@ -394,22 +412,24 @@ async def test_failed_cycles_do_not_satisfy_archive_gate(
     cycle_id_2 = await _record_verification_cycle(memory_service, success=False)
 
     try:
-        result = await memory_service.execute(MemoryRequest.model_validate({
-            "operation": "reconcile_semantic_lifecycle",
-            "scope": _scope(),
-            "record": {
-                "format": "structured",
-                "lifecycle_reconciliation": {
-                    "scope_key": _scope_key(),
-                    "force_archive_claim_ids": [claim_id],
-                    "absent_verification_cycle_ids": [cycle_id_1, cycle_id_2],
-                },
-            },
-        }))
-        assert result.manage is not None
-        assert not result.manage.success, (
-            "Failed cycles must not satisfy archive gate"
+        result = await memory_service.execute(
+            MemoryRequest.model_validate(
+                {
+                    "operation": "reconcile_semantic_lifecycle",
+                    "scope": _scope(),
+                    "record": {
+                        "format": "structured",
+                        "lifecycle_reconciliation": {
+                            "scope_key": _scope_key(),
+                            "force_archive_claim_ids": [claim_id],
+                            "absent_verification_cycle_ids": [cycle_id_1, cycle_id_2],
+                        },
+                    },
+                }
+            )
         )
+        assert result.manage is not None
+        assert not result.manage.success, "Failed cycles must not satisfy archive gate"
         assert "MEM_ARCHIVE_GATE_NOT_MET" in (result.manage.error or ""), (
             f"Expected MEM_ARCHIVE_GATE_NOT_MET, got: {result.manage.error!r}"
         )
@@ -455,22 +475,24 @@ async def test_scope_unrelated_cycles_do_not_count_for_archive_gate(
     )
 
     try:
-        result = await memory_service.execute(MemoryRequest.model_validate({
-            "operation": "reconcile_semantic_lifecycle",
-            "scope": _scope(),
-            "record": {
-                "format": "structured",
-                "lifecycle_reconciliation": {
-                    "scope_key": _scope_key(),
-                    "force_archive_claim_ids": [claim_id],
-                    "absent_verification_cycle_ids": [cycle_id_1, cycle_id_2],
-                },
-            },
-        }))
-        assert result.manage is not None
-        assert not result.manage.success, (
-            "Scope-unrelated cycles must not satisfy archive gate"
+        result = await memory_service.execute(
+            MemoryRequest.model_validate(
+                {
+                    "operation": "reconcile_semantic_lifecycle",
+                    "scope": _scope(),
+                    "record": {
+                        "format": "structured",
+                        "lifecycle_reconciliation": {
+                            "scope_key": _scope_key(),
+                            "force_archive_claim_ids": [claim_id],
+                            "absent_verification_cycle_ids": [cycle_id_1, cycle_id_2],
+                        },
+                    },
+                }
+            )
         )
+        assert result.manage is not None
+        assert not result.manage.success, "Scope-unrelated cycles must not satisfy archive gate"
         assert "MEM_ARCHIVE_GATE_NOT_MET" in (result.manage.error or ""), (
             f"Expected MEM_ARCHIVE_GATE_NOT_MET, got: {result.manage.error!r}"
         )
@@ -502,18 +524,22 @@ async def test_single_successful_absent_cycle_insufficient_for_archive(
     cycle_id = await _record_verification_cycle(memory_service, success=True)
 
     try:
-        result = await memory_service.execute(MemoryRequest.model_validate({
-            "operation": "reconcile_semantic_lifecycle",
-            "scope": _scope(),
-            "record": {
-                "format": "structured",
-                "lifecycle_reconciliation": {
-                    "scope_key": _scope_key(),
-                    "force_archive_claim_ids": [claim_id],
-                    "absent_verification_cycle_ids": [cycle_id],
-                },
-            },
-        }))
+        result = await memory_service.execute(
+            MemoryRequest.model_validate(
+                {
+                    "operation": "reconcile_semantic_lifecycle",
+                    "scope": _scope(),
+                    "record": {
+                        "format": "structured",
+                        "lifecycle_reconciliation": {
+                            "scope_key": _scope_key(),
+                            "force_archive_claim_ids": [claim_id],
+                            "absent_verification_cycle_ids": [cycle_id],
+                        },
+                    },
+                }
+            )
+        )
         assert result.manage is not None
         assert not result.manage.success
         assert "MEM_ARCHIVE_GATE_NOT_MET" in (result.manage.error or "")
@@ -544,18 +570,22 @@ async def test_archived_claims_remain_in_knowledge_semantic_claims(
     cycle_id_1 = await _record_verification_cycle(memory_service, success=True)
     cycle_id_2 = await _record_verification_cycle(memory_service, success=True)
 
-    result = await memory_service.execute(MemoryRequest.model_validate({
-        "operation": "reconcile_semantic_lifecycle",
-        "scope": _scope(),
-        "record": {
-            "format": "structured",
-            "lifecycle_reconciliation": {
-                "scope_key": _scope_key(),
-                "force_archive_claim_ids": [claim_id],
-                "absent_verification_cycle_ids": [cycle_id_1, cycle_id_2],
-            },
-        },
-    }))
+    result = await memory_service.execute(
+        MemoryRequest.model_validate(
+            {
+                "operation": "reconcile_semantic_lifecycle",
+                "scope": _scope(),
+                "record": {
+                    "format": "structured",
+                    "lifecycle_reconciliation": {
+                        "scope_key": _scope_key(),
+                        "force_archive_claim_ids": [claim_id],
+                        "absent_verification_cycle_ids": [cycle_id_1, cycle_id_2],
+                    },
+                },
+            }
+        )
+    )
 
     assert result.manage is not None and result.manage.success
 
@@ -588,17 +618,21 @@ async def test_reconciled_count_reflects_degraded_claims(
     claim_id_1 = await _insert_claim(knowledge_backend, lifecycle_state="active_evidenced")
     claim_id_2 = await _insert_claim(knowledge_backend, lifecycle_state="active_evidenced")
 
-    result = await memory_service.execute(MemoryRequest.model_validate({
-        "operation": "reconcile_semantic_lifecycle",
-        "scope": _scope(),
-        "record": {
-            "format": "structured",
-            "lifecycle_reconciliation": {
-                "scope_key": _scope_key(),
-                "degrade_claim_ids": [claim_id_1, claim_id_2],
-            },
-        },
-    }))
+    result = await memory_service.execute(
+        MemoryRequest.model_validate(
+            {
+                "operation": "reconcile_semantic_lifecycle",
+                "scope": _scope(),
+                "record": {
+                    "format": "structured",
+                    "lifecycle_reconciliation": {
+                        "scope_key": _scope_key(),
+                        "degrade_claim_ids": [claim_id_1, claim_id_2],
+                    },
+                },
+            }
+        )
+    )
 
     assert result.manage is not None
     assert result.manage.success
@@ -620,16 +654,20 @@ async def test_reconcile_no_op_returns_zero_count(
     """
     from workflows_mcp.engine.memory_service import MemoryRequest
 
-    result = await memory_service.execute(MemoryRequest.model_validate({
-        "operation": "reconcile_semantic_lifecycle",
-        "scope": _scope(),
-        "record": {
-            "format": "structured",
-            "lifecycle_reconciliation": {
-                "scope_key": _scope_key(),
-            },
-        },
-    }))
+    result = await memory_service.execute(
+        MemoryRequest.model_validate(
+            {
+                "operation": "reconcile_semantic_lifecycle",
+                "scope": _scope(),
+                "record": {
+                    "format": "structured",
+                    "lifecycle_reconciliation": {
+                        "scope_key": _scope_key(),
+                    },
+                },
+            }
+        )
+    )
 
     assert result.manage is not None
     assert result.manage.success
@@ -654,18 +692,22 @@ async def test_archive_sets_archived_at_and_absent_cycle_count(
     cycle_id_1 = await _record_verification_cycle(memory_service, success=True)
     cycle_id_2 = await _record_verification_cycle(memory_service, success=True)
 
-    result = await memory_service.execute(MemoryRequest.model_validate({
-        "operation": "reconcile_semantic_lifecycle",
-        "scope": _scope(),
-        "record": {
-            "format": "structured",
-            "lifecycle_reconciliation": {
-                "scope_key": _scope_key(),
-                "force_archive_claim_ids": [claim_id],
-                "absent_verification_cycle_ids": [cycle_id_1, cycle_id_2],
-            },
-        },
-    }))
+    result = await memory_service.execute(
+        MemoryRequest.model_validate(
+            {
+                "operation": "reconcile_semantic_lifecycle",
+                "scope": _scope(),
+                "record": {
+                    "format": "structured",
+                    "lifecycle_reconciliation": {
+                        "scope_key": _scope_key(),
+                        "force_archive_claim_ids": [claim_id],
+                        "absent_verification_cycle_ids": [cycle_id_1, cycle_id_2],
+                    },
+                },
+            }
+        )
+    )
 
     assert result.manage is not None and result.manage.success
 
@@ -713,19 +755,23 @@ async def test_combined_degrade_and_archive_in_one_request(
     cycle_id_1 = await _record_verification_cycle(memory_service, success=True)
     cycle_id_2 = await _record_verification_cycle(memory_service, success=True)
 
-    result = await memory_service.execute(MemoryRequest.model_validate({
-        "operation": "reconcile_semantic_lifecycle",
-        "scope": _scope(),
-        "record": {
-            "format": "structured",
-            "lifecycle_reconciliation": {
-                "scope_key": _scope_key(),
-                "degrade_claim_ids": [claim_a],
-                "force_archive_claim_ids": [claim_b],
-                "absent_verification_cycle_ids": [cycle_id_1, cycle_id_2],
-            },
-        },
-    }))
+    result = await memory_service.execute(
+        MemoryRequest.model_validate(
+            {
+                "operation": "reconcile_semantic_lifecycle",
+                "scope": _scope(),
+                "record": {
+                    "format": "structured",
+                    "lifecycle_reconciliation": {
+                        "scope_key": _scope_key(),
+                        "degrade_claim_ids": [claim_a],
+                        "force_archive_claim_ids": [claim_b],
+                        "absent_verification_cycle_ids": [cycle_id_1, cycle_id_2],
+                    },
+                },
+            }
+        )
+    )
 
     assert result.manage is not None
     assert result.manage.success, f"Expected success, got: {result.manage.error!r}"
@@ -743,8 +789,7 @@ async def test_combined_degrade_and_archive_in_one_request(
     )
 
     row_b = await knowledge_backend.query(
-        "SELECT lifecycle_state, archived_at FROM knowledge_semantic_claims"
-        " WHERE id = $1::uuid",
+        "SELECT lifecycle_state, archived_at FROM knowledge_semantic_claims WHERE id = $1::uuid",
         (claim_b,),
     )
     assert row_b.rows[0]["lifecycle_state"] == "archived", (
@@ -771,19 +816,23 @@ async def test_combined_request_rolls_back_degrade_when_archive_gate_fails(
     cycle_id = await _record_verification_cycle(memory_service, success=True)
 
     try:
-        result = await memory_service.execute(MemoryRequest.model_validate({
-            "operation": "reconcile_semantic_lifecycle",
-            "scope": _scope(),
-            "record": {
-                "format": "structured",
-                "lifecycle_reconciliation": {
-                    "scope_key": _scope_key(),
-                    "degrade_claim_ids": [claim_a],
-                    "force_archive_claim_ids": [claim_b],
-                    "absent_verification_cycle_ids": [cycle_id],
-                },
-            },
-        }))
+        result = await memory_service.execute(
+            MemoryRequest.model_validate(
+                {
+                    "operation": "reconcile_semantic_lifecycle",
+                    "scope": _scope(),
+                    "record": {
+                        "format": "structured",
+                        "lifecycle_reconciliation": {
+                            "scope_key": _scope_key(),
+                            "degrade_claim_ids": [claim_a],
+                            "force_archive_claim_ids": [claim_b],
+                            "absent_verification_cycle_ids": [cycle_id],
+                        },
+                    },
+                }
+            )
+        )
         assert result.manage is not None
         assert not result.manage.success, (
             "Combined request with insufficient cycles must be rejected"

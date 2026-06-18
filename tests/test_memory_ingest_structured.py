@@ -927,8 +927,8 @@ class TestStructuredIngestService:
         backend = MagicMock()
         backend.query = AsyncMock(
             side_effect=[
-                MagicMock(rows=[]),           # pre-flight superseded check — no superseded records
-                MagicMock(rows=[{"cnt": 0}]), # skipped count (USER_VALIDATED / ARCHIVED)
+                MagicMock(rows=[]),  # pre-flight superseded check — no superseded records
+                MagicMock(rows=[{"cnt": 0}]),  # skipped count (USER_VALIDATED / ARCHIVED)
                 MagicMock(rows=[{"id": "m-1"}]),  # archive UPDATE
             ]
         )

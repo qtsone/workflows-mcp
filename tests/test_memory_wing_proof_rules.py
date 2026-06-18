@@ -81,8 +81,7 @@ async def clean_palace(knowledge_backend: PostgresBackend) -> AsyncIterator[None
 
     async def _wipe() -> None:
         await knowledge_backend.execute(
-            "DELETE FROM knowledge_wing_proof_bundles "
-            "WHERE palace LIKE $1",
+            "DELETE FROM knowledge_wing_proof_bundles WHERE palace LIKE $1",
             (palace_pattern,),
         )
         # claim_evidence_links cascade from claims
@@ -133,8 +132,7 @@ async def _store_evidence(
         )
     )
     assert result.manage is not None and result.manage.success, (
-        f"Failed to store evidence {entity_stable_id}/{evidence_category}: "
-        f"{result.manage}"
+        f"Failed to store evidence {entity_stable_id}/{evidence_category}: {result.manage}"
     )
 
 

@@ -435,8 +435,7 @@ def test_tool_error_payload_preserves_insufficient_locality_retry_guidance() -> 
             ),
             retryable=False,
             actionable_fix=(
-                "Retry ingest with scope.palace/wing/room/compartment, "
-                "scope_token, or context_id."
+                "Retry ingest with scope.palace/wing/room/compartment, scope_token, or context_id."
             ),
         ),
     )
@@ -927,8 +926,14 @@ def test_b3_memory_user_id_env_is_used_as_uuid(monkeypatch: pytest.MonkeyPatch) 
 
     test_uuid = str(uuid.uuid4())
     monkeypatch.setenv("MEMORY_USER_ID", test_uuid)
-    for var in ["WORKFLOWS_USER_ID", "WORKFLOWS_USER", "MCP_USER_ID", "USER", "USERNAME", "LOGNAME"
-                ]:
+    for var in [
+        "WORKFLOWS_USER_ID",
+        "WORKFLOWS_USER",
+        "MCP_USER_ID",
+        "USER",
+        "USERNAME",
+        "LOGNAME",
+    ]:
         monkeypatch.delenv(var, raising=False)
 
     user_id, user_string, auth_method = _get_standalone_user_context()
@@ -944,8 +949,14 @@ def test_b3_memory_user_id_env_non_uuid_produces_deterministic_uuid(
     from workflows_mcp.tools_memory import _get_standalone_user_context
 
     monkeypatch.setenv("MEMORY_USER_ID", "alice")
-    for var in ["WORKFLOWS_USER_ID", "WORKFLOWS_USER", "MCP_USER_ID", "USER", "USERNAME", "LOGNAME"
-                ]:
+    for var in [
+        "WORKFLOWS_USER_ID",
+        "WORKFLOWS_USER",
+        "MCP_USER_ID",
+        "USER",
+        "USERNAME",
+        "LOGNAME",
+    ]:
         monkeypatch.delenv(var, raising=False)
 
     user_id, user_string, auth_method = _get_standalone_user_context()
@@ -1427,9 +1438,7 @@ async def test_palace_store_write_path_includes_palace() -> None:
         )
 
     # Find the INSERT INTO knowledge_memories call
-    memory_inserts = [
-        (sql, params) for sql, params in execute_calls if "knowledge_memories" in sql
-    ]
+    memory_inserts = [(sql, params) for sql, params in execute_calls if "knowledge_memories" in sql]
     assert memory_inserts, "Expected at least one INSERT INTO knowledge_memories"
 
     insert_sql, insert_params = memory_inserts[0]
@@ -1838,25 +1847,29 @@ async def test_adr013_new_wing_requires_minimum_two_evidence_categories() -> Non
     service = MemoryService(backend=object(), context=context)
 
     try:
-        request = MemoryRequest.model_validate({
-            "operation": "derive_system2_semantic_claims",
-            "scope": {
-                "palace": "acme", "wing": "new_wing",
-                "room": "services", "compartment": "auth",
-            },
-            "record": {
-                "format": "structured",
-                "derivation": {
-                    "is_new_wing": True,
-                    "proof_bundle": {
-                        "evidence_categories": ["class_anchor"],
-                        # Only one category — must be rejected; minimum is 2.
-                    },
-                    "room_intent_label": "auth_layer",
-                    "evidence_entity_stable_ids": ["src/auth.py::AuthService"],
+        request = MemoryRequest.model_validate(
+            {
+                "operation": "derive_system2_semantic_claims",
+                "scope": {
+                    "palace": "acme",
+                    "wing": "new_wing",
+                    "room": "services",
+                    "compartment": "auth",
                 },
-            },
-        })
+                "record": {
+                    "format": "structured",
+                    "derivation": {
+                        "is_new_wing": True,
+                        "proof_bundle": {
+                            "evidence_categories": ["class_anchor"],
+                            # Only one category — must be rejected; minimum is 2.
+                        },
+                        "room_intent_label": "auth_layer",
+                        "evidence_entity_stable_ids": ["src/auth.py::AuthService"],
+                    },
+                },
+            }
+        )
     except ValidationError as exc:
         pytest.fail(
             "derive_system2_semantic_claims is not yet a registered MemoryOperation — "
@@ -1914,24 +1927,28 @@ async def test_adr013_new_wing_with_two_evidence_categories_is_accepted() -> Non
     service = MemoryService(backend=backend, context=context)
 
     try:
-        request = MemoryRequest.model_validate({
-            "operation": "derive_system2_semantic_claims",
-            "scope": {
-                "palace": "acme", "wing": "new_wing",
-                "room": "services", "compartment": "auth",
-            },
-            "record": {
-                "format": "structured",
-                "derivation": {
-                    "is_new_wing": True,
-                    "proof_bundle": {
-                        "evidence_categories": ["class_anchor", "method_anchor"],
-                    },
-                    "room_intent_label": "auth_layer",
-                    "evidence_entity_stable_ids": ["src/auth.py::AuthService"],
+        request = MemoryRequest.model_validate(
+            {
+                "operation": "derive_system2_semantic_claims",
+                "scope": {
+                    "palace": "acme",
+                    "wing": "new_wing",
+                    "room": "services",
+                    "compartment": "auth",
                 },
-            },
-        })
+                "record": {
+                    "format": "structured",
+                    "derivation": {
+                        "is_new_wing": True,
+                        "proof_bundle": {
+                            "evidence_categories": ["class_anchor", "method_anchor"],
+                        },
+                        "room_intent_label": "auth_layer",
+                        "evidence_entity_stable_ids": ["src/auth.py::AuthService"],
+                    },
+                },
+            }
+        )
     except ValidationError as exc:
         pytest.fail(
             "derive_system2_semantic_claims is not yet a registered MemoryOperation — "
@@ -1984,18 +2001,25 @@ async def test_adr013_archive_blocked_without_two_successful_absent_verification
     service = MemoryService(backend=backend, context=context)
 
     try:
-        request = MemoryRequest.model_validate({
-            "operation": "reconcile_semantic_lifecycle",
-            "scope": {"palace": "acme", "wing": "code", "room": "services", "compartment": "auth"},
-            "record": {
-                "format": "structured",
-                "lifecycle_reconciliation": {
-                    "scope_key": "acme/code/services/auth",
-                    "force_archive_claim_ids": ["claim-1"],
-                    # No absent_verification_cycle_ids — archive gate must block this.
+        request = MemoryRequest.model_validate(
+            {
+                "operation": "reconcile_semantic_lifecycle",
+                "scope": {
+                    "palace": "acme",
+                    "wing": "code",
+                    "room": "services",
+                    "compartment": "auth",
                 },
-            },
-        })
+                "record": {
+                    "format": "structured",
+                    "lifecycle_reconciliation": {
+                        "scope_key": "acme/code/services/auth",
+                        "force_archive_claim_ids": ["claim-1"],
+                        # No absent_verification_cycle_ids — archive gate must block this.
+                    },
+                },
+            }
+        )
     except ValidationError as exc:
         pytest.fail(
             "reconcile_semantic_lifecycle is not yet a registered MemoryOperation — "
@@ -2064,35 +2088,39 @@ async def test_adr013_archive_allowed_with_two_successful_absent_verification_cy
     # Register two successful verification cycles (absence confirmed) first.
     cycle_ids: list[str] = []
     for _ in range(2):
-        cycle_req = MemoryRequest.model_validate({
-            "operation": "record_system1_verification_cycle",
-            "scope": scope,
-            "record": {
-                "format": "structured",
-                "verification_cycle": {
-                    "success": True,
-                    "covered_scope": scope,
+        cycle_req = MemoryRequest.model_validate(
+            {
+                "operation": "record_system1_verification_cycle",
+                "scope": scope,
+                "record": {
+                    "format": "structured",
+                    "verification_cycle": {
+                        "success": True,
+                        "covered_scope": scope,
+                    },
                 },
-            },
-        })
+            }
+        )
         cycle_result = await service.execute(cycle_req)
         assert cycle_result.manage is not None
         assert cycle_result.manage.cycle_id is not None
         cycle_ids.append(cycle_result.manage.cycle_id)
 
     try:
-        request = MemoryRequest.model_validate({
-            "operation": "reconcile_semantic_lifecycle",
-            "scope": scope,
-            "record": {
-                "format": "structured",
-                "lifecycle_reconciliation": {
-                    "scope_key": "acme/code/services/auth",
-                    "force_archive_claim_ids": ["claim-1"],
-                    "absent_verification_cycle_ids": cycle_ids,
+        request = MemoryRequest.model_validate(
+            {
+                "operation": "reconcile_semantic_lifecycle",
+                "scope": scope,
+                "record": {
+                    "format": "structured",
+                    "lifecycle_reconciliation": {
+                        "scope_key": "acme/code/services/auth",
+                        "force_archive_claim_ids": ["claim-1"],
+                        "absent_verification_cycle_ids": cycle_ids,
+                    },
                 },
-            },
-        })
+            }
+        )
     except ValidationError as exc:
         pytest.fail(
             "reconcile_semantic_lifecycle is not yet a registered MemoryOperation — "
@@ -2125,11 +2153,13 @@ def test_adr013_system1_operations_not_rejected_as_invalid_operation() -> None:
         "apply_semantic_override",
         "reconcile_semantic_lifecycle",
     ]:
-        req = MemoryRequest.model_validate({
-            "operation": op,
-            "scope": {"palace": "acme", "wing": "code", "room": "svc", "compartment": "auth"},
-            "record": {"format": "structured"},
-        })
+        req = MemoryRequest.model_validate(
+            {
+                "operation": op,
+                "scope": {"palace": "acme", "wing": "code", "room": "svc", "compartment": "auth"},
+                "record": {"format": "structured"},
+            }
+        )
         assert req.operation == op, f"Expected operation={op!r} to be accepted"
 
 
@@ -2360,14 +2390,16 @@ def test_override_service_rejects_missing_reason_at_operation_level() -> None:
     service = MemoryService(backend=backend, context=context)
 
     # Build a MemoryRequest with override field intentionally omitted
-    request = MemoryRequest.model_validate({
-        "operation": "apply_semantic_override",
-        "scope": {"palace": "acme", "wing": "code", "room": "svc", "compartment": "auth"},
-        "record": {
-            "format": "structured",
-            # override field intentionally omitted
-        },
-    })
+    request = MemoryRequest.model_validate(
+        {
+            "operation": "apply_semantic_override",
+            "scope": {"palace": "acme", "wing": "code", "room": "svc", "compartment": "auth"},
+            "record": {
+                "format": "structured",
+                # override field intentionally omitted
+            },
+        }
+    )
 
     with pytest.raises(MemoryContractError) as exc:
         asyncio.run(service.execute(request))
@@ -2870,8 +2902,9 @@ def test_derive_system1_topology_input_accepts_inline_candidates() -> None:
     assert len(inp.inline_candidates) == 2
 
 
-def test_derive_system1_topology_input_rejects_when_neither_evidence_ids_nor_inline_candidates(
-) -> None:
+def test_derive_system1_topology_input_rejects_when_neither_evidence_ids_nor_inline_candidates() -> (  # noqa: E501
+    None
+):  # noqa: E501
     """DeriveSystem1TopologyInput must reject input when both evidence sources are absent.
 
     ADR-013 Task 5b: at least one evidence source is required (fail closed).
@@ -2890,8 +2923,9 @@ def test_derive_system1_topology_input_rejects_when_neither_evidence_ids_nor_inl
     ), f"ValidationError must mention evidence requirement; got {errors!r}"
 
 
-def test_derive_system1_topology_input_evidence_ids_optional_when_inline_candidates_provided(
-) -> None:
+def test_derive_system1_topology_input_evidence_ids_optional_when_inline_candidates_provided() -> (
+    None
+):
     """DeriveSystem1TopologyInput must not require evidence_ids when inline_candidates are given.
 
     ADR-013 Task 5b: inline candidates serve as evidence source so evidence_ids becomes optional.

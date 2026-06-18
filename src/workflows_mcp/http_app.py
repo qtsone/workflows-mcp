@@ -61,9 +61,7 @@ def _install_exception_handlers(app: FastAPI) -> None:
     """
 
     @app.exception_handler(RequestValidationError)
-    async def _handle_validation_error(
-        _: Request, exc: RequestValidationError
-    ) -> JSONResponse:
+    async def _handle_validation_error(_: Request, exc: RequestValidationError) -> JSONResponse:
         return _error_response(
             status_code=422,
             code="VALIDATION_FAILED",
@@ -72,9 +70,7 @@ def _install_exception_handlers(app: FastAPI) -> None:
         )
 
     @app.exception_handler(HTTPException)
-    async def _handle_http_exception(
-        _: Request, exc: HTTPException
-    ) -> JSONResponse:
+    async def _handle_http_exception(_: Request, exc: HTTPException) -> JSONResponse:
         """Convert any HTTPException into the stable ErrorEnvelope shape.
 
         The ``detail`` field may already contain a structured dict (from the
@@ -326,9 +322,7 @@ class RateLimitMiddleware:
             if self._is_protected(path):
                 key = self._client_key(scope)
                 limiter = (
-                    self.login_limiter
-                    if path == "/api/admin/v1/auth/login"
-                    else self.mcp_limiter
+                    self.login_limiter if path == "/api/admin/v1/auth/login" else self.mcp_limiter
                 )
                 if not limiter.is_allowed(key):
                     response = _error_response(
@@ -424,7 +418,7 @@ def _make_auth_guard(token_store: TokenStore):  # type: ignore[no-untyped-def]
     def _auth_guard(authorization: str | None = Header(default=None)) -> None:
         token: str | None = None
         if authorization is not None and authorization.startswith("Bearer "):
-            token = authorization[len("Bearer "):]
+            token = authorization[len("Bearer ") :]
         if token is None or not token_store.validate(token):
             raise HTTPException(
                 status_code=401,
@@ -545,6 +539,7 @@ def create_app(
 # ---------------------------------------------------------------------------
 # MCP-over-HTTP entry point
 # ---------------------------------------------------------------------------
+
 
 def _mount_mcp_transport(
     app: FastAPI,

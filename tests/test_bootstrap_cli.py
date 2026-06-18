@@ -239,14 +239,8 @@ def test_verify_password_rejects_out_of_policy_iterations_without_pbkdf2(
 
     monkeypatch.setattr(hashlib, "pbkdf2_hmac", _pbkdf2_fail_if_called)
 
-    too_high_hash = (
-        f"{ALGORITHM}${MAX_ITERATIONS + 1}$"
-        "c2FsdA$ZXhwZWN0ZWQ"
-    )
-    too_low_hash = (
-        f"{ALGORITHM}${MIN_ITERATIONS - 1}$"
-        "c2FsdA$ZXhwZWN0ZWQ"
-    )
+    too_high_hash = f"{ALGORITHM}${MAX_ITERATIONS + 1}$c2FsdA$ZXhwZWN0ZWQ"
+    too_low_hash = f"{ALGORITHM}${MIN_ITERATIONS - 1}$c2FsdA$ZXhwZWN0ZWQ"
 
     assert verify_password("pw", too_high_hash) is False
     assert verify_password("pw", too_low_hash) is False
@@ -450,9 +444,7 @@ def test_cli_bootstrap_first_time_eof_on_host_port_prompts_uses_factory_defaults
     assert called["reconfigure"] is False
 
 
-def test_cli_bootstrap_skips_prompt_when_metadata_db_exists(
-    monkeypatch, tmp_path: Path
-) -> None:
+def test_cli_bootstrap_skips_prompt_when_metadata_db_exists(monkeypatch, tmp_path: Path) -> None:
     cli = importlib.import_module("workflows_mcp.cli")
 
     config_dir = tmp_path / "cfg"
@@ -725,9 +717,7 @@ def test_cli_bootstrap_reconfigure_password_prompt_eof_keeps_existing_password(
     assert verify_password("first-password", after_hash)
 
 
-def test_cli_bootstrap_rejects_empty_admin_password_flag(
-    tmp_path: Path, capsys
-) -> None:
+def test_cli_bootstrap_rejects_empty_admin_password_flag(tmp_path: Path, capsys) -> None:
     cli = importlib.import_module("workflows_mcp.cli")
 
     try:
@@ -751,9 +741,7 @@ def test_cli_bootstrap_rejects_empty_admin_password_flag(
     assert "must not be empty" in captured.err.lower()
 
 
-def test_cli_bootstrap_rejects_whitespace_only_admin_password_flag(
-    tmp_path: Path, capsys
-) -> None:
+def test_cli_bootstrap_rejects_whitespace_only_admin_password_flag(tmp_path: Path, capsys) -> None:
     cli = importlib.import_module("workflows_mcp.cli")
 
     try:
@@ -849,6 +837,7 @@ def test_cli_bootstrap_prompt_rejects_out_of_range_port_then_accepts_default_on_
     assert called["port"] == 8000
     assert called["admin_password"] == "prompted-secret"
 
+
 def test_cli_bootstrap_friendly_message_when_password_prompt_eof_non_interactive(
     monkeypatch, tmp_path: Path, capsys
 ) -> None:
@@ -873,9 +862,7 @@ def test_cli_bootstrap_friendly_message_when_password_prompt_eof_non_interactive
     assert "--admin-password" in captured.err
 
 
-def test_cli_bootstrap_uses_env_config_dir_when_flag_omitted(
-    monkeypatch, tmp_path: Path
-) -> None:
+def test_cli_bootstrap_uses_env_config_dir_when_flag_omitted(monkeypatch, tmp_path: Path) -> None:
     cli = importlib.import_module("workflows_mcp.cli")
 
     called: dict[str, object] = {}
@@ -920,9 +907,7 @@ def test_cli_bootstrap_uses_env_config_dir_when_flag_omitted(
     }
 
 
-def test_cli_bootstrap_explicit_config_dir_wins_over_env(
-    monkeypatch, tmp_path: Path
-) -> None:
+def test_cli_bootstrap_explicit_config_dir_wins_over_env(monkeypatch, tmp_path: Path) -> None:
     cli = importlib.import_module("workflows_mcp.cli")
 
     called: dict[str, object] = {}
@@ -1072,7 +1057,9 @@ def test_cli_build_ui_invokes_npm_build_in_web_dir(monkeypatch) -> None:
     assert kwargs["check"] is False
 
 
-def test_cli_build_ui_fails_when_web_package_json_missing(monkeypatch, tmp_path: Path, capsys) -> None:
+def test_cli_build_ui_fails_when_web_package_json_missing(
+    monkeypatch, tmp_path: Path, capsys
+) -> None:
     cli = importlib.import_module("workflows_mcp.cli")
 
     monkeypatch.setattr(cli, "_repo_root_dir", lambda: tmp_path)
@@ -1085,9 +1072,7 @@ def test_cli_build_ui_fails_when_web_package_json_missing(monkeypatch, tmp_path:
     assert "web/package.json was not found" in captured.err
 
 
-def test_cli_build_ui_fails_with_actionable_message_when_npm_missing(
-    monkeypatch, capsys
-) -> None:
+def test_cli_build_ui_fails_with_actionable_message_when_npm_missing(monkeypatch, capsys) -> None:
     cli = importlib.import_module("workflows_mcp.cli")
 
     web_dir = cli._repo_root_dir() / "web"

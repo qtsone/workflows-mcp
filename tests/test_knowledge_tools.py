@@ -1052,9 +1052,7 @@ class TestScanPathSafety:
         assert exc_info.value.code == "MEM_SCAN_PATH_OUT_OF_ROOT"
         assert "scan.root" in exc_info.value.message
 
-    def test_in_root_accepted(
-        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
-    ) -> None:
+    def test_in_root_accepted(self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
         """A scan.root inside WORKFLOWS_SCAN_ROOT must not raise."""
         monkeypatch.setenv("WORKFLOWS_SCAN_ROOT", str(tmp_path))
         _validate_scan_path_within_workspace(tmp_path / "src", "scan.root")
@@ -2099,8 +2097,7 @@ class TestMemorySchemaOperation:
         )
         # At least one example must demonstrate the text-search pattern
         text_example_present = any(
-            isinstance(ex, dict) and ex.get("query", {}).get("text") is not None
-            for ex in examples
+            isinstance(ex, dict) and ex.get("query", {}).get("text") is not None for ex in examples
         )
         assert text_example_present, (
             "schema.query.examples must include at least one example with "
@@ -2317,8 +2314,7 @@ class TestProjectOnboardScanThenSync:
         final_payload = json.loads(final_sync.content[0].text)
         assert final_payload.get("status") == "completed"
         assert execute_log == [], (
-            "No operations must run on completed checkpoint; "
-            f"got: {execute_log}"
+            f"No operations must run on completed checkpoint; got: {execute_log}"
         )
 
 
@@ -2493,9 +2489,7 @@ class TestProjectSyncFastPathHardening:
         )
 
     @pytest.mark.asyncio
-    async def test_float_integral_next_index_takes_fast_path(
-        self, mock_ctx: MagicMock
-    ) -> None:
+    async def test_float_integral_next_index_takes_fast_path(self, mock_ctx: MagicMock) -> None:
         """next_index=1.0 (integral float) must be accepted and take the fast-path."""
         checkpoint = {**self._COMPLETED_CHECKPOINT, "next_index": 1.0}
         backend_mock = _make_backend_mock()
@@ -2683,18 +2677,14 @@ class TestProjectFlowCompactResponse:
         )
 
     @pytest.mark.asyncio
-    async def test_onboard_completed_default_omits_results_list(
-        self, mock_ctx: MagicMock
-    ) -> None:
+    async def test_onboard_completed_default_omits_results_list(self, mock_ctx: MagicMock) -> None:
         """Default response: completed status must not include a `results` list."""
         backend_mock = _make_backend_mock()
         with (
             patch("workflows_mcp.tools_memory.PostgresBackend", return_value=backend_mock),
             patch("workflows_mcp.tools_memory.MemoryService") as mock_svc,
         ):
-            mock_svc.return_value.execute = AsyncMock(
-                return_value=self._make_ingest_result()
-            )
+            mock_svc.return_value.execute = AsyncMock(return_value=self._make_ingest_result())
             result = await onboard(
                 scope=self._BASE_SCOPE,
                 ingest={"content": "hello"},
@@ -2710,18 +2700,14 @@ class TestProjectFlowCompactResponse:
         assert "completed_operations" in payload
 
     @pytest.mark.asyncio
-    async def test_onboard_completed_debug_includes_results_list(
-        self, mock_ctx: MagicMock
-    ) -> None:
+    async def test_onboard_completed_debug_includes_results_list(self, mock_ctx: MagicMock) -> None:
         """debug=True: completed status must include full `results` list."""
         backend_mock = _make_backend_mock()
         with (
             patch("workflows_mcp.tools_memory.PostgresBackend", return_value=backend_mock),
             patch("workflows_mcp.tools_memory.MemoryService") as mock_svc,
         ):
-            mock_svc.return_value.execute = AsyncMock(
-                return_value=self._make_ingest_result()
-            )
+            mock_svc.return_value.execute = AsyncMock(return_value=self._make_ingest_result())
             result = await onboard(
                 scope=self._BASE_SCOPE,
                 ingest={"content": "hello"},
@@ -2738,18 +2724,14 @@ class TestProjectFlowCompactResponse:
         assert isinstance(payload["results"], list)
 
     @pytest.mark.asyncio
-    async def test_sync_completed_default_omits_results_list(
-        self, mock_ctx: MagicMock
-    ) -> None:
+    async def test_sync_completed_default_omits_results_list(self, mock_ctx: MagicMock) -> None:
         """Default response: project_sync completed must not include a `results` list."""
         backend_mock = _make_backend_mock()
         with (
             patch("workflows_mcp.tools_memory.PostgresBackend", return_value=backend_mock),
             patch("workflows_mcp.tools_memory.MemoryService") as mock_svc,
         ):
-            mock_svc.return_value.execute = AsyncMock(
-                return_value=self._make_ingest_result()
-            )
+            mock_svc.return_value.execute = AsyncMock(return_value=self._make_ingest_result())
             result = await sync(
                 scope=self._BASE_SCOPE,
                 ingest={"content": "hello"},
@@ -2764,18 +2746,14 @@ class TestProjectFlowCompactResponse:
         )
 
     @pytest.mark.asyncio
-    async def test_sync_completed_debug_includes_results_list(
-        self, mock_ctx: MagicMock
-    ) -> None:
+    async def test_sync_completed_debug_includes_results_list(self, mock_ctx: MagicMock) -> None:
         """debug=True: project_sync completed must include full `results` list."""
         backend_mock = _make_backend_mock()
         with (
             patch("workflows_mcp.tools_memory.PostgresBackend", return_value=backend_mock),
             patch("workflows_mcp.tools_memory.MemoryService") as mock_svc,
         ):
-            mock_svc.return_value.execute = AsyncMock(
-                return_value=self._make_ingest_result()
-            )
+            mock_svc.return_value.execute = AsyncMock(return_value=self._make_ingest_result())
             result = await sync(
                 scope=self._BASE_SCOPE,
                 ingest={"content": "hello"},
@@ -2791,18 +2769,14 @@ class TestProjectFlowCompactResponse:
         )
 
     @pytest.mark.asyncio
-    async def test_checkpoint_plan_payloads_preserved_for_resume(
-        self, mock_ctx: MagicMock
-    ) -> None:
+    async def test_checkpoint_plan_payloads_preserved_for_resume(self, mock_ctx: MagicMock) -> None:
         """Compact checkpoint must keep plan[].payload intact so resume works."""
         backend_mock = _make_backend_mock()
         with (
             patch("workflows_mcp.tools_memory.PostgresBackend", return_value=backend_mock),
             patch("workflows_mcp.tools_memory.MemoryService") as mock_svc,
         ):
-            mock_svc.return_value.execute = AsyncMock(
-                return_value=self._make_ingest_result()
-            )
+            mock_svc.return_value.execute = AsyncMock(return_value=self._make_ingest_result())
             result = await onboard(
                 scope=self._BASE_SCOPE,
                 ingest={"content": "hello"},
@@ -2821,9 +2795,7 @@ class TestProjectFlowCompactResponse:
             )
 
     @pytest.mark.asyncio
-    async def test_compact_checkpoint_is_resumable(
-        self, mock_ctx: MagicMock
-    ) -> None:
+    async def test_compact_checkpoint_is_resumable(self, mock_ctx: MagicMock) -> None:
         """The compact checkpoint returned by default must be accepted for resume."""
         backend_mock = _make_backend_mock()
         execute_results = [self._make_ingest_result(), self._make_archive_result()]
@@ -2859,9 +2831,7 @@ class TestProjectFlowCompactResponse:
                 ctx=mock_ctx,
             )
             p2 = json.loads(r2.content[0].text)
-            assert p2["status"] == "completed", (
-                f"Compact checkpoint must be resumable; got: {p2}"
-            )
+            assert p2["status"] == "completed", f"Compact checkpoint must be resumable; got: {p2}"
             assert "archive" in p2["completed_operations"]
 
     @pytest.mark.asyncio
@@ -2881,9 +2851,7 @@ class TestProjectFlowCompactResponse:
             patch("workflows_mcp.tools_memory.PostgresBackend", return_value=backend_mock),
             patch("workflows_mcp.tools_memory.MemoryService") as mock_svc,
         ):
-            mock_svc.return_value.execute = AsyncMock(
-                return_value=self._make_ingest_result()
-            )
+            mock_svc.return_value.execute = AsyncMock(return_value=self._make_ingest_result())
             result = await onboard(
                 scope=self._BASE_SCOPE,
                 scan={"patterns": ["*.py"], "root": str(workspace_tmp)},
@@ -2913,9 +2881,7 @@ class TestProjectFlowCompactResponse:
             patch("workflows_mcp.tools_memory.PostgresBackend", return_value=backend_mock),
             patch("workflows_mcp.tools_memory.MemoryService") as mock_svc,
         ):
-            mock_svc.return_value.execute = AsyncMock(
-                return_value=self._make_ingest_result()
-            )
+            mock_svc.return_value.execute = AsyncMock(return_value=self._make_ingest_result())
             result = await onboard(
                 scope=self._BASE_SCOPE,
                 scan={"patterns": ["*.py"], "root": str(workspace_tmp)},
@@ -2965,9 +2931,7 @@ class TestProjectFlowCompactResponse:
         )
 
     @pytest.mark.asyncio
-    async def test_sync_fast_path_debug_includes_results_list(
-        self, mock_ctx: MagicMock
-    ) -> None:
+    async def test_sync_fast_path_debug_includes_results_list(self, mock_ctx: MagicMock) -> None:
         """debug=True: project_sync fast-path must include results list."""
         completed_checkpoint: dict[str, Any] = {
             "version": "oss-r3",
@@ -3077,9 +3041,7 @@ class TestCheckpointPlanPayloadCompaction:
         assert pending_step.get("payload") is not None
 
     @pytest.mark.asyncio
-    async def test_debug_true_includes_full_plan_payload_content(
-        self, mock_ctx: MagicMock
-    ) -> None:
+    async def test_debug_true_includes_full_plan_payload_content(self, mock_ctx: MagicMock) -> None:
         """debug=True: plan[i].payload must be present and intact for all steps."""
         backend_mock = _make_backend_mock()
         large_memories = [{"content": self._LARGE_CONTENT}]

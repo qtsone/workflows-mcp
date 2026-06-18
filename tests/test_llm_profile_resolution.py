@@ -159,9 +159,7 @@ class TestImageProfileResolution:
         loader = LLMConfigLoader()
         loader._config = LLMConfig(
             providers={"openai-cloud": ProviderConfig(type="openai")},
-            profiles={
-                "image": ProfileConfig(provider="openai-cloud", model="gpt-image-1")
-            },
+            profiles={"image": ProfileConfig(provider="openai-cloud", model="gpt-image-1")},
             default_profile="image",
         )
         inputs = ImageGenInput(profile="image", prompt="paint a red square")
@@ -182,9 +180,7 @@ class TestImageProfileResolution:
         loader = LLMConfigLoader()
         loader._config = LLMConfig(
             providers={"openai-cloud": ProviderConfig(type="openai")},
-            profiles={
-                "image": ProfileConfig(provider="openai-cloud", model="gpt-image-1")
-            },
+            profiles={"image": ProfileConfig(provider="openai-cloud", model="gpt-image-1")},
             default_profile="image",
         )
         inputs = ImageGenInput(

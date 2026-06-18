@@ -162,9 +162,7 @@ class TestModuleQname:
         assert len(module_entities) == 1
         assert module_entities[0]["qualified_name"] == "greeter"
 
-    def test_rust_module_qname_nested_path(
-        self, tmp_path: Path, mock_execution: MagicMock
-    ) -> None:
+    def test_rust_module_qname_nested_path(self, tmp_path: Path, mock_execution: MagicMock) -> None:
         """src/utils/parser.rs -> module qname 'utils.parser'."""
         f = tmp_path / "src" / "utils" / "parser.rs"
         f.parent.mkdir(parents=True, exist_ok=True)
@@ -174,9 +172,7 @@ class TestModuleQname:
         assert len(module_entities) == 1
         assert module_entities[0]["qualified_name"] == "utils.parser"
 
-    def test_rust_language_detected(
-        self, full_rust_file: Path, mock_execution: MagicMock
-    ) -> None:
+    def test_rust_language_detected(self, full_rust_file: Path, mock_execution: MagicMock) -> None:
         result = _run(full_rust_file, "src/greeter.rs", mock_execution)
         assert result.language == "rust"
 
@@ -195,9 +191,7 @@ class TestModuleQname:
 
 
 class TestFileEntity:
-    def test_file_entity_exists(
-        self, full_rust_file: Path, mock_execution: MagicMock
-    ) -> None:
+    def test_file_entity_exists(self, full_rust_file: Path, mock_execution: MagicMock) -> None:
         result = _run(full_rust_file, "src/greeter.rs", mock_execution)
         file_entities = [e for e in result.entities if e["entity_type"] == "File"]
         assert len(file_entities) == 1
@@ -264,15 +258,9 @@ class TestStructEntities:
             assert "start_line" in entity["metadata"]
             assert "start_column" in entity["metadata"]
 
-    def test_struct_name_simple(
-        self, full_rust_file: Path, mock_execution: MagicMock
-    ) -> None:
+    def test_struct_name_simple(self, full_rust_file: Path, mock_execution: MagicMock) -> None:
         result = _run(full_rust_file, "src/greeter.rs", mock_execution)
-        greeter = next(
-            e
-            for e in result.entities
-            if e.get("qualified_name") == "greeter.Greeter"
-        )
+        greeter = next(e for e in result.entities if e.get("qualified_name") == "greeter.Greeter")
         assert greeter["name"] == "Greeter"
 
 
@@ -309,9 +297,7 @@ class TestTraitEntities:
     ) -> None:
         result = _run(full_rust_file, "src/greeter.rs", mock_execution)
         class_entities = [e for e in result.entities if e["entity_type"] == "Class"]
-        greeter = next(
-            e for e in class_entities if e["qualified_name"] == "greeter.Greeter"
-        )
+        greeter = next(e for e in class_entities if e["qualified_name"] == "greeter.Greeter")
         assert greeter["metadata"].get("is_trait", False) is False
 
 
@@ -371,22 +357,14 @@ class TestMethodEntities:
     ) -> None:
         result = _run(full_rust_file, "src/greeter.rs", mock_execution)
         new_method = next(
-            e
-            for e in result.entities
-            if e.get("qualified_name") == "greeter.Greeter.new"
+            e for e in result.entities if e.get("qualified_name") == "greeter.Greeter.new"
         )
-        assert (
-            new_method["metadata"]["parent_class_id"] == "__class_qname__:greeter.Greeter"
-        )
+        assert new_method["metadata"]["parent_class_id"] == "__class_qname__:greeter.Greeter"
 
-    def test_method_name_simple(
-        self, full_rust_file: Path, mock_execution: MagicMock
-    ) -> None:
+    def test_method_name_simple(self, full_rust_file: Path, mock_execution: MagicMock) -> None:
         result = _run(full_rust_file, "src/greeter.rs", mock_execution)
         greet = next(
-            e
-            for e in result.entities
-            if e.get("qualified_name") == "greeter.Greeter.greet"
+            e for e in result.entities if e.get("qualified_name") == "greeter.Greeter.greet"
         )
         assert greet["name"] == "greet"
 
@@ -470,9 +448,7 @@ class TestEntityOrdering:
 
 
 class TestContainsRelations:
-    def test_contains_file_to_module(
-        self, full_rust_file: Path, mock_execution: MagicMock
-    ) -> None:
+    def test_contains_file_to_module(self, full_rust_file: Path, mock_execution: MagicMock) -> None:
         result = _run(full_rust_file, "src/greeter.rs", mock_execution)
         contains = [r for r in result.relations if r["relation_type"] == "CONTAINS"]
         file_entity = next(e for e in result.entities if e["entity_type"] == "File")
@@ -507,8 +483,7 @@ class TestContainsRelations:
         module_to_func = [
             r
             for r in contains
-            if r["source_qname"] == "greeter"
-            and r["target_entity_type"] == "Function"
+            if r["source_qname"] == "greeter" and r["target_entity_type"] == "Function"
         ]
         qnames = {r["target_qname"] for r in module_to_func}
         assert "greeter.top_level" in qnames
@@ -522,8 +497,7 @@ class TestContainsRelations:
         class_to_method = [
             r
             for r in contains
-            if r["source_qname"] == "greeter.Greeter"
-            and r["target_entity_type"] == "Method"
+            if r["source_qname"] == "greeter.Greeter" and r["target_entity_type"] == "Method"
         ]
         qnames = {r["target_qname"] for r in class_to_method}
         assert "greeter.Greeter.new" in qnames
@@ -577,18 +551,14 @@ class TestImports:
             assert rel["confidence"] == 0.5
             assert rel["metadata"].get("resolution") == "unresolved"
 
-    def test_import_source_is_module(
-        self, full_rust_file: Path, mock_execution: MagicMock
-    ) -> None:
+    def test_import_source_is_module(self, full_rust_file: Path, mock_execution: MagicMock) -> None:
         result = _run(full_rust_file, "src/greeter.rs", mock_execution)
         imports = [r for r in result.relations if r["relation_type"] == "IMPORTS"]
         for rel in imports:
             assert rel["source_entity_type"] == "Module"
             assert rel["target_entity_type"] == "Module"
 
-    def test_import_deduplication(
-        self, tmp_path: Path, mock_execution: MagicMock
-    ) -> None:
+    def test_import_deduplication(self, tmp_path: Path, mock_execution: MagicMock) -> None:
         """Duplicate use paths emitted only once."""
         f = tmp_path / "dup.rs"
         f.write_text(MULTI_USE_RUST_SRC, encoding="utf-8")
@@ -631,9 +601,7 @@ class TestInheritsFrom:
             for r in inherits
         )
 
-    def test_plain_impl_no_inherits_from(
-        self, tmp_path: Path, mock_execution: MagicMock
-    ) -> None:
+    def test_plain_impl_no_inherits_from(self, tmp_path: Path, mock_execution: MagicMock) -> None:
         """impl Foo { ... } (no trait) -> no INHERITS_FROM."""
         f = tmp_path / "foo.rs"
         f.write_text(PLAIN_IMPL_RUST_SRC, encoding="utf-8")
@@ -641,9 +609,7 @@ class TestInheritsFrom:
         inherits = [r for r in result.relations if r["relation_type"] == "INHERITS_FROM"]
         assert len(inherits) == 0
 
-    def test_trait_impl_confidence(
-        self, tmp_path: Path, mock_execution: MagicMock
-    ) -> None:
+    def test_trait_impl_confidence(self, tmp_path: Path, mock_execution: MagicMock) -> None:
         """INHERITS_FROM from trait impl has confidence=0.8 and rust_trait=True."""
         f = tmp_path / "src" / "widget.rs"
         f.parent.mkdir(parents=True, exist_ok=True)
@@ -664,9 +630,7 @@ class TestInheritsFrom:
         result = _run(f, "src/widget.rs", mock_execution)
         inherits = [r for r in result.relations if r["relation_type"] == "INHERITS_FROM"]
         # Display is defined in same module
-        widget_inherits = [
-            r for r in inherits if r["source_qname"] == "widget.Widget"
-        ]
+        widget_inherits = [r for r in inherits if r["source_qname"] == "widget.Widget"]
         assert len(widget_inherits) >= 1
         assert widget_inherits[0]["metadata"].get("resolution") == "resolved"
 
@@ -724,9 +688,7 @@ impl std::fmt::Display for Foo {
         result = _run(f, "foo.rs", mock_execution)
         method_entities = [e for e in result.entities if e["entity_type"] == "Method"]
         qnames = {e["qualified_name"] for e in method_entities}
-        assert "foo.Foo.fmt" in qnames, (
-            f"Expected 'foo.Foo.fmt' in method qnames, got: {qnames}"
-        )
+        assert "foo.Foo.fmt" in qnames, f"Expected 'foo.Foo.fmt' in method qnames, got: {qnames}"
         fmt_method = next(e for e in method_entities if e["qualified_name"] == "foo.Foo.fmt")
         assert fmt_method["metadata"]["parent_class_id"] == "__class_qname__:foo.Foo"
 
@@ -737,18 +699,14 @@ impl std::fmt::Display for Foo {
 
 
 class TestCalls:
-    def test_same_module_call_resolved(
-        self, tmp_path: Path, mock_execution: MagicMock
-    ) -> None:
+    def test_same_module_call_resolved(self, tmp_path: Path, mock_execution: MagicMock) -> None:
         """foo() calls helper() -> resolved to module.helper, confidence=1.0."""
         f = tmp_path / "mymod.rs"
         f.write_text(CALLS_RUST_SRC, encoding="utf-8")
         result = _run(f, "mymod.rs", mock_execution)
         calls = [r for r in result.relations if r["relation_type"] == "CALLS"]
         foo_calls = [r for r in calls if r["source_qname"] == "mymod.foo"]
-        helper_call = next(
-            (r for r in foo_calls if r["target_qname"] == "mymod.helper"), None
-        )
+        helper_call = next((r for r in foo_calls if r["target_qname"] == "mymod.helper"), None)
         assert helper_call is not None
         assert helper_call["confidence"] == 1.0
 
@@ -761,16 +719,12 @@ class TestCalls:
         result = _run(f, "mymod.rs", mock_execution)
         calls = [r for r in result.relations if r["relation_type"] == "CALLS"]
         foo_calls = [r for r in calls if r["source_qname"] == "mymod.foo"]
-        unresolved = [
-            r for r in foo_calls if r["metadata"].get("resolution") == "unresolved"
-        ]
+        unresolved = [r for r in foo_calls if r["metadata"].get("resolution") == "unresolved"]
         assert len(unresolved) >= 1
         for c in unresolved:
             assert c["confidence"] == 0.5
 
-    def test_call_has_site_metadata(
-        self, tmp_path: Path, mock_execution: MagicMock
-    ) -> None:
+    def test_call_has_site_metadata(self, tmp_path: Path, mock_execution: MagicMock) -> None:
         """CALLS relations include call_line and call_column."""
         f = tmp_path / "mymod.rs"
         f.write_text(CALLS_RUST_SRC, encoding="utf-8")
@@ -780,9 +734,7 @@ class TestCalls:
             assert "call_line" in rel["metadata"]
             assert "call_column" in rel["metadata"]
 
-    def test_call_has_entity_type_fields(
-        self, tmp_path: Path, mock_execution: MagicMock
-    ) -> None:
+    def test_call_has_entity_type_fields(self, tmp_path: Path, mock_execution: MagicMock) -> None:
         f = tmp_path / "mymod.rs"
         f.write_text(CALLS_RUST_SRC, encoding="utf-8")
         result = _run(f, "mymod.rs", mock_execution)
@@ -823,9 +775,7 @@ impl std::fmt::Display for Foo {
         result = _run(file, "foo.rs", mock_execution)
         calls = [r for r in result.relations if r["relation_type"] == "CALLS"]
         fmt_calls = [r for r in calls if r["source_qname"] == "foo.Foo.fmt"]
-        helper_call = next(
-            (r for r in fmt_calls if r["target_qname"] == "foo.helper"), None
-        )
+        helper_call = next((r for r in fmt_calls if r["target_qname"] == "foo.helper"), None)
         assert helper_call is not None, (
             f"Expected CALLS from foo.Foo.fmt to foo.helper, got fmt_calls={fmt_calls}"
         )
@@ -841,9 +791,7 @@ impl std::fmt::Display for Foo {
 
 class TestNonRustUnchanged:
     @pytest.mark.asyncio
-    async def test_python_file_unaffected(
-        self, tmp_path: Path, mock_execution: MagicMock
-    ) -> None:
+    async def test_python_file_unaffected(self, tmp_path: Path, mock_execution: MagicMock) -> None:
         """Python extractor continues to work after Rust extractor added."""
         from workflows_mcp.engine.executors_treesitter import (
             TreeSitterExecutor,
@@ -853,18 +801,14 @@ class TestNonRustUnchanged:
         f = tmp_path / "mymod.py"
         f.write_text("def foo(): pass\n", encoding="utf-8")
         executor = TreeSitterExecutor()
-        inputs = TreeSitterInput(
-            path=str(f), repo_relative_path="mymod.py"
-        )
+        inputs = TreeSitterInput(path=str(f), repo_relative_path="mymod.py")
         result = await executor.execute(inputs, mock_execution)
         assert result.language == "python"
         func_entities = [e for e in result.entities if e["entity_type"] == "Function"]
         assert len(func_entities) == 1
 
     @pytest.mark.asyncio
-    async def test_go_file_unaffected(
-        self, tmp_path: Path, mock_execution: MagicMock
-    ) -> None:
+    async def test_go_file_unaffected(self, tmp_path: Path, mock_execution: MagicMock) -> None:
         """Go extractor continues to work after Rust extractor added."""
         from workflows_mcp.engine.executors_treesitter import (
             TreeSitterExecutor,
@@ -874,9 +818,7 @@ class TestNonRustUnchanged:
         f = tmp_path / "main.go"
         f.write_text("package main\nfunc Add(a, b int) int { return a + b }\n", encoding="utf-8")
         executor = TreeSitterExecutor()
-        inputs = TreeSitterInput(
-            path=str(f), repo_relative_path="main.go"
-        )
+        inputs = TreeSitterInput(path=str(f), repo_relative_path="main.go")
         result = await executor.execute(inputs, mock_execution)
         assert result.language == "go"
 
@@ -887,9 +829,7 @@ class TestNonRustUnchanged:
 
 
 class TestDeterminism:
-    def test_output_is_deterministic(
-        self, full_rust_file: Path, mock_execution: MagicMock
-    ) -> None:
+    def test_output_is_deterministic(self, full_rust_file: Path, mock_execution: MagicMock) -> None:
         result1 = _run(full_rust_file, "src/greeter.rs", mock_execution)
         result2 = _run(full_rust_file, "src/greeter.rs", mock_execution)
 
@@ -898,11 +838,9 @@ class TestDeterminism:
         assert qnames1 == qnames2
 
         rel_keys1 = sorted(
-            (r["relation_type"], r["source_qname"], r["target_qname"])
-            for r in result1.relations
+            (r["relation_type"], r["source_qname"], r["target_qname"]) for r in result1.relations
         )
         rel_keys2 = sorted(
-            (r["relation_type"], r["source_qname"], r["target_qname"])
-            for r in result2.relations
+            (r["relation_type"], r["source_qname"], r["target_qname"]) for r in result2.relations
         )
         assert rel_keys1 == rel_keys2
