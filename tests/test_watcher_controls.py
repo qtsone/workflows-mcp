@@ -16,7 +16,7 @@ import workflows_mcp.http.routes.admin_v1.projects as projects_routes
 import workflows_mcp.http.routes.admin_v1.sync as sync_routes
 import workflows_mcp.server as server_module
 from workflows_mcp.bootstrap import bootstrap_if_needed
-from workflows_mcp.engine.memory_service import MemoryRequest
+from workflows_mcp.engine.memory_schema import MemoryRequest
 from workflows_mcp.metadata.db import connect_metadata_db
 from workflows_mcp.metadata.migrations import migrate_metadata_db
 from workflows_mcp.metadata.repos.projects_repo import ProjectRecord
@@ -1229,7 +1229,7 @@ async def test_watcher_sync_writes_structural_evidence_before_verification_cycle
         ScannedFileEntry,
         run_programmatic_onboard_with_cycle_recording,
     )
-    from workflows_mcp.engine.memory_service import ManageMemoryResult, MemoryResult
+    from workflows_mcp.engine.memory_schema import ManageMemoryResult, MemoryResult
 
     operations_called: list[str] = []
 
@@ -1308,7 +1308,7 @@ async def test_watcher_sync_structural_evidence_write_failure_blocks_cycle_recor
         ScannedFileEntry,
         run_programmatic_onboard_with_cycle_recording,
     )
-    from workflows_mcp.engine.memory_service import ManageMemoryResult, MemoryResult
+    from workflows_mcp.engine.memory_schema import ManageMemoryResult, MemoryResult
 
     cycle_recording_attempted = False
 
@@ -1381,7 +1381,7 @@ async def test_watcher_sync_derives_structural_module_evidence_from_file_paths()
         ScannedFileEntry,
         run_programmatic_onboard_with_cycle_recording,
     )
-    from workflows_mcp.engine.memory_service import ManageMemoryResult, MemoryResult
+    from workflows_mcp.engine.memory_schema import ManageMemoryResult, MemoryResult
 
     captured_evidence: list[dict[str, Any]] = []
 

@@ -37,6 +37,11 @@ from .engine.memory_onboard_sync_orchestrator import (
     run_programmatic_onboard,
     run_programmatic_onboard_with_cycle_recording,
 )
+from .engine.memory_schema import (
+    MemoryRequest,
+    MemoryResponseInput,
+    MemoryResult,
+)
 from .engine.memory_scope_resolver import (
     SyncContextCandidate,
     build_ambiguous_context_envelope,
@@ -46,9 +51,6 @@ from .engine.memory_scope_resolver import (
 )
 from .engine.memory_service import (
     MemoryContractError,
-    MemoryRequest,
-    MemoryResponseInput,
-    MemoryResult,
     MemoryService,
 )
 from .engine.project_flow_service import (

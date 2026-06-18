@@ -12,11 +12,13 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 from pydantic import ValidationError
 
-from workflows_mcp.engine.memory_service import (
+from workflows_mcp.engine.memory_schema import (
     ManageMemoryRequest,
     ManageMemoryResult,
-    MemoryContractError,
     MemoryRequest,
+)
+from workflows_mcp.engine.memory_service import (
+    MemoryContractError,
     MemoryService,
 )
 

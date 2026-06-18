@@ -182,7 +182,7 @@ async def test_clean_palace_starts_empty(
 
 def test_memory_item_input_schema_exists() -> None:
     """MemoryItemInput must accept item identity + file metadata fields."""
-    from workflows_mcp.engine.memory_service import MemoryItemInput
+    from workflows_mcp.engine.memory_schema import MemoryItemInput
 
     item = MemoryItemInput.model_validate(
         {
@@ -199,7 +199,7 @@ def test_memory_item_input_schema_exists() -> None:
 
 
 def test_memory_record_input_accepts_item_and_embeddings() -> None:
-    from workflows_mcp.engine.memory_service import MemoryRecordInput
+    from workflows_mcp.engine.memory_schema import MemoryRecordInput
 
     rec = MemoryRecordInput.model_validate(
         {
@@ -237,7 +237,7 @@ def test_memory_record_input_accepts_item_and_embeddings() -> None:
 )
 def test_memory_request_accepts_new_operations(op: str) -> None:
     """MemoryRequest must accept all eight new operation names without raising."""
-    from workflows_mcp.engine.memory_service import MemoryRequest
+    from workflows_mcp.engine.memory_schema import MemoryRequest
 
     payload: dict[str, Any] = {
         "operation": op,
@@ -256,7 +256,7 @@ def test_memory_request_accepts_new_operations(op: str) -> None:
 async def test_ensure_source_upsert_returns_id(
     memory_service, knowledge_backend, clean_palace
 ) -> None:
-    from workflows_mcp.engine.memory_service import MemoryRequest
+    from workflows_mcp.engine.memory_schema import MemoryRequest
 
     req = MemoryRequest.model_validate(
         {
@@ -291,7 +291,7 @@ async def test_ensure_source_upsert_returns_id(
 async def test_ensure_item_upsert_updates_metadata(
     memory_service, knowledge_backend, clean_palace
 ) -> None:
-    from workflows_mcp.engine.memory_service import MemoryRequest
+    from workflows_mcp.engine.memory_schema import MemoryRequest
 
     base = {
         "operation": "ensure_item",
@@ -363,7 +363,7 @@ async def test_ensure_item_trigger_rejects_cross_palace_source(
 
 async def test_ensure_item_rejects_missing_not_null_fields(memory_service, clean_palace) -> None:
     """ensure_item must return MEM_FIELD_REQUIRED when any NOT NULL item field is absent."""
-    from workflows_mcp.engine.memory_service import MemoryRequest
+    from workflows_mcp.engine.memory_schema import MemoryRequest
 
     result = await memory_service.execute(
         MemoryRequest.model_validate(
@@ -392,7 +392,7 @@ async def test_ensure_item_rejects_missing_not_null_fields(memory_service, clean
 async def test_store_entities_bulk_upsert_idempotent(
     memory_service, knowledge_backend, clean_palace
 ) -> None:
-    from workflows_mcp.engine.memory_service import MemoryRequest
+    from workflows_mcp.engine.memory_schema import MemoryRequest
 
     await memory_service.execute(
         MemoryRequest.model_validate(
@@ -466,7 +466,7 @@ async def test_store_entities_bulk_upsert_idempotent(
 
 
 async def test_store_relations_bulk_insert(memory_service, knowledge_backend, clean_palace) -> None:
-    from workflows_mcp.engine.memory_service import MemoryRequest
+    from workflows_mcp.engine.memory_schema import MemoryRequest
 
     seed_payload = {
         "operation": "store_entities",
@@ -508,7 +508,7 @@ async def test_store_relations_bulk_insert(memory_service, knowledge_backend, cl
 async def test_store_relations_rejects_cross_palace_endpoint(
     memory_service, knowledge_backend, clean_palace
 ) -> None:
-    from workflows_mcp.engine.memory_service import MemoryRequest
+    from workflows_mcp.engine.memory_schema import MemoryRequest
 
     own = await memory_service.execute(
         MemoryRequest.model_validate(
@@ -564,7 +564,7 @@ async def test_store_relations_rejects_cross_palace_endpoint(
 async def test_store_memories_anchored_to_entity(
     memory_service, knowledge_backend, clean_palace, monkeypatch
 ) -> None:
-    from workflows_mcp.engine.memory_service import MemoryRequest
+    from workflows_mcp.engine.memory_schema import MemoryRequest
 
     seeded = await memory_service.execute(
         MemoryRequest.model_validate(
@@ -631,7 +631,7 @@ async def test_store_memories_anchored_to_entity(
 
 
 async def test_store_memories_rejects_code_wing(memory_service, clean_palace, monkeypatch) -> None:
-    from workflows_mcp.engine.memory_service import MemoryRequest
+    from workflows_mcp.engine.memory_schema import MemoryRequest
 
     async def fake_compute_embedding(  # noqa: E501
         *args: Any, **kwargs: Any
@@ -666,7 +666,7 @@ async def test_store_memories_rejects_code_wing(memory_service, clean_palace, mo
 async def test_store_memories_rejects_cross_palace_anchor(
     memory_service, knowledge_backend, clean_palace, monkeypatch
 ) -> None:
-    from workflows_mcp.engine.memory_service import MemoryRequest
+    from workflows_mcp.engine.memory_schema import MemoryRequest
 
     async def fake_compute_embedding(  # noqa: E501
         *args: Any, **kwargs: Any
@@ -719,7 +719,7 @@ async def test_store_memories_rejects_cross_palace_anchor(
 async def test_store_entity_embeddings_upsert(
     memory_service, knowledge_backend, clean_palace
 ) -> None:
-    from workflows_mcp.engine.memory_service import MemoryRequest
+    from workflows_mcp.engine.memory_schema import MemoryRequest
 
     seeded = await memory_service.execute(
         MemoryRequest.model_validate(
@@ -776,7 +776,7 @@ async def test_store_entity_embeddings_upsert(
 async def test_store_entity_embeddings_rejects_dimension_mismatch(
     memory_service, clean_palace
 ) -> None:
-    from workflows_mcp.engine.memory_service import MemoryRequest
+    from workflows_mcp.engine.memory_schema import MemoryRequest
 
     seeded = await memory_service.execute(
         MemoryRequest.model_validate(
@@ -819,7 +819,7 @@ async def test_store_entity_embeddings_rejects_dimension_mismatch(
 async def test_store_entity_embeddings_rejects_cross_palace_entity(
     memory_service, knowledge_backend, clean_palace
 ) -> None:
-    from workflows_mcp.engine.memory_service import MemoryRequest
+    from workflows_mcp.engine.memory_schema import MemoryRequest
 
     foreign = await knowledge_backend.query(
         """
@@ -862,7 +862,7 @@ async def test_store_entity_embeddings_rejects_cross_palace_entity(
 
 
 async def test_archive_memories_by_item(memory_service, knowledge_backend, clean_palace) -> None:
-    from workflows_mcp.engine.memory_service import MemoryRequest
+    from workflows_mcp.engine.memory_schema import MemoryRequest
 
     await memory_service.execute(
         MemoryRequest.model_validate(
@@ -955,7 +955,7 @@ async def test_archive_memories_by_item(memory_service, knowledge_backend, clean
 async def test_archive_memories_rejects_item_in_different_palace(
     memory_service, knowledge_backend, clean_palace
 ) -> None:
-    from workflows_mcp.engine.memory_service import MemoryRequest
+    from workflows_mcp.engine.memory_schema import MemoryRequest
 
     foreign_palace = f"{PALACE}_foreign"
     src = await knowledge_backend.query(
@@ -995,7 +995,7 @@ async def test_archive_memories_rejects_item_in_different_palace(
 async def test_mark_item_dirty_sets_lifecycle_and_error(
     memory_service, knowledge_backend, clean_palace
 ) -> None:
-    from workflows_mcp.engine.memory_service import MemoryRequest
+    from workflows_mcp.engine.memory_schema import MemoryRequest
 
     await memory_service.execute(
         MemoryRequest.model_validate(
@@ -1060,7 +1060,7 @@ async def test_mark_item_dirty_sets_lifecycle_and_error(
 async def test_mark_item_dirty_rejects_cross_palace_item(
     memory_service, knowledge_backend, clean_palace
 ) -> None:
-    from workflows_mcp.engine.memory_service import MemoryRequest
+    from workflows_mcp.engine.memory_schema import MemoryRequest
 
     foreign_palace = f"{PALACE}_foreign_dirty"
     src = await knowledge_backend.query(
@@ -1107,7 +1107,7 @@ async def test_store_entities_persists_qualified_name_and_parent_class_id(
     memory_service, knowledge_backend, clean_palace
 ) -> None:
     """store_entities must persist qualified_name and parent_class_id columns."""
-    from workflows_mcp.engine.memory_service import MemoryRequest
+    from workflows_mcp.engine.memory_schema import MemoryRequest
 
     # Seed parent Class entity first.
     parent_resp = await memory_service.execute(
@@ -1170,7 +1170,7 @@ async def test_store_entities_upsert_updates_qualified_name_and_parent(
     memory_service, knowledge_backend, clean_palace
 ) -> None:
     """Upsert path (ON CONFLICT) must refresh qualified_name and parent_class_id."""
-    from workflows_mcp.engine.memory_service import MemoryRequest
+    from workflows_mcp.engine.memory_schema import MemoryRequest
 
     # Seed two Class entities to swap parents between.
     classes = await memory_service.execute(
@@ -1242,7 +1242,7 @@ async def test_store_relations_persists_metadata(
     """store_relations must persist per-edge metadata JSONB."""
     import json as _json
 
-    from workflows_mcp.engine.memory_service import MemoryRequest
+    from workflows_mcp.engine.memory_schema import MemoryRequest
 
     seeded = await memory_service.execute(
         MemoryRequest.model_validate(
@@ -1299,7 +1299,7 @@ async def test_store_relations_metadata_defaults_to_empty_object(
     """Omitting metadata must default to empty JSONB object (NOT NULL column)."""
     import json as _json
 
-    from workflows_mcp.engine.memory_service import MemoryRequest
+    from workflows_mcp.engine.memory_schema import MemoryRequest
 
     seeded = await memory_service.execute(
         MemoryRequest.model_validate(
@@ -1358,7 +1358,7 @@ async def test_store_relations_metadata_defaults_to_empty_object(
 
 def test_system1_store_structural_evidence_operation_accepted_by_request() -> None:
     """MemoryRequest must accept 'store_system1_structural_evidence' without raising."""
-    from workflows_mcp.engine.memory_service import MemoryRequest
+    from workflows_mcp.engine.memory_schema import MemoryRequest
 
     req = MemoryRequest.model_validate(
         {
@@ -1372,7 +1372,7 @@ def test_system1_store_structural_evidence_operation_accepted_by_request() -> No
 
 def test_system1_record_verification_cycle_operation_accepted_by_request() -> None:
     """MemoryRequest must accept 'record_system1_verification_cycle' without raising."""
-    from workflows_mcp.engine.memory_service import MemoryRequest
+    from workflows_mcp.engine.memory_schema import MemoryRequest
 
     req = MemoryRequest.model_validate(
         {
@@ -1386,7 +1386,7 @@ def test_system1_record_verification_cycle_operation_accepted_by_request() -> No
 
 def test_system2_derive_semantic_claims_operation_accepted_by_request() -> None:
     """MemoryRequest must accept 'derive_system2_semantic_claims' without raising."""
-    from workflows_mcp.engine.memory_service import MemoryRequest
+    from workflows_mcp.engine.memory_schema import MemoryRequest
 
     req = MemoryRequest.model_validate(
         {
@@ -1400,7 +1400,7 @@ def test_system2_derive_semantic_claims_operation_accepted_by_request() -> None:
 
 def test_system2_apply_semantic_override_operation_accepted_by_request() -> None:
     """MemoryRequest must accept 'apply_semantic_override' without raising."""
-    from workflows_mcp.engine.memory_service import MemoryRequest
+    from workflows_mcp.engine.memory_schema import MemoryRequest
 
     req = MemoryRequest.model_validate(
         {
@@ -1414,7 +1414,7 @@ def test_system2_apply_semantic_override_operation_accepted_by_request() -> None
 
 def test_system2_reconcile_semantic_lifecycle_operation_accepted_by_request() -> None:
     """MemoryRequest must accept 'reconcile_semantic_lifecycle' without raising."""
-    from workflows_mcp.engine.memory_service import MemoryRequest
+    from workflows_mcp.engine.memory_schema import MemoryRequest
 
     req = MemoryRequest.model_validate(
         {
@@ -1431,7 +1431,7 @@ async def test_system1_store_structural_evidence_persists_evidence_rows(
 ) -> None:
     """store_system1_structural_evidence must write structural evidence rows keyed by
     scope/entity and return success with stored evidence IDs."""
-    from workflows_mcp.engine.memory_service import MemoryRequest
+    from workflows_mcp.engine.memory_schema import MemoryRequest
 
     result = await memory_service.execute(
         MemoryRequest.model_validate(
@@ -1475,7 +1475,7 @@ async def test_system1_store_structural_evidence_row_exists_in_db(
     Querying knowledge_structural_evidence after the call must return exactly
     one row matching the submitted scope/entity/category key.
     """
-    from workflows_mcp.engine.memory_service import MemoryRequest
+    from workflows_mcp.engine.memory_schema import MemoryRequest
 
     await memory_service.execute(
         MemoryRequest.model_validate(
@@ -1520,7 +1520,7 @@ async def test_system1_record_verification_cycle_persists_cycle_metadata(
 ) -> None:
     """record_system1_verification_cycle must persist a verification cycle row
     with scope_key identity and success/failure status."""
-    from workflows_mcp.engine.memory_service import MemoryRequest
+    from workflows_mcp.engine.memory_schema import MemoryRequest
 
     result = await memory_service.execute(
         MemoryRequest.model_validate(
@@ -1552,7 +1552,7 @@ async def test_system2_derive_semantic_claims_returns_claim_ids(
 ) -> None:
     """derive_system2_semantic_claims must derive claims backed by System 1 evidence
     and return claim IDs in the response."""
-    from workflows_mcp.engine.memory_service import MemoryRequest
+    from workflows_mcp.engine.memory_schema import MemoryRequest
 
     # Pre-store structural evidence so the derivation can resolve stable IDs.
     await memory_service.execute(
@@ -1601,7 +1601,7 @@ async def test_system2_apply_semantic_override_activates_immediately_with_proven
 ) -> None:
     """apply_semantic_override must activate the override immediately and persist
     provenance fields (override_reason, overridden_by, activated_at)."""
-    from workflows_mcp.engine.memory_service import MemoryRequest
+    from workflows_mcp.engine.memory_schema import MemoryRequest
 
     # First, store structural evidence so a real claim can be derived.
     await memory_service.execute(
@@ -1671,7 +1671,7 @@ async def test_system2_reconcile_semantic_lifecycle_returns_transition_summary(
 ) -> None:
     """reconcile_semantic_lifecycle must evaluate lifecycle transitions and return
     a summary of affected claims and their new states."""
-    from workflows_mcp.engine.memory_service import MemoryRequest
+    from workflows_mcp.engine.memory_schema import MemoryRequest
 
     result = await memory_service.execute(
         MemoryRequest.model_validate(
@@ -1703,7 +1703,8 @@ async def test_system1_failed_verification_cycle_does_not_count_for_archive_gate
     This is a runtime service invariant — failed cycles must not satisfy the gate
     even when two cycle IDs are technically present.
     """
-    from workflows_mcp.engine.memory_service import MemoryContractError, MemoryRequest
+    from workflows_mcp.engine.memory_schema import MemoryRequest
+    from workflows_mcp.engine.memory_service import MemoryContractError
 
     scope_key = _scope_key()
 
@@ -1791,7 +1792,7 @@ async def test_system1_store_structural_evidence_is_idempotent_for_same_scope_en
       for the conflict key after two store calls, proving no duplicate was
       created.
     """
-    from workflows_mcp.engine.memory_service import MemoryRequest
+    from workflows_mcp.engine.memory_schema import MemoryRequest
 
     evidence_payload = {
         "operation": "store_system1_structural_evidence",
@@ -1871,7 +1872,8 @@ async def test_archive_gate_rejects_unregistered_fabricated_cycle_ids(
     cycles.  Passing two fabricated/unregistered IDs must be rejected with
     MEM_ARCHIVE_GATE_NOT_MET — unknown IDs are not countable.
     """
-    from workflows_mcp.engine.memory_service import MemoryContractError, MemoryRequest
+    from workflows_mcp.engine.memory_schema import MemoryRequest
+    from workflows_mcp.engine.memory_service import MemoryContractError
 
     scope_key = _scope_key()
     # Fabricated UUIDs — never registered with the service (not in DB).
@@ -1917,7 +1919,7 @@ async def test_archive_gate_rejects_unregistered_fabricated_cycle_ids(
 
 async def _store_evidence(memory_service: Any, stable_id: str) -> None:
     """Helper: store one structural evidence row in the test palace/scope."""
-    from workflows_mcp.engine.memory_service import MemoryRequest
+    from workflows_mcp.engine.memory_schema import MemoryRequest
 
     result = await memory_service.execute(
         MemoryRequest.model_validate(
@@ -1952,7 +1954,7 @@ async def test_system2_room_intent_label_persists_claim_and_evidence_link(
     in knowledge_semantic_claims with claim_type='room_intent' and
     lifecycle_state='active_evidenced'.  A matching knowledge_claim_evidence_links
     row must also exist."""
-    from workflows_mcp.engine.memory_service import MemoryRequest
+    from workflows_mcp.engine.memory_schema import MemoryRequest
 
     stable_id = "src/t7_room.py::RoomClass"
     await _store_evidence(memory_service, stable_id)
@@ -2009,7 +2011,7 @@ async def test_system2_compartment_reasoning_unit_persists_claim_and_evidence_li
 ) -> None:
     """derive_system2_semantic_claims must persist a compartment_reasoning_unit claim
     backed by at least one evidence link when compartment_reasoning_unit is supplied."""
-    from workflows_mcp.engine.memory_service import MemoryRequest
+    from workflows_mcp.engine.memory_schema import MemoryRequest
 
     stable_id = "src/t7_comp.py::CompClass"
     await _store_evidence(memory_service, stable_id)
@@ -2063,7 +2065,7 @@ async def test_system2_semantic_corridor_persists_claim_edge_and_canonical_type(
     2. Persist a directed edge row in knowledge_semantic_corridors with
        canonicalized corridor_type and original raw type in corridor_type_raw.
     3. Return the corridor claim ID in claim_ids."""
-    from workflows_mcp.engine.memory_service import MemoryRequest
+    from workflows_mcp.engine.memory_schema import MemoryRequest
 
     stable_id = "src/t7_corr.py::CorrClass"
     await _store_evidence(memory_service, stable_id)
@@ -2170,7 +2172,7 @@ async def test_system2_partial_corridor_fields_rejected(
     all three required fields."""
     from pydantic import ValidationError
 
-    from workflows_mcp.engine.memory_service import MemoryRequest
+    from workflows_mcp.engine.memory_schema import MemoryRequest
 
     stable_id = "src/t7_partial.py::PartialClass"
     await _store_evidence(memory_service, stable_id)
@@ -2208,7 +2210,7 @@ async def test_system2_corridor_self_loop_rejected(
     with a message that mentions self-loop."""
     from pydantic import ValidationError
 
-    from workflows_mcp.engine.memory_service import MemoryRequest
+    from workflows_mcp.engine.memory_schema import MemoryRequest
 
     stable_id = "src/t7_loop.py::LoopClass"
     await _store_evidence(memory_service, stable_id)
@@ -2242,7 +2244,8 @@ async def test_system2_derive_without_resolvable_evidence_fails(
 ) -> None:
     """derive_system2_semantic_claims must fail when no matching structural evidence
     rows exist in the scope — claims must not be born without resolvable evidence."""
-    from workflows_mcp.engine.memory_service import MemoryContractError, MemoryRequest
+    from workflows_mcp.engine.memory_schema import MemoryRequest
+    from workflows_mcp.engine.memory_service import MemoryContractError
 
     # Do NOT store evidence — stable ID will not resolve.
     try:
@@ -2287,7 +2290,7 @@ async def test_duplicate_corridor_edge_rolls_back_and_leaves_no_orphaned_claim(
     - No orphaned claim row (half-inserted state) was left in
       knowledge_semantic_claims from the second call.
     """
-    from workflows_mcp.engine.memory_service import MemoryRequest
+    from workflows_mcp.engine.memory_schema import MemoryRequest
 
     stable_id = "src/t7_atomicity.py::AtomicityClass"
     await _store_evidence(memory_service, stable_id)
@@ -2428,7 +2431,7 @@ async def test_verification_cycle_updates_override_accountability(
     - After a failed cycle (success=False): accountability_status does NOT change.
     - Trajectory via cycle-operation path: pending → supported → unsupported → supported.
     """
-    from workflows_mcp.engine.memory_service import MemoryRequest
+    from workflows_mcp.engine.memory_schema import MemoryRequest
 
     # Step 1: Store structural evidence so we can derive a real claim.
     await memory_service.execute(
@@ -2635,7 +2638,8 @@ async def test_derive_system1_topology_fails_closed_when_evidence_rows_are_indet
     rows in this palace, the heuristic has nothing to work from and must fail closed.
     This is the authoritative indeterminate case: zero evidence rows loaded.
     """
-    from workflows_mcp.engine.memory_service import MemoryContractError, MemoryRequest
+    from workflows_mcp.engine.memory_schema import MemoryRequest
+    from workflows_mcp.engine.memory_service import MemoryContractError
 
     # Use a fabricated UUID that does not exist in knowledge_structural_evidence.
     nonexistent_evidence_id = "00000000-dead-beef-0000-000000000099"
@@ -2672,7 +2676,8 @@ async def test_derive_system1_topology_does_not_fallback_to_default_literal(
     Even if evidence rows exist, the result must not silently assign a default
     topology value. The operation must either produce a proven topology or fail closed.
     """
-    from workflows_mcp.engine.memory_service import MemoryContractError, MemoryRequest
+    from workflows_mcp.engine.memory_schema import MemoryRequest
+    from workflows_mcp.engine.memory_service import MemoryContractError
 
     # Attempt derivation with a fabricated evidence_id (not actually stored).
     # The operation should fail closed, not silently return 'default'.
@@ -2715,7 +2720,7 @@ async def _store_structural_evidence_and_get_id(
     compartment: str = "owl-compartment",
 ) -> str:
     """Helper: store one structural evidence row and return its UUID string."""
-    from workflows_mcp.engine.memory_service import MemoryRequest
+    from workflows_mcp.engine.memory_schema import MemoryRequest
 
     req = MemoryRequest.model_validate(
         {
@@ -2770,7 +2775,7 @@ async def test_derive_system1_topology_explicit_override_success(
     - Return derivation_source='explicit_override', derived_wing/room/compartment,
       provenance_id, claim_id.
     """
-    from workflows_mcp.engine.memory_service import MemoryRequest
+    from workflows_mcp.engine.memory_schema import MemoryRequest
 
     evidence_id = await _store_structural_evidence_and_get_id(
         memory_service, knowledge_backend, entity_stable_id="src/owl.py::OwlClass"
@@ -2884,7 +2889,7 @@ async def test_derive_system1_topology_explicit_override_provenance_is_append_on
     ADR-013 append-only requirement: every accepted override call must produce
     a distinct knowledge_topology_provenance row, preserving full history.
     """
-    from workflows_mcp.engine.memory_service import MemoryRequest
+    from workflows_mcp.engine.memory_schema import MemoryRequest
 
     evidence_id = await _store_structural_evidence_and_get_id(
         memory_service, knowledge_backend, entity_stable_id="src/append.py::AppendClass"
@@ -2970,7 +2975,7 @@ async def test_derive_system1_topology_explicit_override_multiple_evidence_ids(
     When multiple evidence IDs are supplied, each must have a corresponding
     link row — no partial linking permitted.
     """
-    from workflows_mcp.engine.memory_service import MemoryRequest
+    from workflows_mcp.engine.memory_schema import MemoryRequest
 
     ev1 = await _store_structural_evidence_and_get_id(
         memory_service, knowledge_backend, entity_stable_id="src/multi1.py::ClassOne"
@@ -3025,7 +3030,8 @@ async def test_derive_system1_topology_explicit_override_nonexistent_evidence_id
     ADR-013 Task 2b: evidence IDs must reference persisted structural evidence rows.
     A nonexistent ID must produce an error and no orphaned rows (atomic rollback).
     """
-    from workflows_mcp.engine.memory_service import MemoryContractError, MemoryRequest
+    from workflows_mcp.engine.memory_schema import MemoryRequest
+    from workflows_mcp.engine.memory_service import MemoryContractError
 
     fake_id = "00000000-dead-beef-0000-000000000099"
 
@@ -3118,7 +3124,7 @@ async def test_derive_system1_topology_without_override_succeeds_via_structural_
     the operation must now succeed when sufficient structural evidence is present,
     returning derivation_source='system1_derived'.
     """
-    from workflows_mcp.engine.memory_service import MemoryRequest
+    from workflows_mcp.engine.memory_schema import MemoryRequest
 
     evidence_id = await _store_structural_evidence_and_get_id(
         memory_service, knowledge_backend, entity_stable_id="src/no_override.py::NoOverrideClass"
@@ -3164,7 +3170,7 @@ async def _store_structural_evidence_typed(
     compartment: str,
 ) -> str:
     """Helper: store a structural evidence row with explicit type/category and return its UUID."""
-    from workflows_mcp.engine.memory_service import MemoryRequest
+    from workflows_mcp.engine.memory_schema import MemoryRequest
 
     req = MemoryRequest.model_validate(
         {
@@ -3218,7 +3224,7 @@ async def test_derive_system1_topology_structural_success_returns_system1_derive
     - Return non-empty derived_wing, derived_room, derived_compartment.
     - Return non-None provenance_id and claim_id.
     """
-    from workflows_mcp.engine.memory_service import MemoryRequest
+    from workflows_mcp.engine.memory_schema import MemoryRequest
 
     # Store a class entity (highest anchor priority) in a known wing/room/compartment.
     ev_id = await _store_structural_evidence_typed(
@@ -3270,7 +3276,7 @@ async def test_derive_system1_topology_structural_algorithm_version_is_system1_v
     ADR-013 Task 3: algorithm version must be persisted for inspectability and future
     upgrade tracking.
     """
-    from workflows_mcp.engine.memory_service import MemoryRequest
+    from workflows_mcp.engine.memory_schema import MemoryRequest
 
     ev_id = await _store_structural_evidence_typed(
         memory_service,
@@ -3326,7 +3332,7 @@ async def test_derive_system1_topology_structural_provenance_is_append_only(
     ADR-013 Task 3: provenance is history, not mutable state. Each accepted derivation
     must produce a fresh knowledge_topology_provenance row.
     """
-    from workflows_mcp.engine.memory_service import MemoryRequest
+    from workflows_mcp.engine.memory_schema import MemoryRequest
 
     ev_id = await _store_structural_evidence_typed(
         memory_service,
@@ -3386,7 +3392,7 @@ async def test_derive_system1_topology_structural_evidence_links_persisted(
     ADR-013 Task 3: evidence IDs used for structural derivation must be linked in the
     provenance evidence table for accountability.
     """
-    from workflows_mcp.engine.memory_service import MemoryRequest
+    from workflows_mcp.engine.memory_schema import MemoryRequest
 
     ev_id = await _store_structural_evidence_typed(
         memory_service,
@@ -3438,7 +3444,7 @@ async def test_derive_system1_topology_structural_class_anchor_priority(
     function/doc unit. The derived topology must reflect the class entity's placement
     rather than the function entity's placement.
     """
-    from workflows_mcp.engine.memory_service import MemoryRequest
+    from workflows_mcp.engine.memory_schema import MemoryRequest
 
     # Store a class entity in one wing/room/compartment.
     cls_ev_id = await _store_structural_evidence_typed(
@@ -3504,7 +3510,7 @@ async def test_derive_system1_topology_structural_no_semantic_labels_influence(
     semantic-sounding entity_stable_id prefix, one without) must produce the same
     wing/room/compartment topology from structural signals only.
     """
-    from workflows_mcp.engine.memory_service import MemoryRequest
+    from workflows_mcp.engine.memory_schema import MemoryRequest
 
     # Evidence rows in identical structural positions but with names that could
     # be mistaken for semantic categories.  The heuristic must use only structural
@@ -3581,7 +3587,7 @@ async def test_derive_system1_topology_modal_wing_room_tie_break_is_lexicographi
     the "z-*" row is stored first so that naive Counter iteration or DB row order
     would return it before "a-*".
     """
-    from workflows_mcp.engine.memory_service import MemoryRequest
+    from workflows_mcp.engine.memory_schema import MemoryRequest
 
     # Store "z-wing"/"z-room" with a stable_id that sorts BEFORE "a-wing" entity's stable_id.
     # The DB query returns rows ORDER BY entity_stable_id ASC, so "aaa_..." sorts first.
@@ -3656,7 +3662,7 @@ async def test_derive_system1_topology_new_wing_insufficient_bundle_one_row_two_
     artifact can satisfy at most one category. Two category labels with one row
     must not pass.
     """
-    from workflows_mcp.engine.memory_service import MemoryRequest
+    from workflows_mcp.engine.memory_schema import MemoryRequest
 
     # Store exactly ONE evidence row under one category.
     ev_id = await _store_structural_evidence_typed(
@@ -3713,7 +3719,7 @@ async def test_derive_system1_topology_new_wing_sufficient_bundle_two_rows_two_c
 
     Verifies: one artifact per category, >=2 categories, >=2 distinct rows.
     """
-    from workflows_mcp.engine.memory_service import MemoryRequest
+    from workflows_mcp.engine.memory_schema import MemoryRequest
 
     ev1 = await _store_structural_evidence_typed(
         memory_service,
@@ -3775,7 +3781,7 @@ async def test_derive_system1_topology_explicit_override_bypasses_proof_bundle_g
     Verifies: result succeeds with is_new_wing=True, no proof_bundle, and a valid
     topology_override — the gate must be bypassed entirely.
     """
-    from workflows_mcp.engine.memory_service import MemoryRequest
+    from workflows_mcp.engine.memory_schema import MemoryRequest
 
     ev = await _store_structural_evidence_typed(
         memory_service,
@@ -3836,7 +3842,8 @@ async def test_derive_system1_topology_structural_atomic_rollback_on_db_failure(
     """
     from unittest.mock import patch
 
-    from workflows_mcp.engine.memory_service import MemoryContractError, MemoryRequest
+    from workflows_mcp.engine.memory_schema import MemoryRequest
+    from workflows_mcp.engine.memory_service import MemoryContractError
 
     evidence_id = await _store_structural_evidence_and_get_id(
         memory_service,
@@ -3932,7 +3939,8 @@ async def test_derive_system1_topology_explicit_override_atomic_rollback_on_db_f
     """
     from unittest.mock import patch
 
-    from workflows_mcp.engine.memory_service import MemoryContractError, MemoryRequest
+    from workflows_mcp.engine.memory_schema import MemoryRequest
+    from workflows_mcp.engine.memory_service import MemoryContractError
 
     evidence_id = await _store_structural_evidence_typed(
         memory_service,
@@ -4040,7 +4048,7 @@ async def test_derive_system1_topology_explicit_override_all_four_tables_commit_
     exactly one new row traceable back to the same derive_system1_topology call.
     This is the positive atomicity assertion — all-or-nothing in the success direction.
     """
-    from workflows_mcp.engine.memory_service import MemoryRequest
+    from workflows_mcp.engine.memory_schema import MemoryRequest
 
     evidence_id = await _store_structural_evidence_typed(
         memory_service,
@@ -4134,7 +4142,7 @@ async def test_derive_system1_topology_inline_candidates_stored_and_derived_atom
     ADR-013 Task 5b: one operation accepts inline candidates, stores them, and derives topology
     in a single transaction. On success, structural evidence rows must exist in the database.
     """
-    from workflows_mcp.engine.memory_service import MemoryRequest
+    from workflows_mcp.engine.memory_schema import MemoryRequest
 
     derive_req = MemoryRequest.model_validate(
         {
@@ -4212,7 +4220,7 @@ async def test_derive_system1_topology_inline_candidates_insufficient_no_partial
     override is provided, the operation must fail closed. No evidence rows, claim rows, or
     provenance rows must be written (atomic rollback).
     """
-    from workflows_mcp.engine.memory_service import MemoryRequest
+    from workflows_mcp.engine.memory_schema import MemoryRequest
 
     # Single inline candidate without override — insufficient for complete topology.
     derive_req = MemoryRequest.model_validate(
@@ -4304,7 +4312,7 @@ async def test_derive_system1_topology_inline_candidates_wing_not_from_language(
     ADR-013 Task 5b: wing must not default to programming language.
     Parser metadata is evidence metadata only; language value must never appear as wing.
     """
-    from workflows_mcp.engine.memory_service import MemoryRequest
+    from workflows_mcp.engine.memory_schema import MemoryRequest
 
     derive_req = MemoryRequest.model_validate(
         {

@@ -7,18 +7,18 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from workflows_mcp.engine.knowledge.graph import graph_neighbors, graph_stats
-from workflows_mcp.engine.memory_service import (
+from workflows_mcp.engine.memory_schema import (
     ManageMemoryRequest,
     ManageMemoryResult,
     MemoryGraphInput,
     MemoryRequest,
     MemoryResponseInput,
     MemoryResult,
-    MemoryService,
     OrgUserMergeTransparency,
     QueryMemoryRequest,
     QueryMemoryResult,
 )
+from workflows_mcp.engine.memory_service import MemoryService
 from workflows_mcp.tools_memory import _shape_memory_response
 
 

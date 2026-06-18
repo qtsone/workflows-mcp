@@ -1186,7 +1186,7 @@ async def run_programmatic_onboard_with_cycle_recording(
     Raises:
         Exception: Re-raised from ``MemoryService.execute`` if cycle recording fails.
     """
-    from .memory_service import MemoryRequest
+    from .memory_schema import MemoryRequest
 
     result = run_programmatic_onboard(request)
     if result.status != "completed":

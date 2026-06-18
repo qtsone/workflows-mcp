@@ -11,7 +11,8 @@ from pydantic import Field
 from .block import BlockInput, BlockOutput
 from .execution import Execution
 from .executor_base import BlockExecutor, ExecutorCapabilities, ExecutorSecurityLevel
-from .memory_service import MemoryRequest, MemoryService
+from .memory_schema import MemoryRequest
+from .memory_service import MemoryService
 
 logger = logging.getLogger(__name__)
 

@@ -8,13 +8,13 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from workflows_mcp.engine.knowledge.constants import Authority
-from workflows_mcp.engine.memory_service import (
+from workflows_mcp.engine.memory_schema import (
     ManageMemoryRequest,
     MemoryRequest,
     MemoryScope,
-    MemoryService,
     QueryMemoryRequest,
 )
+from workflows_mcp.engine.memory_service import MemoryService
 
 
 def _embedding_patch() -> Any:

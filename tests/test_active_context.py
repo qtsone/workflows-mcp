@@ -192,7 +192,7 @@ class TestAcceptanceAOnboardActivatesContext:
         backend_mock.connect = AsyncMock()
         backend_mock.disconnect = AsyncMock()
 
-        from workflows_mcp.engine.memory_service import MemoryResult, QueryMemoryResult
+        from workflows_mcp.engine.memory_schema import MemoryResult, QueryMemoryResult
 
         query_result = MemoryResult(
             operation="query",
@@ -322,7 +322,7 @@ class TestAcceptanceDExplicitScopeOverridesActive:
         # Track which scope was actually used by MemoryService.
         captured_requests: list[Any] = []
 
-        from workflows_mcp.engine.memory_service import (
+        from workflows_mcp.engine.memory_schema import (
             MemoryRequest,
             MemoryResult,
             QueryMemoryResult,

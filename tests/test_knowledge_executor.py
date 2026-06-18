@@ -1078,11 +1078,11 @@ class TestMemoryService:
 
     def test_memory_service_importable(self) -> None:
         """MemoryService must be importable from memory_service module."""
-        from workflows_mcp.engine.memory_service import (
+        from workflows_mcp.engine.memory_schema import (
             ManageMemoryRequest,
-            MemoryService,
             QueryMemoryRequest,
         )
+        from workflows_mcp.engine.memory_service import MemoryService
 
         assert MemoryService is not None
         assert QueryMemoryRequest is not None
@@ -1093,7 +1093,8 @@ class TestMemoryService:
         """MemoryService.query returns structured facts/memories without summary."""
         from unittest.mock import AsyncMock, MagicMock, patch
 
-        from workflows_mcp.engine.memory_service import MemoryService, QueryMemoryRequest
+        from workflows_mcp.engine.memory_schema import QueryMemoryRequest
+        from workflows_mcp.engine.memory_service import MemoryService
 
         backend = MagicMock()
         backend.query = AsyncMock(
@@ -1140,7 +1141,8 @@ class TestMemoryService:
         """MemoryService.manage returns a result with operation field."""
         from unittest.mock import AsyncMock, MagicMock, patch
 
-        from workflows_mcp.engine.memory_service import ManageMemoryRequest, MemoryService
+        from workflows_mcp.engine.memory_schema import ManageMemoryRequest
+        from workflows_mcp.engine.memory_service import MemoryService
 
         backend = MagicMock()
         backend.query = AsyncMock(return_value=MagicMock(rows=[]))
@@ -1165,11 +1167,11 @@ class TestMemoryService:
     @pytest.mark.asyncio
     async def test_execute_ingest_raw_forwards_validity_window_to_store(self) -> None:
         """Unified ingest must forward valid_from/valid_to from record to store request."""
-        from workflows_mcp.engine.memory_service import (
+        from workflows_mcp.engine.memory_schema import (
             ManageMemoryResult,
             MemoryRequest,
-            MemoryService,
         )
+        from workflows_mcp.engine.memory_service import MemoryService
 
         backend = MagicMock()
         context = MagicMock()
@@ -1205,7 +1207,8 @@ class TestMemoryService:
     @pytest.mark.asyncio
     async def test_query_with_as_of_passes_temporal_filter_to_search_layer(self) -> None:
         """Query as_of should be converted and forwarded to search SQL builder layer."""
-        from workflows_mcp.engine.memory_service import MemoryService, QueryMemoryRequest
+        from workflows_mcp.engine.memory_schema import QueryMemoryRequest
+        from workflows_mcp.engine.memory_service import MemoryService
 
         backend = MagicMock()
         backend.execute = AsyncMock()
@@ -1231,7 +1234,8 @@ class TestMemoryService:
     @pytest.mark.asyncio
     async def test_query_with_interval_passes_temporal_range_to_search_layer(self) -> None:
         """Query from/to should be converted and forwarded to search SQL builder layer."""
-        from workflows_mcp.engine.memory_service import MemoryService, QueryMemoryRequest
+        from workflows_mcp.engine.memory_schema import QueryMemoryRequest
+        from workflows_mcp.engine.memory_service import MemoryService
 
         backend = MagicMock()
         backend.execute = AsyncMock()
@@ -1261,11 +1265,11 @@ class TestMemoryService:
     @pytest.mark.asyncio
     async def test_manage_context_preserves_filter_fields(self) -> None:
         """Context management must forward all scoping/filter fields to QueryMemoryRequest."""
-        from workflows_mcp.engine.memory_service import (
+        from workflows_mcp.engine.memory_schema import (
             ManageMemoryRequest,
-            MemoryService,
             QueryMemoryResult,
         )
+        from workflows_mcp.engine.memory_service import MemoryService
 
         backend = MagicMock()
         backend.query = AsyncMock(return_value=MagicMock(rows=[]))
@@ -1323,7 +1327,8 @@ class TestMemoryService:
     @pytest.mark.parametrize("strategy", ["auto", "communities", "palace"])
     async def test_query_retrieval_updates_last_retrieved_timestamp(self, strategy: str) -> None:
         """Retrieval update SQL must increment count and stamp last_retrieved_at."""
-        from workflows_mcp.engine.memory_service import MemoryService, QueryMemoryRequest
+        from workflows_mcp.engine.memory_schema import QueryMemoryRequest
+        from workflows_mcp.engine.memory_service import MemoryService
 
         backend = MagicMock()
         backend.execute = AsyncMock()
@@ -1396,7 +1401,7 @@ class TestMemoryExecutorManageWiring:
 
         async def capture_execute(request: Any) -> Any:
             captured_requests.append(request)
-            from workflows_mcp.engine.memory_service import ManageMemoryResult, MemoryResult
+            from workflows_mcp.engine.memory_schema import ManageMemoryResult, MemoryResult
 
             return MemoryResult(
                 operation="ingest",

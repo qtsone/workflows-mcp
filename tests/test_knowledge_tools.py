@@ -14,12 +14,12 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from workflows_mcp.engine.executors_file import _SENSITIVE_EXCLUDE_PATTERNS
-from workflows_mcp.engine.memory_service import (
+from workflows_mcp.engine.memory_schema import (
     ManageMemoryResult,
-    MemoryContractError,
     MemoryResult,
     QueryMemoryResult,
 )
+from workflows_mcp.engine.memory_service import MemoryContractError
 from workflows_mcp.server import mcp as _mcp_server
 from workflows_mcp.tools_memory import (
     ScanConfig,

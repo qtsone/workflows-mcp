@@ -2232,8 +2232,8 @@ async def test_record_system1_verification_cycle_persists_db_row_with_scope_key(
     Verifies ADR-013 Task 6: DB-backed cycle persistence replaces the
     process-local _cycle_success_registry stub from Task 3.
     """
+    from workflows_mcp.engine.memory_schema import MemoryRequest
     from workflows_mcp.engine.memory_scope_resolver import scope_key
-    from workflows_mcp.engine.memory_service import MemoryRequest
 
     covered = _vc_scope()
     expected_scope_key = scope_key(covered)
@@ -2283,8 +2283,8 @@ async def test_record_system1_failed_verification_cycle_persists_failure_in_db(
     """A failed verification cycle (success=False) must be persisted with
     success=False in DB. The archive gate must not count these cycles.
     """
+    from workflows_mcp.engine.memory_schema import MemoryRequest
     from workflows_mcp.engine.memory_scope_resolver import scope_key
-    from workflows_mcp.engine.memory_service import MemoryRequest
 
     covered = _vc_scope()
     expected_scope_key = scope_key(covered)
@@ -2328,7 +2328,7 @@ async def test_archive_gate_reads_absent_evidence_cycles_from_db(
     This test verifies ADR-013 Task 6 requirement: 'reconcile_semantic_lifecycle
     must read cycle success/scope metadata from DB for cycle ID validation.'
     """
-    from workflows_mcp.engine.memory_service import MemoryRequest
+    from workflows_mcp.engine.memory_schema import MemoryRequest
 
     covered = _vc_scope()
     cycle_ids: list[str] = []
@@ -2409,8 +2409,8 @@ async def test_archive_gate_rejects_failed_db_cycles_as_absent_evidence(
     """Failed DB cycles (success=False) must not satisfy the absent-evidence
     archive gate even when two cycle IDs are provided.
     """
+    from workflows_mcp.engine.memory_schema import MemoryRequest
     from workflows_mcp.engine.memory_scope_resolver import scope_key
-    from workflows_mcp.engine.memory_service import MemoryRequest
 
     covered = _vc_scope()
     cycle_ids: list[str] = []

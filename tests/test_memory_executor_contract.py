@@ -4,7 +4,7 @@ import pytest
 from pydantic import ValidationError
 
 from workflows_mcp.engine.executors_memory import MemoryInput
-from workflows_mcp.engine.memory_service import MemoryRequest
+from workflows_mcp.engine.memory_schema import MemoryRequest
 
 
 @pytest.mark.parametrize(

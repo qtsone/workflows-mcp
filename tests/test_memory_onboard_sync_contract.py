@@ -609,7 +609,7 @@ class TestActiveScopeSourceLabeling:
         mock_ctx.request_context.lifespan_context.get_active_context.return_value = candidate
 
         memory = _get_tool_fn("memory")
-        from workflows_mcp.engine.memory_service import MemoryResult, QueryMemoryResult
+        from workflows_mcp.engine.memory_schema import MemoryResult, QueryMemoryResult
 
         query_result = MemoryResult(
             operation="query",
@@ -680,7 +680,7 @@ class TestActiveProjectDefaultResolution:
 
         async def _capture_execute(self: Any, request: Any) -> Any:
             captured.append(request)
-            from workflows_mcp.engine.memory_service import MemoryResult, QueryMemoryResult
+            from workflows_mcp.engine.memory_schema import MemoryResult, QueryMemoryResult
 
             return MemoryResult(
                 operation="query",
@@ -781,7 +781,7 @@ class TestActiveProjectDefaultResolution:
 
         async def _capture_execute(self: Any, request: Any) -> Any:
             captured.append(request)
-            from workflows_mcp.engine.memory_service import MemoryResult, QueryMemoryResult
+            from workflows_mcp.engine.memory_schema import MemoryResult, QueryMemoryResult
 
             return MemoryResult(
                 operation="query",
@@ -832,7 +832,7 @@ class TestActiveProjectDefaultResolution:
 
         async def _capture_execute(self: Any, request: Any) -> Any:
             captured.append(request)
-            from workflows_mcp.engine.memory_service import MemoryResult, QueryMemoryResult
+            from workflows_mcp.engine.memory_schema import MemoryResult, QueryMemoryResult
 
             return MemoryResult(
                 operation="query",
@@ -892,7 +892,7 @@ class TestActiveProjectDefaultResolution:
 
         async def _capture_execute(self: Any, request: Any) -> Any:
             captured.append(request)
-            from workflows_mcp.engine.memory_service import MemoryResult, QueryMemoryResult
+            from workflows_mcp.engine.memory_schema import MemoryResult, QueryMemoryResult
 
             return MemoryResult(
                 operation="query",

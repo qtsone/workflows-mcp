@@ -56,7 +56,8 @@ from workflows_mcp.engine.io_queue import IOQueue
 from workflows_mcp.engine.job_queue import JobQueue
 from workflows_mcp.engine.knowledge.schema import ensure_schema
 from workflows_mcp.engine.llm_config import LLMConfigLoader
-from workflows_mcp.engine.memory_service import MemoryService, QueryMemoryRequest
+from workflows_mcp.engine.memory_schema import QueryMemoryRequest
+from workflows_mcp.engine.memory_service import MemoryService
 from workflows_mcp.engine.registry import WorkflowRegistry
 from workflows_mcp.engine.schema import WorkflowSchema
 from workflows_mcp.engine.sql.backend import ConnectionConfig, DatabaseEngine

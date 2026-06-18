@@ -11,10 +11,10 @@ import pytest_asyncio
 from workflows_mcp.engine.execution import Execution
 from workflows_mcp.engine.knowledge.schema import ensure_schema
 from workflows_mcp.engine.memory_errors import MemoryContractError
+from workflows_mcp.engine.memory_schema import MemoryRequest
 from workflows_mcp.engine.memory_service import (
     _PROJECT_DEFAULT_TOPOLOGY_APPLIED_BY,
     _PROJECT_DEFAULT_TOPOLOGY_OVERRIDE_REASON,
-    MemoryRequest,
     MemoryService,
 )
 from workflows_mcp.engine.sql.backend import ConnectionConfig, DatabaseEngine

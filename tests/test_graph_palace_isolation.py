@@ -158,7 +158,7 @@ async def test_two_palaces_seed_helper(
 
 async def test_graph_query_without_palace_is_rejected(memory_service: Any) -> None:
     """External graph requests must not fall back to deployment-global scope."""
-    from workflows_mcp.engine.memory_service import QueryMemoryRequest
+    from workflows_mcp.engine.memory_schema import QueryMemoryRequest
 
     request = QueryMemoryRequest.model_validate(
         {
@@ -181,7 +181,7 @@ async def test_graph_stats_without_entity_and_without_palace_is_rejected(
     memory_service: Any,
 ) -> None:
     """Stats without start entity still requires request-layer palace."""
-    from workflows_mcp.engine.memory_service import QueryMemoryRequest
+    from workflows_mcp.engine.memory_schema import QueryMemoryRequest
 
     request = QueryMemoryRequest.model_validate(
         {
@@ -203,9 +203,7 @@ async def test_resolve_scoped_graph_entity_rejects_cross_palace_uuid(
     memory_service: Any, two_palaces: dict[str, dict[str, str]]
 ) -> None:
     """Querying palace_a with palace_b's UUID must not resolve."""
-    from workflows_mcp.engine.memory_service import (
-        QueryMemoryRequest,
-    )
+    from workflows_mcp.engine.memory_schema import QueryMemoryRequest
 
     palace_b_alpha_uuid = two_palaces["b"]["alpha"]
 
@@ -267,7 +265,7 @@ async def test_filter_graph_result_drops_cross_palace_nodes(
         (palace_a_alpha, palace_b_beta),
     )
 
-    from workflows_mcp.engine.memory_service import QueryMemoryRequest
+    from workflows_mcp.engine.memory_schema import QueryMemoryRequest
 
     request = QueryMemoryRequest.model_validate(
         {
@@ -329,7 +327,7 @@ async def test_scoped_graph_stats_counts_only_own_palace(
     memory_service: Any, two_palaces: dict[str, dict[str, str]]
 ) -> None:
     """A stats query in palace_a must not include palace_b entity/relation counts."""
-    from workflows_mcp.engine.memory_service import QueryMemoryRequest
+    from workflows_mcp.engine.memory_schema import QueryMemoryRequest
 
     request = QueryMemoryRequest.model_validate(
         {
@@ -363,7 +361,7 @@ async def test_community_refresh_does_not_touch_other_palace(
         (),
     )
 
-    from workflows_mcp.engine.memory_service import MemoryRequest
+    from workflows_mcp.engine.memory_schema import MemoryRequest
 
     request = MemoryRequest.model_validate(
         {
@@ -390,7 +388,7 @@ async def test_community_refresh_does_not_touch_other_palace(
 
 async def test_community_refresh_without_palace_is_rejected(memory_service: Any) -> None:
     """External community_refresh requires palace even if lower scope exists."""
-    from workflows_mcp.engine.memory_service import MemoryRequest
+    from workflows_mcp.engine.memory_schema import MemoryRequest
 
     request = MemoryRequest.model_validate(
         {
@@ -411,7 +409,8 @@ async def test_store_system1_structural_graph_rejects_cross_palace_relation_and_
 ) -> None:
     """Relation endpoint resolution is palace-scoped and must not cross-link palaces."""
     from workflows_mcp.engine.execution import Execution
-    from workflows_mcp.engine.memory_service import MemoryRequest, MemoryService
+    from workflows_mcp.engine.memory_schema import MemoryRequest
+    from workflows_mcp.engine.memory_service import MemoryService
 
     service = MemoryService(backend=knowledge_backend, context=Execution())
 
