@@ -27,8 +27,6 @@ from .formatting import (
     format_workflow_list_markdown,
     format_workflow_not_found_error,
 )
-from .metadata.db import connect_metadata_db
-from .metadata.migrations import migrate_metadata_db
 from .metadata.repos.run_history_repo import SQLiteRunHistoryRepository
 from .server import mcp
 from .tool_helpers import AUTH_SCOPE_KEY, get_request_scope, json_response
@@ -66,8 +64,8 @@ def _resolve_run_binding(ctx: AppContextType) -> tuple[str | None, str | None]:
     return project_id, token_id
 
 
-def _metadata_db_path(app_ctx: Any) -> Any | None:
-    return getattr(app_ctx, "metadata_db_path", None)
+def _metadata_db_conn(app_ctx: Any) -> Any | None:
+    return getattr(app_ctx, "metadata_db_conn", None)
 
 
 def _json_dumps_compact(data: Any) -> str:
@@ -104,31 +102,26 @@ def _create_sync_run_record(
     token_id: str | None,
     execution_mode: str = "sync",
 ) -> str | None:
-    db_path = _metadata_db_path(app_ctx)
-    if db_path is None:
+    conn = _metadata_db_conn(app_ctx)
+    if conn is None:
         return None
 
     run_id = f"run_{uuid4().hex[:8]}"
     now = datetime.now().isoformat()
-    conn = connect_metadata_db(db_path)
-    try:
-        migrate_metadata_db(conn)
-        SQLiteRunHistoryRepository(conn).create_run(
-            run_id=run_id,
-            workflow_name=workflow_name,
-            status="running",
-            execution_mode=execution_mode,
-            timeout_seconds=0,
-            created_at=now,
-            started_at=now,
-            updated_at=now,
-            inputs_json=_json_dumps_compact(inputs),
-            project_id=project_id,
-            token_id=token_id,
-            cancellable=False,
-        )
-    finally:
-        conn.close()
+    SQLiteRunHistoryRepository(conn).create_run(
+        run_id=run_id,
+        workflow_name=workflow_name,
+        status="running",
+        execution_mode=execution_mode,
+        timeout_seconds=0,
+        created_at=now,
+        started_at=now,
+        updated_at=now,
+        inputs_json=_json_dumps_compact(inputs),
+        project_id=project_id,
+        token_id=token_id,
+        cancellable=False,
+    )
     return run_id
 
 
@@ -141,8 +134,8 @@ def _update_sync_run_record(
 ) -> None:
     if run_id is None:
         return
-    db_path = _metadata_db_path(app_ctx)
-    if db_path is None:
+    conn = _metadata_db_conn(app_ctx)
+    if conn is None:
         return
 
     execution_data = (
@@ -153,31 +146,24 @@ def _update_sync_run_record(
     status = _run_status_from_execution_status(str(getattr(result, "status", "unknown")))
     now = datetime.now().isoformat()
     finished_at = now if status in {"completed", "failed", "cancelled"} else None
-    conn = connect_metadata_db(db_path)
-    try:
-        migrate_metadata_db(conn)
-        SQLiteRunHistoryRepository(conn).update_run(
-            run_id=run_id,
-            status=status,
-            updated_at=now,
-            finished_at=finished_at,
-            cancellable=False,
-            result_summary=_result_summary_from_execution_data(execution_data),
-            error_summary=(
-                str(execution_data["error"])
-                if isinstance(execution_data.get("error"), str)
-                else None
-            ),
-            execution_state_json=(
-                _json_dumps_compact(execution_data["execution_state"])
-                if isinstance(execution_data.get("execution_state"), dict)
-                else None
-            ),
-            execution_json=_json_dumps_compact(execution_data),
-            inputs_json=_json_dumps_compact(inputs),
-        )
-    finally:
-        conn.close()
+    SQLiteRunHistoryRepository(conn).update_run(
+        run_id=run_id,
+        status=status,
+        updated_at=now,
+        finished_at=finished_at,
+        cancellable=False,
+        result_summary=_result_summary_from_execution_data(execution_data),
+        error_summary=(
+            str(execution_data["error"]) if isinstance(execution_data.get("error"), str) else None
+        ),
+        execution_state_json=(
+            _json_dumps_compact(execution_data["execution_state"])
+            if isinstance(execution_data.get("execution_state"), dict)
+            else None
+        ),
+        execution_json=_json_dumps_compact(execution_data),
+        inputs_json=_json_dumps_compact(inputs),
+    )
 
 
 def _execution_response(result: Any, *, debug: bool, run_id: str | None) -> dict[str, Any]:

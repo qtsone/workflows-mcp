@@ -94,6 +94,7 @@ def build_resources(*, base_dir: Path) -> AppResources:
         max_recursion_depth=max_recursion_depth,
         metadata_base_dir=base_dir,
         metadata_db_path=metadata_db_path,
+        metadata_db_conn=metadata_db_conn,
         secret_provider=secret_provider,
     )
 

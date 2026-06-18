@@ -18,6 +18,7 @@ This test suite validates:
    - Response format variations (minimal/detailed, json/markdown)
 """
 
+import asyncio
 from pathlib import Path
 from typing import Any
 from unittest.mock import MagicMock
@@ -34,6 +35,7 @@ from workflows_mcp.engine.llm_config import LLMConfigLoader
 from workflows_mcp.engine.registry import WorkflowRegistry
 from workflows_mcp.engine.schema import WorkflowSchema
 from workflows_mcp.metadata.db import connect_metadata_db
+from workflows_mcp.metadata.migrations import migrate_metadata_db
 from workflows_mcp.metadata.repos.run_history_repo import SQLiteRunHistoryRepository
 from workflows_mcp.tools import (
     execute_inline_workflow,
@@ -467,6 +469,8 @@ class TestWorkflowExecution:
         app_ctx = mock_context.request_context.lifespan_context
         app_ctx.metadata_base_dir = tmp_path
         app_ctx.metadata_db_path = tmp_path / "server.db"
+        app_ctx.metadata_db_conn = connect_metadata_db(tmp_path / "server.db")
+        migrate_metadata_db(app_ctx.metadata_db_conn)
         registry = app_ctx.registry
 
         required_workflow = WorkflowSchema(
@@ -573,6 +577,8 @@ outputs:
         app_ctx = mock_context.request_context.lifespan_context
         app_ctx.metadata_base_dir = tmp_path
         app_ctx.metadata_db_path = tmp_path / "server.db"
+        app_ctx.metadata_db_conn = connect_metadata_db(tmp_path / "server.db")
+        migrate_metadata_db(app_ctx.metadata_db_conn)
         workflow_yaml = """
 name: inline-persisted
 description: Inline workflow test
@@ -609,6 +615,64 @@ outputs:
         assert run.execution_mode == "inline"
         assert run.execution_json is not None
         assert "Inline persisted" in run.execution_json
+
+    @pytest.mark.asyncio
+    async def test_concurrent_executions_share_one_metadata_connection(
+        self,
+        mock_context,
+        tmp_path: Path,
+    ) -> None:
+        """N concurrent sessions reuse the one lifespan-owned metadata connection.
+
+        Smoke-tests the central-server invariant: a single shared SQLite connection
+        serves many concurrent ``execute_workflow`` calls without transaction-ownership
+        errors, connection churn, or lost run records.
+        """
+        app_ctx = mock_context.request_context.lifespan_context
+        app_ctx.metadata_base_dir = tmp_path
+        app_ctx.metadata_db_path = tmp_path / "server.db"
+        shared_conn = connect_metadata_db(tmp_path / "server.db")
+        migrate_metadata_db(shared_conn)
+        app_ctx.metadata_db_conn = shared_conn
+
+        app_ctx.registry.register(
+            WorkflowSchema(
+                name="concurrent-smoke",
+                description="Trivial workflow for concurrency smoke test",
+                blocks=[
+                    {
+                        "id": "echo",
+                        "type": "Shell",
+                        "inputs": {"command": "echo concurrent"},
+                    }
+                ],
+            )
+        )
+
+        results = await asyncio.gather(
+            *(
+                execute_workflow(
+                    workflow="concurrent-smoke",
+                    inputs={},
+                    debug=False,
+                    mode="sync",
+                    timeout=None,
+                    ctx=mock_context,
+                )
+                for _ in range(16)
+            )
+        )
+
+        run_ids = {result.structuredContent["run_id"] for result in results}
+        assert len(run_ids) == 16  # every call persisted a distinct record
+        for result in results:
+            assert result.structuredContent["status"] == "success"
+
+        repo = SQLiteRunHistoryRepository(shared_conn)
+        for run_id in run_ids:
+            run = repo.get_run(str(run_id))
+            assert run is not None
+            assert run.status == "completed"
 
     @pytest.mark.asyncio
     async def test_execute_inline_workflow_empty_yaml(self, mock_context) -> None:

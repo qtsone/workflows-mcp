@@ -5,6 +5,7 @@ separated to avoid circular imports.
 """
 
 import asyncio
+import sqlite3
 import uuid
 from collections.abc import Callable
 from dataclasses import dataclass, field
@@ -78,6 +79,11 @@ class AppContext:
     memory_backend_unavailable_error: MemoryBackendUnavailableError | None = None
     metadata_base_dir: Path | None = None
     metadata_db_path: Path | None = None
+    # Lifespan-owned metadata SQLite connection shared by all tool calls.
+    # The central server reuses this single connection instead of opening (and
+    # re-migrating) a fresh one per invocation. Access is single-event-loop-thread
+    # only; the run-history repository owns its own BEGIN IMMEDIATE/commit cycles.
+    metadata_db_conn: sqlite3.Connection | None = None
     secret_provider: SecretProvider | None = None
     watcher_manager: "WatcherManager | None" = None
     max_recursion_depth: int = 50  # Default recursion depth limit
