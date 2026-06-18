@@ -33,3 +33,7 @@ A continuation flow continues a previously established memory operation context.
 ## Scope candidate
 
 A scope candidate is stored session context that can contain `scope`, `scope_key_value`, checkpoint data, and source metadata. A complete scope candidate can support continuation flows and reads, but does not automatically authorize standalone placement writes.
+
+## Memory→Postgres fast-path invariant
+
+The memory subsystem requires a PostgreSQL backend with the `pgvector` extension. Unlike the SQL block — which is multi-DB and selects its backend through the `DatabaseBackend` dialect-selection Protocol — memory binds `PostgresBackend` / `DatabaseEngine.POSTGRESQL` directly at every production site and emits Postgres-only SQL (pgvector ANN search, full-text search, RRF) with no SQLite path. This asymmetry is intentional and documented as a fast-path invariant: memory is single-DB by design; only the SQL block is portable. See ADR-016.
