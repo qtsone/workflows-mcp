@@ -7,7 +7,7 @@ Architecture (ADR-006):
 - Orchestrator creates Metadata based on success/exceptions
 
 Features:
-- Multiple database backends: SQLite, PostgreSQL, MariaDB
+- Multiple database backends: SQLite, PostgreSQL
 - Automatic parameter placeholder conversion
 - Connection pooling for remote databases
 - Transaction support with isolation levels
@@ -39,7 +39,6 @@ from .sql import (
     ConnectionConfig,
     DatabaseBackendBase,
     DatabaseEngine,
-    MariaDBBackend,
     ModelSchema,
     ParamConverter,
     PostgresBackend,
@@ -104,19 +103,17 @@ class SqlInput(BlockInput):
     # CONNECTION (required)
     # ═══════════════════════════════════════════════════════════════════
 
-    engine: Literal["sqlite", "postgresql", "mariadb"] = Field(
-        description="Database engine. Required."
-    )
+    engine: Literal["sqlite", "postgresql"] = Field(description="Database engine. Required.")
 
     # SQLite-specific
     path: str | None = Field(
         default=None, description="SQLite: Database file path. Use ':memory:' for in-memory DB."
     )
 
-    # Remote database connection (PostgreSQL/MariaDB)
+    # Remote database connection (PostgreSQL)
     host: str | None = Field(default=None, description="Database host")
     port: int | str | None = Field(
-        default=None, description="Database port (default: 5432 for PostgreSQL, 3306 for MariaDB)"
+        default=None, description="Database port (default: 5432 for PostgreSQL)"
     )
     database: str | None = Field(default=None, description="Database name")
     username: str | None = Field(default=None, description="Database username")
@@ -133,7 +130,6 @@ class SqlInput(BlockInput):
         description="""
         SQL statement(s) to execute (Raw SQL mode).
         - Use ? for positional params (SQLite) or $1, $2 for PostgreSQL
-        - MariaDB uses %s for positional params
         - Multi-statement scripts: separate with semicolons
         Mutually exclusive with 'model' field.
         """,
@@ -144,7 +140,7 @@ class SqlInput(BlockInput):
         description="""
         Query parameters for raw SQL (prevents SQL injection).
         - List for positional: [value1, value2]
-        - Dict for named: {"name": value} (PostgreSQL/MariaDB)
+        - Dict for named: {"name": value} (PostgreSQL)
         """,
     )
 
@@ -250,7 +246,7 @@ class SqlInput(BlockInput):
         default=None,
         description="""
         Transaction isolation level.
-        - PostgreSQL/MariaDB: read_uncommitted, read_committed, repeatable_read, serializable
+        - PostgreSQL: read_uncommitted, read_committed, repeatable_read, serializable
         - SQLite: immediate (recommended for writes), exclusive, or default (deferred)
         """,
     )
@@ -273,7 +269,7 @@ class SqlInput(BlockInput):
     )
     pool_size: int | str = Field(
         default=5,
-        description="Connection pool size (PostgreSQL/MariaDB only)",
+        description="Connection pool size (PostgreSQL only)",
     )
 
     # ═══════════════════════════════════════════════════════════════════
@@ -415,7 +411,7 @@ class SqlExecutor(BlockExecutor):
     - Uses Execution context
 
     Features:
-    - Multiple database backends: SQLite, PostgreSQL, MariaDB
+    - Multiple database backends: SQLite, PostgreSQL
     - Automatic parameter placeholder conversion
     - Connection pooling for remote databases
     - Transaction support with isolation levels
@@ -652,13 +648,6 @@ class SqlExecutor(BlockExecutor):
                     "Install with: pip install workflows-mcp[postgresql]"
                 )
             return PostgresBackend()
-        elif engine == "mariadb":
-            if MariaDBBackend is None:
-                raise ImportError(
-                    "MariaDB backend requires 'aiomysql' package. "
-                    "Install with: pip install workflows-mcp[mariadb]"
-                )
-            return MariaDBBackend()
         else:
             raise ValueError(f"Unsupported engine: {engine}")
 

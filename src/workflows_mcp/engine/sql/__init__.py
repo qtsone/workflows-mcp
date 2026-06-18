@@ -1,7 +1,7 @@
 """SQL database backend module for the workflow engine.
 
 This module provides a unified interface for executing SQL against multiple
-database backends: SQLite, PostgreSQL, and MariaDB/MySQL.
+database backends: SQLite and PostgreSQL.
 
 Features:
     - Pluggable backend architecture
@@ -15,7 +15,6 @@ Usage:
     from workflows_mcp.engine.sql import (
         SqliteBackend,
         PostgresBackend,
-        MariaDBBackend,
         ConnectionConfig,
         DatabaseEngine,
         QueryResult,
@@ -62,12 +61,6 @@ try:
 except ImportError:
     PostgresBackend = None  # type: ignore[misc,assignment]
 
-# MariaDB backend (optional dependency)
-try:
-    from .mariadb_backend import MariaDBBackend
-except ImportError:
-    MariaDBBackend = None  # type: ignore[misc,assignment]
-
 __all__ = [
     # Core types
     "ConnectionConfig",
@@ -87,5 +80,4 @@ __all__ = [
     # Backends
     "SqliteBackend",
     "PostgresBackend",
-    "MariaDBBackend",
 ]

@@ -57,14 +57,11 @@ class QueryBuilder:
             index: 0-based parameter index
 
         Returns:
-            Placeholder string (?, $1, %s depending on engine)
+            Placeholder string (? for SQLite, $1 for PostgreSQL)
         """
-        if self.engine == DatabaseEngine.SQLITE:
-            return "?"
-        elif self.engine == DatabaseEngine.POSTGRESQL:
+        if self.engine == DatabaseEngine.POSTGRESQL:
             return f"${index + 1}"
-        else:  # MARIADB
-            return "%s"
+        return "?"
 
     def _generate_auto_values(self, data: dict[str, Any], is_insert: bool) -> dict[str, Any]:
         """Generate auto values (uuid, created_at, updated_at).
@@ -290,36 +287,27 @@ class QueryBuilder:
         val_list = ", ".join(placeholders)
         conflict_cols = ", ".join(f'"{c}"' for c in conflict)
 
-        # Build update set for non-conflict columns
+        # Build update set for non-conflict columns. SQLite spells the
+        # conflicting-row pseudo-table "excluded"; PostgreSQL spells it "EXCLUDED".
+        excluded = "EXCLUDED" if self.engine == DatabaseEngine.POSTGRESQL else "excluded"
         update_cols = [c for c in columns if c not in conflict]
         if update_cols:
-            if self.engine == DatabaseEngine.SQLITE:
-                update_set = ", ".join(f'"{c}" = excluded."{c}"' for c in update_cols)
-            elif self.engine == DatabaseEngine.POSTGRESQL:
-                update_set = ", ".join(f'"{c}" = EXCLUDED."{c}"' for c in update_cols)
-            else:  # MARIADB uses different syntax
-                update_set = ", ".join(f'"{c}" = VALUES("{c}")' for c in update_cols)
+            update_set = ", ".join(f'"{c}" = {excluded}."{c}"' for c in update_cols)
         else:
             # If all columns are conflict columns, do nothing on conflict
             update_set = None
 
-        if self.engine == DatabaseEngine.MARIADB:
-            # MariaDB uses ON DUPLICATE KEY UPDATE
-            sql = f'INSERT INTO "{self.schema.table}" ({col_list}) VALUES ({val_list})'
-            if update_set:
-                sql += f" ON DUPLICATE KEY UPDATE {update_set}"
+        # SQLite and PostgreSQL both use ON CONFLICT
+        sql = f'INSERT INTO "{self.schema.table}" ({col_list}) VALUES ({val_list})'
+        sql += f" ON CONFLICT ({conflict_cols})"
+        if update_set:
+            sql += f" DO UPDATE SET {update_set}"
         else:
-            # SQLite and PostgreSQL use ON CONFLICT
-            sql = f'INSERT INTO "{self.schema.table}" ({col_list}) VALUES ({val_list})'
-            sql += f" ON CONFLICT ({conflict_cols})"
-            if update_set:
-                sql += f" DO UPDATE SET {update_set}"
-            else:
-                sql += " DO NOTHING"
+            sql += " DO NOTHING"
 
         # Add RETURNING for primary key
         pk = self.schema.get_primary_key()
-        if pk and self.engine != DatabaseEngine.MARIADB:
+        if pk:
             sql += f' RETURNING "{pk.name}"'
 
         return sql, values

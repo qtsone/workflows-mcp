@@ -13,7 +13,12 @@ from typing import Any, Protocol, runtime_checkable
 
 
 class DatabaseEngine(Enum):
-    """Supported database engines."""
+    """Database engines recognised by the SQL layer.
+
+    SQLITE and POSTGRESQL are the supported backends. MARIADB has no backend
+    adapter; it remains only as a placeholder-conversion target in
+    ``param_converter`` (it speaks the MySQL ``%s`` format).
+    """
 
     SQLITE = "sqlite"
     POSTGRESQL = "postgresql"
@@ -25,9 +30,9 @@ class ConnectionConfig:
     """Database connection configuration.
 
     Attributes:
-        dialect: Database dialect (sqlite, postgresql, mariadb)
+        dialect: Database dialect (sqlite, postgresql)
         path: SQLite database file path (or ":memory:" for in-memory)
-        host: Database server host (PostgreSQL/MariaDB)
+        host: Database server host (PostgreSQL)
         port: Database server port
         database: Database name
         username: Database username
@@ -65,12 +70,9 @@ class ConnectionConfig:
             if not self.database:
                 raise ValueError(f"{self.dialect.value} requires 'database' parameter")
 
-            # Set default ports
-            if self.port is None:
-                if self.dialect == DatabaseEngine.POSTGRESQL:
-                    self.port = 5432
-                elif self.dialect == DatabaseEngine.MARIADB:
-                    self.port = 3306
+            # Set default port
+            if self.port is None and self.dialect == DatabaseEngine.POSTGRESQL:
+                self.port = 5432
 
 
 @dataclass
@@ -193,7 +195,7 @@ class DatabaseBackend(Protocol):
         Args:
             isolation_level: Transaction isolation level. Values depend on dialect:
                 - SQLite: "deferred", "immediate", "exclusive"
-                - PostgreSQL/MariaDB: "read_uncommitted", "read_committed",
+                - PostgreSQL: "read_uncommitted", "read_committed",
                   "repeatable_read", "serializable"
 
         Raises:

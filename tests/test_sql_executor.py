@@ -1,7 +1,7 @@
 """Tests for the SQL executor and backends.
 
 Tests focus on SQLite backend since it doesn't require external dependencies.
-PostgreSQL and MariaDB backends are tested when those optional dependencies are installed.
+The PostgreSQL backend is tested when its optional dependency is installed.
 """
 
 from __future__ import annotations
@@ -360,15 +360,6 @@ class TestConnectionConfig:
             database="mydb",
         )
         assert config.port == 5432
-
-    def test_mariadb_default_port(self) -> None:
-        """MariaDB gets default port 3306."""
-        config = ConnectionConfig(
-            dialect=DatabaseEngine.MARIADB,
-            host="localhost",
-            database="mydb",
-        )
-        assert config.port == 3306
 
     def test_sqlite_valid_config(self) -> None:
         """Valid SQLite config should work."""

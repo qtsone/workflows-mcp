@@ -62,8 +62,6 @@ dev = [
 ]
 benchmark = ["fastembed>=0.7.3"]
 postgresql = []  # asyncpg moved to main dependencies
-mariadb = ["aiomysql>=0.2.0"]
-sql-all = ["aiomysql>=0.2.0"]  # asyncpg moved to main dependencies
 
 [build-system]
 requires = ["hatchling>=1.26", "uv-dynamic-versioning"]

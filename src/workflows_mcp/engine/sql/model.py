@@ -36,37 +36,30 @@ TYPE_MAPPING: dict[str, dict[DatabaseEngine, str]] = {
     "text": {
         DatabaseEngine.SQLITE: "TEXT",
         DatabaseEngine.POSTGRESQL: "TEXT",
-        DatabaseEngine.MARIADB: "TEXT",
     },
     "integer": {
         DatabaseEngine.SQLITE: "INTEGER",
         DatabaseEngine.POSTGRESQL: "INTEGER",
-        DatabaseEngine.MARIADB: "INT",
     },
     "real": {
         DatabaseEngine.SQLITE: "REAL",
         DatabaseEngine.POSTGRESQL: "DOUBLE PRECISION",
-        DatabaseEngine.MARIADB: "DOUBLE",
     },
     "boolean": {
         DatabaseEngine.SQLITE: "INTEGER",
         DatabaseEngine.POSTGRESQL: "BOOLEAN",
-        DatabaseEngine.MARIADB: "TINYINT(1)",
     },
     "json": {
         DatabaseEngine.SQLITE: "JSON TEXT",
         DatabaseEngine.POSTGRESQL: "JSONB",
-        DatabaseEngine.MARIADB: "JSON",
     },
     "timestamp": {
         DatabaseEngine.SQLITE: "TEXT",
         DatabaseEngine.POSTGRESQL: "TIMESTAMPTZ",
-        DatabaseEngine.MARIADB: "DATETIME",
     },
     "blob": {
         DatabaseEngine.SQLITE: "BLOB",
         DatabaseEngine.POSTGRESQL: "BYTEA",
-        DatabaseEngine.MARIADB: "BLOB",
     },
 }
 

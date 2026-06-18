@@ -552,21 +552,20 @@ Without this, execution fails with configuration error.
 
 - **`path`** (string): SQLite: Database file path. Use ':memory:' for in-memory DB.
 - **`host`** (string): Database host
-- **`port`** (integer|string): Database port (default: 5432 for PostgreSQL, 3306 for MariaDB)
+- **`port`** (integer|string): Database port (default: 5432 for PostgreSQL)
 - **`database`** (string): Database name
 - **`username`** (string): Database username
 - **`password`** (string): Database password. Use {{secrets.DB_PASSWORD}} for security.
 - **`sql`** (string): 
         SQL statement(s) to execute (Raw SQL mode).
         - Use ? for positional params (SQLite) or $1, $2 for PostgreSQL
-        - MariaDB uses %s for positional params
         - Multi-statement scripts: separate with semicolons
         Mutually exclusive with 'model' field.
         
 - **`params`** (array|object): 
         Query parameters for raw SQL (prevents SQL injection).
         - List for positional: [value1, value2]
-        - Dict for named: {"name": value} (PostgreSQL/MariaDB)
+        - Dict for named: {"name": value} (PostgreSQL)
         
 - **`model`** (object|string): 
         Model schema for CRUD operations (Model mode).
@@ -609,13 +608,13 @@ Without this, execution fails with configuration error.
         
 - **`isolation_level`** (string): 
         Transaction isolation level.
-        - PostgreSQL/MariaDB: read_uncommitted, read_committed, repeatable_read, serializable
+        - PostgreSQL: read_uncommitted, read_committed, repeatable_read, serializable
         - SQLite: immediate (recommended for writes), exclusive, or default (deferred)
         
 - **`ssl`** (boolean|string) *(default: `False`)*: Enable SSL/TLS. Boolean or sslmode string (require, verify-ca, verify-full)
 - **`timeout`** (integer|string) *(default: `30`)*: Query execution timeout in seconds
 - **`connect_timeout`** (integer|string) *(default: `10`)*: Connection establishment timeout in seconds
-- **`pool_size`** (integer|string) *(default: `5`)*: Connection pool size (PostgreSQL/MariaDB only)
+- **`pool_size`** (integer|string) *(default: `5`)*: Connection pool size (PostgreSQL only)
 - **`sqlite_pragmas`** (object): 
         SQLite PRAGMA settings applied on connection.
         Defaults: journal_mode=WAL, busy_timeout=30000, synchronous=NORMAL, foreign_keys=ON

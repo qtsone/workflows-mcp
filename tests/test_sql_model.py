@@ -73,12 +73,6 @@ class TestColumnDef:
         sql = col.to_sql(DatabaseEngine.POSTGRESQL)
         assert '"metadata" JSONB' in sql
 
-    def test_json_column_mariadb(self) -> None:
-        """Test JSON column uses JSON for MariaDB."""
-        col = ColumnDef.from_dict("metadata", {"type": "json"})
-        sql = col.to_sql(DatabaseEngine.MARIADB)
-        assert '"metadata" JSON' in sql
-
 
 class TestIndexDef:
     """Tests for IndexDef class."""
@@ -340,13 +334,6 @@ class TestQueryBuilder:
         assert "ON CONFLICT" in sql
         assert "EXCLUDED" in sql  # PostgreSQL uses EXCLUDED
 
-    def test_upsert_mariadb(self, schema: ModelSchema) -> None:
-        """Test UPSERT generation for MariaDB."""
-        builder = QueryBuilder(schema, DatabaseEngine.MARIADB)
-        sql, params = builder.upsert(data={"task_id": "123", "name": "Task"}, conflict=["task_id"])
-
-        assert "ON DUPLICATE KEY UPDATE" in sql
-
     def test_placeholder_sqlite(self, builder: QueryBuilder) -> None:
         """Test SQLite placeholder format."""
         assert builder._placeholder(0) == "?"
@@ -357,9 +344,3 @@ class TestQueryBuilder:
         builder = QueryBuilder(schema, DatabaseEngine.POSTGRESQL)
         assert builder._placeholder(0) == "$1"
         assert builder._placeholder(5) == "$6"
-
-    def test_placeholder_mariadb(self, schema: ModelSchema) -> None:
-        """Test MariaDB placeholder format."""
-        builder = QueryBuilder(schema, DatabaseEngine.MARIADB)
-        assert builder._placeholder(0) == "%s"
-        assert builder._placeholder(5) == "%s"

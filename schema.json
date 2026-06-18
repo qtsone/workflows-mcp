@@ -1528,8 +1528,7 @@
                       "description": "Database engine. Required.",
                       "enum": [
                         "sqlite",
-                        "postgresql",
-                        "mariadb"
+                        "postgresql"
                       ],
                       "title": "Engine",
                       "type": "string"
@@ -1573,7 +1572,7 @@
                         }
                       ],
                       "default": null,
-                      "description": "Database port (default: 5432 for PostgreSQL, 3306 for MariaDB)",
+                      "description": "Database port (default: 5432 for PostgreSQL)",
                       "title": "Port"
                     },
                     "database": {
@@ -1625,7 +1624,7 @@
                         }
                       ],
                       "default": null,
-                      "description": "\n        SQL statement(s) to execute (Raw SQL mode).\n        - Use ? for positional params (SQLite) or $1, $2 for PostgreSQL\n        - MariaDB uses %s for positional params\n        - Multi-statement scripts: separate with semicolons\n        Mutually exclusive with 'model' field.\n        ",
+                      "description": "\n        SQL statement(s) to execute (Raw SQL mode).\n        - Use ? for positional params (SQLite) or $1, $2 for PostgreSQL\n        - Multi-statement scripts: separate with semicolons\n        Mutually exclusive with 'model' field.\n        ",
                       "title": "Sql"
                     },
                     "params": {
@@ -1643,7 +1642,7 @@
                         }
                       ],
                       "default": null,
-                      "description": "\n        Query parameters for raw SQL (prevents SQL injection).\n        - List for positional: [value1, value2]\n        - Dict for named: {\"name\": value} (PostgreSQL/MariaDB)\n        ",
+                      "description": "\n        Query parameters for raw SQL (prevents SQL injection).\n        - List for positional: [value1, value2]\n        - Dict for named: {\"name\": value} (PostgreSQL)\n        ",
                       "title": "Params"
                     },
                     "model": {
@@ -1830,7 +1829,7 @@
                         }
                       ],
                       "default": null,
-                      "description": "\n        Transaction isolation level.\n        - PostgreSQL/MariaDB: read_uncommitted, read_committed, repeatable_read, serializable\n        - SQLite: immediate (recommended for writes), exclusive, or default (deferred)\n        ",
+                      "description": "\n        Transaction isolation level.\n        - PostgreSQL: read_uncommitted, read_committed, repeatable_read, serializable\n        - SQLite: immediate (recommended for writes), exclusive, or default (deferred)\n        ",
                       "title": "Isolation Level"
                     },
                     "ssl": {
@@ -1882,7 +1881,7 @@
                         }
                       ],
                       "default": 5,
-                      "description": "Connection pool size (PostgreSQL/MariaDB only)",
+                      "description": "Connection pool size (PostgreSQL only)",
                       "title": "Pool Size"
                     },
                     "sqlite_pragmas": {
@@ -3725,8 +3724,7 @@
           "description": "Database engine. Required.",
           "enum": [
             "sqlite",
-            "postgresql",
-            "mariadb"
+            "postgresql"
           ],
           "title": "Engine",
           "type": "string"
@@ -3770,7 +3768,7 @@
             }
           ],
           "default": null,
-          "description": "Database port (default: 5432 for PostgreSQL, 3306 for MariaDB)",
+          "description": "Database port (default: 5432 for PostgreSQL)",
           "title": "Port"
         },
         "database": {
@@ -3822,7 +3820,7 @@
             }
           ],
           "default": null,
-          "description": "\n        SQL statement(s) to execute (Raw SQL mode).\n        - Use ? for positional params (SQLite) or $1, $2 for PostgreSQL\n        - MariaDB uses %s for positional params\n        - Multi-statement scripts: separate with semicolons\n        Mutually exclusive with 'model' field.\n        ",
+          "description": "\n        SQL statement(s) to execute (Raw SQL mode).\n        - Use ? for positional params (SQLite) or $1, $2 for PostgreSQL\n        - Multi-statement scripts: separate with semicolons\n        Mutually exclusive with 'model' field.\n        ",
           "title": "Sql"
         },
         "params": {
@@ -3840,7 +3838,7 @@
             }
           ],
           "default": null,
-          "description": "\n        Query parameters for raw SQL (prevents SQL injection).\n        - List for positional: [value1, value2]\n        - Dict for named: {\"name\": value} (PostgreSQL/MariaDB)\n        ",
+          "description": "\n        Query parameters for raw SQL (prevents SQL injection).\n        - List for positional: [value1, value2]\n        - Dict for named: {\"name\": value} (PostgreSQL)\n        ",
           "title": "Params"
         },
         "model": {
@@ -4027,7 +4025,7 @@
             }
           ],
           "default": null,
-          "description": "\n        Transaction isolation level.\n        - PostgreSQL/MariaDB: read_uncommitted, read_committed, repeatable_read, serializable\n        - SQLite: immediate (recommended for writes), exclusive, or default (deferred)\n        ",
+          "description": "\n        Transaction isolation level.\n        - PostgreSQL: read_uncommitted, read_committed, repeatable_read, serializable\n        - SQLite: immediate (recommended for writes), exclusive, or default (deferred)\n        ",
           "title": "Isolation Level"
         },
         "ssl": {
@@ -4079,7 +4077,7 @@
             }
           ],
           "default": 5,
-          "description": "Connection pool size (PostgreSQL/MariaDB only)",
+          "description": "Connection pool size (PostgreSQL only)",
           "title": "Pool Size"
         },
         "sqlite_pragmas": {
