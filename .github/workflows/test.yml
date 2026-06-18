@@ -76,7 +76,6 @@ jobs:
 
       - name: Run mypy
         run: uv run mypy src/workflows_mcp/
-        continue-on-error: true
 
   generated-files:
     name: Verify Generated Files
