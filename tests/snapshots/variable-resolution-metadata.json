@@ -1,7 +1,0 @@
-{
-  "outputs": {
-    "started_at": "TIMESTAMP",
-    "workflow_name": "variable-resolution-metadata"
-  },
-  "status": "success"
-}

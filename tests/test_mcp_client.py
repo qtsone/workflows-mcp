@@ -47,11 +47,6 @@ from workflows_mcp.tools import (
 )
 from workflows_mcp.tools_memory import register_memory_tools
 
-# Test configuration
-SNAPSHOTS_DIR = Path(__file__).parent / "snapshots"
-WORKFLOWS_DIR = Path(__file__).parent / "workflows"
-
-
 # =============================================================================
 # Fixtures
 # =============================================================================

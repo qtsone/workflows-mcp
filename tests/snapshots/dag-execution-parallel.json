@@ -1,9 +1,0 @@
-{
-  "outputs": {
-    "all_succeeded": true,
-    "parallel_1_output": "parallel_1",
-    "parallel_2_output": "parallel_2",
-    "parallel_3_output": "parallel_3"
-  },
-  "status": "success"
-}

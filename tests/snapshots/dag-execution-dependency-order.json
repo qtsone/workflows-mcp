@@ -1,9 +1,0 @@
-{
-  "outputs": {
-    "step1_output": "1",
-    "step2_output": "1-2",
-    "step3_output": "1-2-3",
-    "step4_output": "1-2-3-4"
-  },
-  "status": "success"
-}

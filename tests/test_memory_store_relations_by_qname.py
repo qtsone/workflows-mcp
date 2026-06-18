@@ -1,6 +1,6 @@
 """TDD contract tests for Memory operation store_relations_by_qname (ADR-012).
 
-All tests run through MemoryService.execute() — same seam as test_memory_executor_ops.py.
+All tests run through MemoryService.execute() — same seam as tests/memory_executor_ops/.
 Tests are arranged RED-first: they must fail before production code exists.
 
 Operation contract (ADR-012):

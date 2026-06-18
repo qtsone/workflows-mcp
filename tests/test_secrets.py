@@ -1,9 +1,7 @@
 """Shared test secrets configuration.
 
-Single source of truth for test secrets used across:
-- conftest.py (pytest fixture setup)
-- generate_snapshots.py (snapshot generation)
-- regenerate_snapshots.sh (legacy shell script - can be removed)
+Single source of truth for test secrets used by conftest.py (pytest fixture
+setup) and the secrets workflows in tests/workflows/core/secrets/.
 
 Secret values match tests/workflows/core/secrets/README.md
 """

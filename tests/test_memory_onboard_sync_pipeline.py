@@ -1970,7 +1970,7 @@ class TestOnboardContextPersistenceForSync:
 # ===========================================================================
 # ADR-013 Task 6: System 1 verification-cycle DB persistence
 # ===========================================================================
-# These tests require a live PostgreSQL connection (same env as test_memory_executor_ops.py).
+# These tests require a live PostgreSQL connection (same env as tests/memory_executor_ops/).
 
 
 _VCT_PALACE = "palace_vc_pipeline_test"
